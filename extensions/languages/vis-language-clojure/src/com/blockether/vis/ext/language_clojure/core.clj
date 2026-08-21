@@ -560,11 +560,10 @@
            (catch Throwable _ (repl-manager/home-relativize s)))
       s)))
 
-;; Only true Clojure SOURCE dialects — the same set the canonical
-;; `clojure -M:format` (codestyle) formats. Deliberately NOT `.edn`: zprint
-;; sorts map keys + reflows, which would churn hand-ordered config files
-;; (deps.edn, `.zprint.edn`) that codestyle never touches, making the
-;; format-on-write hook fight the canonical formatter.
+;; Only true Clojure SOURCE dialects — everything the repo's canonical formatter
+;; touches. Deliberately NOT `.edn`: zprint sorts map keys + reflows, which would
+;; churn hand-ordered config files (deps.edn, `.zprint.edn`) that are kept by
+;; hand, making the format-on-write hook fight their authors.
 (def ^:private clj-source-exts [".clj" ".cljs" ".cljc" ".cljx"])
 
 (defn- clj-source-file?

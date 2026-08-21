@@ -1846,7 +1846,7 @@ Vis uses [lazytest](https://github.com/NoahTheDuke/lazytest); test tool function
       (expect (= "Oslo" (:city (:result result)))))))
 ```
 
-Before shipping, run `clojure -M:format check`, `clojure -M:lint src extensions test build.clj`, and the relevant tests.
+Before shipping, run `format_code`, `clojure -M:lint` (add `extensions build.clj` for a wider sweep), and the relevant tests.
 
 ## See also
 

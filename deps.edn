@@ -1,6 +1,6 @@
 ;; Vis' AGGREGATE build: the engine plus every extension on ONE classpath. Each
 ;; extension under `extensions/` is its own deps.edn project, linked in here as a
-;; :local/root dep. Nothing formats this file — `clojure -M:format` skips .edn on
+;; :local/root dep. Nothing formats this file — `format_code` skips .edn on
 ;; purpose — so the order is hand-kept: this tree's own projects first, then
 ;; third-party coordinates alphabetically, then aliases alphabetically.
 {;; "packages/vis-agent/src" is a RESOURCE root, not Clojure source: it holds the
@@ -150,13 +150,14 @@
   :companion-themes {:exec-fn com.blockether.vis.dev.companion-themes/write!
                      :extra-paths ["dev"]}
 
-  :format {:deps {io.github.enajski/codestyle {:git/sha "158c94789dd284946c20148a527e655a3e97ec95"
-                                               :git/url "https://github.com/enajski/codestyle.git"}}
-           :main-opts ["-m" "codestyle.advanced-format"]}
-
-  :lint {:deps {io.github.enajski/codestyle {:git/sha "158c94789dd284946c20148a527e655a3e97ec95"
-                                             :git/url "https://github.com/enajski/codestyle.git"}}
-         :main-opts ["-m" "codestyle.lint"]}
+  ;; The whole-tree static-analysis gate CI runs. clj-kondo straight from its own
+  ;; CLI, pinned to the SAME version the Clojure language pack loads in process for
+  ;; `lint_code`, so the gate and the tool can never disagree. :replace-deps keeps
+  ;; the project's own classpath out of it — clj-kondo reads sources and the
+  ;; `.clj-kondo` config from disk, never from the classpath. The default paths are
+  ;; what CI lints; extra paths on the command line append to them.
+  :lint {:main-opts ["-m" "clj-kondo.main" "--lint" "src" "test" "dev"]
+         :replace-deps {clj-kondo/clj-kondo {:mvn/version "2026.07.24"}}}
 
   :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}
 

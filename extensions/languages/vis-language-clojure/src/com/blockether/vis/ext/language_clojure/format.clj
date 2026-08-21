@@ -8,8 +8,8 @@
 
      * zprint  — when a `.zprint.edn`/`.zprintrc` is found walking UP from the
                  path. The project's zprint options map is applied. This is the
-                 canonical, reflowing formatter (matches the repo's `:format`
-                 alias / codestyle).
+                 canonical, reflowing formatter — for this repo it is THE
+                 formatter, applied through the repo's own `.zprint.edn`.
      * cljfmt  — when only a `.cljfmt.edn`/`.cljfmt.clj` is found (no zprint), or
                  when neither config exists (cljfmt defaults). Conservative:
                  normalizes indentation + whitespace of MULTI-LINE forms but does
