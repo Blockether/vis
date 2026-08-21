@@ -282,9 +282,125 @@
         (expect (= [[::session [system user]] [::session [result]]] @turns))
         (expect (= [] @closed)))))
   (it
+    "reuses one Codex socket across model changes and pins each turn's model"
+    (let [session-atom
+          (atom nil)
+
+          router
+          (Object.)
+
+          history
+          (atom [])
+
+          opened
+          (atom [])
+
+          turns
+          (atom [])
+
+          closed
+          (atom [])
+
+          system
+          {:role "system" :content "stable"}
+
+          first-user
+          {:role "user" :content "luna"}
+
+          first-assistant
+          {:role "assistant" :content "luna answer"}
+
+          second-user
+          {:role "user" :content "terra"}
+
+          second-assistant
+          {:role "assistant" :content "terra answer"}]
+
+      (with-redefs [svar/open-session
+                    (fn [actual-router opts]
+                      (swap! opened conj [actual-router opts])
+                      ::session)
+
+                    svar/session-history
+                    (fn [_]
+                      @history)
+
+                    svar/ask!
+                    (fn [session opts]
+                      (let [assistant (if (empty? @turns) first-assistant second-assistant)]
+                        (swap! turns conj [session (:messages opts) (:routing opts)])
+                        (reset! history (into @history (concat (:messages opts) [assistant])))
+                        {:assistant-message assistant}))
+
+                    svar/close-session!
+                    (fn [session]
+                      (swap! closed conj session))]
+
+        (#'lp/ask-code-with-session!
+         {:router router :llm-session-atom session-atom}
+         {:provider :openai-codex :name "gpt-5.6-luna"}
+         {:messages [system first-user]})
+        (#'lp/ask-code-with-session!
+         {:router router :llm-session-atom session-atom}
+         {:provider :openai-codex :name "gpt-5.6-terra"}
+         {:messages [system first-user first-assistant second-user]})
+        (expect (= 1 (count @opened)))
+        (expect (= [[::session [system first-user] {:provider :openai-codex :model "gpt-5.6-luna"}]
+                    [::session [second-user] {:provider :openai-codex :model "gpt-5.6-terra"}]]
+                   @turns))
+        (expect (= [] @closed)))))
+  (it
+    "replaces a Codex session when reload supplies a new router snapshot"
+    (let [old-router
+          (with-meta {:id :router} {:generation :old})
+
+          new-router
+          (with-meta {:id :router} {:generation :new})
+
+          session-atom
+          (atom {:provider :openai-codex :router old-router :session ::old})
+
+          opened
+          (atom [])
+
+          closed
+          (atom [])
+
+          asked
+          (atom nil)]
+
+      (with-redefs [svar/open-session
+                    (fn [router opts]
+                      (swap! opened conj [router opts])
+                      ::fresh)
+
+                    svar/session-history
+                    (fn [_]
+                      [])
+
+                    svar/ask!
+                    (fn [session opts]
+                      (reset! asked [session opts])
+                      {:stop-reason :end})
+
+                    svar/close-session!
+                    (fn [session]
+                      (swap! closed conj session))]
+
+        (#'lp/ask-code-with-session!
+         {:router new-router :llm-session-atom session-atom}
+         {:provider :openai-codex :name "gpt-5.6"}
+         {:messages [{:role "user" :content "after reload"}]})
+        (expect (= old-router new-router))
+        (expect (not (identical? old-router new-router)))
+        (expect (= [::old] @closed))
+        (expect (= 1 (count @opened)))
+        (expect (identical? new-router (ffirst @opened)))
+        (expect (= ::fresh (first @asked))))))
+  (it
     "replays on a fresh Codex session when canonical history diverges"
     (let [session-atom
-          (atom {:key [:openai-codex "gpt-5.6"] :session ::stale})
+          (atom {:provider :openai-codex :router ::router :session ::stale})
 
           opened
           (atom [])
@@ -323,28 +439,56 @@
         (expect (= [::stale] @closed))
         (expect (= 1 (count @opened)))
         (expect (= [::fresh messages] @sent)))))
-  (it "closes the sticky Codex session before a non-Codex call"
-      (let [session-atom
-            (atom {:key [:openai-codex "gpt-5.6"] :session ::session})
+  (it
+    "closes the sticky Codex session for another provider and opens fresh on return"
+    (let [session-atom
+          (atom {:provider :openai-codex :router ::router :session ::session})
 
-            closed
-            (atom [])]
+          closed
+          (atom [])
 
-        (with-redefs [svar/close-session!
-                      (fn [session]
-                        (swap! closed conj session))
+          opened
+          (atom [])
 
-                      svar/ask-code!
-                      (fn [router opts]
-                        [router opts])]
+          asked
+          (atom nil)]
 
-          (expect (= [::router {:messages []}]
-                     (#'lp/ask-code-with-session!
-                      {:router ::router :llm-session-atom session-atom}
-                      {:provider :anthropic :name "claude"}
-                      {:messages []})))
-          (expect (= [::session] @closed))
-          (expect (nil? @session-atom))))))
+      (with-redefs [svar/close-session!
+                    (fn [session]
+                      (swap! closed conj session))
+
+                    svar/ask-code!
+                    (fn [router opts]
+                      [router opts])
+
+                    svar/open-session
+                    (fn [router opts]
+                      (swap! opened conj [router opts])
+                      ::fresh)
+
+                    svar/session-history
+                    (fn [_]
+                      [])
+
+                    svar/ask!
+                    (fn [session opts]
+                      (reset! asked [session opts])
+                      {:stop-reason :end})]
+
+        (expect (= [::router {:messages []}]
+                   (#'lp/ask-code-with-session!
+                    {:router ::router :llm-session-atom session-atom}
+                    {:provider :anthropic :name "claude"}
+                    {:messages []})))
+        (expect (= [::session] @closed))
+        (expect (nil? @session-atom))
+        (#'lp/ask-code-with-session!
+         {:router ::router :llm-session-atom session-atom}
+         {:provider :openai-codex :name "gpt-5.6"}
+         {:messages [{:role "user" :content "back"}]})
+        (expect (= 1 (count @opened)))
+        (expect (= ::fresh (first @asked)))
+        (expect (= ::fresh (:session @session-atom)))))))
 
 (defdescribe
   environment-lifecycle-test

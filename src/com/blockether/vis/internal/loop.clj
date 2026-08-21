@@ -4485,8 +4485,16 @@
 
     (when (and (<= n (count messages)) (= history (subvec messages 0 n))) (subvec messages n))))
 
+(defn- pin-session-route
+  "Pin a session turn to the model Vis already resolved."
+  [opts provider model]
+  (assoc opts
+    :routing (assoc (:routing opts)
+               :provider provider
+               :model model)))
+
 (defn- ask-code-with-session!
-  "Use one Codex Responses session per env/model; other providers stay one-shot."
+  "Use one Codex Responses session per env/router; other providers stay one-shot."
   [environment resolved-model ask-opts]
   (let [provider
         (:provider resolved-model)
@@ -4494,32 +4502,33 @@
         model
         (:name resolved-model)
 
+        router
+        (:router environment)
+
         session-atom
         (:llm-session-atom environment)]
 
     (if (and (= :openai-codex provider) session-atom)
       (locking session-atom
-        (let [session-key
-              [provider model]
-
-              current
+        (let [entry
               @session-atom
 
               current
-              (when (= session-key (:key current)) current)
+              (when (and (= provider (:provider entry)) (identical? router (:router entry))) entry)
 
               _
-              (when (and @session-atom (nil? current)) (close-llm-session! session-atom))
+              (when (and entry (nil? current)) (close-llm-session! session-atom))
 
               session
               (or (:session current)
-                  (svar/open-session (:router environment)
+                  (svar/open-session router
                                      (-> ask-opts
                                          (dissoc :messages)
-                                         (assoc :routing {:provider provider :model model}))))
+                                         (pin-session-route provider model))))
 
               _
-              (when-not current (reset! session-atom {:key session-key :session session}))
+              (when-not current
+                (reset! session-atom {:provider provider :router router :session session}))
 
               messages
               (vec (:messages ask-opts))
@@ -4534,18 +4543,20 @@
                   ;; A resumed/compacted transcript diverged from the local cursor.
                   ;; Start a fresh server chain and replay its canonical full input.
                   (close-llm-session! session-atom)
-                  (let [fresh (svar/open-session (:router environment)
+                  (let [fresh (svar/open-session router
                                                  (-> ask-opts
                                                      (dissoc :messages)
-                                                     (assoc :routing {:provider provider
-                                                                      :model model})))]
-                    (reset! session-atom {:key session-key :session fresh})
+                                                     (pin-session-route provider model)))]
+                    (reset! session-atom {:provider provider :router router :session fresh})
                     fresh)))
 
               turn-messages
               (or suffix messages)]
 
-          (svar/ask! session (assoc ask-opts :messages turn-messages))))
+          (svar/ask! session
+                     (-> ask-opts
+                         (assoc :messages turn-messages)
+                         (pin-session-route provider model)))))
       (do (when (and session-atom @session-atom)
             (locking session-atom (close-llm-session! session-atom)))
           (svar/ask-code! (:router environment)
