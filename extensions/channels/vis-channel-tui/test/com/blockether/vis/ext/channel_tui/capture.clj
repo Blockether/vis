@@ -8,14 +8,14 @@
 
      (require '[com.blockether.vis.ext.channel-tui.capture :as cap])
 
-     (cap/shot! {:paint! (fn [{:keys [screen]}] (dlg/magit-dialog! screen root))})
+     (cap/shot! {:paint! (fn [{:keys [screen]}] (dlg/text-view-dialog! screen \"Log\" lines))})
      ;; => \"/tmp/vis-tui/shot.png\"
 
    That string is a PATH: attach it with `attach` and LOOK at it. Three more
    calls cover everything else:
 
      (cap/frame-text (cap/capture! {:paint! …}))   ; greppable text of the paint
-     (cap/shots! {:paint! … :out \"magit\"})         ; one PNG per flush
+     (cap/shots! {:paint! … :out \"log\"})           ; one PNG per flush
      (cap/ink \"/tmp/vis-tui/shot.png\")             ; non-paper pixels, for asserts
 
    Keys are fed to the terminal BEFORE `:paint!` runs, so a dialog that owns its
@@ -239,7 +239,7 @@
 (defn shot!
   "ONE picture of a real paint, and its PATH back.
 
-     (cap/shot! {:paint! (fn [{:keys [screen]}] (dlg/magit-dialog! screen root))})
+     (cap/shot! {:paint! (fn [{:keys [screen]}] (dlg/text-view-dialog! screen \"Log\" lines))})
      ;; => \"/tmp/vis-tui/shot.png\"
 
    Everything `capture!` takes, plus:

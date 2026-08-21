@@ -1189,7 +1189,7 @@
    the `TerminalPosition` the caller should place the terminal cursor at (the
    focused text field), or nil when no text field has focus.
 
-   A magit-style TRANSIENT, not a modal — and the SAME band the C-x hydra paints
+   A TRANSIENT band, not a modal — and the SAME band the C-x hydra paints
    (`transient/paint-layout!`), down to the painter: a closed BOX on the
    terminal's own paper, corner-capped rules with `│` down both edge columns and
    the hint bar fenced INSIDE it under its own rule. It is anchored directly
@@ -1202,7 +1202,7 @@
    a third kind of surface next to the hydra it is supposed to BE.
 
    No title row either: the request's question rides ON the opening rule the way
-   magit's `── Commit ──` does, which hands the fields back the two rows a title
+   a transient's own `── Commit ──` rule does, which hands the fields back the two rows a title
    row and its own rule used to cost.
 
    `prompt-h` is the live height of that input box (`screen`'s `input-box-h`),

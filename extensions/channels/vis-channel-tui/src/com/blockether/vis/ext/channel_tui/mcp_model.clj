@@ -51,7 +51,7 @@
    servers too); enable/disable/remove persist and therefore only appear for
    gateway-managed ones; the OAuth verbs only for HTTP servers.
 
-   Every verb carries its own magit key and group, so the letter a user learns
+   Every verb carries its own transient key and group, so the letter a user learns
    belongs to the verb and not to whatever widget happens to paint it."
   [row]
   (let [http?
@@ -97,7 +97,7 @@
   [[:runtime "Runtime"] [:config "Configuration"] [:account "Account"] [:inspect "Inspect"]])
 
 (defn server-transient-spec
-  "The magit transient for ONE server: the verbs of `server-actions`, grouped by
+  "The transient for ONE server: the verbs of `server-actions`, grouped by
    what they touch — runtime state, persisted configuration, OAuth, inspection.
 
    Pure, so the band a user sees is unit-testable without a screen."

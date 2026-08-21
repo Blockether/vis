@@ -98,7 +98,7 @@
                  (expect (= "C-x h" (keymap/label-for :toggle-help)))
                  ;; The plain `c` after C-x is distinct from the direct Ctrl+C quit chord.
                  (expect (= :pick-model (keymap/prefix-action-for keymap/quit-key)))
-                 (expect (= :open-magit (keymap/prefix-action-for keymap/abort-key)))
+                 (expect (nil? (keymap/prefix-action-for keymap/abort-key)))
                  ;; `v` records ONE utterance; `b` next to it arms the conversation
                  ;; MODE - the thing the deleted `speech` feature toggle could not be.
                  (expect (= "C-x b" (keymap/label-for :toggle-voice-conversation))))

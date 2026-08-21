@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.channel-tui.transient.spec
-  "The executable contract of a magit TRANSIENT: `clojure.spec` over the three
+  "The executable contract of a TRANSIENT popup: `clojure.spec` over the three
    values the component takes, plus the ONE table its vocabulary lives in.
 
      `spec`    WHAT the popup is — closed DATA a pure producer writes
@@ -10,7 +10,7 @@
 
    **The vocabulary lives here.** [[item-types]] says what each kind of row
    MEANS — `:is-flag`, `:is-valued`, `:is-command` — and `transient.clj` derives
-   magit's leading `-`, the hint bar, the keystroke reducer and the paint from
+   the leading `-`, the hint bar, the keystroke reducer and the paint from
    that map. There is no second copy of the table and no `(= :action type)`
    scattered over the painter, so a new kind of row is added in one place.
 
@@ -38,7 +38,7 @@
 (def item-types
   "Every kind of row a transient offers, and what that kind MEANS:
 
-     `:is-flag`     wears magit's leading `-`, toggles IN PLACE and keeps the
+     `:is-flag`     wears the leading `-`, toggles IN PLACE and keeps the
                     popup open
      `:is-valued`   carries a value the human is asked for, stored under
                     `[:options id]` (the spec's `:read-option` fetches it)
@@ -60,7 +60,7 @@
         item-types))
 
 (def flag-types
-  "Types drawn with magit's leading `-` and toggled in place: `#{:switch :option}`."
+  "Types drawn with a leading `-` and toggled in place: `#{:switch :option}`."
   (types-with :is-flag))
 
 (def valued-types

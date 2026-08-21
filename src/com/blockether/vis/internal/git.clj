@@ -21,7 +21,7 @@
 
 ;; Kept in lockstep with the TUI workspace poll (screen.clj `workspace-refresh-ms`,
 ;; 4s): a shorter TTL is pointless (the poll can't surface a change faster than it
-;; ticks) and a longer one is the whole reason the footer used to lag magit by
+;; ticks) and a longer one is the whole reason the footer used to lag the repo state by
 ;; ~15s. Stale-while-revalidate, so a poll on a stale entry returns instantly and
 ;; the refreshed value lands on the next tick — worst-case footer latency ~4-8s.
 (def ^:private default-cache-ms 4000)
@@ -45,7 +45,7 @@
 (defn- git-argv
   "Argv for `git <args>`. EVERY Vis invocation is prefixed with
    `--no-optional-locks`. The footer poll, the rewind baseline, the environment
-   snapshot and magit all read status far more often than the user types, and a
+   snapshot and the git verbs all read status far more often than the user types, and a
    plain `git status` REFRESHES the index — it takes `.git/index.lock` to write
    the refreshed stat cache back. That lock is OPTIONAL for a reader and
    REQUIRED for the user's own `add`/`commit`/`checkout`, so polling without

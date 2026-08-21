@@ -641,7 +641,7 @@
 
 (defdescribe
   band-test
-  ;; The human-input prompt is a magit-style TRANSIENT inside the session, not a
+  ;; The human-input prompt is a TRANSIENT band inside the session, not a
   ;; full-screen modal: it sits ABOVE the prompt box, grows upward over the
   ;; transcript, and leaves the composer and the session's own footer visible.
   ;;
@@ -685,7 +685,7 @@
         (hi/paint! g 80 30 (assoc (hi/init-form (request)) :focus 7) 12)
         (expect (every? #(= "" (screen-row screen %)) (range 12)))
         (expect (str/includes? (screen-text screen) "Deploy"))))
-  (it "says its name ON the opening rule, the way a magit transient does"
+  (it "says its name ON the opening rule, the way a transient does"
       (let [{:keys [screen g]}
             (virtual-screen)
 

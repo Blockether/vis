@@ -206,40 +206,29 @@
 
 (defn- git-footer-spans
   [{:strs [is_workspace is_draft draft_root] :as status}]
-  ;; The chord rides ON the chip (like the `resources N (C-x s)` /
-  ;; `filesystem N (C-x d)` buttons) so C-x g is discoverable right where the
-  ;; git button lives, not only in the help overlay.
-  (let [chord (keymap/label-for :open-magit)]
-    (cond
-      ;; In a draft, the clone's internal git details (clone dir name,
-      ;; detached HEAD, no-upstream) are noise — show the draft's location
-      ;; (so the user knows WHERE the isolated tree lives) and how many
-      ;; files differ, all in one chunk.
-      is_draft [{:text (str " DRAFT "
-                            (if draft_root (abbreviate-home draft_root) "draft")
-                            (when-let [bits (git-change-bits status)]
-                              (str " (" bits ")"))
-                            (when chord (str " (" chord ")"))
-                            " ")
-                 :fg t/footer-warning-fg
-                 :bold? true
-                 :region :right
-                 :priority 2
-                 :tint :draft
-                 :kind :footer-git}]
-      is_workspace
-      [{:text (str " " git-label " " (git-repo-label status) (when chord (str " (" chord ")")) " ")
-        :fg t/footer-fg-strong
-        :bold? true
-        :region :right
-        :priority 2
-        :tint :git
-        :kind :footer-git}]
-      :else [{:text (str "No " git-label)
-              :fg t/footer-error-fg
-              :bold? true
-              :region :right
-              :priority 2}])))
+  (cond
+    ;; In a draft, the clone's internal git details (clone dir name,
+    ;; detached HEAD, no-upstream) are noise — show the draft's location
+    ;; (so the user knows WHERE the isolated tree lives) and how many
+    ;; files differ, all in one chunk.
+    is_draft [{:text (str " DRAFT "
+                          (if draft_root (abbreviate-home draft_root) "draft")
+                          (when-let [bits (git-change-bits status)]
+                            (str " (" bits ")"))
+                          " ")
+               :fg t/footer-warning-fg
+               :bold? true
+               :region :right
+               :priority 2
+               :tint :draft}]
+    is_workspace [{:text (str " " git-label " " (git-repo-label status) " ")
+                   :fg t/footer-fg-strong
+                   :bold? true
+                   :region :right
+                   :priority 2
+                   :tint :git}]
+    :else
+    [{:text (str "No " git-label) :fg t/footer-error-fg :bold? true :region :right :priority 2}]))
 
 (def ^:private session-cost-keys
   ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost" "cache_read_cost"
@@ -589,7 +578,7 @@
         ;; Git status is a GATEWAY SESSION FACT (`:git` on the workspace record),
         ;; resolved SERVER-SIDE by `git/workspace-status` in the daemon that owns
         ;; the repo — the single source of truth every channel reads (web footer,
-        ;; TUI footer, magit). NO client-side git walk here: the TUI keeps the fact
+        ;; TUI footer). NO client-side git walk here: the TUI keeps the fact
         ;; fresh between turns via the workspace-refresh poller
         ;; (`start-workspace-refresh-thread!`), so the count tracks reality without
         ;; the render thread ever shelling out to git.

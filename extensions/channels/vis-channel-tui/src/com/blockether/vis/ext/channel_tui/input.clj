@@ -1571,7 +1571,7 @@
     (cond
       ;; C-g right after C-x is Emacs `keyboard-quit`: it aborts the PREFIX and
       ;; does nothing else. Without this clause the Ctrl'd `g` fell through to the
-      ;; `C-x g` verb below and opened magit - the opposite of an abort.
+      ;; `C-x <letter>` verb clause below - the opposite of an abort.
       (abort-key? key) {:action :continue :state state}
       ;; C-x p → command palette. A PLAIN `p` is the advertised trigger; a Ctrl'd
       ;; second key (C-x C-p) is also accepted for old muscle memory.
@@ -1592,7 +1592,7 @@
       ;; non-existent N is caught downstream and surfaced as a TUI notice.
       (and c (Character/isDigit c) (not= \0 c))
       {:action :select-tab-index :workspace-index (dec (Character/digit c 10)) :state state}
-      ;; C-x TAB / C-x S-TAB → Emacs global fold cycle (org/magit `<backtab>`):
+      ;; C-x TAB / C-x S-TAB → Emacs global fold cycle (org `<backtab>`):
       ;; toggle EVERY disclosure collapsed↔expanded in one keystroke. Living behind
       ;; the C-x prefix keeps it off bare Tab/S-Tab (which switch workspaces).
       (#{KeyType/Tab KeyType/ReverseTab} (.getKeyType key)) {:action :toggle-all-details

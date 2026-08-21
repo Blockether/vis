@@ -16,8 +16,8 @@
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
 (def ^:private commit-transient-spec
-  "The spec `magit-commit-flow!` hands the transient: one FLAG group and one
-   COMMAND group, exactly like Emacs magit's commit popup."
+  "The spec a commit flow hands the transient: one FLAG group and one
+   COMMAND group."
   {:groups [{:title "Arguments"
              :items
              [{:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"}]}
@@ -45,7 +45,7 @@
 
 (defn- transient-grid!
   "EVERY terminal row (blanks KEPT) after one paint of `tr/run!` at the
-   host-dialog geometry `magit-status-buffer!` hands it, so the popup's own band
+   host-dialog geometry a status dialog hands it, so the popup's own band
    geometry — its capping rule, its margin rows, the row its hint bar lands on —
    is inspectable. `opts` goes straight through. `pre!` paints the HOST buffer
    first, so whatever the popup covers (or fails to cover) shows up."
@@ -117,7 +117,7 @@
           (expect (= :push (:id (:item r))))))))
 
 (defdescribe transient-columns-test
-             (it "flags carry magit's leading dash; commands show the bare key"
+             (it "flags carry the leading dash; commands show the bare key"
                  (expect (= "-h" (tr/key-glyph {:type :switch :key "h"})))
                  (expect (= "-t" (tr/key-glyph {:type :option :key "t"})))
                  (expect (= "c" (tr/key-glyph {:type :action :key "c"}))))
@@ -287,7 +287,7 @@
                  (:ret (drive-transient! commit-transient-spec [\h \h \c]))))
       (expect (= {:action :commit :switches #{:no-verify} :options {}}
                  (:ret (drive-transient! commit-transient-spec [\h \h \h \c])))))
-  (it "transient keys are case-sensitive, exactly like magit"
+  (it "transient keys are case-sensitive"
       (expect (= {:action :commit :switches #{} :options {}}
                  (:ret (drive-transient! commit-transient-spec [\H \c]))))
       (let [spec {:groups
@@ -332,7 +332,7 @@
                              (tr/clear-rows! g {:left 3 :inner-w 74} 6 26)))]
 
       ;; Left alone, the band covers only its own rows: the taller page above
-      ;; it is still on screen — which is exactly why magit chrome works.
+      ;; it is still on screen — which is exactly why band chrome works.
       (expect (some #(str/includes? % "STALE") kept))
       ;; The host's own wipe is what makes a shorter page land on clean paper.
       (expect (not-any? #(str/includes? % "STALE") cleared))
@@ -398,7 +398,7 @@
 ;;; ── The contract: one seam, one refusal ─────────────────────────────────────
 
 (def ^:private legal-region
-  "The rectangle `magit-status-buffer!` hands the popup."
+  "The rectangle a full-width host dialog hands the popup."
   {:left 0 :inner-w 78 :hint-row 28 :text-w 70})
 
 (def ^:private topic-transient-spec
@@ -502,7 +502,7 @@
   (it "width is the only bound: a narrow band packs categories together"
       (expect (< (tr/pane-count leader-spec (assoc leader-band-region :inner-w 40))
                  (count (:groups leader-spec)))))
-  (it "a MODAL keeps magit's single column: its paper is sized to the spec"
+  (it "a MODAL keeps a single column: its paper is sized to the spec"
       (expect (= 1 (tr/pane-count leader-spec (dissoc leader-band-region :is-sideless))))
       (expect (= 1 (tr/pane-count leader-spec nil))))
   (it "panes are never invented: two short categories stay two columns"

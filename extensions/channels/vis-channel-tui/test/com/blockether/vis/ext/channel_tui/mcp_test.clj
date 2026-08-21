@@ -95,7 +95,7 @@
                         :label))))
       (expect (empty? (filter (comp #{:auth :logout} :id)
                               (mcp-model/server-actions managed-stdio)))))
-  (it "binds ONE magit key per verb, and never the same key twice on a row"
+  (it "binds ONE transient key per verb, and never the same key twice on a row"
       (let [ks (mapv :key (mcp-model/server-actions (assoc http-server "is_authorized" true)))]
         (expect (= ["k" "d" "c" "x" "a" "o" "v"] ks))
         (expect (= (count ks) (count (set ks))))))

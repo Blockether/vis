@@ -17,7 +17,7 @@
 
 (defn- add-keys!
   "Queue `keys` on the virtual terminal: `KeyType` members go through untouched,
-   characters become plain keystrokes, so a magit transient's single-key commands
+   characters become plain keystrokes, so a transient's single-key commands
    are driven exactly as a user types them."
   [^DefaultVirtualTerminal terminal keys]
   (doseq [k keys]
@@ -783,7 +783,7 @@
 ;; opened one NESTED DIALOG per step (the preset picker, then the Base URL
 ;; prompt), and every nested dialog clears the frame it was opened from: the
 ;; list the user was reading vanished behind the wizard. Adding a provider is
-;; now the same magit band as every other provider action.
+;; now the same band as every other provider action.
 ;; ─────────────────────────────────────────────────────────────────────────────
 
 (defdescribe preset-transient-spec-test
@@ -805,7 +805,7 @@
 
                    (expect (= [["a" :p0] ["b" :p1]] (picks page-0)))
                    (expect (= [["a" :p2] ["b" :p3]] (picks page-1)))
-                   ;; …and magit's own paging keys, never bound to a preset.
+                   ;; …and the transient's own paging keys, never bound to a preset.
                    (expect (= ["n" "p"] (mapv :key (:items (second (:groups page-0))))))
                    (expect (str/includes? (:title (first (:groups page-0))) "1/3"))))
              (it "asks for no paging when every preset fits on one page"
@@ -923,7 +923,7 @@
           (expect (str/includes? (str (notes log)) "Authentication failed: boom"))))))
 
 (defdescribe provider-transient-spec-test
-             (it "groups a provider's actions the way magit groups a popup, keeping their keys"
+             (it "groups a provider's actions by what they touch, keeping their keys"
                  (let [spec (provider/provider-transient-spec
                               [{:id :default :label "Set as Default..." :key \d}
                                {:id :fallback :label "Set as Fallback..." :key \f}
@@ -1123,10 +1123,10 @@
 
 ;; ── Regression (user report): "when I open the providers and click on active
 ;; providers the transient is hiding the full render of the settings" ─────────────────────────────────────────────────────────────────
-;; Enter on a provider row ran its magit band with `:clear-above? true`, so the
+;; Enter on a provider row ran its band with `:clear-above? true`, so the
 ;; band wiped EVERY row from the settings list's top down: the Settings frame
 ;; was an empty box with one popup floating in it, sidebar rail included. A band
-;; is magit chrome — the buffer it is about stays painted above it.
+;; is band chrome — the buffer it is about stays painted above it.
 (def ^:private settings-router-writes
   "What the router was asked to write during the last `settings-provider-band-frames`
    run — `[:default provider-id model]` / `[:fallback provider-id model]`."

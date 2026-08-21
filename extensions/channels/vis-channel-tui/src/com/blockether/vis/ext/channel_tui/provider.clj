@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.provider
   "The TUI's provider surface: the model picker, and every provider verb offered
-   as a magit transient INSIDE the frame it was fired from (Settings › Providers).
+   as a transient INSIDE the frame it was fired from (Settings › Providers).
    There is no second provider manager — one surface, one set of verbs.
    Config I/O and data helpers live in tui/config.clj.
 
@@ -482,15 +482,15 @@
        (conj {:id :remove :label "Remove Provider" :key \x})))))
 
 (def ^:private routing-action-ids
-  "The actions that re-point the ROUTER. Magit groups a popup's commands by what
+  "The actions that re-point the ROUTER. A popup groups its commands by what
    they touch, and these are the ones that change where requests go."
   #{:default :fallback :clear-fallback})
 
 (defn provider-transient-spec
-  "PURE: the magit transient spec for ONE provider row's `actions` (whatever
+  "PURE: the transient spec for ONE provider row's `actions` (whatever
    `provider-action-items` offered). Every action keeps the SINGLE key it already
    advertised, so the popup is driven by direct keystrokes — `d`, `f`, `a` — with
-   no cursor at all, and the commands are grouped the way magit groups a popup:
+   no cursor at all, and the commands are grouped by what they touch:
    routing first, then the account verbs. A group with no surviving action is
    dropped, so a provider that cannot authenticate never shows an empty heading."
   [actions]
@@ -510,7 +510,7 @@
                     (group "Account" #(not (contains? routing-action-ids (:id %))))])}))
 
 (def ^:private model-transient-keys
-  "Single-key bindings the model transient hands out, in order. Magit's own
+  "Single-key bindings the model transient hands out, in order. The transient's own
    paging keys (`n` / `p`) are held back so a model can never shadow them."
   "abcdefghijklmoqrstuvwxyz")
 
@@ -523,7 +523,7 @@
   (p/clamp (- (long rows) 7) 1 (count model-transient-keys)))
 
 (defn- paged-key-groups
-  "PURE: one PAGE of `items` (`{:id :label}`) as a magit group whose every row is
+  "PURE: one PAGE of `items` (`{:id :label}`) as a transient group whose every row is
    bound to a single letter, plus the `Commands` group that pages it.
 
    Every picker in this dialog family — models, presets — is the same shape: too
@@ -568,10 +568,10 @@
                (conj {:title "Commands" :items commands}))}))
 
 (defn model-transient-spec
-  "PURE: the magit transient spec for the model picker. `entries` are
+  "PURE: the transient spec for the model picker. `entries` are
    `build-model-list` rows, and each real model becomes a COMMAND bound to one
    letter — a model is chosen with a single keystroke exactly like `d` sets the
-   default, never with a cursor. Models past one page are reached with magit's
+   default, never with a cursor. Models past one page are reached with the
    `n` / `p`, and the `:show-all` sentinel becomes `*`. `marks` is
    `{:default id :fallback id}` for the models this provider already holds, so
    the tagged pair stays findable without reading the cards."
@@ -628,7 +628,7 @@
               :else picked)))))
 
 (defn- run-model-transient!
-  "Magit transient model picker for `provider`: one keystroke per model, `n` / `p`
+  "Transient model picker for `provider`: one keystroke per model, `n` / `p`
    to page a long catalog, `*` to expand the models the gateway hid. Returns the
    chosen model id, or nil when the user backed out with Esc."
   [^TerminalScreen screen g geom provider entries preferred marks page-size]
@@ -657,7 +657,7 @@
     (or (first (filter #(str/includes? % "http") lines)) (first lines))))
 
 (defn api-key-transient-spec
-  "PURE: the magit transient an API-key sign-in runs. `k` reads the key INLINE on
+  "PURE: the transient an API-key sign-in runs. `k` reads the key INLINE on
    the band's own hint row (echoed as `*`, and the armed value renders as dots, so
    the credential never lands on screen), `a` submits it to the gateway, Esc
    cancels. No cursor to move, no full-screen prompt.
@@ -840,7 +840,7 @@
   "Pick the model that completes a routing tag for `provider` and hand the pair to
    the daemon: `:primary` re-points the default root, `:fallback` the second one.
 
-   The model list is its OWN transient — a magit popup picks a command, and the
+   The model list is its OWN transient — a popup picks a command, and the
    command that needs an argument opens the popup that supplies it. A daemon
    refusal (a fallback naming the primary's own provider is a 400) explains
    itself and returns `::rejected` instead of killing the caller's loop; nil
@@ -879,7 +879,7 @@
              ::rejected)))))
 
 (defn provider-transient!
-  "Run ONE provider's magit transient inside the CALLER's frame — the same
+  "Run ONE provider's transient inside the CALLER's frame — the same
    commands a provider row offers on Enter, reachable straight from a
    Settings row so a provider needs no manager of its own.
 

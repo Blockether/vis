@@ -3,7 +3,6 @@
             [com.blockether.vis.ext.channel-tui.drafts :as drafts]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
-            [com.blockether.vis.ext.channel-tui.magit :as magit]
             [com.blockether.vis.ext.channel-tui.highlight :as highlight]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
@@ -118,7 +117,7 @@
   "Snapshot the screen's back buffer NOW and return `(fn [] …)` / `(fn [from to])`
    that puts those rows back exactly as they look at this moment.
 
-   A magit band paints over the host's rows, and when a SHORTER band replaces a
+   A transient band paints over the host's rows, and when a SHORTER band replaces a
    taller one the rows between them belong to the HOST again. Blanking them
    punched a hole in the settings list behind the popup — the whole point of a
    band is that the buffer it is about stays readable. The host is not repainted
@@ -162,7 +161,7 @@
    frame back exactly as it was.
 
    `open-nested!` erases the screen on the way OUT, which is right when the
-   caller repaints itself afterwards and catastrophic in the middle of a magit
+   caller repaints itself afterwards and catastrophic in the middle of a transient
    band flow: the next band lands on blank paper and everything above it is
    gone. Snapshotting the back buffer and writing it back costs one delta
    refresh and keeps the host frame on screen across the detour."
@@ -553,7 +552,7 @@
    a Character, or nil for \"nothing actionable, just repaint\".
 
    Any surface holding a screen and a `TextGraphics` embeds a transient with
-   this — the magit status buffer, the provider dialog, `transient-dialog!`."
+   this — the settings dialog, the provider dialog, `transient-dialog!`."
   [^TerminalScreen screen g]
   {:g g
    :hint-bar! draw-hint-bar!
@@ -699,7 +698,7 @@
    own border column, exactly as every other painter here reads it, so the gutter
    is the first column INSIDE it and the text column the one after. A ring painted
    ON the border column erased the frame's rail on precisely the row the keyboard
-   was in: the focused field looked like it had escaped the box, and in a magit
+   was in: the focused field looked like it had escaped the box, and in a transient
    band it read as a rail hanging outside the border. A gutter carved out of the
    TEXT column instead indented every toggle away from its label.
 
@@ -1119,7 +1118,7 @@
           cursor (paint g state geom)]
 
       ;; nil cursor HIDES the hardware cursor (no parked top-left blink — the
-      ;; same fix applied to the magit buffer); a text field returns its cell.
+      ;; same fix applied to every band dialog); a text field returns its cell.
       (.setCursorPosition screen cursor)
       (.refresh screen Screen$RefreshType/DELTA)
       (let [key (read-modal-key! screen)]
@@ -2261,160 +2260,6 @@
                                         :else (recur)))
               (recur))))))))
 
-;;; ── Magit status dialog (C-x g / footer git button) ─────────────────────────
-
-(def ^:private magit-hints
-  "Hint-bar chords for the magit status buffer — the most important magit
-   verbs, one key each. Keys are CASE-SENSITIVE, exactly like Emacs magit
-   (`s` ≠ `S`, `u` ≠ `U`, `f` ≠ `F`). See the full key-for-key reference banner
-   atop `magit.clj`; the same usage is summarised here:
-
-   Navigation  ↑/↓ move a row · n/p next/prev SECTION · PageUp/Down page
-               Home/End top/bottom · TAB fold diff · RET visit · q/Esc close
-   Staging     s/u stage/unstage at point · S/U stage/unstage ALL
-   Discard     x/k discard at point (asks first)
-   Commit      c commit transient (flag -h --no-verify · c commit · a amend)
-   History     l log graph · C-w copy sha/path/ref
-   Remote      P push · F pull · f fetch
-   Branch      b branch flow      Stash  z stash flow
-   Buffer      g refresh
-
-   Magit-compatible bindings use Magit's own verbs, with `x` as an additional
-   discard alias alongside Magit's `k`.
-   Unimplemented Magit keys stay FREE:
-   r rebase · y show-refs · d/D diff · m merge · V revert ·
-   A cherry-pick · t tag · G refresh-all · SPC/DEL scroll · M-n/M-p sibling."
-  [["↑/↓" "move"] ["n/p" "section"] ["TAB" "diff"] ["RET" "visit"] ["s/u" "±stage"] ["S/U" "all"]
-   ["x/k" "discard"] ["c" "commit"] ["l" "log"] ["C-w" "copy"] ["P" "push"] ["F" "pull"]
-   ["f" "fetch"] ["b" "branch"] ["z" "stash"] ["g" "refresh"] ["Esc" "close"]])
-
-(defn- magit-row-style
-  "`[fg bold? bg]` for one status-buffer row — foreground, bold?, and an optional
-   background (diff add/remove lines get the subtle green/red band magit uses)."
-  [{:keys [kind text]}]
-  (case kind
-    :repo
-    [t/dialog-fg true]
-
-    :section
-    [t/dialog-hint-key true]
-
-    :diff
-    (let [t (str/triml (str text))]
-      (cond
-        ;; diff/file headers read as plain hints, never as add/remove lines
-        (or (str/starts-with? t "+++")
-            (str/starts-with? t "---")
-            (str/starts-with? t "diff ")
-            (str/starts-with? t "index ")
-            (str/starts-with? t "new file")
-            (str/starts-with? t "deleted file")
-            (str/starts-with? t "rename ")
-            (str/starts-with? t "similarity "))
-        [t/dialog-hint false]
-        (str/starts-with? t "@@") [t/dialog-hint-key false t/code-block-bg]
-        (str/starts-with? t "+") [t/code-success-fg false t/code-ok-bg]
-        (str/starts-with? t "-") [t/code-error-fg false t/code-err-bg]
-        :else [t/dialog-hint false]))
-
-    :commit
-    [t/dialog-hint false]
-
-    [t/dialog-fg false]))
-
-(defn- magit-diff-filename-split
-  "Char index at which the FILE PATH begins on a rendered diff HEADER line
-   (`diff --git …`, `--- …`, `+++ …`, `rename`/`copy from|to …`) — so the caller
-   paints the `diff --git`/`a/`/`b/` scaffolding dim and the filename that follows
-   in the path colour magit gives it. nil for lines that name no file (context,
-   hunk `@@`, +/- body), which stay flat."
-  [text]
-  (let [full
-        (str text)
-
-        t
-        (str/triml full)
-
-        lead
-        (- (count full) (count t))
-
-        after
-        (fn [marker]
-          (when (str/starts-with? t marker) (+ lead (count marker))))]
-
-    (or (after "diff --git ")
-        (after "--- ")
-        (after "+++ ")
-        (after "rename from ")
-        (after "rename to ")
-        (after "copy from ")
-        (after "copy to "))))
-
-(defn- run-async-with-ticker!
-  "Run blocking `thunk` on a BACKGROUND thread so the caller's UI thread stays
-   live. Between polls it calls `(tick!)` (paint a spinner frame, drain input)
-   every `poll-ms` until the work settles, then returns `thunk`'s value. A thrown
-   `thunk` becomes `{:ok? false :msg <message>}` — a network verb never escapes
-   as an exception onto the modal loop. Screen-free control flow, so it is
-   unit-testable with a plain counting `tick!`."
-  [thunk tick! poll-ms]
-  (let [fut (future (try (thunk)
-                         (catch Throwable t
-                           {:ok? false :msg (or (not-empty (ex-message t)) (str t))})))]
-    (loop []
-
-      (if (realized? fut) @fut (do (tick!) (Thread/sleep (long poll-ms)) (recur))))))
-
-(defn- run-network!
-  "Run a blocking git network `thunk` (push/pull/fetch) on a background thread
-   while `busy!` repaints the magit buffer's OWN footer with `label` progress
-   every tick, returning the thunk's `{:ok? :msg}`. There is NO modal overlay —
-   the spinner lives in the status buffer's footer (the hint-bar row), so the
-   buffer stays fully visible while the network round-trip runs off the
-   render/input loop."
-  [busy! label thunk]
-  (run-async-with-ticker! thunk #(busy! label) 80))
-
-(defn- magit-section-action!
-  "Apply `f` (a `path → result` action) to every file row under the `:section`
-   header at `idx`. Returns the first failure, or a rolled-up success."
-  [rows idx f]
-  (let [files (magit/section-of rows idx)]
-    (if (empty? files)
-      {:ok? false :msg "Nothing here"}
-      (let [results (mapv #(f (:path %)) files)]
-        (or (first (remove :ok? results))
-            {:ok? true :msg (str "Done — " (count files) " file(s)")})))))
-
-(defn- magit-stage-action!
-  [root rows idx {:keys [kind area path hunk]}]
-  (cond (and (= :diff kind) (= :unstaged area)) (magit/stage-hunk! root {:path path :hunk hunk})
-        (and (= :diff kind) (= :staged area)) {:ok? false :msg "Hunk already staged (u to unstage)"}
-        (and (= :file kind) (= :staged area)) {:ok? false :msg "Already staged"}
-        (= :file kind) (magit/stage-file! root path)
-        (and (= :section kind) (contains? #{:untracked :unstaged :unmerged} area))
-        (magit-section-action! rows idx #(magit/stage-file! root %))
-        :else nil))
-
-(defn- magit-unstage-action!
-  [root rows idx {:keys [kind area path hunk]}]
-  (cond (and (= :diff kind) (= :staged area)) (magit/unstage-hunk! root {:path path :hunk hunk})
-        (and (= :diff kind) (= :unstaged area)) {:ok? false :msg "Hunk not staged (s to stage)"}
-        (and (= :file kind) (= :staged area)) (magit/unstage-file! root path)
-        (and (= :section kind) (= :staged area))
-        (magit-section-action! rows idx #(magit/unstage-file! root %))
-        (= :file kind) {:ok? false :msg "Not staged"}
-        :else nil))
-
-;;; ── One question, in the band's own frame ───────────────────────────────────
-;; A band asks its follow-up question by REPLACING the commands that led to it.
-;; Painting `Name the draft:` over the hint row while `c`/`d`/`s`/`k` were still
-;; listed above it advertised commands the reader had already stolen: every
-;; letter typed into the name looked like a command that did nothing. So a
-;; question is a BAND, like everything else here — the prompt is its bold title,
-;; and under it sits the ONE thing that can answer it: a real input row for typed
-;; text, the answers themselves (`y`/`n`, a list of choices) for a keyed one.
-
 (defn host-band-region
   "ONE band INSTANCE inside a frame the host already painted: the caller's
    `tr/run!` geometry plus the single frame snapshot the whole flow shares.
@@ -2428,8 +2273,8 @@
 
 (defn embed-transient!
   "Run ONE transient (`tr/run!`) INSIDE a frame someone else owns — same box,
-   same hint row, no second window. THE band component: the session screen, the
-   magit status buffer, Settings, the provider manager and `transient-dialog!`
+   same hint row, no second window. THE band component: the session screen,
+   Settings, the provider manager and `transient-dialog!`
    are all separate INSTANCES of it, differing only in the region they hand in.
 
    `region` is already in `tr/run!` geometry (`:left`, `:inner-w`, `:hint-row`,
@@ -2466,7 +2311,7 @@
     (draw-hint-bar! g left foot-row inner-w hints)
     body-top))
 
-(defn magit-mini-read!
+(defn mini-read!
   "Ask ONE typed question in the band's own frame: `label` becomes the band's
    title and the answer is typed into a real input row under it, so nothing the
    keyboard no longer owns stays advertised. Enter submits the trimmed string
@@ -2534,9 +2379,9 @@
    frame, so an OPTION is typed without opening a second window."
   [^TerminalScreen screen g region]
   (fn [{:keys [label prompt mask]} current]
-    (magit-mini-read! screen g region (or prompt (str label ":")) {:initial current :mask mask})))
+    (mini-read! screen g region (or prompt (str label ":")) {:initial current :mask mask})))
 
-(defn- magit-mini-choose!
+(defn- mini-choose!
   "Ask WHICH one in the band's own frame. `choices` is a vec of
    {:key char :label str :id kw}, painted as the band's OWN rows under the
    question — a band paints no title row, so the question is inked ON the band's
@@ -2551,7 +2396,7 @@
                                                 {:key (str key) :type :action :id id :label label})
                                               choices)}]})))
 
-(defn- magit-mini-confirm!
+(defn- mini-confirm!
   "Ask y/n in the band's own frame: the question is inked ON the band's opening
    rule and `Yes` / `No` are the only rows under it. Returns true / false / nil (Esc).
 
@@ -2560,7 +2405,7 @@
    saying what agreeing costs — becomes the heading over the two answers, and
    `:yes-label` / `:no-label` name them in the caller's verb (`Yes, remove` /
    `Keep it`) instead of making the reader remember what was asked."
-  ([^TerminalScreen screen g region question] (magit-mini-confirm! screen g region question nil))
+  ([^TerminalScreen screen g region question] (mini-confirm! screen g region question nil))
   ([^TerminalScreen screen g region question {:keys [cost yes-label no-label]}]
    (case (:action (embed-transient!
                     screen
@@ -2580,7 +2425,7 @@
 
      nil)))
 
-(defn- magit-mini-note!
+(defn- mini-note!
   "SAY one line in the band's own frame — the refusal a verb came back with. The
    message is the band's heading, `q` dismisses it, and the list it was fired from
    stays on screen: a failure reached from a transient must not answer with a
@@ -2594,7 +2439,7 @@
                                :items [{:key "q" :type :action :id :dismiss :label "Dismiss"}]}]})
   nil)
 
-(defn- magit-mini-wait!
+(defn- mini-wait!
   "HOLD the band while something else finishes — a browser round-trip the daemon
    is polling for. `line-fn` renders the ONE status line on every tick (elapsed
    seconds), `done?` says the wait is over, and Esc gives up: a flow that has to
@@ -2616,56 +2461,10 @@
           nil
           (do (Thread/sleep 120) (recur)))))))
 
-(defn- magit-discard-flow!
-  [mini root {:keys [kind area path] :as row}]
-  (when (= :file kind)
-    (when ((:confirm! mini)
-            (if (= :untracked area)
-              (str "Delete untracked file " path "?")
-              (str "Discard changes in " path "?")))
-      (magit/discard-file! root row))))
-
-(defn- magit-commit-flow!
-  "Magit's `c` commit transient (`tr/run!`), keyed exactly like Emacs
-   magit's commit popup. FLAGS: `-h` Disable hooks (`--no-verify`) — a TOGGLE (press
-   `h` to arm it, press it again to disarm it), the escape hatch for a repo whose
-   pre-commit/commit-msg githook is broken or irrelevant. COMMANDS: `c` commit the
-   staged index, `a` amend the last commit (magit's `c c` / `c a`). The message is
-   then read INLINE. Commit verification runs off the render/input thread while
-   `busy!` repaints progress in the status buffer's footer."
-  [busy! mini root model]
-  (when-let [{:keys [action switches]}
-             ((:transient! mini)
-               {:title "Commit"
-                :groups [{:title "Arguments"
-                          :items [{:key "h"
-                                   :type :switch
-                                   :id :no-verify
-                                   :label "Disable hooks"
-                                   :arg "--no-verify"}]}
-                         {:title "Commands"
-                          :items
-                          [{:key "c" :type :action :id :commit :label "Commit staged"}
-                           {:key "a" :type :action :id :amend :label "Amend last commit"}]}]})]
-    (let [amend? (= :amend action)
-          no-verify? (contains? switches :no-verify)]
-
-      (if (and (not amend?) (empty? (:staged model)))
-        {:ok? false :msg "Nothing staged — stage with s/S first"}
-        (when-let [msg ((:read! mini)
-                         (if amend? "Amend message:" "Commit message:")
-                         {:initial (if amend? (or (magit/last-commit-message root) "") "")})]
-          (if (str/blank? msg)
-            {:ok? false :msg "Empty message — commit aborted"}
-            (run-async-with-ticker!
-              #(magit/commit! root msg {:amend? amend? :no-verify? no-verify?})
-              #(busy! "Verifying and committing")
-              80)))))))
-
 ;;; ── One band, every question it can ask ─────────────────────────────────────
 ;; A band IS a region — six coordinates — plus the screen it paints on. They are
-;; bound ONCE, here, and every host COMPOSES the result: the magit status
-;; buffer, the provider manager, Settings, the session band and
+;; bound ONCE, here, and every host COMPOSES the result: the provider
+;; manager, Settings, the session band and
 ;; `transient-dialog!` open their sub-transients through the same host and ask
 ;; their follow-up questions on their own hint row through the same minibuffers.
 ;; A caller that unpacks `:left`/`:inner-w`/`:hint-row`/`:text-w` again, or
@@ -2686,21 +2485,21 @@
      `:read-option`  the `:read-option` a spec with OPTION items hands `tr/run!`
 
    A transient that opens a transient, and a question that REPLACES the commands
-   that led to it instead of opening a second frame, is how magit asks a second
+   that led to it instead of opening a second frame, is how a band asks a second
    thing — every band in the TUI does both through this map."
   [^TerminalScreen screen g region]
   (let [read-option (region-option-reader screen g region)]
-    {:read! (fn read! ([label] (read! label {})) ([label opts] (magit-mini-read! screen g region
-                                                                 label opts)))
+    {:read! (fn read! ([label] (read! label {})) ([label opts] (mini-read! screen g region label
+                                                                 opts)))
      :choose! (fn [title choices]
-                (magit-mini-choose! screen g region title choices))
-     :confirm! (fn confirm! ([question] (confirm! question nil)) ([question opts]
-                                                                  (magit-mini-confirm! screen g
-                                                                    region question opts)))
+                (mini-choose! screen g region title choices))
+     :confirm! (fn confirm! ([question] (confirm! question nil)) ([question opts] (mini-confirm!
+                                                                                    screen g region
+                                                                                    question opts)))
      :note! (fn [title line]
-              (magit-mini-note! screen g region title line))
+              (mini-note! screen g region title line))
      :wait! (fn [title line-fn done?]
-              (magit-mini-wait! screen g region title line-fn done?))
+              (mini-wait! screen g region title line-fn done?))
      :transient! (fn [spec]
                    (embed-transient! screen
                                      g
@@ -2710,14 +2509,14 @@
      :read-option read-option}))
 
 (defn transient-dialog!
-  "Host ONE magit transient in its OWN modal — the popup for flows that have no
+  "Host ONE transient in its OWN modal — the popup for flows that have no
    status buffer to sit in (provider authentication). `body` (a string or lines)
    is the caller's guidance, painted once at the top of the content area; the
    transient owns every row under it and its hint bar lands on the dialog's own
    hint row. The box is sized to what it actually holds, so a two-line prompt
    opens a small dialog instead of a half-screen one.
 
-   OPTION items are read INLINE on that hint row (`magit-mini-read!`), honouring
+   OPTION items are read INLINE on that hint row (`mini-read!`), honouring
    the item's `:prompt` (default `<label>:`) and `:mask` (`\\*` for a credential);
    mark such an item `:secret? true` and its value renders as dots, never as
    text. `spec` may carry a `:title` for the popup itself when the frame's title
@@ -2795,738 +2594,6 @@
                         (assoc spec
                           :title (or (:title spec) title)
                           :read-option (region-option-reader screen g region))))))
-
-(defn- magit-push-flow!
-  "Magit-style push transient (`tr/run!`). SWITCHES (all optional):
-   force-with-lease, dry-run, disable hooks (--no-verify), set-upstream. `p` is
-   ALWAYS the direct push — to the branch's upstream, or to the repo's push
-   remote when it has none. A Gerrit repo ADDS `r Push for review →
-   refs/for/<branch>` and a `t Topic` OPTION BESIDE it instead of replacing it:
-   magit binds the review push as an EXTRA key, and a repo whose refs/heads are
-   pushable directly keeps both paths. Every remote `p` does not already target
-   is listed INLINE as its own `Push to <remote>` action in the SAME overlay
-   (magit lists push targets in the transient — no second dialog)."
-  [busy! mini root]
-  (let [upstream
-        (magit/upstream-name root)
-
-        remotes
-        (magit/remotes root)
-
-        push-target
-        (magit/push-remote root)
-
-        g-remote
-        (magit/gerrit-remote root)
-
-        g-branch
-        (magit/gerrit-target-branch root)
-
-        branch
-        (magit/current-branch root)
-
-        gerrit?
-        (some? g-remote)
-
-        ;; `p` already lands on the push remote — every OTHER remote, the Gerrit one
-        ;; included (a refs/heads push to it is a legitimate target), gets its own row.
-        other-remotes
-        (->> remotes
-             (map :name)
-             (remove #(= push-target %))
-             (take 9)
-             vec)
-
-        arg-items
-        (cond-> [{:key "f"
-                  :type :switch
-                  :id :force
-                  :label "Force with lease"
-                  :arg "--force-with-lease"}
-                 {:key "n" :type :switch :id :dry-run :label "Dry run" :arg "--dry-run"}
-                 {:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"}
-                 {:key "u" :type :switch :id :set-upstream :label "Set upstream" :arg "-u"}]
-          gerrit?
-          (conj {:key "t" :type :option :id :topic :label "Topic" :arg "%topic="}))
-
-        primary
-        {:key "p"
-         :type :action
-         :id :push
-         :label (str "Push"
-                     (when-let [target (or upstream push-target)]
-                       (str " to " target)))}
-
-        review-rows
-        (if gerrit?
-          [{:key "r" :type :action :id :review :label (str "Push for review → refs/for/" g-branch)}]
-          [])
-
-        ;; Each remaining remote becomes its own inline action row keyed by a
-        ;; digit — magit lists push targets in the SAME transient, never a
-        ;; second dialog.
-        remote-rows
-        (map-indexed (fn [i name]
-                       {:key (str (inc (long i)))
-                        :type :action
-                        :id (keyword "remote" name)
-                        :label (str "Push to " name)})
-                     other-remotes)
-
-        remote-action->name
-        (into {}
-              (map (fn [name]
-                     [(keyword "remote" name) name]))
-              other-remotes)
-
-        push-items
-        (vec (concat [primary] review-rows remote-rows))
-
-        spec
-        {:title "Push"
-         :groups [{:title "Arguments" :items arg-items} {:title "Commands" :items push-items}]
-         :read-option (fn [{:keys [id]} current]
-                        (when (= id :topic)
-                          ((:read! mini)
-                            "Topic:"
-                            {:initial
-                             (or current (when (and branch (not= branch g-branch)) branch) "")})))}]
-
-    (when-let [{:keys [action switches options]} ((:transient! mini) spec)]
-      (let [base {:set-upstream? (contains? switches :set-upstream)
-                  :force? (contains? switches :force)
-                  :dry-run? (contains? switches :dry-run)
-                  :no-verify? (contains? switches :no-verify)}
-            topic (:topic options)
-            ;; With an upstream a bare `git push` follows it (magit's `p`); without one
-            ;; the target is spelled out, or git would fall back to an absent `origin`.
-            push-opts (cond-> base
-                        (and (nil? upstream) push-target)
-                        (assoc :remote push-target))]
-
-        ;; The review push gets every armed switch — `gerrit-push!` refuses the ones
-        ;; a refs/for ref cannot carry instead of dropping them without a word.
-        (cond (= action :review)
-              (run-network! busy!
-                            "Pushing for review"
-                            #(magit/gerrit-push!
-                               root
-                               (merge base {:remote g-remote :branch g-branch :topic topic})))
-              (= action :push) (run-network! busy! "Pushing" #(magit/push! root push-opts))
-              (contains? remote-action->name action)
-              (let [rname (get remote-action->name action)]
-                (run-network! busy!
-                              (str "Pushing to " rname)
-                              #(magit/push! root (assoc base :remote rname))))
-              :else nil)))))
-
-(defn- magit-branch-flow!
-  [mini root]
-  (when-let [id ((:choose! mini)
-                  "Branch:"
-                  [{:key \b :label "checkout" :id :checkout}
-                   {:key \c :label "create & checkout" :id :create}
-                   {:key \k :label "delete" :id :delete}])]
-    (case id
-      :checkout
-      (when-let [nm ((:read! mini) "Checkout branch:" {})]
-        (when-not (str/blank? nm) (magit/checkout-branch! root (str/trim nm))))
-
-      :create
-      (when-let [nm ((:read! mini) "Create branch:" {})]
-        (when-not (str/blank? nm) (magit/create-branch! root (str/trim nm))))
-
-      :delete
-      (when-let [nm ((:read! mini) "Delete branch:" {})]
-        (when-not (str/blank? nm)
-          (let [nm (str/trim nm)
-                r (magit/delete-branch! root nm {})]
-
-            (if (:ok? r)
-              r
-              (if ((:confirm! mini) (str (:msg r) " — force delete " nm "?"))
-                (magit/delete-branch! root nm {:force? true})
-                r))))))))
-
-(defn- magit-stash-flow!
-  "`selected-ref` is the stash under the cursor (when the cursor sits on a
-   stash row), else the newest stash is the target of pop/apply/drop."
-  [mini root selected-ref model]
-  (let [ref
-        (or selected-ref (:ref (first (:stashes model))))
-
-        choices
-        (cond-> [{:key \z :label "stash working tree" :id :push}]
-          ref
-          (into [{:key \p :label (str "pop " ref) :id :pop}
-                 {:key \a :label (str "apply " ref) :id :apply}
-                 {:key \k :label (str "drop " ref) :id :drop}]))]
-
-    (when-let [id ((:choose! mini) "Stash:" choices)]
-      (case id
-        :push
-        (when-some [m ((:read! mini) "Stash message:" {})]
-          (magit/stash-push! root m))
-
-        :pop
-        (magit/stash-pop! root ref)
-
-        :apply
-        (magit/stash-apply! root ref)
-
-        :drop
-        (when ((:confirm! mini) (str "Drop " ref "?")) (magit/stash-drop! root ref))))))
-
-(defn- magit-log-flow!
-  "Magit's `l` log transient, TUI-style. An inline `:choose!` picks the scope —
-   the current branch's history or every ref — then the fullscreen ANSI log
-   viewer opens on git's own colored `--graph` output. `r` inside re-pulls it.
-   Returns nil (the log viewer is its own screen; nothing to echo/refresh)."
-  [^TerminalScreen screen mini root]
-  (when-let [id ((:choose! mini)
-                  "Log:"
-                  [{:key \l :label "current branch" :id :current}
-                   {:key \a :label "all branches" :id :all}])]
-    (let [all? (= id :all)
-          reload #(magit/log-graph-lines root {:all? all?})
-          title (str "Git log — " (if all? "all branches" (or (magit/current-branch root) "HEAD")))]
-
-      (log-view-dialog! screen title (reload) :grammar nil :refresh-fn reload)
-      (clear-screen! screen)))
-  nil)
-
-(defn- magit-copy-action!
-  "Magit's `y`: copy the identifier under the cursor onto the system clipboard —
-   a commit sha, a stash ref, a file path, or a repo root — via the shared
-   `input/clipboard-copy!` shell helpers. Returns the `{:ok? :msg}` echo
-   contract so the action lands in the buffer's footer like every other verb."
-  [root {:keys [kind sha ref path]}]
-  (let [payload (case kind
-                  :commit
-                  sha
-
-                  :stash
-                  ref
-
-                  :file
-                  path
-
-                  :repo
-                  (str root)
-
-                  nil)]
-    (if (seq (str payload))
-      (do (input/clipboard-copy! (str payload)) {:ok? true :msg (str "Copied " payload)})
-      {:ok? false :msg "Nothing to copy here"})))
-
-(defn- magit-path-grammar
-  "Tree-sitter grammar name for a file `path`'s extension (for the RET-visit
-   viewer's syntax coloring), or nil when we don't colorize that language."
-  [path]
-  (let [s
-        (str path)
-
-        dot
-        (str/last-index-of s ".")]
-
-    (when (and dot (< (inc (long dot)) (count s)))
-      (highlight/grammar-for (subs s (inc (long dot)))))))
-
-(defn- magit-char-action!
-  "Run the magit verb for character `c` against the row under the cursor.
-   Returns an action result `{:ok? :msg}`, or nil when the key did nothing.
-   Case-SENSITIVE — `s`≠`S`, `u`≠`U`, `f`≠`F`, exactly like magit. All prompts
-   render inline in the buffer's bottom row via `mini` (never a modal box)."
-  [^TerminalScreen screen busy! mini root model rows idx row c]
-  (case c
-    \s
-    (magit-stage-action! root rows idx row)
-
-    \S
-    (magit/stage-all! root)
-
-    \u
-    (magit-unstage-action! root rows idx row)
-
-    \U
-    (magit/unstage-all! root)
-
-    (\x \k)
-    (magit-discard-flow! mini root row)
-
-    \c
-    (magit-commit-flow! busy! mini root model)
-
-    \l
-    (magit-log-flow! screen mini root)
-
-    \P
-    (magit-push-flow! busy! mini root)
-
-    \F
-    (run-network! busy! "Pulling" #(magit/pull! root))
-
-    \f
-    (run-network! busy! "Fetching" #(magit/fetch! root))
-
-    \b
-    (magit-branch-flow! mini root)
-
-    \z
-    (magit-stash-flow! mini root (when (= :stash (:kind row)) (:ref row)) model)
-
-    \g
-    {:ok? true :msg "Refreshed"}
-
-    nil))
-
-(defn magit-dialog!
-  "Magit-style status buffer over the git CLI — the C-x g / footer-git modal.
-
-   `root-or-repos` is either ONE root (string/File — the classic single-repo
-   buffer) or a vector of repo entries `{:root :label :draft?}` from
-   `magit/session-roots` — the session's primary workspace root, every Git
-   repository nested below it (a mega-repo's `repositories/` clones) and every
-   repository declared in `vis.yml`'s `workspace.filesystem` catalog. Each
-   entry gets a header row carrying its branch and dirty counts, and its own
-   full section stack; a clean repo opens FOLDED to that one line and TAB
-   unfolds it. For a DRAFT session the entries already point at the CLONES the
-   session edits, so the buffer shows the draft's git state, not the trunk's.
-
-   Sections: head/upstream facts, untracked, unmerged, unstaged, staged,
-   stashes and recent commits. TAB folds a file's diff peek open under
-   its row; RET visits it FULLSCREEN (a file's syntax-highlighted body, a
-   commit's or stash's full patch). Verbs mirror magit and route to the repo
-   UNDER THE CURSOR:
-   `s`/`u` stage/unstage the file or the whole section, `S`/`U` all, `k`
-   discard with a confirm, `c` commit/amend (message prompt), `P` push
-   (plain / -u / --force-with-lease), `F` pull, `f` fetch, `b` branch
-   (checkout / create / delete), `z` stash (push / pop / apply / drop), `g`
-   refresh, `C-w` copy the sha/path/ref under point, `q`/Esc close. Every verb
-   shells to the real `git` binary via
-   `internal.git`, and the buffer re-reads every repo after each action, so
-   what you see is always `git status` truth. Returns nil."
-  [^TerminalScreen screen root-or-repos]
-  (let [repo-entries
-        (if (sequential? root-or-repos)
-          (vec root-or-repos)
-          (magit/workspace-roots nil root-or-repos))
-
-        repos*
-        (atom (magit/load-repos repo-entries))
-
-        ;; primary-root / multi? read the LOADED repos so non-git roots that
-        ;; load-repos dropped never skew the title or the fallback root.
-        primary-root
-        (:root (first @repos*))
-
-        multi?
-        (> (count @repos*) 1)
-
-        ;; Discovery bound its own walk? Then a repository exists that this buffer
-        ;; is NOT showing, and the title says so — a short list must never be
-        ;; mistaken for the whole fleet.
-        scan-truncated?
-        (and multi? (magit/nested-scan-truncated? primary-root))
-
-        expanded
-        (atom #{})
-
-        diff-cache
-        (atom {})
-
-        sel
-        (atom 0)
-
-        scroll
-        (atom 0)
-
-        scrollbar-drag-offset
-        (volatile! nil)
-
-        echo
-        (atom nil)
-
-        refresh!
-        (fn []
-          (reset! diff-cache {})
-          (reset! repos* (magit/load-repos repo-entries)))
-
-        run-action!
-        (fn [result]
-          (when result (reset! echo result) (refresh!))
-          nil)
-
-        model-for
-        (fn [root]
-          (or (some #(when (= (:root %) root) (:model %)) @repos*) (:model (first @repos*))))
-
-        diff-fn
-        (fn [row]
-          (let [root
-                (or (:root row) primary-root)
-
-                kind
-                (:kind row)
-
-                id
-                (case kind
-                  :commit
-                  (:sha row)
-
-                  :stash
-                  (:ref row)
-
-                  (:path row))
-
-                k
-                [root (:area row) id]]
-
-            (or (get @diff-cache k)
-                (let [lines (or (not-empty (case kind
-                                             :commit
-                                             (magit/commit-diff-lines root row)
-
-                                             :stash
-                                             (magit/stash-diff-lines root row)
-
-                                             (magit/file-diff-lines root row)))
-                                ["(no diff)"])]
-                  (swap! diff-cache assoc k lines)
-                  lines))))]
-
-    (loop []
-
-      (let [repos
-            @repos*
-
-            size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-
-            cols
-            (.getColumns size)
-
-            term-rows
-            (.getRows size)
-
-            g
-            (.newTextGraphics screen)
-
-            buf-rows
-            (magit/multi-status-rows repos @expanded diff-fn)
-
-            total
-            (count buf-rows)
-
-            title
-            (if multi?
-              (str "Git — " (count repos) " roots" (when scan-truncated? " · scan truncated"))
-              (let [model (:model (first repos))]
-                (str "Git — "
-                     (cond (nil? model) "?"
-                           (:detached? model) "detached HEAD"
-                           :else (:branch model)))))
-
-            ;; Full-screen overlay that still spares the app's two-row footer.
-            ;; Center within `term-rows - 1` so the frame stays above it.
-            content-w
-            (max (footer-content-width cols magit-hints) (- cols 4))
-
-            bounds
-            (draw-dialog-chrome! g cols (dec term-rows) title content-w (max 1 (- term-rows 5)))
-
-            {:keys [left inner-w]}
-            bounds
-
-            left
-            (long left)
-
-            inner-w
-            (long inner-w)
-
-            {:keys [content-top content-h hint-row]}
-            (dialog-layout bounds)
-
-            content-top
-            (long content-top)
-
-            content-h
-            (long content-h)
-
-            echo-h
-            (if @echo 1 0)
-
-            list-h
-            (long (max 1 (- content-h echo-h)))
-
-            _
-            (reset! sel (or (magit/first-selectable buf-rows (min (long @sel) (max 0 (dec total))))
-                            0))
-
-            visible
-            (long (min total list-h))
-
-            max-start
-            (long (max 0 (- total visible)))
-
-            start
-            (p/clamp @scroll 0 max-start)
-
-            _
-            (reset! scroll start)
-
-            text-w
-            (long (max 1 (- inner-w 3)))
-
-            busy!
-            (fn [label]
-              ;; Progress lives in the buffer's OWN footer, not a modal overlay:
-              ;; drain keystrokes typed mid-op (so they can't misfire once the
-              ;; verb returns), then paint the spinner + `label…` over the
-              ;; hint-bar row. The rest of the status buffer stays untouched.
-              (try (loop []
-
-                     (when (.pollInput screen) (recur)))
-                   (p/set-colors! g t/dialog-fg t/dialog-bg)
-                   (p/fill-rect! g (inc left) hint-row inner-w 1)
-                   (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-                   (p/put-str!
-                     g
-                     (+ left 2)
-                     hint-row
-                     (ellipsize
-                       (str (render/spinner-frame (System/currentTimeMillis)) "  " label "…")
-                       text-w))
-                   (.setCursorPosition screen nil)
-                   (.refresh screen Screen$RefreshType/DELTA)
-                   (catch Throwable _ nil)))
-
-            mini
-            (band-questions
-              screen
-              g
-              ;; The band opens INSIDE the status buffer's own frame and
-              ;; may never climb over the box's top border or the rows it
-              ;; keeps visible.
-              {:left left :inner-w inner-w :hint-row hint-row :text-w text-w :min-row content-top})]
-
-        (dotimes [i visible]
-          (let [idx (+ start i)
-                row-y (+ content-top i)]
-
-            (when (< idx total)
-              (let [row (nth buf-rows idx)
-                    [fg bold? row-bg] (magit-row-style row)
-                    bg (or row-bg t/dialog-bg)
-                    selected? (and (= idx @sel) (magit/selectable? row))]
-
-                (p/set-colors! g t/dialog-fg bg)
-                (p/fill-rect! g (inc left) row-y inner-w 1)
-                (p/set-colors! g t/dialog-hint-key bg)
-                (p/draw-selection-marker! g (inc left) row-y selected?)
-                (p/set-colors! g fg bg)
-                (let [txt (ellipsize (:text row) text-w)
-                      ;; On a diff HEADER row, split off the filename so it pops
-                      ;; in the path colour while the `diff --git`/a-/b- scaffolding
-                      ;; stays dim — magit's file-heading look.
-                      split (when (= :diff (:kind row)) (magit-diff-filename-split (:text row)))]
-
-                  (cond (and split (< (long split) (count txt)))
-                        (let [pre (subs txt 0 split)]
-                          (p/put-str! g (+ left 3) row-y pre)
-                          (p/set-colors! g t/result-path-fg bg)
-                          (p/styled g
-                                    [p/BOLD]
-                                    (p/put-str! g (+ left 3 (long split)) row-y (subs txt split))))
-                        (or bold? selected?)
-                        (p/styled g [p/BOLD] (p/put-str! g (+ left 3) row-y txt))
-                        :else (p/put-str! g (+ left 3) row-y txt)))))))
-        (scrollbar/draw! g
-                         {:col (+ left inner-w)
-                          :top content-top
-                          :track-h list-h
-                          :total-h total
-                          :inner-h list-h
-                          :scroll start})
-        (when-let [{:keys [ok? msg]} @echo]
-          (let [row-y (+ content-top list-h)]
-            (p/set-colors! g t/dialog-fg t/dialog-bg)
-            (p/fill-rect! g (inc left) row-y inner-w 1)
-            (p/set-colors! g (if ok? t/code-success-fg t/code-error-fg) t/dialog-bg)
-            (p/put-str! g (+ left 2) row-y (ellipsize (str msg) text-w))))
-        (draw-hint-bar! g left hint-row inner-w magit-hints)
-        ;; No text-input field in the magit buffer — hide the terminal cursor
-        ;; entirely (nil) instead of parking it at 0,0, where it blinks in the
-        ;; top-left corner.
-        (.setCursorPosition screen nil)
-        (.refresh screen Screen$RefreshType/DELTA)
-        (let [key
-              (read-modal-key! screen)
-
-              wheel
-              (modal-wheel-step key)
-
-              row
-              (when (and (pos? total) (< (long @sel) total)) (nth buf-rows @sel))
-
-              row-root
-              (or (:root row) primary-root)
-
-              move!
-              (fn [dir]
-                ;; Move the selection AND keep it in view (arrows follow point).
-                (let [n (magit/next-selectable buf-rows @sel dir)]
-                  (reset! sel n)
-                  (reset! scroll (visible-window-start n @scroll visible total))))
-
-              scroll-view!
-              (fn [delta]
-                ;; Scroll the VIEWPORT independently of the selection, so a long
-                ;; expanded diff (whose lines aren't selectable) can be read.
-                (swap! scroll #(p/clamp (+ (long %) (long delta)) 0 max-start)))
-
-              reconcile-sel!
-              (fn []
-                ;; After a pure viewport scroll, pull the point onto the nearest
-                ;; selectable row still on screen so verbs act on something visible.
-                (let [s
-                      (long @scroll)
-
-                      hi
-                      (long (min total (+ s visible)))]
-
-                  (when (or (< (long @sel) s) (>= (long @sel) hi))
-                    (when-let [n (some #(when (magit/selectable? (nth buf-rows %)) %) (range s hi))]
-                      (reset! sel n)))))
-
-              toggle-diff!
-              (fn []
-                (let [kind
-                      (:kind row)
-
-                      root
-                      (or (:root row) primary-root)
-
-                      k
-                      (case kind
-                        ;; TAB on a section header folds/unfolds the whole
-                        ;; section (magit's section visibility toggle).
-                        :section
-                        (when (:collapsible? row) [root :section (:area row)])
-
-                        ;; TAB on a repo header folds/unfolds that repository's whole
-                        ;; section stack in a multi-root buffer.
-                        :repo
-                        [root :repo nil]
-
-                        :commit
-                        [root (:area row) (:sha row)]
-
-                        :stash
-                        [root :stashes (:ref row)]
-
-                        :file
-                        [root (:area row) (:path row)]
-
-                        nil)]
-
-                  (when k (swap! expanded #(if (contains? % k) (disj % k) (conj % k))))))
-
-              visit!
-              (fn [target]
-                ;; magit's RET: VISIT the thing under point in the FULLSCREEN
-                ;; viewer (TAB still folds the inline diff peek). A file opens
-                ;; its working-tree body, syntax-highlighted by extension and
-                ;; falling back to its diff for a deleted/renamed entry; a
-                ;; commit or stash opens its full patch.
-                (when target
-                  (let [vroot (or (:root target) primary-root)]
-                    (case (:kind target)
-                      :file
-                      (let [{:keys [path]} target
-                            body (magit/visit-file-lines vroot path)]
-
-                        (if (seq body)
-                          (do (log-view-dialog! screen
-                                                (str path)
-                                                body
-                                                :grammar
-                                                (magit-path-grammar path))
-                              (clear-screen! screen))
-                          (when-let [d (not-empty (magit/file-diff-lines vroot target))]
-                            (log-view-dialog! screen (str path "  (diff)") d :grammar nil)
-                            (clear-screen! screen))))
-
-                      :commit
-                      (when-let [d (not-empty (magit/commit-diff-lines vroot target))]
-                        (log-view-dialog! screen (str "commit " (:sha target)) d :grammar nil)
-                        (clear-screen! screen))
-
-                      :stash
-                      (when-let [d (not-empty (magit/stash-diff-lines vroot target))]
-                        (log-view-dialog! screen (str (:ref target)) d :grammar nil)
-                        (clear-screen! screen))
-
-                      nil))))]
-
-          (cond (nil? key) (recur)
-                wheel (do (scroll-view! wheel) (reconcile-sel!) (recur))
-                (instance? MouseAction key)
-                (let [drag (scrollbar/mouse-drag-step key
-                                                      {:col (+ left inner-w)
-                                                       :top content-top
-                                                       :track-h list-h
-                                                       :total-h total
-                                                       :inner-h list-h
-                                                       :scroll start}
-                                                      @scrollbar-drag-offset)]
-                  (when (= drag :release) (vreset! scrollbar-drag-offset nil))
-                  (when-let [grip (:arm drag)]
-                    (vreset! scrollbar-drag-offset grip))
-                  (when-some [s (:scroll drag)]
-                    (reset! scroll s)
-                    (reconcile-sel!))
-                  (recur))
-                :else (condp = (key-type key)
-                        KeyType/Escape nil
-                        KeyType/ArrowUp (do (move! -1) (recur))
-                        KeyType/ArrowDown (do (move! 1) (recur))
-                        KeyType/PageUp
-                        (do (scroll-view! (- (long (max 1 (dec list-h))))) (reconcile-sel!) (recur))
-                        KeyType/PageDown
-                        (do (scroll-view! (long (max 1 (dec list-h)))) (reconcile-sel!) (recur))
-                        KeyType/Home (do (reset! sel (or (magit/first-selectable buf-rows 0) 0))
-                                         (reset! scroll 0)
-                                         (recur))
-                        KeyType/End (do (reset! scroll max-start) (reconcile-sel!) (recur))
-                        KeyType/Tab (do (toggle-diff!) (recur))
-                        KeyType/Enter (do (visit! row) (recur))
-                        KeyType/Character
-                        (let [c (key-character key)]
-                          (cond (= c \q) nil
-                                ;; n/p jump section-to-section (magit's section motion)
-                                (contains? #{\n \p} c)
-                                (let [i (magit/next-section buf-rows @sel (if (= c \n) 1 -1))]
-                                  (reset! sel i)
-                                  (reset! scroll (visible-window-start i @scroll visible total))
-                                  (recur))
-                                ;; C-w copies the sha/path/ref at point (magit-copy-section-value)
-                                (and (.isCtrlDown ^KeyStroke key) (= c \w))
-                                (do (reset! echo nil)
-                                    (run-action! (magit-copy-action! row-root row))
-                                    (recur))
-                                :else (do (reset! echo nil)
-                                          (run-action! (magit-char-action! screen
-                                                                           busy!
-                                                                           mini
-                                                                           row-root
-                                                                           (model-for row-root)
-                                                                           buf-rows
-                                                                           @sel
-                                                                           row
-                                                                           c))
-                                          (recur))))
-                        (recur))))))))
 
 (defn- current-model-info
   []
@@ -4019,7 +3086,7 @@
 
 (defn- provider-settings-rows
   "The `Providers` settings section: one row per provider — auth state, model,
-   default tag on the same line — opening that provider's own magit transient
+   default tag on the same line — opening that provider's own transient
    INSIDE this frame, plus one row that adds a new provider. Empty until
    `load-provider-inventory!` has run."
   []
@@ -4069,7 +3136,7 @@
 
 (defn- mcp-settings-rows
   "The `MCP Servers` settings section: one row per server — its live status
-   riding the same line — opening that server's own magit transient INSIDE this
+   riding the same line — opening that server's own transient INSIDE this
    frame, plus one row that adds a new server. Empty until `load-mcp-inventory!`
    has run."
   []
@@ -4578,7 +3645,7 @@
         result))
 
     ;; An MCP row IS its verbs — start, kill, enable, disable, sign in, edit,
-    ;; remove — offered as a magit transient band in THIS frame, each on the key
+    ;; remove — offered as a transient band in THIS frame, each on the key
     ;; the verb itself carries, and every question that verb then asks (a field,
     ;; the save confirm, a gateway refusal) lands in the SAME band, on the region
     ;; snapshotted here BEFORE anything paints over the settings list.
@@ -6514,8 +5581,8 @@
                   (.refresh screen Screen$RefreshType/DELTA)))))
 
 (defn session-band!
-  "Run ONE transient as a magit BAND inside the LIVE SESSION frame — the same
-   `embed-transient!` component the magit status buffer, Settings and the
+  "Run ONE transient as a BAND inside the LIVE SESSION frame — the same
+   `embed-transient!` component Settings and the
    provider manager embed, instanced here over the session's own region
    (`session-band-instance!`) instead of in a window of its own.
 
@@ -6619,7 +5686,7 @@
 
 (defn- band-run!
   "Run ANOTHER transient over the SAME band region — a transient that opens a
-   transient, which is how magit asks a second question without a second
+   transient, which is how a band asks a second question without a second
    window. The frame is snapshotted and restored once, by the `session-band!`
    that owns this region."
   [ctx spec]

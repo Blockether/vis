@@ -127,7 +127,7 @@ obligations, receipts, or next action: those are fresh, explicit outputs of
 8. The agent calls `(br/check)` again and reports clear status or remaining
    obligations in the final answer.
 
-TUI Magit calls `internal.git/commit!`.
+A commit surface calls `internal.git/commit!`.
 That generic Vis operation owns Git syntax and the exact
 tree invariant: it resolves the effective repository after Git-global options,
 rejects index-mutating commit flags/pathspecs, computes T0 with `write-tree`,
@@ -146,7 +146,7 @@ The hook receives only semantic context (`:root`, `:candidate-tree`, and
 `:index-preserving?`). It runs an exact Bridge index check with explicit
 approval, compares Bridge's candidate with T0, and either invokes the inner
 operation or refuses with the next evidence action. It never parses Git
-arguments and returns no magic candidate field. Magit has no Bridge-specific
+arguments and returns no magic candidate field. The commit caller has no Bridge-specific
 knowledge.
 
 Required evidence is never run as a side effect of commit. Git options such as

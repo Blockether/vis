@@ -363,7 +363,7 @@
       ;; `git/workspace-status` and carried on the workspace record as `:git`. The
       ;; footer reads ONLY that fact (no client-side git walk, no fallback), so the
       ;; map the daemon computed is exactly what paints — the single source of
-      ;; truth every channel (web footer, TUI footer, magit) shares.
+      ;; truth every channel (web footer, TUI footer) shares.
       (let [build-segments @#'footer/build-segments]
         (with-redefs-fn {#'footer/chosen-model-info (fn []
                                                       {:name "gpt-4o" :provider :openai})}
@@ -381,7 +381,7 @@
                                          "is_upstream" true
                                          "ahead" 4
                                          "behind" 0}}}]
-              (expect (= [" git ~/vis (main ~2 +3 -1 ⇡4) (C-x g) "]
+              (expect (= [" git ~/vis (main ~2 +3 -1 ⇡4) "]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
                               (remove fixture-seg?)
@@ -405,7 +405,7 @@
                                          "is_upstream" true
                                          "ahead" 0
                                          "behind" 0}}}]
-              (expect (= [" git ~/spel (main) (C-x g) "]
+              (expect (= [" git ~/spel (main) "]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
                               (remove fixture-seg?)
@@ -431,7 +431,7 @@
                                                       {:name "gpt-4o" :provider :openai})}
           (fn []
             (expect
-              (= [" git ~/vis (main) (C-x g) "]
+              (= [" git ~/vis (main) "]
                  (->> (build-segments {:messages []
                                        :settings {}
                                        :workspace {"root" "/tmp/vis"
@@ -454,7 +454,7 @@
                                                       {:name "gpt-4o" :provider :openai})}
           (fn []
             (expect
-              (= [" git ~/vis (main ∅) (C-x g) "]
+              (= [" git ~/vis (main ∅) "]
                  (->> (build-segments {:messages []
                                        :settings {}
                                        :workspace {"root" "/tmp/vis"

@@ -1218,8 +1218,8 @@
                         [:search-open :show-sessions :pick-file :new-session :new-session-in
                          :fork-session]))
         (expect (not (some ids
-                           [:cycle-model :pick-model :cycle-reasoning :cycle-verbosity :open-drafts
-                            :open-magit])))
+                           [:cycle-model :pick-model :cycle-reasoning :cycle-verbosity
+                            :open-drafts])))
         (expect (not (contains? ids :open-resources)))))
   (it "a turnless session hides BOTH fork verbs from the palette"
       ;; Forking a session with no turns is prohibited, so it must not even be
@@ -1339,14 +1339,19 @@
 
         (expect (= ["s1" "s2" "s3"] (mapv (comp str :id :target) rows))))))
 
+(def ^:private wide-hints
+  "A hint bar too wide for a narrow dialog — the fixture `fit-hint-pairs` clips."
+  [["↑/↓" "move"] ["n/p" "section"] ["TAB" "fold"] ["RET" "visit"] ["s/u" "select"] ["S/U" "all"]
+   ["x/k" "drop"] ["c" "confirm"] ["l" "list"] ["C-w" "copy"] ["P" "send"] ["F" "fetch"]
+   ["f" "find"] ["b" "back"] ["z" "undo"] ["g" "refresh"] ["Esc" "close"]])
 (defdescribe
   fit-hint-pairs-test
   "The hint bar must CLIP to the dialog's content width by dropping whole
    trailing chords — `put-str!` clips to the screen, not the box, so an
-   unfitted footer (e.g. magit's 162-col one) would paint across the border."
+   unfitted footer (e.g. a 162-col one) would paint across the border."
   (it "returns all pairs when they fit exactly"
       (let [hints
-            (var-get #'dlg/magit-hints)
+            wide-hints
 
             w
             (dlg/hint-bar-width hints)]
@@ -1354,7 +1359,7 @@
         (expect (= hints (dlg/fit-hint-pairs hints w)))))
   (it "drops whole trailing pairs when the bar is too wide"
       (let [hints
-            (var-get #'dlg/magit-hints)
+            wide-hints
 
             fitted
             (dlg/fit-hint-pairs hints 112)]
@@ -1363,13 +1368,13 @@
         (expect (= fitted (subvec (vec hints) 0 (count fitted))))
         (expect (<= (dlg/hint-bar-width (vec fitted)) 112))))
   (it "never exceeds text-w at any width (whole-pair invariant)"
-      (let [hints (var-get #'dlg/magit-hints)]
+      (let [hints wide-hints]
         (expect (every? (fn [tw]
                           (<= (dlg/hint-bar-width (vec (dlg/fit-hint-pairs hints tw))) (max tw 0)))
                         (range 0 200)))))
   (it "fits nothing into a sliver without blowing up"
-      (expect (= [] (dlg/fit-hint-pairs (var-get #'dlg/magit-hints) 3)))
-      (expect (= [] (dlg/fit-hint-pairs (var-get #'dlg/magit-hints) 0)))))
+      (expect (= [] (dlg/fit-hint-pairs wide-hints 3)))
+      (expect (= [] (dlg/fit-hint-pairs wide-hints 0)))))
 
 (defdescribe
   mcp-settings-section-test
@@ -1494,7 +1499,7 @@
                             {:mcp-action #(swap! fired conj %)}
                             {:type :mcp :label "fs" :server server})
                  ;; the band IS this server: its live status in the title, its own
-                 ;; verbs grouped the way magit groups a popup
+                 ;; verbs grouped by what they touch
                  (expect (= "fs \u00b7 idle" (:title @spec)))
                  (expect (= ["Runtime" "Configuration" "Inspect"] (mapv :title (:groups @spec))))
                  ;; the picked verb reaches the manager verbatim — with the
@@ -1508,7 +1513,7 @@
                  (expect (= :ok (:status @inventory))))))
            (finally (reset! inventory original))))))
 
-;; `transient-dialog!`: a magit popup hosted in its OWN modal.
+;; `transient-dialog!`: a transient popup hosted in its OWN modal.
 ;;
 ;; This replaced the API-key prompt that painted a full-screen vis logo above a
 ;; text box. The caller's guidance stays visible, the key is read INLINE on the
@@ -1780,9 +1785,8 @@
   (it "binds every question a band can ask to that band's OWN region"
       ;; Each host used to unpack `:left`/`:inner-w`/`:hint-row`/`:text-w` again
       ;; and reach for `tr/run!` plus `transient-host` itself — five copies of
-      ;; the same six coordinates, which is how two bands drift apart. The magit
-      ;; status buffer, Settings, `transient-dialog!` and
-      ;; the session band all compose THIS map now.
+      ;; the same six coordinates, which is how two bands drift apart. Settings,
+      ;; `transient-dialog!` and the session band all compose THIS map now.
       (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
         (try
           (let [g (.newTextGraphics screen)
@@ -1814,7 +1818,7 @@
                          [{:key \a :id :aa :label "A"} {:key \b :id :bb :label "B"}])))
             ;; A transient that opens a transient: the second band lands INSIDE
             ;; the first one's box (its rows start at the region's own left
-            ;; edge), which is how magit asks a second thing without a second
+            ;; edge), which is how a band asks a second thing without a second
             ;; frame.
             (feed! \x)
             (expect (= :ex
@@ -2006,7 +2010,7 @@
           ;; the one frame snapshot the whole flow restores from
           (expect (= (- (long rows) 3 3) (long (:hint-row session-region))))
           (expect (ifn? (:restore! session-region)))
-          ;; the SAME component in a host's own frame (magit, Settings,
+          ;; the SAME component in a host's own frame (Settings,
           ;; providers): a different region, one snapshot, one `:title`
           ;; inked on the band's opening rule
           (let [host-region (dlg/host-band-region
@@ -2026,7 +2030,7 @@
                                    "Alpha band"))))
         (finally (.stopScreen screen))))))
 ;;; ── A field's ring belongs INSIDE the frame ──────────────────────────────────
-;; Regression (reported from the TUI, photo of the magit commit band): the accent
+;; Regression (reported from the TUI, photo of a commit band): the accent
 ;; ring `▎` a focused field wears was painted in the frame's OWN border column,
 ;; and the row's paper was cleared from that column too, so the box lost its left
 ;; rail on exactly the row the keyboard was in — the answer read as a rail hanging
@@ -2077,7 +2081,7 @@
                    (:status (row "s-quiet" {"id" "s-quiet" "title" "Deploy" "turn_count" 3}))))
         (expect (not (:awaiting-input? (row nil {"id" "s-quiet" "title" "Deploy"})))))))
 
-;; Regression (user report): the fullscreen log viewer a magit RET-visit opens
+;; Regression (user report): the fullscreen log viewer a diff visit opens
 ;; for a diff painted a scrollbar its key loop never wired mouse events to, so
 ;; pressing the scrollbar did nothing — only the wheel scrolled.
 (defdescribe

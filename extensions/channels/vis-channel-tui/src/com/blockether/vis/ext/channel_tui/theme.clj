@@ -54,7 +54,7 @@
 (def border-fg (rgb :border-fg))
 
 (def ^:dynamic dialog-bg
-  "The paper the CURRENT surface paints on. Dynamic because a magit-style BAND is
+  "The paper the CURRENT surface paints on. Dynamic because a transient BAND is
    the same chrome on DIFFERENT paper: `transient/paint-layout!` and
    `human-input/paint!` bind it to `terminal-bg` for the rows they own — a band
    lies ON the live transcript and takes no tint, so it is its BORDER that says

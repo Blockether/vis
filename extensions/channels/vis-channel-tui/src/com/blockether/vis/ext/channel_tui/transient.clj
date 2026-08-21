@@ -1,11 +1,11 @@
 (ns com.blockether.vis.ext.channel-tui.transient
-  "Magit-style TRANSIENT as a REUSABLE, EMBEDDABLE component.
+  "A keyed TRANSIENT popup as a REUSABLE, EMBEDDABLE component.
 
    A transient is a VALUE — a `spec` — and this namespace knows how to lay it
    out, paint it into a rectangle, and (optionally) run its key loop. It owns NO
    screen, NO dialog chrome and NO Lanterna types, so ANY surface that can hand
-   over a `TextGraphics` and answer keystrokes can embed one: the magit status
-   buffer, the provider dialog, a modal of its own (`dialogs/transient-dialog!`),
+   over a `TextGraphics` and answer keystrokes can embed one: the settings
+   dialog, the provider dialog, a modal of its own (`dialogs/transient-dialog!`),
    or a panel that does not exist yet.
 
    THREE values, three concerns:
@@ -17,10 +17,10 @@
               where an `item` is
               `{:key \"h\" :type :switch|:option|:action :id :no-verify
                 :label \"Disable hooks\" :arg \"--no-verify\" :secret? false}`.
-              FLAGS (`:switch` / `:option`) render with magit's leading `-` and
+              FLAGS (`:switch` / `:option`) render with a leading `-` and
               TOGGLE — press once to arm, again to disarm — while COMMANDS
-              (`:action`) fire once and close. Keys are CASE-SENSITIVE, exactly
-              like magit (`-f` is not `-F`). `:read-option` (impure, optional)
+              (`:action`) fire once and close. Keys are CASE-SENSITIVE
+              (`-f` is not `-F`). `:read-option` (impure, optional)
               fetches an OPTION's value; nil (Esc) leaves it unchanged.
 
      `region`  WHERE it sits — the host's rectangle:
@@ -128,15 +128,15 @@
   (step-key (index-by-key spec) state ch))
 
 (defn key-glyph
-  "PURE: the key column glyph magit paints for one item. FLAGS (`:switch` /
-   `:option`) carry magit's leading `-` — `-h`, `-t` — so a toggle can never be
+  "PURE: the key column glyph painted for one item. FLAGS (`:switch` /
+   `:option`) carry the leading `-` — `-h`, `-t` — so a toggle can never be
    mistaken for a fire-once verb; COMMANDS (`sp/command-types`) show the bare
    key. Tolerant of a partial item: an unknown type is not a command."
   [{:keys [type key]}]
   (if (contains? sp/command-types type) (str key) (str "-" key)))
 
 (defn item-arg
-  "PURE: the trailing git-argument cell magit shows for a FLAG: `(--no-verify)` for
+  "PURE: the trailing git-argument cell shown for a FLAG: `(--no-verify)` for
    a switch, `(%topic=fix)` for an option carrying `value`. nil for commands (a
    command contributes no argument) and for flags that name none.
 
@@ -164,7 +164,7 @@
 (def item-indent
   "Columns an item row steps RIGHT of the heading above it. A heading NAMES a
    column and the verbs under it are its content, so they are indented under it
-   exactly like magit's; flush left, the key letter collided with the first
+   with one column of indent; flush left, the key letter collided with the first
    letter of the heading and the two read as one ragged column."
   1)
 
@@ -583,7 +583,7 @@
       :foot-rule-row foot-rule-row
       :foot-row foot-row
       ;; The band wipes exactly the rows it paints — the buffer above its opening
-      ;; separator is what magit keeps visible behind a transient. A host that
+      ;; separator is what stays visible behind a transient. A host that
       ;; repaints bands of different heights owns those rows and clears them
       ;; itself (`clear-rows!`); the component never reaches over them.
       :wipe-top (max sep-row top-limit)
@@ -792,7 +792,7 @@
        (do (p/set-colors! g t/dialog-border t/dialog-bg)
            (p/draw-separator! g left (+ left inner-w 1) row)))
      ;; The band has no title ROW, so a titled band says its name ON the rule —
-     ;; magit's own `── Commit ──`. The first row stays chrome and every row
+     ;; a rule such as `── Commit ──`. The first row stays chrome and every row
      ;; below it stays column grid.
      (when-not (str/blank? (str label))
        (let [txt (str " " (p/ellipsize (str label) (long (max 0 (- inner-w 6)))) " ")]

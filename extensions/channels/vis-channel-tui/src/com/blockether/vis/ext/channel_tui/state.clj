@@ -1239,7 +1239,7 @@
     ;; stale/empty tab-locals snapshot — taken before `:set-workspace` landed —
     ;; can null the denormalized top-level `:workspace/root`; backfill it from
     ;; the entry so every reader (footer, F2 context panel, `/cd` picker,
-    ;; magit) keeps the ACTIVE session's root and never the vis process cwd.
+    ;; the git footer) keeps the ACTIVE session's root and never the vis process cwd.
     (-> (cond-> db'
           (and (nil? (:workspace/root db')) (:workspace/root entry))
           (assoc :workspace/root (:workspace/root entry))
@@ -1689,7 +1689,7 @@
                     (assoc :detail-expansions {:vis.channel-tui/baseline :expand}))))
 
 (reg-event-db :toggle-all-details
-              ;; C-x TAB / C-x S-TAB — Emacs global fold cycle (org/magit `<backtab>`): if the
+              ;; C-x TAB / C-x S-TAB — Emacs global fold cycle (org `<backtab>`): if the
               ;; bulk baseline is currently expanded, collapse EVERY disclosure; otherwise
               ;; expand them all. One keystroke flips the whole transcript (per-node overrides
               ;; wiped), mirroring org-mode's buffer-wide visibility cycle.

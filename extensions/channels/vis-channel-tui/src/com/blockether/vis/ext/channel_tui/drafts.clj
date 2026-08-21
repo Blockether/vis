@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.channel-tui.drafts
-  "Draft workspaces as a magit TRANSIENT — the PURE half.
+  "Draft workspaces as a TRANSIENT — the PURE half.
 
    Managing drafts used to be a stack of modal windows: a full-screen picker,
    then a text-input dialog for the name, then a confirm dialog for the

@@ -118,7 +118,6 @@
    {:action :recenter :key \j :label "jump to bottom" :group "Buffer"}
    ;; `z` = vim's fold prefix — the jump-label overlay toggles folds.
    {:action :toggle-detail-labels :key \z :label "label folds" :group "Buffer"}
-   {:action :open-magit :key \g :label "git status" :group "Tools"}
    {:action :providers :key \o :label "providers" :group "Tools"}])
 
 (def prefix-groups
@@ -225,7 +224,7 @@
   \x)
 
 ;; ── The C-x hydra ───────────────────────────────────────────────────────────
-;; C-x is not a dead prefix waiting in the echo area: it opens a magit-style
+;; C-x is not a dead prefix waiting in the echo area: it opens a
 ;; TRANSIENT band listing every verb the next keystroke can run, exactly like an
 ;; Emacs hydra / doom leader. The spec is PURE data here; `dialogs/prefix-band!`
 ;; paints it and `input/resolve-prefix-key` still owns the keystroke, so the band

@@ -450,8 +450,8 @@
         ;; Clamp to terminal - hard constraint, always final so the frame can
         ;; never leave the screen. The inset is deliberately generous — 4 cols each
         ;; side and, after the upward box-top nudge, ~3 rows above / ~7 below — so
-        ;; full-bleed dialogs — the magit
-        ;; buffer, session/copy browsers, theme picker — float with a clear
+        ;; full-bleed dialogs — the settings,
+        ;; session/copy browsers, theme picker — float with a clear
         ;; margin instead of butting flush against the window frame, header
         ;; tab bar, and footer.
         ;; `max 1` LAST: a terminal smaller than the inset still has to produce a

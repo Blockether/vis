@@ -26,7 +26,6 @@
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
-            [com.blockether.vis.ext.channel-tui.magit :as magit]
             [com.blockether.vis.internal.config :as vis-config]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.header :as vis-header]
@@ -2623,7 +2622,7 @@
         (let [help-geom (components/help-overlay! g cols rows (:help-scroll db))]
           (when (not= (:max-scroll help-geom) (:help-scroll-max db))
             (state/dispatch [:set-help-scroll-max (:max-scroll help-geom)]))))
-      ;; A human-input request is a magit-style TRANSIENT, not a modal: the band
+      ;; A human-input request is a TRANSIENT band, not a modal: the band
       ;; takes over the prompt's rows and grows upward over the transcript, never
       ;; past the first message row, so the operator still sees WHAT they are
       ;; answering. It paints last and owns the text cursor while it is open.
@@ -2744,7 +2743,7 @@
 
    `focus-section` parks the cursor on one section label: the palette's MCP
    entry opens Settings on `MCP Servers` and its Providers entry on
-   `Providers`, where every provider row runs its OWN magit transient inside the
+   `Providers`, where every provider row runs its OWN transient inside the
    settings frame and `:mcp-add` / `:provider-add` add a new entry. Returns nil."
   ([^TerminalScreen screen] (open-settings-modal! screen nil))
   ([^TerminalScreen screen focus-section]
@@ -4067,8 +4066,8 @@
    Git status is a SERVER-SIDE session fact — `git/workspace-status`, a
    stale-while-revalidate cache in the daemon that OWNS the repo — and the footer
    reads ONLY that fact (no client-side git walk, no fallback). Refetch it on a
-   slow cadence so the footer's changed-file count tracks reality (and agrees with
-   magit) instead of freezing at the last turn-end `:set-workspace` snapshot.
+   slow cadence so the footer's changed-file count tracks reality instead of
+   freezing at the last turn-end `:set-workspace` snapshot.
    Dispatches only when the `:git` fact actually changes, so an idle session costs
    one cheap gateway read per tick and never churns the render loop."
   ^Thread []
@@ -5694,26 +5693,6 @@
                                      (vis/notify! "Cleared session"
                                                   :level :success
                                                   :ttl-ms copy-success-ttl-ms)))))
-              ;; Managed-resources dialog (C-x s + the footer's `res N`
-              ;; Magit-style status buffer (C-x g + the footer's git button).
-              ;; Same one-dialog-at-a-time discipline as the resources modal;
-              ;; on close, re-seed the footer's cached git status so a
-              ;; stage/commit/push done inside is reflected immediately.
-              open-magit!
-              (fn open-magit! []
-                (when-not (:dialog-open? @state/app-db)
-                  (state/dispatch [:close-overlays])
-                  (when (get-in @state/app-db [:search :active?]) (state/dispatch [:search-clear]))
-                  (let [db @state/app-db
-                        fallback (or (:workspace/root db) (System/getProperty "user.dir"))
-                        ;; The primary workspace root plus every git repo
-                        ;; nested below it (a mega-repo's `repositories/`
-                        ;; clones). For a DRAFT the primary points at the
-                        ;; clone, so the buffer shows the draft's git state,
-                        ;; never the trunk's.
-                        repos (magit/session-roots (:workspace db) fallback)]
-
-                    (with-dialog-lock #(dlg/magit-dialog! screen repos)))))
               ;; Companion parity ("Start the session in"): a new session may begin in an
               ;; isolated COPY of the project instead of the project itself. The dirty copy
               ;; is the interesting one — the clone carries the uncommitted work with it, so
@@ -6336,9 +6315,6 @@
                                      (do (state/dispatch [:reset-input])
                                          (switch-session! {:action :new}))
 
-                                     :footer-git
-                                     (open-magit!)
-
                                      :footer-model
                                      (show-model-picker!)
 
@@ -6649,9 +6625,6 @@
                                  (do (state/dispatch [:reset-input])
                                      (switch-session! {:action :new}))
 
-                                 :footer-git
-                                 (open-magit!)
-
                                  :footer-model
                                  (show-model-picker!)
 
@@ -6776,9 +6749,6 @@
                                  :header-new-session
                                  (do (state/dispatch [:reset-input])
                                      (switch-session! {:action :new}))
-
-                                 :footer-git
-                                 (open-magit!)
 
                                  :footer-model
                                  (show-model-picker!)
@@ -7171,9 +7141,6 @@
                                   :toggle-help
                                   (state/dispatch [:toggle-help])
 
-                                  :open-magit
-                                  (open-magit!)
-
                                   :show-sessions
                                   (show-sessions!)
 
@@ -7355,9 +7322,6 @@
 
                          :open-drafts
                          (do (show-drafts!) (recur))
-
-                         :open-magit
-                         (do (open-magit!) (recur))
 
                          :show-palette
                          (do (when-not (:dialog-open? @state/app-db)
