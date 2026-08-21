@@ -385,15 +385,18 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
         description="staging",
     ) as view:
         view.status("Building", tone="running")
-        view.row("api", ["api", "queued"])
-        view.row("api", ["api", "done"], tone="ok")
+        view.row("api", ["deploy / api", "queued"], branch="deploy")
+        view.row("api", ["deploy / api", "done"], tone="ok", branch="deploy")
         view["jobs"].focus("api")
         view.write("cloning", "compiling")
         state = view.state()
         nodes = _painted(state["nodes"])
         # The row was upserted by its id, not appended twice.
-        assert [row["cells"] for row in nodes["jobs"]["rows"]] == [["api", "done"]]
+        assert [row["cells"] for row in nodes["jobs"]["rows"]] == [
+            ["deploy / api", "done"]
+        ]
         assert nodes["jobs"]["rows"][0]["tone"] == "ok"
+        assert nodes["jobs"]["rows"][0]["branch"] == "deploy"
         assert nodes["jobs"]["focused_ids"] == ["api"]
         assert nodes["tail"]["lines"] == ["cloning", "compiling"]
         assert nodes["now"]["text"] == "Building"

@@ -165,6 +165,8 @@ export interface LiveRow {
   id: string;
   cells: string[];
   tone: LiveTone;
+  /** Shared parent label; equal labels become one collapsible table branch. */
+  branch?: string;
 }
 
 /** Rows keyed by id: an update lands in the slot the eye left it in. */
@@ -350,6 +352,7 @@ function rowFromWire(raw: Record<string, unknown>): LiveRow | null {
     id,
     cells: Array.isArray(raw.cells) ? raw.cells.map((cell) => text(cell)) : [],
     tone: tone(raw.tone),
+    branch: optionalText(raw.branch),
   };
 }
 

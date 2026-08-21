@@ -965,13 +965,20 @@ class Log(_Node):
 
 
 class Table(_KeyedNode):
-    def upsert(self, row_id, cells, tone=None):
+    def upsert(self, row_id, cells, tone=None, branch=None):
         # ONE verb for "new row" and "row changed": a scan loop writing a live
         # table does not know which it is, and the id is the address either way.
         return self._op(
             "append",
             rows=[
-                _live_item(row_id, {"cells": [_cell(c) for c in cells], "tone": tone})
+                _live_item(
+                    row_id,
+                    {
+                        "cells": [_cell(c) for c in cells],
+                        "tone": tone,
+                        "branch": branch,
+                    },
+                )
             ],
         )
 
@@ -1277,8 +1284,10 @@ class LiveView:
     def write(self, *lines):
         return self._only("log", "write").write(*lines)
 
-    def row(self, row_id, cells, tone=None):
-        return self._only("table", "row").upsert(row_id, cells, tone=tone)
+    def row(self, row_id, cells, tone=None, branch=None):
+        return self._only("table", "row").upsert(
+            row_id, cells, tone=tone, branch=branch
+        )
 
     def link(self, link_id, label, target, target_kind=None, tone=None):
         return self._only("link", "link").add(

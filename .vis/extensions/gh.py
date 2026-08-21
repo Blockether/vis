@@ -36,6 +36,7 @@ import os
 import shlex
 import tempfile
 import time
+from collections import Counter
 
 import vis
 
@@ -142,6 +143,16 @@ def _job_id(job, index=0):
     return str(job.get("databaseId") or job.get("name") or index)
 
 
+def _job_groups(jobs):
+    """Repeated GitHub `parent / variant` names become one collapsible table branch."""
+    prefixes = []
+    for job in jobs:
+        name = str(job.get("name") or "")
+        prefixes.append(name.rsplit(" / ", 1)[0] if " / " in name else None)
+    counts = Counter(prefix for prefix in prefixes if prefix)
+    return [prefix if prefix and counts[prefix] > 1 else None for prefix in prefixes]
+
+
 def default_focus_ids(jobs):
     """All running jobs, else the last failed job, else the last job."""
     running = [
@@ -170,6 +181,7 @@ def run_shape(payload, focus_ids=None, now=None):
     """
     jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
     tones = [tone_of(job.get("status"), job.get("conclusion")) for job in jobs]
+    groups = _job_groups(jobs)
     indexed = [(_job_id(job, index), job) for index, job in enumerate(jobs)]
     by_id = dict(indexed)
     requested = (
@@ -260,8 +272,11 @@ def run_shape(payload, focus_ids=None, now=None):
                     _elapsed(job, now),
                 ],
                 "tone": job_tone,
+                **({"branch": group} if group else {}),
             }
-            for index, (job, job_tone) in enumerate(zip(jobs, tones, strict=True))
+            for index, (job, job_tone, group) in enumerate(
+                zip(jobs, tones, groups, strict=True)
+            )
         ],
         "focus": focus,
         "focus_ids": selected_ids,
@@ -297,7 +312,7 @@ def declared_nodes(shape):
                 vis.table_column("took", "Took"),
             ],
             rows=[
-                vis.table_row(row["id"], row["cells"], tone=row["tone"])
+                vis.table_row(row["id"], row["cells"], tone=row["tone"], branch=row.get("branch"))
                 for row in shape["rows"]
             ],
             is_focusable=True,
@@ -332,7 +347,9 @@ def push_changes(view, before, after):
     rows = {one["id"]: one for one in before.get("rows") or []}
     for row in after["rows"]:
         if rows.get(row["id"]) != row:
-            view["jobs"].upsert(row["id"], row["cells"], tone=row["tone"])
+            view["jobs"].upsert(
+                row["id"], row["cells"], tone=row["tone"], branch=row.get("branch")
+            )
     steps = {one["id"]: one for one in before.get("steps") or []}
     if before.get("focus_ids") != after["focus_ids"]:
         view["jobs"].focus(*after["focus_ids"])

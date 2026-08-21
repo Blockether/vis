@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- feat(companion): nest matrix jobs in collapsible branches
 ## [v0.1.41] - 2026-08-21
 
 ### Changed

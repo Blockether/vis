@@ -121,6 +121,12 @@ def test_a_poll_reads_as_the_seven_answers():
         "12s",
     ]
     assert shape["rows"][1]["tone"] == "error"
+    # Matrix variants share one semantic parent instead of repeating that parent as flat peers.
+    assert shape["rows"][0]["branch"] == "tests"
+    assert shape["rows"][1]["branch"] == "tests"
+    assert "branch" not in next(
+        row for row in shape["rows"] if row["cells"][0] == "lint / clj-kondo"
+    )
     # Every concurrently running job is focused; the elapsed column waits for its end.
     assert shape["focus_ids"] == ["95742028721", "95742028781"]
     assert shape["focus"] == "tests / macos-latest + tests / ubuntu-latest"

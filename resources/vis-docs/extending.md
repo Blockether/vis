@@ -759,15 +759,18 @@ handle only has the verbs its type can honour:
 | `vis.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label=, tone=)`, `.remove(*ids)`, `.clear()` |
 | `vis.steps(id, steps=[…])` | a checklist | `.set(step_id, tone=, label=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
 | `vis.output(id, label=…)` | streamed lines | `.write(*lines)`, `.clear()` |
-| `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=)`, `.focus(*row_ids)`, `.remove(*ids)`, `.clear()` |
+| `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=, branch=)`, `.focus(*row_ids)`, `.remove(*ids)`, `.clear()` |
 | `vis.link(id, links=[…])` | pointers a human can open | `.add(link_id, label, target, target_kind=, tone=)` |
 
 `vis.output` builds a `log` node; the builder is named `output` so it never
 shadows `vis.log`, the engine log line — the same reason `vis.slider` builds a
 `range` field. Rows and columns of a declared table are `vis.table_row(...)` and
 `vis.table_column(...)`, and a table's `order` says how it paints — `insertion`
-(the default), `newest-first`, or `{'by': 'duration', 'dir': 'desc'}`. A table declared with
-`is_focusable=True` paints every row as a control; `focused_ids=[…]` is its initial selection.
+(the default), `newest-first`, or `{'by': 'duration', 'dir': 'desc'}`. Rows that
+share a non-blank `branch="Release apps"` paint beneath one collapsible parent;
+the first cell may retain the full `Release apps / iOS` identity, while surfaces
+show only `iOS` below that parent. A table declared with `is_focusable=True`
+paints every leaf row as a control; `focused_ids=[…]` is its initial selection.
 A surface click and `view["jobs"].focus(*row_ids)` write the same shared patch, so the
 extension reads the current selection from `view.state()` before it replaces the focused detail.
 

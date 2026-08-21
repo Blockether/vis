@@ -1,5 +1,15 @@
-import { useEffect, useState } from 'react';
-import { Button, Input, LoadMore, Meter, PROSE, Spinner, TableFocusButton, TableFocusRow } from './ui';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Button,
+  Disclosure,
+  Input,
+  LoadMore,
+  Meter,
+  PROSE,
+  Spinner,
+  TableFocusButton,
+  TableFocusRow,
+} from './ui';
 import { InlineMarkdown } from './ChatContent';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -19,6 +29,7 @@ import {
   type LiveStatNode,
   type LiveStatusNode,
   type LiveStepsNode,
+  type LiveRow,
   type LiveTableNode,
   type LiveTone,
   type LiveView as LiveViewModel,
@@ -260,7 +271,37 @@ function TableRows({
   onFocus?: (nodeId: string, itemIds: string[]) => void;
 }) {
   const rows = orderedRows(node);
-  const focused = new Set(node.focused_ids);
+  const focused = useMemo(() => new Set(node.focused_ids), [node.focused_ids]);
+  const grouped = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of rows) if (row.branch) counts.set(row.branch, (counts.get(row.branch) ?? 0) + 1);
+    return counts;
+  }, [rows]);
+  const focusedGroups = useMemo(
+    () => new Set(rows.filter((row) => focused.has(row.id) && row.branch).map((row) => row.branch as string)),
+    [rows, focused],
+  );
+  const focusedGroupKey = JSON.stringify([...focusedGroups].sort());
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => focusedGroups);
+  useEffect(() => {
+    if (focusedGroups.size === 0) return;
+    setOpenGroups((was) => {
+      if ([...focusedGroups].every((group) => was.has(group))) return was;
+      return new Set([...was, ...focusedGroups]);
+    });
+  }, [focusedGroupKey]);
+
+  const visible: Array<{ kind: 'group'; label: string } | { kind: 'row'; row: LiveRow }> = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const group = row.branch && (grouped.get(row.branch) ?? 0) > 1 ? row.branch : undefined;
+    if (group && !seen.has(group)) {
+      seen.add(group);
+      visible.push({ kind: 'group', label: group });
+    }
+    if (!group || openGroups.has(group)) visible.push({ kind: 'row', row });
+  }
+
   return (
     <div className="-mx-1 overflow-x-auto">
       <table className="w-full min-w-0 border-collapse border border-dialog-edge font-mono text-chip">
@@ -282,16 +323,41 @@ function TableRows({
         <tbody>
           {rows.length === 0 && (
             <tr>
-              <td
-                className="border border-dialog-edge px-1.5 py-1"
-                colSpan={Math.max(1, node.columns.length)}
-              >
+              <td className="border border-dialog-edge px-1.5 py-1" colSpan={Math.max(1, node.columns.length)}>
                 <Empty>{EMPTY_LINE.table}</Empty>
               </td>
             </tr>
           )}
-          {rows.map((row) => {
+          {visible.map((item) => {
+            if (item.kind === 'group') {
+              const isOpen = openGroups.has(item.label);
+              return (
+                <tr key={`group:${item.label}`} className="bg-panel-2 text-dialog-hint">
+                  <td className="border border-dialog-edge px-1.5" colSpan={Math.max(1, node.columns.length)}>
+                    <Disclosure
+                      isOpen={isOpen}
+                      aria-label={item.label}
+                      onClick={() =>
+                        setOpenGroups((was) => {
+                          const next = new Set(was);
+                          if (isOpen) next.delete(item.label);
+                          else next.add(item.label);
+                          return next;
+                        })
+                      }
+                    >
+                      <span className="truncate font-bold">{item.label}</span>
+                    </Disclosure>
+                  </td>
+                </tr>
+              );
+            }
+            const row = item.row;
             const isFocused = focused.has(row.id);
+            const firstCell =
+              row.branch && row.cells[0]?.startsWith(`${row.branch} / `)
+                ? row.cells[0].slice(row.branch.length + 3)
+                : (row.cells[0] ?? '');
             return (
               <TableFocusRow
                 key={row.id}
@@ -307,11 +373,10 @@ function TableRows({
                     } ${column.align === 'right' ? 'text-right tabular-nums' : 'text-left'}`}
                   >
                     {node.is_focusable && cell === 0 ? (
-                      <TableFocusButton
-                        isFocused={isFocused}
-                        aria-label={`Focus ${row.cells[cell] || row.id}`}
-                      >
-                        <InlineMarkdown>{row.cells[cell] ?? ''}</InlineMarkdown>
+                      <TableFocusButton isFocused={isFocused} aria-label={`Focus ${row.cells[cell] || row.id}`}>
+                        <span className={row.branch ? 'pl-3' : ''}>
+                          <InlineMarkdown>{firstCell}</InlineMarkdown>
+                        </span>
                       </TableFocusButton>
                     ) : (
                       <InlineMarkdown>{row.cells[cell] ?? ''}</InlineMarkdown>

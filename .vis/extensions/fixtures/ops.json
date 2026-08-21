@@ -57,7 +57,8 @@
                 "tests / macos-latest",
                 "in progress",
                 "10m 34s"
-              ]
+              ],
+              "branch": "tests"
             },
             {
               "id": "95742028770",
@@ -66,7 +67,8 @@
                 "tests / vis-agent + vis-contract (PyPI packages)",
                 "failure",
                 "12s"
-              ]
+              ],
+              "branch": "tests"
             },
             {
               "id": "95742028781",
@@ -75,7 +77,8 @@
                 "tests / ubuntu-latest",
                 "in progress",
                 "10m 34s"
-              ]
+              ],
+              "branch": "tests"
             },
             {
               "id": "95742028809",
@@ -93,7 +96,8 @@
                 "classpath / .",
                 "success",
                 "21s"
-              ]
+              ],
+              "branch": "classpath"
             },
             {
               "id": "95742029230",
@@ -102,7 +106,8 @@
                 "classpath / extensions/channels/vis-channel-tui",
                 "success",
                 "22s"
-              ]
+              ],
+              "branch": "classpath"
             }
           ],
           "is_focusable": true,
@@ -310,7 +315,8 @@
                 "success",
                 "28m 33s"
               ],
-              "tone": "ok"
+              "tone": "ok",
+              "branch": "tests"
             },
             {
               "id": "95742028781",
@@ -319,7 +325,8 @@
                 "success",
                 "12m 54s"
               ],
-              "tone": "ok"
+              "tone": "ok",
+              "branch": "tests"
             }
           ],
           "op": "append",

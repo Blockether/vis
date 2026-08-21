@@ -1452,6 +1452,10 @@
       (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 5 :order] {:by "nope"}))))
       (expect (nil? (hs/live-view-error
                       (assoc-in (live-view) [:nodes 5 :order] {:by "host" :dir :desc})))))
+  (it "accepts a non-blank branch on rows and refuses an empty one"
+      (expect (nil? (hs/live-view-error
+                      (assoc-in (live-view) [:nodes 5 :rows 0 :branch] "Release apps"))))
+      (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 5 :rows 0 :branch] "")))))
   (it "refuses a table row whose id is missing, because a row with no id cannot be upserted"
       (expect (some? (hs/live-view-error
                        (assoc-in (live-view) [:nodes 5 :rows] [{:cells ["a" "b"]}]))))))

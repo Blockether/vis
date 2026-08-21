@@ -1,6 +1,6 @@
 {
-  "title": "CI · run 32146686161",
   "description": "docs(release): record the TestFlight build testers now have · push",
+  "title": "CI · run 32146686161",
   "nodes": [
     {
       "tone": "error",
@@ -54,7 +54,8 @@
             "tests / macos-latest",
             "success",
             "28m 33s"
-          ]
+          ],
+          "branch": "tests"
         },
         {
           "id": "95742028770",
@@ -63,7 +64,8 @@
             "tests / vis-agent + vis-contract (PyPI packages)",
             "failure",
             "12s"
-          ]
+          ],
+          "branch": "tests"
         },
         {
           "id": "95742028781",
@@ -72,7 +74,8 @@
             "tests / ubuntu-latest",
             "success",
             "12m 54s"
-          ]
+          ],
+          "branch": "tests"
         },
         {
           "id": "95742028809",
@@ -90,7 +93,8 @@
             "classpath / .",
             "success",
             "21s"
-          ]
+          ],
+          "branch": "classpath"
         },
         {
           "id": "95742029230",
@@ -99,11 +103,10 @@
             "classpath / extensions/channels/vis-channel-tui",
             "success",
             "22s"
-          ]
+          ],
+          "branch": "classpath"
         }
       ],
-      "max_rows": 5000,
-      "order": "insertion",
       "columns": [
         {
           "id": "job",
@@ -119,7 +122,9 @@
         }
       ],
       "type": "table",
-      "id": "jobs"
+      "id": "jobs",
+      "max_rows": 5000,
+      "order": "insertion"
     },
     {
       "label": "Selected job steps",
@@ -191,8 +196,8 @@
         "2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s",
         "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1."
       ],
-      "total_lines": 13,
-      "window_lines": 2000
+      "window_lines": 2000,
+      "total_lines": 13
     },
     {
       "links": [

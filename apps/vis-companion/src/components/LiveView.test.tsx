@@ -149,7 +149,32 @@ describe('focusing a table row', () => {
     fireEvent.click(screen.getByText('critical'));
     expect(onFocus).toHaveBeenCalledWith('hosts', ['db-2']);
   });
+  // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: matrix jobs repeated
+  // their whole parent name as flat peers, making the run hard to scan on a phone.
+  it('nests matrix jobs under a collapsible parent', () => {
+    const view = focusableView();
+    const hosts = view.nodes
+      .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
+      .find((node) => node.id === 'hosts');
+    if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
+    hosts.rows = [
+      { id: 'ios', cells: ['Release apps / iOS', 'queued'], tone: 'running', branch: 'Release apps' },
+      { id: 'android', cells: ['Release apps / Android', 'running'], tone: 'running', branch: 'Release apps' },
+      { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok' },
+    ];
+    hosts.focused_ids = ['android'];
+    paint({ view, onFocus: vi.fn() });
 
+    const parent = screen.getByRole('button', { name: 'Release apps' });
+    expect(parent.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Focus Release apps / iOS' })).toBeTruthy();
+    expect(screen.getByText('Android')).toBeTruthy();
+
+    fireEvent.click(parent);
+    expect(parent.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('button', { name: 'Focus Release apps / iOS' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Focus Publish docs' })).toBeTruthy();
+  });
   // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: selecting a job only
   // tinted its first cell, so the table looked like a cell picker instead of a row picker.
   it('paints the selected state across the whole job row', () => {

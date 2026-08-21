@@ -237,7 +237,7 @@
   #{:id :seq :created-at})
 
 (def live-column-keys "Every key one declared table column may carry." #{:id :label :align})
-(def live-row-keys "Every key one table row may carry." #{:id :cells :tone})
+(def live-row-keys "Every key one table row may carry." #{:id :cells :tone :branch})
 (def live-stat-keys "Every key one stat may carry." #{:id :label :value-text :tone})
 (def live-step-keys "Every key one step may carry." #{:id :label :tone :detail :value})
 (def live-link-keys "Every key one link may carry." #{:id :label :target-kind :target :tone})
@@ -519,6 +519,7 @@
 ;; A field — the leaf that holds one answer
 
 (s/def ::id non-blank-string?)
+(s/def ::branch non-blank-string?)
 (s/def ::name non-blank-string?)
 ;; One dispatch key, two vocabularies: a form field and a live node can never be
 ;; mistaken for each other, because neither multimethod has a method for the
@@ -886,7 +887,8 @@
          non-empty?
          #(apply distinct? (map :id %))))
 
-(s/def ::row (s/and #(closed? live-row-keys %) (s/keys :req-un [::id ::cells] :opt-un [::tone])))
+(s/def ::row
+  (s/and #(closed? live-row-keys %) (s/keys :req-un [::id ::cells] :opt-un [::tone ::branch])))
 ;; A node's `:rows` are everything the table HOLDS; `:max-patch-rows` is the
 ;; materializer's refusal, for the same reason `::lines` carries the window.
 (s/def ::rows (s/coll-of ::row :kind vector? :max-count (long (:max-rows table-defaults))))
