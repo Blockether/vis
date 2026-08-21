@@ -385,9 +385,10 @@ describe('what a run says about its own layout', () => {
     expect(headline.parentElement?.className).not.toContain('flex');
   });
 
-  // Regression, reported from the app: interrupt removed the live panel but never
-  // re-read the transcript, so the record filed by that stop stayed invisible.
-  it('announces a closed record so its transcript row can be re-read', async () => {
+  // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: interrupt
+  // removed the live panel, then its one transcript read raced the running block
+  // persisting the record, so no artifact row appeared.
+  it('re-reads through the handoff from a closed view to its transcript artifact', async () => {
     let receive: ((event: SseEvent) => void) | null = null;
     const client = { liveViews: () => Promise.resolve([opened()]) } as unknown as GatewayClient;
     const subscriptions = {
@@ -406,16 +407,23 @@ describe('what a run says about its own layout', () => {
 
     render(<Probe />);
     await waitFor(() => expect(screen.getByText('1')).toBeTruthy());
-    act(() =>
-      receive?.({
-        type: LIVE_VIEW_CLOSE_EVENT,
-        view_id: opened().id,
-        result: { artifact_id: 'record-1' },
-      }),
-    );
+    vi.useFakeTimers();
+    try {
+      act(() =>
+        receive?.({
+          type: LIVE_VIEW_CLOSE_EVENT,
+          view_id: opened().id,
+          result: { artifact_id: 'record-1' },
+        }),
+      );
 
-    expect(onRecordFiled).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('0')).toBeTruthy();
+      expect(onRecordFiled).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('0')).toBeTruthy();
+      act(() => vi.advanceTimersByTime(8_000));
+      expect(onRecordFiled).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

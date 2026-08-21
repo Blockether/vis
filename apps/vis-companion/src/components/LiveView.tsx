@@ -632,19 +632,29 @@ export function useLiveViews(
     const stopConnection = subscriptions.subscribeConnection((connected) => {
       if (connected) reload();
     });
+    const recordRefreshTimers: ReturnType<typeof setTimeout>[] = [];
+    const revealRecord = () => {
+      onRecordFiled?.();
+      // A close on the gateway thread files into the running block's collector
+      // immediately, but that collector reaches the persisted iteration only when
+      // the block returns. The close frame can therefore beat one transcript read.
+      // Re-read across that short handoff instead of making the vanished live panel
+      // the only evidence that the record exists.
+      for (const delay of [250, 1_000, 3_000, 8_000]) {
+        recordRefreshTimers.push(setTimeout(() => onRecordFiled?.(), delay));
+      }
+    };
     const stopEvents = subscriptions.subscribeSession(sid, (event) => {
       if (!isLiveViewEvent(event)) return;
       setViews((current) => applyLiveViewEvent(current, event));
-      // The close is published only after its record has been attached to the
-      // iteration. The panel disappearing must therefore trigger the transcript
-      // read that makes that durable row visible on this already-open screen.
-      if (event.type === LIVE_VIEW_CLOSE_EVENT) onRecordFiled?.();
+      if (event.type === LIVE_VIEW_CLOSE_EVENT) revealRecord();
     });
     return () => {
       cancelled = true;
       controller.abort();
       stopConnection();
       stopEvents();
+      for (const timer of recordRefreshTimers) clearTimeout(timer);
     };
   }, [client, sid, subscriptions, onRecordFiled]);
 
