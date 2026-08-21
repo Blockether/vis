@@ -104,10 +104,10 @@ export function AnchoredPanel({
 const BAND = 'px-3 py-2 font-mono text-chip font-bold uppercase tracking-[0.08em]';
 
 /**
- * The one question you cannot skip wears the Blockether yellow, and a menu spends
- * that colour exactly once — every other band in it is quiet.
+ * Every primary menu heading uses the same dark title band as a dialog. The accent
+ * belongs to the heading's verb, not to the whole strip behind it.
  */
-const LOUD = 'border-b-2 border-warn-strong bg-accent text-accent-foreground';
+const LOUD = 'border-b-2 border-dialog-title bg-dialog-title text-dialog-title-foreground';
 const QUIET = 'border-b border-dialog-edge bg-panel-2 text-dialog-hint';
 
 /**
@@ -153,11 +153,14 @@ export function Menu({
  */
 export function MenuHeading({
   tone = 'loud',
+  action,
   onClose,
   closeLabel,
   children,
 }: {
   tone?: 'loud' | 'quiet';
+  /** The heading's one primary verb, before its way out. */
+  action?: ReactNode;
   children: ReactNode;
 } & (
   | {
@@ -183,6 +186,7 @@ export function MenuHeading({
     // a band of one height.
     <header className={`flex min-h-12 shrink-0 items-stretch mouse:min-h-9 ${skin}`}>
       <p className={`${BAND} min-w-0 flex-1 self-center truncate`}>{children}</p>
+      {action && <span className="flex shrink-0 items-center px-2">{action}</span>}
       <CloseButton isBand label={closeLabel} onClick={onClose} />
     </header>
   );
@@ -231,6 +235,7 @@ export function MenuBack({
  */
 export function MenuItem({
   title,
+  meta,
   hint,
   badge,
   icon,
@@ -239,16 +244,13 @@ export function MenuItem({
   onSelect,
 }: {
   title: string;
+  /** Supporting fact on the title line; the hint remains its own line. */
+  meta?: string;
   hint?: string;
   badge?: string;
   icon?: ReactNode;
   tone?: 'default' | 'danger';
-  /**
-   * A SECOND verb on the same row — the trash beside a project you can also choose.
-   * Buttons cannot nest, so the row splits into a pressable half and this one; the
-   * hairline moves to the wrapper so the two halves still read as one row. Without
-   * it the row is a plain button, exactly as before.
-   */
+  /** A second verb beside the row; buttons cannot nest. */
   action?: ReactNode;
   /** Receives the row itself, so a sheet can be anchored on what opened it. */
   onSelect: (anchor: HTMLElement) => void;
@@ -275,10 +277,13 @@ export function MenuItem({
         </span>
       )}
       <span className="min-w-0 flex-1">
-        <span
-          className={`block truncate font-mono text-ui font-bold ${danger ? 'text-err' : 'text-white'}`}
-        >
-          {title}
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span
+            className={`block min-w-0 flex-1 truncate font-mono text-ui font-bold ${danger ? 'text-err' : 'text-white'}`}
+          >
+            {title}
+          </span>
+          {meta && <span className="shrink-0 font-mono text-meta text-dialog-hint">{meta}</span>}
         </span>
         {hint && <span className="mt-0.5 block font-mono text-meta text-dialog-hint">{hint}</span>}
       </span>

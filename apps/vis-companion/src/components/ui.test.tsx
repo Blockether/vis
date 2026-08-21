@@ -3383,7 +3383,7 @@ describe("the way out wears the ink of its band", () => {
         Projects · tower
       </MenuHeading>,
     );
-    expect(menu).toContain("text-accent-foreground");
+    expect(menu).toContain("text-dialog-title-foreground");
 
     const dialog = renderToStaticMarkup(
       <DialogHeader

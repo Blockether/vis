@@ -26,6 +26,7 @@ import type { MenuPosition } from '../lib/anchored-menu';
 import { ChevronIcon, PencilIcon, ProjectsIcon, TrashIcon } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { BrowseEntry } from '../lib/types';
+import { homeifyPath } from '../lib/path';
 
 /** How many crumbs stay on screen. A path too long for 390px elides from the LEFT. */
 const CRUMB_TAIL = 3;
@@ -310,6 +311,11 @@ export function ManageProjectsSheet({
           entrance for a list one tap away from the menu that opened it. */}
       {!adding && (
         <MenuHeading
+          action={
+            <Button variant="primary" density="compact" onClick={() => setAdding(true)}>
+              New project…
+            </Button>
+          }
           onClose={onCancel}
           closeLabel={`Close projects on ${label}`}
         >{`Projects · ${label}`}</MenuHeading>
@@ -330,9 +336,10 @@ export function ManageProjectsSheet({
                   key={entry.root}
                   icon={<ProjectsIcon className="size-4" />}
                   title={entry.name}
-                  hint={`${entry.count} ${entry.count === 1 ? 'transcript' : 'transcripts'}${
+                  meta={`${entry.count} ${entry.count === 1 ? 'transcript' : 'transcripts'}${
                     entry.live > 0 ? `, ${entry.live} running` : ''
-                  } · ${homeify(entry.root, home) || entry.root}`}
+                  }`}
+                  hint={homeifyPath(entry.root) || entry.root}
                   badge={entry.root === startAt ? 'current' : undefined}
                   onSelect={() => onChoose(entry.root)}
                   action={
@@ -348,13 +355,6 @@ export function ManageProjectsSheet({
                 />
               ))
             )}
-          </div>
-          <div className={`shrink-0 border-t border-dialog-edge bg-panel-2 py-2 ${SHEET_EDGE}`}>
-            <div className="flex items-center justify-end">
-              <Button variant="secondary" onClick={() => setAdding(true)}>
-                New project…
-              </Button>
-            </div>
           </div>
         </>
       ) : (

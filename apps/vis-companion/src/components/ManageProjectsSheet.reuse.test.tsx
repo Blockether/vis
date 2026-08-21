@@ -440,6 +440,18 @@ describe("the path band", () => {
 // the gateway's folder browser — an empty list that filled in one network round-trip
 // later, with no project rows and no trash beside them, and no way back to the inventory.
 describe("the projects mark opens the inventory", () => {
+  it("puts creation in the dark heading and gives each path its own line", async () => {
+    sheet();
+    const create = screen.getByRole("button", { name: "New project…" });
+    const heading = create.closest("header")!;
+    expect(heading).toHaveClass("bg-dialog-title");
+
+    const row = await screen.findByRole("menuitem", { name: /vis/ });
+    expect(row.textContent).toContain("3 transcripts, 1 running");
+    const path = screen.getByText("~/code/vis");
+    expect(path).toHaveClass("block");
+    expect(path.parentElement).toBe(row.querySelector("span.min-w-0.flex-1"));
+  });
   it("lists the machine's projects, each with its trash, before any browse", async () => {
     const { client, onRemove } = sheet();
 
