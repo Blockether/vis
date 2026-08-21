@@ -463,6 +463,17 @@ def test_a_push_at_a_node_the_view_never_declared_is_refused():
     assert "ghost" in str(raised.value)
 
 
+def test_a_view_may_answer_the_model_with_an_optimized_string():
+    view = vis.live("Scan", [vis.status("now", "reading")])
+    result = view.close(
+        summary="the durable human-facing ending",
+        model_result="Scan complete: 12 files checked, no findings.",
+    )
+
+    assert result == "Scan complete: 12 files checked, no findings."
+    assert view.close() == result
+
+
 def test_a_view_that_ended_answers_its_verdict_rather_than_vanishing():
     view = vis.live("Scan", [vis.status("now", "reading")])
     verdict = view.close(reason="interrupted", summary="the human stopped watching")

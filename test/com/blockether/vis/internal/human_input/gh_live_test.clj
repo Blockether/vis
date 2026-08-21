@@ -46,7 +46,11 @@
                   (let [envelope (if (= "open" (get op "op"))
                                    (assoc op "view" (assoc (get op "view") "session_id" session-id))
                                    (assoc op "view_id" @view-id))
-                        answer (hi/live-dispatch envelope)]
+                        final-view (when (= "close" (get op "op"))
+                                     (:view (hi/live-dispatch {"op" "state" "view_id" @view-id})))
+                        answer (cond-> (hi/live-dispatch envelope)
+                                 final-view
+                                 (assoc :final-view final-view))]
 
                     (vreset! view-id (:view-id answer))
                     answer))
@@ -57,18 +61,18 @@
 (defdescribe
   gh-extension-live-test
   (it
-    "accepts every op the gh extension says, and ends in the picture the model reads"
+    "accepts every op the gh extension says, keeps the picture, and returns only its string"
     (let [ops
           (fixture ops-file)
 
           answers
           (replay ops)
 
-          verdict
+          result
           (:result (last answers))
 
           view
-          (:view verdict)
+          (:final-view (last answers))
 
           opened-view
           (:view (first answers))
@@ -78,8 +82,8 @@
 
       ;; Every push before the close was accepted: the wire the extension speaks IS this one.
       (expect (every? :is-open (butlast answers)))
-      (expect (= :completed (:reason verdict)))
-      (expect (str/starts-with? (:summary verdict) "6 of 6 jobs finished, 1 failed"))
+      (expect (string? result))
+      (expect (str/starts-with? result "6 of 6 jobs finished, 1 failed"))
       ;; Seven distinct answers: overview, selected-job details, and the run link.
       (expect (= ["run" "progress" "score" "jobs" "steps" "output" "links"]
                  (mapv :id (:nodes view))))
@@ -124,19 +128,19 @@
       (expect (str/ends-with? (last (:lines (node view "output")))
                               "##[error]Process completed with exit code 1."))
       (expect (= ["run" "95742028770"] (mapv :id (:links (node view "links")))))))
-  (it "renders the same picture into the document the model reads"
-      (let [verdict
-            (:result (last (replay (fixture ops-file))))
+  (it "renders the preserved human picture into the durable document"
+      (let [view
+            (:final-view (last (replay (fixture ops-file))))
 
             document
-            (live/->markdown (:view verdict))]
+            (live/->markdown view)]
 
         (expect (str/includes? document "6 of 6 jobs finished, 1 failed"))
         (expect (str/includes? document "tests / vis-agent + vis-contract (PyPI packages)"))
         (expect (str/includes? document "exit code 1"))))
   (it "paints the picture the extension's own host painted, key for key"
       (let [engine
-            (:view (:result (last (replay (fixture ops-file)))))
+            (:final-view (last (replay (fixture ops-file))))
 
             outside
             (fixture picture-file)]

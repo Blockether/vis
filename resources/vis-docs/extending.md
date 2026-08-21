@@ -825,16 +825,22 @@ host call per window rather than one per iteration. Every read (`view.state()`,
 `view.is_interrupted`) and `view.close(...)` flush first, so nothing you wrote is
 ever behind what you read.
 
-`view.close(reason=…, summary=…, error=…, artifact_id=…, focus_snapshots=…)` ends the view and
-answers **the verdict, as data**: `is_completed`, the `reason` it ended,
-`is_from_human` with the `note` when a person stopped it, the finished picture
-(`view`, plus `elided` counts for anything a budget cut), and the `summary` the
-extension chose. That is what the model reads — never a
-rendering of it. Closing twice answers the first verdict, so a `finally` that
-closes what an interrupt already closed cannot overwrite the reason the human
-chose. Used as a context manager, the view closes itself, and an exception
-inside closes it `failed` with the error rather than leaving a spinner up
-forever.
+`view.close(reason=…, summary=…, error=…, artifact_id=…, focus_snapshots=…,
+model_result=…)` ends the view. By default it answers **the verdict, as data**:
+`is_completed`, the `reason` it ended, `is_from_human` with the `note` when a
+person stopped it, the finished picture (`view`, plus `elided` counts for
+anything a budget cut), and the `summary` the extension chose.
+
+Pass a non-blank `model_result` string when the model needs a smaller semantic
+answer than the human-facing picture. That exact string is the only close result
+returned to the extension—and therefore the only value `print(result)` sends to
+the model. The complete verdict and picture still close the live surfaces and
+remain in the durable artifact; they are not also fed to the model. A human stop
+that races the extension wins before this close and returns its structured
+interruption verdict, including the person's note, so optimization cannot hide
+that intervention. Closing twice answers the first result, so a `finally` cannot
+overwrite it. Used as a context manager, the view closes itself; an exception
+inside closes it `failed` with the error rather than leaving a spinner forever.
 
 A finished artifact has no extension process left to answer a focusable-table
 click. When archived rows must remain inspectable, `focus_snapshots` seals the

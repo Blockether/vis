@@ -1673,11 +1673,12 @@
    flag and the picture are the ENGINE's: what the human watched is read from the
    record, never claimed by whoever is ending it. So is the human's own stop:
    `:is-from-human` and `:note` are ENGINE stamps too, because no run gets to
-   claim a person ended it."
-  (conj (wire-keys (reduce disj
+   claim a person ended it. `:model-result` is the optional compact string returned
+   to the model while the complete verdict remains human-facing."
+  (into (wire-keys (reduce disj
                            hi-spec/live-result-keys
                            #{:view-id :is-completed :view :elided :is-from-human :note}))
-        :focus-snapshots))
+        (wire-keys #{:focus-snapshots :model-result})))
 
 (defn- live-entry
   "The pending entry of live view `view-id`, or nil when no live view is open
@@ -1938,14 +1939,16 @@
                     false)))))
 
 (defn close-live!
-  "End live view `view-id` and return its verdict — the ONE thing the model
-   reads. nil when the view was already closed, so a `finally` closing what an
-   interrupt already closed is a no-op rather than a second verdict.
+  "End live view `view-id` and return what the model should read. nil when the
+   view was already closed, so a `finally` closing what an interrupt already
+   closed is a no-op rather than a second result.
 
    `ending` says how it ended: `:reason` (`completed` by default), `:summary`,
-   `:error`, `:artifact-id`, and optional archive-only `:focus-snapshots`. `human`
-   is the person who stopped it — `{:note …}`, which only [[interrupt-live!]]
-   passes, because a run does not get to claim a human ended it.
+   `:error`, `:artifact-id`, optional archive-only `:focus-snapshots`, and optional
+   compact string `:model-result`. The full verdict always remains in the artifact
+   and human-facing close event. `human` is the person who stopped it — `{:note …}`,
+   which only [[interrupt-live!]] passes, because a run does not get to claim a
+   human ended it.
 
    The close SETTLES the view: the record it has been writing since `open` becomes
    an artifact this session owns, and its id rides back in the verdict — so the
@@ -1980,10 +1983,16 @@
                                             java.nio.charset.StandardCharsets/UTF_8))
                           (long hi-spec/live-focus-snapshot-bytes))
                    (invalid-live-view! "focus snapshots exceed the 1000000-byte artifact limit"))
-               verdict (live-result @cell
-                                    (dissoc ending :focus-snapshots :focus_snapshots)
-                                    human
-                                    invalid-live-view!)
+               verdict
+               (live-result
+                 @cell
+                 (dissoc ending :focus-snapshots :focus_snapshots :model-result :model_result)
+                 human
+                 invalid-live-view!)
+               compact-result (when (or (contains? ending :model-result)
+                                        (contains? ending "model_result"))
+                                (or (trimmed (pick* ending :model-result))
+                                    (invalid-live-view! "model_result must be a non-blank string")))
                ;; Built BEFORE the registry drops the view, so a refusal leaves the
                ;; view open and nameable rather than stranding whoever is holding it;
                ;; REGISTERED after, inside the branch that won the close, so a second
@@ -2006,42 +2015,34 @@
                                       (or mpl-capture/*attachment-sink* (:attachment-sink entry))]
                               (mpl-capture/record-attachment! attachment))))
                    artifact-id (when filed? (:id artifact))
-                   result (cond-> verdict
-                            artifact-id
-                            (assoc :artifact-id artifact-id))]
+                   artifact-result (cond-> verdict
+                                     artifact-id
+                                     (assoc :artifact-id artifact-id))
+                   model-result (or compact-result artifact-result)]
 
-               ;; The trailer carries the SAME verdict that is delivered and
-               ;; published, artifact and all: `live-ended` reads the record for a
-               ;; view the human interrupted, and it must not learn less than the
-               ;; thread that was holding it.
-               ;; The wall the open LIFTED is the block's again the moment the
-               ;; view stops being watched.
+               ;; The trailer and event carry the complete verdict for durable and
+               ;; human-facing readers. Only the blocked extension receives the compact
+               ;; model result when it explicitly supplied one.
                (when-let [release (:wall-hold entry)]
                  (release))
-               ;; Focus snapshots belong only to the durable record. They are not
-               ;; copied into the model verdict or broadcast close event.
                (live-sink/close! (:file entry)
-                                 (cond-> result
+                                 (cond-> artifact-result
                                    (seq snapshots)
                                    (assoc :focus-snapshots snapshots)))
-               (deliver (:promise entry) result)
-               ;; `:session-id` rides on every live event for the same reason it
-               ;; rides on a form's close: by the time this one is published the
-               ;; entry is out of the registry, and a listener that has to route
-               ;; the ending to a session can no longer look it up.
+               (deliver (:promise entry) model-result)
                (publish! (:channel-ids entry)
                          {:op :human-input/live-close
                           :view-id view-id
                           :session-id (:session-id entry)
-                          :result result})
+                          :result artifact-result})
                (tel/log! {:level :debug
                           :id ::live-closed
                           :data {:view-id view-id
-                                 :reason (:reason result)
-                                 :is-from-human (:is-from-human result)
+                                 :reason (:reason artifact-result)
+                                 :is-from-human (:is-from-human artifact-result)
                                  :artifact-id artifact-id}
                           :msg "Live view closed"})
-               result))))))))
+               model-result))))))))
 
 (defn interrupt-live!
   "End live view `view-id` because a human stopped watching — Escape in the

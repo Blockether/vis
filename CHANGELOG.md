@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- feat(live,extensions): `LiveView.close(model_result=…)` can now return one compact semantic string to the model while preserving the complete structured verdict, final picture, and focus snapshots exclusively for human-facing close events and the durable artifact. GitHub Actions watches use this path, so the model receives only their optimized one-line outcome instead of the full jobs, steps, and log structure.
+
 - fix(live,companion,extensions): finished live artifacts now retain a bounded picture for every row of a focusable table. Reopened GitHub runs can switch jobs locally to inspect each job's final steps and log after the watcher process has exited; these archive-only pictures stay out of the model verdict and live close broadcast.
 
 - refactor(extensions): the GitHub live view no longer renders a run-wide Activity feed that duplicated job states and selected-job steps. The job table remains the run overview, while selecting a row gives that job's steps and log; provider retries remain visible in the run status.

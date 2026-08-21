@@ -1,4 +1,4 @@
-"""gh — watch a GitHub Actions run on a live view, and hand the model the picture at the end.
+"""gh — watch a GitHub Actions run live, then hand the model one compact string.
 
 A CI run is the archetype a live view exists for: it takes fifteen minutes, the extension can see
 exactly when it ends, a person wants to WATCH it, and the model needs one paragraph afterwards.
@@ -780,17 +780,20 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
         if terminal_failure:
             return view.close(
                 reason="failed",
-                summary=_summary(shape, superseded, terminal_failure),
                 error=terminal_failure,
                 focus_snapshots=focus_snapshots,
+                model_result=_summary(shape, superseded, terminal_failure),
             )
         if superseded:
             return view.close(
                 reason="superseded",
-                summary=_summary(shape, superseded),
                 focus_snapshots=focus_snapshots,
+                model_result=_summary(shape, superseded),
             )
-        return view.close(summary=_summary(shape), focus_snapshots=focus_snapshots)
+        return view.close(
+            focus_snapshots=focus_snapshots,
+            model_result=_summary(shape),
+        )
 
 
 def gh_watch_run(run=None, repo=None):

@@ -1044,10 +1044,11 @@ class LiveView:
     one, so a per-row progress counter costs one wire row per tick rather than
     one per write.
 
-    Closing is the point: `close()` answers the verdict the model reads. Used as
-    a context manager the view closes itself — `completed` on the way out, and
-    `failed` carrying the error when the body raised, because a run that died
-    mid-way still owes the model the picture the human was watching.
+    Closing is the point: `close()` answers either the structured verdict or the
+    compact `model_result` the extension chose. Used as a context manager the
+    view closes itself — `completed` on the way out, and `failed` carrying the
+    error when the body raised, because a run that died mid-way still owes the
+    model what happened.
     """
 
     def __init__(self, request, flush_ms=None):
@@ -1189,10 +1190,14 @@ class LiveView:
                 pass
         return not self._is_open
 
+    def _result_field(self, key):
+        """One structured-verdict field, absent for a compact model result."""
+        return self._result.get(key) if isinstance(self._result, dict) else None
+
     @property
     def reason(self):
-        """Why the view ended, or None while it is open."""
-        return (self._result or {}).get("reason")
+        """Why the view ended, or None while open or after a compact result."""
+        return self._result_field("reason")
 
     @property
     def is_from_human(self):
@@ -1202,7 +1207,7 @@ class LiveView:
         left unanswered by stopping it — and this is how the run finds out that is
         what happened.
         """
-        return bool((self._result or {}).get("is_from_human"))
+        return bool(self._result_field("is_from_human"))
 
     @property
     def note(self):
@@ -1211,11 +1216,11 @@ class LiveView:
         The stop always lands; the note says WHY in their own words, and the same
         words reach the model in the verdict.
         """
-        return (self._result or {}).get("note")
+        return self._result_field("note")
 
     @property
     def result(self):
-        """The verdict, once the view has ended."""
+        """The structured verdict or compact model result, once ended."""
         return self._result
 
     # -- nodes ----------------------------------------------------------------
@@ -1313,14 +1318,19 @@ class LiveView:
         error=None,
         artifact_id=None,
         focus_snapshots=None,
+        model_result=None,
     ):
-        """End the view and answer the verdict the model reads.
+        """End the view and answer the result the model reads.
+
+        ``model_result`` is an optional compact string returned instead of the
+        full structured verdict. The finished picture and close metadata remain
+        in the durable artifact and on human-facing close events.
 
         ``focus_snapshots`` are finished pictures keyed by a focusable table and
         its selected rows. They are sealed only into the artifact record, so a
         reopened run can still switch rows without keeping its extension alive.
 
-        Closing twice is a no-op answering the first verdict: a `finally` that
+        Closing twice is a no-op answering the first result: a `finally` that
         closes what an interrupt already closed must not overwrite the reason
         the human chose.
         """
@@ -1336,6 +1346,7 @@ class LiveView:
             "error": error,
             "artifact_id": artifact_id,
             "focus_snapshots": focus_snapshots,
+            "model_result": model_result,
         }
         answer = self._settle(
             self._call(
@@ -1586,7 +1597,7 @@ class _LiveRecorder:
         elif action == "close":
             ending = envelope.get("ending") or {}
             reason = ending.get("reason") or "completed"
-            self._result = {
+            verdict = {
                 "view_id": self.view_id,
                 "reason": reason,
                 "is_completed": reason == "completed",
@@ -1595,9 +1606,14 @@ class _LiveRecorder:
                 "view": self.picture(),
                 "elided": {},
             }
-            self._result.update(
-                {k: self._copy(v) for k, v in ending.items() if k not in self._result}
+            verdict.update(
+                {
+                    k: self._copy(v)
+                    for k, v in ending.items()
+                    if k not in verdict and k != "model_result"
+                }
             )
+            self._result = ending.get("model_result", verdict)
             answer = {"view_id": self.view_id, "is_open": False, "result": self._result}
         else:
             raise AssertionError(f"unsupported test live envelope: {envelope!r}")

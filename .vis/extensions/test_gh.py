@@ -276,15 +276,16 @@ def test_running_focus_waits_while_finished_focus_gets_its_log(watched):
 
 
 def test_the_settled_pane_is_one_photograph(watched):
-    recorder, verdict = watched
-    lines = node(verdict["view"], "output")["lines"]
+    recorder, result = watched
+    lines = node(recorder.picture(), "output")["lines"]
     written = [op for op in recorder.patched() if op.get("node_id") == "output"]
 
     # The feed is the story WHILE it runs; what is LEFT is the log of the job that has to be
-    # acted on, asked for at the model's own budget. The record still holds every line.
+    # acted on. The model receives only the compact semantic ending below.
     assert any(op["op"] == "clear" for op in written)
     assert lines[0] == "── tests / vis-agent + vis-contract (PyPI packages) · log"
     assert lines[1:] == failing_log()
+    assert result.startswith("6 of 6 jobs finished, 1 failed")
     assert ("95742028770", gh.LOG_TAIL_LINES) in recorder.asked
     snapshots = recorder.said[-1]["ending"]["focus_snapshots"]
     assert [one["focused_ids"] for one in snapshots] == [
@@ -352,7 +353,7 @@ def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
         asked.append((job_id, lines))
         return [f"log for {job_id}"]
 
-    verdict = gh.watch(
+    result = gh.watch(
         TITLE,
         DESCRIPTION,
         poll,
@@ -365,7 +366,8 @@ def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
         if op.get("node_id") == "jobs" and "focused_ids" in op
     ]
     assert focus_ops[-1]["focused_ids"] == [selected]
-    assert node(verdict["view"], "output")["lines"] == [
+    assert result.startswith("6 of 6 jobs finished, 1 failed")
+    assert node(recorder.picture(), "output")["lines"] == [
         "── lint / clj-kondo · log",
         f"log for {selected}",
     ]
@@ -390,7 +392,7 @@ def test_a_focus_change_refreshes_details_even_while_github_is_unavailable(recor
             recorder.focus("jobs", [selected])
         raise RuntimeError("GitHub unavailable in regression fixture")
 
-    verdict = gh.watch(
+    result = gh.watch(
         TITLE,
         DESCRIPTION,
         poll,
@@ -398,19 +400,22 @@ def test_a_focus_change_refreshes_details_even_while_github_is_unavailable(recor
     )
 
     assert recorder.node("jobs")["focused_ids"] == [selected]
-    assert node(verdict["view"], "steps")["steps"][0]["label"] == "Set up job"
-    assert node(verdict["view"], "output")["lines"] == [
+    assert result.startswith("Stopped watching after GitHub failed")
+    assert node(recorder.picture(), "steps")["steps"][0]["label"] == "Set up job"
+    assert node(recorder.picture(), "output")["lines"] == [
         "── tests / vis-agent + vis-contract (PyPI packages) · log",
         f"log for {selected}",
     ]
 
 
-def test_the_picture_is_the_one_the_human_watched(watched):
-    _, verdict = watched
+def test_the_model_gets_only_the_optimized_string_while_the_artifact_keeps_the_picture(
+    watched,
+):
+    recorder, result = watched
 
-    assert verdict["is_completed"] is True
-    assert verdict["summary"].startswith("6 of 6 jobs finished, 1 failed")
-    assert_tree(verdict["view"], fixture("view.json"))
+    assert isinstance(result, str)
+    assert result.startswith("6 of 6 jobs finished, 1 failed")
+    assert_tree(recorder.picture(), fixture("view.json"))
 
 
 def test_the_ops_are_the_ones_the_engine_replays(watched):
@@ -463,15 +468,14 @@ def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
     # overtook a running CI run, the settled record said "finished" while its rows
     # remained queued/in progress forever. Close it as superseded and make every
     # unfinished row explicitly superseded instead of preserving a stale action state.
-    verdict = gh.watch(TITLE, DESCRIPTION, poll, superseded_by=lambda: newer)
+    result = gh.watch(TITLE, DESCRIPTION, poll, superseded_by=lambda: newer)
 
     assert len(polls) == 1
-    assert verdict["is_completed"] is False
-    assert verdict["reason"] == "superseded"
-    assert verdict["summary"].startswith("Superseded by run 32146699999")
-    assert node(verdict["view"], "run")["text"] == "Superseded by newer run 32146699999"
-    assert node(verdict["view"], "run")["tone"] == "idle"
-    rows = node(verdict["view"], "jobs")["rows"]
+    assert result.startswith("Superseded by run 32146699999")
+    picture = recorder.picture()
+    assert node(picture, "run")["text"] == "Superseded by newer run 32146699999"
+    assert node(picture, "run")["tone"] == "idle"
+    rows = node(picture, "jobs")["rows"]
     assert [
         row["cells"][1] for row in rows if row["id"] in {"95742028721", "95742028781"}
     ] == [
@@ -479,13 +483,13 @@ def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
         "superseded",
     ]
     assert all(row["tone"] != "running" for row in rows)
-    assert node(verdict["view"], "score")["stats"][-1] == {
+    assert node(picture, "score")["stats"][-1] == {
         "id": "queued",
         "value_text": "0",
         "label": "queued",
         "tone": "idle",
     }
-    assert node(verdict["view"], "links")["links"][-1]["id"] == "newer-run"
+    assert node(picture, "links")["links"][-1]["id"] == "newer-run"
 
 
 def test_a_transient_github_failure_keeps_the_watch_alive(recorder):
@@ -504,12 +508,13 @@ def test_a_transient_github_failure_keeps_the_watch_alive(recorder):
 
     # Regression: one temporary CLI, network, or API failure ended the view while the run
     # was still alive. GitHub outages are state too: retain the last picture and retry.
-    verdict = gh.watch(TITLE, DESCRIPTION, poll)
+    result = gh.watch(TITLE, DESCRIPTION, poll)
 
-    assert verdict["is_completed"] is True
+    assert result.startswith("6 of 6 jobs finished, 1 failed")
     assert not polls
-    assert all(one["id"] != "activity" for one in verdict["view"]["nodes"])
-    assert node(verdict["view"], "run")["text"].startswith("6 of 6 jobs finished")
+    picture = recorder.picture()
+    assert all(one["id"] != "activity" for one in picture["nodes"])
+    assert node(picture, "run")["text"].startswith("6 of 6 jobs finished")
 
 
 def test_a_permanently_unavailable_run_stops_after_bounded_retries(recorder):
@@ -521,12 +526,11 @@ def test_a_permanently_unavailable_run_stops_after_bounded_retries(recorder):
             return fixture("run-mid.json")
         raise RuntimeError("gh run view failed: run was deleted")
 
-    verdict = gh.watch(TITLE, DESCRIPTION, poll)
+    result = gh.watch(TITLE, DESCRIPTION, poll)
 
     assert len(attempts) == gh.MAX_CONSECUTIVE_POLL_FAILURES + 1
-    assert verdict["is_completed"] is False
-    assert verdict["summary"].startswith("Stopped watching after GitHub failed")
-    assert node(verdict["view"], "run")["tone"] == "error"
+    assert result.startswith("Stopped watching after GitHub failed")
+    assert node(recorder.picture(), "run")["tone"] == "error"
 
 
 def test_a_watch_has_no_clock_of_its_own(recorder, monkeypatch):

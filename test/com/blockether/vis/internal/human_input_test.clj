@@ -1721,6 +1721,35 @@
                        (count (live-sink/read-range (live-sink/view-file (:session-id spec) view-id)
                                                     0
                                                     10)))))))))
+  (it "returns an explicit model result while preserving the full artifact verdict"
+      (recorded
+        (fn []
+          (let [spec
+                (live-spec {:id "now" :type "status" :text "Done"})
+
+                view
+                (hi/open-live! spec)
+
+                result
+                (hi/close-live! (:id view)
+                                {:summary "Human-facing close metadata"
+                                 :model-result "Build failed: linux-tests · Run tests"})
+
+                trailer
+                (:result (last (live-sink/read-range (live-sink/view-file (:session-id spec)
+                                                                          (:id view))
+                                                     0
+                                                     10)))]
+
+            (expect (= "Build failed: linux-tests · Run tests" result))
+            (expect (= "Human-facing close metadata" (:summary trailer)))
+            (expect (= "Done"
+                       (-> trailer
+                           :view
+                           :nodes
+                           first
+                           :text)))
+            (expect (nil? (:model-result trailer)))))))
   ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: finished
   ;; focusable rows lost their alternate detail pictures when the live writer exited.
   (it

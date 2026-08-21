@@ -418,7 +418,7 @@
   {
     "op": "close",
     "ending": {
-      "summary": "6 of 6 jobs finished, 1 failed — workflow **CI** on `main` · started **18 Aug 2026, 14:10 UTC** · in focus **tests / vis-agent + vis-contract (PyPI packages)**, finished · https://github.com/Blockether/vis/actions/runs/32146686161"
+      "model_result": "6 of 6 jobs finished, 1 failed — workflow **CI** on `main` · started **18 Aug 2026, 14:10 UTC** · in focus **tests / vis-agent + vis-contract (PyPI packages)**, finished · https://github.com/Blockether/vis/actions/runs/32146686161"
     }
   }
 ]

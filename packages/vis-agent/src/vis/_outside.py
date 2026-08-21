@@ -1035,8 +1035,10 @@ def live(envelope_json):
         _live_say([_live_apply(held["view"], one) for one in ops])
         held["seq"] += 1
         return json.dumps({"view_id": view_id, "is_open": True, "seq": held["seq"]})
-    verdict = _live_verdict(held, envelope.get("ending") or {})
-    held["result"] = verdict
+    ending_spec = envelope.get("ending") or {}
+    verdict = _live_verdict(held, ending_spec)
+    model_result = ending_spec.get("model_result", verdict)
+    held["result"] = model_result
     ending = verdict.get("summary") or verdict.get("error") or ""
     print(
         "== {} · {}{} ==".format(
@@ -1046,7 +1048,7 @@ def live(envelope_json):
         ),
         file=sys.stderr,
     )
-    return json.dumps({"view_id": view_id, "is_open": False, "result": verdict})
+    return json.dumps({"view_id": view_id, "is_open": False, "result": model_result})
 
 
 # -- The host itself ----------------------------------------------------------
