@@ -461,6 +461,7 @@ SkFWQS1ST09U
            (.setExecutable native true false)
            (spit powershell
                  (str "#!/bin/sh\n"
+                      "printf '%s\\n' 'Cannot invoke method in constrained language mode' >&2\n"
                       "case \"$*\" in *'::new('*|*'OutputEncoding'*) exit 1 ;; esac\n"
                       "printf '%s' '"
                       windows-pem
@@ -482,6 +483,7 @@ SkFWQS1ST09U
                  (io/file state "trust" "wsl-system-ca.pem")]
 
              (expect (zero? exit) output)
+             (expect (not (str/includes? output "constrained language mode")) output)
              (expect (= (str ubuntu-pem "\n" windows-pem) (slurp exported)))
              (expect (str/includes? output (str "SSL_CERT_FILE=" (.getAbsolutePath exported)))
                      output)

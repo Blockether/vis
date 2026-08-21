@@ -405,7 +405,7 @@ refresh_wsl_windows_ca_bundle() {
   elif command -v pwsh.exe >/dev/null 2>&1; then
     powershell="$(command -v pwsh.exe)"
   else
-    warn "WSL detected, but Windows PowerShell interop is unavailable; using the WSL trust store"
+    measure_log "Windows certificate export unavailable; using the WSL trust store"
     return 0
   fi
 
@@ -435,12 +435,12 @@ refresh_wsl_windows_ca_bundle() {
           "-----END CERTIFICATE-----"
         }
       }
-    ' | tr -d '\r' >>"$tmp" && [[ -s "$tmp" ]]; then
+    ' 2>/dev/null | tr -d '\r' >>"$tmp" && [[ -s "$tmp" ]]; then
     mv -f "$tmp" "$output"
     export_system_ca_bundle "$output"
   else
     rm -f "$tmp"
-    warn "could not export Windows root certificates; using the WSL trust store"
+    measure_log "Windows certificate export failed; using the WSL trust store"
   fi
 }
 
