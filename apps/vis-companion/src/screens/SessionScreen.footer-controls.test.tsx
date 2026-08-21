@@ -14,6 +14,13 @@ const toggle = (id: string, label: string, value: string, choices: string[]) => 
 });
 
 describe("composer response controls", () => {
+  it("keeps the footer compact while preserving the native safe area", () => {
+    const { container } = renderSessionScreen();
+    expect(container.querySelector("section > footer")).toHaveClass(
+      "pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))]",
+    );
+  });
+
   it("orders reasoning, verbosity, then fast mode and cycles verbosity", async () => {
     const user = userEvent.setup();
     const reasoning = toggle("reasoning_level", "Reasoning effort", "balanced", [
