@@ -366,6 +366,9 @@
           keytool
           (io/file java-bin "keytool")
 
+          keytool-calls
+          (io/file tmp "keytool-calls")
+
           trust-store
           (doto (io/file java-security "cacerts") (spit "store"))
 
@@ -384,38 +387,56 @@ SkFWQS1ST09U
           mac-bundle
           (doto (io/file tmp "mac-ca.pem") (spit mac-pem))]
 
-      (try
-        (io/copy (io/file "bin" "vis-agent") wrapper)
-        (.setExecutable wrapper true false)
-        (spit native
-              (str "#!/bin/sh\n" "printf 'ARGS=%s\\n' \"$*\"\n"
-                   "printf 'SSL_CERT_FILE=%s\\n' \"${SSL_CERT_FILE:-}\"\n"
-                   "cat \"$SSL_CERT_FILE\"\n"))
-        (.setExecutable native true false)
-        (spit keytool (str "#!/bin/sh\nprintf '%s' '" java-pem "'\n"))
-        (.setExecutable keytool true false)
-        (let [{:keys [exit output]}
-              (run-wrapper wrapper
-                           {"HOME" (.getAbsolutePath tmp)
-                            "VIS_HOME" (.getAbsolutePath (io/file tmp "state"))
-                            "JAVA_HOME" (.getAbsolutePath java-home)
-                            "VIS_SYSTEM_CA_CERT" ""
-                            "VIS_SYSTEM_TRUSTSTORE" ""
-                            "SSL_CERT_FILE" (.getAbsolutePath mac-bundle)}
-                           ["help"])
+      (try (io/copy (io/file "bin" "vis-agent") wrapper)
+           (.setExecutable wrapper true false)
+           (spit native
+                 (str "#!/bin/sh\n" "printf 'ARGS=%s\\n' \"$*\"\n"
+                      "printf 'SSL_CERT_FILE=%s\\n' \"${SSL_CERT_FILE:-}\"\n"
+                      "cat \"$SSL_CERT_FILE\"\n"))
+           (.setExecutable native true false)
+           (spit keytool
+                 (str "#!/bin/sh
+printf 'called\n' >> "
+                      (pr-str (.getAbsolutePath keytool-calls))
+                      "
+printf '%s' '"
+                      java-pem
+                      "'
+"))
+           (.setExecutable keytool true false)
+           (let [env
+                 {"HOME" (.getAbsolutePath tmp)
+                  "VIS_HOME" (.getAbsolutePath (io/file tmp "state"))
+                  "JAVA_HOME" (.getAbsolutePath java-home)
+                  "VIS_SYSTEM_CA_CERT" ""
+                  "VIS_SYSTEM_TRUSTSTORE" ""
+                  "SSL_CERT_FILE" (.getAbsolutePath mac-bundle)}
 
-              combined
-              (io/file tmp "state" "trust" "system-ca.pem")]
+                 first-run
+                 (run-wrapper wrapper env ["help"])
 
-          (expect (zero? exit) output)
-          (expect (str/includes? output
-                                 (str "-Djavax.net.ssl.trustStore=" (.getAbsolutePath trust-store)))
-                  output)
-          (expect (= (str mac-pem "
+                 second-run
+                 (run-wrapper wrapper env ["help"])
+
+                 combined
+                 (io/file tmp "state" "trust" "system-ca.pem")]
+
+             (expect (zero? (:exit first-run)) (:output first-run))
+             (expect (zero? (:exit second-run)) (:output second-run))
+             (expect (str/includes? (:output second-run)
+                                    (str "-Djavax.net.ssl.trustStore="
+                                         (.getAbsolutePath trust-store)))
+                     (:output second-run))
+             (expect (= (str mac-pem "
 " java-pem) (slurp combined)))
-          (expect (str/includes? output (str "SSL_CERT_FILE=" (.getAbsolutePath combined))) output))
-        (finally (doseq [file (reverse (file-seq tmp))]
-                   (io/delete-file file true)))))))
+             (expect (= "called
+" (slurp keytool-calls))
+                     "the cached bundle avoids a second keytool export")
+             (expect (str/includes? (:output second-run)
+                                    (str "SSL_CERT_FILE=" (.getAbsolutePath combined)))
+                     (:output second-run)))
+           (finally (doseq [file (reverse (file-seq tmp))]
+                      (io/delete-file file true)))))))
 
 
 (defdescribe
@@ -443,6 +464,9 @@ SkFWQS1ST09U
           powershell
           (io/file fake-path "powershell.exe")
 
+          powershell-calls
+          (io/file tmp "powershell-calls")
+
           ubuntu-pem
           "-----BEGIN CERTIFICATE-----\nVUJVTlRVLVJPT1Q=\n-----END CERTIFICATE-----\n"
 
@@ -461,34 +485,47 @@ SkFWQS1ST09U
            (.setExecutable native true false)
            (spit powershell
                  (str "#!/bin/sh\n"
+                      "printf 'called\\n' >> "
+                      (pr-str (.getAbsolutePath powershell-calls))
+                      "\n"
                       "printf '%s\\n' 'Cannot invoke method in constrained language mode' >&2\n"
                       "case \"$*\" in *'::new('*|*'OutputEncoding'*) exit 1 ;; esac\n"
                       "printf '%s' '"
                       windows-pem
                       "'\n"))
            (.setExecutable powershell true false)
-           (let [{:keys [exit output]}
-                 (run-wrapper wrapper
-                              {"HOME" (.getAbsolutePath tmp)
-                               "VIS_HOME" (.getAbsolutePath state)
-                               "WSL_DISTRO_NAME" "Ubuntu"
-                               "JAVA_HOME" (.getAbsolutePath (io/file tmp "no-java-home"))
-                               "SDKMAN_CANDIDATES_DIR" (.getAbsolutePath (io/file tmp "no-sdkman"))
-                               "VIS_SYSTEM_CA_CERT" ""
-                               "SSL_CERT_FILE" (.getAbsolutePath ubuntu-bundle)
-                               "PATH" (str (.getAbsolutePath fake-path) ":" (System/getenv "PATH"))}
-                              ["help"])
+           (let [env
+                 {"HOME" (.getAbsolutePath tmp)
+                  "VIS_HOME" (.getAbsolutePath state)
+                  "WSL_DISTRO_NAME" "Ubuntu"
+                  "JAVA_HOME" (.getAbsolutePath (io/file tmp "no-java-home"))
+                  "SDKMAN_CANDIDATES_DIR" (.getAbsolutePath (io/file tmp "no-sdkman"))
+                  "VIS_SYSTEM_CA_CERT" ""
+                  "SSL_CERT_FILE" (.getAbsolutePath ubuntu-bundle)
+                  "PATH" (str (.getAbsolutePath fake-path) ":" (System/getenv "PATH"))}
+
+                 first-run
+                 (run-wrapper wrapper env ["help"])
+
+                 second-run
+                 (run-wrapper wrapper env ["help"])
 
                  exported
-                 (io/file state "trust" "wsl-system-ca.pem")]
+                 (io/file state "trust" "system-ca.pem")]
 
-             (expect (zero? exit) output)
-             (expect (not (str/includes? output "constrained language mode")) output)
+             (expect (zero? (:exit first-run)) (:output first-run))
+             (expect (zero? (:exit second-run)) (:output second-run))
+             (expect (not (str/includes? (:output first-run) "constrained language mode"))
+                     (:output first-run))
              (expect (= (str ubuntu-pem "\n" windows-pem) (slurp exported)))
-             (expect (str/includes? output (str "SSL_CERT_FILE=" (.getAbsolutePath exported)))
-                     output)
-             (expect (str/includes? output (str "VIS_SYSTEM_CA_CERT=" (.getAbsolutePath exported)))
-                     output))
+             (expect (= "called\n" (slurp powershell-calls))
+                     "the cached bundle avoids a second Windows certificate export")
+             (expect (str/includes? (:output second-run)
+                                    (str "SSL_CERT_FILE=" (.getAbsolutePath exported)))
+                     (:output second-run))
+             (expect (str/includes? (:output second-run)
+                                    (str "VIS_SYSTEM_CA_CERT=" (.getAbsolutePath exported)))
+                     (:output second-run)))
            (finally (doseq [file (reverse (file-seq tmp))]
                       (io/delete-file file true)))))))
 
@@ -518,7 +555,42 @@ printf 'updated wrapper\n'
 "
 
           state
-          (io/file tmp "state")]
+          (io/file tmp "state")
+
+          trust-dir
+          (doto (io/file state "trust") .mkdirs)
+
+          managed-bundle
+          (doto (io/file trust-dir "system-ca.pem") (spit "stale bundle
+"))
+
+          java-home
+          (doto (io/file tmp "java") .mkdirs)
+
+          java-bin
+          (doto (io/file java-home "bin") .mkdirs)
+
+          java-security
+          (doto (io/file java-home "lib" "security") .mkdirs)
+
+          keytool
+          (io/file java-bin "keytool")
+
+          _trust-store
+          (doto (io/file java-security "cacerts") (spit "store"))
+
+          refreshed-pem
+          "-----BEGIN CERTIFICATE-----
+UkVGUkVTSEVE
+-----END CERTIFICATE-----
+"
+
+          host-bundle
+          (doto (io/file tmp "host.pem")
+            (spit "-----BEGIN CERTIFICATE-----
+SE9TVA==
+-----END CERTIFICATE-----
+"))]
 
       (try (spit (io/file remote "deps.edn") "{}
 ")
@@ -529,16 +601,26 @@ printf 'updated wrapper\n'
            (run-command! remote
                          ["git" "-c" "user.name=Vis Test" "-c" "user.email=vis@example.com" "commit"
                           "--quiet" "-m" "test source"])
+           (spit keytool (str "#!/bin/sh
+printf '%s' '" refreshed-pem "'
+"))
+           (.setExecutable keytool true false)
            (io/copy (io/file "bin" "vis-agent") installed)
            (.setExecutable installed true false)
            (let [{:keys [exit output]} (run-wrapper installed
                                                     {"HOME" (.getAbsolutePath tmp)
                                                      "VIS_HOME" (.getAbsolutePath state)
                                                      "VIS_REPO_SLUG" "local/vis"
-                                                     "VIS_REPO_URL" (.getAbsolutePath remote)}
+                                                     "VIS_REPO_URL" (.getAbsolutePath remote)
+                                                     "JAVA_HOME" (.getAbsolutePath java-home)
+                                                     "VIS_SYSTEM_CA_CERT" ""
+                                                     "VIS_SYSTEM_TRUSTSTORE" ""
+                                                     "SSL_CERT_FILE" (.getAbsolutePath host-bundle)}
                                                     ["update" "--keep-gateway"])]
              (expect (zero? exit) output)
              (expect (= replacement (slurp installed)))
+             (expect (str/includes? (slurp managed-bundle) refreshed-pem)
+                     "update refreshes a previously cached certificate bundle")
              (expect (str/includes? output "vis-agent command updated from") output))
            (finally (doseq [file (reverse (file-seq tmp))]
                       (io/delete-file file true)))))))

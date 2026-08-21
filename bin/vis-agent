@@ -392,11 +392,12 @@ export_system_ca_bundle() {
 
 # WSL has its own Linux trust database; installing a root in the Windows host
 # does not copy it into the distribution. Export the host's CurrentUser and
-# LocalMachine root stores through WSL interop on every launch, so certificate
-# policy changes are visible without modifying the distribution or a JDK.
+# LocalMachine root stores through WSL interop when the managed bundle is
+# created or refreshed. Ordinary launches reuse that bundle without invoking
+# PowerShell; install/update refreshes it before network access.
 refresh_wsl_windows_ca_bundle() {
   local powershell="" trust_dir="$vis_home/trust" output="" tmp="" linux_bundle=""
-  output="$trust_dir/wsl-system-ca.pem"
+  output="$trust_dir/system-ca.pem"
   [[ -z "${VIS_SYSTEM_CA_CERT:-}" ]] || return 0
   is_wsl || return 0
 
@@ -467,11 +468,15 @@ trust_property_is_configured() {
 }
 
 configure_system_trust() {
-  local runtime="$1" store="" store_type="" store_password="changeit" ca_bundle=""
-  local explicit_ca_bundle="${VIS_SYSTEM_CA_CERT:-}"
+  local runtime="$1" refresh="${2:-0}" store="" store_type="" store_password="changeit" ca_bundle=""
+  local explicit_ca_bundle="${VIS_SYSTEM_CA_CERT:-}" managed_ca_bundle="$vis_home/trust/system-ca.pem"
   trust_native_args=()
   trust_jvm_args=()
-  refresh_wsl_windows_ca_bundle
+  if [[ -z "$explicit_ca_bundle" && "$refresh" != 1 && -r "$managed_ca_bundle" ]]; then
+    export_system_ca_bundle "$managed_ca_bundle"
+  else
+    refresh_wsl_windows_ca_bundle
+  fi
 
   if [[ -n "${VIS_SYSTEM_TRUSTSTORE:-}" && ! -r "$VIS_SYSTEM_TRUSTSTORE" ]]; then
     die "VIS_SYSTEM_TRUSTSTORE is not readable: $VIS_SYSTEM_TRUSTSTORE"
@@ -495,8 +500,13 @@ configure_system_trust() {
 
   # A discovered SDKMAN/JAVA_HOME store is also the corporate source for tools
   # that cannot read JKS. An explicit PEM override remains exact and untouched.
-  if [[ -z "$explicit_ca_bundle" ]]; then
+  # The managed bundle is rebuilt during install/update, or lazily if an older
+  # installation does not have one yet. Normal launches only export its path.
+  if [[ -z "$explicit_ca_bundle" && ( "$refresh" = 1 || ! -r "$managed_ca_bundle" ) ]]; then
     refresh_java_ca_bundle "$store" "$store_password"
+  fi
+  if [[ -z "$explicit_ca_bundle" && -r "$managed_ca_bundle" ]]; then
+    export_system_ca_bundle "$managed_ca_bundle"
   fi
 
   if [[ -n "$store" ]]; then
@@ -1066,7 +1076,7 @@ case "${1:-}" in
   update)
     shift
     # Git and curl need the same corporate roots as the runtime they update.
-    configure_system_trust "$(runtime_effective)"
+    configure_system_trust "$(runtime_effective)" 1
     vis_do_update "$@"
     ;;
 esac
