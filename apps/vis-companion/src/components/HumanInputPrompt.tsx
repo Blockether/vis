@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Banner, Button, ChoiceRow, DialogFrame, Input, Modal } from './ui';
+import { Banner, Button, ChoiceRow, DialogFrame, Input, Modal, Slider } from './ui';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -493,15 +493,14 @@ function HumanInputFieldRow({
     return (
       <FieldShell field={field} {...(error ? { error } : {})}>
         <div className="flex items-center gap-3">
-          <input
-            type="range"
+          <Slider
             disabled={disabled}
             min={min}
             max={max}
             step={step}
             value={current}
             aria-label={field.label}
-            className="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-edge accent-accent disabled:cursor-not-allowed"
+            className="flex-1"
             onChange={(event) => onChange(field.id, clampHumanInputRange(field, event.target.valueAsNumber))}
           />
           <span className="shrink-0 font-mono text-meta tabular-nums text-white sm:text-ui">{current}</span>

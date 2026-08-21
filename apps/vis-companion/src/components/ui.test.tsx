@@ -78,6 +78,7 @@ import {
   SectionGap,
   SectionHeader,
   SectionShelf,
+  Slider,
   Spinner,
   UnreadBadge,
 } from "./ui";
@@ -3352,6 +3353,43 @@ describe("one ✕, at one size, under one wash", () => {
   });
 });
 
+// Reported as a spoken reply with "one yellow dot" where its scrubber should be:
+// the transcript's seek rail was a bare native `range`, which paints no track at
+// all on light paper, while the human-input field one screen away drew a 4px rule
+// with the brand thumb. Two controls with one meaning, two faces.
+describe("Slider", () => {
+  const html = (props: Record<string, unknown> = {}) =>
+    renderToStaticMarkup(<Slider aria-label="Speech position" {...props} />);
+
+  it("draws one face: a rule the app paints, not the browser's own track", () => {
+    const face = html();
+    expect(face).toContain('type="range"');
+    expect(face).toContain("h-1");
+    expect(face).toContain("appearance-none");
+    expect(face).toContain("bg-edge");
+    expect(face).toContain("accent-accent");
+    expect(face).toContain("rounded-full");
+  });
+
+  it("stands in a row a finger can hit, tight only under a cursor", () => {
+    expect(html()).toContain("min-h-11");
+    expect(html()).toContain("mouse:min-h-6");
+  });
+
+  it("is the only slider in the app", () => {
+    const sources = import.meta.glob(["../**/*.tsx"], {
+      query: "?raw",
+      import: "default",
+      eager: true,
+    }) as Record<string, string>;
+    const rolled: string[] = [];
+    for (const [path, source] of Object.entries(sources)) {
+      if (path.endsWith(".test.tsx") || path.endsWith("/ui.tsx")) continue;
+      if (source.includes('type="range"')) rolled.push(path);
+    }
+    expect(rolled).toEqual([]);
+  });
+});
 // Regression, user report ("some of the X are a different X than the dialog ones, and
 // white instead of black"): the way out painted its own resting ink — the page's
 // `--fg` on a panel band — while the band under it painted `text-accent-foreground`.

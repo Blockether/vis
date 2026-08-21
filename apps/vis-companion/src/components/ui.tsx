@@ -764,6 +764,33 @@ export function ChoiceRow({
 }
 
 /**
+ * A VALUE YOU DRAG ALONG A LINE, and there is only one of it.
+ *
+ * A human-input `range` field and the spoken reply's seek rail ask the same
+ * question — where along this run — and each spelled its own box: the field a
+ * 4px rule with the brand thumb, the rail a bare native track, which draws no
+ * visible line at all on light paper and left one yellow dot floating in the
+ * block. The FACE is the rule; the TARGET is the row it stands in, because a
+ * finger cannot hit 4px and only a cursor earns the tight rhythm.
+ */
+export function Slider({
+  className = '',
+  ...props
+}: InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <span
+      className={`flex min-h-11 min-w-0 items-center mouse:min-h-6 ${className}`}
+    >
+      <input
+        type="range"
+        className="h-1 w-full min-w-0 cursor-pointer appearance-none rounded-full bg-edge accent-accent disabled:cursor-not-allowed"
+        {...props}
+      />
+    </span>
+  );
+}
+
+/**
  * THE WAY BACK, and there is only one of it.
  *
  * A full-screen surface that stands ON another one — a session over its list —

@@ -57,6 +57,56 @@ describe("spoken transcript", () => {
     expect(html).toContain('lang="en"');
   });
 
+  // Reported as "za żółto ... dwa headery": the block painted an amber band for
+  // its name and a SECOND amber band under it holding a worded Play/Pause button,
+  // so one spoken reply carried two headers and two yellow surfaces.
+  it("carries one header band, with the transport as an icon inside it", () => {
+    const html = renderToStaticMarkup(
+      <ContentBlockView
+        block={{ id: "speech-1", type: "speech", text: "Listen again." }}
+      />,
+    );
+
+    expect(count(html, /data-disclosure-toggle/g)).toBe(1);
+    expect(html).not.toContain("bg-accent-surface");
+
+    const view = render(<SpeechBlock text="Listen again." />);
+    try {
+      const play = view.getByRole("button", { name: "Play" });
+      expect(play.textContent).toBe("");
+      expect(play.querySelector("svg")).not.toBeNull();
+      // The transport shares the header's row with the disclosure.
+      expect(
+        play.parentElement?.querySelector("[data-disclosure-toggle]"),
+      ).not.toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+
+  // Reported as "suwak audio powinien być na górze": the rail sat under a second
+  // control band instead of leading the block's body, right under the one header.
+  it("leads the body with the seek rail and nothing else", () => {
+    const view = render(<SpeechBlock text="Listen again." />);
+    try {
+      const rail = view.getByRole("slider", { name: "Speech position" });
+      const header = view
+        .getByRole("button", { name: /Spoken version/ })
+        .closest("[data-speech-header]");
+      const body = header?.nextElementSibling;
+
+      expect(body?.contains(rail)).toBe(true);
+      // Every control the block has is in the header, so the rail leads the body.
+      expect(body?.querySelector("button")).toBeNull();
+      expect(
+        rail.compareDocumentPosition(view.container.querySelector("p")!) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("puts the disclosure chevron before its name and points it down while open", () => {
     const html = renderToStaticMarkup(
       <ContentBlockView

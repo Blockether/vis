@@ -14,7 +14,7 @@ import Prism from "prismjs";
 import { DataTable } from "./DataTable";
 import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
 import { LiveRunRow } from "./LiveArtifact";
-import { AlertIcon, ArrowOutIcon, ChevronIcon } from "./icons";
+import { AlertIcon, ArrowOutIcon, ChevronIcon, PauseIcon, PlayIcon } from "./icons";
 import {
   attachmentBytes,
   attachmentIsAudio,
@@ -30,12 +30,13 @@ import {
 import {
   BandLabel,
   BandTally,
-  Button,
   CopyChip,
   Disclosure,
+  IconButton,
   LoadMore,
   PROSE,
   PROSE_RAGGED,
+  Slider,
   Spinner,
 } from "./ui";
 import "prismjs/components/prism-bash";
@@ -2575,40 +2576,48 @@ export function SpeechBlock({ text }: { text: string }) {
 
   return (
     <section className="my-2 border border-accent bg-panel">
-      <div className="bg-accent-surface px-2.5">
+      {/* ONE band, and the transport rides in it. The block used to stack its own
+          name on one amber surface and a worded Play/Pause on a second one, which
+          read as two headers for a single spoken reply. */}
+      <div
+        data-speech-header
+        className="flex min-h-12 items-center pl-2.5 mouse:min-h-9"
+      >
         <Disclosure
           isOpen={open}
           tone="step"
+          className="flex-1"
           onClick={() => setOpen((was) => !was)}
         >
           <span className="min-w-0 flex-1 truncate">Spoken version</span>
-          <span className="shrink-0 font-normal tabular-nums text-accent-ink">
-            {speaking ? "Playing" : speechTime(duration)}
+          <span className="shrink-0 font-normal tabular-nums text-dialog-hint">
+            {speechTime(position * duration)} / {speechTime(duration)}
           </span>
         </Disclosure>
+        <IconButton
+          label={speaking ? "Pause" : "Play"}
+          variant="quiet"
+          className="mr-1.5"
+          onClick={() => (speaking ? stop() : play())}
+        >
+          {speaking ? (
+            <PauseIcon className="size-4" />
+          ) : (
+            <PlayIcon className="size-4" />
+          )}
+        </IconButton>
       </div>
       {open && (
-        <div className="border-t border-accent">
-          <div className="flex min-h-12 items-center gap-2 bg-accent-surface px-2.5 mouse:min-h-9">
-            <Button
-              variant={speaking ? "secondary" : "primary"}
-              density="compact"
-              className="shrink-0"
-              onClick={() => (speaking ? stop() : play())}
-            >
-              {speaking ? "Pause" : "Play"}
-            </Button>
-            <span className="w-8 shrink-0 text-right font-mono text-chip tabular-nums text-accent-ink">
-              {speechTime(position * duration)}
-            </span>
-            <input
-              type="range"
+        <div className="border-t border-edge">
+          {/* The rail LEADS the body: it belongs to the header above it, not to
+              the transcript, so nothing stands between the two. */}
+          <div className="px-2.5">
+            <Slider
               min="0"
               max="1"
               step="0.001"
               value={position}
               aria-label="Speech position"
-              className="h-11 min-w-0 flex-1 cursor-pointer accent-accent"
               onPointerDown={beginSeek}
               onPointerUp={finishSeek}
               onPointerCancel={finishSeek}
@@ -2616,20 +2625,15 @@ export function SpeechBlock({ text }: { text: string }) {
               onKeyUp={finishSeek}
               onChange={(event) => rememberPosition(event.target.valueAsNumber)}
             />
-            <span className="w-8 shrink-0 font-mono text-chip tabular-nums text-accent-ink">
-              {speechTime(duration)}
-            </span>
           </div>
           <p
             lang={language}
-            className={`${PROSE} border-t border-accent px-2.5 py-3 text-body text-dialog-foreground`}
+            className={`${PROSE} px-2.5 pb-3 text-body text-dialog-foreground`}
           >
             {text}
           </p>
           {error && (
-            <p className="border-t border-accent px-2.5 py-2 font-mono text-meta text-err">
-              {error}
-            </p>
+            <p className="px-2.5 pb-2 font-mono text-meta text-err">{error}</p>
           )}
         </div>
       )}

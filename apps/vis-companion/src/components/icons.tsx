@@ -157,6 +157,16 @@ export function PlayIcon({ className }: { className?: string }) {
   );
 }
 
+/** Pause — the same solid weight as play, because they are one control. */
+export function PauseIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <rect x="6.6" y="4.71" width="3" height="14.58" fill="currentColor" />
+      <rect x="14.4" y="4.71" width="3" height="14.58" fill="currentColor" />
+    </Icon>
+  );
+}
+
 /** More of the same, below: what "Load 12 more" does to the list. */
 export function ArrowDownIcon({ className }: { className?: string }) {
   return (
