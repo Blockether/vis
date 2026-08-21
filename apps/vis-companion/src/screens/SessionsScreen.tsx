@@ -916,7 +916,7 @@ export function SessionsScreen({
     if (!isVisible) return;
     const controller = new AbortController();
     const refreshLiveStates = () => {
-      if (document.visibilityState === 'visible') void load(controller.signal, true);
+      void load(controller.signal, true);
     };
 
     void load(controller.signal);
@@ -924,7 +924,8 @@ export function SessionsScreen({
     // shows the truth. Cheap on BOTH ends — an unchanged fleet comes back as a 304
     // with no body (see `GatewayClient.listSessions`), and `load(_, true)` drops a
     // tick that fires while the previous one is still in flight instead of queueing
-    // it. Hidden tabs poll not at all.
+    // A frozen webview runs no timers. Do not trust `document.visibilityState` here: a resumed
+    // Capacitor webview can keep reporting `hidden` while this screen is on the glass.
     const timer = window.setInterval(refreshLiveStates, 10_000);
     // Waking is the one moment the rows are guaranteed stale, and a suspended
     // poll may still be latched: drop the latch, then refresh.

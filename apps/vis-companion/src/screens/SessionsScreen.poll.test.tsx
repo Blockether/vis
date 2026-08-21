@@ -60,6 +60,20 @@ describe("a poll that changes nothing leaves the list alone", () => {
     expect(badge.syncBadge.mock.calls.length).toBe(painted);
     expect(screen.getByText("First")).toBeTruthy();
   });
+
+  it("keeps polling while an iOS webview reports the document hidden", async () => {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const view = renderSessionsScreen({
+      machines: [{ label: "RBI", sessions: [listSession({ id: "a1", title: "First" })] }],
+    });
+    restore = view.restore;
+    await settle(50);
+    const read = listReads(view.requests);
+
+    await settle(10_000);
+
+    expect(listReads(view.requests)).toBeGreaterThan(read);
+  });
 });
 
 // Regression, user report (paraphrased: "I come back to the app in a session view, and
