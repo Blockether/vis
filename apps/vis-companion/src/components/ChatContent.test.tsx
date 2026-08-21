@@ -611,11 +611,11 @@ describe("a markdown table", () => {
     expect(text(markup)).toContain("manifest.edn");
   });
 
-  // A code span inside justified prose inherited the paragraph alignment, stretching
-  // spaces in release commands and identifiers into wide gaps.
-  it("keeps code spans ragged inside justified prose", () => {
+  // A code span or fenced shell result inside justified prose inherited the paragraph
+  // alignment, stretching spaces in commands and output into wide gaps.
+  it("keeps every Markdown code surface ragged inside justified prose", () => {
     const markdown = renderToStaticMarkup(
-      <Markdown>{"Release `update version files for v0.7.126, bump next dev version`."}</Markdown>,
+      <Markdown>{"Release `update version files for v0.7.126, bump next dev version`.\n\n```shell\ngit status --short\n```"}</Markdown>,
     );
     const inline = renderToStaticMarkup(
       <InlineMarkdown>{"Run `update version files` now"}</InlineMarkdown>,
@@ -627,6 +627,7 @@ describe("a markdown table", () => {
     }
     expect(/<p class="[^"]*text-justify/.test(markdown)).toBe(true);
     expect(/<code class="[^"]*break-all/.test(markdown)).toBe(true);
+    expect(/<pre class="[^"]*text-left/.test(markdown)).toBe(true);
   });
 });
 // Reported from a phone: a message was sent, the session title updated, and the

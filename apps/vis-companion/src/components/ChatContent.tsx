@@ -490,7 +490,7 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
         </CopyChip>
       )}
       <pre
-        className={`${compact ? "py-2 text-meta " : "py-2.5 text-ui "} m-0 max-w-full overflow-x-auto overscroll-x-contain font-mono text-code-foreground`}
+        className={`${compact ? "py-2 text-meta " : "py-2.5 text-ui "} m-0 max-w-full overflow-x-auto overscroll-x-contain text-left font-mono text-code-foreground`}
       >
         <code className="block min-w-max [tab-size:2]">
           {lines.map((segments, index) => (
