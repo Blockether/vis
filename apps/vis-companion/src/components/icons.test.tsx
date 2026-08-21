@@ -440,6 +440,11 @@ describe("the shipped screens", () => {
     expect(offenders).toEqual([]);
   });
 
+  // A PLOT IS NOT AN ICON. `ui.tsx`'s `Waveform` draws one `<rect>` per measured
+  // bucket, as many as the width a `ResizeObserver` reports; an icon is a fixed glyph
+  // on the 24-unit grid, and keeping those in one module is the whole point of this
+  // rule. So the plot is named here rather than exempted by folder, and it still may
+  // never draw a glyph's `<path>`.
   it("import those icons from the one module that draws them", () => {
     const drawn = Object.entries(sources).filter(
       ([path, source]) =>
@@ -448,7 +453,11 @@ describe("the shipped screens", () => {
         !path.includes(".test.") &&
         /<svg/.test(source),
     );
-    expect(drawn.map(([path]) => path)).toEqual([]);
+
+    expect(drawn.map(([path]) => path)).toEqual(["./ui.tsx"]);
+    const [[, wave]] = drawn;
+    expect(wave.match(/<svg/g)).toHaveLength(1);
+    expect(wave).not.toContain("<path");
   });
 
   // Regression: the app's two-item tab bar was deleted, and its marks — a
