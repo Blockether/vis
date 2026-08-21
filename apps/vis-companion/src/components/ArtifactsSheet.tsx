@@ -864,9 +864,8 @@ function ArtifactDetail({
     );
   }
 
-  // A PDF is READ in its frame and DRAWN ON through the pen: the page is
-  // rasterised, the ink stamped back onto it, and the stamped PDF saved under
-  // the same filename — the next version, like an annotated note.
+  // PDFs are rendered by the app so each page fits this overlay; drawing stamps the
+  // visible page back into the same filename as its next version.
   const frame = (
     <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} />
   );
@@ -880,7 +879,6 @@ function ArtifactDetail({
           name={artifact.name}
           mediaType={artifact.mediaType}
           url={url}
-          frame={frame}
         />
       ) : (
         frame

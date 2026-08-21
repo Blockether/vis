@@ -26,13 +26,12 @@ vi.mock("@capacitor/preferences", () => ({
   },
 }));
 
-// The pen and the rasteriser are the browser's job; what is under test is the
-// WIRING — that an artifact opened from the TRANSCRIPT reaches the annotator,
-// and that drawing on a PDF saves under the same filename, which is the next
-// version of that artifact.
+// The pen and rasteriser are the browser’s job; these tests hold the wiring from a
+// transcript artifact through a visible PDF revision and back to the same filename.
+const pdfMocks = vi.hoisted(() => ({ renders: 0 }));
 vi.mock("../lib/pdf-annotate", () => ({
   renderPdfPage: vi.fn(async () => ({
-    src: "data:image/png;base64,",
+    src: `data:image/png;base64,page-${++pdfMocks.renders}`,
     pageCount: 3,
   })),
   stampPdfPage: vi.fn(async () => new Uint8Array([1, 2, 3])),
@@ -40,14 +39,17 @@ vi.mock("../lib/pdf-annotate", () => ({
 
 vi.mock("./ImageViewer", () => ({
   ImageViewer: ({
+    src,
     applyLabel,
     onApply,
   }: {
+    src: string;
     applyLabel?: string;
     onApply?: (edited: Blob) => void | Promise<void>;
   }) => (
     <button
       type="button"
+      data-source={src}
       aria-label="apply"
       onClick={() => void onApply?.(new Blob(["ink"]))}
     >
@@ -112,6 +114,7 @@ async function settle() {
 
 beforeEach(() => {
   native.store.clear();
+  pdfMocks.renders = 0;
   globalThis.localStorage.clear();
   resetAnnotationDraftCache();
   host = document.createElement("div");
@@ -202,7 +205,9 @@ describe("an artifact opened from the transcript", () => {
     // What became of the document is the band's to report, under its name.
     expect(band().textContent).toContain("Saved as v7");
   });
-  it("draws on a PDF page and saves it as the next version", async () => {
+  // Regression, user report: the PDF used the browser’s unconstrained viewer and a saved
+  // drawing disappeared because the open reader kept showing the original bytes.
+  it("fits a PDF page in the app and shows the saved drawing", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(new Uint8Array([37, 80, 68, 70]))),
@@ -220,9 +225,17 @@ describe("an artifact opened from the transcript", () => {
         />,
       );
     });
+    await settle();
+
+    expect(host.querySelector("iframe")).toBe(null);
+    const page = host.querySelector<HTMLImageElement>(
+      'img[aria-label="Page 1 of report.pdf"]',
+    );
+    expect(page?.className).toContain("max-h-full");
+    expect(page?.className).toContain("max-w-full");
+    expect(page?.src).toContain("page-1");
 
     press('button[aria-label="Draw on page 1"]');
-    await settle();
     press('button[aria-label="apply"]');
     await settle();
 
@@ -234,6 +247,7 @@ describe("an artifact opened from the transcript", () => {
       expect.anything(),
     );
     expect(host.textContent).toContain("Saved as v4");
+    expect(page?.src).toContain("page-2");
   });
 
   it("stays a plain reader when the artifact cannot be marked up", async () => {

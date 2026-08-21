@@ -331,7 +331,6 @@ export const DocOverlay = memo(function DocOverlay({
           name={name}
           mediaType={mime}
           url={url}
-          frame={<DocFrame url={url} mime={mime} name={name} />}
         />
       ) : (
         <DocBody name={name} mime={mime} url={url} failed={failed} />

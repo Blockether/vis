@@ -102,9 +102,8 @@ describe("ImageViewer", () => {
     expect(picture?.closest(".place-items-center")?.className).toContain(
       "pt-[calc(5rem+env(safe-area-inset-top))]",
     );
-    expect(picture?.className).toContain(
-      "max-h-[calc(100dvh-10rem-env(safe-area-inset-top))]",
-    );
+    expect(picture?.className).toContain("max-h-full");
+    expect(picture?.className).toContain("max-w-[calc(100vw-2rem)]");
   });
 
   // Regression, reported attachment filename click: an image edit could only be opened
@@ -183,9 +182,13 @@ describe("ImageViewer", () => {
     expect(
       document.querySelector("canvas")?.getAttribute("data-annotation"),
     ).toBe("active");
-    // Five inks, Undo and Clear: the same strip a document page gets.
+    // Five inks, Undo and Clear sit directly under the title band, not in the footer.
     const tools = document.querySelector('[aria-label="Drawing tools"]');
     expect(tools?.querySelectorAll("button[aria-pressed]")).toHaveLength(5);
+    expect(tools?.parentElement?.className).toContain("top-[calc(3rem");
+    expect(document.querySelector("header")?.nextElementSibling).toBe(
+      tools?.parentElement,
+    );
 
     act(() => named("Draw").click());
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();

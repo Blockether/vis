@@ -674,6 +674,19 @@ export function ImageViewer({
         }
       />
 
+      {drawing && (
+        <div className="absolute inset-x-0 top-[calc(3rem+env(safe-area-inset-top))] z-20 border-b border-dialog-edge bg-panel px-3 sm:top-12 sm:px-4">
+          <PenToolbar
+            color={penColor}
+            onColor={setPenColor}
+            strokeCount={strokeCount}
+            onUndo={() => annotationRef.current?.undo()}
+            onClear={() => annotationRef.current?.clear()}
+            className="mx-auto flex max-w-[1400px] items-center justify-center gap-1 overflow-x-auto overscroll-x-contain"
+          />
+        </div>
+      )}
+
       {/* THE PICTURE CLEARS THE BAND THAT CLEARS THE NOTCH.
 
           The title bar floats over the image, so the top pad and the picture's
@@ -693,7 +706,7 @@ export function ImageViewer({
           viewport declares itself unselectable too, not only the sheet over the
           picture. */}
       <div
-        className={`absolute inset-0 grid cursor-grab select-none place-items-center overflow-hidden overscroll-none px-4 pt-[calc(5rem+env(safe-area-inset-top))] active:cursor-grabbing sm:pt-20 [touch-action:none] ${drawing ? "pb-36" : "pb-24"}`}
+        className={`absolute inset-0 grid cursor-grab select-none place-items-center overflow-hidden overscroll-none px-4 active:cursor-grabbing [touch-action:none] ${drawing ? "pb-24 pt-[calc(8rem+env(safe-area-inset-top))] sm:pt-32" : "pb-24 pt-[calc(5rem+env(safe-area-inset-top))] sm:pt-20"}`}
         onPointerDownCapture={beginGesture}
         onPointerMove={moveGesture}
         onPointerUp={endGesture}
@@ -711,7 +724,7 @@ export function ImageViewer({
             alt={shown.name}
             draggable={false}
             onLoad={fitAnnotations}
-            className={`block max-w-[calc(100vw-2rem)] select-none object-contain ${drawing ? "max-h-[calc(100dvh-13rem-env(safe-area-inset-top))] sm:max-h-[calc(100dvh-13rem)]" : "max-h-[calc(100dvh-10rem-env(safe-area-inset-top))] sm:max-h-[calc(100dvh-10rem)]"}`}
+            className="block max-h-full max-w-[calc(100vw-2rem)] select-none object-contain"
           />
           <AnnotationLayer
             ref={annotationRef}
@@ -823,16 +836,6 @@ export function ImageViewer({
           </div>
         </div>
 
-        {drawing && (
-          <PenToolbar
-            color={penColor}
-            onColor={setPenColor}
-            strokeCount={strokeCount}
-            onUndo={() => annotationRef.current?.undo()}
-            onClear={() => annotationRef.current?.clear()}
-            className="mx-auto mt-1 flex max-w-[1400px] items-center justify-center gap-1 overflow-x-auto overscroll-x-contain pb-1"
-          />
-        )}
 
         <div
           className="mx-auto min-h-4 max-w-[1400px] truncate pt-1 text-center font-mono text-chip text-dialog-hint"

@@ -1,20 +1,15 @@
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 
 import type { GatewayClient } from "../lib/gateway";
-import { renderPdfPage, stampPdfPage } from "../lib/pdf-annotate";
+import {
+  renderPdfPage,
+  stampPdfPage,
+  type RenderedPage,
+} from "../lib/pdf-annotate";
 import { ImageViewer } from "./ImageViewer";
 import { Button } from "./ui";
 
-/**
- * A PDF YOU CAN DRAW ON.
- *
- * The document itself is read in its own frame, as before. `Draw` rasterises
- * the page that is being read, hands it to the app's existing pen (the image
- * viewer already owns zoom, pan, colours and undo), and stamps the flattened
- * result back onto that page — so what is saved is a PDF, under the same
- * filename, which the gateway files as the artifact's NEXT VERSION exactly the
- * way an annotated markdown note is.
- */
+/** A PDF page fitted by the app, with edits saved and shown immediately. */
 export const PdfAnnotator = memo(function PdfAnnotator({
   client,
   sid,
@@ -22,46 +17,50 @@ export const PdfAnnotator = memo(function PdfAnnotator({
   name,
   mediaType,
   url,
-  frame,
 }: {
   client: GatewayClient;
   sid: string;
   iterationId: string;
   name: string;
   mediaType: string;
-  /** The artifact's own bytes. */
   url: string;
-  /** The reading view — supplied by the caller so this file owns only the pen. */
-  frame: React.ReactNode;
 }) {
   const [page, setPage] = useState(1);
-  const [pageCount, setPageCount] = useState(0);
+  const [source, setSource] = useState<ArrayBuffer | null>(null);
+  const [rendered, setRendered] = useState<RenderedPage | null>(null);
   const [drawn, setDrawn] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
 
-  const draw = useCallback(async () => {
+  useEffect(() => {
+    let live = true;
     setBusy(true);
     setStatus("");
-    try {
-      const bytes = await (await fetch(url)).arrayBuffer();
-      const rendered = await renderPdfPage(bytes, page);
-      setPageCount(rendered.pageCount);
-      setDrawn(rendered.src);
-    } catch {
-      setStatus("This page could not be opened for drawing.");
-    } finally {
-      setBusy(false);
-    }
+    void (async () => {
+      try {
+        const bytes = await (await fetch(url)).arrayBuffer();
+        const next = await renderPdfPage(bytes, page);
+        if (!live) return;
+        setSource(bytes);
+        setRendered(next);
+      } catch {
+        if (live) setStatus("This PDF could not be opened.");
+      } finally {
+        if (live) setBusy(false);
+      }
+    })();
+    return () => {
+      live = false;
+    };
   }, [url, page]);
 
   const apply = useCallback(
     async (edited: Blob) => {
+      if (!source) return;
       setStatus("");
       try {
-        const original = await (await fetch(url)).arrayBuffer();
         const stamped = await stampPdfPage(
-          original,
+          source,
           page,
           await edited.arrayBuffer(),
         );
@@ -72,37 +71,53 @@ export const PdfAnnotator = memo(function PdfAnnotator({
           mediaType || "application/pdf",
           stamped,
         );
+        const bytes = stamped.slice().buffer as ArrayBuffer;
+        const next = await renderPdfPage(bytes, page);
+        setSource(bytes);
+        setRendered(next);
+        setDrawn(null);
         setStatus(saved.version ? `Saved as v${saved.version}` : "Saved");
       } catch {
         setStatus("Could not save this revision.");
       }
     },
-    [client, sid, iterationId, name, mediaType, url, page],
+    [client, sid, iterationId, name, mediaType, source, page],
   );
 
-  const pages = Math.max(pageCount, page);
-
+  const pageCount = rendered?.pageCount ?? 0;
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {frame}
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-input">
+      <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-2 sm:p-4">
+        {rendered ? (
+          <img
+            src={rendered.src}
+            aria-label={`Page ${page} of ${name}`}
+            className="block max-h-full max-w-full object-contain shadow-lg"
+          />
+        ) : (
+          <p className="text-meta text-footer-muted">
+            {busy ? "Rendering PDF…" : status || "PDF unavailable"}
+          </p>
+        )}
+      </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-dialog-edge px-3 py-2 sm:px-4">
         <Button
           type="button"
           variant="quiet"
           aria-label="Previous page"
-          disabled={page <= 1}
+          disabled={page <= 1 || busy}
           onClick={() => setPage((at) => Math.max(1, at - 1))}
         >
           Prev
         </Button>
         <span className="font-mono text-chip text-dialog-hint">
-          {pageCount ? `Page ${page} of ${pages}` : `Page ${page}`}
+          {pageCount ? `Page ${page} of ${pageCount}` : `Page ${page}`}
         </span>
         <Button
           type="button"
           variant="quiet"
           aria-label="Next page"
-          disabled={pageCount > 0 && page >= pageCount}
+          disabled={busy || (pageCount > 0 && page >= pageCount)}
           onClick={() => setPage((at) => at + 1)}
         >
           Next
@@ -110,10 +125,10 @@ export const PdfAnnotator = memo(function PdfAnnotator({
         <Button
           type="button"
           aria-label={`Draw on page ${page}`}
-          onClick={draw}
-          disabled={busy}
+          onClick={() => rendered && setDrawn(rendered.src)}
+          disabled={busy || !rendered}
         >
-          {busy ? "Opening…" : `Draw on page ${page}`}
+          Draw on page {page}
         </Button>
         {status ? (
           <span role="status" className="text-meta text-dialog-hint">
