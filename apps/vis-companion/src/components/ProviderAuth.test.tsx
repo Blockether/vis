@@ -2,17 +2,11 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it } from 'vitest';
-import type {
-  AuthFlow,
-  ProviderLimitRow,
-  ProviderPreset,
-  RouterProvider,
-} from '../lib/types';
+import type { AuthFlow, ProviderPreset, RouterProvider } from '../lib/types';
 import {
   AddProviderButton,
   ProviderNotice,
   ProviderRows,
-  providerQuotaMark,
   unscopedMessage,
   type ProviderAuth,
 } from './ProviderAuth';
@@ -161,35 +155,8 @@ describe('unscopedMessage', () => {
   });
 });
 
-// Reported: the provider card carried four account buttons — "Sign in again",
-// "Check status", "Sign out" and "Remove" — where sign-out and remove destroyed
-// the same credential, and the quota only refreshed if the user tapped for it.
-describe('providerQuotaMark', () => {
-  const reporting = (rows: ProviderLimitRow[]): RouterProvider => ({
-    ...provider('github-copilot'),
-    limits: { dynamic: { limits: rows } },
-  });
-
-  it('wears the window closest to running out, because that is the one that decides', () => {
-    expect(
-      providerQuotaMark(
-        reporting([
-          { label: 'Chat', limit: 100, remaining: 62 },
-          { label: 'Completions', limit: 100, remaining: 16 },
-        ]),
-      ),
-    ).toBe('16%');
-  });
-
-  it('marks nothing rather than a fabricated zero when no window carries a number', () => {
-    expect(providerQuotaMark(reporting([{ label: 'Chat', is_unlimited: true }]))).toBeNull();
-    expect(providerQuotaMark(provider('anthropic'))).toBeNull();
-  });
-});
-
-// The same report, one layer up: a provider is a machine-sized thing, so its
-// verbs live under its own row's slide exactly as a machine's do, instead of
-// inside a body that had to be expanded to reach a `<select>` and four buttons.
+// A provider's account facts belong in its own row; quota is not a destination
+// and does not need a second surface to reveal it.
 describe('ProviderRows', () => {
   const signedIn = (fields: Partial<RouterProvider> = {}): RouterProvider => ({
     ...provider('github-copilot'),
@@ -197,7 +164,7 @@ describe('ProviderRows', () => {
     ...fields,
   });
 
-  it('paints the most urgent quota in the collapsed row for an at-a-glance read', () => {
+  it('shows every reported limit directly in the provider row without disclosure chrome', () => {
     render(
       <ProviderRows
         auth={state({
@@ -209,6 +176,7 @@ describe('ProviderRows', () => {
                     { label: 'Chat', limit: 100, remaining: 62 },
                     { label: 'Completions', limit: 100, remaining: 16 },
                   ],
+                  note: 'Live quota source detail.',
                 },
               },
             }),
@@ -216,48 +184,16 @@ describe('ProviderRows', () => {
         })}
       />,
     );
-    expect(screen.getByText('16%')).toBeTruthy();
-    expect(screen.queryByText('Check status')).toBeNull();
-  });
 
-  // Reported: pressing a signed-in provider refreshed it without opening the
-  // provider, so its quota windows remained hidden behind the collapsed row.
-  it('opens a signed-in provider and shows every reported limit', () => {
-    render(
-      <ProviderRows
-        auth={state({
-          providers: [
-            signedIn({
-              limits: {
-                dynamic: {
-                  limits: [
-                    { label: 'Chat', limit: 100, remaining: 62 },
-                    { label: 'Completions', limit: 100, remaining: 16 },
-                  ],
-                },
-              },
-            }),
-          ],
-          recheck: async () => {},
-        })}
-      />,
-    );
     const row = screen.getByText('GITHUB-COPILOT').closest('button');
     expect(row).not.toBeNull();
     if (!row) throw new Error('provider row missing');
-    expect(row.getAttribute('aria-expanded')).toBe('false');
+    expect(row.textContent).toContain('Chat 62% left');
+    expect(row.textContent).toContain('Completions 16% left');
+    expect(row.getAttribute('aria-expanded')).toBeNull();
     expect(screen.queryByRole('region', { name: 'GITHUB-COPILOT limits' })).toBeNull();
-
-    fireEvent.click(row);
-
-    expect(row.getAttribute('aria-expanded')).toBe('true');
-    const limits = screen.getByRole('region', { name: 'GITHUB-COPILOT limits' });
-    expect(limits.textContent).toContain('Chat 62% left');
-    expect(limits.textContent).toContain('Completions 16% left');
-
-    fireEvent.click(row);
-    expect(row.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('region', { name: 'GITHUB-COPILOT limits' })).toBeNull();
+    expect(screen.queryByText('Limits')).toBeNull();
+    expect(screen.queryByText('Live quota source detail.')).toBeNull();
   });
 
   it('presses into a live re-check for an account that is already signed in', () => {
