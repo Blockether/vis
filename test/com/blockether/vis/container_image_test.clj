@@ -335,6 +335,86 @@
            (finally (doseq [file (reverse (file-seq tmp))]
                       (io/delete-file file true)))))))
 
+(defdescribe
+  wrapper-sdkman-system-trust-test
+  (it
+    "discovers certificates installed only in the active SDKMAN JDK"
+    (let [tmp
+          (.toFile (Files/createTempDirectory "vis-sdkman-system-trust"
+                                              (make-array FileAttribute 0)))
+
+          bundle
+          (doto (io/file tmp "agent") .mkdirs)
+
+          java-home
+          (doto (io/file tmp ".sdkman" "candidates" "java" "current") .mkdirs)
+
+          java-bin
+          (doto (io/file java-home "bin") .mkdirs)
+
+          java-security
+          (doto (io/file java-home "lib" "security") .mkdirs)
+
+          wrapper
+          (io/file bundle "vis-agent")
+
+          native
+          (io/file bundle "vis-agent-native")
+
+          keytool
+          (io/file java-bin "keytool")
+
+          trust-store
+          (doto (io/file java-security "cacerts") (spit "store"))
+
+          mac-pem
+          "-----BEGIN CERTIFICATE-----
+TUFDLVJPT1Q=
+-----END CERTIFICATE-----
+"
+
+          java-pem
+          "-----BEGIN CERTIFICATE-----
+SkFWQS1ST09U
+-----END CERTIFICATE-----
+"
+
+          mac-bundle
+          (doto (io/file tmp "mac-ca.pem") (spit mac-pem))]
+
+      (try
+        (io/copy (io/file "bin" "vis-agent") wrapper)
+        (.setExecutable wrapper true false)
+        (spit native
+              (str "#!/bin/sh\n" "printf 'ARGS=%s\\n' \"$*\"\n"
+                   "printf 'SSL_CERT_FILE=%s\\n' \"${SSL_CERT_FILE:-}\"\n"
+                   "cat \"$SSL_CERT_FILE\"\n"))
+        (.setExecutable native true false)
+        (spit keytool (str "#!/bin/sh\nprintf '%s' '" java-pem "'\n"))
+        (.setExecutable keytool true false)
+        (let [{:keys [exit output]}
+              (run-wrapper wrapper
+                           {"HOME" (.getAbsolutePath tmp)
+                            "VIS_HOME" (.getAbsolutePath (io/file tmp "state"))
+                            "JAVA_HOME" (.getAbsolutePath java-home)
+                            "VIS_SYSTEM_CA_CERT" ""
+                            "VIS_SYSTEM_TRUSTSTORE" ""
+                            "SSL_CERT_FILE" (.getAbsolutePath mac-bundle)}
+                           ["help"])
+
+              combined
+              (io/file tmp "state" "trust" "system-ca.pem")]
+
+          (expect (zero? exit) output)
+          (expect (str/includes? output
+                                 (str "-Djavax.net.ssl.trustStore=" (.getAbsolutePath trust-store)))
+                  output)
+          (expect (= (str mac-pem "
+" java-pem) (slurp combined)))
+          (expect (str/includes? output (str "SSL_CERT_FILE=" (.getAbsolutePath combined))) output))
+        (finally (doseq [file (reverse (file-seq tmp))]
+                   (io/delete-file file true)))))))
+
 
 (defdescribe
   wrapper-wsl-system-trust-test
@@ -389,6 +469,8 @@
                               {"HOME" (.getAbsolutePath tmp)
                                "VIS_HOME" (.getAbsolutePath state)
                                "WSL_DISTRO_NAME" "Ubuntu"
+                               "JAVA_HOME" (.getAbsolutePath (io/file tmp "no-java-home"))
+                               "SDKMAN_CANDIDATES_DIR" (.getAbsolutePath (io/file tmp "no-sdkman"))
                                "VIS_SYSTEM_CA_CERT" ""
                                "SSL_CERT_FILE" (.getAbsolutePath ubuntu-bundle)
                                "PATH" (str (.getAbsolutePath fake-path) ":" (System/getenv "PATH"))}

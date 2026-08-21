@@ -295,26 +295,88 @@ find_native() {
   return 1
 }
 
-# Resolve the host's maintained trust stores without modifying any JDK. Linux CA
-# packages keep a complete Java store (public roots plus administrator-installed
-# roots such as a TLS inspection CA) at one of these conventional paths. The PEM
-# bundle beside it serves curl, Git, Python, Node and other child toolchains.
-# VIS_TRUSTSTORE remains the explicit application override; VIS_SYSTEM_TRUSTSTORE
-# and VIS_SYSTEM_CA_CERT cover distributions with non-standard paths.
+# Resolve trust from the active JDK as well as the host. Corporate macOS setups
+# commonly install inspection roots in each SDKMAN JDK but not in Keychain. Linux
+# CA packages instead maintain a Java store at one of the conventional paths
+# below. VIS_TRUSTSTORE remains the explicit application override;
+# VIS_SYSTEM_TRUSTSTORE and VIS_SYSTEM_CA_CERT cover non-standard locations.
 find_system_java_truststore() {
-  local candidate
+  local candidate sdkman_candidates="${SDKMAN_CANDIDATES_DIR:-${HOME:-}/.sdkman/candidates}"
   if [[ -n "${VIS_SYSTEM_TRUSTSTORE:-}" ]]; then
     printf '%s\n' "$VIS_SYSTEM_TRUSTSTORE"
     return 0
   fi
-  for candidate in /etc/ssl/certs/java/cacerts \
+  for candidate in "${JAVA_HOME:-}/lib/security/cacerts" \
+                   "${JAVA_HOME:-}/jre/lib/security/cacerts" \
+                   "$sdkman_candidates/java/current/lib/security/cacerts" \
+                   "$sdkman_candidates/java/current/jre/lib/security/cacerts" \
+                   /etc/ssl/certs/java/cacerts \
                    /etc/pki/java/cacerts \
                    /etc/pki/ca-trust/extracted/java/cacerts; do
-    [[ -r "$candidate" ]] || continue
+    [[ -n "$candidate" && -r "$candidate" ]] || continue
     printf '%s\n' "$candidate"
     return 0
   done
   return 1
+}
+
+find_java_keytool() {
+  local candidate resolved sdkman_candidates="${SDKMAN_CANDIDATES_DIR:-${HOME:-}/.sdkman/candidates}"
+  for candidate in "${JAVA_HOME:-}/bin/keytool" \
+                   "$sdkman_candidates/java/current/bin/keytool" \
+                   keytool; do
+    [[ -n "$candidate" ]] || continue
+    if [[ "$candidate" == */* ]]; then
+      [[ -x "$candidate" ]] || continue
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    resolved="$(command -v "$candidate" 2>/dev/null || true)"
+    [[ -n "$resolved" ]] || continue
+    printf '%s\n' "$resolved"
+    return 0
+  done
+  return 1
+}
+
+# Turn a JDK trust store into the PEM format used by curl, Git, Node, Python and
+# the process-wide composite TLS context. The original store remains untouched.
+refresh_java_ca_bundle() {
+  local store="$1" password="$2" trust_dir="$vis_home/trust" output="" tmp="" java_pem="" keytool="" ca_bundle=""
+  [[ -n "$store" ]] || return 0
+  output="$trust_dir/system-ca.pem"
+  keytool="$(find_java_keytool 2>/dev/null || true)"
+  [[ -n "$keytool" ]] || {
+    warn "cannot export certificates from $store because keytool is unavailable"
+    return 0
+  }
+  mkdir -p "$trust_dir" || {
+    warn "cannot create $trust_dir; using the Java trust store only for Vis"
+    return 0
+  }
+  tmp="$(mktemp "$trust_dir/.system-ca.XXXXXX")" || return 0
+  java_pem="$(mktemp "$trust_dir/.java-ca.XXXXXX")" || {
+    rm -f "$tmp"
+    return 0
+  }
+  chmod 600 "$tmp" "$java_pem"
+  if "$keytool" -J-Duser.language=en -list -rfc -keystore "$store" \
+       -storepass "$password" 2>/dev/null |
+       awk '/-----BEGIN CERTIFICATE-----/{copy=1} copy{print} /-----END CERTIFICATE-----/{copy=0}' \
+       >"$java_pem" && grep -q -- '-----BEGIN CERTIFICATE-----' "$java_pem"; then
+    ca_bundle="$(find_system_ca_bundle 2>/dev/null || true)"
+    if [[ -n "$ca_bundle" ]]; then
+      cat "$ca_bundle" >"$tmp"
+      printf '\n' >>"$tmp"
+    fi
+    cat "$java_pem" >>"$tmp"
+    mv -f "$tmp" "$output"
+    rm -f "$java_pem"
+    export_system_ca_bundle "$output"
+  else
+    rm -f "$tmp" "$java_pem"
+    warn "could not export certificates from Java trust store $store"
+  fi
 }
 
 is_wsl() {
@@ -406,6 +468,7 @@ trust_property_is_configured() {
 
 configure_system_trust() {
   local runtime="$1" store="" store_type="" store_password="changeit" ca_bundle="" java_opts=""
+  local explicit_ca_bundle="${VIS_SYSTEM_CA_CERT:-}"
   trust_native_args=()
   refresh_wsl_windows_ca_bundle
 
@@ -427,6 +490,12 @@ configure_system_trust() {
       store_type="${VIS_SYSTEM_TRUSTSTORE_TYPE:-JKS}"
       store_password="${VIS_SYSTEM_TRUSTSTORE_PASSWORD:-changeit}"
     fi
+  fi
+
+  # A discovered SDKMAN/JAVA_HOME store is also the corporate source for tools
+  # that cannot read JKS. An explicit PEM override remains exact and untouched.
+  if [[ -z "$explicit_ca_bundle" ]]; then
+    refresh_java_ca_bundle "$store" "$store_password"
   fi
 
   if [[ -n "$store" ]]; then
