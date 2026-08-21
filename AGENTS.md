@@ -18,6 +18,7 @@ Read the skill before working in its area — each one is the full contract, kep
 - `doc("companion-ui")` — every Companion screen: control vocabulary, density, proposals, proof by numbers.
 - `doc("release-vis")` / `doc("release-companion-hotfix")` — a product release / an app-only rebuild.
 - `doc("issue-triage")`, `doc("ios-crash-triage")`, `doc("spel")` — triage and browser/native automation.
+- `doc("skill-doctor")` — auditing the skills themselves against the sessions that read them, before proposing SKILL.md edits.
 
 ## Engineering defaults that differ from the usual ones
 
