@@ -285,7 +285,7 @@ def test_the_settled_pane_is_one_photograph(watched):
     assert any(op["op"] == "clear" for op in written)
     assert lines[0] == "── tests / vis-agent + vis-contract (PyPI packages) · log"
     assert lines[1:] == failing_log()
-    assert result.startswith("6 of 6 jobs finished, 1 failed")
+    assert json.loads(result)["run"]["conclusion"] == "failure"
     assert ("95742028770", gh.LOG_TAIL_LINES) in recorder.asked
     snapshots = recorder.said[-1]["ending"]["focus_snapshots"]
     assert [one["focused_ids"] for one in snapshots] == [
@@ -366,7 +366,7 @@ def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
         if op.get("node_id") == "jobs" and "focused_ids" in op
     ]
     assert focus_ops[-1]["focused_ids"] == [selected]
-    assert result.startswith("6 of 6 jobs finished, 1 failed")
+    assert json.loads(result)["run"]["conclusion"] == "failure"
     assert node(recorder.picture(), "output")["lines"] == [
         "── lint / clj-kondo · log",
         f"log for {selected}",
@@ -400,7 +400,7 @@ def test_a_focus_change_refreshes_details_even_while_github_is_unavailable(recor
     )
 
     assert recorder.node("jobs")["focused_ids"] == [selected]
-    assert result.startswith("Stopped watching after GitHub failed")
+    assert json.loads(result)["ending"]["reason"] == "poll_failure"
     assert node(recorder.picture(), "steps")["steps"][0]["label"] == "Set up job"
     assert node(recorder.picture(), "output")["lines"] == [
         "── tests / vis-agent + vis-contract (PyPI packages) · log",
@@ -408,13 +408,57 @@ def test_a_focus_change_refreshes_details_even_while_github_is_unavailable(recor
     ]
 
 
-def test_the_model_gets_only_the_optimized_string_while_the_artifact_keeps_the_picture(
-    watched,
-):
+def test_the_model_gets_one_deduplicated_diagnostic_string(watched):
     recorder, result = watched
+    payload = fixture("run-final.json")
 
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: the compact result omitted
+    # the job inventory, stable ids, timing, steps, and the failed job's actionable error.
     assert isinstance(result, str)
-    assert result.startswith("6 of 6 jobs finished, 1 failed")
+    report = json.loads(result)
+    assert report["run"] == {
+        "id": 32146686161,
+        "workflow": "CI",
+        "branch": "main",
+        "status": "completed",
+        "conclusion": "failure",
+        "url": "https://github.com/Blockether/vis/actions/runs/32146686161",
+    }
+    assert report["job_fields"] == [
+        "id",
+        "name",
+        "conclusion",
+        "started_at",
+        "completed_at",
+        "steps",
+    ]
+    assert report["step_fields"] == ["id", "conclusion", "name"]
+    assert report["jobs"] == [
+        [
+            job["databaseId"],
+            job["name"],
+            job["conclusion"],
+            job["startedAt"],
+            job["completedAt"],
+            [
+                [step["number"], step["conclusion"], step["name"]]
+                for step in job["steps"]
+            ],
+        ]
+        for job in payload["jobs"]
+    ]
+    assert list(report["failed_logs"]) == ["95742028770"]
+    failed_log = report["failed_logs"]["95742028770"]
+    assert sum("1 failed, 58 passed in 0.72s" in line for line in failed_log) == 1
+    assert (
+        sum(
+            "##[error]Process completed with exit code 1." in line
+            for line in failed_log
+        )
+        == 1
+    )
+    assert not any("Terminate orphan process" in line for line in failed_log)
+    assert result == json.dumps(report, ensure_ascii=False, separators=(",", ":"))
     assert_tree(recorder.picture(), fixture("view.json"))
 
 
@@ -471,7 +515,7 @@ def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
     result = gh.watch(TITLE, DESCRIPTION, poll, superseded_by=lambda: newer)
 
     assert len(polls) == 1
-    assert result.startswith("Superseded by run 32146699999")
+    assert json.loads(result)["ending"]["replacement_run_id"] == 32146699999
     picture = recorder.picture()
     assert node(picture, "run")["text"] == "Superseded by newer run 32146699999"
     assert node(picture, "run")["tone"] == "idle"
@@ -510,7 +554,7 @@ def test_a_transient_github_failure_keeps_the_watch_alive(recorder):
     # was still alive. GitHub outages are state too: retain the last picture and retry.
     result = gh.watch(TITLE, DESCRIPTION, poll)
 
-    assert result.startswith("6 of 6 jobs finished, 1 failed")
+    assert json.loads(result)["run"]["conclusion"] == "failure"
     assert not polls
     picture = recorder.picture()
     assert all(one["id"] != "activity" for one in picture["nodes"])
@@ -529,7 +573,7 @@ def test_a_permanently_unavailable_run_stops_after_bounded_retries(recorder):
     result = gh.watch(TITLE, DESCRIPTION, poll)
 
     assert len(attempts) == gh.MAX_CONSECUTIVE_POLL_FAILURES + 1
-    assert result.startswith("Stopped watching after GitHub failed")
+    assert json.loads(result)["ending"]["reason"] == "poll_failure"
     assert node(recorder.picture(), "run")["tone"] == "error"
 
 

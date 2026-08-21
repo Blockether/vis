@@ -71,6 +71,9 @@
           result
           (:result (last answers))
 
+          model-report
+          (json/read-json result :key-fn keyword)
+
           view
           (:final-view (last answers))
 
@@ -83,7 +86,9 @@
       ;; Every push before the close was accepted: the wire the extension speaks IS this one.
       (expect (every? :is-open (butlast answers)))
       (expect (string? result))
-      (expect (str/starts-with? result "6 of 6 jobs finished, 1 failed"))
+      (expect (= "failure" (get-in model-report [:run :conclusion])))
+      (expect (= 6 (count (:jobs model-report))))
+      (expect (= [:95742028770] (vec (keys (:failed_logs model-report)))))
       ;; Seven distinct answers: overview, selected-job details, and the run link.
       (expect (= ["run" "progress" "score" "jobs" "steps" "output" "links"]
                  (mapv :id (:nodes view))))

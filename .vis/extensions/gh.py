@@ -1,7 +1,7 @@
-"""gh — watch a GitHub Actions run live, then hand the model one compact string.
+"""gh — watch GitHub Actions live, then give the model one deduplicated diagnostic.
 
-A CI run is the archetype a live view exists for: it takes fifteen minutes, the extension can see
-exactly when it ends, a person wants to WATCH it, and the model needs one paragraph afterwards.
+A CI run is the archetype a live view exists for: it takes time, a person wants to WATCH it, and
+the model needs the final jobs, steps, timing, and failed logs without repeating the artifact tree.
 
 **Everything GitHub is the `gh` CLI through the sandbox shell verb.** No hand-built HTTPS, no token
 read, copied or printed: authentication is the operator's own `gh` session, and a missing or
@@ -532,19 +532,67 @@ def superseded_shape(shape):
     return settled
 
 
-def _summary(shape, superseded=None, failure=None):
+def _model_report(payload, log_of, cache, superseded=None, failure=None):
+    """One compact, lossless-enough CI report: schema once, each fact once."""
+    jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
+    report = {
+        "run": {
+            "id": payload.get("databaseId"),
+            "workflow": payload.get("workflowName") or "?",
+            "branch": payload.get("headBranch") or "?",
+            "status": payload.get("status") or "",
+            "conclusion": payload.get("conclusion") or "",
+            "url": payload.get("url") or "",
+        },
+        "job_fields": [
+            "id",
+            "name",
+            "conclusion",
+            "started_at",
+            "completed_at",
+            "steps",
+        ],
+        "step_fields": ["id", "conclusion", "name"],
+        "jobs": [
+            [
+                job.get("databaseId") or job.get("name") or index,
+                job.get("name") or "?",
+                job.get("conclusion") or job.get("status") or "",
+                job.get("startedAt") or "",
+                job.get("completedAt") or "",
+                [
+                    [
+                        step.get("number") or step_index,
+                        step.get("conclusion") or step.get("status") or "",
+                        step.get("name") or "?",
+                    ]
+                    for step_index, step in enumerate(job.get("steps") or [])
+                    if isinstance(step, dict)
+                ],
+            ]
+            for index, job in enumerate(jobs)
+        ],
+        "failed_logs": {
+            str(job.get("databaseId") or job.get("name") or index): tail
+            for index, job in enumerate(jobs)
+            if tone_of(job.get("status"), job.get("conclusion")) == "error"
+            if (
+                tail := _job_log_tail(
+                    _job_id(job, index), LOG_TAIL_LINES, log_of, cache
+                )
+            )
+        },
+    }
     if superseded:
-        return "Superseded by run {} — {} · {}".format(
-            superseded.get("databaseId") or "?",
-            superseded.get("displayTitle") or "newer workflow run",
-            superseded.get("url") or shape["run_url"],
-        )
-    if failure:
-        return f"Stopped watching after GitHub failed {MAX_CONSECUTIVE_POLL_FAILURES} consecutive polls — {shape['run_url']}"
-    ending = "finished" if shape["is_over"] else "still running"
-    return "{} — {}, {} · {}".format(
-        shape["headline"], shape["detail"], ending, shape["run_url"]
-    )
+        report["ending"] = {
+            "reason": "superseded",
+            "replacement_run_id": superseded.get("databaseId"),
+            "replacement_title": superseded.get("displayTitle") or "",
+            "replacement_url": superseded.get("url") or "",
+        }
+    elif failure:
+        report["ending"] = {"reason": "poll_failure", "error": failure}
+    return json.dumps(report, ensure_ascii=False, separators=(",", ":"))
 
 
 def _focus_signature(shape):
@@ -782,17 +830,19 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                 reason="failed",
                 error=terminal_failure,
                 focus_snapshots=focus_snapshots,
-                model_result=_summary(shape, superseded, terminal_failure),
+                model_result=_model_report(
+                    payload, log_of, log_cache, superseded, terminal_failure
+                ),
             )
         if superseded:
             return view.close(
                 reason="superseded",
                 focus_snapshots=focus_snapshots,
-                model_result=_summary(shape, superseded),
+                model_result=_model_report(payload, log_of, log_cache, superseded),
             )
         return view.close(
             focus_snapshots=focus_snapshots,
-            model_result=_summary(shape),
+            model_result=_model_report(payload, log_of, log_cache),
         )
 
 
@@ -804,9 +854,11 @@ def gh_watch_run(run=None, repo=None):
     parallel are focused initially; tap one to replace the steps and output below with that job.
     With none running, the last failed job (or the last job) is focused. While a selected job runs,
     its current step and elapsed time keep moving; GitHub's raw log replaces that pulse the moment
-    the job ends. `run` is a run id or URL; without one, the newest run on the current branch is
-    watched until it ends or a newer commit starts the same workflow, branch and event. An explicit
-    run is never replaced. `repo` is `owner/name` for a repository other than the working directory's.
+    the job ends. The returned string is compact JSON: run metadata; a schema-once list of every job
+    with id, outcome, start/end times, and nested step ids/outcomes/names; and one bounded log tail for
+    each failed job. It never repeats the live artifact tree. `run` is a run id or URL; without one, the
+    newest run on the current branch is watched until it ends or a newer commit starts the same workflow,
+    branch and event. An explicit run is never replaced. `repo` is `owner/name` for another repository.
     """
     require_gh()
     implicit = run is None
