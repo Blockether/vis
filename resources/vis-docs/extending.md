@@ -743,9 +743,10 @@ def watch_run(run_id):
         return view.close(summary=f"the run {run['conclusion']}")
 ```
 
-The Vis repository ships the whole version of this as `.vis/extensions/gh.py` — eight nodes,
-selectable job rows, focused steps and logs, and `gh pr checks` read through the same mapping —
-with its tests beside it and a Clojure test replaying its captured ops through the engine.
+The Vis repository ships the whole version of this as `.vis/extensions/gh.py` — seven nodes,
+selectable job rows, focused steps and logs. Its single `gh_watch_run` entry point accepts either an
+Actions run or `pr=` for aggregate pull-request checks, both through the same mapping. Tests live
+beside it, with a Clojure test replaying captured ops through the engine.
 
 **A view declares its nodes once and addresses them by id ever after** — which
 is why the id is the first argument of every builder, exactly as a field name is

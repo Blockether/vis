@@ -24,10 +24,10 @@ therefore shows its current step and live elapsed time; that pulse is replaced b
 as GitHub publishes it. Temporary CLI, network, malformed JSON, rate-limit, and provider failures
 retain the last good picture and retry visibly in the run status; three consecutive failures settle
 the view as failed instead of turning an outage or deleted run into an infinite watch. A missing job
-log is never cached as final. When an implicitly selected run is overtaken by a newer commit for the
-same workflow, branch and event, the obsolete watch closes and links to its replacement instead of
-polling work that no longer matters. A check set with no checks settles neutral rather than waiting
-forever.
+log is never cached as final. When a running watch is overtaken by a newer commit for the same
+workflow, branch and event, the obsolete watch closes and links to its replacement instead of
+polling work that no longer matters. Pull-request checks use this same view through the one public
+watcher; a check set with no checks settles neutral rather than waiting forever.
 """
 
 import calendar
@@ -312,7 +312,9 @@ def declared_nodes(shape):
                 vis.table_column("took", "Took"),
             ],
             rows=[
-                vis.table_row(row["id"], row["cells"], tone=row["tone"], branch=row.get("branch"))
+                vis.table_row(
+                    row["id"], row["cells"], tone=row["tone"], branch=row.get("branch")
+                )
                 for row in shape["rows"]
             ],
             is_focusable=True,
@@ -863,21 +865,31 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
         )
 
 
-def gh_watch_run(run=None, repo=None):
-    """What is this CI run doing, and how did it end? Watch a GitHub Actions run to its verdict.
+def gh_watch_run(run=None, repo=None, pr=None):
+    """What is this CI activity doing, and how did it end? Watch one run or one PR's checks.
 
-    Opens a live view a person can watch (and stop) while it polls `gh run view` every three
-    seconds, easing to eight past five minutes. Job rows are controls: all jobs running in
-    parallel are focused initially; tap one to replace the steps and output below with that job.
-    With none running, the last failed job (or the last job) is focused. While a selected job runs,
-    its current step and elapsed time keep moving; GitHub's raw log replaces that pulse the moment
-    the job ends. The returned string is compact JSON: run metadata; a schema-once list of every job
-    with id, outcome, start/end times, and nested step ids/outcomes/names; and one bounded log tail for
-    each failed job. It never repeats the live artifact tree. `run` is a run id or URL; without one, the
-newest run on the current branch is selected. Any running watch yields when a newer run starts the same workflow,
-    branch and event, including when `run` was explicit. `repo` is `owner/name` for another repository.
+    Opens a live view a person can watch (and stop), easing polls from three seconds to eight after
+    five minutes. Job rows are controls: all jobs running in parallel are focused initially; tap one
+    to replace the steps and output below with that job. The returned string is compact JSON: run
+    metadata; a schema-once list of every job with id, outcome, start/end times, and nested step
+    ids/outcomes/names; and one bounded log tail for each failed job. It never repeats the artifact
+    tree. `run` is a run id or URL; without `run` or `pr`, the newest run on the current branch is
+    selected. `pr` is a pull-request number, branch, URL, or `"current"`; it watches that PR's
+    aggregate checks through the same view. `run` and `pr` are mutually exclusive. Any running run
+    yields when a newer run starts the same workflow, branch and event. `repo` is `owner/name` for
+    another repository.
     """
+    if run is not None and pr is not None:
+        raise ValueError("Choose either run or pr, not both")
     require_gh()
+    if pr is not None:
+        pull = None if pr == "current" else pr
+        first = fetch_checks(pull, repo)
+        return watch(
+            f"Checks · {pull}" if pull else "Checks",
+            str(first.get("displayTitle") or "checks"),
+            lambda: fetch_checks(pull, repo),
+        )
     run_id = run or newest_run(repo)
     first = fetch_run(run_id, repo)
     title = str(first.get("workflowName") or "GitHub Actions")
@@ -895,7 +907,7 @@ newest run on the current branch is selected. Any running watch yields when a ne
 
 
 def checks_payload(rows, pull):
-    """`gh pr checks --json` rows read as a run payload, so ONE mapping serves both views."""
+    """Read `gh pr checks --json` rows as the run payload the shared view understands."""
     states = {
         "pass": ("completed", "success"),
         "fail": ("completed", "failure"),
@@ -955,37 +967,18 @@ def fetch_checks(pull, repo=None):
     return checks_payload(rows, pull)
 
 
-def gh_watch_checks(pr=None, repo=None):
-    """Are this pull request's checks green yet? Watch `gh pr checks` to its verdict.
-
-    The same seven-node view as `gh_watch_run` over a pull request's checks — each check is a
-    row, upserted by its link, and the steps node stays empty because a check has none. `pr` is
-    a number, branch or URL; without one, the pull request for the current branch.
-    """
-    require_gh()
-    first = fetch_checks(pr, repo)
-    return watch(
-        f"Checks · {pr}" if pr else "Checks",
-        str(first.get("displayTitle") or "checks"),
-        lambda: fetch_checks(pr, repo),
-    )
-
-
-PROMPT = """gh_ surface active — watch a GitHub Actions run on a live view the human can see.
-  gh_watch_run(run=None, repo=None)     gh_watch_checks(pr=None, repo=None)
-Both open a view, poll `gh` until the run ends, and answer the picture (jobs, score, focused
-steps, log tail) — use them instead of a shell loop over `gh run view`."""
+PROMPT = """gh_ surface active — watch GitHub Actions on a live view the human can see.
+  gh_watch_run(run=None, repo=None, pr=None)
+It watches either one run or one pull request's aggregate checks until completion, then answers the
+picture (jobs, score, focused steps, failed log tails) — use it instead of a shell polling loop."""
 
 
 vis.extension(
     name="gh",
-    description="Watch a GitHub Actions run or a pull request's checks on a live view.",
+    description="Watch a GitHub Actions run or pull-request checks on a live view.",
     version="0.1.0",
     kind="integration",
     alias="gh",
-    symbols=[
-        vis.symbol(gh_watch_run, tag="observation"),
-        vis.symbol(gh_watch_checks, tag="observation"),
-    ],
+    symbols=[vis.symbol(gh_watch_run, tag="observation")],
     prompt=PROMPT,
 )

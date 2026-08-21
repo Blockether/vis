@@ -638,7 +638,6 @@ def test_a_newer_run_is_matched_to_the_same_workflow_branch_and_event(monkeypatc
     ]
 
 
-
 def test_an_explicit_running_run_still_yields_to_its_replacement(monkeypatch):
     # Regression, session 89177777-0681-498d-8b26-b6d59ea67d75: the release watcher
     # kept a cancelled run open for hours because passing its id disabled replacement checks.
@@ -661,6 +660,8 @@ def test_an_explicit_running_run_still_yields_to_its_replacement(monkeypatch):
 
     assert gh.gh_watch_run(32146686161) == "watched"
     assert received["superseded_by"]() == replacement
+
+
 def test_a_missing_gh_refuses_in_one_line_before_a_view_opens(recorder, monkeypatch):
     monkeypatch.setattr(
         gh,
@@ -674,6 +675,33 @@ def test_a_missing_gh_refuses_in_one_line_before_a_view_opens(recorder, monkeypa
     assert "\n" not in str(refusal.value)
     assert "gh auth login" in str(refusal.value)
     assert recorder.said == []
+
+
+def test_one_public_watcher_routes_pull_request_checks(monkeypatch):
+    rows = [
+        {"name": "tests", "bucket": "pending", "link": "https://github.com/o/r/runs/2"}
+    ]
+    received = {}
+
+    monkeypatch.setattr(gh, "require_gh", lambda: None)
+
+    def fetch(pr, repo=None):
+        received["fetch"] = (pr, repo)
+        return gh.checks_payload(rows, pr)
+
+    def capture(title, description, poll, log_of=None, superseded_by=None):
+        received["watch"] = (title, description, poll())
+        return "watched"
+
+    monkeypatch.setattr(gh, "fetch_checks", fetch)
+    monkeypatch.setattr(gh, "watch", capture)
+
+    assert gh.gh_watch_run(pr=1421, repo="o/r") == "watched"
+    assert received["fetch"] == (1421, "o/r")
+    assert received["watch"][:2] == ("Checks · 1421", "Checks on 1421")
+    assert not hasattr(gh, "gh_watch_checks")
+    with pytest.raises(ValueError, match="either run or pr"):
+        gh.gh_watch_run(run=7, pr=1421)
 
 
 def test_a_pull_requests_checks_read_as_the_same_run():
