@@ -130,7 +130,9 @@
       ;; that was a bare header, and nothing a described ask could match. A docstring is the whole
       ;; of that fix — first line to the listing, the rest to the page — and the rule had to name
       ;; where that line SHOWS UP, or it reads as style advice. It lands at 6 152.
-      (expect (< (count text) 6200))
+      ;; 6.2k → 6.35k to distinguish questions from implementation requests before any tool rule.
+      ;; Answering directly avoids turning an informational question into an unsolicited code change.
+      (expect (< (count text) 6350))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -142,6 +144,12 @@
       (doseq [shape ["`grep({\"query\": [needles], \"paths\": [scopes]})`" "`cat(path, start, end)`"
                      "`patch(path, edits)`" "`[{\"from\": a, \"to\": b, \"replace\": text}]`"]]
         (expect (str/includes? text shape)))
+      (expect
+        (str/includes?
+          text
+          "When the user asks a question, answer the question. Do not start coding. Use tools or scripts only when you need more information for the answer."))
+      (expect (< (str/index-of text "When the user asks a question")
+                 (str/index-of text "`grep(...)` FIRST")))
       (expect (str/includes? text "`grep(...)` FIRST"))
       ;; A helper the model wrote is the only document it can author mid-session, so the rule that
       ;; orders one has to name what its docstring BECOMES — a gist, a page, and a way to be found.
