@@ -158,20 +158,3 @@ export function isEnterSendPlatform(
 ): boolean {
   return platform === 'web';
 }
-
-/**
- * Puts the native software keyboard away without moving the composer first.
- *
- * The native keyboard events keep the app shell pinned throughout the dismissal
- * animation. Blurring the field eagerly breaks that ownership: the composer can
- * fall to the physical bottom while UIKit is still drawing the keyboard over it.
- * Keeping DOM focus is harmless — the native plugin resigns the input — and lets
- * the keyboard's will/did-hide sequence release the shell at the right frame.
- * A no-op with a hardware keyboard, where nothing is covering anything.
- */
-export function dismissSoftKeyboard(
-  _element: HTMLElement | null | undefined,
-): void {
-  if (isEnterSendPlatform()) return;
-  if (Capacitor.isNativePlatform()) void Keyboard.hide().catch(() => undefined);
-}

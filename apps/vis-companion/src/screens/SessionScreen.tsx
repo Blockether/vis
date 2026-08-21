@@ -74,11 +74,7 @@ import {
 import { sheetDismissed } from "../lib/image-file";
 import { AttachImageContext } from "../lib/attach-image";
 import type { GatewayClient } from "../lib/gateway";
-import {
-  dismissSoftKeyboard,
-  holdKeyboardAcrossSheet,
-  isEnterSendPlatform,
-} from "../lib/keyboard";
+import { holdKeyboardAcrossSheet, isEnterSendPlatform } from "../lib/keyboard";
 import {
   mergeQueueBacklog,
   queuedTurnFromWire,
@@ -6070,9 +6066,8 @@ export function SessionScreen({
                 tone="send"
                 onMouseDown={keepKeyboard}
                 onClick={() => {
-                  // Sending ends the writing: the keyboard goes down with the
-                  // message instead of standing over the answer it asked for.
-                  dismissSoftKeyboard(composerRef.current);
+                  // The composer stays focused, so iOS keeps one stable keyboard and
+                  // viewport while the answer starts streaming.
                   void send();
                 }}
                 disabled={

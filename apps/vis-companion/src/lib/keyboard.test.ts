@@ -1,12 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  dismissSoftKeyboard,
-  holdKeyboardAcrossSheet,
-  isEnterSendPlatform,
-} from './keyboard';
+import { holdKeyboardAcrossSheet, isEnterSendPlatform } from './keyboard';
 
 let platform = 'web';
-const hide = vi.fn(() => Promise.resolve());
 
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
@@ -14,7 +9,7 @@ vi.mock('@capacitor/core', () => ({
     isNativePlatform: () => platform !== 'web',
   },
 }));
-vi.mock('@capacitor/keyboard', () => ({ Keyboard: { hide: () => hide(), show: () => Promise.resolve() } }));
+vi.mock('@capacitor/keyboard', () => ({ Keyboard: { show: () => Promise.resolve() } }));
 
 interface Composer {
   element: HTMLTextAreaElement;
@@ -342,33 +337,5 @@ describe('isEnterSendPlatform', () => {
     expect(isEnterSendPlatform('web')).toBe(true);
     expect(isEnterSendPlatform('ios')).toBe(false);
     expect(isEnterSendPlatform('android')).toBe(false);
-  });
-});
-
-// Regression, user report: blurring the native composer dropped it to the bottom
-// while iOS was still animating its software keyboard away.
-describe('dismissSoftKeyboard', () => {
-  it('lets the native keyboard dismissal own the animation', () => {
-    platform = 'ios';
-    hide.mockClear();
-    const { element, document, log } = composer();
-
-    dismissSoftKeyboard(element);
-
-    expect(log).toEqual([]);
-    expect(document.activeElement).toBe(element);
-    expect(hide).toHaveBeenCalledTimes(1);
-    platform = 'web';
-  });
-
-  it('leaves a hardware keyboard alone', () => {
-    hide.mockClear();
-    const { element, document, log } = composer();
-
-    dismissSoftKeyboard(element);
-
-    expect(log).toEqual([]);
-    expect(document.activeElement).toBe(element);
-    expect(hide).not.toHaveBeenCalled();
   });
 });
