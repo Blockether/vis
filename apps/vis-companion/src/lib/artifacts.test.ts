@@ -45,6 +45,8 @@ describe("document media types", () => {
     expect(docKindLabel("application/pdf")).toBe("PDF");
     expect(docKindLabel("text/html")).toBe("HTML");
     expect(isPdfMedia("application/pdf")).toBe(true);
+    expect(isPdfMedia("APPLICATION/PDF; charset=binary")).toBe(true);
+    expect(isPdfMedia("application/notpdf")).toBe(false);
     expect(isPdfMedia("text/html")).toBe(false);
   });
 });

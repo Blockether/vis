@@ -87,7 +87,7 @@ export function isDocMedia(
 }
 
 export function isPdfMedia(mime: string | undefined): boolean {
-  return (mime ?? "").toLowerCase().includes("pdf");
+  return baseMedia(mime) === "application/pdf";
 }
 
 /** The chip beside the name: what KIND of document this is. */
