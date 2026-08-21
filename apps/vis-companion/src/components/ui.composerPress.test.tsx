@@ -35,6 +35,26 @@ describe("the send button under a finger", () => {
     await waitFor(() => expect(submitTurn).toHaveBeenCalledTimes(1));
     expect(await screen.findByText("run the tests")).toBeInTheDocument();
   });
+
+  // Regression, WebKit issue #164077: an iOS autocorrection could update the
+  // textarea without notifying React before the send press.
+  it("sends the text committed by iOS before React state catches up", async () => {
+    const submitTurn = vi.fn(() => Promise.resolve(null));
+    renderSessionScreen({ client: { submitTurn } });
+
+    const box = (await screen.findByLabelText("Message Vis")) as HTMLTextAreaElement;
+    fireEvent.change(box, { target: { value: "To będzie dlugie zdanie" } });
+    box.value = "To będzie długie zdanie?";
+    tap(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() =>
+      expect(submitTurn).toHaveBeenCalledWith(
+        expect.any(String),
+        "To będzie długie zdanie?",
+        expect.any(Object),
+      ),
+    );
+  });
 });
 
 describe("the composer's own press", () => {

@@ -4336,7 +4336,14 @@ export function SessionScreen({
   }
 
   async function send(voiceRequest?: string, voiceProjection = false) {
-    const authoredRequest = (voiceRequest ?? prompt).trim();
+    // iOS may commit an autocorrection into the native textarea before React has
+    // delivered the matching change event. Read the control at the press boundary
+    // so the turn carries the text the operator can actually see.
+    const authoredRequest = (
+      voiceRequest ??
+      composerRef.current?.value ??
+      prompt
+    ).trim();
     const request =
       expandFileMentions(expandPastePlaceholders(authoredRequest, pastes)) ||
       (attachments.length ? "Please inspect the attached image(s)." : "");
