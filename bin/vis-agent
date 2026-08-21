@@ -362,31 +362,18 @@ refresh_wsl_windows_ca_bundle() {
   # shellcheck disable=SC2016
   if "$powershell" -NoLogo -NoProfile -NonInteractive -Command '
       $ErrorActionPreference = "Stop"
-      [System.Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
       $seen = @{}
-      $pem = [System.Text.StringBuilder]::new()
-      foreach ($location in @(
-          [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser,
-          [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)) {
-        $store = [System.Security.Cryptography.X509Certificates.X509Store]::new("Root", $location)
-        try {
-          $store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
-          foreach ($cert in $store.Certificates) {
-            if (-not $seen.ContainsKey($cert.Thumbprint)) {
-              $seen[$cert.Thumbprint] = $true
-              [void]$pem.AppendLine("-----BEGIN CERTIFICATE-----")
-              [void]$pem.AppendLine([System.Convert]::ToBase64String(
-                $cert.RawData,
-                [System.Base64FormattingOptions]::InsertLineBreaks))
-              [void]$pem.AppendLine("-----END CERTIFICATE-----")
-            }
-          }
-        } finally {
-          $store.Close()
+      foreach ($cert in Get-ChildItem -Path @(
+          "Cert:\CurrentUser\Root",
+          "Cert:\LocalMachine\Root") -ErrorAction Stop) {
+        if (-not $seen.ContainsKey($cert.Thumbprint)) {
+          $seen[$cert.Thumbprint] = $true
+          "-----BEGIN CERTIFICATE-----"
+          [System.Convert]::ToBase64String($cert.RawData)
+          "-----END CERTIFICATE-----"
         }
       }
-      [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($pem.ToString()))
-    ' | tr -d '\r\n' | base64 --decode >>"$tmp" && [[ -s "$tmp" ]]; then
+    ' | tr -d '\r' >>"$tmp" && [[ -s "$tmp" ]]; then
     mv -f "$tmp" "$output"
     export_system_ca_bundle "$output"
   else

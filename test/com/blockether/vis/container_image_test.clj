@@ -367,9 +367,6 @@
           windows-pem
           "-----BEGIN CERTIFICATE-----\nV0lORE9XUy1ST09U\n-----END CERTIFICATE-----\n"
 
-          encoded
-          (.encodeToString (java.util.Base64/getEncoder) (.getBytes windows-pem "UTF-8"))
-
           ubuntu-bundle
           (doto (io/file tmp "ubuntu-ca.pem") (spit ubuntu-pem))]
 
@@ -380,7 +377,12 @@
                       "printf 'SSL_CERT_FILE=%s\\n' \"${SSL_CERT_FILE:-}\"\n"
                       "printf 'VIS_SYSTEM_CA_CERT=%s\\n' \"${VIS_SYSTEM_CA_CERT:-}\"\n"))
            (.setExecutable native true false)
-           (spit powershell (str "#!/bin/sh\nprintf '%s\\n' '" encoded "'\n"))
+           (spit powershell
+                 (str "#!/bin/sh\n"
+                      "case \"$*\" in *'::new('*|*'OutputEncoding'*) exit 1 ;; esac\n"
+                      "printf '%s' '"
+                      windows-pem
+                      "'\n"))
            (.setExecutable powershell true false)
            (let [{:keys [exit output]}
                  (run-wrapper wrapper
