@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AssistantMessage,
   AttachmentRail,
+  ContentBlockView,
   InlineMarkdown,
   Markdown,
+  SpeechBlock,
   ThinkingBand,
   UserMessage,
 } from "./ChatContent";
@@ -16,6 +18,7 @@ import {
   mediaGridClass,
   mediaTileFrameClass,
 } from "../lib/media-frame";
+import { speechOutput } from "../lib/speech";
 import type { IterationAttachment, TranscriptTurn } from "../lib/types";
 
 /** Visible text of a rendered chunk: tags out, entities back. */
@@ -34,6 +37,75 @@ const codeRows = (html: string) =>
 
 const count = (html: string, pattern: RegExp) =>
   (html.match(pattern) ?? []).length;
+
+describe("spoken transcript", () => {
+  it("opens as a justified audio rail with a seekable position", () => {
+    const html = renderToStaticMarkup(
+      <ContentBlockView
+        block={{
+          id: "speech-1",
+          type: "speech",
+          text: "A spoken answer that the reader can replay from any point.",
+        }}
+      />,
+    );
+
+    expect(html).toContain('aria-expanded="true"');
+    expect(html).toContain('type="range"');
+    expect(html).toContain('aria-label="Speech position"');
+    expect(html).toContain("text-justify");
+    expect(html).toContain('lang="en"');
+  });
+
+  it("puts the disclosure chevron before its name and points it down while open", () => {
+    const html = renderToStaticMarkup(
+      <ContentBlockView
+        block={{ id: "speech-1", type: "speech", text: "Listen again." }}
+      />,
+    );
+    const disclosure = html.slice(
+      html.indexOf("data-disclosure-toggle"),
+      html.indexOf("</button>"),
+    );
+
+    expect(disclosure.indexOf("<svg")).toBeLessThan(
+      disclosure.indexOf("Spoken version"),
+    );
+    expect(disclosure).toContain("rotate-90");
+  });
+
+  it("restarts speech at the position selected on the rail", async () => {
+    const calls: string[] = [];
+    let finish: () => void = () => undefined;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const speak = vi.spyOn(speechOutput, "speak").mockImplementation((value) => {
+      calls.push(value);
+      return pending;
+    });
+    const stop = vi.spyOn(speechOutput, "stop").mockImplementation(() => undefined);
+    const view = render(<SpeechBlock text="one two three four five six" />);
+
+    try {
+      fireEvent.click(view.getByRole("button", { name: "Play" }));
+      expect(calls).toEqual(["one two three four five six"]);
+
+      const rail = view.getByRole("slider", { name: "Speech position" });
+      fireEvent.pointerDown(rail);
+      fireEvent.change(rail, { target: { value: "0.5" } });
+      fireEvent.pointerUp(rail);
+
+      await waitFor(() => expect(calls.at(-1)).toBe("four five six"));
+      expect(stop).toHaveBeenCalled();
+    } finally {
+      finish();
+      view.unmount();
+      speak.mockRestore();
+      stop.mockRestore();
+    }
+  });
+});
 
 describe("Markdown thinking breaks", () => {
   // The engine's `reasoning->ast` turns a single authored newline into `[:br]`, and the

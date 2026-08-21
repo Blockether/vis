@@ -2486,46 +2486,154 @@ export const IterationTrace = memo(function IterationTrace({
   );
 });
 
-function SpeechBlock({ text }: { text: string }) {
-  const [speaking, setSpeaking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+const speechDuration = (text: string) =>
+  Math.max(1, text.trim().split(/\s+/).filter(Boolean).length / 2.5);
 
-  const toggle = () => {
-    if (speaking) {
-      speechOutput.stop();
-      setSpeaking(false);
-      return;
-    }
-    setError(null);
-    setSpeaking(true);
-    void speechOutput.speak(text).catch((cause: unknown) => {
-      setError((cause as Error).message);
-    }).finally(() => setSpeaking(false));
+const speechTime = (seconds: number) => {
+  const whole = Math.max(0, Math.round(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
+};
+
+const speechFrom = (text: string, position: number) => {
+  if (position <= 0) return text;
+  const approximate = Math.min(text.length - 1, Math.floor(text.length * position));
+  const boundary = text.indexOf(" ", approximate);
+  return text.slice(boundary < 0 ? approximate : boundary + 1).trimStart();
+};
+
+export function SpeechBlock({ text }: { text: string }) {
+  const duration = speechDuration(text);
+  const [open, setOpen] = useState(true);
+  const [speaking, setSpeaking] = useState(false);
+  const [position, setPosition] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const positionRef = useRef(0);
+  const runRef = useRef(0);
+  const startedAtRef = useRef(0);
+  const resumeAfterSeekRef = useRef(false);
+
+  const rememberPosition = (next: number) => {
+    const clamped = Math.max(0, Math.min(1, next));
+    positionRef.current = clamped;
+    setPosition(clamped);
   };
 
-  const [open, setOpen] = useState(false);
+  const stop = useCallback(() => {
+    runRef.current += 1;
+    speechOutput.stop();
+    setSpeaking(false);
+  }, []);
+
+  const play = useCallback(
+    (requested = positionRef.current) => {
+      const from = requested >= 0.995 ? 0 : requested;
+      const spoken = speechFrom(text, from);
+      const run = runRef.current + 1;
+      runRef.current = run;
+      speechOutput.stop();
+      rememberPosition(from);
+      startedAtRef.current = performance.now() - from * duration * 1000;
+      setError(null);
+      setSpeaking(true);
+      void speechOutput
+        .speak(spoken)
+        .then(() => {
+          if (runRef.current === run) rememberPosition(1);
+        })
+        .catch((cause: unknown) => {
+          if (runRef.current === run) setError((cause as Error).message);
+        })
+        .finally(() => {
+          if (runRef.current === run) setSpeaking(false);
+        });
+    },
+    [duration, text],
+  );
+
+  useEffect(() => {
+    if (!speaking) return;
+    const timer = window.setInterval(() => {
+      rememberPosition(
+        Math.min(0.995, (performance.now() - startedAtRef.current) / (duration * 1000)),
+      );
+    }, 200);
+    return () => window.clearInterval(timer);
+  }, [duration, speaking]);
+
+  useEffect(() => () => stop(), [stop]);
+
+  const beginSeek = () => {
+    resumeAfterSeekRef.current = resumeAfterSeekRef.current || speaking;
+    if (speaking) stop();
+  };
+  const finishSeek = () => {
+    if (!resumeAfterSeekRef.current) return;
+    resumeAfterSeekRef.current = false;
+    play(positionRef.current);
+  };
+  const language = /[ąćęłńóśźż]/i.test(text) ? "pl" : "en";
+
   return (
-    <div className="my-2 border border-dialog-edge bg-panel">
-      <Disclosure isOpen={open} onClick={() => setOpen((was) => !was)}>
-        <span className="min-w-0 flex-1 truncate font-mono text-meta font-bold">
-          Spoken version
-        </span>
-        <span className="shrink-0 font-mono text-chip text-dialog-hint">
-          {speaking ? "Speaking" : "Ready to replay"}
-        </span>
-      </Disclosure>
+    <section className="my-2 border border-accent bg-panel">
+      <div className="bg-accent-surface px-2.5">
+        <Disclosure
+          isOpen={open}
+          tone="step"
+          onClick={() => setOpen((was) => !was)}
+        >
+          <span className="min-w-0 flex-1 truncate">Spoken version</span>
+          <span className="shrink-0 font-normal tabular-nums text-accent-ink">
+            {speaking ? "Playing" : speechTime(duration)}
+          </span>
+        </Disclosure>
+      </div>
       {open && (
-        <div className="grid gap-2 border-t border-dialog-edge px-2.5 py-2 text-body text-dialog-foreground">
-          <p>{text}</p>
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" density="compact" onClick={toggle}>
-              {speaking ? "Stop" : "Replay"}
+        <div className="border-t border-accent">
+          <div className="flex min-h-12 items-center gap-2 bg-accent-surface px-2.5 mouse:min-h-9">
+            <Button
+              variant={speaking ? "secondary" : "primary"}
+              density="compact"
+              className="shrink-0"
+              onClick={() => (speaking ? stop() : play())}
+            >
+              {speaking ? "Pause" : "Play"}
             </Button>
-            {error && <span className="font-mono text-meta text-err">{error}</span>}
+            <span className="w-8 shrink-0 text-right font-mono text-chip tabular-nums text-accent-ink">
+              {speechTime(position * duration)}
+            </span>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.001"
+              value={position}
+              aria-label="Speech position"
+              className="h-11 min-w-0 flex-1 cursor-pointer accent-accent"
+              onPointerDown={beginSeek}
+              onPointerUp={finishSeek}
+              onPointerCancel={finishSeek}
+              onKeyDown={beginSeek}
+              onKeyUp={finishSeek}
+              onChange={(event) => rememberPosition(event.target.valueAsNumber)}
+            />
+            <span className="w-8 shrink-0 font-mono text-chip tabular-nums text-accent-ink">
+              {speechTime(duration)}
+            </span>
           </div>
+          <p
+            lang={language}
+            className={`${PROSE} border-t border-accent px-2.5 py-3 text-body text-dialog-foreground`}
+          >
+            {text}
+          </p>
+          {error && (
+            <p className="border-t border-accent px-2.5 py-2 font-mono text-meta text-err">
+              {error}
+            </p>
+          )}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
