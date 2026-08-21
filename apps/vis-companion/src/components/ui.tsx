@@ -649,6 +649,15 @@ const BAND_NAME = 'font-extrabold tracking-[0.06em]';
  * `tone` is the ink of the thing it opens, because that is the only difference —
  * ink INCLUDING the slant: the reasoning a thinking band opens is set in italic,
  * so that band's own name is italic, and bold with it.
+ *
+ * A `caption` also stops at its own words (`w-auto`): every other tone fills the row
+ * it shares, but a caption owns the space above a block, and a press target running
+ * the whole width of that block would open the text from empty paper.
+ * `caption` is the name of a block that stands OUTSIDE it, over its top-left
+ * corner: caps at chip size in hint ink, the caption this app already writes over
+ * a field. A framed transport is the loud thing on that row, so its own name steps
+ * off the frame instead of competing inside it.
+ *
  * The height follows the pointer, never the width: 32px under a finger, the
  * tight 24px rhythm only where there is a cursor.
  */
@@ -661,7 +670,7 @@ export function Disclosure({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   isOpen: boolean;
-  tone?: 'step' | 'thinking' | 'muted';
+  tone?: 'step' | 'thinking' | 'muted' | 'caption';
   /**
    * Gives the row's own gutter back: the chevron lines its ink up with the card's
    * leading edge while the press target keeps the padding a finger needs. It is
@@ -675,13 +684,15 @@ export function Disclosure({
       ? `${BAND_NAME} text-accent-ink hover:bg-hover`
       : tone === 'thinking'
         ? 'font-bold italic tracking-[0.07em] text-thinking hover:text-dialog-hint-key'
-        : 'text-footer-muted hover:bg-hover';
+        : tone === 'caption'
+          ? 'uppercase tracking-[0.08em] text-dialog-hint hover:text-accent-ink'
+          : 'text-footer-muted hover:bg-hover';
   return (
     <button
       type="button"
       data-disclosure-toggle
       aria-expanded={isOpen}
-      className={`flex min-h-8 w-full min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono text-chip transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-6 ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
+      className={`flex min-h-8 min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono text-chip transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-6 ${tone === 'caption' ? 'w-auto' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
       {...props}
     >
       <ChevronIcon open={isOpen} className="size-3 shrink-0 opacity-70" />

@@ -75,10 +75,11 @@ describe("spoken transcript", () => {
       const play = view.getByRole("button", { name: "Play" });
       expect(play.textContent).toBe("");
       expect(play.querySelector("svg")).not.toBeNull();
-      // The transport shares the header's row with the disclosure.
-      expect(
-        play.parentElement?.querySelector("[data-disclosure-toggle]"),
-      ).not.toBeNull();
+      // The transport LEADS the header row, and the name is no longer in it.
+      const header = play.parentElement;
+      expect(header?.hasAttribute("data-speech-header")).toBe(true);
+      expect(header?.firstElementChild).toBe(play);
+      expect(header?.querySelector("[data-disclosure-toggle]")).toBeNull();
     } finally {
       view.unmount();
     }
@@ -92,13 +93,17 @@ describe("spoken transcript", () => {
     const view = render(<SpeechBlock text="Listen again." />);
     try {
       const wave = view.getByRole("slider", { name: "Speech position" });
-      const header = view
-        .getByRole("button", { name: /Transcript/ })
-        .closest("[data-speech-header]");
+      const header = view.container.querySelector("[data-speech-header]");
+      const play = view.getByRole("button", { name: "Play" });
 
       expect(header?.contains(wave)).toBe(true);
-      expect(header?.contains(view.getByRole("button", { name: "Play" }))).toBe(true);
+      expect(header?.contains(play)).toBe(true);
 
+      // The name stands OUTSIDE the frame, above its border.
+      const frame = header?.parentElement;
+      const name = view.getByRole("button", { name: /Transcript/ });
+      expect(frame?.contains(name)).toBe(false);
+      expect(name.nextElementSibling).toBe(frame);
       const body = header?.nextElementSibling;
       expect(body?.querySelector("[role='slider']")).toBeNull();
       expect(body?.querySelector("button")).toBeNull();
@@ -121,6 +126,44 @@ describe("spoken transcript", () => {
     }
   });
 
+  // Reported as "ten play i pause powinien być mniejszy i może po lewej stronie a
+  // transcript napis powinien być poza bloczkiem mały i full uppercased po lewej
+  // stronie nad borderem": the name sat inside the amber frame, and the transport
+  // ended the row on the far right in a 16px glyph.
+  it("captions the frame from outside it and leads the row with a small transport", () => {
+    const html = renderToStaticMarkup(
+      <ContentBlockView
+        block={{ id: "speech-1", type: "speech", text: "Listen again." }}
+      />,
+    );
+    const caption = html.slice(
+      html.indexOf("data-disclosure-toggle"),
+      html.indexOf("</button>"),
+    );
+
+    // Above the border, not in it.
+    expect(html.indexOf("data-disclosure-toggle")).toBeLessThan(
+      html.indexOf("<section"),
+    );
+    expect(caption).toContain("uppercase");
+    expect(caption).toContain("text-chip");
+
+    const view = render(<SpeechBlock text="Listen again." />);
+    try {
+      const play = view.getByRole("button", { name: "Play" });
+      // The icons' own 14px grammar, not the 16px one this row used to spell.
+      expect(play.querySelector("svg")?.getAttribute("class")).toContain(
+        "size-3.5",
+      );
+      expect(
+        play.compareDocumentPosition(
+          view.getByRole("slider", { name: "Speech position" }),
+        ) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    } finally {
+      view.unmount();
+    }
+  });
   it("draws a flat rule until real samples exist, and never a made-up shape", () => {
     const view = render(<SpeechBlock text="Nothing has been synthesised yet." />);
     try {

@@ -2595,61 +2595,61 @@ export function SpeechBlock({ text }: { text: string }) {
   const language = /[ąćęłńóśźż]/i.test(text) ? "pl" : "en";
 
   return (
-    <section className="my-2 border border-accent bg-panel">
-      {/* ONE band, and everything the reader can PRESS rides in it: the wave is the
-          reply itself, so it stands where the reply is played, and the text below is
-          what the disclosure is named after. */}
-      <div
-        data-speech-header
-        className="flex min-h-12 items-center gap-2 pl-2.5 mouse:min-h-9"
+    <div className="my-2">
+      {/* The name stands OUTSIDE the frame, over its top-left corner. Inside it, a
+          word competed with the very thing it names: the block IS the transport —
+          one row of wave and clock — and the reader opens it for the text, so the
+          name is the app's field caption, caps at chip size, and keeps its chevron
+          because it still opens something. */}
+      <Disclosure
+        isOpen={open}
+        tone="caption"
+        onClick={() => setOpen((was) => !was)}
       >
-        <span className="flex shrink-0">
-          <Disclosure
-            isOpen={open}
-            tone="step"
-            onClick={() => setOpen((was) => !was)}
-          >
-            Transcript
-          </Disclosure>
-        </span>
-        <Waveform
-          className="flex-1"
-          peaks={track?.peaks ?? []}
-          value={position}
-          label="Speech position"
-          onSeek={seek}
-        />
-        <span className="shrink-0 font-mono text-chip tabular-nums text-dialog-hint">
-          {speechTime(position * duration)}
-          <span className="hidden sm:inline"> / {speechTime(duration)}</span>
-        </span>
-        <IconButton
-          label={speaking ? "Pause" : "Play"}
-          variant="quiet"
-          className="mr-1.5"
-          onClick={() => (speaking ? stop() : play())}
+        Transcript
+      </Disclosure>
+      <section className="border border-accent bg-panel">
+        {/* ONE band, and everything the reader can PRESS rides in it. The transport
+            LEADS the row: the gesture comes before the shape it moves, and the clock
+            it produces ends the row. */}
+        <div
+          data-speech-header
+          className="flex min-h-12 items-center gap-2 pl-1 pr-2.5 mouse:min-h-9"
         >
-          {speaking ? (
-            <PauseIcon className="size-4" />
-          ) : (
-            <PlayIcon className="size-4" />
-          )}
-        </IconButton>
-      </div>
-      {open && (
-        <div className="border-t border-edge">
-          <p
-            lang={language}
-            className={`${PROSE} px-2.5 py-2.5 text-body text-dialog-foreground`}
+          <IconButton
+            label={speaking ? "Pause" : "Play"}
+            variant="quiet"
+            onClick={() => (speaking ? stop() : play())}
           >
-            {text}
-          </p>
-          {error && (
-            <p className="px-2.5 pb-2 font-mono text-meta text-err">{error}</p>
-          )}
+            {speaking ? <PauseIcon /> : <PlayIcon />}
+          </IconButton>
+          <Waveform
+            className="flex-1"
+            peaks={track?.peaks ?? []}
+            value={position}
+            label="Speech position"
+            onSeek={seek}
+          />
+          <span className="shrink-0 font-mono text-chip tabular-nums text-dialog-hint">
+            {speechTime(position * duration)}
+            <span className="hidden sm:inline"> / {speechTime(duration)}</span>
+          </span>
         </div>
-      )}
-    </section>
+        {open && (
+          <div className="border-t border-edge">
+            <p
+              lang={language}
+              className={`${PROSE} px-2.5 py-2.5 text-body text-dialog-foreground`}
+            >
+              {text}
+            </p>
+            {error && (
+              <p className="px-2.5 pb-2 font-mono text-meta text-err">{error}</p>
+            )}
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 

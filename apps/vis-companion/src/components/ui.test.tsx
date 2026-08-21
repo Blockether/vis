@@ -2536,6 +2536,20 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(first(html({ tone: "thinking" }))).not.toContain("not-italic");
       expect(first(html({ tone: "step" }))).not.toContain("italic");
     });
+
+    // Reported as "transcript napis powinien być poza bloczkiem mały i full
+    // uppercased": a name standing OVER a framed block, rather than inside it,
+    // had nowhere in this vocabulary to come from.
+    it("wears caps and hint ink when the name stands outside what it opens", () => {
+      const caption = first(html({ tone: "caption" }));
+
+      expect(caption).toContain("uppercase");
+      expect(caption).toContain("text-chip");
+      expect(caption).toContain("text-dialog-hint");
+      // It owns the space above a block, so its press target stops at its own words.
+      expect(caption).toContain("w-auto");
+      expect(first(html({ tone: "step" }))).toContain("w-full");
+    });
   });
 
   // A band says in ONE word what it holds — `PYTHON` over a program, `RESULT`
