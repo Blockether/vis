@@ -197,7 +197,7 @@ describe('ProviderRows', () => {
     ...fields,
   });
 
-  it('paints what the account has left in the row, with nothing to tap for it', () => {
+  it('paints the most urgent quota in the collapsed row for an at-a-glance read', () => {
     render(
       <ProviderRows
         auth={state({
@@ -218,6 +218,46 @@ describe('ProviderRows', () => {
     );
     expect(screen.getByText('16%')).toBeTruthy();
     expect(screen.queryByText('Check status')).toBeNull();
+  });
+
+  // Reported: pressing a signed-in provider refreshed it without opening the
+  // provider, so its quota windows remained hidden behind the collapsed row.
+  it('opens a signed-in provider and shows every reported limit', () => {
+    render(
+      <ProviderRows
+        auth={state({
+          providers: [
+            signedIn({
+              limits: {
+                dynamic: {
+                  limits: [
+                    { label: 'Chat', limit: 100, remaining: 62 },
+                    { label: 'Completions', limit: 100, remaining: 16 },
+                  ],
+                },
+              },
+            }),
+          ],
+          recheck: async () => {},
+        })}
+      />,
+    );
+    const row = screen.getByText('GITHUB-COPILOT').closest('button');
+    expect(row).not.toBeNull();
+    if (!row) throw new Error('provider row missing');
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('region', { name: 'GITHUB-COPILOT limits' })).toBeNull();
+
+    fireEvent.click(row);
+
+    expect(row.getAttribute('aria-expanded')).toBe('true');
+    const limits = screen.getByRole('region', { name: 'GITHUB-COPILOT limits' });
+    expect(limits.textContent).toContain('Chat 62% left');
+    expect(limits.textContent).toContain('Completions 16% left');
+
+    fireEvent.click(row);
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('region', { name: 'GITHUB-COPILOT limits' })).toBeNull();
   });
 
   it('presses into a live re-check for an account that is already signed in', () => {

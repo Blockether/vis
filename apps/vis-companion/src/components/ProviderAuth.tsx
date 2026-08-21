@@ -1056,22 +1056,21 @@ function ProviderModelMenu({
 }
 
 /**
- * THE PROVIDER ACCOUNTS, one pressable row each — the same slab a machine gets,
- * slid the same way.
+ * THE PROVIDER ACCOUNTS, one pressable disclosure each — the same slab a
+ * machine gets, slid the same way.
  *
- * A provider IS a machine-sized thing: it is signed in or it is not, it holds a
- * rank, and it can be dropped. Its verbs used to live in a body the row had to
- * be expanded to reach — a `<select>` and four buttons for a decision that is
- * one model — while the identical fleet above it answered a swipe. So the verbs
- * moved under the row's trailing edge: `Default` and `Fallback` open that
- * provider's models, and the last cell is the removal, exactly as `Forget` is a
- * machine's.
+ * A provider IS a machine-sized thing: it is signed in or it is not, it holds
+ * a rank, and it can be dropped. Its rank and removal verbs stay under the
+ * trailing edge, while pressing a signed-in row opens that account's report.
+ * Every quota window belongs there; the row keeps only the most urgent number
+ * so the fleet remains scannable.
  *
- * Pressing the row is its cheapest verb: sign in when the account is signed
- * out, otherwise ask the gateway for this account's verdict and quota again.
+ * Opening also asks the gateway for a fresh verdict and quota. A signed-out
+ * row still goes straight to sign-in because it has no account report yet.
  */
 export function ProviderRows({ auth }: { auth: ProviderAuth }) {
   const { providers, pending } = auth;
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [removing, setRemoving] = useState<string | null>(null);
   /** The provider whose model list is open, the rank it will tag, and where it hangs. */
   const [tagging, setTagging] = useState<{ id: string; role: ModelRole; at: MenuPosition } | null>(
@@ -1112,6 +1111,12 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
         const authed = isProviderAuthed(provider);
         const isProbing = pending === `status:${provider.id}`;
         const mark = providerQuotaMark(provider);
+        const isOpen = authed && expanded.has(provider.id);
+        const panelId = `provider-limits-${provider.id}`;
+        const limitLines = (provider.limits?.dynamic?.limits ?? [])
+          .map(limitRowText)
+          .filter((line): line is string => line !== null);
+        const limitsNote = provider.limits?.error?.message ?? provider.limits?.dynamic?.note ?? null;
 
         if (removing === provider.id)
           return (
@@ -1171,8 +1176,20 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
               <div className="min-w-0">
                 <ListRow
                   className="min-w-0 gap-3"
+                  aria-expanded={authed ? isOpen : undefined}
+                  aria-controls={authed && isOpen ? panelId : undefined}
                   onClick={() => {
-                    void (authed ? auth.recheck(provider.id) : auth.signIn(provider));
+                    if (!authed) {
+                      void auth.signIn(provider);
+                      return;
+                    }
+                    setExpanded((current) => {
+                      const next = new Set(current);
+                      if (isOpen) next.delete(provider.id);
+                      else next.add(provider.id);
+                      return next;
+                    });
+                    if (!isOpen) void auth.recheck(provider.id);
                   }}
                 >
                   {/* THE DOT BELONGS TO THE NAME, NOT TO THE ROW. Centred in a
@@ -1213,10 +1230,34 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                   >
                     {isProbing ? 'Checking…' : !authed ? 'Sign in' : (mark ?? '')}
                   </span>
-                  {!authed && <ChevronIcon className="size-3 text-dialog-hint" aria-hidden />}
+                  <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" aria-hidden />
                 </ListRow>
               </div>
             </SwipeActions>
+            {isOpen && (
+              <div
+                id={panelId}
+                role="region"
+                aria-label={`${provider.label} limits`}
+                className="space-y-2 border-t border-dialog-edge bg-panel-2 p-3"
+              >
+                <p className="font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
+                  Limits
+                </p>
+                {limitLines.length > 0 ? (
+                  <ul className="space-y-1 font-mono text-meta text-dialog-foreground">
+                    {limitLines.map((line, index) => (
+                      <li key={`${provider.id}-limit-${index}`}>{line}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="font-mono text-meta text-dialog-hint">
+                    {isProbing ? 'Checking limits…' : 'No limits reported by this provider.'}
+                  </p>
+                )}
+                {limitsNote && <p className="font-mono text-meta text-dialog-hint">{limitsNote}</p>}
+              </div>
+            )}
             <ProviderNotice auth={auth} provider={provider} />
           </div>
         );
