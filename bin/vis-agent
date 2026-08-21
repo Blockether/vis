@@ -320,14 +320,21 @@ find_system_java_truststore() {
 is_wsl() {
   [[ -n "${WSL_DISTRO_NAME:-}" || "$(uname -r 2>/dev/null || true)" == *[Mm]icrosoft* ]]
 }
+export_system_ca_bundle() {
+  local bundle="$1"
+  export VIS_SYSTEM_CA_CERT="$bundle"
+  export CURL_CA_BUNDLE="$bundle" SSL_CERT_FILE="$bundle" REQUESTS_CA_BUNDLE="$bundle"
+  export NODE_EXTRA_CA_CERTS="$bundle" GIT_SSL_CAINFO="$bundle" PIP_CERT="$bundle"
+  export AWS_CA_BUNDLE="$bundle" CARGO_HTTP_CAINFO="$bundle" DENO_CERT="$bundle"
+}
 
 # WSL has its own Linux trust database; installing a root in the Windows host
 # does not copy it into the distribution. Export the host's CurrentUser and
 # LocalMachine root stores through WSL interop on every launch, so certificate
 # policy changes are visible without modifying the distribution or a JDK.
 refresh_wsl_windows_ca_bundle() {
-  local powershell="" trust_dir="$vis_home/trust" output="" tmp=""
-  output="$trust_dir/wsl-windows-ca.pem"
+  local powershell="" trust_dir="$vis_home/trust" output="" tmp="" linux_bundle=""
+  output="$trust_dir/wsl-system-ca.pem"
   [[ -z "${VIS_SYSTEM_CA_CERT:-}" ]] || return 0
   is_wsl || return 0
 
@@ -344,8 +351,13 @@ refresh_wsl_windows_ca_bundle() {
     warn "cannot create $trust_dir; using the WSL trust store"
     return 0
   }
-  tmp="$(mktemp "$trust_dir/.wsl-windows-ca.XXXXXX")" || return 0
+  tmp="$(mktemp "$trust_dir/.wsl-system-ca.XXXXXX")" || return 0
   chmod 600 "$tmp"
+  linux_bundle="$(find_system_ca_bundle 2>/dev/null || true)"
+  if [[ -n "$linux_bundle" ]]; then
+    cat "$linux_bundle" >"$tmp"
+    printf '\n' >>"$tmp"
+  fi
   # The dollar expressions belong to PowerShell, not Bash.
   # shellcheck disable=SC2016
   if "$powershell" -NoLogo -NoProfile -NonInteractive -Command '
@@ -374,9 +386,9 @@ refresh_wsl_windows_ca_bundle() {
         }
       }
       [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($pem.ToString()))
-    ' | tr -d '\r\n' | base64 --decode >"$tmp" && [[ -s "$tmp" ]]; then
+    ' | tr -d '\r\n' | base64 --decode >>"$tmp" && [[ -s "$tmp" ]]; then
     mv -f "$tmp" "$output"
-    export VIS_SYSTEM_CA_CERT="$output"
+    export_system_ca_bundle "$output"
   else
     rm -f "$tmp"
     warn "could not export Windows root certificates; using the WSL trust store"
@@ -443,16 +455,20 @@ configure_system_trust() {
 
   ca_bundle="$(find_system_ca_bundle 2>/dev/null || true)"
   if [[ -n "$ca_bundle" ]]; then
-    [[ -n "${CURL_CA_BUNDLE:-}" ]] || export CURL_CA_BUNDLE="$ca_bundle"
-    [[ -n "${SSL_CERT_FILE:-}" ]] || export SSL_CERT_FILE="$ca_bundle"
-    [[ -n "${REQUESTS_CA_BUNDLE:-}" ]] || export REQUESTS_CA_BUNDLE="$ca_bundle"
-    [[ -n "${NODE_EXTRA_CA_CERTS:-}" ]] || export NODE_EXTRA_CA_CERTS="$ca_bundle"
-    [[ -n "${GIT_SSL_CAINFO:-}" ]] || export GIT_SSL_CAINFO="$ca_bundle"
-    [[ -n "${PIP_CERT:-}" ]] || export PIP_CERT="$ca_bundle"
-    [[ -n "${AWS_CA_BUNDLE:-}" ]] || export AWS_CA_BUNDLE="$ca_bundle"
-    [[ -n "${CARGO_HTTP_CAINFO:-}" ]] || export CARGO_HTTP_CAINFO="$ca_bundle"
-    [[ -n "${DENO_CERT:-}" ]] || export DENO_CERT="$ca_bundle"
-    [[ -n "${VIS_SYSTEM_CA_CERT:-}" ]] || export VIS_SYSTEM_CA_CERT="$ca_bundle"
+    if [[ -n "${VIS_SYSTEM_CA_CERT:-}" ]]; then
+      export_system_ca_bundle "$ca_bundle"
+    else
+      [[ -n "${CURL_CA_BUNDLE:-}" ]] || export CURL_CA_BUNDLE="$ca_bundle"
+      [[ -n "${SSL_CERT_FILE:-}" ]] || export SSL_CERT_FILE="$ca_bundle"
+      [[ -n "${REQUESTS_CA_BUNDLE:-}" ]] || export REQUESTS_CA_BUNDLE="$ca_bundle"
+      [[ -n "${NODE_EXTRA_CA_CERTS:-}" ]] || export NODE_EXTRA_CA_CERTS="$ca_bundle"
+      [[ -n "${GIT_SSL_CAINFO:-}" ]] || export GIT_SSL_CAINFO="$ca_bundle"
+      [[ -n "${PIP_CERT:-}" ]] || export PIP_CERT="$ca_bundle"
+      [[ -n "${AWS_CA_BUNDLE:-}" ]] || export AWS_CA_BUNDLE="$ca_bundle"
+      [[ -n "${CARGO_HTTP_CAINFO:-}" ]] || export CARGO_HTTP_CAINFO="$ca_bundle"
+      [[ -n "${DENO_CERT:-}" ]] || export DENO_CERT="$ca_bundle"
+      export VIS_SYSTEM_CA_CERT="$ca_bundle"
+    fi
     measure_log "system PEM trust enabled from $ca_bundle"
   fi
 }

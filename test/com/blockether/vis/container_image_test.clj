@@ -361,11 +361,17 @@
           powershell
           (io/file fake-path "powershell.exe")
 
+          ubuntu-pem
+          "-----BEGIN CERTIFICATE-----\nVUJVTlRVLVJPT1Q=\n-----END CERTIFICATE-----\n"
+
           windows-pem
           "-----BEGIN CERTIFICATE-----\nV0lORE9XUy1ST09U\n-----END CERTIFICATE-----\n"
 
           encoded
-          (.encodeToString (java.util.Base64/getEncoder) (.getBytes windows-pem "UTF-8"))]
+          (.encodeToString (java.util.Base64/getEncoder) (.getBytes windows-pem "UTF-8"))
+
+          ubuntu-bundle
+          (doto (io/file tmp "ubuntu-ca.pem") (spit ubuntu-pem))]
 
       (try (io/copy (io/file "bin" "vis-agent") wrapper)
            (.setExecutable wrapper true false)
@@ -381,14 +387,16 @@
                               {"HOME" (.getAbsolutePath tmp)
                                "VIS_HOME" (.getAbsolutePath state)
                                "WSL_DISTRO_NAME" "Ubuntu"
+                               "VIS_SYSTEM_CA_CERT" ""
+                               "SSL_CERT_FILE" (.getAbsolutePath ubuntu-bundle)
                                "PATH" (str (.getAbsolutePath fake-path) ":" (System/getenv "PATH"))}
                               ["help"])
 
                  exported
-                 (io/file state "trust" "wsl-windows-ca.pem")]
+                 (io/file state "trust" "wsl-system-ca.pem")]
 
              (expect (zero? exit) output)
-             (expect (= windows-pem (slurp exported)))
+             (expect (= (str ubuntu-pem "\n" windows-pem) (slurp exported)))
              (expect (str/includes? output (str "SSL_CERT_FILE=" (.getAbsolutePath exported)))
                      output)
              (expect (str/includes? output (str "VIS_SYSTEM_CA_CERT=" (.getAbsolutePath exported)))
