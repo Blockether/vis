@@ -3080,7 +3080,10 @@ function useMeasuredPaintSkip(live: boolean) {
       }
       return () => {
         armed = size;
-        box.style.containIntrinsicSize = `auto ${height}px`;
+        // The one-size shorthand applies the tall turn's HEIGHT to both axes. An
+        // off-screen 20 000 px turn then advertises a 20 000 px intrinsic WIDTH,
+        // widening the transcript until the whole app is rendered as a thin strip.
+        box.style.containIntrinsicSize = `auto ${width}px auto ${height}px`;
         box.style.contentVisibility = "auto";
         watchContent();
       };

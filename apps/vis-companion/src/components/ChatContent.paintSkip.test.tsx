@@ -173,7 +173,7 @@ afterEach(() => {
   watchers.length = 0;
 });
 
-describe("a finished turn is skipped at its own measured height", () => {
+describe("a finished turn is skipped at its own measured size", () => {
   // Regression, reported as "the part above a new request jumps like anything,
   // in even steps": arming implies `contain:layout`, so a turn that was not
   // already a formatting context grows by its last child's bottom margin the
@@ -205,7 +205,7 @@ describe("a finished turn is skipped at its own measured height", () => {
     expect(box.style.contentVisibility).toBe("");
   });
 
-  it("arms the skip at the height the turn held still at", () => {
+  it("arms the skip at the width and height the turn held still at", () => {
     const { box } = mount();
     layout(box, 390, 4321.5);
     flushFrames();
@@ -213,7 +213,7 @@ describe("a finished turn is skipped at its own measured height", () => {
     waitOut();
 
     expect(box.style.contentVisibility).toBe("auto");
-    expect(box.style.containIntrinsicSize).toBe("auto 4321.5px");
+    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 4321.5px");
   });
 
   it("keeps waiting while the turn is still growing", () => {
@@ -237,7 +237,7 @@ describe("a finished turn is skipped at its own measured height", () => {
 
     waitOut();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 4000px");
+    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 4000px");
   });
 
   it("never skips the turn that is streaming", () => {
@@ -261,7 +261,7 @@ describe("a finished turn is skipped at its own measured height", () => {
     flushFrames();
     waitOut();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 900px");
+    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 900px");
   });
 
   it("declares nothing for a turn it could not measure", () => {
@@ -290,7 +290,7 @@ describe("a finished turn is skipped at its own measured height", () => {
     resized(box);
     flushFrames();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 4321px");
+    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 4321px");
   });
 
   it("drops the skip when the width changes under it", () => {
@@ -315,7 +315,7 @@ describe("a finished turn is skipped at its own measured height", () => {
     flushFrames();
     waitOut();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 2600px");
+    expect(box.style.containIntrinsicSize).toBe("auto 844px auto 2600px");
   });
 
   it("drops the skip when content lands under it", async () => {
@@ -338,7 +338,7 @@ describe("a finished turn is skipped at its own measured height", () => {
     flushFrames();
     waitOut();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 5000px");
+    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 5000px");
   });
 
   it("drops the skip when a picture under it finishes loading", () => {
@@ -437,7 +437,7 @@ describe("the turn beside the one being read is never skipped", () => {
     nearby(box, false);
     waitOut();
 
-    expect(box.style.containIntrinsicSize).toBe("auto 5000px");
+    expect(box.style.containIntrinsicSize).toBe("auto 390px auto 5000px");
   });
 
   it("holds the whole turn before the one on screen, however tall it is", () => {
