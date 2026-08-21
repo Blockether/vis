@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (4655) — 2026-08-21
+<!-- commit: f5747d0a913eb2327fe5f15d769100db7a8a01c2 -->
+
+- Align menu header assertions
+- Clarify project management
+- Reveal interrupted live artifacts
+- Shrink usage metric values
+- Reduce compact label size
+- Keep iOS fleet polling current
+- Nest matrix jobs
+- Send committed iOS autocorrection
+- Fit and retain PDF annotations
+- Validate PDF media type exactly
+- V0.1.41
+- Tighten composer footer spacing
+- Clarify response footer controls
+- Keep keyboard open after send
+- Retain finished job details
+- Keep fenced code ragged
+- Keep markdown code spans ragged
+- Resume Android beta publishing
+- Rename quick reasoning effort to low
+- Restore the verbosity composer control
+
 ## 0.1.40 (4618) — 2026-08-20
 <!-- commit: 02602989fb71b323fdec8a263673da962d3c9d77 -->
 
