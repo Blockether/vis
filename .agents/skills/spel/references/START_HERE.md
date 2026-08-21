@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 # Start Here
 
 Quick map of spel skill.
@@ -22,13 +22,13 @@ Shape every reply ADHD-shaped, caveman-terse — see the skill's **Reply style**
 - Navigation + wait behavior: `references/NAVIGATION_WAIT.md`
 - Browser/profile/CDP setup: `references/PROFILES_CDP.md` + `references/BROWSER_OPTIONS.md`
 - Network routing/interception: `references/NETWORK_ROUTING.md`
-- Test/assertion patterns: `references/ASSERTIONS_EVENTS.md` + `references/TESTING_CONVENTIONS.md`
+- Test/assertion patterns: `references/ASSERTIONS_EVENTS.md` + `references/API_TESTING.md`
 - Report templates: `references/spel-report.html`, `references/spel-report.md`
 
 ## Critical operating rules
 
 - Always use named session; never rely on default
-- CDP: one session per endpoint; no concurrent multi-session attach
+- CDP: sessions may share one endpoint (each gets its own tab); only the same tab is exclusive
 - Prefer snapshot refs first for interaction targeting
 - Promised output files = hard deliverables, not optional summaries
 

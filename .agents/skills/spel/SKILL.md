@@ -1,14 +1,14 @@
 ---
 name: spel
 description: "Automates browsers and native iOS apps with the spel Clojure Playwright CLI and library. Use for E2E tests, browser flows, site exploration, bug finding, screenshots, scraping, visual regression, codegen, Playwright API usage, CDP profiles, or Appium/XCUITest. Not for general web development or non-browser HTTP work."
-version: "0.9.28"
+version: "0.9.31"
 license: Apache-2.0
 compatibility: agents
 ---
 
 # spel
 
-The `spel` CLI drives interactive work, `eval-sci` reusable scripts. This skill and each shipped reference were generated from spel **0.9.28**; every command automatically checks their release markers and warns on stderr when they differ from the runtime. On such a warning, trust `spel <command> --help` and regenerate with `spel init-agents --force --no-tests`.
+The `spel` CLI drives interactive work, `eval-sci` reusable scripts. This skill and each shipped reference were generated from spel **0.9.31**; every command automatically checks their release markers and warns on stderr when they differ from the runtime. On such a warning, trust `spel <command> --help` and regenerate with `spel init-agents --force --no-tests`.
 
 ## Start safely
 
@@ -60,13 +60,13 @@ Global flags precede the command: `--allowed-domains "example.com,*.example.com"
 
 ## Testing contracts
 
-- `core/with-testing-page` / `core/with-testing-api` at fixture scope only, never nested inside `it` or `deftest`; role constants from `[com.blockether.spel.roles :as role]`; exact text by default, contains-text only when partial matching is intentional. `references/TESTING_CONVENTIONS.md` carries the project's Lazytest or clojure.test flavour.
+- `core/with-testing-page` / `core/with-testing-api` at fixture scope only, never nested inside `it` or `deftest`; role constants from `[com.blockether.spel.roles :as role]`; exact text by default, contains-text only when partial matching is intentional. The project's own test conventions rule; spel only supplies the fixtures.
 - Run the generated tests and verify browser/DOM effects before handoff. Never delete an assertion or add a sleep to make a test pass.
 
 ## Gotchas
 
 - A command without `--session` targets the shared default session.
-- `--content-boundaries` wraps non-empty stdout only — silent commands stay silent and stderr is never wrapped or truncated.
+- `--content-boundaries` wraps non-empty stdout only — silent commands stay silent, `--json` output is never wrapped so it stays parseable, and stderr is never wrapped or truncated.
 - Playwright evaluation returns Java collections, not Clojure maps/vectors, and `sci-eval`-style printed strings may keep their quotes.
 - Attaching to a user's own browser needs `--remote-debugging-port` **and** `--remote-allow-origins='*'` (`references/PROFILES_CDP.md`).
 
@@ -80,7 +80,7 @@ Read only the smallest relevant file; every reference sits one level from here.
 | Sessions, profiles, CDP, browser options | `references/SESSION_COMMON.md`, `references/PROFILES_CDP.md`, `references/BROWSER_OPTIONS.md` |
 | Pages, locators, selectors, snapshots, navigation and waits | `references/PAGE_LOCATORS.md`, `references/SELECTORS_SNAPSHOTS.md`, `references/NAVIGATION_WAIT.md` |
 | SCI scripts, constants, frames, keyboard, mouse | `references/EVAL_GUIDE.md`, `references/CONSTANTS.md`, `references/FRAMES_INPUT.md` |
-| Assertions, events, API testing, test conventions | `references/ASSERTIONS_EVENTS.md`, `references/API_TESTING.md`, `references/TESTING_CONVENTIONS.md` |
+| Assertions, events, API testing, test conventions | `references/ASSERTIONS_EVENTS.md`, `references/API_TESTING.md` |
 | Network mocking, search, codegen, bridge | `references/NETWORK_ROUTING.md`, `references/SEARCH_API.md`, `references/CODEGEN_CLI.md`, `references/BRIDGE.md` |
 | Native iOS and WKWebView | `references/IOS_PROVIDER.md` |
 | PDF, stitching, video | `references/PDF_STITCH_VIDEO.md` |

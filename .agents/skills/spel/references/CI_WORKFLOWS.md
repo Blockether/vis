@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 # GitHub Actions CI/CD workflows
 
 Three workflows: `.github/workflows/ci.yml`, `allure.yml`, `release.yml`.

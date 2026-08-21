@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 # Capabilities
 
 Compact inventory of main spel capability areas.
@@ -41,7 +41,6 @@ Primary references:
 - Allure reporting and CI workflows
 
 Primary references:
-- `references/TESTING_CONVENTIONS.md`
 - `references/ASSERTIONS_EVENTS.md`
 - `references/API_TESTING.md`
 - `references/ALLURE_REPORTING.md`

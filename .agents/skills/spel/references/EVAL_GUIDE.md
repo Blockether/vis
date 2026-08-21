@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 # eval-sci mode guide
 
 `eval-sci` runs Clojure inside a [SCI](https://github.com/babashka/sci) sandbox with full Playwright access. No JVM startup, no project setup.
@@ -9,7 +9,7 @@ spel eval-sci script.clj
 echo '(spel/navigate "…") (println (spel/title))' | spel eval-sci --stdin
 ```
 
-> **Daemon mode is default.** If a daemon is running (`spel open URL` or `spel start`), `eval-sci` reuses the existing browser — no `spel/start!` / `spel/stop!` needed. Standalone scripts manage their own browser (see § Session lifecycle).
+> **Daemon mode is default.** If a daemon is running (any command starts one — `spel open URL`), `eval-sci` reuses the existing browser — no `spel/start!` / `spel/stop!` needed. Standalone scripts manage their own browser (see § Session lifecycle).
 
 ## Discovery — `spel/help`
 
@@ -221,7 +221,7 @@ Need something unavailable → write a `.clj` library file and use the library A
 | `--autoclose` | Close daemon after eval |
 | `--timeout <ms>` | Default action timeout |
 | `--session <name>` | Named session |
-| `--json` | JSON output |
+| `--json` | One JSON object on stdout — `{"result": <value>}`, or `{"error": …}` on failure; whatever the script printed rides in `"stdout"` |
 
 ## Tips
 

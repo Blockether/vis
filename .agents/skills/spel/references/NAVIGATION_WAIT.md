@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 # Page navigation + wait patterns
 
 Go to pages, wait for things. `eval-sci` (implicit page) + library (explicit `pg`).

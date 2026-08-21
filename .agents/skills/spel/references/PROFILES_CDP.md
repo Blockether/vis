@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 # Browser profiles, device emulation, and CDP modes
 
 Use this guide to pick the right browser startup mode for automation.
@@ -83,7 +83,7 @@ Notes:
 For portable auth without full profile coupling:
 
 ```bash
-spel state export -o auth.json
+spel state save auth.json
 spel --load-state auth.json open https://example.com
 ```
 

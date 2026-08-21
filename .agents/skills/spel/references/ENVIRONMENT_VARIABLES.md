@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 # Environment Variables Reference
 
 All spel env vars optional. **CLI flags always take priority over env vars.**
@@ -9,7 +9,7 @@ All spel env vars optional. **CLI flags always take priority over env vars.**
 |---------|---------------|-------------|
 | `SPEL_CHANNEL` | `--channel` | Browser channel: `chrome` (default), `msedge`, `brave` |
 | `SPEL_PROFILE` | `--profile` | Chrome/Edge user data directory — extensions, passwords, bookmarks, everything |
-| `SPEL_LOAD_STATE` | `--load-state` | Playwright storage state JSON path (alias: `SPEL_STORAGE_STATE`) — cookies + localStorage from `state export` |
+| `SPEL_LOAD_STATE` | `--load-state` | Playwright storage state JSON path (alias: `SPEL_STORAGE_STATE`) — cookies + localStorage from `state save` |
 | `SPEL_EXECUTABLE_PATH` | `--executable-path` | Custom browser binary path |
 | `SPEL_USER_AGENT` | `--user-agent` | Custom user agent string |
 | `SPEL_STEALTH` | `--no-stealth` | Set to `false` to disable stealth mode (ON by default) |
@@ -57,7 +57,7 @@ spel install --with-deps
 |---------|---------------|-------------|
 | `SPEL_SESSION_IDLE_TIMEOUT` | — | Auto-shutdown daemon after this many ms of inactivity (default: `1800000` = 30 min, `0` disables) |
 | `SPEL_CDP_IDLE_TIMEOUT` | — | Auto-shutdown daemon after CDP disconnect if no reconnect within this window (ms, default: `1800000` = 30 min, `0` disables) |
-| `SPEL_CDP_LOCK_WAIT` | — | Max seconds to wait for CDP route lock release (default: `120`, `0` = fail immediately) |
+| `SPEL_CDP_LOCK_WAIT` | — | Max seconds to wait when another session intercepts requests in the SAME tab (default: `120`, `0` = fail immediately). Interception is per tab, so sessions on their own tabs never wait; a blocked command answers with `cdp_route_lock` and the owning session, never a generic timeout. |
 | `SPEL_CDP_LOCK_POLL_INTERVAL` | — | Poll interval in seconds when waiting for CDP route lock (default: `2`) |
 | `SPEL_COMMAND_BUDGET_MS` | — | Watchdog budget for a single daemon command before it is abandoned as wedged (default: `25000`; open-ended actions such as `eval-js`/`eval-sci` get 900s) |
 

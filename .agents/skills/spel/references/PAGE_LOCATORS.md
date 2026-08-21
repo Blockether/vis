@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 # Page locators & composable patterns
 
 Every locator strategy returns a Playwright `Locator` — auto-waiting, auto-retrying.

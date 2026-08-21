@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 # Allure test reporting
 
 Rich HTML reports with embedded Playwright traces, steps, labels, attachments,

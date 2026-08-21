@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 # Codegen & CLI reference
 
 ## Codegen — record + transform
@@ -234,17 +234,21 @@ spel network clear
 ### JS eval
 
 ```bash
-spel eval "document.title"
-spel eval "document.querySelector('h1').textContent"
-spel eval "JSON.stringify([...document.querySelectorAll('a')].map(a => ({text:a.textContent, href:a.href})))" -b
+spel eval-js "document.title"
+spel eval-js "document.querySelector('h1').textContent"
+spel eval-js "JSON.stringify([...document.querySelectorAll('a')].map(a => ({text:a.textContent, href:a.href})))" -b
+echo 'document.title' | spel eval-js --stdin
 ```
 
 ### Console / errors
 
-Auto-captured from the moment the page opens; no `start` needed.
+Auto-captured from the moment the page opens; no `start` needed. Capture is **per tab**:
+`spel console` answers with the tab this session is on, `--all` with every tab it has opened.
+Every entry carries its tab's stable id, the one `spel tab list` prints and `spel tab t3` selects.
 
 ```bash
-spel console           spel console clear
+spel console           spel console clear     # this tab
+spel console --all     spel errors --all      # every tab of the session
 spel errors            spel errors  clear
 ```
 
@@ -280,7 +284,7 @@ clojure -T:build native-image
 |------|---------|---------|
 | `--timeout <ms>` | `10000` | Playwright action timeout |
 | `--session <name>` | `default` | Named browser session |
-| `--json` | off | JSON output |
+| `--json` | off | JSON output — `eval-sci` answers `{"result": <value>}`, not EDN |
 | `--debug` | off | Debug output |
 | `--autoclose` | off | Close daemon after `eval-sci` |
 | `--interactive` | off | Headed browser for `eval-sci` |

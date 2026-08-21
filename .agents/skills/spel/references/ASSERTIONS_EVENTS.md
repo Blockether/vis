@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 # Assertions, events & signals
 
 ## Assertions
@@ -88,6 +88,8 @@ Wrap the assertion target with `assert/loc-not`, `assert/page-not`, or `assert/a
 (page/on-response   pg (fn [res] (println "←" (.status res) (.url res))))
 ```
 
+Playwright delivers these only while the script sits inside a browser call — a bare
+`(Thread/sleep …)` dispatches nothing; wait with a real call instead.
 ### Wait-for patterns
 
 ```clojure

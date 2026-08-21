@@ -1,4 +1,4 @@
-<!-- spel-reference-version: 0.9.28 -->
+<!-- spel-reference-version: 0.9.31 -->
 ## Testing conventions
 
 - Framework: `spel.allure` (`defdescribe`, `describe`, `it`, `expect`). NOT `lazytest.core`.
