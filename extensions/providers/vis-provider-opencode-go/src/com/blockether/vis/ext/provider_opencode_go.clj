@@ -73,7 +73,7 @@
    `/models!` against this same public endpoint), and `enrich-models` below
    stamps the wire on whatever comes back."
   ["kimi-k2.7-code" "glm-5.2" "deepseek-v4-flash" "deepseek-v4-pro" "kimi-k2.6" "mimo-v2.5-pro"
-   "mimo-v2.5" "hy3" {:name "minimax-m3" :api-style :anthropic}
+   "mimo-v2.5" "hy3" "ox-alpha-free" {:name "minimax-m3" :api-style :anthropic}
    {:name "minimax-m2.7" :api-style :anthropic} {:name "qwen3.7-max" :api-style :anthropic}
    {:name "qwen3.7-plus" :api-style :anthropic}])
 

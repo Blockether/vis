@@ -161,12 +161,11 @@
    provider `:default-models`, deduped. Config order leads: the models a
    user wrote in vis.yml come first and `model-options` keeps them there."
   [provider]
-  (->> (concat (map config/model-name (:models provider))
-               (:default-models (config/provider-template (:id provider)))
-               (:default-models provider))
-       (remove nil?)
-       distinct
-       vec))
+  (let [template (config/provider-template (:id provider))]
+    (->> (concat (:models provider) (:default-models template) (:default-models provider))
+         (keep config/model-name)
+         distinct
+         vec)))
 
 (defn configured-model-names
   "Model names a provider declares in config, in the exact order they are

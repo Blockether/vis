@@ -403,6 +403,25 @@
       (is (= ["zzz-first" "my-local" "alpha-live"] (providers/configured-model-names provider))
           "configured names come straight off the provider map, in file order"))))
 
+(deftest model-options-accepts-mapped-provider-defaults
+  (with-redefs [providers/fetch-models
+                (constantly ["ox-alpha-free"])
+
+                config/provider-template
+                (constantly nil)
+
+                config/provider-model-visible?
+                (constantly true)]
+
+    (let [provider
+          {:id :fake :default-models ["glm-5.2" {:name "minimax-m3" :api-style :anthropic}]}
+
+          defaults
+          (providers/default-model-names provider)]
+
+      (is (= ["glm-5.2" "minimax-m3"] defaults))
+      (is (= ["glm-5.2" "minimax-m3" "ox-alpha-free"]
+             (:models (providers/model-options provider defaults true)))))))
 (deftest fallback-selection-is-explicit-and-always-on-another-provider
   (let [fleet
         [{:id :openai :models [{:name "gpt-5"}]}

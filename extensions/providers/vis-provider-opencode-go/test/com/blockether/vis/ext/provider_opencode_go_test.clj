@@ -37,11 +37,12 @@
                        bare
                        (filter string? models)]
 
-                   ;; GLM / Kimi / DeepSeek / MiMo / Hy3 ride the OpenAI chat wire.
+                   ;; GLM / Kimi / DeepSeek / MiMo / Hy3 / Ox ride the OpenAI chat wire.
                    (expect (some #(= "glm-5.2" %) bare))
                    (expect (some #(= "kimi-k2.7-code" %) bare))
                    (expect (some #(= "deepseek-v4-flash" %) bare))
-                   (expect (some #(= "hy3" %) bare))))
+                   (expect (some #(= "hy3" %) bare))
+                   (expect (some #(= "ox-alpha-free" %) bare))))
              (it "declares Anthropic-wire models as maps with :api-style :anthropic"
                  (reload!)
                  (let [models
