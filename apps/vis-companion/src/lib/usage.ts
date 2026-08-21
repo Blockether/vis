@@ -1,11 +1,8 @@
 import type { TranscriptTurn } from './types';
 
 /**
- * Session usage math, mirroring the TUI footer's `session-usage`
- * (`channel_tui/footer.clj`) and the canonical `meta-tokens` / `meta-cost`
- * renderers in `internal/format.clj`, so the companion's composer strip and the
- * TUI's footer can never drift in shape: tokens read `11.5k→35 ↺ 4.1k`
- * and cost reads `~$0.0070`.
+ * Turn usage math and the canonical `meta-tokens` / `meta-cost` renderers shared
+ * with the TUI: tokens read `11.5k→35 ↺ 4.1k` and cost reads `~$0.0070`.
  */
 
 export interface Usage {
@@ -13,11 +10,7 @@ export interface Usage {
   output: number;
   cached: number;
   cost: number;
-  /** Turns that actually reported usage — the cumulative denominator. */
-  turns: number;
 }
-
-export const EMPTY_USAGE: Usage = { input: 0, output: 0, cached: 0, cost: 0, turns: 0 };
 
 function finiteNumber(...values: unknown[]): number | undefined {
   return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value));
@@ -53,10 +46,6 @@ export function formatCost(value?: number): string | null {
   return `~$${value.toFixed(value >= 1 ? 2 : value >= 0.0001 ? 4 : 6)}`;
 }
 
-/** Exact figure for the hover/long-press detail, where humanizing would lie. */
-export function exactCost(value: number): string {
-  return `$${value.toFixed(value >= 1 ? 4 : 6)}`;
-}
 
 /**
  * One turn's totals, memoized on the turn OBJECT. A decoded turn never mutates,
@@ -64,10 +53,10 @@ export function exactCost(value: number): string {
  * gateway repeated, so re-rendering a long session re-reads these numbers
  * instead of re-deriving them per bubble, per frame.
  */
-const turnTotals = new WeakMap<TranscriptTurn, Omit<Usage, 'turns'>>();
+const turnTotals = new WeakMap<TranscriptTurn, Usage>();
 
 /** One turn's token + cost slots, tolerating every shape the wire has carried. */
-export function turnUsage(turn: TranscriptTurn): Omit<Usage, 'turns'> {
+export function turnUsage(turn: TranscriptTurn): Usage {
   const memo = turnTotals.get(turn);
   if (memo) return memo;
   const costMap = typeof turn.cost === 'object' && turn.cost ? turn.cost : undefined;
@@ -82,49 +71,3 @@ export function turnUsage(turn: TranscriptTurn): Omit<Usage, 'turns'> {
   return usage;
 }
 
-/**
- * Running totals of the LAST transcript folded: `prefix[i]` is the cumulative
- * usage through turn `i`. Turn objects stay identity-stable across a refetch, so
- * an update that only appends to (or rewrites the tail of) a long session reuses
- * the shared prefix instead of re-folding the whole history.
- */
-let prefixCache: { turns: readonly TranscriptTurn[]; prefix: Usage[] } | null = null;
-
-/**
- * Cumulative usage across a session's transcript — the SAME fold the TUI footer
- * runs over its message vector (`footer/session-usage`), so both surfaces read
- * one number. Costs O(turns that actually changed), not O(session), for every
- * update after the first.
- */
-export function sessionUsage(turns: TranscriptTurn[]): Usage {
-  const cached = prefixCache;
-  let shared = 0;
-  if (cached) {
-    const limit = Math.min(cached.turns.length, turns.length);
-    while (shared < limit && cached.turns[shared] === turns[shared]) shared += 1;
-  }
-  if (cached && shared === turns.length && shared === cached.turns.length) {
-    return prefixTotal(cached.prefix, shared);
-  }
-  const prefix = cached ? cached.prefix.slice(0, shared) : [];
-  let total = prefixTotal(prefix, shared);
-  for (let index = shared; index < turns.length; index += 1) {
-    const usage = turnUsage(turns[index]);
-    const reported = usage.input > 0 || usage.output > 0 || usage.cost > 0;
-    total = {
-      input: total.input + usage.input,
-      output: total.output + usage.output,
-      cached: total.cached + usage.cached,
-      cost: total.cost + usage.cost,
-      turns: total.turns + (reported ? 1 : 0),
-    };
-    prefix.push(total);
-  }
-  prefixCache = { turns, prefix };
-  return total;
-}
-
-/** Cumulative total through `count` turns — empty usage when nothing is shared. */
-function prefixTotal(prefix: Usage[], count: number): Usage {
-  return count > 0 ? (prefix[count - 1] ?? EMPTY_USAGE) : EMPTY_USAGE;
-}

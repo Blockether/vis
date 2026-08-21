@@ -80,12 +80,6 @@ import {
   queuedTurnFromWire,
   type QueueDelta,
 } from "../lib/gateway";
-import {
-  exactCost,
-  formatCost,
-  formatTokens,
-  sessionUsage,
-} from "../lib/usage";
 import type { SessionSubscriptionHub } from "../lib/subscriptions";
 import {
   collapsePastePlaceholders,
@@ -4828,21 +4822,6 @@ export function SessionScreen({
     session && isDraftWorkspace(session)
       ? session.workspace?.label?.trim() ?? ""
       : "";
-  // Cumulative session usage — the SAME fold the TUI footer runs over its message
-  // vector (`footer/session-usage`), so both surfaces read one number. Memoized on
-  // the transcript identity: it only moves when a turn lands, never per keystroke.
-  const usage = useMemo(() => sessionUsage(turns), [turns]);
-  const usageTokens = formatTokens(usage);
-  const usageCost = formatCost(usage.cost);
-  const usageTitle = [
-    `${usage.input.toLocaleString()} input`,
-    `${usage.output.toLocaleString()} output`,
-    usage.cached > 0 ? `${usage.cached.toLocaleString()} cached` : null,
-    usage.cost > 0 ? exactCost(usage.cost) : null,
-    `${usage.turns} turn${usage.turns === 1 ? "" : "s"}`,
-  ]
-    .filter((part): part is string => Boolean(part))
-    .join(" · ");
   const visibleStart = Math.max(0, turns.length - visibleTurnCount);
   // What is mounted this frame: the window, clamped by the hydration ramp.
   const renderStart = Math.max(visibleStart, turns.length - hydratedTurnCount);
@@ -6089,19 +6068,9 @@ export function SessionScreen({
             </div>
           </div>
 
-          {/* Composer strip, in the TUI footer's own reading order: the router chip
-            sits LEFT directly under the input, cumulative session usage (tokens,
-            then cost) rides the RIGHT edge. The chip truncates first so the
-            numbers survive a narrow phone.
-
-            ONE type step for the whole strip: `font-mono text-chip`, semibold,
-            uppercase, the same 0.08em tracking — model, level and usage are the
-            same sentence, so they must not read as three different fonts. The
-            divider is a 10px hairline centred between the two words, not a
-            full-height `border-l` rule: a border on the button grew with its
-            padding and towered over 11px text. Tone does the separating: the
-            model is the loud one, its level the quiet one, the cost the only
-            accent. */}
+          {/* The composer strip now belongs only to response controls. Cumulative
+            session usage lives behind the disclosure on the sessions list, where it
+            remains available without crowding the active session on a phone. */}
           <div className="flex w-full items-center gap-2.5 pt-1">
             <MetaButton
               isPicker
@@ -6179,21 +6148,6 @@ export function SessionScreen({
               </>
             )}
 
-            {(usageTokens || usageCost) && (
-              <span
-                className="ml-auto flex shrink-0 items-center gap-2 py-1 pl-1 font-mono text-chip font-semibold uppercase tracking-[0.08em] tabular-nums text-dialog-hint"
-                title={`Session usage — ${usageTitle}`}
-              >
-                {usageTokens && (
-                  <span className="whitespace-nowrap">{usageTokens}</span>
-                )}
-                {usageCost && (
-                  <span className="whitespace-nowrap text-accent-ink">
-                    {usageCost}
-                  </span>
-                )}
-              </span>
-            )}
           </div>
         </footer>
       </section>

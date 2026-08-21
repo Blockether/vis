@@ -52,6 +52,8 @@ describe("the expanded session card", () => {
     await open();
     // The grid the report kept, proving the card did expand.
     expect(await screen.findByText("Cost")).toBeTruthy();
+    expect(screen.getByText("85k")).toBeTruthy();
+    expect(screen.getByText("2.3k")).toBeTruthy();
     expect(screen.getByText("$0.21")).toBeTruthy();
     expect(screen.getByText("59")).toBeTruthy();
 

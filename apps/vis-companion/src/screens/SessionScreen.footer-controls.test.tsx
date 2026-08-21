@@ -21,6 +21,28 @@ describe("composer response controls", () => {
     );
   });
 
+  // Regression, user report: cumulative token and price totals were repeated in the
+  // session composer footer even though the session-list disclosure owns those details.
+  it("leaves cumulative usage out of the composer footer", () => {
+    const turn = {
+      id: "turn-with-usage",
+      user_request: "Count this",
+      status: "completed",
+      created_at: Date.now(),
+      content: [],
+      tokens: { input: 1_200, output: 34 },
+      total_cost: 0.25,
+    };
+    const { container } = renderSessionScreen({
+      client: {
+        cachedTranscript: () => [turn],
+        transcript: () => Promise.resolve([turn]),
+      },
+    });
+    const footer = container.querySelector("section > footer");
+    expect(footer).not.toHaveTextContent("1.2k→34");
+    expect(footer).not.toHaveTextContent("~$0.2500");
+  });
   it("orders reasoning, verbosity, then fast mode and cycles verbosity", async () => {
     const user = userEvent.setup();
     const reasoning = toggle("reasoning_level", "Reasoning effort", "balanced", [
