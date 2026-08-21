@@ -1656,6 +1656,8 @@ describe("the confirm that IS the row", () => {
   // calm rows share — and the cost sentence, hand-built at the call site, hung
   // under the PREVIOUS provider and read as that row's meta line.
   it("is a BOX in the ink it asks in, and the cost stands inside it", () => {
+    const frameClass =
+      "relative after:pointer-events-none after:absolute after:-top-px after:inset-x-0 after:bottom-0 after:border after:border-err-edge";
     const html = renderToStaticMarkup(
       <ConfirmRow
         question="Remove Codex?"
@@ -1665,9 +1667,9 @@ describe("the confirm that IS the row", () => {
         onConfirm={() => {}}
       />,
     );
-    // Four sides in the destructive edge, and the box's own top rule stands IN
-    // FOR the list rule above it rather than stacking on it.
-    expect(html).toContain('class="-mt-px border border-err-edge"');
+    // Four overlaid sides in the destructive edge replace the list rule without
+    // adding border pixels to the row-height answer strip.
+    expect(html).toContain(`class="${frameClass}"`);
     expect(html).toContain("Signs out on the gateway machine.");
     // The rule between the sentence and the answers belongs to the sentence, so
     // both answers keep the whole 48px a finger is owed.
@@ -1682,7 +1684,7 @@ describe("the confirm that IS the row", () => {
         onConfirm={() => {}}
       />,
     );
-    expect(bare).toContain('class="-mt-px border border-err-edge"');
+    expect(bare).toContain(`class="${frameClass}"`);
     expect(bare).not.toContain("<p");
   });
 

@@ -35,6 +35,8 @@ describe("deleting one session confirms inside its own row", () => {
     const strip = await screen.findByRole("group", { name: "Delete First?" });
     expect(strip.querySelectorAll("button")).toHaveLength(2);
     expect(screen.queryByRole("dialog")).toBeNull();
+    // The frame must not add border pixels around the row-height answer strip.
+    expect(strip.classList.contains("border")).toBe(false);
     // The neighbour keeps its own row: one question, one row.
     expect(screen.queryByRole("group", { name: "Delete Second?" })).toBeNull();
     expect(screen.getByText("Second")).toBeTruthy();

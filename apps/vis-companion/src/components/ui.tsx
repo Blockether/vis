@@ -558,9 +558,9 @@ export const ListRow = forwardRef<
  * two calm rows share. Reported over a machine's providers: `Signs out of
  * OpenAI Codex…` hung under the OpenCode Go row and read as THAT row's meta
  * line, and the refusal, standing on the panel's own paper with no edge of any
- * kind, did not read as a control at all. So the group is boxed in `err-edge`
- * and the cost sentence is a PROP inside that box — one question, framed in
- * the ink it is asking in, and no call site spelling the sentence its own way.
+ * kind, did not read as a control at all. So a non-sizing overlay boxes the
+ * group in `err-edge` — a layout border made the confirmation taller than the
+ * row it replaces — and the cost sentence is a PROP inside that box.
  *
  * The question is also the group's own LABEL, for a reader who cannot see the
  * box it is asked in.
@@ -587,13 +587,13 @@ export function ConfirmRow({
   onConfirm: () => void;
 }) {
   return (
-    // The box's own edge REPLACES the list rule above it, so the question is
-    // bounded ONCE on every side instead of by a neutral hairline stacked on a
-    // red one; the rule below it is already this box's own bottom border.
+    // The overlay REPLACES the list rule above it without contributing pixels
+    // of its own. A layout border made this confirmation taller than the calm
+    // row it replaces even though both answer buttons already owed 48px.
     <div
       role="group"
       aria-label={question}
-      className="-mt-px border border-err-edge"
+      className="relative after:pointer-events-none after:absolute after:-top-px after:inset-x-0 after:bottom-0 after:border after:border-err-edge"
     >
       {cost !== undefined && (
         // The rule that separates the cost from its two answers belongs to the
