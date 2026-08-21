@@ -874,11 +874,10 @@ def gh_watch_run(run=None, repo=None):
     the job ends. The returned string is compact JSON: run metadata; a schema-once list of every job
     with id, outcome, start/end times, and nested step ids/outcomes/names; and one bounded log tail for
     each failed job. It never repeats the live artifact tree. `run` is a run id or URL; without one, the
-    newest run on the current branch is watched until it ends or a newer commit starts the same workflow,
-    branch and event. An explicit run is never replaced. `repo` is `owner/name` for another repository.
+newest run on the current branch is selected. Any running watch yields when a newer run starts the same workflow,
+    branch and event, including when `run` was explicit. `repo` is `owner/name` for another repository.
     """
     require_gh()
-    implicit = run is None
     run_id = run or newest_run(repo)
     first = fetch_run(run_id, repo)
     title = str(first.get("workflowName") or "GitHub Actions")
@@ -891,7 +890,7 @@ def gh_watch_run(run=None, repo=None):
         described.strip(" ·"),
         lambda: fetch_run(run_id, repo),
         lambda job_id, lines: job_log(owner, job_id, lines),
-        (lambda: newer_run(first, repo)) if implicit else None,
+        lambda: newer_run(first, repo),
     )
 
 

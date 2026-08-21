@@ -638,6 +638,29 @@ def test_a_newer_run_is_matched_to_the_same_workflow_branch_and_event(monkeypatc
     ]
 
 
+
+def test_an_explicit_running_run_still_yields_to_its_replacement(monkeypatch):
+    # Regression, session 89177777-0681-498d-8b26-b6d59ea67d75: the release watcher
+    # kept a cancelled run open for hours because passing its id disabled replacement checks.
+    first = fixture("run-mid.json")
+    first["databaseId"] = 32146686161
+    replacement = {"databaseId": 32146699999}
+    received = {}
+
+    monkeypatch.setattr(gh, "require_gh", lambda: None)
+    monkeypatch.setattr(gh, "fetch_run", lambda run_id, repo=None: first)
+    monkeypatch.setattr(gh, "repo_of", lambda payload, repo=None: "Blockether/vis")
+    monkeypatch.setattr(gh, "job_log", lambda owner, job_id, lines: [])
+    monkeypatch.setattr(gh, "newer_run", lambda payload, repo=None: replacement)
+
+    def capture_watch(title, description, poll, log_of=None, superseded_by=None):
+        received["superseded_by"] = superseded_by
+        return "watched"
+
+    monkeypatch.setattr(gh, "watch", capture_watch)
+
+    assert gh.gh_watch_run(32146686161) == "watched"
+    assert received["superseded_by"]() == replacement
 def test_a_missing_gh_refuses_in_one_line_before_a_view_opens(recorder, monkeypatch):
     monkeypatch.setattr(
         gh,

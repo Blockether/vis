@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
-- feat(companion): nest matrix jobs in collapsible branches
+- fix(gateway): supersede explicit GitHub run watches when replacement runs start
 ## [v0.1.41] - 2026-08-21
 
 ### Changed
