@@ -166,6 +166,14 @@ export function providerLimitsLine(provider: RouterProvider): string | null {
   return text || null;
 }
 
+/** The quota window closest to running out, for the collapsed row. */
+function providerQuotaMark(provider: RouterProvider): string | null {
+  const rows = provider.limits?.dynamic?.limits;
+  if (!rows?.length) return null;
+  const left = rows.map(percentRemaining).filter((value): value is number => value !== null);
+  return left.length ? `${Math.min(...left)}%` : null;
+}
+
 /** The two ranks the fleet has. A model wears one of them, or neither. */
 export type ModelRole = 'default' | 'fallback';
 
@@ -1043,18 +1051,21 @@ function ProviderModelMenu({
 }
 
 /**
- * THE PROVIDER ACCOUNTS — the same slab a machine gets, slid the same way.
+ * THE PROVIDER ACCOUNTS, one pressable disclosure each — the same slab a
+ * machine gets, slid the same way.
  *
  * A provider IS a machine-sized thing: it is signed in or it is not, it holds
  * a rank, and it can be dropped. Its rank and removal verbs stay under the
- * trailing edge. Every reported quota window is an account fact, so it lives
- * directly in the provider row rather than behind a second surface.
+ * trailing edge, while pressing a signed-in row opens that account's limits.
+ * The collapsed row keeps only the most urgent number so the fleet remains
+ * scannable.
  *
- * Pressing a signed-in row asks the gateway for a fresh verdict and quota. A
- * signed-out row goes straight to sign-in.
+ * Opening also asks the gateway for a fresh verdict and quota. A signed-out
+ * row still goes straight to sign-in because it has no account report yet.
  */
 export function ProviderRows({ auth }: { auth: ProviderAuth }) {
   const { providers, pending } = auth;
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [removing, setRemoving] = useState<string | null>(null);
   /** The provider whose model list is open, the rank it will tag, and where it hangs. */
   const [tagging, setTagging] = useState<{ id: string; role: ModelRole; at: MenuPosition } | null>(
@@ -1094,6 +1105,9 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
         const dot = providerStatusDot(provider);
         const authed = isProviderAuthed(provider);
         const isProbing = pending === `status:${provider.id}`;
+        const mark = providerQuotaMark(provider);
+        const isOpen = authed && expanded.has(provider.id);
+        const panelId = `provider-limits-${provider.id}`;
         const limitLines = (provider.limits?.dynamic?.limits ?? [])
           .map(limitRowText)
           .filter((line): line is string => line !== null);
@@ -1156,12 +1170,20 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
               <div className="min-w-0">
                 <ListRow
                   className="min-w-0 gap-3"
+                  aria-expanded={authed ? isOpen : undefined}
+                  aria-controls={authed && isOpen ? panelId : undefined}
                   onClick={() => {
                     if (!authed) {
                       void auth.signIn(provider);
                       return;
                     }
-                    void auth.recheck(provider.id);
+                    setExpanded((current) => {
+                      const next = new Set(current);
+                      if (isOpen) next.delete(provider.id);
+                      else next.add(provider.id);
+                      return next;
+                    });
+                    if (!isOpen) void auth.recheck(provider.id);
                   }}
                 >
                   {/* THE DOT BELONGS TO THE NAME, NOT TO THE ROW. Centred in a
@@ -1195,24 +1217,40 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                     <span className="block truncate font-mono text-meta text-dialog-hint">
                       {providerRowLine(provider)}
                     </span>
-                    {limitLines.length > 0 && (
-                      <span className="mt-1 block space-y-0.5 font-mono text-meta text-dialog-foreground">
-                        {limitLines.map((line, index) => (
-                          <span key={`${provider.id}-limit-${index}`} className="block">
-                            {line}
-                          </span>
-                        ))}
-                      </span>
-                    )}
                   </span>
-                  {(isProbing || !authed) && (
-                    <span className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
-                      {isProbing ? 'Checking…' : 'Sign in'}
-                    </span>
-                  )}
+                  <span
+                    className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint"
+                    title={providerLimitsLine(provider) ?? dot.label}
+                  >
+                    {isProbing ? 'Checking…' : !authed ? 'Sign in' : (mark ?? '')}
+                  </span>
+                  <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" aria-hidden />
                 </ListRow>
               </div>
             </SwipeActions>
+            {isOpen && (
+              <div
+                id={panelId}
+                role="region"
+                aria-label={`${provider.label} limits`}
+                className="space-y-2 border-t border-dialog-edge bg-panel-2 p-3"
+              >
+                <p className="font-mono text-chip font-black uppercase tracking-wider text-accent-ink">
+                  Limits
+                </p>
+                {limitLines.length > 0 ? (
+                  <ul className="space-y-1 font-mono text-meta text-dialog-foreground">
+                    {limitLines.map((line, index) => (
+                      <li key={`${provider.id}-limit-${index}`}>{line}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="font-mono text-meta text-dialog-hint">
+                    {isProbing ? 'Checking limits…' : 'No limits reported by this provider.'}
+                  </p>
+                )}
+              </div>
+            )}
             <ProviderNotice auth={auth} provider={provider} />
           </div>
         );

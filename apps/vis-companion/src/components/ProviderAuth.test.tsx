@@ -155,8 +155,7 @@ describe('unscopedMessage', () => {
   });
 });
 
-// A provider's account facts belong in its own row; quota is not a destination
-// and does not need a second surface to reveal it.
+// A provider stays compact until its chevron disclosure is opened.
 describe('ProviderRows', () => {
   const signedIn = (fields: Partial<RouterProvider> = {}): RouterProvider => ({
     ...provider('github-copilot'),
@@ -164,7 +163,7 @@ describe('ProviderRows', () => {
     ...fields,
   });
 
-  it('shows every reported limit directly in the provider row without disclosure chrome', () => {
+  it('opens a signed-in provider and shows every reported limit without source detail', () => {
     render(
       <ProviderRows
         auth={state({
@@ -181,6 +180,7 @@ describe('ProviderRows', () => {
               },
             }),
           ],
+          recheck: async () => {},
         })}
       />,
     );
@@ -188,12 +188,20 @@ describe('ProviderRows', () => {
     const row = screen.getByText('GITHUB-COPILOT').closest('button');
     expect(row).not.toBeNull();
     if (!row) throw new Error('provider row missing');
-    expect(row.textContent).toContain('Chat 62% left');
-    expect(row.textContent).toContain('Completions 16% left');
-    expect(row.getAttribute('aria-expanded')).toBeNull();
+    expect(row.getAttribute('aria-expanded')).toBe('false');
     expect(screen.queryByRole('region', { name: 'GITHUB-COPILOT limits' })).toBeNull();
-    expect(screen.queryByText('Limits')).toBeNull();
+
+    fireEvent.click(row);
+
+    expect(row.getAttribute('aria-expanded')).toBe('true');
+    const limits = screen.getByRole('region', { name: 'GITHUB-COPILOT limits' });
+    expect(limits.textContent).toContain('Chat 62% left');
+    expect(limits.textContent).toContain('Completions 16% left');
     expect(screen.queryByText('Live quota source detail.')).toBeNull();
+
+    fireEvent.click(row);
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('region', { name: 'GITHUB-COPILOT limits' })).toBeNull();
   });
 
   it('presses into a live re-check for an account that is already signed in', () => {
