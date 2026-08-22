@@ -5,8 +5,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { AuthFlow, ProviderPreset, RouterProvider } from '../lib/types';
 import {
   AddProviderButton,
+  isProviderAuthed,
   ProviderNotice,
   ProviderRows,
+  providerStatusDot,
+  providerStatusLine,
   unscopedMessage,
   type ProviderAuth,
 } from './ProviderAuth';
@@ -155,6 +158,30 @@ describe('unscopedMessage', () => {
   });
 });
 
+describe('provider authentication verdict', () => {
+  it('paints a live quota rejection as an authentication error instead of signed in', () => {
+    const rejected = provider('zai-coding-plan');
+    rejected.status = { is_authenticated: true, source: 'config' };
+    rejected.limits = {
+      status: 'unauthenticated',
+      dynamic: {
+        limits: [],
+        note: 'Z.ai (Coding Plan) rejected the current API key.',
+      },
+    };
+
+    expect(isProviderAuthed(rejected)).toBe(false);
+    expect(providerStatusDot(rejected)).toEqual({
+      glyph: '●',
+      tone: 'text-err',
+      label: 'Authentication error',
+    });
+    expect(providerStatusLine(rejected)).toBe(
+      'Z.ai (Coding Plan) rejected the current API key.',
+    );
+  });
+});
+
 // A provider stays compact until its chevron disclosure is opened.
 describe('ProviderRows', () => {
   const signedIn = (fields: Partial<RouterProvider> = {}): RouterProvider => ({
@@ -218,6 +245,28 @@ describe('ProviderRows', () => {
     );
     fireEvent.click(screen.getByText('GITHUB-COPILOT'));
     expect(asked).toEqual(['github-copilot']);
+  });
+
+  it('keeps the disclosure quiet while its live re-check is in flight', () => {
+    render(
+      <ProviderRows
+        auth={state({
+          providers: [signedIn()],
+          pending: 'status:github-copilot',
+          recheck: async () => {},
+        })}
+      />,
+    );
+
+    const row = screen.getByText('GITHUB-COPILOT').closest('button');
+    expect(row).not.toBeNull();
+    if (!row) throw new Error('provider row missing');
+    fireEvent.click(row);
+
+    expect(screen.getByText('Signed in')).toBeTruthy();
+    expect(screen.queryByText(/Checking/)).toBeNull();
+    expect(screen.queryByText('No limits reported by this provider.')).toBeNull();
+    expect(row.querySelector('[title="Signed in"]')?.className).not.toContain('animate-pulse');
   });
 
   it('presses into the sign-in of an account that has none', () => {

@@ -1192,7 +1192,7 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                       the label's OWN type step — never a hand-set line-height —
                       puts it on the name's 18px line. */}
                   <span
-                    className={`shrink-0 self-start font-mono text-body ${dot.tone} ${isProbing ? 'animate-pulse' : ''}`}
+                    className={`shrink-0 self-start font-mono text-body ${dot.tone}`}
                     aria-hidden="true"
                     title={dot.label}
                   >
@@ -1222,7 +1222,7 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                     className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint"
                     title={providerLimitsLine(provider) ?? dot.label}
                   >
-                    {isProbing ? 'Checking…' : !authed ? 'Sign in' : (mark ?? '')}
+                    {!authed ? 'Sign in' : (mark ?? '')}
                   </span>
                   <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" aria-hidden />
                 </ListRow>
@@ -1244,11 +1244,11 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                       <li key={`${provider.id}-limit-${index}`}>{line}</li>
                     ))}
                   </ul>
-                ) : (
+                ) : !isProbing ? (
                   <p className="font-mono text-meta text-dialog-hint">
-                    {isProbing ? 'Checking limits…' : 'No limits reported by this provider.'}
+                    No limits reported by this provider.
                   </p>
-                )}
+                ) : null}
               </div>
             )}
             <ProviderNotice auth={auth} provider={provider} />
