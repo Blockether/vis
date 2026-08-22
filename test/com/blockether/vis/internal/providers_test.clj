@@ -4,7 +4,7 @@
    a warm caller, a stale snapshot must refresh OFF the calling thread, and
    every same-process fleet mutation must invalidate the snapshot."
   (:require [lazytest.core :as lt]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]]
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.cancellation :as cancel]
             [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
@@ -41,21 +41,64 @@
                                             (f)
                                             (finally (providers/set-router-rebuild-hook! prev)))))])
 
-(deftest live-limits-unauthenticated-overrides-a-stale-credential-status
-  (with-redefs [registry/provider-by-id
-                (constantly {:provider/status-fn (constantly {:is-authenticated true})
-                             :provider/limits-fn (constantly nil)})
+(deftest provider-status-classifies-the-live-auth-verdict
+  (let [limits
+        (atom {:provider-id :remote :status :ok :static {} :dynamic {:limits []}})
 
-                provider-limits/provider-limits
-                (constantly {:provider-id :anthropic-coding-plan
-                             :status :unauthenticated
-                             :static {}
-                             :dynamic {:limits []
-                                       :note "Claude subscription is no longer active."}})]
+        registered
+        {:provider/status-fn (constantly {:is-authenticated true :source :config})
+         :provider/limits-fn (constantly nil)}]
 
-    (let [status (providers/provider-status {:id :anthropic-coding-plan})]
-      (is (false? (:is-authenticated status)))
-      (is (= "Claude subscription is no longer active." (:error status))))))
+    (with-redefs [registry/provider-by-id
+                  (constantly registered)
+
+                  provider-limits/provider-limits
+                  (fn [_]
+                    @limits)]
+
+      (testing "a successful live account check is verified"
+        (is (= :verified (:auth-state (providers/provider-status {:id :remote})))))
+      (testing "an explicit credential rejection is red, not merely signed out"
+        (reset! limits {:provider-id :remote
+                        :status :unauthenticated
+                        :static {}
+                        :dynamic {:limits [] :note "The provider rejected this token."}})
+        (let [status (providers/provider-status {:id :remote})]
+          (is (false? (:is-authenticated status)))
+          (is (= :rejected (:auth-state status)))
+          (is (= "The provider rejected this token." (:error status)))))
+      (testing "a transient limits failure keeps the usable credential but degrades its proof"
+        (reset! limits {:provider-id :remote
+                        :status :error
+                        :static {}
+                        :dynamic {:limits [] :note "Limits are temporarily unavailable."}
+                        :error {:message "upstream timeout"}})
+        (let [status (providers/provider-status {:id :remote})]
+          (is (true? (:is-authenticated status)))
+          (is (= :degraded (:auth-state status)))
+          (is (= "Limits are temporarily unavailable." (:warning status)))))
+      (testing "an endpoint that cannot verify credentials remains neutral"
+        (reset! limits {:provider-id :remote :status :unsupported :static {} :dynamic {:limits []}})
+        (is (= :unverified (:auth-state (providers/provider-status {:id :remote})))))))
+  (testing "a saved credential with no live check is neutral"
+    (with-redefs [registry/provider-by-id (constantly {:provider/status-fn (constantly
+                                                                             {:is-authenticated true
+                                                                              :source :config})})]
+      (let [status (providers/provider-status {:id :remote})]
+        (is (true? (:is-authenticated status)))
+        (is (= :unverified (:auth-state status)))))))
+
+(deftest initial-provider-status-is-neutral-until-a-live-check
+  (let [saved
+        (providers/initial-provider-status {:id :remote :api-key "saved"})
+
+        pending
+        (providers/initial-provider-status {:id :remote})]
+
+    (is (= true (get saved "is_authenticated")))
+    (is (= "unverified" (get saved "auth_state")))
+    (is (= "unverified" (get pending "auth_state")))
+    (is (= true (get pending "is_loading")))))
 
 (deftest configured-providers-cached-warm-reads-never-re-enumerate
   (let [calls
@@ -599,30 +642,27 @@
   (is (= :oauth (providers/auth-kind (first providers/oauth-provider-ids))))
   (is (= :none (providers/auth-kind (first providers/local-no-auth-provider-ids)))))
 
-(deftest status-checking-verdict-test
-  ;; A probe still in flight is NOT a verdict. Both report forms used to render
-  ;; the placeholder status as a definitive "no" and retract it one refresh
-  ;; later, which is exactly what a provider card showed while it was loading.
+(deftest status-report-uses-the-four-state-auth-verdict
   (let [limits
         {:provider-id :slow :status :loading :static {} :dynamic {:limits []}}
 
-        loading
-        {:is-authenticated nil :loading? true}
+        report
+        (fn [status]
+          [(providers/status-text {:id :slow} status limits)
+           (providers/status-md {:id :slow} status limits)])
 
-        text
-        (providers/status-text {:id :slow} loading limits)
+        [neutral-text neutral-md]
+        (report {:is-authenticated true :auth-state :unverified :loading? true})]
 
-        md
-        (providers/status-md {:id :slow} loading limits)]
-
-    (is (str/includes? text "Authenticated: checking…"))
-    (is (not (str/includes? text "Authenticated: no")))
-    (is (str/includes? md "**Authenticated:** checking…"))
-    (is (not (str/includes? md "no ✗")))
-    (is (str/includes? (providers/status-md {:id :slow} {:is-authenticated true} limits) "yes ✓"))
-    (is (str/includes? (providers/status-md {:id :slow} {:is-authenticated false} limits) "no ✗"))
-    (is (str/includes? (providers/status-text {:id :slow} {:is-authenticated false} limits)
-                       "Authenticated: no"))))
+    (is (str/includes? neutral-text "Authenticated: saved, not verified"))
+    (is (not (str/includes? neutral-text "checking")))
+    (is (str/includes? neutral-md "**Authenticated:** saved, not verified ○"))
+    (is (str/includes? (first (report {:is-authenticated true :auth-state :verified}))
+                       "Authenticated: verified"))
+    (is (str/includes? (first (report {:is-authenticated false :auth-state :rejected}))
+                       "Authenticated: rejected"))
+    (is (str/includes? (first (report {:is-authenticated true :auth-state :degraded}))
+                       "Authenticated: usable; live check unavailable"))))
 
 ;; Regression, issue #113: a provider lifecycle callback that never returned ran
 ;; unbounded on the caller's thread, so one wedged extension held the gateway's

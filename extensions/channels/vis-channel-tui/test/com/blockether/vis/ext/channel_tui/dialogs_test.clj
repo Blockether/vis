@@ -6,6 +6,7 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.terminals :as term]
+            [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.core :as vis]
             ;; Loaded for its side effect: registers the `shell` toggle (internal
@@ -1593,30 +1594,39 @@
         ;; No gateway read yet → Settings stays provider-free.
         (reset! inventory {:status :unloaded :providers [] :error nil})
         (expect (nil? (provider-rows)))
-        (reset! inventory {:status :ok
-                           :error nil
-                           :providers
-                           [{:provider {:id :anthropic :models [{:name "claude"}]}
-                             :auth :on
-                             :default? true}
-                            {:provider {:id :openai :models ["gpt"]} :auth :off :default? false}
-                            {:provider {:id :ollama :models []} :auth :local :default? false}]})
+        (reset! inventory
+          {:status :ok
+           :error nil
+           :providers
+           [{:provider {:id :anthropic :models [{:name "claude"}]} :auth :verified :default? true}
+            {:provider {:id :zai-coding-plan :models ["glm"]} :auth :rejected :default? false}
+            {:provider {:id :openai-codex :models ["codex"]} :auth :degraded :default? false}
+            {:provider {:id :openrouter :models ["openrouter"]} :auth :unverified :default? false}
+            {:provider {:id :openai :models ["gpt"]} :auth :off :default? false}
+            {:provider {:id :ollama :models []} :auth :local :default? false}]})
         (let [rows
               (provider-rows)
 
               providers
               (filterv #(= :provider (:type %)) rows)]
 
-          (expect (= [:section :provider :provider :provider :action] (mapv :type rows)))
+          (expect (= [:section :provider :provider :provider :provider :provider :provider :action]
+                     (mapv :type rows)))
           (expect (= "Providers" (:label (first rows))))
           (expect (= :provider-add (:id (last rows))))
           ;; the row carries the provider itself, so Enter can open ITS menu
-          (expect (= [:anthropic :openai :ollama] (mapv #(:id (:provider %)) providers)))
-          ;; the router tag LEADS the line: `d`/`f` have no other mark on the row
-          (expect (= "default · signed in · claude" (:description (first providers))))
-          (expect (= "not signed in · gpt" (:description (second providers))))
-          ;; the dot is the gateway's verdict; a local provider needs no credential
-          (expect (= [p/STATUS_ON p/STATUS_OFF p/MARK_VALUE] (mapv #(first (mark % {})) providers)))
+          (expect (= [:anthropic :zai-coding-plan :openai-codex :openrouter :openai :ollama]
+                     (mapv #(:id (:provider %)) providers)))
+          ;; The router tag leads the line, then the same four auth verdicts every
+          ;; channel paints. Signed out and unverified are both neutral, but say why.
+          (expect (= ["default · verified · claude" "credentials rejected · glm"
+                      "live check unavailable · codex" "saved, not verified · openrouter"
+                      "not signed in · gpt" "local, reachable"]
+                     (mapv :description providers)))
+          (expect (= [[p/STATUS_ON t/status-ok] [p/STATUS_ON t/status-bad]
+                      [p/STATUS_ON t/warning-fg] [p/STATUS_OFF t/dialog-hint]
+                      [p/STATUS_OFF t/dialog-hint] [p/STATUS_ON t/status-ok]]
+                     (mapv #(mark % {}) providers)))
           (expect (every? selectable? (remove #(= :section (:type %)) rows))))
         ;; A gateway that is down degrades to an inline row, never a modal.
         (reset! inventory {:status :error :providers [] :error "connection refused"})
@@ -1686,16 +1696,20 @@
                          vis/gateway-router-fleet
                          (fn []
                            (swap! router-reads inc)
-                           [{"id" "anthropic" "status" {"is_authenticated" true}}
-                            {"id" "openai" "status" {"is_authenticated" false}}])]
+                           [{"id" "anthropic"
+                             "status" {"is_authenticated" true "auth_state" "verified"}}
+                            {"id" "ollama"
+                             "status" {"is_authenticated" true "auth_state" "verified"}}
+                            {"id" "openai"
+                             "status" {"is_authenticated" false "auth_state" "unverified"}}])]
 
              (dlg/load-provider-inventory!)
              (let [{:keys [status providers]} @inventory]
                (expect (= :ok status))
                ;; a configured provider is NOT duplicated by its preset twin
                (expect (= [:anthropic :ollama :openai] (mapv #(:id (:provider %)) providers)))
-               ;; a local provider needs no credential, so the gateway is never asked
-               (expect (= [:on :local :off] (mapv :auth providers)))
+               ;; local is green only after the daemon confirms its live probe
+               (expect (= [:verified :local :off] (mapv :auth providers)))
                ;; …and it costs ONE gateway read for the WHOLE fleet, never one
                ;; per provider
                (expect (= 1 @router-reads))
@@ -1730,7 +1744,9 @@
                            (constantly [])
 
                            vis/gateway-router-fleet
-                           (constantly [{"id" "acme-llm" "status" {"is_authenticated" true}}])]
+                           (constantly [{"id" "acme-llm"
+                                         "status" {"is_authenticated" true
+                                                   "auth_state" "verified"}}])]
 
                (dlg/load-provider-inventory!)
                (let [{:keys [providers]} @inventory]
@@ -1761,7 +1777,9 @@
                          (constantly [])
 
                          vis/gateway-router-fleet
-                         (constantly [{"id" "openai" "status" {"is_authenticated" false}}])]
+                         (constantly [{"id" "openai"
+                                       "status" {"is_authenticated" false
+                                                 "auth_state" "unverified"}}])]
 
              (reset! inventory {:status :unloaded :providers [] :error nil})
              (activate! nil

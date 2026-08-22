@@ -327,54 +327,97 @@
                 :error
                 (str "Can't reach " label " at " host " (" (or (ex-message e) (str e)) ")")))))))))
 
-(declare provider-limits-safe)
+(defn provider-limits-safe
+  "Normalized limits report for a provider id; an error report instead
+   of a throw."
+  [provider]
+  (try (provider-limits/provider-limits (:id provider))
+       (catch Throwable e
+         {:provider-id (:id provider)
+          :status :error
+          :static {}
+          :dynamic {:limits []}
+          :error {:message (or (ex-message e) (str e))}})))
+
+(defn- limits-status-message
+  [limits fallback]
+  (or (get-in limits [:dynamic :note]) (get-in limits [:error :message]) fallback))
 
 (defn provider-status
-  "Auth/liveness status for a CONFIGURED provider map. Local providers
-   are probed for real; an explicit `:api-key` is trusted; otherwise
-   the registered extension's status/detect fns answer. When an authenticated
-   provider exposes live limits and that check says `:unauthenticated`, the
-   live verdict wins over a merely-present credential file. Never throws."
+  "Auth/liveness status for a CONFIGURED provider map, with one explicit
+   `:auth-state` every channel paints:
+
+   - `:verified` — a live provider check accepted the credential,
+   - `:rejected` — the credential/config was explicitly refused,
+   - `:degraded` — the credential remains usable but its live check failed,
+   - `:unverified` — a credential exists but no live check can prove it (or
+     no credential exists yet).
+
+   `:is-authenticated` remains the independent usability bit: a degraded or
+   unverified entry can still route only when it is true; rejection forces it false.
+   Never throws."
   [provider]
   (let [registered
         (registry/provider-by-id (:id provider))
+
+        credential-gap
+        (config/provider-credential-gap provider)
 
         status
         (cond
           ;; FIRST, ahead of the `:api-key` trust branch: an unresolved `${NAME}`
           ;; leaves the literal reference sitting in `:api-key`, which is `some?` and
-          ;; would otherwise read as "authenticated from config" — the worst possible
-          ;; verdict, since the truth only surfaces as a 401 on the first real turn.
-          ;; A configured `api_key_command` that cannot currently produce a token is
-          ;; the same class of un-authenticatable provider and answers here too.
-          (config/provider-credential-gap provider)
-          (let [{:keys [reason env-vars]} (config/provider-credential-gap provider)]
+          ;; would otherwise read as authenticated from config.
+          credential-gap
+          (let [{:keys [reason env-vars]} credential-gap]
             (cond-> {:is-authenticated false :source (if env-vars :env :command) :error reason}
               env-vars
               (assoc :needs-env (str/join ", " env-vars))))
-          ;; Local no-auth providers (Ollama / LM Studio) have no key and
-          ;; their registered status-fn is a hardcoded stub — probe the
-          ;; endpoint for real.
+          ;; Local no-auth providers are verified by their live `/models` probe.
           (contains? local-no-auth-provider-ids (:id provider)) (probe-local-reachable provider)
           (some? (:api-key provider))
           {:is-authenticated true :source :config :config-path (config/state-path)}
-          ;; No gap above means the helper DID produce a token just now.
+          ;; No gap above means the helper produced a token just now.
           (some? (:api-key-command provider)) {:is-authenticated true :source :command}
           registered (or (safe-provider-status registered) {:is-authenticated false})
-          :else {:is-authenticated false})]
+          :else {:is-authenticated false})
 
-    ;; OAuth credentials can remain on disk after their subscription has ended.
-    ;; A limits endpoint that rejects those credentials is the one live account
-    ;; signal available to every channel, so surface its explanation as status.
-    (if (and (:is-authenticated status) (:provider/limits-fn registered))
+        base-state
+        (cond credential-gap :rejected
+              (contains? local-no-auth-provider-ids (:id provider))
+              (if (:is-authenticated status) :verified :degraded)
+              (:is-authenticated status) :unverified
+              (:error status) :degraded
+              :else :unverified)
+
+        status*
+        (assoc status :auth-state base-state)]
+
+    ;; A provider-specific live limits endpoint is also the shared auth probe.
+    ;; Its result upgrades a merely-present credential without making a transient
+    ;; quota outage look like a rejected token.
+    (if (and (:is-authenticated status*) (:provider/limits-fn registered))
       (let [limits (provider-limits-safe provider)]
-        (if (= :unauthenticated (:status limits))
-          (assoc status
+        (case (:status limits)
+          :ok
+          (assoc status* :auth-state :verified)
+
+          :unauthenticated
+          (assoc status*
             :is-authenticated false
-            :error (or (get-in limits [:dynamic :note])
-                       "Provider rejected the current credentials."))
-          status))
-      status)))
+            :auth-state :rejected
+            :error (limits-status-message limits "Provider rejected the current credentials."))
+
+          :error
+          (assoc status*
+            :auth-state :degraded
+            :warning (limits-status-message limits "Provider limits could not be checked."))
+
+          :unsupported
+          (assoc status* :auth-state :unverified)
+
+          (assoc status* :auth-state :unverified)))
+      status*)))
 
 (defn provider-reachable?
   "Cheap ROUTING-time liveness verdict: local providers (Ollama /
@@ -423,17 +466,6 @@
                {:router router :demoted []}))))
        (catch Throwable _ {:router router :demoted []})))
 
-(defn provider-limits-safe
-  "Normalized limits report for a provider id; an error report instead
-   of a throw."
-  [provider]
-  (try (provider-limits/provider-limits (:id provider))
-       (catch Throwable e
-         {:provider-id (:id provider)
-          :status :error
-          :static {}
-          :dynamic {:limits []}
-          :error {:message (or (ex-message e) (str e))}})))
 
 (defn initial-provider-status
   "Placeholder status while a real probe runs in the background. A credential gap
@@ -441,15 +473,21 @@
    plus at most one cached credential-command probe — so the card never flashes
    an authenticated verdict it is about to retract."
   [provider]
-  (wire/canonical
-    (if-let [{:keys [reason env-vars]} (config/provider-credential-gap-cached provider)]
-      (cond-> {:is-authenticated false :source (if env-vars :env :command) :error reason}
-        env-vars
-        (assoc :needs-env (str/join ", " env-vars)))
-      (cond (some? (:api-key provider))
-            {:is-authenticated true :source :config :config-path (config/state-path)}
-            (some? (:api-key-command provider)) {:is-authenticated true :source :command}
-            :else {:is-authenticated nil :loading? true}))))
+  (wire/canonical (if-let [{:keys [reason env-vars]} (config/provider-credential-gap-cached
+                                                       provider)]
+                    (cond-> {:is-authenticated false
+                             :auth-state :rejected
+                             :source (if env-vars :env :command)
+                             :error reason}
+                      env-vars
+                      (assoc :needs-env (str/join ", " env-vars)))
+                    (cond (some? (:api-key provider)) {:is-authenticated true
+                                                       :auth-state :unverified
+                                                       :source :config
+                                                       :config-path (config/state-path)}
+                          (some? (:api-key-command provider))
+                          {:is-authenticated true :auth-state :unverified :source :command}
+                          :else {:is-authenticated nil :auth-state :unverified :loading? true}))))
 
 (defn initial-provider-limits
   "Placeholder limits report while the real fetch runs."
@@ -504,13 +542,48 @@
          (when note (str " - " note)))))
 
 (defn- auth-verdict
-  "Three-valued authentication verdict for a status map. A probe still in
-   flight is `:checking`, NEVER a definitive `:no` the card is about to
-   retract one refresh later."
+  "The daemon-classified authentication state. Missing evidence is neutral, never
+   inferred as success or rejection from credential presence alone."
   [status]
-  (cond (get status "is_authenticated") :yes
-        (get status "is_loading") :checking
-        :else :no))
+  (let [state (some-> (get status "auth_state")
+                      keyword)]
+    (if (contains? #{:verified :rejected :degraded :unverified} state) state :unverified)))
+
+(defn- auth-summary
+  [status decorated?]
+  (let [verdict
+        (auth-verdict status)
+
+        label
+        (case verdict
+          :verified
+          "verified"
+
+          :rejected
+          "rejected"
+
+          :degraded
+          "usable; live check unavailable"
+
+          :unverified
+          (if (get status "is_authenticated") "saved, not verified" "not verified"))
+
+        marker
+        (when decorated?
+          (case verdict
+            :verified
+            " ✓"
+
+            :rejected
+            " ✗"
+
+            :degraded
+            " ⚠"
+
+            :unverified
+            " ○"))]
+
+    (str label marker)))
 
 (defn status-text
   "Multi-line human status + limits report for a configured provider.
@@ -530,7 +603,7 @@
          rows
          (->> status
               (remove (fn [[k _]]
-                        (contains? #{"is_authenticated" "is_loading"} k)))
+                        (contains? #{"is_authenticated" "is_loading" "auth_state"} k)))
               (sort-by (comp str key))
               (map (fn [[k v]]
                      (str (status-entry-label k) ": " (format-status-value v)))))
@@ -542,16 +615,7 @@
        "\n"
        (concat
          [title "" (str "Base URL: " (or (config/provider-base-url provider) "-"))
-          (str "Authenticated: "
-               (case (auth-verdict status)
-                 :yes
-                 "yes"
-
-                 :no
-                 "no"
-
-                 :checking
-                 "checking…"))]
+          (str "Authenticated: " (auth-summary status false))]
          (when-let [e (get status "error")]
            ["" (str "Error: " e)])
          (when (seq rows) (concat [""] rows))
@@ -584,7 +648,7 @@
   [status]
   (->> status
        (remove (fn [[k _]]
-                 (contains? #{"is_authenticated" "error" "is_loading"} k)))
+                 (contains? #{"is_authenticated" "error" "is_loading" "auth_state"} k)))
        (sort-by (comp str key))
        (map (fn [[k v]]
               (str "- **" (status-entry-label k) ":** " (format-status-value v))))))
@@ -605,9 +669,6 @@
          label
          (config/display-label (:id provider))
 
-         verdict
-         (auth-verdict status)
-
          dynamic
          (get-in limits [:dynamic :limits])
 
@@ -622,15 +683,7 @@
        (concat
          [(str "## " label) ""
           (str "**Authenticated:** "
-               (case verdict
-                 :yes
-                 "yes ✓"
-
-                 :no
-                 "no ✗"
-
-                 :checking
-                 "checking…")
+               (auth-summary status true)
                "  ·  **Base URL:** `"
                (or (config/provider-base-url provider) "-")
                "`")]

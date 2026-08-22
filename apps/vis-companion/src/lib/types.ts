@@ -292,8 +292,12 @@ export interface McpTestResult {
 // mirror the gateway EDN (`:is-authenticated`) mechanically. Never rename a
 // field on the way in.
 
+export type ProviderAuthState = 'verified' | 'rejected' | 'degraded' | 'unverified';
+
 export interface ProviderStatus {
   is_authenticated?: boolean;
+  /** Live auth evidence, classified daemon-side so every channel paints the same truth. */
+  auth_state: ProviderAuthState;
   detail?: string;
   label?: string;
   /** Where the credential came from: `auth-file`, `config`, `env-var`, … */
@@ -301,8 +305,10 @@ export interface ProviderStatus {
   account_type?: string;
   /** Milliseconds until the daemon's credential expires, when it knows. */
   expires_in_ms?: number;
-  /** Probe failure (unreachable local provider, refused token, …). */
+  /** Definitive credential/config failure. */
   error?: string;
+  /** Transient live-check failure; the credential remains usable. */
+  warning?: string;
 }
 
 /**

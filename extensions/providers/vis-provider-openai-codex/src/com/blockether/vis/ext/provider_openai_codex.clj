@@ -514,12 +514,19 @@
 
 (defn- usage-error-report
   [^Throwable t]
-  {:provider-id :openai-codex
-   :status :error
-   :fetched-at-ms (System/currentTimeMillis)
-   :dynamic {:limits [] :note "OpenAI Codex usage is unavailable."}
-   :error {:type :provider/openai-codex-usage-error
-           :message (or (ex-message t) (.getName (class t)))}})
+  (if (usage-auth-error? t)
+    {:provider-id :openai-codex
+     :status :unauthenticated
+     :fetched-at-ms (System/currentTimeMillis)
+     :dynamic {:limits [] :note "OpenAI Codex credentials were rejected."}
+     :error {:type :provider/openai-codex-usage-unauthenticated
+             :message (or (ex-message t) (.getName (class t)))}}
+    {:provider-id :openai-codex
+     :status :error
+     :fetched-at-ms (System/currentTimeMillis)
+     :dynamic {:limits [] :note "OpenAI Codex usage is unavailable."}
+     :error {:type :provider/openai-codex-usage-error
+             :message (or (ex-message t) (.getName (class t)))}}))
 
 (defn- usage-report-from-token!
   [{:keys [token llm-headers]}]

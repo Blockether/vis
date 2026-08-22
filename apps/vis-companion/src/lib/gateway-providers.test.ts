@@ -85,6 +85,23 @@ describe("provider presets", () => {
   });
 });
 
+describe("provider status", () => {
+  it("keeps the daemon's four-state auth verdict intact", async () => {
+    answerWith({ status: { is_authenticated: true, auth_state: "verified" } });
+    const status = await new GatewayClient(CONN).providerStatus("openrouter");
+
+    expect(status).toEqual({ is_authenticated: true, auth_state: "verified" });
+    expect(calls[0].url).toBe("http://gateway.example.com:7777/v1/providers/openrouter/status");
+  });
+
+  it("refuses a malformed answer instead of inventing an auth verdict", async () => {
+    answerWith({});
+    await expect(new GatewayClient(CONN).providerStatus("openrouter")).rejects.toThrow(
+      "Provider status response is missing status for openrouter",
+    );
+  });
+});
+
 describe("fleet membership", () => {
   it("adds a preset by id and carries the base url the user owns", async () => {
     answerWith({ providers: [{ id: "lmstudio", label: "LM Studio" }] });

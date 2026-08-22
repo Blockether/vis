@@ -259,7 +259,7 @@
           (detect-key plan-tag)]
 
       {:provider-id provider-id
-       :status (if detected :ok :unauthenticated)
+       :status (if detected :unsupported :unauthenticated)
        :fetched-at-ms (System/currentTimeMillis)
        :dynamic {:limits []
                  :note (if detected

@@ -43,3 +43,15 @@
       (provider-limits/provider-limits :limits-cache-test)
       (testing "sign-in / sign-out must not leave a stale :unauthenticated report"
         (is (= 2 @calls))))))
+
+(deftest a-thrown-auth-rejection-is-an-unauthenticated-report
+  (with-redefs [registry/provider-by-id (constantly {:provider/id :rejected-limits-test
+                                                     :provider/limits-fn
+                                                     (fn []
+                                                       (throw (ex-info
+                                                                "Provider rejected the credential"
+                                                                {:status 401})))})]
+    (provider-limits/flush-limits-cache! :rejected-limits-test)
+    (let [report (provider-limits/provider-limits :rejected-limits-test)]
+      (is (= :unauthenticated (:status report)))
+      (is (= [] (get-in report [:dynamic :limits]))))))

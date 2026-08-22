@@ -481,7 +481,7 @@
                              :dynamic {:limits [] :note (str label " is not authenticated.")}}
             (= :coding plan-tag) (coding-limits-report! provider-id label (:api-key detected))
             :else {:provider-id provider-id
-                   :status :ok
+                   :status :unsupported
                    :fetched-at-ms (System/currentTimeMillis)
                    :dynamic {:limits []
                              :note (str label

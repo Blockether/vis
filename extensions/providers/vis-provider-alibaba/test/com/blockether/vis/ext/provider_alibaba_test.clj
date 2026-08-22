@@ -113,13 +113,13 @@
 
 (defdescribe limits-test
              (it
-               "reports :ok with a console note - neither plan exposes a quota endpoint"
+               "reports :unsupported with a console note - no endpoint verifies the key"
                (require 'com.blockether.vis.ext.provider-alibaba :reload)
                (with-redefs-fn {#'alibaba/detect-key (constantly {:api-key "k" :source :auth-file})}
                  (fn []
                    (let [report (vis/provider-limits :alibaba-token-plan)]
                      (expect (= :alibaba-token-plan (:provider-id report)))
-                     (expect (= :ok (:status report)))
+                     (expect (= :unsupported (:status report)))
                      (expect (= [] (get-in report [:dynamic :limits])))
                      (expect (re-find #"Model Studio console" (get-in report [:dynamic :note])))))))
              (it "reports :unauthenticated when the plan key is absent"

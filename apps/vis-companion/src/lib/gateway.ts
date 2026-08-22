@@ -1905,7 +1905,8 @@ export class GatewayClient {
       undefined,
       signal,
     );
-    const status = response.status ?? {};
+    const status = response.status;
+    if (!status) throw new Error(`Provider status response is missing status for ${providerId}`);
     this.mergeCachedProvider(providerId, { status });
     return status;
   }

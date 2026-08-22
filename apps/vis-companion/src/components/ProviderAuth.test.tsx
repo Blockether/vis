@@ -159,26 +159,75 @@ describe('unscopedMessage', () => {
 });
 
 describe('provider authentication verdict', () => {
-  it('paints a live quota rejection as an authentication error instead of signed in', () => {
+  it('paints only a live-confirmed credential green', () => {
+    const verified = provider('openrouter');
+    verified.status = { is_authenticated: true, auth_state: 'verified', source: 'config' };
+    verified.limits = { status: 'ok', dynamic: { limits: [] } };
+
+    expect(isProviderAuthed(verified)).toBe(true);
+    expect(providerStatusDot(verified)).toEqual({
+      glyph: '●',
+      tone: 'text-ok',
+      label: 'Authentication verified',
+    });
+  });
+
+  it('paints a live credential rejection red instead of signed in', () => {
     const rejected = provider('zai-coding-plan');
-    rejected.status = { is_authenticated: true, source: 'config' };
+    rejected.status = {
+      is_authenticated: false,
+      auth_state: 'rejected',
+      source: 'config',
+      error: 'Z.ai (Coding Plan) rejected the current API key.',
+    };
     rejected.limits = {
       status: 'unauthenticated',
-      dynamic: {
-        limits: [],
-        note: 'Z.ai (Coding Plan) rejected the current API key.',
-      },
+      dynamic: { limits: [], note: 'Z.ai (Coding Plan) rejected the current API key.' },
     };
 
     expect(isProviderAuthed(rejected)).toBe(false);
     expect(providerStatusDot(rejected)).toEqual({
       glyph: '●',
       tone: 'text-err',
-      label: 'Authentication error',
+      label: 'Authentication rejected',
     });
     expect(providerStatusLine(rejected)).toBe(
       'Z.ai (Coding Plan) rejected the current API key.',
     );
+  });
+
+  it('paints a transient limits failure yellow while keeping the provider usable', () => {
+    const degraded = provider('openrouter');
+    degraded.status = {
+      is_authenticated: true,
+      auth_state: 'degraded',
+      warning: 'Limits are temporarily unavailable.',
+    };
+    degraded.limits = {
+      status: 'error',
+      dynamic: { limits: [], note: 'Limits are temporarily unavailable.' },
+    };
+
+    expect(isProviderAuthed(degraded)).toBe(true);
+    expect(providerStatusDot(degraded)).toEqual({
+      glyph: '●',
+      tone: 'text-warn',
+      label: 'Live check unavailable',
+    });
+    expect(providerStatusLine(degraded)).toBe('Limits are temporarily unavailable.');
+  });
+
+  it('paints a saved but unverified key as a neutral hollow dot', () => {
+    const unverified = provider('openai');
+    unverified.status = { is_authenticated: true, auth_state: 'unverified', source: 'config' };
+
+    expect(isProviderAuthed(unverified)).toBe(true);
+    expect(providerStatusDot(unverified)).toEqual({
+      glyph: '○',
+      tone: 'text-dialog-hint',
+      label: 'Saved, not verified',
+    });
+    expect(providerStatusLine(unverified)).toBe('config key · not verified');
   });
 });
 
@@ -186,7 +235,7 @@ describe('provider authentication verdict', () => {
 describe('ProviderRows', () => {
   const signedIn = (fields: Partial<RouterProvider> = {}): RouterProvider => ({
     ...provider('github-copilot'),
-    status: { is_authenticated: true, label: 'signed-in session' },
+    status: { is_authenticated: true, auth_state: 'verified', label: 'signed-in session' },
     ...fields,
   });
 
@@ -266,7 +315,7 @@ describe('ProviderRows', () => {
     expect(screen.getByText('Signed in')).toBeTruthy();
     expect(screen.queryByText(/Checking/)).toBeNull();
     expect(screen.queryByText('No limits reported by this provider.')).toBeNull();
-    expect(row.querySelector('[title="Signed in"]')?.className).not.toContain('animate-pulse');
+    expect(row.querySelector('[title="Authentication verified"]')?.className).not.toContain('animate-pulse');
   });
 
   it('presses into the sign-in of an account that has none', () => {

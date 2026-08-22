@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
-import type { AuthFlow, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
+import type { AuthFlow, ProviderAuthState, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
 import { Banner, Button, ConfirmRow, DialogFrame, Input, ListRow, Modal } from './ui';
 import { ChevronIcon, PlusIcon, SortIcon, StarIcon, TrashIcon } from './icons';
 import { MENU_WIDTH, Menu, MenuHeading, MenuItem } from './Menu';
@@ -10,15 +10,13 @@ import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 /** How long to keep polling a device flow before giving up on our side. */
 const DEVICE_POLL_CEILING_MS = 15 * 60 * 1000;
 
-/** A live limits probe can invalidate credentials that still exist locally. */
-function limitsAuthError(provider: RouterProvider): string | null {
-  const report = provider.limits;
-  if (report?.status !== 'unauthenticated') return null;
-  return report.dynamic?.note ?? report.error?.message ?? 'Provider credentials were rejected.';
+/** The daemon classifies live evidence once; every surface only paints it. */
+export function providerAuthState(provider: RouterProvider): ProviderAuthState {
+  return provider.status?.auth_state ?? 'unverified';
 }
 
 export function isProviderAuthed(provider: RouterProvider): boolean {
-  return provider.status?.is_authenticated === true && !limitsAuthError(provider);
+  return provider.status?.is_authenticated === true && providerAuthState(provider) !== 'rejected';
 }
 
 /** Present the explicit router default first without mutating the gateway fleet. */
@@ -45,12 +43,20 @@ export function openProviderUrl(url: string): void {
 }
 
 export function providerStatusDot(provider: RouterProvider) {
-  if (provider.status?.error || limitsAuthError(provider)) {
-    return { glyph: '●', tone: 'text-err', label: 'Authentication error' };
+  switch (providerAuthState(provider)) {
+    case 'verified':
+      return { glyph: '●', tone: 'text-ok', label: 'Authentication verified' };
+    case 'rejected':
+      return { glyph: '●', tone: 'text-err', label: 'Authentication rejected' };
+    case 'degraded':
+      return { glyph: '●', tone: 'text-warn', label: 'Live check unavailable' };
+    case 'unverified':
+      return {
+        glyph: '○',
+        tone: 'text-dialog-hint',
+        label: provider.status?.is_authenticated ? 'Saved, not verified' : 'Not signed in',
+      };
   }
-  return isProviderAuthed(provider)
-    ? { glyph: '●', tone: 'text-ok', label: 'Signed in' }
-    : { glyph: '○', tone: 'text-dialog-hint', label: 'Signed out' };
 }
 
 /** `12m`, `3h`, `6d` — coarse on purpose: this is a hint, not a countdown. */
@@ -82,11 +88,19 @@ const SOURCE_LABELS: Record<string, string> = {
  */
 export function providerStatusLine(provider: RouterProvider): string {
   const status = provider.status;
-  const liveAuthError = limitsAuthError(provider);
-  if (status?.error) return status.error;
-  if (liveAuthError) return liveAuthError;
+  const authState = providerAuthState(provider);
+  const limitsMessage = provider.limits?.dynamic?.note ?? provider.limits?.error?.message;
+  if (authState === 'rejected') {
+    return status?.error ?? limitsMessage ?? 'Provider credentials were rejected.';
+  }
+  if (authState === 'degraded') {
+    return status?.warning ?? status?.error ?? limitsMessage ?? 'Limits are temporarily unavailable.';
+  }
   if (!status?.is_authenticated) return status?.detail ?? 'Not signed in';
   const source = status.source ? (SOURCE_LABELS[status.source] ?? status.source) : undefined;
+  if (authState === 'unverified') {
+    return source ? `${source} · not verified` : 'Saved, not verified';
+  }
   const parts = [status.detail, source, status.account_type].filter(
     (part): part is string => !!part && part.length > 0,
   );

@@ -223,7 +223,23 @@
             (expect (= :ok (:status report)))
             (expect (= "dead" @rejected))
             (expect (= [["dead" "acct_123"] ["fresh" "acct_123"]] @calls))
-            (expect (= [:codex-7d] (mapv :id (get-in report [:dynamic :limits]))))))))))
+            (expect (= [:codex-7d] (mapv :id (get-in report [:dynamic :limits])))))))))
+  (it "reports rejected credentials when the refreshed token is rejected too"
+      (let [calls (atom 0)]
+        (with-redefs-fn
+          {#'codex/detect-credentials (constantly {:access-token "stale" :account-id "acct_123"})
+           #'codex/get-openai-codex-token!
+           (constantly {:token "dead" :llm-headers {"chatgpt-account-id" "acct_123"}})
+           #'codex/force-refresh-token!
+           (constantly {:token "fresh" :llm-headers {"chatgpt-account-id" "acct_123"}})
+           #'codex-limits/dynamic-limits! (fn [& _]
+                                            (swap! calls inc)
+                                            (throw (ex-info "usage unauthorized" {:status 401})))}
+          (fn []
+            (let [report (codex/limits)]
+              (expect (= 2 @calls))
+              (expect (= :unauthenticated (:status report)))
+              (expect (= [] (get-in report [:dynamic :limits])))))))))
 
 (defdescribe provider-registration-test
              (it "registers the OpenAI Codex auth provider"

@@ -1799,7 +1799,8 @@
        #'providers/default-selection (constantly {:provider-id :anthropic-coding-plan
                                                   :model "claude-sonnet-5"})
        #'providers/fallback-selection (constantly {:provider-id :zai-coding-plan :model "glm-5.2"})
-       #'providers/provider-status (constantly {:is-authenticated true :source :auth-file})
+       #'providers/provider-status
+       (constantly {:is-authenticated true :auth-state :verified :source :auth-file})
        #'providers/provider-limits-safe
        (constantly
          {:provider-id :anthropic-coding-plan :status :ok :static {} :dynamic {:limits []}})}
@@ -1831,6 +1832,7 @@
           (is (nil? (get p1 "default_model")))
           ;; connection verdict is the snake_case STRING key — no keyword restore
           (is (true? (get-in p0 ["status" "is_authenticated"])))
+          (is (= "verified" (get-in p0 ["status" "auth_state"])))
           (is (= "auth-file" (get-in p0 ["status" "source"])))
           (is (every? string? (keys (get p0 "status"))))
           ;; limits ride embedded, string-keyed too

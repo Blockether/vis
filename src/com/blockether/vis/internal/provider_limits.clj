@@ -125,6 +125,30 @@
               data
               (assoc :data data)))))
 
+(defn- rejection-status
+  "The explicit upstream auth status carried by a provider exception, if any."
+  [^Throwable t]
+  (let [data (ex-data t)]
+    (or (:status data)
+        (:code data)
+        (get data "status")
+        (get data "code")
+        (get-in data [:response :status])
+        (get-in data ["response" "status"]))))
+
+(defn- authentication-rejection?
+  [^Throwable t]
+  (contains? #{401 403 "401" "403"} (rejection-status t)))
+
+(defn- unauthenticated-report
+  [provider-id ^Throwable t]
+  (assoc (base-report provider-id :unauthenticated "Provider rejected the current credentials.")
+    :error {:type :provider/limits-unauthenticated
+            :message (or (ex-message t) "Provider rejected the current credentials.")
+            :data (cond-> {:class (.getName (class t))}
+                    (rejection-status t)
+                    (assoc :status (rejection-status t)))}))
+
 (defn- merge-report
   [base raw]
   (cond-> (-> base
@@ -213,10 +237,12 @@
                                               (or ((:provider/limits-fn provider)) {}))]
                      (if (s/valid? ::report report) report (invalid-report provider-id report)))
                    (catch Throwable t
-                     (error-report provider-id
-                                   :provider/limits-error
-                                   (or (ex-message t) (.getName (class t)))
-                                   {:class (.getName (class t))})))))
+                     (if (authentication-rejection? t)
+                       (unauthenticated-report provider-id t)
+                       (error-report provider-id
+                                     :provider/limits-error
+                                     (or (ex-message t) (.getName (class t)))
+                                     {:class (.getName (class t))}))))))
           has-static? (base-report
                         provider-id
                         :ok

@@ -2976,33 +2976,37 @@
 
 (defn- gateway-auth-index
   "ONE gateway round trip for the WHOLE fleet. `GET /v1/router` already carries
-   every provider's `status`, so Settings asks once instead of once per provider
-   — a fleet of eight used to cost eight requests to the daemon, in parallel but
-   each with its own connection and its own tail latency.
-
-   Returns `{provider-id-string is-authenticated?}`, or nil when the gateway
-   refused: a read that failed is an `:off` row, never a throw into the loop."
+   every provider's daemon-classified auth state, so Settings asks once instead
+   of once per provider. Returns `{provider-id-string status-map}`."
   []
   (try (into {}
              (keep (fn [entry]
                      (when-let [id (get entry "id")]
-                       [id (boolean (get-in entry ["status" "is_authenticated"]))])))
+                       [id (or (get entry "status") {})])))
              (vis/gateway-router-fleet))
        (catch Throwable _ nil)))
 
 (defn- provider-auth-state
-  "`:local` for a provider that needs no credentials at all, otherwise the
-   GATEWAY's verdict, read out of the one fleet-wide `auth-index`: `:on`
-   authenticated, `:off` not. The TUI must not read the auth file itself — the
-   gateway may be on another machine and it is the one process that owns
-   credential resolution."
+  "The gateway's four-state auth verdict, refined only for display: a provider
+   with no credential is `:off`, while a reachable local runtime is `:local`.
+   The TUI never reads credential files itself."
   [provider auth-index]
-  (cond (contains? vis/provider-local-no-auth-ids (:id provider)) :local
+  (let [status
         (get auth-index
              (some-> (:id provider)
                      name))
-        :on
-        :else :off))
+
+        state
+        (some-> (get status "auth_state")
+                keyword)
+
+        authenticated?
+        (true? (get status "is_authenticated"))]
+
+    (cond (and (contains? vis/provider-local-no-auth-ids (:id provider)) (= :verified state)) :local
+          (contains? #{:verified :rejected :degraded} state) state
+          authenticated? :unverified
+          :else :off)))
 
 (defn load-provider-inventory!
   "Refresh the cached provider fleet from config + gateway. Never throws: a
@@ -3072,11 +3076,20 @@
                 [(when default? (tag "default" default-model))
                  (when fallback? (tag "fallback" fallback-model))
                  (case auth
-                   :on
-                   "signed in"
+                   :verified
+                   "verified"
+
+                   :rejected
+                   "credentials rejected"
+
+                   :degraded
+                   "live check unavailable"
+
+                   :unverified
+                   "saved, not verified"
 
                    :local
-                   "local, no sign-in"
+                   "local, reachable"
 
                    "not signed in")
                  (str (some-> provider
@@ -3282,24 +3295,25 @@
     label))
 
 (defn- settings-row-mark
-  "Leading status glyph + its color for a settings row — the visual that
-   replaces the old `[ON]/[off]` text. Consistent with the footer's ● active
-   glyph and the resource status dots: ● (status-ok) = on, ○ (dim) = off,
-   ◆ (accent) = a value/enum to cycle, ▸ (accent) = an action. Returns
-   `[glyph fg-color]`."
+  "Leading status glyph + its color for a settings row. Provider rows use
+   the daemon's four auth states: green verified, red rejected, yellow degraded,
+   and a neutral hollow dot when unverified/off. Returns `[glyph fg-color]`."
   [{:keys [key type set-key item-id toggle-id server auth]} values]
   (let [on
         [p/STATUS_ON t/status-ok]
 
-        ;; enabled
         off
         [p/STATUS_OFF t/dialog-hint]
 
-        ;; disabled
+        bad
+        [p/STATUS_ON t/status-bad]
+
+        warn
+        [p/STATUS_ON t/warning-fg]
+
         val
         [p/MARK_VALUE t/header-active-tab-accent]
 
-        ;; cycles a value
         act
         [p/MARK_ACTION t/header-active-tab-accent]]
 
@@ -3339,11 +3353,14 @@
       ;; a provider's dot is the GATEWAY's auth verdict, never a local guess
       :provider
       (case auth
-        :on
+        (:verified :local)
         on
 
-        :local
-        val
+        :rejected
+        bad
+
+        :degraded
+        warn
 
         off)
 

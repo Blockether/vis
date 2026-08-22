@@ -113,3 +113,14 @@
             (expect (=
                       "Z.ai (Coding Plan) rejected the current API key: token expired or incorrect."
                       (get-in report [:dynamic :note]))))))))
+
+(defdescribe pass-limits-test
+             (it "keeps a saved Pass key unverified when no live quota endpoint exists"
+                 (require 'com.blockether.vis.ext.provider-zai :reload)
+                 (with-redefs-fn {#'zai/detect-key (fn [plan-tag]
+                                                     (when (= :pass plan-tag)
+                                                       {:api-key "saved-key" :source :config}))}
+                   (fn []
+                     (let [report ((:provider/limits-fn (vis/provider-by-id :zai)))]
+                       (expect (= :unsupported (:status report)))
+                       (expect (= [] (get-in report [:dynamic :limits]))))))))
