@@ -82,11 +82,11 @@ class DeviceSpeechOutput {
 /**
  * What speaks a line ON THE MACHINE, registered by the screen that knows which
  * gateway and which session the reply came from. `null` whenever no session is open,
- * which is exactly why `gateway` is a preference and not a promise: the router falls
- * back to this device rather than dropping the reply.
+ * which is exactly why a machine engine is a preference and not a promise: the router
+ * falls back to this device rather than dropping the reply.
  */
 export interface GatewaySpeaker {
-  speak(text: string, voiceId: string | null): Promise<Blob>;
+  speak(text: string, voiceId: string | null, engineId: string): Promise<Blob>;
 }
 
 /**
@@ -111,17 +111,12 @@ export interface SpeechListener {
 /** Enough bars for a phone-width rail, and cheap to read from a reply-sized WAV. */
 const WAVE_BARS = 240;
 /**
- * WHERE a reply is spoken: nowhere, on this device, or on the machine that answered.
+ * Which TTS engine speaks a reply.
  *
- * `speak(text)` is unchanged for every call site - the choice is a stored preference
- * and not an argument, because the reader makes it once in settings and the transcript
- * code has no opinion about audio. Two rules the routing keeps:
- *
- *   - `off` is SILENCE, not a failure: the answer is on screen and nothing is spoken.
- *   - a machine that cannot speak right now costs the reader nothing - this device
- *     says the line instead, and the reason is reported once through the notice the
- *     screen registered. Staying quiet because the chosen engine is unreachable would
- *     lose the reply itself, which is the one thing the reader asked for.
+ * `speak(text)` stays unchanged for transcript call sites. Settings stores one engine
+ * choice: `null` is this device's system TTS, while an id asks the active machine for
+ * that exact registered engine. If that machine or engine cannot speak, this device
+ * says the line instead so a routing failure never loses the reply itself.
  */
 class SpeechOutput {
   private readonly device = new DeviceSpeechOutput();
@@ -152,9 +147,13 @@ class SpeechOutput {
 
   async speak(text: string, listener?: SpeechListener): Promise<void> {
     const prefs = await this.settings();
-    if (prefs.route === "gateway" && this.gateway) {
+    if (prefs.ttsEngine && this.gateway) {
       try {
-        const audio = await this.gateway.speak(text, prefs.gatewayVoice);
+        const audio = await this.gateway.speak(
+          text,
+          prefs.gatewayVoice,
+          prefs.ttsEngine,
+        );
         await this.play(audio, listener);
         return;
       } catch (cause) {

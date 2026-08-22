@@ -1255,6 +1255,42 @@ export function ChoiceCell({
 }
 
 /**
+ * A SETTINGS DIRECTION THAT OPENS its concrete choices.
+ *
+ * The row keeps the setting name and current value visible while closed, and the one
+ * trailing chevron names the hidden list. It is a whole-row target because ASR and TTS
+ * are destinations, not tiny icon actions beside inert copy.
+ */
+export function SettingsDisclosure({
+  label,
+  value,
+  isOpen,
+  className = '',
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  label: string;
+  value: string;
+  isOpen: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={isOpen}
+      className={`flex min-h-12 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent motion-reduce:transition-none mouse:min-h-10 ${className}`}
+      {...props}
+    >
+      <span className="min-w-0 flex-1">
+        <span className="block font-mono text-ui font-black uppercase tracking-[0.08em] text-white">
+          {label}
+        </span>
+        <span className="block truncate font-mono text-chip text-dialog-hint">{value}</span>
+      </span>
+      <ChevronIcon open={isOpen} className="size-3 shrink-0 text-dialog-hint" />
+    </button>
+  );
+}
+
+/**
  * ON OR OFF, and there is only one of it.
  *
  * A feature toggle is a WORD, not a sliding knob: `ON`/`OFF` in the same mono

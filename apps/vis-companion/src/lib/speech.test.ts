@@ -1,9 +1,8 @@
 /**
- * WHERE a reply is spoken, proven at the seam that decides it.
+ * Which TTS engine speaks a reply, proven at the seam that decides it.
  *
- * The router is the one place in the app that may drop a reply, so each of its three
- * answers is pinned: silence when the reader asked for silence, the machine's audio
- * when a machine is speaking, and THIS DEVICE - not silence - when that machine cannot.
+ * A selected machine engine receives its exact id. This device remains the safe answer
+ * when no machine is open or that engine cannot speak, so routing never drops the reply.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SpeechPrefs } from "./types";
@@ -43,7 +42,8 @@ class FakeAudio {
 }
 
 const prefs = (over: Partial<SpeechPrefs> = {}): SpeechPrefs => ({
-  route: "device",
+  asrEngine: null,
+  ttsEngine: null,
   deviceVoice: null,
   gatewayVoice: null,
   rate: 1,
@@ -88,12 +88,18 @@ describe("spoken reply routing", () => {
     const speak = vi
       .fn()
       .mockResolvedValue(new Blob([new Uint8Array([1, 2])], { type: "audio/wav" }));
-    speechOutput.apply(prefs({ route: "gateway", gatewayVoice: "kristin" }));
+    speechOutput.apply(
+      prefs({ ttsEngine: "pocket-tts-local", gatewayVoice: "kristin" }),
+    );
     speechOutput.setGateway({ speak });
 
     await speechOutput.speak("Spoken by the machine.");
 
-    expect(speak).toHaveBeenCalledWith("Spoken by the machine.", "kristin");
+    expect(speak).toHaveBeenCalledWith(
+      "Spoken by the machine.",
+      "kristin",
+      "pocket-tts-local",
+    );
     expect(played).toEqual(["blob:reply"]);
     expect(said).toEqual([]);
   });
@@ -101,7 +107,7 @@ describe("spoken reply routing", () => {
   it("speaks here when the machine cannot, and says why once", async () => {
     const { speechOutput } = await import("./speech");
     const notices: string[] = [];
-    speechOutput.apply(prefs({ route: "gateway", rate: 1.2 }));
+    speechOutput.apply(prefs({ ttsEngine: "pocket-tts-local", rate: 1.2 }));
     speechOutput.setGateway(
       { speak: () => Promise.reject(new Error("no speech engine is registered")) },
       (message) => notices.push(message),
@@ -117,7 +123,7 @@ describe("spoken reply routing", () => {
 
   it("falls back to this device when no session has registered a machine", async () => {
     const { speechOutput } = await import("./speech");
-    speechOutput.apply(prefs({ route: "gateway" }));
+    speechOutput.apply(prefs({ ttsEngine: "pocket-tts-local" }));
     speechOutput.setGateway(null);
 
     await speechOutput.speak("Nobody is listening to the gateway.");

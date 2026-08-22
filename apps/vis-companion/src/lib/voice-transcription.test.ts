@@ -41,6 +41,7 @@ const upload = {
   body: {} as unknown,
   headers: {} as Record<string, string>,
   sentBytes: 0,
+  url: "",
 };
 
 class FakeXhr {
@@ -60,6 +61,7 @@ class FakeXhr {
   open(method: string, url: string): void {
     this.method = method;
     this.url = url;
+    upload.url = url;
   }
 
   setRequestHeader(key: string, value: string): void {
@@ -140,6 +142,7 @@ beforeEach(() => {
   upload.body = {};
   upload.headers = {};
   upload.sentBytes = 0;
+  upload.url = "";
   (globalThis as { XMLHttpRequest?: unknown }).XMLHttpRequest = FakeXhr;
 });
 
@@ -192,6 +195,7 @@ describe("transcribeVoice", () => {
     const client = new GatewayClient(CONN);
     const transcript = await client.transcribeVoice("s1", wav(), {
       onProgress: (progress) => seen.push(progress),
+      engine: "parakeet-local",
     });
 
     expect(transcript.text).toBe("add this to the prompt");
@@ -199,6 +203,9 @@ describe("transcribeVoice", () => {
     expect(upload.sentBytes).toBe(4096);
     expect(upload.headers["content-type"]).toBe("audio/wav");
     expect(upload.headers["authorization"]).toBe("Bearer secret");
+    expect(upload.url).toBe(
+      "http://gateway.example.com:7777/v1/sessions/s1/voice?engine=parakeet-local",
+    );
     // SENDING is distinct from TRANSCRIBING, and each carries its own number.
     expect(seen.map((p) => `${p.phase}:${p.progress}`)).toEqual([
       "uploading:0",

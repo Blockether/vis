@@ -279,6 +279,12 @@ function errorText(parsed: unknown, status: number): string {
   return message || `HTTP ${status}`;
 }
 
+/** Add the engine selector every voice/speech endpoint shares. */
+function withEngine(path: string, engine?: string | null): string {
+  if (!engine) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}engine=${encodeURIComponent(engine)}`;
+}
+
 /** Router rows per gateway base URL, shared by every screen and client instance. */
 const routerCache = new Map<string, { at: number; rows: RouterProvider[] }>();
 
@@ -957,23 +963,35 @@ export class GatewayClient {
   // settings can ask - and start the download - before any conversation exists.
 
   /**
-   * Whether the listening engine is ready, still downloading (with how far it has got), or
-   * failed and why. `start` POSTs instead: prepare the engine, which begins the download.
+   * Whether one listening engine is ready, still downloading (with progress), or failed.
+   * `start` POSTs instead: prepare that exact engine and begin its download.
    */
-  voiceModel(start = false, signal?: AbortSignal): Promise<VoiceModelState> {
+  voiceModel(
+    { start = false, signal, engine }: {
+      start?: boolean;
+      signal?: AbortSignal;
+      engine?: string | null;
+    } = {},
+  ): Promise<VoiceModelState> {
     return this.request<VoiceModelState>(
       start ? "POST" : "GET",
-      "/v1/voice/model",
+      withEngine("/v1/voice/model", engine),
       undefined,
       signal,
     );
   }
 
   /** [[voiceModel]] for the speaking direction. */
-  speechModel(start = false, signal?: AbortSignal): Promise<VoiceModelState> {
+  speechModel(
+    { start = false, signal, engine }: {
+      start?: boolean;
+      signal?: AbortSignal;
+      engine?: string | null;
+    } = {},
+  ): Promise<VoiceModelState> {
     return this.request<VoiceModelState>(
       start ? "POST" : "GET",
-      "/v1/speech/model",
+      withEngine("/v1/speech/model", engine),
       undefined,
       signal,
     );
@@ -985,11 +1003,13 @@ export class GatewayClient {
   // belongs to the machine, and the screen that manages voices is settings — which is
   // reading a machine and not a session.
 
-  /** Every voice the speaking engine can use, plus whether it can learn another one. */
-  speechVoices(signal?: AbortSignal): Promise<SpeechVoices> {
+  /** Every voice one speaking engine can use, plus whether it can learn another one. */
+  speechVoices(
+    { signal, engine }: { signal?: AbortSignal; engine?: string | null } = {},
+  ): Promise<SpeechVoices> {
     return this.request<SpeechVoices>(
       "GET",
-      "/v1/speech/voices",
+      withEngine("/v1/speech/voices", engine),
       undefined,
       signal,
     );
@@ -1004,14 +1024,14 @@ export class GatewayClient {
   async importSpeechVoice(
     clip: Blob,
     about: { name: string; lang?: string; text?: string },
-    signal?: AbortSignal,
+    { signal, engine }: { signal?: AbortSignal; engine?: string | null } = {},
   ): Promise<SpeechVoice> {
     const query = new URLSearchParams({ name: about.name });
     if (about.lang) query.set("lang", about.lang);
     if (about.text) query.set("text", about.text);
     const answer = await this.request<{ voice: SpeechVoice }>(
       "POST",
-      `/v1/speech/voices?${query.toString()}`,
+      withEngine(`/v1/speech/voices?${query.toString()}`, engine),
       clip,
       signal,
     );
@@ -1019,10 +1039,13 @@ export class GatewayClient {
   }
 
   /** Take an imported voice back. 404 means the catalogue on screen is stale. */
-  async forgetSpeechVoice(id: string, signal?: AbortSignal): Promise<void> {
+  async forgetSpeechVoice(
+    id: string,
+    { signal, engine }: { signal?: AbortSignal; engine?: string | null } = {},
+  ): Promise<void> {
     await this.request(
       "DELETE",
-      `/v1/speech/voices/${encodeURIComponent(id)}`,
+      withEngine(`/v1/speech/voices/${encodeURIComponent(id)}`, engine),
       undefined,
       signal,
     );
@@ -1042,11 +1065,14 @@ export class GatewayClient {
   async speakText(
     sid: string,
     text: string,
-    voice?: string | null,
-    signal?: AbortSignal,
+    { voice, engine, signal }: {
+      voice?: string | null;
+      engine?: string | null;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<Blob> {
     const base = `/v1/sessions/${encodeURIComponent(sid)}/speech`;
-    const answer = await this.audioFetch("POST", base, {
+    const answer = await this.audioFetch("POST", withEngine(base, engine), {
       body: JSON.stringify(voice ? { text, voice } : { text }),
       contentType: "application/json",
       signal,
@@ -1142,6 +1168,7 @@ export class GatewayClient {
     wav: Blob,
     onUploaded: (percent: number) => void,
     signal?: AbortSignal,
+    engine?: string | null,
   ): Promise<VoiceJob> {
     const budget = voiceTimeoutMs(wav.size);
     const seconds = Math.round(budget / 1000);
@@ -1155,7 +1182,7 @@ export class GatewayClient {
       const done = () => signal?.removeEventListener("abort", onAbort);
       xhr.open(
         "POST",
-        `${this.base}/v1/sessions/${encodeURIComponent(sid)}/voice`,
+        `${this.base}${withEngine(`/v1/sessions/${encodeURIComponent(sid)}/voice`, engine)}`,
       );
       xhr.timeout = budget;
       this.headers({ "Content-Type": "audio/wav" }).forEach((value, key) =>
@@ -1322,9 +1349,10 @@ export class GatewayClient {
     opts: {
       onProgress?: (progress: VoiceProgress) => void;
       signal?: AbortSignal;
+      engine?: string | null;
     } = {},
   ): Promise<VoiceTranscript> {
-    const { onProgress, signal } = opts;
+    const { onProgress, signal, engine } = opts;
     // A reporting callback is a UI detail; it can never fail a transcription.
     const report = (progress: VoiceProgress) => {
       try {
@@ -1339,6 +1367,7 @@ export class GatewayClient {
       wav,
       (percent) => report({ phase: "uploading", progress: percent }),
       signal,
+      engine,
     );
     report({
       phase: accepted.phase ?? "queued",

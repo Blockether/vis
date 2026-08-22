@@ -70,6 +70,7 @@ import {
   OptionRow,
   Pill,
   Disclosure,
+  SettingsDisclosure,
   Switch,
   TextButton,
   ProjectCrumb,
@@ -1527,33 +1528,24 @@ describe("settings is ONE dialog with two columns", () => {
     expect(mcp).toContain("Add an MCP server");
   });
 
-  // Reported over the same screenshot: the voice bands were the worst of the lot,
-  // and a reader asked what an `Off` switch for spoken replies is even for.
-  it("unboxes the voice lists and drops the silence that nothing needed", () => {
-    // Every voice, and every engine, sat in its own hairline box inside a padded
-    // box inside the panel — three frames deep for one row of text.
+  it("keeps speech engines and voices unboxed under the machine", () => {
     const voices = settings.slice(
       settings.indexOf('title="Voices"'),
-      settings.indexOf("How far one engine has got"),
+      settings.indexOf("One persisted speech preference write"),
     );
     expect(voices).not.toContain("description=");
     expect(voices).not.toContain("meta=");
     expect(voices).not.toContain("bg-panel-2");
     expect(voices).toContain("w-full justify-center");
     expect(voices).toContain("Import a voice…");
+
     const engines = settings.slice(
-      settings.indexOf("function EngineRow"),
-      settings.indexOf('title="Speech engines"'),
+      settings.indexOf("export function SpeechEnginesPanel"),
+      settings.indexOf("function FormLabel"),
     );
     expect(engines).not.toContain("bg-panel-2");
-    // Nothing speaks unless this device started the turn by voice, so `Off` named
-    // a state the reader already has by not talking to it. The band ROUTES.
-    const spoken = settings.slice(
-      settings.indexOf("SPEECH_ROUTE_FACES"),
-      settings.indexOf("function SettingsColumn"),
-    );
-    expect(spoken).not.toContain('off:');
-    expect(spoken).not.toContain("description=");
+    expect(engines.match(/<SettingsDisclosure/g)).toHaveLength(2);
+    expect(settings).not.toContain("Spoken replies");
   });
   // Reported over this screenshot: why is that button not simply full width on a
   // phone, and the green dots do not line up with the text.
@@ -2926,6 +2918,30 @@ describe("a setting is picked and switched by one control each", () => {
     expect(classes(off)).not.toContain("border");
   });
 
+  it("opens a settings direction with one full-row chevron control", () => {
+    const closed = renderToStaticMarkup(
+      <SettingsDisclosure label="ASR" value="Parakeet (local)" isOpen={false} />,
+    );
+    expect(closed).toContain('aria-expanded="false"');
+    expect(closed).toContain("ASR");
+    expect(closed).toContain("Parakeet (local)");
+    expect(classes(closed)).toContain("min-h-12");
+    expect(classes(closed)).toContain("mouse:min-h-10");
+    const open = renderToStaticMarkup(
+      <SettingsDisclosure label="TTS" value="This device" isOpen />,
+    );
+    expect(open).toContain('aria-expanded="true"');
+    expect(open).toContain("rotate-90");
+  });
+
+  it("keeps ASR and TTS in Speech engines and has no spoken-replies panel", () => {
+    expect(settingsSource.match(/<SettingsDisclosure/g)).toHaveLength(2);
+    expect(settingsSource).toContain('label="ASR"');
+    expect(settingsSource).toContain('label="TTS"');
+    expect(settingsSource).toContain('title="Speech engines"');
+    expect(settingsSource).not.toContain("Spoken replies");
+  });
+
   it("says ON or OFF in words, and says when it is still asking", () => {
     const on = renderToStaticMarkup(<Switch label="Web search" isOn />);
     expect(on).toContain('role="switch"');
@@ -3804,7 +3820,8 @@ describe("the machine's voices", () => {
   );
 
   it("is a band on the machine's column and disappears where speech is not installed", () => {
-    expect(settingsSource).toContain("<VoicesPanel client={client} />");
+    expect(settingsSource).toContain("<VoicesPanel");
+    expect(settingsSource).toContain("prefs={speechPrefs}");
     // 501 is a Vis with no voice extension — the ordinary one. Speech is not required
     // to run Vis, so the band goes away entirely instead of explaining a feature this
     // machine does not have, or worse, painting a red banner about it.
@@ -3819,8 +3836,9 @@ describe("the machine's voices", () => {
     expect(panel).toContain("{canImport && (");
   });
 
-  it("sends the recording itself, and the words it says with it", () => {
-    expect(panel).toContain("client.importSpeechVoice(clip, {");
+  it("sends the recording itself, its engine, and the words it says", () => {
+    expect(panel).toContain("client.importSpeechVoice(");
+    expect(panel).toContain("{ engine: prefs.ttsEngine }");
     // The transcript is what the model is TOLD, which is what makes a clone track the
     // voice instead of guessing the words.
     expect(panel).toContain("text: says.trim() || undefined");
@@ -3831,7 +3849,7 @@ describe("the machine's voices", () => {
   it("only takes back what somebody brought, and asks first", () => {
     expect(panel).toContain("voice.is_imported && confirming !== voice.id");
     expect(panel).toContain("<ConfirmRow");
-    expect(panel).toContain("client.forgetSpeechVoice(voice.id)");
+    expect(panel).toContain("client.forgetSpeechVoice(voice.id,");
   });
 
   it("is built from the closed vocabulary", () => {

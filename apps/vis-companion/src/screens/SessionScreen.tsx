@@ -2635,6 +2635,17 @@ export function SessionScreen({
     if (slashMode) void refreshSlashCommands();
   }, [slashMode, refreshSlashCommands]);
 
+  const chosenAsrEngine = useCallback(
+    async (snapshot?: GatewayCapabilities | null): Promise<string | null> => {
+      const requested = (await speechOutput.settings()).asrEngine;
+      if (!requested) return null;
+      const engines = snapshot?.features.voice.engines;
+      return engines && !engines.some((engine) => engine.id === requested)
+        ? null
+        : requested;
+    },
+    [],
+  );
   // Revalidated on every RECONNECT, not just on mount: a probe that lost the race
   // with a gateway that was down/asleep used to pin `voiceSupported` false for the
   // whole life of the screen — the mic button silently vanished from the composer
@@ -2645,13 +2656,21 @@ export function SessionScreen({
     void (async () => {
       try {
         const next = await client.capabilities(controller.signal);
+        const engine = await chosenAsrEngine(next);
+        const model = engine
+          ? await client.voiceModel({ signal: controller.signal, engine })
+          : next.features.voice.model;
         if (!active) return;
         setCapabilities(next);
         setVoiceSupported(next.features.voice.enabled);
-        setVoiceModel(next.features.voice.model);
+        setVoiceModel(model);
       } catch {
         try {
-          const model = await client.voiceModel(false, controller.signal);
+          const engine = await chosenAsrEngine(client.cachedCapabilities());
+          const model = await client.voiceModel({
+            signal: controller.signal,
+            engine,
+          });
           if (!active) return;
           // An ANSWER of `unavailable` is the gateway saying it has no voice
           // extension — that one is authoritative and does hide the mic.
@@ -2672,7 +2691,7 @@ export function SessionScreen({
       active = false;
       controller.abort();
     };
-  }, [client, sid, connected]);
+  }, [chosenAsrEngine, client, sid, connected]);
 
   // WHICH machine speaks, for as long as this session is the one on screen.
   //
@@ -2683,7 +2702,10 @@ export function SessionScreen({
   // is why the notice goes to the composer rather than to a thrown error.
   useEffect(() => {
     speechOutput.setGateway(
-      { speak: (text, voiceId) => client.speakText(sid, text, voiceId) },
+      {
+        speak: (text, voiceId, engineId) =>
+          client.speakText(sid, text, { voice: voiceId, engine: engineId }),
+      },
       setComposerNotice,
     );
     return () => speechOutput.setGateway(null);
@@ -2697,8 +2719,8 @@ export function SessionScreen({
       // and nothing at all while the app is backgrounded.
       if (inflight || document.visibilityState === "hidden") return;
       inflight = true;
-      void client
-        .voiceModel()
+      void chosenAsrEngine(capabilities)
+        .then((engine) => client.voiceModel({ engine }))
         .then(setVoiceModel)
         .catch(() => undefined)
         .finally(() => {
@@ -2706,7 +2728,14 @@ export function SessionScreen({
         });
     }, 2000);
     return () => window.clearInterval(timer);
-  }, [client, sid, voiceModel?.status, voiceSupported]);
+  }, [
+    capabilities,
+    chosenAsrEngine,
+    client,
+    sid,
+    voiceModel?.status,
+    voiceSupported,
+  ]);
 
   // A dictation of any length overflows the 80px composer, and a PROGRAMMATIC
   // value change never scrolls a textarea to its caret (only real user input
@@ -2743,8 +2772,10 @@ export function SessionScreen({
       pendingVoiceRef.current = wav;
       void savePendingVoice(voiceMailboxId, wav);
       try {
+        const engine = await chosenAsrEngine(capabilities);
         const transcript = await client.transcribeVoice(sid, wav, {
           onProgress: setVoiceProgress,
+          engine,
         });
         pendingVoiceRef.current = null;
         void clearPendingVoice(voiceMailboxId);
@@ -2785,7 +2816,14 @@ export function SessionScreen({
         setVoiceProgress(null);
       }
     },
-    [client, sid, revealComposerEnd, voiceMailboxId],
+    [
+      capabilities,
+      chosenAsrEngine,
+      client,
+      sid,
+      revealComposerEnd,
+      voiceMailboxId,
+    ],
   );
 
   // End dictation and transcribe what WAS captured. Every path that takes the
@@ -4299,7 +4337,8 @@ export function SessionScreen({
       if (model?.status !== "ready") {
         let reachable = true;
         try {
-          model = await client.voiceModel(true);
+          const engine = await chosenAsrEngine(capabilities);
+          model = await client.voiceModel({ start: true, engine });
           setVoiceModel(model);
         } catch {
           reachable = false;

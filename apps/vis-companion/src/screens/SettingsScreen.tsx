@@ -8,6 +8,7 @@ import {
 } from "react";
 import { GatewayClient, GatewayError } from "../lib/gateway";
 import type {
+  GatewayCapabilities,
   GatewayConn,
   PushDevice,
   PushStatus,
@@ -19,7 +20,6 @@ import type {
   McpServerInput,
   McpTestResult,
   SpeechPrefs,
-  SpeechRoute,
   SpeechVoice,
   SpeechVoices,
   VoiceEngineAbsence,
@@ -65,19 +65,18 @@ import {
 } from "../lib/relay";
 import {
   DEFAULT_SESSION_PAGE_SIZE,
-  DEFAULT_SPEECH_RATE,
-  DEFAULT_SPEECH_ROUTE,
+  DEFAULT_SPEECH_PREFS,
   SPEECH_RATES,
-  SPEECH_ROUTES,
   getGatewayNotify,
   getSessionsPerPage,
   getThemePref,
   getSpeechPrefs,
   setSessionsPerPage,
+  setSpeechAsrEngine,
   setSpeechDeviceVoice,
   setSpeechGatewayVoice,
   setSpeechRate,
-  setSpeechRoute,
+  setSpeechTtsEngine,
   setThemePref,
 } from "../lib/storage";
 import { speechOutput } from "../lib/speech";
@@ -98,6 +97,7 @@ import {
   Modal,
   NotifyConnectionRow,
   PROSE,
+  SettingsDisclosure,
   Switch,
 } from "../components/ui";
 import {
@@ -121,7 +121,15 @@ import {
  * what left is the frame around them, and the dialog now owns Escape, the title and
  * the way out.
  */
-function GatewayPanels({ gateway }: { gateway: GatewayConn }) {
+function GatewayPanels({
+  gateway,
+  speechPrefs,
+  onSpeechChange,
+}: {
+  gateway: GatewayConn;
+  speechPrefs: SpeechPrefs;
+  onSpeechChange: SaveSpeechPrefs;
+}) {
   // ONE CLIENT PER MACHINE, and the transport pair is its whole identity. A fresh
   // `new GatewayClient(...)` per render re-fired every panel's `load` on every
   // unrelated re-render of the dialog; renaming a machine — a field no client reads
@@ -240,9 +248,21 @@ function GatewayPanels({ gateway }: { gateway: GatewayConn }) {
 
       {!unreachable && !unauthorized && <McpServersPanel client={client} />}
 
-      {!unreachable && !unauthorized && <VoiceEnginesPanel client={client} />}
+      {!unreachable && !unauthorized && (
+        <SpeechEnginesPanel
+          client={client}
+          prefs={speechPrefs}
+          onChange={onSpeechChange}
+        />
+      )}
 
-      {!unreachable && !unauthorized && <VoicesPanel client={client} />}
+      {!unreachable && !unauthorized && (
+        <VoicesPanel
+          client={client}
+          prefs={speechPrefs}
+          onChange={onSpeechChange}
+        />
+      )}
 
       {unreachable ? (
         <SettingsPanel title="Settings">
@@ -956,7 +976,15 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
  * installs do not carry it; a band explaining a feature that is not there is noise on
  * every one of them.
  */
-function VoicesPanel({ client }: { client: GatewayClient }) {
+function VoicesPanel({
+  client,
+  prefs,
+  onChange,
+}: {
+  client: GatewayClient;
+  prefs: SpeechPrefs;
+  onChange: SaveSpeechPrefs;
+}) {
   const [catalogue, setCatalogue] = useState<SpeechVoices | null>(null);
   const [isAbsent, setIsAbsent] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -967,16 +995,17 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
   const [says, setSays] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
-  // Which of THIS machine's voices this device asks for. Device-local, like every other
-  // audio choice, and stored by id: a machine that no longer has it speaks in its own
-  // default rather than falling silent.
-  const [prefs, setPrefs] = useState<SpeechPrefs | null>(null);
+  // Which of THIS machine's voices this device asks for. Stored by id: a machine
+  // that no longer has it speaks in its selected engine's default instead.
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
       try {
-        const answer = await client.speechVoices(signal);
+        const answer = await client.speechVoices({
+          signal,
+          engine: prefs.ttsEngine,
+        });
         if (signal?.aborted) return;
         setCatalogue(answer);
         setIsAbsent(false);
@@ -995,7 +1024,7 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
         setErr((e as Error).message);
       }
     },
-    [client],
+    [client, prefs.ttsEngine],
   );
 
   useEffect(() => {
@@ -1004,21 +1033,9 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
     return () => controller.abort();
   }, [load]);
 
-  useEffect(() => {
-    let isLive = true;
-    void speechOutput.settings().then((current) => {
-      if (isLive) setPrefs(current);
-    });
-    return () => {
-      isLive = false;
-    };
-  }, []);
 
   async function chooseVoice(id: string | null) {
-    await setSpeechGatewayVoice(id);
-    const next = await getSpeechPrefs();
-    speechOutput.apply(next);
-    setPrefs(next);
+    await onChange(() => setSpeechGatewayVoice(id));
   }
 
   function chooseClip(file: File | null) {
@@ -1040,11 +1057,15 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
     if (!clip || !voiceName.trim()) return;
     setPending("import");
     try {
-      const voice = await client.importSpeechVoice(clip, {
-        name: voiceName.trim(),
-        lang: language.trim() || undefined,
-        text: says.trim() || undefined,
-      });
+      const voice = await client.importSpeechVoice(
+        clip,
+        {
+          name: voiceName.trim(),
+          lang: language.trim() || undefined,
+          text: says.trim() || undefined,
+        },
+        { engine: prefs.ttsEngine },
+      );
       setNote(`${voice.label ?? voice.id} can speak on this machine now.`);
       chooseClip(null);
       setVoiceName("");
@@ -1061,7 +1082,7 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
   async function forget(voice: SpeechVoice) {
     setPending(voice.id);
     try {
-      await client.forgetSpeechVoice(voice.id);
+      await client.forgetSpeechVoice(voice.id, { engine: prefs.ttsEngine });
       setConfirming(null);
       setNote(null);
       await load();
@@ -1235,8 +1256,18 @@ function VoicesPanel({ client }: { client: GatewayClient }) {
   );
 }
 
-/** How far one engine has got, in the fewest words that are still true. */
+/** One persisted speech preference write, shared by every open machine panel. */
+type SaveSpeechPrefs = (write: () => Promise<void>) => Promise<SpeechPrefs>;
+
+/** How often a moving model refreshes its own progress. */
 const ENGINE_POLL_MS = 1200;
+
+/** What each device speed sounds like, so the number is not the only thing on the cell. */
+const SPEECH_RATE_WORDS: Record<string, string> = {
+  "0.85": "unhurried",
+  "1": "natural",
+  "1.2": "brisk",
+};
 
 type EngineReading = {
   state: VoiceModelState | null;
@@ -1245,6 +1276,18 @@ type EngineReading = {
   error: string | null;
 };
 
+type EngineChoice = { id: string; label?: string };
+
+function selectedEngine(
+  requested: string | null,
+  fallback: string | null | undefined,
+  engines: EngineChoice[],
+): string | null {
+  if (requested && engines.some((engine) => engine.id === requested)) return requested;
+  if (fallback && engines.some((engine) => engine.id === fallback)) return fallback;
+  return engines[0]?.id ?? null;
+}
+
 function engineWord(reading: EngineReading | null): string {
   if (reading === null) return "checking…";
   if (reading.absence) return "not installed";
@@ -1252,8 +1295,12 @@ function engineWord(reading: EngineReading | null): string {
   switch (reading.state?.status) {
     case "ready":
       return "ready";
-    case "downloading":
-      return reading.state.phase === "extracting" ? "unpacking" : "downloading";
+    case "downloading": {
+      const action = reading.state.phase === "extracting" ? "unpacking" : "downloading";
+      return typeof reading.state.progress === "number"
+        ? `${action} ${Math.round(reading.state.progress)}%`
+        : action;
+    }
     case "failed":
       return "failed";
     case "absent":
@@ -1263,51 +1310,26 @@ function engineWord(reading: EngineReading | null): string {
   }
 }
 
-/**
- * ONE direction's readiness, as a row: what it is doing, which engine is doing it, and the
- * one verb that can change it. Presentational on purpose — the panel owns every read, so a
- * download is polled once for both rows instead of twice.
- */
-function EngineRow({
-  title,
-  hint,
+/** Only the exceptional detail below a selected engine; the choice row owns its status. */
+function EngineProblem({
   reading,
   isBusy,
   onPrepare,
 }: {
-  title: string;
-  hint: string;
   reading: EngineReading | null;
   isBusy: boolean;
   onPrepare: () => void;
 }) {
   const state = reading?.state ?? null;
-  const percent =
-    typeof state?.progress === "number" ? Math.round(state.progress) : null;
-  const word = engineWord(reading);
   const canPrepare =
     reading !== null &&
     !reading.absence &&
-    (state?.status === "absent" ||
-      state?.status === "failed" ||
-      !!reading.error);
-
+    (state?.status === "absent" || state?.status === "failed" || !!reading.error);
+  if (!reading?.absence && !reading?.error && state?.status !== "failed" && !canPrepare) {
+    return null;
+  }
   return (
-    <div className="space-y-2 px-3 py-2.5 sm:px-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-        <p className="font-mono text-ui text-white">{title}</p>
-        <p className="font-mono text-meta text-dialog-hint">
-          {word}
-          {percent !== null && state?.status === "downloading"
-            ? ` ${percent}%`
-            : ""}
-          {state?.engine ? ` · ${state.engine}` : ""}
-        </p>
-      </div>
-      <p className="font-mono text-chip text-dialog-hint">{hint}</p>
-
-      {/* A machine that never carried a voice engine and one whose engine FAILED to load
-          are different machines, and only the second is something a human can fix. */}
+    <div className="space-y-2 border-t border-dialog-edge px-3 py-3 sm:px-4">
       {reading?.absence && (
         <p className="font-mono text-chip text-dialog-hint">
           {reading.absence.reasons?.length
@@ -1315,12 +1337,10 @@ function EngineRow({
             : "This machine has no engine for this direction installed."}
         </p>
       )}
-
       {state?.status === "failed" && state.error && (
         <Banner kind="err">{state.error}</Banner>
       )}
       {reading?.error && <Banner kind="err">{reading.error}</Banner>}
-
       {canPrepare && (
         <Button variant="primary" disabled={isBusy} onClick={onPrepare}>
           {isBusy
@@ -1335,132 +1355,318 @@ function EngineRow({
 }
 
 /**
- * WHETHER this machine can listen and speak, and what it is doing about it.
+ * THE TWO SPEECH DIRECTIONS, each opening onto the concrete engines that can do it.
  *
- * Regression, user report: with the model already installed, voice still failed and the only
- * cure anyone found was restarting Vis — while no screen said which half was broken, whether
- * a download had died, or that the engine had failed to load at all. Both directions report
- * themselves here, the panel polls itself while bytes are moving, and a failure carries the
- * reason plus the one button that retries it.
+ * Selection belongs to this device and travels on each request. ASR names one machine
+ * engine. TTS puts this device's system engine in the same list as every engine the
+ * machine advertised, so there is one choice instead of a separate reply-routing panel.
  */
-export function VoiceEnginesPanel({ client }: { client: GatewayClient }) {
+export function SpeechEnginesPanel({
+  client,
+  prefs,
+  onChange,
+}: {
+  client: GatewayClient;
+  prefs: SpeechPrefs;
+  onChange: SaveSpeechPrefs;
+}) {
+  const [capabilities, setCapabilities] = useState<GatewayCapabilities | null>(() =>
+    client.cachedCapabilities(),
+  );
+  const [open, setOpen] = useState<"asr" | "tts" | null>(null);
   const [listening, setListening] = useState<EngineReading | null>(null);
   const [speaking, setSpeaking] = useState<EngineReading | null>(null);
-  const [busy, setBusy] = useState<"listen" | "speak" | null>(null);
+  const [voices, setVoices] = useState<DeviceVoice[] | null>(null);
+  const [busy, setBusy] = useState<"asr" | "tts" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const voiceFeature = capabilities?.features?.voice;
+  const speechFeature = capabilities?.features?.speech;
+  const asrEngines = voiceFeature?.engines ?? [];
+  const ttsEngines = speechFeature?.engines ?? [];
+  const asrEngine = selectedEngine(
+    prefs.asrEngine,
+    voiceFeature?.selected,
+    asrEngines,
+  );
+  const chosenTtsEngine =
+    prefs.ttsEngine && ttsEngines.some((engine) => engine.id === prefs.ttsEngine)
+      ? prefs.ttsEngine
+      : null;
+  const machineTtsEngine = selectedEngine(
+    chosenTtsEngine,
+    speechFeature?.selected,
+    ttsEngines,
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void client
+      .capabilities(controller.signal)
+      .then((answer) => {
+        if (!controller.signal.aborted) {
+          setCapabilities(answer);
+          setErr(null);
+        }
+      })
+      .catch((cause: unknown) => {
+        if (!controller.signal.aborted) setErr((cause as Error).message);
+      });
+    return () => controller.abort();
+  }, [client]);
+
+  useEffect(() => {
+    let isLive = true;
+    void deviceVoices()
+      .then((list) => {
+        if (isLive) setVoices(list);
+      })
+      .catch(() => {
+        if (isLive) setVoices([]);
+      });
+    return () => {
+      isLive = false;
+    };
+  }, []);
 
   const readOne = useCallback(
     async (
-      ask: (start: boolean, signal?: AbortSignal) => Promise<VoiceModelState>,
-      signal?: AbortSignal,
+      ask: () => Promise<VoiceModelState>,
     ): Promise<EngineReading> => {
       try {
-        return { state: await ask(false, signal), absence: null, error: null };
-      } catch (e) {
-        if (e instanceof GatewayError && e.status === 501) {
+        return { state: await ask(), absence: null, error: null };
+      } catch (cause) {
+        if (cause instanceof GatewayError && cause.status === 501) {
           return {
             state: null,
             absence: {
-              error: e.message,
-              reasons: (e.body as VoiceEngineAbsence | undefined)?.reasons,
+              error: cause.message,
+              reasons: (cause.body as VoiceEngineAbsence | undefined)?.reasons,
             },
             error: null,
           };
         }
-        return { state: null, absence: null, error: (e as Error).message };
+        return { state: null, absence: null, error: (cause as Error).message };
       }
     },
     [],
   );
 
-  const load = useCallback(
+  const loadModels = useCallback(
     async (signal?: AbortSignal) => {
       const [heard, spoken] = await Promise.all([
-        readOne((start, sig) => client.voiceModel(start, sig), signal),
-        readOne((start, sig) => client.speechModel(start, sig), signal),
+        readOne(() => client.voiceModel({ signal, engine: asrEngine })),
+        readOne(() => client.speechModel({ signal, engine: machineTtsEngine })),
       ]);
       if (signal?.aborted) return;
       setListening(heard);
       setSpeaking(spoken);
     },
-    [client, readOne],
+    [asrEngine, client, machineTtsEngine, readOne],
   );
 
   useEffect(() => {
     const controller = new AbortController();
-    void load(controller.signal);
+    void loadModels(controller.signal);
     return () => controller.abort();
-  }, [load]);
+  }, [loadModels]);
 
-  // A download is the one state where a screen that never refreshes is a screen that lies.
   const isMoving =
     listening?.state?.status === "downloading" ||
     speaking?.state?.status === "downloading";
   useEffect(() => {
     if (!isMoving) return;
-    const timer = window.setInterval(() => {
-      void load();
-    }, ENGINE_POLL_MS);
+    const timer = window.setInterval(() => void loadModels(), ENGINE_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [isMoving, load]);
+  }, [isMoving, loadModels]);
 
-  async function prepare(which: "listen" | "speak") {
-    setBusy(which);
+  async function choose(direction: "asr" | "tts", engine: string | null) {
+    try {
+      await onChange(() =>
+        direction === "asr"
+          ? setSpeechAsrEngine(engine)
+          : setSpeechTtsEngine(engine),
+      );
+      setErr(null);
+    } catch (cause) {
+      setErr((cause as Error).message);
+    }
+  }
+
+  async function chooseDeviceSetting(write: () => Promise<void>) {
+    try {
+      await onChange(write);
+      setErr(null);
+    } catch (cause) {
+      setErr((cause as Error).message);
+    }
+  }
+
+  async function prepare(direction: "asr" | "tts") {
+    setBusy(direction);
     try {
       const state =
-        which === "listen"
-          ? await client.voiceModel(true)
-          : await client.speechModel(true);
+        direction === "asr"
+          ? await client.voiceModel({ start: true, engine: asrEngine })
+          : await client.speechModel({ start: true, engine: machineTtsEngine });
       const reading: EngineReading = { state, absence: null, error: null };
-      if (which === "listen") setListening(reading);
+      if (direction === "asr") setListening(reading);
       else setSpeaking(reading);
-    } catch (e) {
+    } catch (cause) {
       const failed: EngineReading = {
         state: null,
         absence: null,
-        error: (e as Error).message,
+        error: (cause as Error).message,
       };
-      if (which === "listen") setListening(failed);
+      if (direction === "asr") setListening(failed);
       else setSpeaking(failed);
     } finally {
       setBusy(null);
     }
   }
 
-  // An ordinary Vis carries no voice extension at all, and a panel that only ever says so is
-  // clutter. One that has something to REPORT — a model to fetch, a download in flight, an
-  // engine that failed to load — is the whole point.
-  const isSilentMachine =
-    listening?.absence != null &&
-    speaking?.absence != null &&
-    !listening.absence.reasons?.length &&
-    !speaking.absence.reasons?.length;
-  if (isSilentMachine) return null;
-
-  const meta =
-    listening === null || speaking === null
-      ? "checking…"
-      : `${engineWord(listening)} · ${engineWord(speaking)}`;
+  const asrLabel =
+    asrEngines.find((engine) => engine.id === asrEngine)?.label ??
+    asrEngine ??
+    (capabilities ? "Not installed" : "Checking…");
+  const ttsLabel =
+    ttsEngines.find((engine) => engine.id === chosenTtsEngine)?.label ??
+    chosenTtsEngine ??
+    "This device";
+  const deviceList = voices ?? [];
 
   return (
-    <SettingsPanel
-      title="Speech engines"
-      meta={meta}
-    >
+    <SettingsPanel title="Speech engines">
       <div className="divide-y divide-dialog-edge">
-        <EngineRow
-          title="Listening"
-          hint="Turns a recording into text — the microphone in the composer, and Ctrl+B in the terminal."
-          reading={listening}
-          isBusy={busy === "listen"}
-          onPrepare={() => void prepare("listen")}
-        />
-        <EngineRow
-          title="Speaking"
-          hint="Reads a reply out loud when this device asks the machine to."
-          reading={speaking}
-          isBusy={busy === "speak"}
-          onPrepare={() => void prepare("speak")}
-        />
+        {err && (
+          <div className="p-3 sm:p-4">
+            <Banner kind="err">{err}</Banner>
+          </div>
+        )}
+
+        <div>
+          <SettingsDisclosure
+            label="ASR"
+            value={asrLabel}
+            isOpen={open === "asr"}
+            aria-controls="speech-asr-engines"
+            onClick={() => setOpen((current) => (current === "asr" ? null : "asr"))}
+          />
+          {open === "asr" && (
+            <div id="speech-asr-engines" className="border-t border-dialog-edge">
+              {asrEngines.length > 0 ? (
+                <div className="grid grid-cols-1 gap-px bg-dialog-edge">
+                  {asrEngines.map((engine) => (
+                    <ChoiceCell
+                      key={engine.id}
+                      title={engine.label ?? engine.id}
+                      sub={engine.id === asrEngine ? engineWord(listening) : engine.id}
+                      isSelected={engine.id === asrEngine}
+                      onClick={() => void choose("asr", engine.id)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <p className="px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
+                  No ASR engine is registered on this machine.
+                </p>
+              )}
+              <EngineProblem
+                reading={listening}
+                isBusy={busy === "asr"}
+                onPrepare={() => void prepare("asr")}
+              />
+            </div>
+          )}
+        </div>
+
+        <div>
+          <SettingsDisclosure
+            label="TTS"
+            value={ttsLabel}
+            isOpen={open === "tts"}
+            aria-controls="speech-tts-engines"
+            onClick={() => setOpen((current) => (current === "tts" ? null : "tts"))}
+          />
+          {open === "tts" && (
+            <div id="speech-tts-engines" className="border-t border-dialog-edge">
+              <div className="grid grid-cols-1 gap-px bg-dialog-edge">
+                <ChoiceCell
+                  title="This device"
+                  sub="system TTS"
+                  isSelected={chosenTtsEngine === null}
+                  onClick={() => void choose("tts", null)}
+                />
+                {ttsEngines.map((engine) => (
+                  <ChoiceCell
+                    key={engine.id}
+                    title={engine.label ?? engine.id}
+                    sub={engine.id === chosenTtsEngine ? engineWord(speaking) : engine.id}
+                    isSelected={engine.id === chosenTtsEngine}
+                    onClick={() => void choose("tts", engine.id)}
+                  />
+                ))}
+              </div>
+
+              {chosenTtsEngine === null ? (
+                <>
+                  <div className="grid grid-cols-3 gap-px border-t border-dialog-edge bg-dialog-edge">
+                    {SPEECH_RATES.map((rate) => (
+                      <ChoiceCell
+                        key={rate}
+                        title={`${rate}×`}
+                        sub={SPEECH_RATE_WORDS[String(rate)] ?? "speed"}
+                        isSelected={prefs.rate === rate}
+                        onClick={() => void chooseDeviceSetting(() => setSpeechRate(rate))}
+                      />
+                    ))}
+                  </div>
+                  {voices === null && (
+                    <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
+                      Asking this device what it can speak in…
+                    </p>
+                  )}
+                  {voices !== null && deviceList.length === 0 && (
+                    <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
+                      This device has no system TTS engine installed.
+                    </p>
+                  )}
+                  {deviceList.length > 0 && (
+                    <div className="grid max-h-64 grid-cols-1 gap-px overflow-y-auto border-t border-dialog-edge bg-dialog-edge">
+                      <ChoiceCell
+                        title="System default"
+                        sub="whatever this device prefers"
+                        isSelected={prefs.deviceVoice === null}
+                        onClick={() =>
+                          void chooseDeviceSetting(() => setSpeechDeviceVoice(null))
+                        }
+                      />
+                      {deviceList.map((voice) => (
+                        <ChoiceCell
+                          key={voice.id}
+                          title={voice.label}
+                          sub={[voice.language, voice.isDefault ? "device default" : null]
+                            .filter(Boolean)
+                            .join(" · ")}
+                          isSelected={prefs.deviceVoice === voice.id}
+                          onClick={() =>
+                            void chooseDeviceSetting(() => setSpeechDeviceVoice(voice.id))
+                          }
+                        />
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <EngineProblem
+                  reading={speaking}
+                  isBusy={busy === "tts"}
+                  onPrepare={() => void prepare("tts")}
+                />
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </SettingsPanel>
   );
@@ -1505,156 +1711,6 @@ function FormLabel({
  * grey prose nobody reads twice. Reported over this screen as pointless; the prop
  * went with the last three call sites that used it.
  */
-/**
- * The two places a reply can be spoken. There is no `Off`: nothing here ever speaks
- * on its own — a reply is read out loud only for a turn this device STARTED by
- * voice, and the spoken block in the transcript is replayed by pressing it. Silence
- * is already the default of not talking to it.
- */
-const SPEECH_ROUTE_FACES: Record<SpeechRoute, { title: string; sub: string }> =
-  {
-    device: { title: "This device", sub: "the phone reads it" },
-    gateway: { title: "The machine", sub: "its own voice" },
-  };
-
-/** What each speed sounds like, so the number is not the only thing on the cell. */
-const SPEECH_RATE_WORDS: Record<string, string> = {
-  "0.85": "unhurried",
-  "1": "natural",
-  "1.2": "brisk",
-};
-
-/**
- * WHERE A REPLY IS SPOKEN, and in which voice.
- *
- * This device is the only thing that can answer it - it owns the speaker - so the whole
- * band lives in the Application column and nothing here is ever sent to a gateway. Three
- * choices, and each is a real one: `Off` is SILENCE, not a broken feature; `This device`
- * is the phone's own engine, which works with no gateway reachable at all; `The machine`
- * sends the line to whichever machine answered it and plays what comes back, which is the
- * only way to hear a voice that was cloned from a recording.
- *
- * A machine that cannot speak right now does not cost the reader the reply: the router in
- * `speech.ts` falls back to this device and says so once. WHICH of a machine's voices to
- * ask for is picked in that machine's own Voices band, beside the catalogue it belongs to.
- */
-export function SpokenRepliesPanel() {
-  const [prefs, setPrefs] = useState<SpeechPrefs | null>(null);
-  const [voices, setVoices] = useState<DeviceVoice[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    let isLive = true;
-    void speechOutput.settings().then((current) => {
-      if (isLive) setPrefs(current);
-    });
-    void deviceVoices()
-      .then((list) => {
-        if (isLive) setVoices(list);
-      })
-      .catch(() => {
-        if (isLive) setVoices([]);
-      });
-    return () => {
-      isLive = false;
-    };
-  }, []);
-
-  async function save(change: () => Promise<void>) {
-    try {
-      await change();
-      const next = await getSpeechPrefs();
-      // The router reads its settings once per app run, so the next reply obeys this
-      // without a reload.
-      speechOutput.apply(next);
-      setPrefs(next);
-      setErr(null);
-    } catch (e) {
-      setErr((e as Error).message);
-    }
-  }
-
-  const route = prefs?.route ?? DEFAULT_SPEECH_ROUTE;
-  const rate = prefs?.rate ?? DEFAULT_SPEECH_RATE;
-  const deviceList = voices ?? [];
-
-  return (
-    <SettingsPanel title="Spoken replies" meta={SPEECH_ROUTE_FACES[route].sub}>
-      <div className="divide-y divide-dialog-edge">
-        {err && (
-          <div className="p-3">
-            <Banner kind="err">{err}</Banner>
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-px bg-dialog-edge">
-          {SPEECH_ROUTES.map((choice) => (
-            <ChoiceCell
-              key={choice}
-              title={SPEECH_ROUTE_FACES[choice].title}
-              sub={SPEECH_ROUTE_FACES[choice].sub}
-              isSelected={route === choice}
-              onClick={() => void save(() => setSpeechRoute(choice))}
-            />
-          ))}
-        </div>
-
-        {route === "device" && (
-          <>
-            <div className="grid grid-cols-3 gap-px bg-dialog-edge">
-              {SPEECH_RATES.map((choice) => (
-                <ChoiceCell
-                  key={choice}
-                  title={`${choice}×`}
-                  sub={SPEECH_RATE_WORDS[String(choice)] ?? "speed"}
-                  isSelected={rate === choice}
-                  onClick={() => void save(() => setSpeechRate(choice))}
-                />
-              ))}
-            </div>
-
-            {voices === null && (
-              <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">
-                Asking this device what it can speak in…
-              </p>
-            )}
-            {voices !== null && deviceList.length === 0 && (
-              <p className="px-3 py-5 font-mono text-meta text-dialog-hint sm:px-4">
-                This device has no speech engine installed.
-              </p>
-            )}
-            {deviceList.length > 0 && (
-              <div className="grid max-h-64 grid-cols-1 gap-px overflow-y-auto bg-dialog-edge">
-                <ChoiceCell
-                  title="System default"
-                  sub="whatever this device prefers"
-                  isSelected={prefs?.deviceVoice == null}
-                  onClick={() => void save(() => setSpeechDeviceVoice(null))}
-                />
-                {deviceList.map((voice) => (
-                  <ChoiceCell
-                    key={voice.id}
-                    title={voice.label}
-                    sub={[
-                      voice.language,
-                      voice.isDefault ? "device default" : null,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                    isSelected={prefs?.deviceVoice === voice.id}
-                    onClick={() =>
-                      void save(() => setSpeechDeviceVoice(voice.id))
-                    }
-                  />
-                ))}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </SettingsPanel>
-  );
-}
 
 function SettingsColumn({
   title,
@@ -1790,6 +1846,7 @@ export function SettingsDialog({
 }) {
   const [pref, setPref] = useState<ThemePref>(DEFAULT_THEME.id);
   const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
+  const [speechPrefs, setSpeechPrefs] = useState<SpeechPrefs>(DEFAULT_SPEECH_PREFS);
   const [pending, setPending] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Pairing opens over this dialog rather than inside it: see the sheet at the
@@ -1799,13 +1856,15 @@ export function SettingsDialog({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [theme, sessions] = await Promise.all([
+      const [theme, sessions, speech] = await Promise.all([
         getThemePref(),
         getSessionsPerPage(),
+        getSpeechPrefs(),
       ]);
       if (cancelled) return;
       setPref(theme);
       setPageSize(sessions);
+      setSpeechPrefs(speech);
     })();
     return () => {
       cancelled = true;
@@ -1851,6 +1910,14 @@ export function SettingsDialog({
     } finally {
       setPending(null);
     }
+  }
+
+  async function changeSpeech(write: () => Promise<void>): Promise<SpeechPrefs> {
+    await write();
+    const next = await getSpeechPrefs();
+    speechOutput.apply(next);
+    setSpeechPrefs(next);
+    return next;
   }
 
   // WHICH MACHINES STAND OPEN, held by the identity that survives an address change.
@@ -1933,7 +2000,12 @@ export function SettingsDialog({
                 onForget={onRemove}
                 onSelectAddress={onSelectAddress}
                 renderPanel={(conn) => (
-                  <GatewayPanels key={machineId(conn)} gateway={conn} />
+                  <GatewayPanels
+                    key={machineId(conn)}
+                    gateway={conn}
+                    speechPrefs={speechPrefs}
+                    onSpeechChange={changeSpeech}
+                  />
                 )}
               />
             ) : (
@@ -1994,8 +2066,6 @@ export function SettingsDialog({
                 ))}
               </div>
             </SettingsPanel>
-
-            <SpokenRepliesPanel />
           </SettingsColumn>
         </div>
       </DialogFrame>

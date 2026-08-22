@@ -671,21 +671,16 @@ export interface SpeechVoices {
   voices: SpeechVoice[];
 }
 
-/**
- * WHERE a reply is spoken. App-local, like the theme: a machine is never asked and
- * never told, because the device doing the listening is the only thing that can
- * answer it. There is no `off`: a reply is read out loud only for a turn this
- * device started by VOICE, so not talking to it IS the silence.
- */
-export type SpeechRoute = "device" | "gateway";
-
-/** The whole spoken-output choice this device made. */
+/** The speech-engine choices this device made. */
 export interface SpeechPrefs {
-  route: SpeechRoute;
+  /** A machine ASR engine id; `null` follows that machine's selected default. */
+  asrEngine: string | null;
+  /** A machine TTS engine id; `null` means this device's system TTS engine. */
+  ttsEngine: string | null;
   /** A `voiceURI` on the web, an engine voice name on Android; `null` is "the default". */
   deviceVoice: string | null;
   /**
-   * A voice id from the MACHINE's catalogue. Stored per device on purpose: an id the
+   * A voice id from the chosen MACHINE engine. Stored per device on purpose: an id the
    * machine in front of you does not have speaks in the engine's default rather than
    * silencing the reply.
    */

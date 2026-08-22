@@ -10,7 +10,6 @@ import { forgetNotifyVerdict } from "./notify-verdict";
 import type {
   GatewayConn,
   SpeechPrefs,
-  SpeechRoute,
   ThemePref,
 } from "./types";
 
@@ -268,29 +267,30 @@ export function subscribeSessionsPerPage(
   };
 }
 
-// ── Spoken replies ───────────────────────────────────────────────────────
+// ── Speech engines ────────────────────────────────────────────────────────
 //
-// App-local, like the theme, and for the same reason: this is an AUDIO OUTPUT
-// choice, and the device with the speaker is the only one that can answer it.
-// Nothing here is ever sent to a gateway. The gateway voice is kept as a bare id
-// and resolved against whichever machine the open session runs on - an id that
-// machine does not have speaks in the engine's default instead of silencing the
-// reply.
+// Engine selection is app-local: the phone chooses an ASR engine for requests it
+// records and one TTS engine for replies it plays. A bare engine id is resolved against
+// the machine serving the open session; an unavailable id falls back at the use site.
 
-const SPEECH_ROUTE_KEY = "vis.speech.route";
+const SPEECH_ASR_ENGINE_KEY = "vis.speech.asrEngine";
+const SPEECH_TTS_ENGINE_KEY = "vis.speech.ttsEngine";
 const SPEECH_DEVICE_VOICE_KEY = "vis.speech.deviceVoice";
 const SPEECH_GATEWAY_VOICE_KEY = "vis.speech.gatewayVoice";
 const SPEECH_RATE_KEY = "vis.speech.rate";
 
-export const SPEECH_ROUTES: readonly SpeechRoute[] = ["device", "gateway"];
-/** What Vis did before there was a choice: the phone says the answer out loud. */
-export const DEFAULT_SPEECH_ROUTE: SpeechRoute = "device";
 export const SPEECH_RATES: readonly number[] = [0.85, 1, 1.2];
 export const DEFAULT_SPEECH_RATE = 1;
+export const DEFAULT_SPEECH_PREFS: SpeechPrefs = {
+  asrEngine: null,
+  ttsEngine: null,
+  deviceVoice: null,
+  gatewayVoice: null,
+  rate: DEFAULT_SPEECH_RATE,
+};
 
-function normalizeRoute(raw: string | null): SpeechRoute {
-  const value = raw?.trim() as SpeechRoute | undefined;
-  return value && SPEECH_ROUTES.includes(value) ? value : DEFAULT_SPEECH_ROUTE;
+function normalizeEngine(raw: string | null): string | null {
+  return raw?.trim() || null;
 }
 
 function normalizeRate(raw: string | null): number {
@@ -299,22 +299,28 @@ function normalizeRate(raw: string | null): number {
 }
 
 export async function getSpeechPrefs(): Promise<SpeechPrefs> {
-  const [route, deviceVoice, gatewayVoice, rate] = await Promise.all([
-    getRaw(SPEECH_ROUTE_KEY),
+  const [asrEngine, ttsEngine, deviceVoice, gatewayVoice, rate] = await Promise.all([
+    getRaw(SPEECH_ASR_ENGINE_KEY),
+    getRaw(SPEECH_TTS_ENGINE_KEY),
     getRaw(SPEECH_DEVICE_VOICE_KEY),
     getRaw(SPEECH_GATEWAY_VOICE_KEY),
     getRaw(SPEECH_RATE_KEY),
   ]);
   return {
-    route: normalizeRoute(route),
-    deviceVoice: deviceVoice?.trim() || null,
-    gatewayVoice: gatewayVoice?.trim() || null,
+    asrEngine: normalizeEngine(asrEngine),
+    ttsEngine: normalizeEngine(ttsEngine),
+    deviceVoice: normalizeEngine(deviceVoice),
+    gatewayVoice: normalizeEngine(gatewayVoice),
     rate: normalizeRate(rate),
   };
 }
 
-export async function setSpeechRoute(route: SpeechRoute): Promise<void> {
-  await setRaw(SPEECH_ROUTE_KEY, normalizeRoute(route));
+export async function setSpeechAsrEngine(id: string | null): Promise<void> {
+  await setRaw(SPEECH_ASR_ENGINE_KEY, id ?? "");
+}
+
+export async function setSpeechTtsEngine(id: string | null): Promise<void> {
+  await setRaw(SPEECH_TTS_ENGINE_KEY, id ?? "");
 }
 
 /** `null` is "whatever the engine calls its default", and it is a real choice. */

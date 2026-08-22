@@ -420,11 +420,15 @@ describe('GatewayClient imported voices', () => {
     const { GatewayClient } = await import('./gateway');
     const clip = new Blob([new Uint8Array([82, 73, 70, 70])], { type: 'audio/wav' });
 
-    const voice = await new GatewayClient(conn).importSpeechVoice(clip, {
-      name: 'My Own',
-      lang: 'en-GB',
-      text: 'what the clip says',
-    });
+    const voice = await new GatewayClient(conn).importSpeechVoice(
+      clip,
+      {
+        name: 'My Own',
+        lang: 'en-GB',
+        text: 'what the clip says',
+      },
+      { engine: 'pocket-tts-local' },
+    );
 
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     const asked = new URL(String(url));
@@ -432,6 +436,7 @@ describe('GatewayClient imported voices', () => {
     expect(asked.searchParams.get('name')).toBe('My Own');
     expect(asked.searchParams.get('lang')).toBe('en-GB');
     expect(asked.searchParams.get('text')).toBe('what the clip says');
+    expect(asked.searchParams.get('engine')).toBe('pocket-tts-local');
     // The BYTES travel, not a JSON envelope around them — and the clip keeps its own
     // media type, so nothing stamps `application/json` on a WAV.
     expect((init as RequestInit).body).toBe(clip);
@@ -450,12 +455,16 @@ describe('GatewayClient imported voices', () => {
     const { GatewayClient } = await import('./gateway');
     const client = new GatewayClient(conn);
 
-    await client.speechVoices();
-    await client.forgetSpeechVoice('my own');
+    await client.speechVoices({ engine: 'pocket-tts-local' });
+    await client.forgetSpeechVoice('my own', { engine: 'pocket-tts-local' });
 
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/v1/speech/voices');
-    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('/sessions/');
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/v1/speech/voices/my%20own');
+    const listed = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    const forgotten = new URL(String(fetchMock.mock.calls[1]?.[0]));
+    expect(listed.pathname).toBe('/v1/speech/voices');
+    expect(listed.searchParams.get('engine')).toBe('pocket-tts-local');
+    expect(listed.pathname).not.toContain('/sessions/');
+    expect(forgotten.pathname).toBe('/v1/speech/voices/my%20own');
+    expect(forgotten.searchParams.get('engine')).toBe('pocket-tts-local');
     expect(fetchMock.mock.calls[1]?.[1]?.method).toBe('DELETE');
   });
 });
@@ -475,12 +484,14 @@ describe('GatewayClient speakText', () => {
     const audio = await new mod.GatewayClient(conn).speakText(
       'session-1',
       'Say this out loud',
-      'kristin',
+      { voice: 'kristin', engine: 'pocket-tts-local' },
     );
 
     expect(audio.size).toBe(4);
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('http://gateway.example.com:7890/v1/sessions/session-1/speech');
+    expect(url).toBe(
+      'http://gateway.example.com:7890/v1/sessions/session-1/speech?engine=pocket-tts-local',
+    );
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual({
       text: 'Say this out loud',
@@ -555,16 +566,16 @@ describe('GatewayClient voice engines', () => {
     const mod = await import('./gateway');
     const client = new mod.GatewayClient(conn);
 
-    expect((await client.voiceModel()).status).toBe('ready');
-    await client.speechModel(true);
+    expect((await client.voiceModel({ engine: 'parakeet-local' })).status).toBe('ready');
+    await client.speechModel({ start: true, engine: 'pocket-tts-local' });
 
     const calls = fetchMock.mock.calls.map((call: unknown[]) => {
       const init = call[1] as RequestInit | undefined;
       return `${init?.method ?? 'GET'} ${String(call[0])}`;
     });
     expect(calls).toEqual([
-      'GET http://gateway.example.com:7890/v1/voice/model',
-      'POST http://gateway.example.com:7890/v1/speech/model',
+      'GET http://gateway.example.com:7890/v1/voice/model?engine=parakeet-local',
+      'POST http://gateway.example.com:7890/v1/speech/model?engine=pocket-tts-local',
     ]);
     expect(calls.some((call: string) => call.includes('/sessions/'))).toBe(false);
   });
