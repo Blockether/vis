@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.footer-test
   (:require [clojure.string :as str]
+            [com.blockether.vis.ext.channel-tui.capture :as cap]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
@@ -493,16 +494,26 @@
             (expect (empty? (->> (build-limits-segments {:messages [] :settings {}} 0)
                                  (filter #(= :right (:region %)))
                                  (mapv :text))))))))
-  (it "shows Fast only for an active Codex session"
+  (it "shows Fast and its shortcut only for an active Codex session"
       (let [build-segments @#'footer/build-segments]
         (try (vis/toggle-set-value! "codex_fast_mode" true)
-             (doseq [[provider visible?] [[:openai-codex true] [:github-copilot false]]]
+             (doseq [[provider expected] [[:openai-codex ["» fast" "(C-x q)"]]
+                                          [:github-copilot []]]]
                (with-redefs-fn {#'footer/session-model-info (fn [_]
                                                               {:name "gpt-5.6-sol"
                                                                :provider provider})}
                  (fn []
-                   (let [texts (mapv :text (build-segments {:messages [] :settings {}} 0))]
-                     (expect (= visible? (boolean (some #{"» fast"} texts))))))))
+                   (let [db {:messages [] :settings {}}
+                         texts (mapv :text (build-segments db 0))]
+
+                     (expect (= expected (filterv #{"» fast" "(C-x q)"} texts)))
+                     (when (= :openai-codex provider)
+                       (let [capture (cap/capture! {:cols 120
+                                                    :rows 4
+                                                    :paint! (fn [{:keys [g]}]
+                                                              (footer/draw-footer! g db 1 120 0))})]
+                         (expect (nil? (:error capture)))
+                         (expect (str/includes? (cap/frame-text capture) "» fast (C-x q)"))))))))
              (finally (vis/toggle-reset-to-default! "codex_fast_mode")))))
   (it "hides the verbosity knob when the session's model rejects the field"
       ;; Regression: the chip was gated on the provider being `:openai-codex`, so a

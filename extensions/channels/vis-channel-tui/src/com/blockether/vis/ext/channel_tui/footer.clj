@@ -625,7 +625,15 @@
              :priority 5})
 
       codex-fast?
-      (conj {:text "» fast" :fg t/footer-fg-strong :bold? true :region :left :priority 2})))
+      (conj {:text "» fast" :fg t/footer-fg-strong :bold? true :region :left :priority 2})
+
+      codex-fast?
+      (conj {:text (str "(" (keymap/label-for :toggle-codex-fast) ")")
+             :join-left? true
+             :fg t/footer-fg-muted
+             :bold? false
+             :region :left
+             :priority 5})))
   ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
   ;; The bubble's `progress->text` already carries live activity, and
   ;; user-facing cancellation feedback is emitted as a host notification.
