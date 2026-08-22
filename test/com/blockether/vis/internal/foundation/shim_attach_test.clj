@@ -655,6 +655,26 @@
 
         (expect (nil? (:error out)))
         (expect (re-find #"RAISED True" (str (:stdout out))))))
+  ;; Regression, vis session f904a444: passing the local Path that produced an
+  ;; image yielded only a generic missing-id error, forcing a documentation
+  ;; round trip before the caller discovered the required attach(path) step.
+  (it
+    "gives a local image path the exact persistence remediation"
+    (let [pctx
+          (ctx-with-root (temp-root))
+
+          out
+          (binding [mpl-capture/*attachment-reader* (fake-reader)]
+            (block pctx
+                   (str
+                     "try:\n"
+                     "    show_attachment(Path('local-proof.png'))\n" "except LookupError as e:\n"
+                     "    print('HINT', 'show_attachment(attach(path))' in str(e))\n"
+                     "print('DOC', 'show_attachment(attach(path))' in doc('show_attachment'))\n")))]
+
+      (expect (nil? (:error out)))
+      (expect (re-find #"HINT True" (str (:stdout out))))
+      (expect (re-find #"DOC True" (str (:stdout out))))))
   (it "answers with the RUNNING block's own artifacts when no reader is bound"
       (let [pctx
             (ctx-with-root (temp-root))

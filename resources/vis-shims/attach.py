@@ -520,11 +520,18 @@ def __vis_install_attach__():
                     return r
         thread = __vis_thread(rows, wanted)
         if not thread:
+            hint = (
+                "; to show a local image, persist it first with "
+                "show_attachment(attach(path))"
+                if caller == "show_attachment"
+                else ""
+            )
             raise LookupError(
                 caller
                 + ": no attachment with id or filename "
                 + repr(wanted)
                 + " in this session"
+                + hint
             )
         if version is None:
             return thread[-1]
@@ -660,11 +667,12 @@ def __vis_install_attach__():
             show_attachment,
             __vis_target_keys,
             "Put a stored IMAGE in front of the model for exactly the NEXT request, "
-            "then stored-only again; nothing is re-stored. Images replay only while "
-            "they fit the request's image budget, and this is the way back to one "
-            "that dropped out. Same addressing as get_attachment - an image this "
-            "block attached for the model is on the wire already, so showing it is a "
-            "no-op."
+            "then stored-only again; nothing is re-stored. A local path is a source, "
+            "not an attachment address: use show_attachment(attach(path)). Images "
+            "replay only while they fit the request's image budget, and this is the "
+            "way back to one that dropped out. Same addressing as get_attachment - "
+            "an image this block attached for the model is on the wire already, so "
+            "showing it is a no-op."
             "\n\nRaw result: {id, filename, media_type, size} for the image now queued "
             "for the next request.",
         ),
