@@ -82,7 +82,7 @@
                   (str "extending.md never shows " needle " in an apropos row")))))
   (it "names the shim keys that drive discovery and the page they answer with"
       (let [md (extending-md)]
-        (doseq [needle [":shim/imports" ":shim/globals" ":shim/description" ":shim/docs"]]
+        (doseq [needle [":shim/imports" ":shim/globals" ":shim/source" ":shim/docs"]]
           (expect (str/includes? md needle) (str "extending.md never mentions " needle))))))
 
 ;; A live view is the one primitive an author cannot infer from the field builders:

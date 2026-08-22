@@ -93,6 +93,11 @@ def __vis_install_tzdata__():
         return set(__vis_tz_available__())
 
     _zi_mod = _types.ModuleType("zoneinfo")
+    _zi_mod.__doc__ = (
+        "`zoneinfo.ZoneInfo` over the JVM java.time zone database — 600+ IANA zones, "
+        "DST-correct, no tzdata files on disk. Part of the vis time shim; see "
+        '`doc("tzdata")`.'
+    )
     _zi_mod.ZoneInfo = ZoneInfo
     _zi_mod.ZoneInfoNotFoundError = ZoneInfoNotFoundError
     _zi_mod.__version__ = "system"
@@ -109,6 +114,11 @@ def __vis_install_tzdata__():
 
     # a bare tzdata package so `import tzdata` succeeds (libs probe for it)
     _tzdata_mod = _types.ModuleType("tzdata")
+    _tzdata_mod.__doc__ = (
+        "JVM java.time-backed `zoneinfo`/`pytz`/`tzdata` and "
+        "`dateutil.tz`/`parser`/`relativedelta`: 600+ IANA zones, DST-correct, no data files. "
+        "Other dateutil submodules unsupported."
+    )
     _tzdata_mod.IANA_VERSION = "system"
     _tzdata_mod.__version__ = "system"
 
@@ -189,6 +199,11 @@ def __vis_install_tzdata__():
         return _dt.timezone(_dt.timedelta(minutes=minutes))
 
     _pytz_mod = _types.ModuleType("pytz")
+    _pytz_mod.__doc__ = (
+        "`pytz` over the JVM java.time zone database: `timezone`, `utc`, `all_timezones`, "
+        "`localize`, `normalize`, the exception types. Part of the vis time shim; see "
+        '`doc("tzdata")`.'
+    )
     _pytz_mod.timezone = _pytz_timezone
     _pytz_mod.utc = _utc
     _pytz_mod.UTC = _utc
@@ -875,6 +890,11 @@ def __vis_install_tzdata__():
 
     # dateutil package
     _du_mod = _types.ModuleType("dateutil")
+    _du_mod.__doc__ = (
+        "`dateutil.tz`, `dateutil.parser`, `dateutil.relativedelta`, `rrule`, `easter` and "
+        "`utils` over the JVM zone database. Other dateutil submodules are not supported. "
+        'Part of the vis time shim; see `doc("tzdata")`.'
+    )
     _du_mod.tz = _tz_mod
     _du_mod.parser = _parser_mod
     _du_mod.relativedelta = _rd_mod

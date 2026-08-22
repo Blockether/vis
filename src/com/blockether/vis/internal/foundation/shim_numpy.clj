@@ -35,13 +35,6 @@
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
      :ext/sandbox-shims
-     [{:shim/name "numpy"
-       :shim/imports ["numpy"]
-       :shim/description
-       (str
-         "Pure-Python `numpy` subset: ndarray, broadcasting, reductions, `linalg` "
-         "norm/det/inv/solve, random, histogram. No C speed or shared-memory views. Not supported: "
-         "eig/svd/qr, >2-D axis median/cumsum/sort/flip, >1-D pad, dstack (`NotImplementedError`).")
-       :shim/source "vis-shims/numpy.py"}]}))
+     [{:shim/name "numpy" :shim/imports ["numpy"] :shim/source "vis-shims/numpy.py"}]}))
 
 (vis/register-extension! vis-extension)

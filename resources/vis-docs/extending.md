@@ -772,6 +772,7 @@ share a non-blank `branch="Release apps"` paint beneath one collapsible parent;
 the first cell may retain the full `Release apps / iOS` identity, while surfaces
 show only `iOS` below that parent. A table declared with `is_focusable=True`
 paints every leaf row as a control; `focused_ids=[…]` is its initial selection.
+
 A surface click and `view["jobs"].focus(*row_ids)` write the same shared patch, so the
 extension reads the current selection from `view.state()` before it replaces the focused detail.
 
@@ -1283,9 +1284,11 @@ first import:
 
 These are compatibility subsets, not the full PyPI packages — enough for
 scripting and tests, not a substitute for the real library's every corner. Each
-shim's `:shim/description` names what it does NOT support, and the authoring
-contract lives in [Sandbox shims and autoloads](#sandbox-shims-and-autoloads)
-below — a Clojure-extension capability, since a shim needs host callables.
+shim's own Python says what it does NOT support: `doc("numpy")` prints the module's
+docstring with every public name it lends, and `doc("numpy.linalg.solve")` reads one
+of them. The authoring contract lives in
+[Sandbox shims and autoloads](#sandbox-shims-and-autoloads) below — a
+Clojure-extension capability, since a shim needs host callables.
 
 ### Asking a document a question — `anydoc`
 
@@ -1616,10 +1619,10 @@ List one or more shim specs under `:ext/sandbox-shims`:
  ;; name missing here is a capability the model never learns it has.
  :shim/imports     ["yaml"]
  :shim/globals     []
- ;; PUSHED into every request's system prompt: one line, the surface and what it
- ;; does NOT support. Detail a caller needs only while calling belongs in
- ;; `:shim/docs`, which nothing pushes and `doc("yaml")` answers.
- :shim/description "PyYAML-compatible module backed by YAMLStar. No custom tags."
+ ;; PULLED by `doc("yaml")`: doctrine no single name owns — a query language, the
+ ;; fixture vocabulary, a server-side API. Prose ABOUT A NAME belongs ON that name,
+ ;; in the shim's own Python: the module's `__doc__` and every function's and class's
+ ;; docstring, harvested into `resources/vis-shims/capabilities.edn`.
  :shim/docs        "PyYAML-compatible `yaml` ... every option, in full."
  ;; Host callables the shim's Python delegates to — a `{py-name -> fn}` map (or a
  ;; 0-arg fn returning one). Each is wired onto the sandbox globals as a Python
@@ -1637,12 +1640,14 @@ List one or more shim specs under `:ext/sandbox-shims`:
  :shim/source      "vis-shims/yaml.py"}
 ```
 
-One page documents every name a shim contributes: `:shim/docs` — or, absent it,
-`:shim/description` — becomes the `doc`/`apropos` answer for each of them that
-the shim's own Python did not already document. So a shim with `:shim/globals`
-must NAME the call on that page (`nippy_encode(obj) -> bytes`), not just the
-library it stands in for; a contract test fails a globals page that never spells
-`name(`.
+`doc(name)` answers for every name a shim contributes with the module's own Python
+`__doc__` plus every public member it lends — harvested into
+`resources/vis-shims/capabilities.edn`, and `doc("pandas.read_csv")` reads one of
+those members. `:shim/docs`, when declared, is appended to it. So the page a model
+reads IS the docstring beside the code: a shim with `:shim/globals` must NAME the call
+in that docstring (`nippy_encode(obj) -> bytes`), not just the library it stands in
+for; one contract test fails a globals page that never spells `name(`, and another
+fails any contributed name the harvest finds undocumented.
 
 Installed BEFORE the sandbox's baseline snapshot, so your `__vis_*` bridge names
 and published module are hidden from the model's live-vars view. Install is

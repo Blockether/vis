@@ -80,6 +80,19 @@ def __vis_fonttools_clear_errors__():
 
     ft.__getattr__ = _explain("fontTools")
     ttLib.__getattr__ = _explain("fontTools.ttLib")
+    ft.__doc__ = (
+        "WOFF2 to TTF: `fontTools.ttLib.woff2.decompress(input, output)` plus "
+        "`brotli.decompress(bytes)`. Not supported: `brotli.compress`, WOFF1, `TTFont`, the "
+        "wider fontTools API."
+    )
+
+    brotli = sys.modules.get("brotli")
+    if brotli is not None:
+        brotli.__doc__ = (
+            "`brotli.decompress(bytes) -> bytes`, the decompressor the WOFF2 path needs. "
+            "`brotli.compress` is not supported. Part of the vis `fontTools` shim; see "
+            '`doc("fonttools")`.'
+        )
 
 
 __vis_install_fonttools__()

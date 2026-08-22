@@ -489,6 +489,10 @@ def __vis_install_xlsxwriter__():
             return False
 
     mod = types.ModuleType("xlsxwriter")
+    mod.__doc__ = (
+        "Rust-backed `xlsxwriter` .xlsx writer: model the workbook in Python, built on close. "
+        "Not supported: `constant_memory` streaming, VBA, charts, data validation."
+    )
     mod.Workbook = Workbook
     mod.Worksheet = Worksheet
     mod.Format = Format

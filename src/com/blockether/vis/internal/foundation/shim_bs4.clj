@@ -67,11 +67,6 @@
      :ext/sandbox-shims
      [{:shim/name "bs4"
        :shim/imports ["bs4" "soupsieve"]
-       :shim/description
-       (str
-         "`bs4` (`find`, `find_all`, `select`, `get_text`, mutation, serialization, `bs4.dammit`) "
-         "over stdlib `html.parser`, with a bundled soupsieve 2.5 engine including `:has()`. Not "
-         "supported: lxml/html5lib — requesting one raises `FeatureNotFound`.")
        :shim/docs
        (str "`bs4` BeautifulSoup API (`find`, `find_all`, `select`, `get_text`, mutation, "
             "serialization, plus PageElement/ResultSet/SoupStrainer, `soup.builder`, formatters "

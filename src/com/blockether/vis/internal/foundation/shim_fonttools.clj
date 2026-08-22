@@ -47,14 +47,8 @@
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
-     :ext/sandbox-shims
-     [{:shim/name "fonttools"
-       :shim/imports ["brotli" "fontTools"]
-       :shim/description
-       (str
-         "WOFF2 to TTF: `fontTools.ttLib.woff2.decompress(input, output)` plus "
-         "`brotli.decompress(bytes)`. Not supported: `brotli.compress`, WOFF1, `TTFont`, the wider "
-         "fontTools API.")
-       :shim/source "vis-shims/fonttools.py"}]}))
+     :ext/sandbox-shims [{:shim/name "fonttools"
+                          :shim/imports ["brotli" "fontTools"]
+                          :shim/source "vis-shims/fonttools.py"}]}))
 
 (vis/register-extension! vis-extension)

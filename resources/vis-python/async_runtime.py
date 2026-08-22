@@ -3782,6 +3782,92 @@ def __vis_def_calls__():
     return out
 
 
+def __vis_dotted_doc__(target):
+    # ONE MEMBER of a sandbox module, read LIVE: `doc("pandas.read_csv")`. The
+    # capability index the host ships names what a module LENDS; the prose of a
+    # single member lives ON that member, so it is read off the object itself and
+    # can never drift from it. Only the head module is imported — the same cost
+    # the block that calls the member would pay anyway.
+    import importlib
+    import inspect
+
+    dotted = "".join(str(target or "").split())
+    parts = [p for p in dotted.split(".") if p]
+    if not parts:
+        return ""
+
+    obj = None
+    used = 0
+    # The LONGEST importable prefix wins: `mpl_toolkits.mplot3d` is itself a
+    # module, while `pandas.read_csv` stops at `pandas`. A BARE name imports
+    # itself, which is how a shim the generated index never saw still has a page.
+    for i in range(len(parts), 0, -1):
+        try:
+            obj = importlib.import_module(".".join(parts[:i]))
+            used = i
+            break
+        except Exception:
+            obj = None
+    if obj is None:
+        # A shim GLOBAL (`attach`, `ls`) is a name in this namespace, not a module.
+        obj = globals().get(parts[0], getattr(__vis_builtins_mod__, parts[0], None))
+        used = 1
+        if obj is None:
+            return ""
+    # module, while `pandas.read_csv` stops at `pandas`.
+    for i in range(len(parts) - 1, 0, -1):
+        try:
+            obj = importlib.import_module(".".join(parts[:i]))
+            used = i
+            break
+        except Exception:
+            obj = None
+    if obj is None:
+        # A shim GLOBAL (`attach`, `ls`) is a name in this namespace, not a module.
+        obj = globals().get(parts[0], getattr(__vis_builtins_mod__, parts[0], None))
+        used = 1
+        if obj is None:
+            return ""
+
+    for name in parts[used:]:
+        obj = getattr(obj, name, None)
+        if obj is None:
+            return ""
+
+    if inspect.ismodule(obj):
+        kind = "module"
+    elif inspect.isclass(obj):
+        kind = "class"
+    elif callable(obj):
+        kind = "callable"
+    else:
+        kind = "data"
+
+    out = ["# " + dotted + "  ·  " + kind]
+    if kind in ("class", "callable"):
+        try:
+            out.append(parts[-1] + str(inspect.signature(obj)))
+        except Exception:
+            pass
+    own = getattr(obj, "__doc__", None)
+    text = inspect.cleandoc(own) if isinstance(own, str) and own.strip() else ""
+    if text:
+        out.append(text)
+    elif len(parts) < 2:
+        # A BARE name with no prose has nothing to add — the caller already holds
+        # whatever page the capability index knows.
+        return ""
+    else:
+        out.append(
+            'No prose on this member. `doc("'
+            + parts[0]
+            + '")` names every name '
+            + parts[0]
+            + " lends and what it refuses."
+        )
+    return "\n".join(out)
+
+
 def defs(name=None):
     """The helpers THIS session defined, and their source — plain text.
 

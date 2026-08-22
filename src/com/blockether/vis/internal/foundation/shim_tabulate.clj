@@ -32,11 +32,6 @@
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
      :ext/sandbox-shims
-     [{:shim/name "tabulate"
-       :shim/imports ["tabulate"]
-       :shim/description
-       (str "`tabulate`-compatible, pure Python: "
-            "plain/simple/github/pipe/grid/fancy_grid/rst/tsv/html. No exotic formats or color.")
-       :shim/source "vis-shims/tabulate.py"}]}))
+     [{:shim/name "tabulate" :shim/imports ["tabulate"] :shim/source "vis-shims/tabulate.py"}]}))
 
 (vis/register-extension! vis-extension)

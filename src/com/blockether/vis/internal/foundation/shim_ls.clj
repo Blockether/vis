@@ -68,12 +68,6 @@
      :ext/sandbox-shims
      [{:shim/name "ls"
        :shim/globals ["ls"]
-       :shim/description
-       (str
-         "`ls(paths, depth=1, is_hidden=False)` maps a tree from the host's ignore-aware walk as "
-         "a compact STRING: a `path  Nd Nf` header, then one line per entry, directories first "
-         "then alphabetical. Dotfiles need `is_hidden=True`; gitignored entries are never "
-         "listed; a file raises `NotADirectoryError`. Row shapes and batches: `doc(\"ls\")`.")
        :shim/docs
        (str
          "`ls(paths, depth=1, is_hidden=False)` maps a tree from the host's ignore-aware walk as "

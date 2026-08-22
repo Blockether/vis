@@ -565,7 +565,9 @@ def __vis_install_ruff__():
     module.console_main = console_main
     module.main = console_main
     module.__doc__ = (
-        "Vis shim: in-process Ruff formatter/linter/fixer; no pip or PATH binary."
+        "In-process Ruff, no pip or PATH: `python -m ruff check|format <paths>` (`--fix`, "
+        "`--check`, `--diff`) and the `format_/check_/fix_{str,file}` import API, honouring "
+        "the nearest config per file. A reduced in-process shim, not a full Ruff wheel."
     )
     sys.modules["ruff"] = module
     try:

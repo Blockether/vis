@@ -735,7 +735,9 @@ def __vis_install_httpx__():
 
     mod = _types.ModuleType("httpx")
     mod.__doc__ = (
-        "vis sandbox httpx-compat shim (sync + async wrapper over the requests shim)."
+        "`httpx` subset wrapping requests: get/post, `Client`/`AsyncClient`, `Response`, "
+        "`raise_for_status`. `AsyncClient` coroutines use synchronous I/O. Not supported: "
+        "HTTP/2, concurrent async I/O."
     )
     mod.Response = Response
     mod.Headers = Headers

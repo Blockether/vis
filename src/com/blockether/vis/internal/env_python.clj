@@ -29,6 +29,7 @@
             [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
             [com.blockether.vis.internal.sandbox-fs :as sandbox-fs]
             [com.blockether.vis.internal.sandbox-resources :as res]
+            [com.blockether.vis.internal.shim-capabilities :as shim-caps]
             [flatland.ordered.map :as omap]
             [taoensso.telemere :as tel])
   (:import [org.graalvm.polyglot Context Context$Builder Engine Value PolyglotAccess
@@ -1047,6 +1048,26 @@
            (value->str-map (.execute f (object-array 0)))
            {}))
        (catch Throwable _ {})))
+
+(defn- dotted-doc
+  "ONE MEMBER of a sandbox module, rendered by the sandbox itself — `doc(\"pandas.read_csv\")`.
+   The capability index names what a module LENDS; the prose of one member lives on that
+   member, so it is read live off the object and can never drift from it. Answers `\"\"` when
+   the target does not resolve, which is the caller's cue to say so."
+  [^Value g ^String target]
+  (try (let [^Value f (.getMember g "__vis_dotted_doc__")]
+         (if (and f (not (.isNull f)) (.canExecute f))
+           (let [^Value v (.execute f (object-array [(str target)]))]
+             (if (and v (not (.isNull v)) (.isString v)) (.asString v) ""))
+           ""))
+       (catch Throwable _ "")))
+(def ^:private unharvested-shim-page
+  "What a shim carries when the generated capability index never saw it — an
+   extension declares its own shims, and only the shims in this repository are
+   harvested. It keeps the name searchable; `doc()` reads the live module instead
+   of printing this."
+  "sandbox shim capability")
+
 (def ^:private ^:const apropos-limit
   "How many documents `apropos` answers for a described ask. Terms are ORed, so
    a six-word question touches half the corpus; every measured ask answered
@@ -1348,7 +1369,8 @@
 
                       ;; A helper this session defined and never documented has
                       ;; no page to print — so the page says what would make one.
-                      (if (and (= "local" (str (:kind hit))) (str/blank? (str (:text hit))))
+                      (cond
+                        (and (= "local" (str (:kind hit))) (str/blank? (str (:text hit))))
                         (str page
                              "This session defined it and it carries no docstring, so there is "
                              "nothing to print. `defs(\""
@@ -1356,8 +1378,19 @@
                              "\")` returns its source; a "
                              "docstring's first line becomes its `defs()` gist and the whole of it "
                              "becomes this page — which is also what lets `apropos` find it.")
-                        page))
-                    (doc-corpus/miss-text es target))))))))
+                        ;; A shim the generated index never saw — an extension declares its
+                        ;; own — carries its prose only on the live object, so the placeholder
+                        ;; is a cue to import THIS one module, which is what the reader asked for.
+                        (and (= "shim" (str (:kind hit)))
+                             (contains? #{"" unharvested-shim-page} (str (:text hit))))
+                        (let [live (dotted-doc g target)]
+                          (if (str/blank? live) page live))
+                        :else page))
+                    ;; A DOTTED target is a member of a shim module, not a document:
+                    ;; the index names what a module lends, and the member's own prose
+                    ;; is read live off the object.
+                    (let [live (dotted-doc g target)]
+                      (if (str/blank? live) (doc-corpus/miss-text es target) live)))))))))
     ;; These two helpers are installed by the engine rather than the extension
     ;; registry, so seed their own docs here.
     (set-python-binding-doc!
@@ -1367,7 +1400,7 @@
     (set-python-binding-doc!
       ctx
       'doc
-      "doc(target) -> str. RETRIEVE one document whole: a function name, a Vis documentation slug or a skill name — case, whitespace and a trailing `.md` do not matter, and a function wins a name collision. `doc()` with no argument prints the curated index of the verbs a session starts from. A skill is one of these documents and nothing more: reading it is the whole of using it.")
+      "doc(target) -> str. RETRIEVE one document whole: a function name, a Vis documentation slug or a skill name — case, whitespace and a trailing `.md` do not matter, and a function wins a name collision. A DOTTED target reads ONE MEMBER live off the object itself — `doc(\"pandas.read_csv\")` prints that member's own signature and docstring, so a module's page names what it lends and this says what one of them does. `doc()` with no argument prints the curated index of the verbs a session starts from. A skill is one of these documents and nothing more: reading it is the whole of using it.")
     (set-python-binding-doc!
       ctx
       'gather
@@ -2289,11 +2322,14 @@
     (install-sandbox-shims! ctx g)
     ;; Advertise exact import names and direct globals to the sandbox's discovery
     ;; surface. `:shim/name` is registry identity only and must never imply importability.
-    ;; `doc()` answers with `:shim/docs` when the shim declares one — the full
-    ;; surface, PULLED — and falls back to the short `:shim/description` the
-    ;; system prompt pushes. A shim whose own Python already documents a global
-    ;; KEEPS that call contract — the argument list is what a caller types — and
-    ;; gains the page under it, because a page nothing reaches was cut, not moved.
+    ;; `doc()` answers with the HARVESTED capability page — the module's own Python
+    ;; `__doc__` plus every public member it lends (`internal.shim-capabilities`,
+    ;; generated into `resources/vis-shims/capabilities.edn`) — and appends
+    ;; `:shim/docs` when the shim declares doctrine no single name owns. Prose about a
+    ;; name lives ON that name, in the shim's Python, so the page a model reads is the
+    ;; source a maintainer edits. A shim whose own Python already documents a global
+    ;; KEEPS that call contract — the argument list is what a caller types — and gains
+    ;; the page under it, because a page nothing reaches was cut, not moved.
     (try
       (let [shims
             (registered-sandbox-shims)
@@ -2306,24 +2342,33 @@
                  vec)
 
             docs
-            (reduce
-              (fn [m s]
-                (let [page
-                      (when-not (str/blank? (:shim/docs s)) (:shim/docs s))
+            (reduce (fn [m s]
+                      (let [page (when-not (str/blank? (:shim/docs s)) (:shim/docs s))]
+                        (reduce (fn [acc nm]
+                                  (let [caps (shim-caps/page nm)
+                                        solo (->> [caps page]
+                                                  (remove str/blank?)
+                                                  (str/join "\n\n"))]
 
-                      solo
-                      (or page (:shim/description s))
+                                    (assoc acc
+                                      nm
+                                      ;; A shim OUTSIDE the generated index — a user
+                                      ;; extension's own — has no harvested page.
+                                      (cond-> {"solo"
+                                               (if (str/blank? solo) unharvested-shim-page solo)}
+                                        page
+                                        (assoc "page" page)))))
+                                m
+                                (concat (:shim/imports s) (:shim/globals s)))))
+                    {}
+                    shims)
 
-                      entry
-                      (cond-> {"solo" (if (str/blank? solo)
-                                        "sandbox shim capability"
-                                        (str "sandbox shim — " solo))}
-                        page
-                        (assoc "page" page))]
-
-                  (reduce #(assoc %1 %2 entry) m (concat (:shim/imports s) (:shim/globals s)))))
-              {}
-              shims)]
+            calls
+            (into {}
+                  (keep (fn [nm]
+                          (when-let [sig (shim-caps/call-line nm)]
+                            [nm sig])))
+                  names)]
 
         (when (seq names)
           (.putMember g "__vis_shims_json__" (json/write-json-str names))
@@ -2342,6 +2387,7 @@
                       "        _vis_docs[_k] = _own + '\\n\\n' + _page\n"
                       "del _vis_docs, _k, _v, _own, _page"))
           (.putMember g "__vis_docs_json__" nil))
+        (seed-py-map! ctx g "__vis_calls__" calls)
         (seed-py-map! ctx
                       g
                       "__vis_kinds__"

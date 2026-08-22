@@ -929,12 +929,6 @@
      :ext/sandbox-shims
      [{:shim/name "matplotlib"
        :shim/imports ["matplotlib" "mpl_toolkits"]
-       :shim/description
-       (str
-         "`matplotlib.pyplot` and OO subset with native PNG and ASCII renderers "
-         "(line/scatter/bar/hist/fill/step/pie/box/image, `mpl_toolkits.mplot3d`); `show()` is "
-         "inline PNG or ASCII, `savefig` writes PNG or ASCII text. Not supported: animation, full "
-         "rcParams theming.")
        :shim/docs
        (str "matplotlib.pyplot/OO subset with native PNG and ASCII renderers: "
             "line/scatter/bar/hist/fill/step/pie/box/image. "

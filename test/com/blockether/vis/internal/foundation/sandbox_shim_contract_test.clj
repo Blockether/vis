@@ -13,6 +13,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.shim-capabilities :as shim-caps]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File]
            [org.graalvm.polyglot Context]))
@@ -103,39 +104,17 @@
         (expect (empty? dupe-names) (str "duplicate shim names: " (pr-str dupe-names)))
         (expect (empty? dupe-imports)
                 (str "two shims claim the same import: " (pr-str dupe-imports)))))
-  (it "declares a name, a description, and a way for the sandbox to reach it"
-      ;; The sandbox capability docs are generated from these; a blank one ships
-      ;; an unusable capability the model cannot discover. A shim reaches Python
-      ;; either as an importable module (`:shim/imports`) or as prebound globals
-      ;; (`:shim/bindings`, how the `attach` shim publishes `attach` & friends) —
-      ;; declaring NEITHER makes it unreachable.
-      (doseq [{:shim/keys [name description imports bindings]} (registered-shims)]
+  (it "declares a name and a way for the sandbox to reach it"
+      ;; A shim reaches Python either as an importable module (`:shim/imports`) or as
+      ;; prebound globals (`:shim/bindings`, how the `attach` shim publishes `attach`
+      ;; and friends) — declaring NEITHER makes it unreachable. WHAT each name does is
+      ;; documented in the shim's own Python (`__doc__`), harvested into
+      ;; `resources/vis-shims/capabilities.edn`; `shim-capabilities-test` pins that, so
+      ;; no Clojure-side prose can drift from the module it describes.
+      (doseq [{:shim/keys [name imports bindings]} (registered-shims)]
         (expect (not (str/blank? name)))
-        (expect (not (str/blank? description)) (str name " has no :shim/description"))
         (expect (or (seq imports) (some? bindings))
-                (str name " declares neither :shim/imports nor :shim/bindings"))))
-  ;; A description is WRITTEN over several lines — `(str "…" "…")` — so a human
-  ;; edits ONE sentence instead of reflowing a 700-character literal. Its VALUE
-  ;; stays a single line: it is printed as ONE bullet of the system prompt's
-  ;; sandbox-shims block and as one `doc()` / `apropos` gist, so a raw multi-line
-  ;; literal would break the bullet apart and smuggle the source file's own
-  ;; indentation into the model's context.
-  (it "keeps every shim description a single line"
-      (doseq [{:shim/keys [name description]} (registered-shims)]
-        (expect (not (str/includes? (str description) "\n"))
-                (str name " :shim/description spans lines — write it as (str \"…\" \"…\")"))))
-  ;; The description is PUSHED into the system prompt of every request, whether or
-  ;; not the session ever imports the shim; `:shim/docs` is PULLED by `doc(name)`
-  ;; and costs nothing. So the budget is a ratchet: a line that wants to teach a
-  ;; query language, every fixture name or a server API has outgrown the prompt
-  ;; and belongs in `:shim/docs`, with the description pointing at it.
-  (it "keeps every pushed shim description under the prompt budget"
-      (doseq [{:shim/keys [name description]} (registered-shims)]
-        (expect (<= (count (str description)) 340)
-                (str name
-                     " :shim/description is "
-                     (count (str description))
-                     " chars — move the detail to :shim/docs")))))
+                (str name " declares neither :shim/imports nor :shim/bindings")))))
 
 (defdescribe shim-resource-test
              (it "has a shim declaring every resources/vis-shims/*.py"
@@ -147,7 +126,13 @@
                        on-disk
                        (->> (.listFiles (io/file shim-resource-dir))
                             (map (fn [^File f]
-                                   (str "vis-shims/" (.getName f))))
+                                   (.getName f)))
+                            ;; `capabilities.edn` sits beside the sources: it is the GENERATED
+                            ;; index of what the shims lend, not a shim, so nothing declares it.
+                            (filter (fn [^String n]
+                                      (.endsWith n ".py")))
+                            (map (fn [^String n]
+                                   (str "vis-shims/" n)))
                             (remove env-python-installed))
 
                        orphans
@@ -188,8 +173,10 @@
         (expect (some? shim) "no shim declares :shim/docs — the pull path is untested")
         (expect (str/includes? doc (subs (:shim/docs shim) 0 60))
                 (str name " doc() does not serve :shim/docs"))
-        (expect (not (str/includes? doc (:shim/description shim)))
-                (str name " doc() still serves the pushed description")))))
+        (expect (some? (shim-caps/gist name))
+                (str name " was never harvested into capabilities.edn"))
+        (expect (str/includes? doc (shim-caps/gist name))
+                (str name " doc() does not serve the module's own Python __doc__")))))
 
 (defdescribe
   shim-globals-name-their-call-test

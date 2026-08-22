@@ -123,14 +123,9 @@
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
-     :ext/sandbox-shims
-     [{:shim/name "tzdata"
-       :shim/imports ["dateutil" "pytz" "tzdata" "zoneinfo"]
-       :shim/description
-       (str "JVM java.time-backed `zoneinfo`/`pytz`/`tzdata` and "
-            "`dateutil.tz`/`parser`/`relativedelta`: 600+ IANA zones, DST-correct, no data files. "
-            "Other dateutil submodules unsupported.")
-       :shim/bindings tzdata-bridge-bindings
-       :shim/source "vis-shims/tzdata.py"}]}))
+     :ext/sandbox-shims [{:shim/name "tzdata"
+                          :shim/imports ["dateutil" "pytz" "tzdata" "zoneinfo"]
+                          :shim/bindings tzdata-bridge-bindings
+                          :shim/source "vis-shims/tzdata.py"}]}))
 
 (vis/register-extension! vis-extension)

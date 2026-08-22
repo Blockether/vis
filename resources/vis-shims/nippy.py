@@ -29,17 +29,32 @@ def __vis_install_nippy__():
         return _realize(result[1])
 
     def decode(data):
+        """Read trusted Vis Nippy bytes (or their base64 text) back into plain Python data.
+
+        Vectorz vectors arrive as lists and Clojure's exact types are not preserved.
+        Raises TypeError on a non-bytes argument, NippyError on malformed input.
+        Never decode bytes from an untrusted source.
+        """
         if not isinstance(data, (bytes, bytearray, memoryview)):
             raise TypeError("nippy_decode() requires bytes-like input")
         encoded = base64.b64encode(bytes(data)).decode("ascii")
         return _call(_decode, encoded)
 
     def encode(value):
+        """Serialize plain Python data to Vis Nippy bytes the Clojure host reads back.
+
+        Takes what JSON takes plus bytes, and answers `bytes`. Raises NippyError on a
+        value the encoder cannot represent.
+        """
         encoded = _call(_encode, value)
         return base64.b64decode(encoded)
 
     mod = types.ModuleType("nippy")
-    mod.__doc__ = "Vis Nippy codec for trusted persistence BLOBs and Python plain data."
+    mod.__doc__ = (
+        "`nippy_decode`/`nippy_encode` round-trip trusted Vis Nippy bytes and plain Python "
+        "data; Vectorz vectors decode as lists. Not supported: exact Clojure type "
+        "preservation, Java Serializable fallback, encryption, untrusted input."
+    )
     mod.__version__ = "vis"
     mod.NippyError = NippyError
     mod.decode = decode

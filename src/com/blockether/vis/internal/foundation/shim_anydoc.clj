@@ -264,12 +264,6 @@
      :ext/sandbox-shims
      [{:shim/name "anydoc"
        :shim/imports ["anydoc"]
-       :shim/description
-       (str
-         "Reads .doc .docx .odt .rtf .pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv "
-         "as Markdown from a path, bytes or an open file (`to_markdown`, `to_document`) and "
-         "BM25-searches one document or a directory with page/section/line citations (`search`). "
-         "No writing, OCR or embeddings. Query language and `Citation`: `doc(\"anydoc\")`.")
        :shim/docs
        (str "`anydoc.to_markdown(source)` renders .doc .docx .odt .rtf "
             ".pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv as GitHub-Flavored "

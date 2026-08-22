@@ -642,24 +642,6 @@
              distinct
              sort)
 
-        shim-capabilities
-        (->> shims
-             (keep (fn [shim]
-                     (let [names
-                           (seq (or (seq (:shim/imports shim)) (:shim/globals shim)))
-
-                           description
-                           (some-> (:shim/description shim)
-                                   str/trim
-                                   not-empty)]
-
-                       (when (and names description)
-                         [(first names)
-                          (str "- " (str/join ", " (map #(str "`" % "`") names))
-                               ": " description)]))))
-             (sort-by first)
-             (mapv second))
-
         shell?
         (boolean (some #(= "foundation-shell" (:ext/name %)) (or active-extensions [])))
 
@@ -668,27 +650,23 @@
 
     (prompt-block
       "sandbox-shims"
-      (str
-        "Auto-imported by `python_execution` (no `import`): `"
-        auto-imports
-        "`."
-        (when (seq shim-imports)
-          (str "\nPreinstalled shim modules (no pip; import before use and alias in "
-               "the same block, e.g. `import numpy as np`; `np`/`pd` are never "
-               "auto-created): `"
-               (str/join "`, `" shim-imports)
-               "`."))
-        (when (seq shim-globals)
-          (str "\nPrebound shim globals (use directly; never import them): `"
-               (str/join "`, `" shim-globals)
-               "`."))
-        (when (seq shim-capabilities)
-          (str
-            "\nEach is a Vis REIMPLEMENTATION, not the upstream package: the line is its surface "
-            "and its refusals, so trust it over your memory of the library and never reach "
-            "for an API it does not claim.\n" (str/join "\n" shim-capabilities)))
-        "\n"
-        (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
+      (str "Auto-imported by `python_execution` (no `import`): `"
+           auto-imports
+           "`."
+           (when (seq shim-imports)
+             (str "\nPreinstalled shim modules (no pip; import before use and alias in "
+                  "the same block, e.g. `import numpy as np`; `np`/`pd` are never "
+                  "auto-created): `"
+                  (str/join "`, `" shim-imports)
+                  "`."))
+           (when (seq shim-globals)
+             (str "\nPrebound shim globals (use directly; never import them): `"
+                  (str/join "`, `" shim-globals)
+                  "`."))
+           "\nEach is a Vis REIMPLEMENTATION, not the upstream package: `doc(\"numpy\")` "
+           "names what it really lends and what it refuses, and `doc(\"numpy.linalg.solve\")` "
+           "reads one member — trust those over your memory of the library."
+           "\n" (get env-python/PROCESS_SURFACE (if shell? "ban" "off"))))))
 
 (defn- turn-system-context-block
   "Turn-scoped system context that can be rebuilt/replaced as runtime

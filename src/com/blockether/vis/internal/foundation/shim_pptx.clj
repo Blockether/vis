@@ -49,14 +49,9 @@
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
-     :ext/sandbox-shims
-     [{:shim/name "pptx"
-       :shim/imports ["pptx"]
-       :shim/description
-       (str
-         "python-pptx-compatible create/open/edit/save backed by one Rust read and one Rust build, "
-         "including charts, images, rich text, tables, notes, layouts and properties.")
-       :shim/bindings pptx-bridge-bindings
-       :shim/source "vis-shims/pptx.py"}]}))
+     :ext/sandbox-shims [{:shim/name "pptx"
+                          :shim/imports ["pptx"]
+                          :shim/bindings pptx-bridge-bindings
+                          :shim/source "vis-shims/pptx.py"}]}))
 
 (vis/register-extension! vis-extension)

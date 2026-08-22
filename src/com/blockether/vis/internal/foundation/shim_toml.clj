@@ -30,12 +30,6 @@
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
      :ext/sandbox-shims
-     [{:shim/name "toml"
-       :shim/imports ["toml"]
-       :shim/description
-       (str
-         "`toml`: spec-correct `loads`/`load` via stdlib tomllib, pure-Python `dumps`/`dump`. No "
-         "comment preservation or exotic writer formatting.")
-       :shim/source "vis-shims/toml.py"}]}))
+     [{:shim/name "toml" :shim/imports ["toml"] :shim/source "vis-shims/toml.py"}]}))
 
 (vis/register-extension! vis-extension)

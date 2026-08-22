@@ -43,14 +43,9 @@
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
-     :ext/sandbox-shims
-     [{:shim/name "xlsxwriter"
-       :shim/imports ["xlsxwriter"]
-       :shim/description
-       (str
-         "Rust-backed `xlsxwriter` .xlsx writer: model the workbook in Python, built on close. Not "
-         "supported: `constant_memory` streaming, VBA, charts, data validation.")
-       :shim/bindings xlsxwriter-bridge-bindings
-       :shim/source "vis-shims/xlsxwriter.py"}]}))
+     :ext/sandbox-shims [{:shim/name "xlsxwriter"
+                          :shim/imports ["xlsxwriter"]
+                          :shim/bindings xlsxwriter-bridge-bindings
+                          :shim/source "vis-shims/xlsxwriter.py"}]}))
 
 (vis/register-extension! vis-extension)

@@ -1265,7 +1265,10 @@ def __vis_install_requests_compat__():
     # ---- top-level requests module ---------------------------------------
     mod = types.ModuleType("requests")
     mod.__doc__ = (
-        "vis requests-compatible shim backed by urllib (pure Python, no host bridge)."
+        "`requests`-compatible API over stdlib urllib. No HTTP/2 or real pooling; "
+        "`verify=`/`cert=` build the TLS context from a str, bytes or os.PathLike path and "
+        "`REQUESTS_CA_BUNDLE`/`CURL_CA_BUNDLE` are read unless `Session.trust_env` is off; "
+        "`HTTPDigestAuth` is accepted but sends no auth header."
     )
     mod.__version__ = "2.0-vis-urllib"
     mod.__path__ = []

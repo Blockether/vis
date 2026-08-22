@@ -1080,7 +1080,10 @@ def __vis_install_urllib3__():
 
     mod = _types.ModuleType("urllib3")
     mod.__doc__ = (
-        "vis sandbox urllib3-compat shim (thin wrapper over the requests shim)."
+        "`urllib3` as a package: `PoolManager`/`ProxyManager`, `HTTPResponse`, `request`, "
+        "`util`, `fields`, `filepost`, `exceptions`. TLS options reach the socket and a bad "
+        "certificate raises `exceptions.SSLError`; retries and pooling are best-effort "
+        "no-ops. Not supported: `assert_fingerprint`, `ciphers` (`NotImplementedError`)."
     )
     mod.__path__ = []
     mod.__version__ = "2.2.0-vis"

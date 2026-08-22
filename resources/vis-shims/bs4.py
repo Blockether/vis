@@ -5642,6 +5642,12 @@ def __vis_install_bs4__():
         searchTag = search_tag
 
     mod = types.ModuleType("bs4")
+    mod.__doc__ = (
+        "`bs4` (`find`, `find_all`, `select`, `get_text`, mutation, serialization, "
+        "`bs4.dammit`) over stdlib `html.parser`, with a bundled soupsieve 2.5 engine "
+        "including `:has()`. Not supported: lxml/html5lib — requesting one raises "
+        "`FeatureNotFound`."
+    )
     mod.__path__ = []
     mod.__version__ = "4.12-vis-pure"
     mod.BeautifulSoup = BeautifulSoup
@@ -5980,7 +5986,11 @@ def __vis_install_bs4__():
     # imports it directly, so the shim publishes a facade with soupsieve's module
     # surface over the selector engine above.
     soupsieve_mod = types.ModuleType("soupsieve")
-    soupsieve_mod.__doc__ = "Soup Sieve. A CSS selector filter for BeautifulSoup4."
+    soupsieve_mod.__doc__ = (
+        "The CSS selector engine bundled with the vis `bs4` shim (soupsieve 2.5 surface, "
+        "`:has()` included): `select`, `select_one`, `match`, `filter`, `closest`, `compile`, "
+        '`iselect`. See `doc("bs4")`.'
+    )
     soupsieve_mod.__version__ = "2.5"
     soupsieve_mod.__version_info__ = _collections.namedtuple(
         "Version", "major minor micro release pre post dev"

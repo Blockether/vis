@@ -114,7 +114,8 @@ def __vis_install_yaml_compat__():
 
     mod = types.ModuleType("yaml")
     mod.__doc__ = (
-        "vis PyYAML-compatible shim backed by YAMLStar (pure-Clojure YAML 1.2)."
+        "PyYAML-compatible `yaml` via pure-Clojure YAMLStar (YAML 1.2). Map keys return as "
+        "strings; no custom tags, `!!python` or arbitrary-object (de)serialization."
     )
     mod.__version__ = "6.0-yamlstar"
     mod.YAMLError = YAMLError

@@ -129,6 +129,10 @@ def __vis_install_ls__():
         "path is a str or a pathlib.Path."
     )
 
+    # ONE text for one handle: `help(ls)` and `doc("ls")` read the same
+    # string, so neither can go stale against the other.
+    ls.__doc__ = docs["ls"]
+
 
 __vis_install_ls__()
 del __vis_install_ls__

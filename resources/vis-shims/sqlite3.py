@@ -12,6 +12,10 @@ def __vis_install_sqlite3__():
     _total_changes = __vis_sqlite_total_changes__
     BLOB_TAG = "__vis_blob__"
     mod = types.ModuleType("sqlite3")
+    mod.__doc__ = (
+        "JVM xerial sqlite-jdbc `sqlite3` DB-API 2.0; connections use integer handles. "
+        "Bindings support int/float/str/None only, else `InterfaceError`."
+    )
 
     class Warning(Exception):
         pass

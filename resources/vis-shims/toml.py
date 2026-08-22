@@ -145,6 +145,10 @@ def __vis_install_toml__():
         return s
 
     mod = types.ModuleType("toml")
+    mod.__doc__ = (
+        "`toml`: spec-correct `loads`/`load` via stdlib tomllib, pure-Python `dumps`/`dump`. "
+        "No comment preservation or exotic writer formatting."
+    )
     mod.loads = loads
     mod.load = load
     mod.dumps = dumps

@@ -2370,12 +2370,6 @@
      :ext/sandbox-shims
      [{:shim/name "pil"
        :shim/imports ["PIL"]
-       :shim/description
-       (str
-         "Pillow-compatible `PIL` backed by a Rust renderer, no java.desktop or pip: Image, ImageDraw, "
-         "ImageFilter, ImageOps, ImageFont, ImageMath, ImagePalette, ExifTags/TiffTags and the rest of "
-         "Pillow 10's module set. Rejects images over 512 MiB RGBA; samples are 8-bit and a saved file "
-         "reopens as 'RGB'/'RGBA'. Full surface: `doc(\"pil\")`.")
        :shim/docs
        (str
          "Pillow-compatible `PIL` published into `sys.modules`, backed by com.blockether/imaging's Rust "

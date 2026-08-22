@@ -52,13 +52,9 @@
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
-     :ext/sandbox-shims
-     [{:shim/name "yaml"
-       :shim/imports ["yaml"]
-       :shim/description
-       (str "PyYAML-compatible `yaml` via pure-Clojure YAMLStar (YAML 1.2). Map keys return as "
-            "strings; no custom tags, `!!python` or arbitrary-object (de)serialization.")
-       :shim/bindings yaml-bridge-bindings
-       :shim/source "vis-shims/yaml.py"}]}))
+     :ext/sandbox-shims [{:shim/name "yaml"
+                          :shim/imports ["yaml"]
+                          :shim/bindings yaml-bridge-bindings
+                          :shim/source "vis-shims/yaml.py"}]}))
 
 (vis/register-extension! vis-extension)

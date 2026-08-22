@@ -3330,6 +3330,10 @@ def __vis_install_pptx__():
     # -- module wiring -------------------------------------------------------
 
     mod = types.ModuleType("pptx")
+    mod.__doc__ = (
+        "python-pptx-compatible create/open/edit/save backed by one Rust read and one Rust "
+        "build, including charts, images, rich text, tables, notes, layouts and properties."
+    )
     mod.Presentation = Presentation
     mod.__version__ = "1.0.2"
     mod.__path__ = []

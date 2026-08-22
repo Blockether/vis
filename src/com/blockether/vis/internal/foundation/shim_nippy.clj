@@ -117,11 +117,6 @@
      [{:shim/name "nippy"
        :shim/imports ["nippy"]
        :shim/globals ["nippy_decode" "nippy_encode"]
-       :shim/description
-       (str
-         "`nippy_decode`/`nippy_encode` round-trip trusted Vis Nippy bytes and plain Python data; "
-         "Vectorz vectors decode as lists. Not supported: exact Clojure type preservation, Java "
-         "Serializable fallback, encryption, untrusted input.")
        :shim/docs
        (str
          "`nippy_decode(data)` -> the plain Python value inside TRUSTED Vis-owned Nippy bytes: "

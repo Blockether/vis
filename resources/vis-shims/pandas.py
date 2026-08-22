@@ -2377,6 +2377,11 @@ def __vis_install_pandas__():
     NaN = _NA
 
     mod = types.ModuleType("pandas")
+    mod.__doc__ = (
+        "Pure-Python `pandas` subset: Series, DataFrame, groupby, merge, `read_csv`. No C "
+        "speed or vectorized IO-heavy APIs; `to_csv(path)` is disabled — use `to_csv()` for "
+        "text."
+    )
     mod.DataFrame = DataFrame
     mod.Index = Index
     mod.Series = Series

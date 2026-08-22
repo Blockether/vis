@@ -1771,7 +1771,9 @@ def __vis_install_paramiko__():
 
     mod = types.ModuleType("paramiko")
     mod.__doc__ = (
-        "vis sandbox paramiko-compat shim (pure-Java SSH2 via the mwiede JSch fork)."
+        "Paramiko-compatible SSH2 over pure-Java JSch: `SSHClient` `exec_command`/SFTP, "
+        "RSA/DSS/ECDSA/Ed25519 keys, plus a MINA-backed server side for reverse forwards "
+        '(`doc("paramiko")`). Not supported: `invoke_shell` — use `exec_command`/SFTP.'
     )
     mod.__version__ = "3.5.0-vis"
     mod.__path__ = []

@@ -36,12 +36,6 @@
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
      :ext/sandbox-shims
-     [{:shim/name "pandas"
-       :shim/imports ["pandas"]
-       :shim/description
-       (str
-         "Pure-Python `pandas` subset: Series, DataFrame, groupby, merge, `read_csv`. No C speed "
-         "or vectorized IO-heavy APIs; `to_csv(path)` is disabled — use `to_csv()` for text.")
-       :shim/source "vis-shims/pandas.py"}]}))
+     [{:shim/name "pandas" :shim/imports ["pandas"] :shim/source "vis-shims/pandas.py"}]}))
 
 (vis/register-extension! vis-extension)

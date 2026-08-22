@@ -481,10 +481,6 @@
      :ext/sandbox-shims
      [{:shim/name "paramiko"
        :shim/imports ["paramiko"]
-       :shim/description
-       (str "Paramiko-compatible SSH2 over pure-Java JSch: `SSHClient` `exec_command`/SFTP, "
-            "RSA/DSS/ECDSA/Ed25519 keys, plus a MINA-backed server side for reverse forwards "
-            "(`doc(\"paramiko\")`). Not supported: `invoke_shell` — use `exec_command`/SFTP.")
        :shim/docs
        (str "Paramiko-compatible SSH2 via pure-Java JSch: SSHClient exec/SFTP, "
             "RSA/DSS/ECDSA/Ed25519 keys, and server APIs/constants. "

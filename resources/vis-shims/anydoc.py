@@ -1681,6 +1681,11 @@ def __vis_install_anydoc__():
     mod = types.ModuleType("anydoc")
     mod.__doc__ = """Any document as Markdown, and any question about it as citations.
 
+    Reads .doc .docx .odt .rtf .pdf .epub .ppt .pptx .odp .xls .xlsx .xlsm .xlsb .ods .csv
+    as Markdown from a path, bytes or an open file (`to_markdown`, `to_document`) and
+    BM25-searches one document or a directory with page/section/line citations (`search`).
+    No writing, OCR or embeddings.
+
 Reading:
 
     anydoc.to_markdown("q1.pdf")                 -> str

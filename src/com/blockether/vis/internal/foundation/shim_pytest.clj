@@ -59,11 +59,6 @@
      :ext/sandbox-shims
      [{:shim/name "pytest"
        :shim/imports ["pytest"]
-       :shim/description
-       (str
-         "Stdlib `pytest` subset: collection, assert introspection, conftest, parametrize, marks, "
-         "`raises`/`warns`/`approx`, the common fixtures, and `pytest.main(args)` over node ids. "
-         "Not supported: plugins, most CLI options, import-time assertion rewriting.")
        :shim/docs
        (str "Stdlib pytest subset: collection/assert introspection; conftest, parametrize, "
             "marks, raises/warns/approx; fixtures monkeypatch, capsys/capfd/caplog, recwarn, "

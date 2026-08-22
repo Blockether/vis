@@ -288,20 +288,15 @@
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
-     :ext/sandbox-shims
-     [{:shim/name "sqlite3"
-       :shim/imports ["sqlite3"]
-       :shim/description
-       (str
-         "JVM xerial sqlite-jdbc `sqlite3` DB-API 2.0; connections use integer handles. Bindings "
-         "support int/float/str/None only, else `InterfaceError`.")
-       :shim/bindings sqlite-bridge-bindings
-       :shim/resources {::conns {:resource/label "sqlite connection"
-                                 :resource/release (fn [_h ^Connection c]
-                                                     (.close c))
-                                 ;; Backstop for a runaway guest inside ONE session; the scope is
-                                 ;; what stops a connection outliving the session that opened it.
-                                 :resource/max 64}}
-       :shim/source "vis-shims/sqlite3.py"}]}))
+     :ext/sandbox-shims [{:shim/name "sqlite3"
+                          :shim/imports ["sqlite3"]
+                          :shim/bindings sqlite-bridge-bindings
+                          :shim/resources {::conns {:resource/label "sqlite connection"
+                                                    :resource/release (fn [_h ^Connection c]
+                                                                        (.close c))
+                                                    ;; Backstop for a runaway guest inside ONE session; the scope is
+                                                    ;; what stops a connection outliving the session that opened it.
+                                                    :resource/max 64}}
+                          :shim/source "vis-shims/sqlite3.py"}]}))
 
 (vis/register-extension! vis-extension)

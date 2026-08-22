@@ -32,13 +32,6 @@
      :ext/license "Apache-2.0"
      :ext/kind "foundation"
      :ext/sandbox-shims
-     [{:shim/name "requests"
-       :shim/imports ["requests"]
-       :shim/description
-       (str "`requests`-compatible API over stdlib urllib. No HTTP/2 or real pooling; "
-            "`verify=`/`cert=` build the TLS context from a str, bytes or os.PathLike path and "
-            "`REQUESTS_CA_BUNDLE`/`CURL_CA_BUNDLE` are read unless `Session.trust_env` is off; "
-            "`HTTPDigestAuth` is accepted but sends no auth header.")
-       :shim/source "vis-shims/requests.py"}]}))
+     [{:shim/name "requests" :shim/imports ["requests"] :shim/source "vis-shims/requests.py"}]}))
 
 (vis/register-extension! vis-extension)

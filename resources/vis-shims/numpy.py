@@ -1923,6 +1923,12 @@ def __vis_install_numpy__():
 
     # ---- module assembly -------------------------------------------------------
     mod = types.ModuleType("numpy")
+    mod.__doc__ = (
+        "Pure-Python `numpy` subset: ndarray, broadcasting, reductions, `linalg` "
+        "norm/det/inv/solve, random, histogram. No C speed or shared-memory views. Not "
+        "supported: eig/svd/qr, >2-D axis median/cumsum/sort/flip, >1-D pad, dstack "
+        "(`NotImplementedError`)."
+    )
     mod.__version__ = "1.26-vis-pure"
     mod.ndarray = ndarray
     mod.dtype = _DType

@@ -2493,7 +2493,12 @@ def __vis_install_matplotlib__():
     pyplot.colormaps = get_cmap
 
     mpl = types.ModuleType("matplotlib")
-    mpl.__doc__ = "vis matplotlib-compat shim (no CPython matplotlib wheel)."
+    mpl.__doc__ = (
+        "`matplotlib.pyplot` and OO subset with native PNG and ASCII renderers "
+        "(line/scatter/bar/hist/fill/step/pie/box/image, `mpl_toolkits.mplot3d`); `show()` is "
+        "inline PNG or ASCII, `savefig` writes PNG or ASCII text. Not supported: animation, "
+        "full rcParams theming."
+    )
     mpl.__version__ = "3.0-vis-imaging"
     mpl.pyplot = pyplot
     mpl.style = style
@@ -2526,6 +2531,11 @@ def __vis_install_matplotlib__():
     mplot3d.proj3d = proj3d
 
     mpl_toolkits = types.ModuleType("mpl_toolkits")
+    mpl_toolkits.__doc__ = (
+        "The `mpl_toolkits` half of the vis `matplotlib` shim: `mplot3d` (`Axes3D`, `art3d`, "
+        "`proj3d`) and `axes_grid1`, over the same native renderer. Same refusals as "
+        '`matplotlib` — see `doc("matplotlib")`.'
+    )
     mpl_toolkits.mplot3d = mplot3d
 
     # ---- matplotlib submodules -------------------------------------------

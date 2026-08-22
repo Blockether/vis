@@ -2555,7 +2555,11 @@ def __vis_install_pytest_compat__():
 
     # ---- publish module -----------------------------------------------------
     mod = types.ModuleType("pytest")
-    mod.__doc__ = "vis pytest-compatible shim (pure Python stdlib; no plugins/import-rewrite, minimal -k/-x/--maxfail/--collect-only CLI with node-id selection, conftest.py in disk mode)."
+    mod.__doc__ = (
+        "Stdlib `pytest` subset: collection, assert introspection, conftest, parametrize, "
+        "marks, `raises`/`warns`/`approx`, the common fixtures, and `pytest.main(args)` over "
+        "node ids. Not supported: plugins, most CLI options, import-time assertion rewriting."
+    )
     mod.__version__ = "8.0-vis"
     mod.raises = raises
     mod.warns = warns

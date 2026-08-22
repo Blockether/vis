@@ -268,13 +268,9 @@
     "advertises exact model-facing Python capabilities, never internal shim ids"
     (let [shims [{:shim/name "attachments"
                   :shim/globals ["attach" "list_attachments" "get_attachment" "read_attachment"
-                                 "show_attachment"]
-                  :shim/description
-                  "Persist artifacts as durable attachments. Vis-native; no upstream library."}
+                                 "show_attachment"]}
                  {:shim/name "fonttools" :shim/imports ["brotli" "fontTools"]}
-                 {:shim/name "numpy"
-                  :shim/imports ["numpy"]
-                  :shim/description "Pure-Python `numpy` subset. Not supported: eig/svd/qr."}
+                 {:shim/name "numpy" :shim/imports ["numpy"]}
                  {:shim/name "pil" :shim/imports ["PIL"]}
                  {:shim/name "tzdata" :shim/imports ["zoneinfo"]}]]
       (with-redefs [extension/sandbox-shims (constantly shims)]
@@ -293,19 +289,14 @@
                           "show_attachment"]]
             (expect (str/includes? text (str "`" global "`"))))
           (expect (not (str/includes? text "`attachments`")))
-          ;; NAMES ALONE ARE A TRAP. Every shim is a reimplementation, so the surface
-          ;; it supports and the APIs it refuses must travel WITH the name: reading
-          ;; only `numpy` in this block, the model wrote against the real numpy and
-          ;; first learned about `NotImplementedError` from a failed call.
+          ;; NAMES ALONE WOULD BE A TRAP — every shim is a REIMPLEMENTATION — so the
+          ;; block still says so, but it POINTS at the page instead of pushing one
+          ;; hand-written bullet per shim (5.7 KB) into every request. `doc("numpy")`
+          ;; answers from the module's own Python `__doc__` plus the members it lends.
           (expect (str/includes? text "REIMPLEMENTATION"))
-          (expect (str/includes?
-                    text
-                    "- `numpy`: Pure-Python `numpy` subset. Not supported: eig/svd/qr."))
-          (expect (str/includes? text
-                                 (str "- `attach`, `list_attachments`, "
-                                      "`get_attachment`, `read_attachment`, "
-                                      "`show_attachment`: Persist artifacts")))
-          ;; A shim that documents nothing contributes no empty bullet.
+          (expect (str/includes? text "doc(\"numpy\")"))
+          (expect (str/includes? text "doc(\"numpy.linalg.solve\")"))
+          (expect (not (str/includes? text "- `numpy`")))
           (expect (not (str/includes? text "- `brotli`")))
           ;; With no shell layer active the block must SAY the process surface is
           ;; gone: silence read as "maybe try `subprocess`", and every attempt then
@@ -333,21 +324,26 @@
         (expect (str/includes? text "os.popen"))
         (expect (not (str/includes? text "shell(")))
         (expect (not (str/includes? text "\"id\"")))))
-  (it "carries every REGISTERED shim's own limits into the prompt, inside budget"
-      ;; The registry itself, not a fixture: the shim the model actually gets has to
-      ;; be the shim the prompt describes, or the description is dead metadata.
+  (it "pushes every REGISTERED shim's names, and its prose nowhere"
+      ;; The registry itself, not a fixture: the model gets exactly these names. The
+      ;; prose that used to ride along — one hand-written bullet per shim — now lives
+      ;; in each module's own Python `__doc__`, is harvested into
+      ;; `resources/vis-shims/capabilities.edn`, and is PULLED by `doc(name)`. A block
+      ;; that grows back into prose is a context regression, not documentation.
       (let [text
             (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])
 
-            described
-            (filter :shim/description (extension/sandbox-shims))]
+            shims
+            (extension/sandbox-shims)]
 
-        (expect (seq described))
-        (doseq [shim described]
-          (expect (str/includes? text (str/trim (:shim/description shim)))))
-        ;; One stable block worth roughly 2.5k tokens. A description that grows
-        ;; without bound is a context regression, not documentation.
-        (expect (< (count text) 16000)))))
+        (expect (seq shims))
+        (doseq [nm (mapcat #(concat (:shim/imports %) (:shim/globals %)) shims)]
+          (expect (str/includes? text (str "`" nm "`"))
+                  (str nm " is installed but the prompt never names it")))
+        (doseq [shim (filter :shim/docs shims)]
+          (expect (not (str/includes? text (subs (:shim/docs shim) 0 40)))
+                  (str (:shim/name shim) " pushes its pulled page into every request")))
+        (expect (< (count text) 1500)))))
 
 (defdescribe
   project-instructions-hoist-test

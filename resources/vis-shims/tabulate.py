@@ -2992,7 +2992,10 @@ def __vis_install_tabulate__():
         return locals()
 
     mod = types.ModuleType("tabulate")
-    mod.__doc__ = "Pretty-print tabular data."
+    mod.__doc__ = (
+        "`tabulate`-compatible, pure Python: "
+        "plain/simple/github/pipe/grid/fancy_grid/rst/tsv/html. No exotic formats or color."
+    )
     for _k, _v in _tabulate_module_body().items():
         setattr(mod, _k, _v)
     sys.modules["tabulate"] = mod

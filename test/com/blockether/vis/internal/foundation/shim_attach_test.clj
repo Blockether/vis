@@ -10,6 +10,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
+            [com.blockether.vis.internal.shim-capabilities :as shim-caps]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context Value]
            [java.nio.file Files]
@@ -371,12 +372,11 @@
         (expect (true? (ev pctx "'callable' in doc('attach')")))
         (expect (true? (ev pctx "'callable' in doc('show_attachment')")))))
   (it "discovers declared capabilities instead of the internal shim identity"
-      (with-redefs [extension/sandbox-shims (constantly
-                                              [{:shim/name "internal-id"
-                                                :shim/imports ["actual_module"]
-                                                :shim/globals ["actual_global"]
-                                                :shim/description "Synthetic discovery contract."
-                                                :shim/source "vis-shims-test/discovery.py"}])]
+      (with-redefs [extension/sandbox-shims (constantly [{:shim/name "internal-id"
+                                                          :shim/imports ["actual_module"]
+                                                          :shim/globals ["actual_global"]
+                                                          :shim/source
+                                                          "vis-shims-test/discovery.py"}])]
         (let [pctx (ctx-with-root (temp-root))]
           (expect (= ["actual_global" "actual_module"]
                      (vec (ev pctx "sorted(list(apropos('actual'))[:2])"))))
@@ -783,15 +783,7 @@
    — the shim description that rides the prompt, and the sandbox `doc()` plus
    `__doc__` of both attach twins — carries the same rule in the same words."
   (it "tells the write side to keep one document under one name"
-      (let [shim
-            (->> shim-attach/vis-extension
-                 :ext/sandbox-shims
-                 (filter #(= "attachments" (:shim/name %)))
-                 first)
-
-            descr
-            (str (:shim/description shim))]
-
+      (let [descr (str (shim-caps/page "attach"))]
         (expect (re-find #"SAME DOCUMENT, SAME NAME" descr))
         (expect (re-find #"(?i)next VERSION" descr))
         (expect (re-find #"(?i)different document" descr)))
