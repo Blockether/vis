@@ -50,22 +50,6 @@ Vis Companion is the phone client for a Vis gateway you run yourself — it driv
 
 The app requires a gateway. Start one with `vis-agent gateway`, then pair by scanning the QR code it displays. For application questions and feedback, email `contact@blockether.com` (or use the TestFlight feedback button).
 
-## The runtime
-
-There is nothing to choose: how Vis was installed decides what runs, and everything it installs lives under `~/.vis`. Where the command file sits decides nothing either — a copy of the wrapper inside a checkout still runs the runtime Vis owns, never the tree around it.
-
-| Runtime | Runs | Comes from |
-|---|---|---|
-| `native` | the private `vis-agent-native` sidecar beside the command | a release bundle or the container image |
-| `jvm` | `clojure -M:vis` from the source Vis owns, pinned to main's newest commit | `install-vis-agent` |
-
-```bash
-vis-agent runtime           # what runs, where it lives, what the source is pinned to
-vis-agent update            # move the command and its runtime to the newest
-```
-
-`vis-agent update` takes the installed runtime forward and carries the command with it; it never swaps one runtime for the other. A native build wins whenever one is installed. Full detail: [Runtime distributions](resources/vis-docs/distributions.md).
-
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
