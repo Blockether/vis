@@ -14,8 +14,8 @@ export interface DeviceVoice {
   isLocal?: boolean;
 }
 
-/** Five named alternatives plus System default keep the device picker deliberate and short. */
-export const BEST_DEVICE_VOICE_LIMIT = 5;
+/** Three premium-ranked alternatives plus System default keep the device picker deliberate. */
+export const BEST_DEVICE_VOICE_LIMIT = 3;
 
 function normalizedLanguage(value: string | undefined): string {
   return (value ?? "").replaceAll("_", "-").toLowerCase();
@@ -52,9 +52,9 @@ function preferredDeviceLanguages(): string[] {
 }
 
 /**
- * The best INSTALLED named voices for this device: relevant language first, then the OS's
- * quality, local availability and default verdict. A stored choice remains reachable even
- * after preferences or installed voice packs change, without making the list grow.
+ * Up to three premium-ranked INSTALLED voices for this device: relevant language first,
+ * then the OS's quality, local availability and default verdict. A stored choice remains
+ * reachable after preferences or installed voice packs change, without making the list grow.
  */
 export function bestDeviceVoices(
   voices: DeviceVoice[],

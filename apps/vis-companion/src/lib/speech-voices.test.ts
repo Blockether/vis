@@ -22,8 +22,6 @@ describe("best device voices", () => {
       "premium-local",
       "premium-web",
       "enhanced",
-      "high",
-      "good",
     ]);
     expect(chosen.some((voice) => voice.language === "fr-FR")).toBe(false);
   });
@@ -32,8 +30,11 @@ describe("best device voices", () => {
     const chosen = bestDeviceVoices(voices, "compact", ["en-US"]);
 
     expect(chosen).toHaveLength(BEST_DEVICE_VOICE_LIMIT);
-    expect(chosen.map((voice) => voice.id)).toContain("compact");
-    expect(chosen.map((voice) => voice.id)).not.toContain("good");
+    expect(chosen.map((voice) => voice.id)).toEqual([
+      "premium-local",
+      "premium-web",
+      "compact",
+    ]);
   });
 
   it("recognises the quality markers carried by Apple voice identifiers", () => {
@@ -41,6 +42,11 @@ describe("best device voices", () => {
       [
         { id: "com.apple.voice.compact.en-US.Fred", label: "Fred", language: "en-US" },
         { id: "com.apple.voice.premium.en-US.Ava", label: "Ava", language: "en-US" },
+        {
+          id: "com.apple.voice.natural.en-US.Samantha",
+          label: "Samantha",
+          language: "en-US",
+        },
         { id: "com.apple.voice.enhanced.en-US.Alex", label: "Alex", language: "en-US" },
       ],
       null,
@@ -49,8 +55,9 @@ describe("best device voices", () => {
 
     expect(chosen.map((voice) => voice.id)).toEqual([
       "com.apple.voice.premium.en-US.Ava",
+      "com.apple.voice.natural.en-US.Samantha",
       "com.apple.voice.enhanced.en-US.Alex",
-      "com.apple.voice.compact.en-US.Fred",
     ]);
+    expect(chosen.some((voice) => voice.id.includes("compact"))).toBe(false);
   });
 });

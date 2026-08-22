@@ -147,7 +147,7 @@ describe("the speech-engines band", () => {
     await waitFor(() => expect(asked).toContain("asr:whisper-local:read"));
   });
 
-  it("labels machine TTS as gateway engines and offers only the best device voices", async () => {
+  it("labels machine TTS as gateway engines and offers up to three premium device voices", async () => {
     const { client } = machine();
     render(<Harness client={client} />);
 
@@ -160,9 +160,9 @@ describe("the speech-engines band", () => {
     expect(screen.queryByRole("button", { name: /Piper \(local\)/ })).toBeNull();
     expect(screen.getByRole("button", { name: /Samantha/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Ava/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Alex/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /Tom/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Zoe/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Alex/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Zoe/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Daniel/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Fred Compact/ })).toBeNull();
 
