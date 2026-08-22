@@ -39,6 +39,15 @@ vis-agent update            # move the command and its runtime to the newest com
 {:deps {com.blockether/vis {:mvn/version "0.1.41"}}}
 ```
 
+## Quick start
+
+```bash
+vis-agent tui --jvm                                 # interactive terminal UI
+vis-agent gateway start --host 0.0.0.0 --pair --jvm # gateway for the phone app; prints the pairing QR
+```
+
+`--jvm` runs the JVM source runtime — the checkout Vis owns — instead of an installed native binary (`VIS_JVM=1` is the same switch). A gateway bound to a non-loopback `--host` always requires a bearer token, and `--pair` prints the QR that carries it — see [Gateway & pairing](resources/vis-docs/gateway.md).
+
 ## Companion app (iPhone / Android)
 
 Vis Companion is the phone client for a Vis gateway you run yourself — it drives the same sessions as the TUI (see [Gateway & pairing](resources/vis-docs/gateway.md)). Both stores are in public testing; no invite, no tester list, just the link.
