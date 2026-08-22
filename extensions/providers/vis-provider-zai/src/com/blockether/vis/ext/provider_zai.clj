@@ -383,6 +383,39 @@
       (and (seq rows) (some? level))
       (assoc :note (str "Z.ai coding plan level: " level ".")))))
 
+(def ^:private quota-auth-statuses #{401 403})
+
+(defn- application-quota-error
+  "The Z.ai monitor endpoint can answer HTTP 200 while its JSON body rejects
+   the request. Return that application-level failure without retaining the
+   response body or credential."
+  [quota]
+  (let [success
+        (field quota :success)
+
+        code
+        (field quota :code)
+
+        status
+        (when (number? code) (long code))]
+
+    (when (or (false? success) (and status (<= 400 status 599)))
+      {:status status
+       :message (some-> (or (field quota :msg) (field quota :message))
+                        str
+                        str/trim
+                        not-empty)})))
+
+(defn- quota-request-error
+  [status message]
+  (ex-info (str "Z.ai coding plan quota request failed" (when status (str ": HTTP " status)))
+           (cond-> {:type :provider/zai-coding-quota-error :url coding-quota-url}
+             status
+             (assoc :status status)
+
+             message
+             (assoc :upstream-message message))))
+
 (defn- fetch-quota!
   [api-key]
   (let [response
@@ -397,15 +430,41 @@
         body
         (:body response)]
 
-    (if (<= 200 status 299)
-      (json/read-json body :key-fn keyword)
-      (throw (ex-info (str "Z.ai coding plan quota request failed: HTTP " status)
-                      {:type :provider/zai-coding-quota-error
-                       :status status
-                       :body body
-                       :url coding-quota-url})))))
+    (if (and (number? status) (<= 200 status 299))
+      (let [quota (json/read-json body :key-fn keyword)]
+        (if-let [{:keys [status message]} (application-quota-error quota)]
+          (throw (quota-request-error status message))
+          quota))
+      (throw (quota-request-error status nil)))))
 
-(defn- coding-dynamic-limits! [api-key] (quota->dynamic-limits (fetch-quota! api-key)))
+(defn- quota-error-note
+  [label status message]
+  (str label
+       (if (contains? quota-auth-statuses status)
+         " rejected the current API key"
+         " quota check failed")
+       (when message (str ": " (str/replace message #"[.!?]+$" "")))
+       "."))
+
+(defn- coding-limits-report!
+  [provider-id label api-key]
+  (try {:provider-id provider-id
+        :status :ok
+        :fetched-at-ms (System/currentTimeMillis)
+        :dynamic (quota->dynamic-limits (fetch-quota! api-key))}
+       (catch Throwable t
+         (let [{:keys [status upstream-message]}
+               (ex-data t)
+
+               auth-rejected?
+               (contains? quota-auth-statuses status)]
+
+           {:provider-id provider-id
+            :status (if auth-rejected? :unauthenticated :error)
+            :fetched-at-ms (System/currentTimeMillis)
+            :dynamic {:limits [] :note (quota-error-note label status upstream-message)}
+            :error {:type :provider/zai-coding-quota-error
+                    :message (or (ex-message t) "Z.ai coding plan quota check failed")}}))))
 
 (defn- make-limits-fn
   [plan-tag]
@@ -416,14 +475,17 @@
           detected
           (detect-key plan-tag)]
 
-      {:provider-id provider-id
-       :status (if detected :ok :unauthenticated)
-       :fetched-at-ms (System/currentTimeMillis)
-       :dynamic (cond (nil? detected) {:limits [] :note (str label " is not authenticated.")}
-                      (= :coding plan-tag) (coding-dynamic-limits! (:api-key detected))
-                      :else {:limits []
+      (cond (nil? detected) {:provider-id provider-id
+                             :status :unauthenticated
+                             :fetched-at-ms (System/currentTimeMillis)
+                             :dynamic {:limits [] :note (str label " is not authenticated.")}}
+            (= :coding plan-tag) (coding-limits-report! provider-id label (:api-key detected))
+            :else {:provider-id provider-id
+                   :status :ok
+                   :fetched-at-ms (System/currentTimeMillis)
+                   :dynamic {:limits []
                              :note (str label
-                                        " does not expose a dynamic quota endpoint yet.")})})))
+                                        " does not expose a dynamic quota endpoint yet.")}}))))
 
 (defn- auth-instruction-lines
   [plan-tag]

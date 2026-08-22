@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.provider-zai-test
-  (:require [com.blockether.svar.core :as svar]
+  (:require [babashka.http-client :as http]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.provider-zai :as zai]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -95,4 +96,20 @@
           (let [report ((:provider/limits-fn (vis/provider-by-id :zai-coding-plan)))]
             (expect (= :zai-coding-plan (:provider-id report)))
             (expect (= :unauthenticated (:status report)))
-            (expect (= [] (get-in report [:dynamic :limits]))))))))
+            (expect (= [] (get-in report [:dynamic :limits])))))))
+  (it "treats an application-level 401 quota response as rejected credentials"
+      (require 'com.blockether.vis.ext.provider-zai :reload)
+      (with-redefs-fn
+        {#'zai/detect-key (fn [plan-tag]
+                            (when (= :coding plan-tag) {:api-key "rejected-key" :source :config}))
+         #'http/get (fn [_url _request]
+                      {:status 200
+                       :body
+                       "{\"success\":false,\"code\":401,\"msg\":\"token expired or incorrect\"}"})}
+        (fn []
+          (let [report ((:provider/limits-fn (vis/provider-by-id :zai-coding-plan)))]
+            (expect (= :unauthenticated (:status report)))
+            (expect (= [] (get-in report [:dynamic :limits])))
+            (expect (=
+                      "Z.ai (Coding Plan) rejected the current API key: token expired or incorrect."
+                      (get-in report [:dynamic :note]))))))))
