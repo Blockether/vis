@@ -1183,6 +1183,35 @@ class LiveView:
         self._last_read = time.monotonic()
         return answer.get("view")
 
+    def sleep(self, seconds, slice_ms=200):
+        """Wait out `seconds`, waking the MOMENT a surface changes the view.
+
+        A tap on a focusable row, an expanded node or a stop is shared state, not
+        provider data: it is already in the view before any provider answers. A
+        loop that naps between polls waits here instead of in `time.sleep`, so the
+        details a person just asked for are pushed within a slice rather than at
+        the end of the nap. Answers True when it woke early (something changed, or
+        the view ended), False when the whole time passed untouched.
+
+        Reads the view once per slice — five host calls a second by default, and
+        none at all outside a nap. `seconds` at or below zero costs nothing.
+        """
+        seconds = float(seconds)
+        if seconds <= 0:
+            return False
+        step = max(0.01, float(slice_ms) / 1000.0)
+        deadline = time.monotonic() + seconds
+        before = self._json.dumps(self.state(), sort_keys=True)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(step, remaining))
+            if self._json.dumps(self.state(), sort_keys=True) != before:
+                return True
+            if not self._is_open:
+                return True
+
     @property
     def is_interrupted(self):
         """True once the human stopped watching.

@@ -867,3 +867,44 @@ def test_malformed_github_json_is_a_retryable_poll_failure(monkeypatch):
         gh.fetch_run(42)
     with pytest.raises(RuntimeError, match="invalid JSON"):
         gh.fetch_checks(42)
+
+
+def test_a_tap_during_the_nap_is_answered_before_the_next_poll(recorder, monkeypatch):
+    """Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a tap waited out the tick.
+
+    The watcher slept the whole three-second tick in one piece and only then read the
+    shared selection, so a click on a job row took a tick (eight seconds on a long run)
+    plus a GitHub poll before its steps and log appeared.
+    """
+    monkeypatch.setattr(gh, "FAST_TICK_S", 3.0)
+    polls = [fixture("run-mid.json"), fixture("run-final.json")]
+    selected = "95742028809"
+    events = []
+    now = [0.0]
+    slept = []
+
+    def fake_sleep(seconds):
+        now[0] += seconds
+        slept.append(seconds)
+        if len(slept) == 2:
+            recorder.focus("jobs", [selected])
+
+    monkeypatch.setattr(vis.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(vis.time, "sleep", fake_sleep)
+
+    def poll():
+        events.append("poll")
+        return polls.pop(0) if len(polls) > 1 else polls[0]
+
+    def log_of(job_id, lines):
+        events.append(f"log {job_id}")
+        return [f"log for {job_id}"]
+
+    gh.watch(TITLE, DESCRIPTION, poll, log_of)
+
+    second_poll = [index for index, one in enumerate(events) if one == "poll"][1]
+    assert events.index(f"log {selected}") < second_poll
+    # The tap was answered a slice after it landed, not a tick.
+    assert sum(slept[:2]) <= gh.NAP_SLICE_S * 2
+    # GitHub keeps its own cadence: the tap neither polls it nor cuts the tick short.
+    assert sum(slept) == pytest.approx(3.0)

@@ -546,3 +546,47 @@ def test_the_first_op_crosses_on_a_freshly_booted_machine(monkeypatch):
     assert view.is_interrupted is False
     assert crossed == ["open", "patch", "state"]
     view.close()
+
+
+def test_a_nap_answers_a_surface_the_moment_it_touches_the_view(monkeypatch):
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a watcher slept out its
+    # whole provider tick before reading shared state, so a tap on a row waited seconds
+    # for details the extension already had.
+    recorder = vis.testing.LiveRecorder(vis._host)
+    monkeypatch.setattr(vis, "_host", recorder)
+    now = [0.0]
+    slept = []
+
+    def fake_sleep(seconds):
+        now[0] += seconds
+        slept.append(seconds)
+        if len(slept) == 2:
+            recorder.focus("jobs", ["b"])
+
+    monkeypatch.setattr(vis.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(vis.time, "sleep", fake_sleep)
+    view = vis.live(
+        "CI",
+        [
+            vis.table(
+                "jobs",
+                columns=[vis.table_column("job", "Job")],
+                rows=[vis.table_row("a", ["one"]), vis.table_row("b", ["two"])],
+                is_focusable=True,
+                focused_ids=["a"],
+            )
+        ],
+    )
+
+    # Nothing to wait for costs nothing: no slice, no host call.
+    assert view.sleep(0) is False
+    assert slept == []
+
+    assert view.sleep(3.0) is True
+    assert sum(slept) <= 0.5
+    assert recorder.node("jobs")["focused_ids"] == ["b"]
+
+    slept.clear()
+    assert view.sleep(1.0) is False
+    assert sum(slept) == pytest.approx(1.0)
+    view.close()

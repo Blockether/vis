@@ -691,7 +691,6 @@ human watches it in the terminal, in the companion app, or both.
 
 ```python
 import json
-import time
 
 import vis
 
@@ -737,7 +736,7 @@ def watch_run(run_id):
                         tone=TONES.get(job["conclusion"], "error"),
                     )
             view["progress"].set(done=sum(1 for j in run["jobs"] if j["status"] == "completed"))
-            time.sleep(5)
+            view.sleep(5)                     # wakes at once when a person taps a row
             run = poll(run_id)
         view["run"].set(run["conclusion"], tone=TONES.get(run["conclusion"], "error"))
         return view.close(summary=f"the run {run['conclusion']}")
@@ -775,6 +774,15 @@ paints every leaf row as a control; `focused_ids=[…]` is its initial selection
 
 A surface click and `view["jobs"].focus(*row_ids)` write the same shared patch, so the
 extension reads the current selection from `view.state()` before it replaces the focused detail.
+
+**Nap with `view.sleep(seconds)`, never `time.sleep`.** A provider's cadence is not the
+human's: `time.sleep(3)` holds the loop for three whole seconds after a click, so the
+steps and log a person just asked for arrive a tick late even though the extension
+already had them. `view.sleep(3)` waits out that same tick in short slices, reads the
+view every slice, and answers `True` the moment a surface changed it (or the view
+ended) — apply the new selection there and go back to napping out the rest of the tick,
+and a tap costs no provider call at all. Napping costs about five host reads a second
+and nothing outside a nap; `view.sleep(0)` answers `False` without reading.
 
 **Writing an item twice updates it in place.** Every keyed verb is an upsert:
 `.upsert("web-1", …)` is both "new row" and "that row changed", because a scan

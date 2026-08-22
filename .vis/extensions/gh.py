@@ -51,6 +51,11 @@ SLOW_TICK_S = 8.0
 BACKOFF_AFTER_S = 300.0
 MAX_CONSECUTIVE_POLL_FAILURES = 3
 
+# A tick is GITHUB's cadence, never the human's. The nap between two polls is slept in
+# slices, and every slice reads the shared selection, so a tap on a job row is answered
+# within a fifth of a second instead of at the end of a three- or eight-second tick.
+NAP_SLICE_S = 0.2
+
 # The model's copy of a log is a TAIL: the whole log stays in the view's record. The settled tail
 # is the engine's own model budget for a log node, so the picture elides nothing; a job that fails
 # mid-run says less, because the run is not over and the story is still moving.
@@ -845,6 +850,24 @@ def _sync_surface_focus(view, payload, shape, manual_focus, log_of, cache, shown
     return focused, manual_focus, fresh_focus
 
 
+def _nap(view, seconds, payload, shape, manual_focus, log_of, cache, shown_focus):
+    """Wait out one tick, answering a surface tap the moment it lands.
+
+    GitHub keeps its own cadence; a selection is local shared state, so the steps and
+    log a person just asked for are pushed inside the nap rather than a whole tick and
+    a poll later. The tick is never cut short — a tap costs no GitHub call.
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or view.is_interrupted:
+            return shape, manual_focus, shown_focus
+        if view.sleep(remaining, slice_ms=NAP_SLICE_S * 1000):
+            shape, manual_focus, shown_focus = _sync_surface_focus(
+                view, payload, shape, manual_focus, log_of, cache, shown_focus
+            )
+
+
 def watch(title, description, poll, log_of=None, superseded_by=None):
     """Open a selectable CI view, patch it until the run ends, answer its picture.
 
@@ -872,8 +895,19 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
             while not shape["is_over"]:
                 if view.is_interrupted:
                     break
-                time.sleep(_tick(time.monotonic() - began))
                 try:
+                    # The nap is where a tap is ANSWERED: shared state is read every
+                    # slice, so a click does not wait out the tick.
+                    shape, manual_focus, shown_focus = _nap(
+                        view,
+                        _tick(time.monotonic() - began),
+                        payload,
+                        shape,
+                        manual_focus,
+                        log_of,
+                        log_cache,
+                        shown_focus,
+                    )
                     # Selection is local shared state, not provider data. Apply it BEFORE a
                     # network call so a slow or unavailable GitHub cannot freeze the details.
                     shape, manual_focus, shown_focus = _sync_surface_focus(
@@ -982,7 +1016,8 @@ def gh_watch_run(run=None, repo=None, pr=None):
 
     Opens a live view a person can watch (and stop), easing polls from three seconds to eight after
     five minutes. Job rows are controls: all jobs running in parallel are focused initially; tap one
-    to replace the steps and output below with that job. The returned string is compact JSON: run
+    to replace the steps and output below with that job, answered within a fifth of a second
+    whatever the poll cadence. The returned string is compact JSON: run
     metadata; a schema-once list of every job with id, outcome, start/end times, and nested step
     ids/outcomes/names; and one bounded log tail for each failed job. It never repeats the artifact
     tree. `run` is a run id or URL; without `run` or `pr`, the newest run on the current branch is
