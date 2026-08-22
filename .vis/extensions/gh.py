@@ -3,10 +3,9 @@
 A CI run is the archetype a live view exists for: it takes time, a person wants to WATCH it, and
 the model needs the final jobs, steps, timing, and failed logs without repeating the artifact tree.
 
-**Everything GitHub is the `gh` CLI through the sandbox shell verb.** No hand-built HTTPS, no token
-read, copied or printed: authentication is the operator's own `gh` session, and a missing or
-unauthenticated `gh` refuses in ONE line before any view opens — nothing to watch beats an empty
-pane.
+**Everything GitHub is the `gh` CLI through the sandbox shell verb.** No hand-built HTTPS, token
+read, copy, or model-visible credential: when `gh` is signed out, GitHub's browser device flow is
+mediated by private human input before any view opens.
 
 Seven nodes answer distinct questions about a run: status (`run`), completion (`progress`), outcome
 counts (`score`), jobs (`jobs`), the selected job's steps (`steps`) and log (`output`), and where to
@@ -33,6 +32,7 @@ watcher; a check set with no checks settles neutral rather than waiting forever.
 import calendar
 import json
 import os
+import re
 import shlex
 import tempfile
 import time
@@ -397,16 +397,128 @@ def _capture(command, seconds=120):
         os.unlink(path)
 
 
-def require_gh():
-    """Refuse in one line when `gh` is absent or signed out — before anything is opened."""
-    exit_code, text = _capture("gh auth status", 60)
-    if exit_code != 0:
-        first = next((line.strip() for line in text.splitlines() if line.strip()), "")
-        raise GhMissing(
-            "gh is not usable here: "
-            + (first or "`gh auth status` failed")
-            + " — install GitHub CLI and run `gh auth login`, then ask again"
+def _github_hostname(value):
+    """A shell-safe GitHub host name, without accepting a URL or command syntax."""
+    hostname = str(value or "").strip().lower()
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", hostname):
+        raise ValueError("hostname must be a host name such as github.com")
+    return hostname
+
+
+def _auth_status(hostname="github.com"):
+    """Whether GitHub CLI has a valid account for one host, without exposing its status text."""
+    hostname = _github_hostname(hostname)
+    exit_code, _ = _capture(
+        f"gh auth status --hostname {shlex.quote(hostname)}",
+        60,
+    )
+    return exit_code == 0
+
+
+def _device_authorization(process, hostname, seconds=60):
+    """Read the short-lived OAuth device code and URL from a running `gh auth login`."""
+    deadline = time.monotonic() + seconds
+    ansi = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+    while True:
+        state = process.logs(-80)
+        text = ansi.sub("", str(state.get("out") or ""))
+        code = re.search(r"\b[A-Z0-9]{4}-[A-Z0-9]{4}\b", text)
+        url = re.search(r"https://[^\s]+/login/device", text)
+        if code and url:
+            target = url.group(0)
+            if not target.lower().startswith(f"https://{hostname}/"):
+                raise GhMissing("GitHub CLI returned an unexpected authorization host")
+            return code.group(0), target
+        if state.get("status") != "running":
+            raise GhMissing(
+                "GitHub CLI exited before browser authorization could begin"
+            )
+        if time.monotonic() >= deadline:
+            process.stop()
+            raise GhMissing("GitHub CLI did not produce a browser authorization code")
+        process.wait(1)
+
+
+def gh_login(hostname="github.com"):
+    """Authenticate GitHub CLI through private human input and GitHub's browser device flow.
+
+    If already signed in, returns immediately. Otherwise GitHub creates a short-lived code which is
+    shown only in a HITL dialog; the human opens GitHub, authorizes the CLI, and confirms there. The
+    model receives only the final status, never the code, token, account status output, or process
+    transcript. HTTPS Git credentials are configured as part of login. `hostname` defaults to
+    `github.com` and may name a GitHub Enterprise host.
+    """
+    hostname = _github_hostname(hostname)
+    if _auth_status(hostname):
+        return f"GitHub CLI is already authenticated with {hostname}."
+
+    installed, _ = _capture("gh --version", 30)
+    if installed != 0:
+        raise GhMissing("GitHub CLI is not installed; install `gh`, then ask again")
+
+    quoted = shlex.quote(hostname)
+    process = vis.shell(
+        {
+            "op": "background",
+            "id": f"gh-login-{int(time.monotonic() * 1000)}",
+            "command": (
+                "GH_BROWSER=true gh auth login "
+                f"--hostname {quoted} --git-protocol https --web --skip-ssh-key"
+            ),
+        }
+    )
+    completed = False
+    try:
+        code, url = _device_authorization(process, hostname)
+        # `gh` pauses before launching its browser helper. The helper is deliberately `true`: HITL
+        # is the browser boundary, while Enter lets `gh` begin polling GitHub for authorization.
+        process.type("")
+        answer = vis.ask(
+            "Sign in to GitHub",
+            [
+                vis.heading("Authorize GitHub CLI"),
+                vis.paragraph(f"Open this address in a browser: {url}"),
+                vis.paragraph(f"Enter this one-time code: {code}"),
+                vis.paragraph(
+                    "GitHub will show the requested CLI permissions. Approve them there, then "
+                    "return here. The code and resulting credential are never sent to the model."
+                ),
+                vis.checkbox(
+                    "authorized",
+                    label="I completed authorization in GitHub",
+                    is_required=True,
+                ),
+            ],
+            description="Authorize GitHub CLI without sharing credentials with the model.",
+            submit_label="I authorized GitHub",
+            cancel_label="Cancel sign-in",
+            timeout_ms=0,
         )
+        if not answer:
+            reason = str(getattr(answer, "reason", "cancelled") or "cancelled")
+            if reason == "cancelled":
+                raise GhMissing("GitHub authentication was cancelled by the human")
+            raise GhMissing(f"GitHub authentication could not continue: {reason}")
+
+        finished = process.wait(300)
+        if finished.get("status") == "running":
+            raise GhMissing(
+                "GitHub authentication did not finish after human authorization"
+            )
+        if finished.get("exit") != 0 or not _auth_status(hostname):
+            raise GhMissing(
+                "GitHub rejected or could not complete browser authentication"
+            )
+        completed = True
+        return f"GitHub CLI authenticated with {hostname}."
+    finally:
+        if not completed:
+            process.stop()
+
+
+def require_gh():
+    """Ensure the default GitHub CLI account exists, asking the human to sign in when needed."""
+    gh_login()
 
 
 def _repo_flag(repo):
@@ -967,18 +1079,24 @@ def fetch_checks(pull, repo=None):
     return checks_payload(rows, pull)
 
 
-PROMPT = """gh_ surface active — watch GitHub Actions on a live view the human can see.
+PROMPT = """gh_ surface active — authenticate GitHub and watch Actions on a live view the human can see.
+  gh_login(hostname="github.com")
   gh_watch_run(run=None, repo=None, pr=None)
-It watches either one run or one pull request's aggregate checks until completion, then answers the
-picture (jobs, score, focused steps, failed log tails) — use it instead of a shell polling loop."""
+`gh_login` runs GitHub's browser device flow through private human input; no code or credential is
+returned to the model. A watcher invokes it automatically when signed out. The watcher follows one
+run or one pull request's checks until completion, then answers the diagnostic picture — use it
+instead of a shell polling loop."""
 
 
 vis.extension(
     name="gh",
-    description="Watch a GitHub Actions run or pull-request checks on a live view.",
-    version="0.1.0",
+    description="Authenticate GitHub CLI and watch Actions on a live view.",
+    version="0.2.0",
     kind="integration",
     alias="gh",
-    symbols=[vis.symbol(gh_watch_run, tag="observation")],
+    symbols=[
+        vis.symbol(gh_login, tag="mutation"),
+        vis.symbol(gh_watch_run, tag="observation"),
+    ],
     prompt=PROMPT,
 )

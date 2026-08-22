@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- feat(gateway): authenticate GitHub CLI through private human input
 - fix(companion): reveal live artifacts after an interrupt
 - refactor(extensions): expose one GitHub Actions watcher for both runs and pull-request checks
 - fix(gateway): supersede explicit GitHub run watches when replacement runs start

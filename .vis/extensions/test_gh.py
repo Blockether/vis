@@ -662,18 +662,150 @@ def test_an_explicit_running_run_still_yields_to_its_replacement(monkeypatch):
     assert received["superseded_by"]() == replacement
 
 
-def test_a_missing_gh_refuses_in_one_line_before_a_view_opens(recorder, monkeypatch):
+class _LoginProcess(dict):
+    def __init__(self, output):
+        super().__init__(status="running", exit=None, out="")
+        self.output = output
+        self.sent = []
+        self.stopped = False
+
+    def logs(self, offset=None, limit=None):
+        return {"status": "running", "exit": None, "out": self.output}
+
+    def type(self, text, is_enter=True):
+        self.sent.append((text, is_enter))
+        return self
+
+    def wait(self, seconds=120):
+        return {"status": "exited", "exit": 0, "out": "Authentication complete."}
+
+    def stop(self):
+        self.stopped = True
+        return {"status": "stopped", "exit": 143, "out": ""}
+
+
+def test_device_login_keeps_the_oauth_code_inside_human_input(monkeypatch):
+    commands = []
+    started = []
+    asks = []
+    status_checks = 0
+
+    process = _LoginProcess(
+        "! First copy your one-time code: ABCD-EFGH\n"
+        "Press Enter to open https://github.com/login/device in your browser...\n"
+    )
+
+    def capture(command, seconds=120):
+        nonlocal status_checks
+        commands.append(command)
+        if command == "gh --version":
+            return 0, "gh version 2"
+        if command == "gh auth status --hostname github.com":
+            status_checks += 1
+            if status_checks == 1:
+                return 1, "You are not logged into any GitHub hosts."
+            return 0, "Logged in to github.com account operator"
+        raise AssertionError(command)
+
+    def ask(title, fields, **options):
+        asks.append((title, fields, options))
+        return {"authorized": True}
+
+    def start(options):
+        started.append(options)
+        return process
+
+    monkeypatch.setattr(gh, "_capture", capture)
+    monkeypatch.setattr(gh.vis, "shell", start)
+    monkeypatch.setattr(gh.vis, "ask", ask)
+
+    result = gh.gh_login()
+
+    assert result == "GitHub CLI authenticated with github.com."
+    assert commands == [
+        "gh auth status --hostname github.com",
+        "gh --version",
+        "gh auth status --hostname github.com",
+    ]
+    assert started[0]["op"] == "background"
+    assert started[0]["id"].startswith("gh-login-")
+    assert started[0]["command"] == (
+        "GH_BROWSER=true gh auth login --hostname github.com "
+        "--git-protocol https --web --skip-ssh-key"
+    )
+    assert process.sent == [("", True)]
+    assert len(asks) == 1
+    title, fields, options = asks[0]
+    rendered = json.dumps(fields)
+    assert title == "Sign in to GitHub"
+    assert "https://github.com/login/device" in rendered
+    assert "ABCD-EFGH" in rendered
+    assert "**" not in rendered
+    assert "[github.com](" not in rendered
+    assert options == {
+        "description": "Authorize GitHub CLI without sharing credentials with the model.",
+        "submit_label": "I authorized GitHub",
+        "cancel_label": "Cancel sign-in",
+        "timeout_ms": 0,
+    }
+    assert "ABCD-EFGH" not in result
+    assert process.stopped is False
+
+
+def test_login_returns_without_hitl_when_the_cli_is_already_authenticated(monkeypatch):
+    monkeypatch.setattr(gh, "_capture", lambda command, seconds=120: (0, "signed in"))
+    monkeypatch.setattr(
+        gh.vis,
+        "ask",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("unexpected HITL")
+        ),
+    )
+
+    assert gh.gh_login() == "GitHub CLI is already authenticated with github.com."
+    with pytest.raises(ValueError, match="host name"):
+        gh.gh_login("github.com; echo unsafe")
+
+
+def test_cancelling_device_login_stops_the_waiting_process(monkeypatch):
+    class Cancelled:
+        reason = "cancelled"
+
+        def __bool__(self):
+            return False
+
+    process = _LoginProcess("Code WXYZ-1234 https://github.com/login/device")
     monkeypatch.setattr(
         gh,
         "_capture",
-        lambda command, seconds=120: (1, "You are not logged into any GitHub hosts.\n"),
+        lambda command, seconds=120: (
+            (0, "gh version 2") if command == "gh --version" else (1, "signed out")
+        ),
     )
+    monkeypatch.setattr(gh.vis, "shell", lambda options: process)
+    monkeypatch.setattr(gh.vis, "ask", lambda *args, **kwargs: Cancelled())
+
+    with pytest.raises(gh.GhMissing, match="cancelled by the human"):
+        gh.gh_login()
+
+    assert process.stopped is True
+
+
+def test_missing_auth_uses_login_hitl_before_a_view_opens(recorder, monkeypatch):
+    called = []
+
+    def login():
+        called.append(True)
+        raise gh.GhMissing("GitHub authentication was cancelled by the human")
+
+    monkeypatch.setattr(gh, "gh_login", login)
 
     with pytest.raises(gh.GhMissing) as refusal:
         gh.gh_watch_run(32146686161)
 
     assert "\n" not in str(refusal.value)
-    assert "gh auth login" in str(refusal.value)
+    assert "cancelled by the human" in str(refusal.value)
+    assert called == [True]
     assert recorder.said == []
 
 
