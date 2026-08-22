@@ -1009,6 +1009,12 @@ class __VisShell__(__VisResult__):
         return __vis_settle__(fn(__vis_args__))
 
     @property
+    def status(self):
+        # A shell handle is a dict, but process results conventionally expose status as
+        # an attribute. Keep the canonical map key while accepting that one common read.
+        return self["status"]
+
+    @property
     def stdout(self):
         # Quiet compatibility aliases for the guesses Python process APIs invite.
         # Keep them out of the result map and docs: `out` remains canonical.

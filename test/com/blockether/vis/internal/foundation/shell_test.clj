@@ -1789,21 +1789,24 @@
   ;; merged output from either process channel already lived in `out`.
   ;; Session report d12b41e4-757e-449b-86d9-e2a761d01dca: process-style
   ;; `.stdout` and data-style `.logs[-n:]` guesses both failed before revealing `out`.
-  (it "quietly accepts process-style output aliases without changing the result map"
+  ;; Regression, session report a6f58df5-94bc-442f-a9c6-945edbeaee33: `.status`
+  ;; raised AttributeError after a successful wait despite being present in the result map.
+  (it "quietly accepts object-style shell aliases without changing the result map"
       (let [sid
             (str "py-shell-output-aliases-" (System/nanoTime))
 
             c
             (py-ctx {:session-id sid})]
 
-        (try (expect (= [true true true true true true]
+        (try (expect (= [true true true true true true "exited" true]
                         (py c
                             (str
                               "sh = __vis_settle__(shell('printf abcdefghij', {'id':'aliases'}))\n"
                               "waited = sh.wait(30)\n"
                               "[waited.stdout == waited['out'], 'stdout' not in waited,"
                               " waited.stderr == waited['out'], 'stderr' not in waited,"
-                              " waited.logs[-4:] == 'ghij', callable(waited.logs)]"))))
+                              " waited.logs[-4:] == 'ghij', callable(waited.logs),"
+                              " waited.status, waited.status == waited['status']]"))))
              (finally (resources/stop-all! sid)))))
   (it
     "walks ready log windows with `next(page)` and a bounded `page.pages()` iterator"
@@ -1863,20 +1866,21 @@
                                  " up['out'] == down['out'],"
                                  " up['next_offset'] == down['next_offset']]"))))
              (finally (resources/stop-all! sid)))))
-  (it "reports the shell's status on the run's OWN answer, with no second call"
-      ;; The handle carried a `status()` verb of its own, so "has it finished" read as a
-      ;; separate question about a shell whose own answer had already said it.
+  (it "reports status as data on the run's OWN answer, with no second call"
+      ;; The handle once carried a `status()` verb, so "has it finished" became a
+      ;; separate question. Its data attribute may only alias the map value already returned.
       (let [sid
             (str "py-status-" (System/nanoTime))
 
             c
             (py-ctx {:session-id sid})]
 
-        (try (expect (= [false "running" true true true true]
+        (try (expect (= [true false true "running" true true true true]
                         (py c
                             (str "sh = __vis_settle__(shell('sleep 30', {'id':'stat'}))\n"
                                  "sh.stop()\n"
-                                 "[hasattr(sh, 'status'), sh['status'], sh['exit'] is None,"
+                                 "[hasattr(sh, 'status'), callable(sh.status),"
+                                 " sh.status == sh['status'], sh['status'], sh['exit'] is None,"
                                  " sh['log_path'].endswith('stat.log'),"
                                  " sh['rss_bytes'] > 0, sh['started_at'] > 0]"))))
              (finally (resources/stop-all! sid)))))
