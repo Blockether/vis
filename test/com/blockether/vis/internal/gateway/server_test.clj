@@ -2725,7 +2725,7 @@
               body (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
-          (is (= [:all {:limit 20 :after nil :root "/Users/dev/vis"}] @seen))
+          (is (= [:all {:limit 20 :after nil :root "/Users/dev/vis" :dirty #{}}] @seen))
           (is (= "/Users/dev/vis" (get body "root")))))
       (testing "and a listing with no `root` is still the whole fleet"
         (with-redefs [state/list-sessions-page
@@ -2733,7 +2733,16 @@
                         (reset! seen [channel opts])
                         {:sessions [] :total 0 :limit nil :next-cursor nil :has-more false})]
           ((rv 'list-sessions-handler) {:query-params {}})
-          (is (nil? (:root (second @seen)))))))))
+          (is (nil? (:root (second @seen))))))
+      (testing "and the ids this DEVICE holds unsent words in ride down with it"
+        (with-redefs [state/list-sessions-page
+                      (fn [channel opts]
+                        (reset! seen [channel opts])
+                        {:sessions [] :total 0 :limit nil :next-cursor nil :has-more false})]
+          ((rv 'list-sessions-handler) {:query-params {"dirty" "s-1, s-2 ,,"}})
+          ;; Blanks and stray commas are not ids, and an absent overlay is a set,
+          ;; never nil: the gateway must not have to ask whether a device answered.
+          (is (= #{"s-1" "s-2"} (:dirty (second @seen)))))))))
 
 ;; Regression, user report (paraphrased: "session totals grow as the list loads and the
 ;; whole list flashes again after leaving a session"): rows and project totals were two
@@ -2781,11 +2790,11 @@
                       page)
 
                     state/projects-overview
-                    (fn []
+                    (fn [& _]
                       (throw (ex-info "tail recomputed overview" {})))]
 
         (let [response ((rv 'list-sessions-handler)
-                         {:query-params {"limit" "20" "after" "4000:a"}})]
+                         {:query-params {"limit" "20" "after" "2:-4000:a"}})]
           (is (= 200 (:status response)))
           (is (nil? (get (wire/parse-json (:body response)) "overview"))))))))
 
@@ -2830,15 +2839,16 @@
                                               :awaiting []
                                               :total 9
                                               :limit 20
-                                              :next-cursor "3000:b"
+                                              :next-cursor "2:-3000:b"
                                               :has-more true})]
       (testing "`after` is handed down and the next cursor comes back"
-        (let [response ((rv 'list-sessions-handler) {:query-params {"limit" "20" "after" "4000:a"}})
+        (let [response ((rv 'list-sessions-handler)
+                         {:query-params {"limit" "20" "after" "2:-4000:a"}})
               body (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
-          (is (= [:all {:limit 20 :after "4000:a" :root nil}] @seen))
-          (is (= "3000:b" (get body "next_cursor")))
+          (is (= [:all {:limit 20 :after "2:-4000:a" :root nil :dirty #{}}] @seen))
+          (is (= "2:-3000:b" (get body "next_cursor")))
           (is (true? (get body "has_more")))
           ;; The offset is gone from the wire, not renamed.
           (is (nil? (get body "offset")))
@@ -2856,7 +2866,7 @@
                                                 after
                                                 (assoc "after" after))})
                              [:headers "ETag"]))]
-          (is (not= (etag nil) (etag "4000:a"))))))))
+          (is (not= (etag nil) (etag "2:-4000:a"))))))))
 ;; Regression, issue #146: `wrap-errors` answered EVERY throwable with a generic
 ;; `engine-error` 500, so a request that failed only because no AI provider was
 ;; configured reached the TUI as an ordinary crash — `vis-agent tui` printed a

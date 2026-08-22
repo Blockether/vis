@@ -1821,6 +1821,16 @@
               (some-> (:overview payload)
                       (dissoc :server_time_ms))]))
 
+(defn- query-session-ids
+  "A comma-separated list of session ids from one query parameter, as a set.
+
+   Absent, blank and \"only commas\" all mean the empty set: an overlay a device
+   does not have is not an error, it is simply no overlay."
+  [request k]
+  (into #{}
+        (comp (map str/trim) (remove str/blank?))
+        (str/split (str (get-in request [:query-params k])) #",")))
+
 (defn- list-sessions-handler
   "GET /v1/sessions[?limit=&after=&root=] — sessions in navigator order, WINDOWED on
    request, with a validator so a poller can revalidate instead of re-downloading.
@@ -1845,6 +1855,11 @@
    one row and dropped another whenever a turn landed mid-walk. A cursor that is
    PRESENT but unparsable is a 400, exactly like a bad `limit`, never a silent
    fallback to the head of the list.
+
+   `dirty` names the sessions holding words the ASKING device has typed and not
+   sent - the one part of the navigator list this process cannot see. They are
+   listed even when otherwise empty and band above the rest, so the window a device
+   walks is the list it paints, and its page count is the gateway's own.
 
    `awaiting` carries the sessions parked on an unanswered human-input request,
    complete and OUTSIDE the window, so a client pins them above a list that no
@@ -1874,15 +1889,18 @@
         root
         (some-> (get-in request [:query-params "root"])
                 str
-                not-empty)]
+                not-empty)
+
+        dirty
+        (query-session-ids request "dirty")]
 
     (if (or (and (given? "limit") (nil? limit))
             (and (some? after) (nil? (state/parse-session-cursor after))))
       (error-response 400
                       :invalid-window
-                      "limit must be an integer and after must be a <recency_ms>:<id> cursor")
+                      "limit must be an integer and after must be a <band>:<key>:<id> cursor")
       (let [page
-            (state/list-sessions-page :all {:limit limit :after after :root root})
+            (state/list-sessions-page :all {:limit limit :after after :root root :dirty dirty})
 
             payload
             (cond-> {:sessions (:sessions page)
@@ -1899,7 +1917,7 @@
               ;; One request owns the first paint. Recomputing this for every tail
               ;; window would add work while conveying the same fleet-wide fact.
               (nil? after)
-              (assoc :overview (state/projects-overview)))
+              (assoc :overview (state/projects-overview :all dirty)))
 
             etag
             (sessions-etag payload)
@@ -2122,11 +2140,16 @@
    had landed — switching gateways repainted the header row page by page. The
    gateway already holds the facts; it answers with them (`state/projects-overview`).
 
+   `dirty` is the same overlay the session list takes (see
+   `list-sessions-handler`), so a header's count and the pages under it are one
+   number: without it a device holding unsent words in an otherwise empty session
+   would read a header that its own pages disagree with.
+
    Carries the same weak ETag contract as the session list, because a header row
    is polled on a timer and is identical between polls until a turn moves."
   [request]
   (let [payload
-        (state/projects-overview)
+        (state/projects-overview :all (query-session-ids request "dirty"))
 
         etag
         (weak-etag [(:project_count payload) (:session_count payload) (:live_count payload)

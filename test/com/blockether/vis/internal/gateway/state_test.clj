@@ -2022,8 +2022,9 @@
 
                                lp/by-channel
                                (fn [_]
-                                 [{:id "fresh" :created-at 3000} {:id "middle" :created-at 2000}
-                                  {:id "parked" :created-at 1000}])
+                                 [{:id "fresh" :title "fresh" :created-at 3000}
+                                  {:id "middle" :title "middle" :created-at 2000}
+                                  {:id "parked" :title "parked" :created-at 1000}])
 
                                bus/waiting-requests
                                (constantly {"parked" [{"id" "req-1" "since" 1}]})
@@ -2053,9 +2054,9 @@
   gateway-session-keyset-window-test
   (it
     "pages by the CURSOR of the last row, so a turn landing mid-walk cannot duplicate or drop one"
-    (let [fleet (atom [{:id "e" :created-at 5000} {:id "d" :created-at 4000}
-                       {:id "c" :created-at 3000} {:id "b" :created-at 2000}
-                       {:id "a" :created-at 1000}])]
+    (let [fleet (atom [{:id "e" :title "e" :created-at 5000} {:id "d" :title "d" :created-at 4000}
+                       {:id "c" :title "c" :created-at 3000} {:id "b" :title "b" :created-at 2000}
+                       {:id "a" :title "a" :created-at 1000}])]
       (with-redefs [lp/db-info (constantly nil)
                     persistance/db-session-turn-stats (constantly nil)
                     lp/by-channel (fn [_]
@@ -2071,7 +2072,7 @@
 
         (let [head (state/list-sessions-page :all {:limit 2})]
           (expect (= ["e" "d"] (mapv #(get % "id") (:sessions head))))
-          (expect (= "4000:d" (:next-cursor head)))
+          (expect (= "2:-4000:d" (:next-cursor head)))
           (expect (:has-more head))
           ;; A turn lands in the OLDEST session while the client is still
           ;; walking. Its content time is now the freshest in the fleet, so it
@@ -2095,7 +2096,7 @@
 
                     lp/by-channel
                     (fn [_]
-                      [{:id "y" :created-at 2000} {:id "x" :created-at 2000}])
+                      [{:id "y" :title "y" :created-at 2000} {:id "x" :title "x" :created-at 2000}])
 
                     bus/waiting-requests
                     (constantly {})
@@ -2106,22 +2107,103 @@
 
         (let [head (state/list-sessions-page :all {:limit 1})]
           (expect (= ["x"] (mapv #(get % "id") (:sessions head))))
-          (expect (= "2000:x" (:next-cursor head)))
+          (expect (= "2:-2000:x" (:next-cursor head)))
           (expect (= ["y"]
                      (mapv #(get % "id")
-                           (:sessions (state/list-sessions-page :all
-                                                                {:limit 1 :after "2000:x"}))))))))
+                           (:sessions
+                             (state/list-sessions-page :all {:limit 1 :after "2:-2000:x"}))))))))
   (it "reads a cursor back, and answers nil for anything that is not one"
-      (expect (= [4000 "d"] (state/parse-session-cursor "4000:d")))
-      ;; Only the FIRST colon ends the number; the rest is the id.
-      (expect (= [1 "a:b"] (state/parse-session-cursor "1:a:b")))
+      (expect (= [2 -4000 "d"] (state/parse-session-cursor "2:-4000:d")))
+      ;; Only the first TWO colons end the numbers; the rest is the id.
+      (expect (= [0 1 "a:b"] (state/parse-session-cursor "0:1:a:b")))
+      ;; The two-part cursor the single-band order used is not one any more: a
+      ;; recency alone cannot name a row in a banded list.
+      (expect (nil? (state/parse-session-cursor "4000:d")))
       (expect (nil? (state/parse-session-cursor "4000")))
-      (expect (nil? (state/parse-session-cursor "nope:d")))
-      (expect (nil? (state/parse-session-cursor "4000:")))
-      (expect (nil? (state/parse-session-cursor ":d")))
+      (expect (nil? (state/parse-session-cursor "2:nope:d")))
+      (expect (nil? (state/parse-session-cursor "2:-4000:")))
+      (expect (nil? (state/parse-session-cursor "::d")))
       (expect (nil? (state/parse-session-cursor "")))
       (expect (nil? (state/parse-session-cursor nil)))))
 
+;; Regression, user report ("we should go by pages ... and we should decide how many
+;; documents a page holds"): the gateway ranked every session it had while the CLIENT
+;; decided which of them the list actually shows and in what order, so a
+;; `?root=&limit=` window was a different list at the same address - on one machine
+;; 1034 sessions counted against 763 painted, the last page 27 pages out - and no
+;; client could page anything without downloading the fleet first.
+(def ^:private navigator-fleet
+  "One of each kind of row: used, an abandoned tap, a starred empty, an empty
+   holding unsent words, and a title-less session with a turn in flight."
+  [{:id "used" :title "Refactor the pager" :created-at 3000} {:id "blank" :created-at 2500}
+   {:id "starred" :created-at 2400 :favorite-rank 1} {:id "typed" :created-at 2300}
+   {:id "busy" :created-at 100}])
+
+(defn- navigator-page
+  [opts]
+  (with-redefs-fn {#'lp/db-info (constantly nil)
+                   #'persistance/db-session-turn-stats (constantly nil)
+                   #'lp/by-channel (constantly navigator-fleet)
+                   #'bus/live-turns (constantly {"busy" "turn-1"})
+                   #'bus/waiting-requests (constantly {})
+                   #'state/soul (fn [sid]
+                                  {"id" (str sid)})}
+    (fn []
+      (state/list-sessions-page :all opts))))
+
+(defn- navigator-ids [opts] (mapv #(get % "id") (:sessions (navigator-page opts))))
+
+(defdescribe gateway-owns-the-navigator-list-test
+             "Which sessions are in the list, and where each one sits, is the GATEWAY's answer."
+             (it "leaves out the taps nobody ever used, and counts what is left"
+                 ;; "New session" creates the row before the first message exists, so an
+                 ;; abandoned tap is a session with no title, no turns and nothing running.
+                 (expect (= ["starred" "used" "busy"] (navigator-ids {})))
+                 (expect (= 3 (:total (navigator-page {})))))
+             (it "lists an empty session the reader marked, and bands it above the rest"
+                 ;; A star is the gateway's own fact; unsent words are the device's, and the
+                 ;; only part of this list it has to be told about.
+                 (expect (= ["starred" "typed" "used" "busy"] (navigator-ids {:dirty ["typed"]})))
+                 (expect (= 4 (:total (navigator-page {:dirty ["typed"]})))))
+             (it "walks the bands with ONE cursor, so a page boundary inside them holds"
+                 (let [head (navigator-page {:limit 1 :dirty ["typed"]})]
+                   (expect (= ["starred"] (mapv #(get % "id") (:sessions head))))
+                   (expect (= "0:1:starred" (:next-cursor head)))
+                   (let [second-page (navigator-page
+                                       {:limit 2 :after (:next-cursor head) :dirty ["typed"]})]
+                     ;; Across the band boundary: no row served twice, none skipped.
+                     (expect (= ["typed" "used"] (mapv #(get % "id") (:sessions second-page))))
+                     (expect (= "2:-3000:used" (:next-cursor second-page)))))))
+
+;; Regression, same report: a project header carried the GATEWAY's tally while the rows
+;; under it were the client's own filtered list, so the header said 1034 over pages that
+;; held 763 - the two numbers could only agree by accident.
+(defdescribe
+  gateway-header-count-is-the-page-count-test
+  (it "counts a project exactly as its own pages fill"
+      (let [fleet [{:id "s1" :title "One" :created-at 300} {:id "s2" :title "Two" :created-at 200}
+                   ;; Never used: not in the list, and not in the header either.
+                   {:id "s3" :created-at 100}]]
+        (with-redefs-fn {#'lp/db-info (constantly ::db)
+                         #'lp/projects (constantly [])
+                         #'persistance/db-session-turn-stats (constantly nil)
+                         #'lp/by-channel (constantly fleet)
+                         #'state/session-project-root (constantly "/repo/a")
+                         #'bus/live-turns (constantly {})
+                         #'bus/waiting-requests (constantly {})
+                         #'state/soul (fn [sid]
+                                        {"id" (str sid)})}
+          (fn []
+            (let [overview (state/projects-overview)
+                  header (get-in (into {}
+                                       (map (fn [p]
+                                              [(get p "root") p]))
+                                       (:projects overview))
+                                 ["/repo/a" "session_count"])]
+
+              (expect (= 2 header))
+              (expect (= header (:total (state/list-sessions-page :all {:root "/repo/a"}))))
+              (expect (= 2 (:session_count overview)))))))))
 ;; Regression, user report (paraphrased: "clicking a session suddenly makes it the
 ;; freshest thing and it jumps to the top, and after the gateway restarts the empty
 ;; sessions sit above the one I actually worked in"): the navigator key read
@@ -3883,10 +3965,11 @@
       (with-redefs-fn {#'lp/db-info (constantly ::db)
                        #'lp/projects (fn [_]
                                        [{:id "p-a" :name "Vis" :workspace-root "/repo/a"}])
-                       #'persistance/db-session-turn-stats (fn [_]
-                                                             {"s1" {:latest-turn-at 300}
-                                                              "s2" {:latest-turn-at 100}
-                                                              "s3" {:latest-turn-at 200}})
+                       #'persistance/db-session-turn-stats
+                       (fn [_]
+                         {"s1" {:latest-turn-at 300 :turn-count 2}
+                          "s2" {:latest-turn-at 100 :turn-count 1}
+                          "s3" {:latest-turn-at 200 :turn-count 1}})
                        #'lp/by-channel (fn [_]
                                          [{:id "s1"} {:id "s2"} {:id "s3"}])
                        #'state/session-project-root (fn [_ sid]

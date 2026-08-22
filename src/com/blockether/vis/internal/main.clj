@@ -712,10 +712,15 @@
                               str/trim)]
                 (when (seq s)
                   (or (when-let [session (gateway-state/soul s)]
-                        (:id session))
-                      (let [matches (->> (gateway-state/list-sessions)
-                                         (map :id)
-                                         (filter #(str/starts-with? (str %) s))
+                        ;; A wire soul is STRING-keyed (`wire/canonical`), so `:id`
+                        ;; read nil here and even a full id fell through to the
+                        ;; prefix walk below.
+                        (get session "id"))
+                      ;; Not the navigator list: that one leaves out the sessions
+                      ;; nobody has used yet (`state/session-listed?`), and a CLI
+                      ;; session is created title-less and turn-less BEFORE it runs.
+                      (let [matches (->> (gateway-state/session-ids)
+                                         (filter #(str/starts-with? % s))
                                          distinct
                                          vec)]
                         (when (= 1 (count matches)) (first matches)))))))
