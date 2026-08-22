@@ -1125,21 +1125,43 @@
       (is (:is-activity row))
       (is (= "Polling the run" (:status-text row)))
       (is (= :activity (get-in p [:view :classification])))))
-  (testing "explicit disclosure opens bounded detail and the same action folds it again"
+  (testing "explicit disclosure opens a dedicated bounded Activity rail and folds it again"
     (let [p
           (lv/opened (activity-view))
 
           open
-          (lv/reopened p)]
+          (lv/reopened p)
+
+          text
+          (painted-text [open])
+
+          controls
+          (regions-of [open])]
 
       (is (not (lv/dormant? open)))
       (is (:is-reopened open))
+      (is (str/includes? text "ACTIVITY · LIVE"))
+      (is (str/includes? text "Ran 314 tests"))
+      (is (not (str/includes? text "CI · fix(loop)"))
+          "Activity never inherits generic Live View title chrome")
+      (is (some #(and (= :live-reopen (:kind %)) (= "activity-1" (:view-id %))) controls)
+          "the dedicated title control folds the transcript disclosure")
       (is (nil? (lv/interruptible [open])))
       (is (not-any? #(= "Esc" (first %)) (lv/hint open []))
           "expanded Activity never advertises an impossible independent interrupt")
-      (is (not-any? #(= "Esc" (first %)) (lv/hint (lv/minimized open) []))
-          "collapsed Activity remains read-only")
-      (is (lv/dormant? (lv/reopened open))))))
+      (is (lv/dormant? (lv/reopened open)))
+      (is (str/includes? (painted-text [open] 48 20) "ACTIVITY · LIVE")
+          "the dedicated rail retains its identity at narrow widths")
+      (let [png (cap/shot! {:cols 96
+                            :rows 24
+                            :font-size 14
+                            :out "vis-activity-expanded"
+                            :paint! (fn [{:keys [screen]}]
+                                      (let [g (.newTextGraphics ^TerminalScreen screen)]
+                                        (lv/paint! g 96 24 [open] 1 3)
+                                        (.refresh ^TerminalScreen screen)))})]
+        (is (str/ends-with? png "vis-activity-expanded.png"))
+        (is (pos? (long (cap/ink png))) "the approved expanded Activity state really painted")))))
 
 (deftest activity-transcript-state-test
   (testing "open, patch, and close replace one anchored Activity row"

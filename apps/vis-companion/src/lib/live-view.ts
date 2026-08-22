@@ -871,6 +871,19 @@ export interface LiveRecord {
   ended_at?: number;
 }
 
+/** A verdict carries only mutable presentation fields; restore declaration identity. */
+function recordedViewFromWire(raw: unknown, declared: LiveView | null): LiveView | null {
+  const partial = record(raw);
+  if (!partial) return null;
+  if (!declared) return liveViewFromWire(partial);
+  return liveViewFromWire({
+    ...declared,
+    ...partial,
+    id: declared.id,
+    classification: declared.classification,
+  });
+}
+
 /** The NDJSON record of one view, or `null` when not one line of it is paintable. */
 export function liveRecordFromText(source: string): LiveRecord | null {
   let view: LiveView | null = null;
@@ -895,7 +908,7 @@ export function liveRecordFromText(source: string): LiveRecord | null {
       if (!result) continue;
       // The verdict states the reason; `is_completed` is the engine's own answer
       // to "did it finish", and a stop carries the note the human typed into it.
-      view = liveViewFromWire(result.view) ?? view;
+      view = recordedViewFromWire(result.view, view) ?? view;
       const focusSnapshots = Array.isArray(result.focus_snapshots)
         ? result.focus_snapshots
             .map(record)
