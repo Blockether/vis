@@ -677,6 +677,71 @@
                (expect (= "claude-x" (:from-model ev)))))
            (finally (lp/dispose-environment! env))))))
 
+
+;; Regression: svar speaks its own session notices on the SAME streaming callback as
+;; routing events, and every chunk carrying `:event/type` was labelled
+;; `:provider-fallback`. One session's journal recorded 54 provider swaps that never
+;; happened - all of them Codex rate-limit snapshots - and a stream restart, which
+;; replays text already painted, arrived as a fallback instead of a rewind.
+(defdescribe
+  session-notice-phase-test
+  (let [chunks-of
+        (fn [emit!]
+          (let [env (lp/create-environment ::router {:db :memory})
+                chunks (atom [])]
+
+            (try (with-redefs [svar/ask-code!
+                               (fn [_router opts]
+                                 (emit! (:on-chunk opts))
+                                 {:stop-reason :end :tool-calls [] :content "ok" :tokens {}})]
+                   (lp/run-iteration env
+                                     []
+                                     {:iteration 0
+                                      :resolved-model {:provider :anthropic :name "claude-x"}
+                                      :on-chunk #(swap! chunks conj %)})
+                   @chunks)
+                 (finally (lp/dispose-environment! env)))))]
+    (it "never reports a session telemetry snapshot as a provider fallback"
+        (let [chunks (chunks-of (fn [on-chunk]
+                                  (on-chunk {:event/type :llm.session/rate-limits
+                                             :rate-limits {:limit-id "codex" :plan-type "pro"}
+                                             :content ""
+                                             :done? false})))]
+          (expect (empty? (filterv #(= :provider-fallback (:phase %)) chunks)))
+          (expect (nil? (some #(get-in % [:event :rate-limits]) chunks)))))
+    (it "rewinds the live attempt when the session stream restarts"
+        (let [chunks (chunks-of (fn [on-chunk]
+                                  (on-chunk {:reasoning "thinking hard" :done? false})
+                                  (on-chunk {:event/type :llm.session/stream-restarted
+                                             :restarted? true
+                                             :reason :reconnect
+                                             :attempt 2
+                                             :max-retries 5
+                                             :content ""
+                                             :done? false})
+                                  (on-chunk {:reasoning "thinking hard" :done? false})))
+              restarts (filterv #(= :provider-retry-reset (:phase %)) chunks)
+              deltas (filterv seq (mapv :delta (filterv #(= :reasoning (:phase %)) chunks)))]
+
+          (expect (= 1 (count restarts)))
+          (expect (= {:attempt 2 :max-retries 5}
+                     (select-keys (first restarts) [:attempt :max-retries])))
+          (expect (= :llm.session/stream-restarted (get-in (first restarts) [:error :type])))
+          ;; The replayed attempt streams its text from zero, so an append-only
+          ;; consumer must be told to drop what it drew - and see the whole tail again.
+          (expect (= ["thinking hard" "thinking hard"] deltas))))
+    (it "still reports a routing event as a provider fallback"
+        (let [chunks (chunks-of (fn [on-chunk]
+                                  (on-chunk {:event/type :llm.routing/provider-fallback
+                                             :reason :provider-error
+                                             :content ""
+                                             :done? false})))
+              fallbacks (filterv #(= :provider-fallback (:phase %)) chunks)]
+
+          (expect (= 1 (count fallbacks)))
+          (expect (= :llm.routing/provider-fallback
+                     (get-in (first fallbacks) [:event :event/type])))))))
+
 ;; Regression, issue #120: every provider request looked identical in the TUI, so a
 ;; long tool-result loop was indistinguishable from the client re-sending on its
 ;; own — the spinner said "Vis is calling the provider (iter 12)" and never why.

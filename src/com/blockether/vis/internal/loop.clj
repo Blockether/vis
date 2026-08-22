@@ -4616,7 +4616,30 @@
           streaming-fn
           (when on-chunk
             (fn [{:keys [reasoning content done?] :as chunk}]
-              (cond (:event/type chunk) (on-chunk {:phase :provider-fallback
+              ;; svar speaks two kinds of notice on this stream. Routing events ARE
+              ;; the provider swap `:provider-fallback` names. Session events are the
+              ;; Codex socket's own lifecycle: a restart replays the turn on a fresh
+              ;; socket, so text already painted arrives again - rewind the live
+              ;; attempt exactly like a provider stream retry and restart the delta
+              ;; bookkeeping, or an append-only consumer prints the replayed stream
+              ;; twice. A rate-limit snapshot is telemetry no phase draws; forwarding
+              ;; it as a fallback wrote swaps that never happened into the recap.
+              (cond (= :llm.session/stream-restarted (:event/type chunk))
+                    (do (reset-stream-state!)
+                        (on-chunk {:phase :provider-retry-reset
+                                   :iteration iteration-position
+                                   :attempt (:attempt chunk)
+                                   :max-retries (:max-retries chunk)
+                                   :error {:type :llm.session/stream-restarted
+                                           :message (str "Session stream restarted"
+                                                         (when-let [reason (:reason chunk)]
+                                                           (str " (" (name reason) ")")))}
+                                   :event chunk}))
+                    (some-> (:event/type chunk)
+                            namespace
+                            (= "llm.session"))
+                    nil
+                    (:event/type chunk) (on-chunk {:phase :provider-fallback
                                                    :iteration iteration-position
                                                    :event chunk})
                     :else (do (when (or (some? reasoning) done?)
