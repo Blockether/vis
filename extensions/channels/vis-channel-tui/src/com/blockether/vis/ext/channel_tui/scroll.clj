@@ -266,13 +266,38 @@
       (assoc follow :pos (or (:pos sc) cur))
       {:mode :at :offset t :pos (or (:pos sc) cur)})))
 
+(def ^:const wheel-step-rows
+  "Rows one effective wheel row moves a surface tall enough to take them — the
+   whole TUI's notch size, shared by the transcript, the overlays and the
+   live-view band so the SAME gesture travels the same distance wherever the
+   pointer sits. A per-surface literal is what made the live band feel three
+   times slower than the transcript painted right beside it."
+  3)
+
+(def ^:const wheel-step-frac
+  "Fraction of a surface's visible rows one wheel row moves before
+   `wheel-step-rows` caps it. A four-row status table must not jump a quarter of
+   itself per notch — a short surface keeps terminal-row granularity, and only a
+   surface at least `(/ wheel-step-rows wheel-step-frac)` rows tall reaches the
+   full step."
+  0.25)
+
+(defn wheel-step
+  "Rows per effective wheel row on a surface `visible` rows tall: at least 1,
+   never more than `wheel-step-rows`. A missing measurement (a pane no paint has
+   reported yet) scrolls one row per wheel row."
+  ^long [visible]
+  (let [v (max 0 (long (or visible 0)))]
+    (max 1 (min (long wheel-step-rows) (Math/round (* (double wheel-step-frac) (double v)))))))
+
 (def ^:const momentum-cap
   "Upper bound on the running wheel-momentum used by `merge-wheel-delta`.
    Caps how much a long, continuous same-direction drag can accumulate so a
    single stray opposing tick can't be absorbed forever (which would make the
    scroll feel sticky / unable to reverse). Chosen well above any realistic
-   coalesced batch (`amount` is `(* 3 |wheel-delta|)`), so normal scrolling
-   never clamps, but a frantic flail can't build unbounded inertia."
+   coalesced batch (`amount` is `(* (wheel-step visible) |wheel-delta|)`), so
+   normal scrolling never clamps, but a frantic flail can't build unbounded
+   inertia."
   12)
 
 (def ^:const momentum-hold-ms

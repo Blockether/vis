@@ -178,6 +178,20 @@
       (is (:is-following (lv/scrolled up 6)))
       (is (:is-following (lv/scrolled up 999)) "the wheel cannot run past the end")
       (is (= 40 (:offset (lv/scrolled up 999))))))
+  ;; Reported in Vis session 22b3489b-336f-42d0-9bc8-806dff2de86f: a stray tick of
+  ;; trackpad inertia re-armed follow-tail and snapped the pane to the live edge
+  ;; mid-read.
+  (testing "an upward gesture that only CLAMPS at the end does not arm follow"
+    (let [shrunk (-> (pane :rows 30)
+                     (lv/painted {:offset 40 :total 60 :visible 20})
+                     (lv/scrolled -6)
+                     (lv/painted {:offset 34 :total 34 :visible 20}))]
+      (is (= 14 (:offset (lv/scrolled shrunk -6))))
+      (is (not (:is-following (lv/scrolled shrunk -6))))))
+  (testing "a view with nothing to scroll keeps following through a stray tick"
+    (let [tiny (-> (pane :rows 3)
+                   (lv/painted {:offset 0 :total 3 :visible 20}))]
+      (is (:is-following (lv/scrolled tiny -1)))))
   (testing "a following pane sits at the end of whatever the plan is now"
     (let [p
           (pane :rows 30)

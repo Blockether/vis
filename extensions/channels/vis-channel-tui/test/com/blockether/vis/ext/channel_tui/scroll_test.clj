@@ -162,6 +162,18 @@
     (is (zero? (scroll/decay-wheel-momentum 12 scroll/momentum-hold-ms)))
     (is (zero? (scroll/decay-wheel-momentum -12 99999)))))
 
+;; Reported in Vis session 22b3489b-336f-42d0-9bc8-806dff2de86f: the live band scrolled
+;; one row per wheel row while the transcript beside it scrolled three.
+(deftest wheel-step-scales-with-the-surface
+  (testing "a surface no paint has measured yet moves one row per wheel row"
+    (is (= 1 (scroll/wheel-step nil)))
+    (is (= 1 (scroll/wheel-step 0))))
+  (testing "a compact table keeps terminal-row granularity"
+    (is (= 1 (scroll/wheel-step 4)))
+    (is (= 2 (scroll/wheel-step 8))))
+  (testing "a surface tall enough reaches the shared notch and stops there"
+    (is (= scroll/wheel-step-rows (scroll/wheel-step 12)))
+    (is (= scroll/wheel-step-rows (scroll/wheel-step 200)))))
 (defn- drive-timed-stream
   "Feed `[raw gap-ms]` wheel events through USE-time decay + merge exactly as
    the input loop does: momentum decays by the wall-clock gap since the

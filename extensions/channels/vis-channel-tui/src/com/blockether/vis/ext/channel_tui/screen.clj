@@ -295,6 +295,59 @@
         {:key key :wheel-delta (when-not (zero? acc) acc)}))
     {:key key}))
 
+(defn- smooth-wheel!
+  "Push one raw coalesced wheel `delta` through a SURFACE'S OWN momentum pair —
+   `mom-vol` and `at-vol`, the wall-clock ms of that surface's last wheel event —
+   returning `{:old-mom :new-mom :eff}` and storing both back.
+
+   Every scrollable surface keeps its own pair. One shared running momentum meant
+   the live-view band had to zero the transcript's on entry (the hitch beside a
+   live table) and then ran raw itself, so a slow macOS trackpad's sign-flipping
+   inertia tail reached the pane as real reversals.
+
+   `:eff` is nil when the tick was fully absorbed as such a reversal: the caller
+   scrolls nothing and recurs."
+  [mom-vol at-vol delta]
+  (let [now-ms
+        (System/currentTimeMillis)
+
+        old-mom
+        (long (scroll/decay-wheel-momentum (long @mom-vol) (- now-ms (long @at-vol))))
+
+        [new-mom eff]
+        (scroll/merge-wheel-delta old-mom (long delta))]
+
+    (vreset! mom-vol (long new-mom))
+    (vreset! at-vol now-ms)
+    {:old-mom old-mom
+     :new-mom (long new-mom)
+     :eff (some-> eff
+                  long)}))
+
+(defn- release-wheel-momentum!
+  "Release one surface's stale wheel momentum once its directional-lock window has
+   fully expired. The decay itself is time-based and computed at USE time in
+   `smooth-wheel!`; this idle-branch call only drops the lock so it cannot linger
+   across gestures. `surface` names the pair in the diagnostic."
+  [mom-vol at-vol surface]
+  (let [old-mom
+        (long @mom-vol)
+
+        idle-ms
+        (- (System/currentTimeMillis) (long @at-vol))]
+
+    (when (and (not (zero? old-mom)) (>= idle-ms (long scroll/momentum-hold-ms)))
+      (tel/log! {:level :debug
+                 :id ::wheel-momentum-decay
+                 :data {:surface surface :mom old-mom :idle-ms idle-ms}
+                 :msg (str "wheel-momentum released "
+                           old-mom
+                           " -> 0 after "
+                           idle-ms
+                           "ms idle ("
+                           (name surface)
+                           ")")})
+      (vreset! mom-vol 0))))
 (defn- coalesce-drag-input
   "Collapse consecutive DRAG events into one terminal event.
 
@@ -607,17 +660,21 @@
         (when (and span (<= (long (first span)) (long my) (long (second span)))) (last panes))))))
 
 (defn- live-view-wheel-event
-  "The pane-local event for one coalesced wheel gesture over the live band.
+  "The pane-local event for `wheel-delta` EFFECTIVE wheel rows over the live band
+   (the caller has already smoothed the raw delta through the band's momentum).
 
-   Keep the terminal's signed row delta exactly as read. The transcript scroll path
-   applies acceleration to a document hundreds of rows long; multiplying again in
-   a compact table skipped rails and made a trackpad gesture look like a jump."
+   The rows are scaled by the pane's own height through `scroll/wheel-step`, so a
+   gesture keeps the speed it had over the transcript when it crosses into a tall
+   band, while a compact table — where the transcript's step would skip rails —
+   stays at terminal-row granularity."
   [db my wheel-delta]
   (when (not (zero? (long (or wheel-delta 0))))
     (when-let [pane (live-band-pane db my)]
       ;; A compact status line returns its surface to the transcript; wheel input
       ;; crossing that line must therefore keep scrolling the transcript beneath it.
-      (when-not (lv/minimized? pane) [:live-view-scroll (lv/view-id pane) (long wheel-delta)]))))
+      (when-not (lv/minimized? pane)
+        [:live-view-scroll (lv/view-id pane)
+         (* (scroll/wheel-step (:visible pane)) (long wheel-delta))]))))
 
 (defn- local-live-view?
   "True when `view-id` is owned by this process rather than the serve daemon."
@@ -5277,17 +5334,23 @@
               ;; non-wheel event, it parks it here for the next loop
               ;; iteration instead of dropping it.
               pending-input-key (volatile! [])
-              ;; Running wheel-momentum for `scroll/merge-wheel-delta`. A slow
-              ;; macOS trackpad emits a stream of sign-flipping inertia tail
-              ;; events; smoothing here (the input layer) absorbs the spurious
-              ;; reversals so the viewport can't bounce up/down mid-gesture.
-              ;; Decayed toward zero on idle polls (see the `(nil? key)` branch).
+              ;; Running wheel-momentum for `scroll/merge-wheel-delta`: one pair —
+              ;; momentum plus the wall-clock ms of the LAST wheel event — PER
+              ;; SCROLLABLE SURFACE. A slow macOS trackpad emits a stream of
+              ;; sign-flipping inertia tail events; smoothing here (the input
+              ;; layer) absorbs the spurious reversals so the viewport can't
+              ;; bounce up/down mid-gesture. Decay is TIME-based
+              ;; (scroll/momentum-hold-ms) and computed at USE time from the
+              ;; timestamp — a poll-based decay died between two events of a slow
+              ;; trackpad inertia tail — and the `(nil? key)` branch only releases
+              ;; the lock once its window has expired. The band keeps its OWN pair
+              ;; because a gesture crossing its edge must neither carry the
+              ;; transcript's acceleration into a compact table nor reach the pane
+              ;; unsmoothed.
               scroll-momentum (volatile! 0)
-              ;; Wall-clock ms of the LAST wheel event. `scroll-momentum`'s
-              ;; decay is TIME-based (scroll/momentum-hold-ms) and computed
-              ;; at USE time from this timestamp — a poll-based decay died
-              ;; between two events of a slow trackpad inertia tail.
               last-wheel-at-ms (volatile! 0)
+              live-scroll-momentum (volatile! 0)
+              last-live-wheel-at-ms (volatile! 0)
               warm-session-render!
               (fn [{:keys [id history]}]
                 (virtual/stop-rewarm!)
@@ -6004,42 +6067,27 @@
                    (and (some? key) (lv/stopping (lv/interruptible (:live-views db))))
                    (do (live-stop-key! db key) (recur))
                    (nil? key)
-                   (do (let [old-mom (long @scroll-momentum)
-                             idle-ms (- (System/currentTimeMillis) (long @last-wheel-at-ms))]
-
-                         ;; Decay is TIME-based and computed at USE time in
-                         ;; the wheel branch (scroll/decay-wheel-momentum);
-                         ;; this idle branch only RELEASES the directional
-                         ;; lock once the hold window has fully expired, so
-                         ;; stale momentum can't linger across gestures.
-                         (when (and (not (zero? old-mom)) (>= idle-ms scroll/momentum-hold-ms))
-                           (tel/log! {:level :debug
-                                      :id ::wheel-momentum-decay
-                                      :data {:mom old-mom :idle-ms idle-ms}
-                                      :msg (str "wheel-momentum released "
-                                                old-mom
-                                                " -> 0 after "
-                                                idle-ms
-                                                "ms idle")})
-                           (vreset! scroll-momentum 0)))
-                       ;; Idle wait. With no wheel gesture still coasting, the
-                       ;; input thread has NOTHING to do until the next event —
-                       ;; the render thread owns every repaint / spinner tick /
-                       ;; resize poll. So BLOCK on `.readInput` (parks the
-                       ;; thread → zero idle CPU) instead of busy-polling
-                       ;; `.pollInput` + `(Thread/sleep 16)` (~62 wakeups/sec of
-                       ;; pure idle churn — the FileInputStream.available poll
-                       ;; the JFR flagged). Consistent with modal dialogs, which
-                       ;; already block on `.readInput`. The blocking read is
-                       ;; stashed for the next iteration so it flows through the
-                       ;; normal `read-chat-input!` coalescing / escape path.
-                       ;; While a gesture is still decaying, keep the 16ms tick
-                       ;; so its directional-lock hold window can expire.
-                       (if (zero? (long @scroll-momentum))
-                         (when-let [k (.readInput ^TerminalScreen screen)]
-                           (vswap! pending-input-key conj k))
-                         (Thread/sleep 16))
-                       (recur))
+                   (do
+                     (release-wheel-momentum! scroll-momentum last-wheel-at-ms :transcript)
+                     (release-wheel-momentum! live-scroll-momentum last-live-wheel-at-ms :live-view)
+                     ;; Idle wait. With no wheel gesture still coasting, the
+                     ;; input thread has NOTHING to do until the next event —
+                     ;; the render thread owns every repaint / spinner tick /
+                     ;; resize poll. So BLOCK on `.readInput` (parks the
+                     ;; thread → zero idle CPU) instead of busy-polling
+                     ;; `.pollInput` + `(Thread/sleep 16)` (~62 wakeups/sec of
+                     ;; pure idle churn — the FileInputStream.available poll
+                     ;; the JFR flagged). Consistent with modal dialogs, which
+                     ;; already block on `.readInput`. The blocking read is
+                     ;; stashed for the next iteration so it flows through the
+                     ;; normal `read-chat-input!` coalescing / escape path.
+                     ;; While a gesture is still decaying, keep the 16ms tick
+                     ;; so its directional-lock hold window can expire.
+                     (if (and (zero? (long @scroll-momentum)) (zero? (long @live-scroll-momentum)))
+                       (when-let [k (.readInput ^TerminalScreen screen)]
+                         (vswap! pending-input-key conj k))
+                       (Thread/sleep 16))
+                     (recur))
                    ;; ── Bracketed paste ───────────────────────────────────────────────────
                    ;; Three-state machine sitting BEFORE the regular key dispatch:
                    ;;
@@ -6202,7 +6250,10 @@
                                                               (long render/MESSAGE_MARGIN_TOP))
                                              :eff-scroll (get-in db [:layout :eff-scroll])}
                          slash-suggestions (slash-suggestions-for-db screen db)
-                         live-wheel-event (live-view-wheel-event db my wheel-delta)]
+                         ;; Truthy when this wheel belongs to a live pane rather than the
+                         ;; transcript beneath it. The branch smooths and scales its OWN
+                         ;; delta, so what is wanted here is only the verdict.
+                         live-wheel? (some? (live-view-wheel-event db my wheel-delta))]
 
                      (cond
                        ;; F1 help / F2 task overlay is open: it LOCKS the
@@ -6223,7 +6274,8 @@
                            ;; Mouse-wheel scrolls the F2 panel body.
                            (and wheel-delta (not (zero? (long wheel-delta))))
                            (do (state/dispatch [(if (:help-open? db) :help-scroll-by :ctx-scroll-by)
-                                                (* 3 (long wheel-delta))])
+                                                (* (long scroll/wheel-step-rows)
+                                                   (long wheel-delta))])
                                (state/dispatch [:bump-render-version])
                                (recur))
                            ;; F2 text selection — arm on a press inside the panel body.
@@ -6341,41 +6393,34 @@
                            (recur))
                        ;; The wheel over the live-view band scrolls the PANE. The band is
                        ;; painted ON TOP of the transcript, so the rows under the pointer
-                       ;; are the pane's rows. A pane consumes the raw coalesced row delta
-                       ;; and clears transcript momentum; carrying acceleration across the
-                       ;; boundary is what caused the visible hitch beside a live table.
-                       live-wheel-event (do (vreset! scroll-momentum 0)
-                                            (vreset! last-wheel-at-ms (System/currentTimeMillis))
-                                            (state/dispatch live-wheel-event)
-                                            (state/dispatch [:bump-render-version])
-                                            (recur))
-                       ;; Smooth the raw wheel-delta through the running momentum so a
+                       ;; are the pane's rows. The gesture is smoothed through the BAND's
+                       ;; own momentum (a trackpad's inertia tail flips sign here exactly
+                       ;; as it does over the transcript) and stepped by the pane's own
+                       ;; height, so crossing the boundary changes neither the speed nor
+                       ;; the smoothing.
+                       live-wheel?
+                       (let [{:keys [eff]}
+                             (smooth-wheel! live-scroll-momentum last-live-wheel-at-ms wheel-delta)
+                             pane-event (when eff (live-view-wheel-event db my (long eff)))]
+
+                         (when pane-event
+                           (state/dispatch pane-event)
+                           (state/dispatch [:bump-render-version]))
+                         (recur))
+                       ;; Smooth the raw wheel-delta through the transcript's momentum so a
                        ;; sign-flipping inertia tail can't dispatch a reverse tick (the
                        ;; "scroll fighting me" bounce). An absorbed tick (effective nil)
                        ;; just updates momentum and recurs without scrolling.
                        (not (zero? (long (or wheel-delta 0))))
                        (let [raw (long wheel-delta)
-                             now-ms (System/currentTimeMillis)
-                             ;; Momentum decays by WALL-CLOCK time since the previous
-                             ;; wheel event, computed HERE at use time. The old
-                             ;; poll-based decay (halving per 16ms idle poll) died
-                             ;; between two events of a slow macOS trackpad inertia
-                             ;; tail (50-100ms apart), so the tail's sign-flipped
-                             ;; ticks always met zero momentum and dispatched as real
-                             ;; reversals — re-arming FOLLOW mid-stream whenever the
-                             ;; user sat within the slack band (the 'scrolling in
-                             ;; place' bounce).
-                             old-mom (long (scroll/decay-wheel-momentum
-                                             (long @scroll-momentum)
-                                             (- now-ms (long @last-wheel-at-ms))))
-                             [new-mom eff] (scroll/merge-wheel-delta old-mom raw)
+                             {:keys [old-mom new-mom eff]}
+                             (smooth-wheel! scroll-momentum last-wheel-at-ms raw)
                              ly (:layout db)
                              pre-offset (long (or (:eff-scroll ly) 0))
                              pre-mode (-> (:scroll db)
-                                          :mode)]
+                                          :mode)
+                             step (scroll/wheel-step inner-h)]
 
-                         (vreset! scroll-momentum new-mom)
-                         (vreset! last-wheel-at-ms now-ms)
                          ;; Wheel-momentum diagnostic. Fires on every wheel
                          ;; dispatch: the raw delta, the momentum transition,
                          ;; the effective delta (nil = absorbed tick), the
@@ -6389,9 +6434,9 @@
                             :data {:raw raw
                                    :old-mom old-mom
                                    :new-mom new-mom
-                                   :eff (some-> eff
-                                                long)
+                                   :eff eff
                                    :absorbed? (nil? eff)
+                                   :step step
                                    :pre-offset pre-offset
                                    :pre-mode (str pre-mode)}
                             :msg (str "wheel raw="
@@ -6401,16 +6446,17 @@
                                       "->"
                                       new-mom
                                       " eff="
-                                      (some-> eff
-                                              long)
+                                      eff
                                       (when (nil? eff) " (absorbed)")
+                                      " step=" step
                                       " pre-offset=" pre-offset
                                       " mode=" pre-mode)})
                          (when eff
                            (if (neg? (long eff))
-                             (state/dispatch [:scroll-up (* 3 (Math/abs (long eff))) total-h
-                                              inner-h])
-                             (state/dispatch [:scroll-down (* 3 (long eff)) total-h inner-h])))
+                             (state/dispatch [:scroll-up (* (long step) (Math/abs (long eff)))
+                                              total-h inner-h])
+                             (state/dispatch [:scroll-down (* (long step) (long eff)) total-h
+                                              inner-h])))
                          (recur))
                        ;; CLICK_DOWN on the thumb itself: arm a drag.
                        ;; Record the offset between the click row and

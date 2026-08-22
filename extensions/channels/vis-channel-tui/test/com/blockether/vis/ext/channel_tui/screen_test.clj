@@ -45,6 +45,9 @@
 
 (def ^:private live-view-wheel-event (deref #'screen/live-view-wheel-event))
 
+(def ^:private smooth-wheel! (deref #'screen/smooth-wheel!))
+
+(def ^:private release-wheel-momentum! (deref #'screen/release-wheel-momentum!))
 (def ^:private activate-live-region! (deref #'screen/activate-live-region!))
 
 (def ^:private header-hover-only-change? (deref #'screen/header-hover-only-change?))
@@ -322,6 +325,62 @@
 
                    (expect (nil? wheel-delta)))))
 
+;; Reported in Vis session 22b3489b-336f-42d0-9bc8-806dff2de86f: scrolling a live view
+;; with a MacBook trackpad crawled at a third of the speed of the transcript beside it,
+;; and the gesture's own inertia tail bounced the pane back against the reader.
+(defdescribe
+  live-view-wheel-physics-test
+  (it "steps a tall pane by the shared notch and a compact one by one row"
+      (with-redefs-fn {(ns-resolve 'com.blockether.vis.ext.channel-tui.screen 'live-band-pane)
+                       (fn [_db _my]
+                         {:view {:id "view-1"} :visible 20})}
+        (fn []
+          (expect (= [:live-view-scroll "view-1" -6] (live-view-wheel-event {} 9 -2)))))
+      (with-redefs-fn {(ns-resolve 'com.blockether.vis.ext.channel-tui.screen 'live-band-pane)
+                       (fn [_db _my]
+                         {:view {:id "view-1"} :visible 4})}
+        (fn []
+          (expect (= [:live-view-scroll "view-1" -2] (live-view-wheel-event {} 9 -2))))))
+  (it "absorbs an inertia tail reversal on the band's own momentum"
+      (let [mom
+            (volatile! 0)
+
+            at
+            (volatile! 0)]
+
+        (expect (= -3 (:eff (smooth-wheel! mom at -3))))
+        (expect (nil? (:eff (smooth-wheel! mom at 1))))
+        (expect (neg? (long @mom)))))
+  (it "keeps the band's momentum and the transcript's apart"
+      (let [mom
+            (volatile! 0)
+
+            at
+            (volatile! 0)
+
+            live-mom
+            (volatile! 0)
+
+            live-at
+            (volatile! 0)]
+
+        (smooth-wheel! mom at -3)
+        (expect (zero? (long @live-mom)))
+        (smooth-wheel! live-mom live-at 2)
+        (expect (= -3 (long @mom)))
+        (expect (= 2 (long @live-mom)))))
+  (it "releases a surface's directional lock only once the hold window expired"
+      (let [mom
+            (volatile! 5)
+
+            at
+            (volatile! (System/currentTimeMillis))]
+
+        (release-wheel-momentum! mom at :live-view)
+        (expect (= 5 (long @mom)))
+        (vreset! at (- (System/currentTimeMillis) (* 2 (long scroll/momentum-hold-ms))))
+        (release-wheel-momentum! mom at :live-view)
+        (expect (zero? (long @mom))))))
 ;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: wheel input
 ;; accelerated when it crossed into the live table, its rows had no TUI action, and
 ;; the live transient had no minimize/restore action.

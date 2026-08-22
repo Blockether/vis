@@ -376,15 +376,27 @@
 (defn scrolled
   "The pane after the human moved the wheel `delta` rows over it (positive is
    DOWN). Scrolling up RELEASES follow-tail — reading back is always a deliberate
-   intent — and landing on the last row re-arms it. The anchor is dropped because
-   this gesture, not the previous paint, is now what says where the eye is; the
-   next paint derives a fresh one from the row it lands on."
+   intent — and a DOWNWARD gesture that reaches the last row re-arms it. The
+   anchor is dropped because this gesture, not the previous paint, is now what
+   says where the eye is; the next paint derives a fresh one from the row it
+   lands on.
+
+   Only a downward gesture ARMS the tail: an upward one that merely CLAMPS at the
+   end (the plan shrank under it, or there is nothing to scroll at all) can keep
+   a follow already in force but must never start one, or reading back would snap
+   the pane to the live edge the moment its rows ran out."
   [pane delta]
-  (let [next-offset (clamp (+ (long (or (:offset pane) 0)) (long delta)) 0 (max-offset pane))]
+  (let [delta
+        (long delta)
+
+        next-offset
+        (clamp (+ (long (or (:offset pane) 0)) delta) 0 (max-offset pane))]
+
     (assoc pane
       :offset next-offset
       :anchor nil
-      :is-following (>= next-offset (max-offset pane)))))
+      :is-following (and (>= next-offset (max-offset pane))
+                         (or (pos? delta) (true? (:is-following pane)))))))
 
 (defn expanded
   "The pane with node `node-id` toggled between its window and everything it
