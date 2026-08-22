@@ -2756,6 +2756,31 @@
               (expect (= [draft-primary draft-clone] roots))
               ;; … and the raw ~/.vis grant is gone.
               (expect (not (some #{vis-home} roots))))))))
+    ;; Regression, session 64404d5c-8826-482c-9989-da87f1a502c5: `~/blockether.com` was
+    ;; catalogued in `workspace.filesystem` eleven minutes before that repo was cloned, so
+    ;; the DEFAULT sweep handed a directory that was NOT THERE to `fff-index/lease`, and
+    ;; every grep whose scope widened to "." — `grep({"paths": ["README.md"]})` among them,
+    ;; because the NAME axis normalizes a workspace-root file to "." — died with
+    ;; `rg fff index root must be a directory` instead of searching the roots that existed.
+    (it
+      "a catalogued root that is NOT an existing directory is SKIPPED by the sweep instead of aborting it"
+      (let [real
+            (.getCanonicalPath (fs/file (temp-dir-path "rgd-sweep-real")))
+
+            _
+            (write-temp! "rgd-sweep-real/present.clj" "(def sweep-phantom-needle :here)\n")
+
+            phantom
+            (str real "-never-cloned")
+
+            _
+            (when (fs/exists? phantom) (fs/delete-tree phantom))]
+
+        (with-redefs [workspace/allowed-roots (constantly [real phantom])
+                      workspace/no-search-roots (constantly #{})]
+          (let [out (:result (rg {"query" "sweep-phantom-needle" "paths" ["."]}))]
+            (expect (= 1 (get out "hit_count")))
+            (expect (= 1 (get out "file_count")))))))
     (it
       "an EXISTING file is searched as that ONE file (precise — never widened to its dir); a MISSING path CLIMBS to its nearest existing dir and is REPORTED in missing_paths"
       (let [dir

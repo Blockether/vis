@@ -261,17 +261,33 @@
 
     (concat (rg-fff-rel-files base path-items) (rg-fff-rel-files base grep-items))))
 
+(defn- search-root-kind
+  "What a resolved search root IS on disk right now: `:dir` (fff can index it), `:file`
+   (its own only candidate), or `nil` — a catalogued root the workspace declares but disk
+   does not carry (never cloned, renamed, unmounted, deleted). A `nil` root must contribute
+   NOTHING: `fff-index/lease` throws on a non-directory, so one phantom root in an
+   allowed-roots sweep would otherwise abort the entire search."
+  [^File root]
+  (cond (.isDirectory root) :dir
+        (.isFile root) :file))
+
 (defn- rg-fff-root-files
   "`rg-fff-candidate-files` for ONE root: a FILE root is its own only candidate, a
-   directory root leases a single fff index and realizes every needle's hits in it."
+   directory root leases a single fff index and realizes every needle's hits in it, and a
+   root that is neither is skipped."
   [^File root needles is-regex? overlay]
-  (if (.isFile root)
+  (case (search-root-kind root)
+    :file
     [root]
+
+    :dir
     (fff-index/with-index [idx (fff-index/lease root true overlay)]
                           (let [base (.getCanonicalFile root)]
                             ;; doall: realize the lazy hits INSIDE with-open, before the fresh
                             ;; instance is closed.
-                            (doall (mapcat #(rg-fff-query-files idx base % is-regex?) needles))))))
+                            (doall (mapcat #(rg-fff-query-files idx base % is-regex?) needles))))
+
+    []))
 
 (defn- rg-fff-candidate-files
   "Files under `roots` that MIGHT contain a needle, via fff — the fast, nested-
@@ -1653,16 +1669,22 @@
 
 (defn- find-scan-root
   "`find-scan` for ONE root: a FILE root contributes itself, a directory root leases one
-   fff index and scores its page of hits inside the lease."
+   fff index and scores its page of hits inside the lease, and a root that is neither is
+   skipped."
   [^File root query is_hidden candidate-page overlay]
-  (if (.isFile root)
+  (case (search-root-kind root)
+    :file
     [(find-direct-file-item root)]
+
+    :dir
     (fff-index/with-index [idx (fff-index/lease root true overlay)]
                           (let [base (.getCanonicalFile root)]
                             ;; doall: realize hits INSIDE with-open, before the fresh instance is closed.
                             (doall (->> (:items
                                           (fff/search idx {:query query :page-size candidate-page}))
-                                        (keep #(find-scan-item base query is_hidden %))))))))
+                                        (keep #(find-scan-item base query is_hidden %))))))
+
+    []))
 
 (defn- find-scan
   "Scan `roots` for ONE `query` string and keep candidates whose
@@ -1720,15 +1742,20 @@
 
 (defn- find-ls-root
   "`find-ls` for ONE root: a FILE root lists itself, a directory root enumerates its fff
-   index with a blank query inside the lease."
+   index with a blank query inside the lease, and a root that is neither is skipped."
   [^File root limit is_hidden overlay]
-  (if (.isFile root)
+  (case (search-root-kind root)
+    :file
     [(find-direct-file-item root)]
+
+    :dir
     (fff-index/with-index
       [idx (fff-index/lease root true overlay)]
       (let [base (.getCanonicalFile root)]
         (doall (->> (:items (fff/search idx {:query "" :page-size (max (long limit) 300)}))
-                    (keep #(find-ls-item base is_hidden %))))))))
+                    (keep #(find-ls-item base is_hidden %))))))
+
+    []))
 
 (defn- find-ls-rank
   "ls ordering key: frecency desc, then recency desc, then path."
