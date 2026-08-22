@@ -1037,6 +1037,20 @@ class __VisShell__(__VisResult__):
             return dict.__getitem__(self, "out")[__vis_key__]
         return super().__getitem__(__vis_key__)
 
+    def __vis_log_text_concat__(self, other, reverse):
+        # A heading + log page is the unsliced twin of heading + page[-n:]. Preserve
+        # the status map everywhere else; only string concatenation reads its payload.
+        if dict.get(self, "op") != "_shell_logs" or not isinstance(other, str):
+            return NotImplemented
+        out = dict.__getitem__(self, "out")
+        return other + out if reverse else out + other
+
+    def __add__(self, other):
+        return self.__vis_log_text_concat__(other, False)
+
+    def __radd__(self, other):
+        return self.__vis_log_text_concat__(other, True)
+
     def __vis_log_page__(self, __vis_args__):
         __vis_page__ = self.__vis_op__("_shell_logs", __vis_args__)
         __vis_page__.__vis_logs_spec__ = dict(__vis_args__)

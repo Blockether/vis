@@ -1766,21 +1766,24 @@
              (finally (resources/stop-all! sid)))))
   ;; Session report 6e345db0-5e32-49f2-a63e-d871cd5227b6: tail-clipping the log page
   ;; itself raised a map-indexing KeyError instead of clipping its `out` text.
-  (it "slices a log page directly as its `out` text"
+  ;; Regression, session report e3f70641-623f-433a-81fc-ce532239c89c: adding an awaited
+  ;; log page to a report heading raised TypeError instead of using that same text payload.
+  (it "uses a log page directly as its `out` text for slices and concatenation"
       (let [sid
-            (str "py-logs-slice-" (System/nanoTime))
+            (str "py-logs-text-" (System/nanoTime))
 
             c
             (py-ctx {:session-id sid})]
 
-        (try (expect (= [true true]
+        (try (expect (= [true true true true]
                         (py c
-                            (str
-                              "status_res = __vis_settle__(shell('printf abcdefghij',"
-                              " {'id':'slice'}))\n"
-                              "status_res.wait(30)\n" "page = status_res.logs()\n"
-                              "tail = page[-4000:]\n"
-                              "[tail == page['out'], ('STATUS:' + page[-4:]) == 'STATUS:ghij']"))))
+                            (str "status_res = __vis_settle__(shell('printf abcdefghij',"
+                                 " {'id':'text'}))\n"
+                                 "status_res.wait(30)\n" "page = status_res.logs(-120)\n"
+                                 "tail = page[-4000:]\n"
+                                 "[tail == page['out'], ('STATUS:' + page[-4:]) == 'STATUS:ghij',"
+                                 " ('STATUS:' + page) == 'STATUS:abcdefghij',"
+                                 " (page + ':END') == 'abcdefghij:END']"))))
              (finally (resources/stop-all! sid)))))
   ;; Session report e3f70641-623f-433a-81fc-ce532239c89c: `.stderr` raised AttributeError even though the PTY's
   ;; merged output from either process channel already lived in `out`.
