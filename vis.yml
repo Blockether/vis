@@ -51,6 +51,9 @@ workspace:
     - id: infrastructure
       path: ~/infrastructure
       description: Sibling repo — private operations automation. Nothing about it belongs in this repository.
+    - id: blockether-com
+      path: ~/blockether.com
+      description: Sibling repo — source for the Blockether website.
     # (`~/.vis` — Vis' own session folder — is granted implicitly by the engine.)
     # Managed REPL / test-runner dependency caches. Granted so a jailed JVM/Node
     # resolves already-cached artifacts, but kept OUT of the default search sweep.
@@ -98,7 +101,7 @@ toggles:
 #   # here is not confined-granted. Access (RW vs read-only) comes from the
 #   # catalog entry above.
 #   filesystem:
-#     allow: [spel, fff, clj-fff, clj-parinferish, clj-ruff, tree-sitter, tree-sitter-clojure, svar, clj-imaging, infrastructure, m2, clojure, clj-tslp, graal, npm]
+#     allow: [spel, fff, clj-fff, clj-parinferish, clj-ruff, tree-sitter, tree-sitter-clojure, svar, clj-imaging, infrastructure, blockether-com, m2, clojure, clj-tslp, graal, npm]
 #
 #   # Outbound egress allowlist. A bare host also matches its subdomains, so
 #   # `github.com` covers `api.github.com`, and `githubusercontent.com` covers
