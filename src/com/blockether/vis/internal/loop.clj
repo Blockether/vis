@@ -4536,27 +4536,16 @@
               suffix
               (session-message-suffix (svar/session-history session) messages)
 
-              session
+              turn-opts
               (if (some? suffix)
-                session
-                (do
-                  ;; A resumed/compacted transcript diverged from the local cursor.
-                  ;; Start a fresh server chain and replay its canonical full input.
-                  (close-llm-session! session-atom)
-                  (let [fresh (svar/open-session router
-                                                 (-> ask-opts
-                                                     (dissoc :messages)
-                                                     (pin-session-route provider model)))]
-                    (reset! session-atom {:provider provider :router router :session fresh})
-                    fresh)))
+                (assoc ask-opts :messages suffix)
+                ;; Mutable context tails and compaction can rewrite canonical history.
+                ;; Reset only the logical response chain; the physical socket stays hot.
+                (-> ask-opts
+                    (dissoc :messages)
+                    (assoc :history messages)))]
 
-              turn-messages
-              (or suffix messages)]
-
-          (svar/ask! session
-                     (-> ask-opts
-                         (assoc :messages turn-messages)
-                         (pin-session-route provider model)))))
+          (svar/ask! session (pin-session-route turn-opts provider model))))
       (do (when (and session-atom @session-atom)
             (locking session-atom (close-llm-session! session-atom)))
           (svar/ask-code! (:router environment)

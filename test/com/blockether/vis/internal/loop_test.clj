@@ -398,9 +398,9 @@
         (expect (identical? new-router (ffirst @opened)))
         (expect (= ::fresh (first @asked))))))
   (it
-    "replays on a fresh Codex session when canonical history diverges"
+    "replays divergent canonical history without replacing the Codex session"
     (let [session-atom
-          (atom {:provider :openai-codex :router ::router :session ::stale})
+          (atom {:provider :openai-codex :router ::router :session ::sticky})
 
           opened
           (atom [])
@@ -429,16 +429,17 @@
 
                     svar/ask!
                     (fn [session opts]
-                      (reset! sent [session (:messages opts)])
+                      (reset! sent [session (:history opts) (:messages opts)])
                       {:stop-reason :end})]
 
         (#'lp/ask-code-with-session!
          {:router ::router :llm-session-atom session-atom}
          {:provider :openai-codex :name "gpt-5.6"}
          {:messages messages})
-        (expect (= [::stale] @closed))
-        (expect (= 1 (count @opened)))
-        (expect (= [::fresh messages] @sent)))))
+        (expect (= [] @closed))
+        (expect (= [] @opened))
+        (expect (= [::sticky messages nil] @sent))
+        (expect (= ::sticky (:session @session-atom))))))
   (it
     "closes the sticky Codex session for another provider and opens fresh on return"
     (let [session-atom
