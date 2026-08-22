@@ -713,29 +713,6 @@ function projectMillis(sessions: Session[]): number {
   return sessions.reduce((newest, session) => Math.max(newest, sessionMillis(session)), 0);
 }
 
-/**
- * ONE page of a project's history, cut from the rows the screen is PAINTING.
- *
- * Which rows those ARE is the gateway's answer now — the device sends the one
- * fact it cannot know (`dirty=`) and gets its own list back — so a local cut
- * and a `?root=` window are finally the same arithmetic. They were not: on one
- * machine the gateway counted 1034 sessions in a project this list painted 763
- * of, which put the gateway's last page 27 pages beyond the pager's.
- *
- * `page` is CLAMPED, so a list that shrank under the reader (a deletion, a
- * filter, a smaller step) never gets a frame with an empty band in it.
- */
-export function projectPage(
-  sessions: Session[],
-  page: number,
-  pageSize: number,
-): { page: number; pageCount: number; rows: Session[] } {
-  const size = Math.max(1, Math.floor(pageSize) || 1);
-  const pageCount = Math.max(1, Math.ceil(sessions.length / size));
-  const at = Math.min(Math.max(1, Math.floor(page) || 1), pageCount);
-  return { page: at, pageCount, rows: sessions.slice((at - 1) * size, at * size) };
-}
-
 /** Where a machine is working right now, as the menu says it out loud. */
 export interface MachineProject {
   /** The repo root a new session starts in. */

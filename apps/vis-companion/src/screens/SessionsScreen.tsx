@@ -58,7 +58,12 @@ import {
   useListScrollPark,
   type ListAnchor,
 } from '../lib/list-scroll';
-import { EPOCH_STALE_AWAY_MS, holdOrder, useOrderEpoch } from '../lib/order-epoch';
+import {
+  EPOCH_STALE_AWAY_MS,
+  holdOrder,
+  useOrderEpoch,
+  type OrderEpoch,
+} from '../lib/order-epoch';
 import { usePullToSearch, type PullPhase } from '../lib/pull-to-search';
 import { SwipeActions } from '../components/SwipeActions';
 import {
@@ -105,7 +110,6 @@ import {
   newSessionTarget,
   projectDelete,
   projectLabel,
-  projectPage,
   projectTally,
   type Tally,
   reconcileMachines,
@@ -201,6 +205,9 @@ type SearchAnswers = { needle: string; asked: string[]; byMachine: Map<string, S
 
 const NO_MACHINES: string[] = [];
 
+// A page whose read has not answered yet paints nothing rather than rows from
+// another place in the project (`ProjectGroup`).
+const NO_ROWS: Session[] = [];
 const NO_SEARCH: SearchAnswers = { needle: '', asked: NO_MACHINES, byMachine: new Map() };
 
 // A RETRY IS A GESTURE, so it answers on a gesture's clock. The transport gives every
@@ -330,9 +337,10 @@ const LIST_GEOMETRY = {
  * setting's.
  *
  * `vis.sessionsPerProject` (5/10/15) sized this page for a device it never
- * measured; the panel, the key and the hook that read it are gone. Paging is
- * presentational either way: `projectPage` cuts rows the fleet poll already
- * holds (`lib/fleet`), so a page recut on rotation costs no request.
+ * measured; the panel, the key and the hook that read it are gone. It is the
+ * number the GATEWAY is asked for (`limit`, see `GatewayClient.listProjectPage`),
+ * so rotating the device asks for the page the new screen holds instead of
+ * recutting rows this app downloaded to hide most of.
  */
 function useSessionsPerPage(): number {
   const isMouse = useMouseDensity();
@@ -1359,6 +1367,7 @@ export function SessionsScreen({
           admitted.add(id);
         return {
           machine: entry.machine,
+          admitted,
           ...holdOrder(
             epoch,
             entry.sessions,
@@ -1938,6 +1947,9 @@ export function SessionsScreen({
     () =>
       heldRows.map((entry) => ({
         machine: entry.machine,
+        // Carried beside the machine because every project group holds a page of its
+        // own now, under the same agreement this screen made (`lib/order-epoch`).
+        admitted: entry.admitted,
         // Group identity and every create action keep the gateway's canonical path.
         // Home-shortening is paint only; feeding `~/vis` back as an API root is how an
         // older gateway produced the impossible `/…/vis/~/vis` directory.
@@ -2301,7 +2313,7 @@ export function SessionsScreen({
           </div>
         ) : (
           <div>
-            {sections.map(({ machine, groups }, sectionIndex) => {
+            {sections.map(({ machine, groups, admitted }, sectionIndex) => {
               const key = machineKey(machine.conn);
               const color = machineColor(machineColors, key);
               const address = hostOf(machine.conn.url);
@@ -2431,6 +2443,10 @@ export function SessionsScreen({
                           // the private copy beside its own "New session".
                           onNewDraft={(anchor, root) => openDraftsAt(anchor, machine.conn, root)}
                           pageSize={pageSize}
+                          epoch={epoch}
+                          admitted={admitted}
+                          isVisible={isVisible}
+                          list={machine.sessions}
                           drafts={draftMessages}
                           // The order already put the machine's live work on top; the
                           // project it lands on is the one that opens by itself.
@@ -2911,6 +2927,10 @@ const ProjectGroup = memo(function ProjectGroup({
   creating,
   onNewDraft,
   pageSize,
+  epoch,
+  admitted,
+  isVisible,
+  list,
   isTop,
 }: {
   project: string;
@@ -2946,6 +2966,23 @@ const ProjectGroup = memo(function ProjectGroup({
   /** Opens the private-copy question for this project, anchored on the button. */
   onNewDraft?: (anchor: HTMLElement, root: string) => void;
   pageSize: number;
+  /** The order this reader agreed to, which the page below is held in (`lib/order-epoch`). */
+  epoch: OrderEpoch | null;
+  /** Rows this reader is not surprised by: what they just started, what holds their words. */
+  admitted: ReadonlySet<string>;
+  /**
+   * Whether this screen is on the glass. A group parked behind an open transcript
+   * asks the gateway for nothing: its page is a READ, and reading a page nobody
+   * can see is the cascade the fleet poll already refuses to run off the glass.
+   */
+  isVisible: boolean;
+  /**
+   * The machine's OWN list, taken by identity alone: a poll that changed nothing
+   * hands back the very array it was handed before (`GatewayClient.listSessions`),
+   * so a page is re-read exactly when the list under it moved — never once per poll
+   * per project, and never on a re-render this device made for itself.
+   */
+  list: Session[] | null;
   /**
    * This is the project the machine's own order put ON TOP, and the one project
    * that opens without being asked. Everything below it starts folded.
@@ -2967,19 +3004,37 @@ const ProjectGroup = memo(function ProjectGroup({
     [onToggleStar, conn],
   );
 
-  // A project is WALKED, page by page, and every page is cut from the rows this
-  // screen already paints: `projectPage` owns that arithmetic and the reason it
-  // is not the gateway's.
+  // A PROJECT'S PAGE IS CUT BY WHOEVER OWNS THE LIST.
+  //
+  // What this group paints is the gateway's answer to `?root=&limit=&after=` —
+  // this project, at the size this screen measured, ordered and banded there
+  // (`GatewayClient.listProjectPage`). It used to be a slice of an array this
+  // device had downloaded, re-filtered and re-ordered for itself: the gateway
+  // counted 1034 sessions in a project this list painted 763 of, page one
+  // therefore disagreed with every page after it, and the last page painted its
+  // three real rows and swapped them 119ms later for an unrelated ten.
+  //
   // A PAGE IS A PLACE IN THE PROJECT, NOT A NUMBER. The step belongs to the
   // screen (`useSessionsPerPage`), so it changes when the device is rotated or
   // the window opened wider — and page 77 of 102 then names a different stretch
   // of the history. What the reader is holding is the FIRST ROW on screen, so its
-  // INDEX is what is kept and the page is cut from it again at the new step;
-  // keeping the number would have sent a reader deep in a project back to page
-  // one through the clamp below.
+  // INDEX is what is kept and the page is asked for from there again at the new
+  // step; keeping the number would have sent a reader deep in a project back to
+  // page one through the clamp below.
   const [first, setFirst] = useState(0);
   const page = Math.floor(first / pageSize) + 1;
   const goToPage = (next: number) => setFirst((next - 1) * pageSize);
+  // The page that index FALLS IN, from its first row: the reader keeps a ROW, and
+  // the page is the grid that row lands on at the step the screen now holds.
+  const start = (page - 1) * pageSize;
+  // WHERE A PAGE BEGINS IS A ROW, NOT A COUNT: first row index → the cursor of the
+  // row before it, learned one answer at a time as the project is walked. Index 0
+  // is the top of the project and needs no cursor at all. A cursor NAMES a row, so
+  // the place survives everything the fleet does under the reader, which an offset
+  // into an ordering recomputed per request could not (`state/list-sessions-page`).
+  const cursors = useRef(new Map<number, string>([[0, '']]));
+  // The page LAST ANSWERED, whichever it is: the rows and the project's own count.
+  const [paged, setPaged] = useState<{ rows: Session[]; total: number } | null>(null);
   // A project FOLDS, and only the top one starts open: the screen's job is to show
   // the work that moved last, not four checkouts' history at once. What the reader
   // folds afterwards is theirs and outlives this component — see `lib/project-fold`.
@@ -2995,15 +3050,94 @@ const ProjectGroup = memo(function ProjectGroup({
   // a query is on, every project that still has rows shows them. The fold the reader
   // set is untouched and is back the moment the query is.
   const isShowing = isOpen || needle !== '';
-  const {
-    page: shownPage,
-    pageCount,
-    rows,
-  } = useMemo(() => projectPage(sessions, page, pageSize), [sessions, page, pageSize]);
+  const searching = needle !== '';
+  // THE PAGE IS ASKED FOR, NOT SLICED.
+  //
+  // A folded group asks for nothing — the read IS the paint, and a project nobody
+  // opened has no page to be wrong. A query is the one answer this device holds
+  // COMPLETE (the search fanout narrows a list it was given), so its pages are cut
+  // below instead of read here.
   useEffect(() => {
-    // The fleet moved under the pager (a deletion, a filter, a smaller step): the
-    // page that no longer exists becomes the first one rather than the last one a
-    // reader never asked for.
+    if (!isVisible || !isShowing || searching) return;
+    const control = new AbortController();
+    let live = true;
+    // The deepest place this group has walked to that is not past the one asked
+    // for. Page one needs no cursor; a number tapped out of nowhere is asked for
+    // from there with a `limit` spanning the gap, and the TAIL of that one answer
+    // is the page — a cursor can only ever be the row a page ended on.
+    let from = start;
+    while (from > 0 && !cursors.current.has(from)) from -= 1;
+    void clientFor(conn)
+      .listProjectPage(
+        root,
+        start - from + pageSize,
+        cursors.current.get(from) ?? '',
+        control.signal,
+      )
+      .then((answer) => {
+        if (!live) return;
+        if (answer.nextCursor)
+          cursors.current.set(from + answer.rows.length, answer.nextCursor);
+        setPaged({
+          rows: answer.rows.slice(start - from),
+          total: answer.total,
+        });
+      })
+      .catch(() => {
+        // A read that failed, or one this effect replaced, leaves the page already
+        // on screen standing: an unreachable machine is said once, by its own band.
+      });
+    return () => {
+      live = false;
+      control.abort();
+    };
+  }, [conn, root, start, pageSize, isVisible, isShowing, searching, list]);
+  // The count under the header and the pages beside it are ONE number — the
+  // project's own total, as the gateway counted it. Under a query the complete
+  // answer is on this device, and then what is on screen is the honest count.
+  const total = searching ? sessions.length : (paged?.total ?? tally.count);
+  const pageCount = Math.max(1, Math.ceil(Math.max(total, 1) / pageSize));
+  const shownPage = Math.min(page, pageCount);
+  // A PAGE ARRIVES OVER THE ONE BEFORE IT, NEVER OVER A HOLE. The read a step takes
+  // lands a beat after the tap, and a group that painted nothing meanwhile lost its
+  // rows, its height AND the pager the thumb had just pressed — the reflow this
+  // whole seam exists to end. So the last page answered stays on the glass until the
+  // next one lands, and only page ONE has something else to open on: the head of
+  // this project as the fleet read left it, in the gateway's own order.
+  const pageRows = paged?.rows ?? null;
+  const painting = searching
+    ? sessions.slice((shownPage - 1) * pageSize, shownPage * pageSize)
+    : (pageRows ?? (start === 0 ? sessions.slice(0, pageSize) : NO_ROWS));
+  // A ROW THIS DEVICE JUST CHANGED IS THE ROW IT PAINTS. A star or a rename is
+  // echoed into the list this screen holds the moment the gateway answers the
+  // PATCH; the window carrying it is a read of its own and lands a beat later, so
+  // a page takes the held copy of any row it has one for — the same row, the same
+  // identity the rest of the screen is rendering, wearing the mark the tap just
+  // made. Order is never taken from there: WHERE a row sits is the answer above.
+  const local = useMemo(
+    () => new Map(sessions.map((session) => [session.id, session])),
+    [sessions],
+  );
+  // NOTHING MOVES WHILE THE READER IS LOOKING AT IT (`lib/order-epoch`). The list
+  // of projects is held by the screen; a page read from the gateway is held HERE,
+  // or a turn finishing on another machine would slide this page under the thumb on
+  // the next poll. A search answer arrives held already, and a row this reader
+  // started or is holding words for is admitted rather than parked behind the pill.
+  const rows = useMemo(() => {
+    const shown = painting.map((session) => local.get(session.id) ?? session);
+    return searching
+      ? shown
+      : holdOrder(
+          epoch,
+          shown,
+          (session) => ({ id: session.id, millis: sessionMillis(session) }),
+          admitted,
+        ).rows;
+  }, [searching, painting, local, epoch, admitted]);
+  useEffect(() => {
+    // The project shrank under the pager (a deletion, a smaller step): the page that
+    // no longer exists becomes the first one rather than the last one a reader never
+    // asked for.
     if (page > pageCount) setFirst(0);
   }, [page, pageCount]);
   // A star PINS its row to the top of the project, and the top of the project is

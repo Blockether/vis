@@ -52,7 +52,12 @@ describe("what a project header counts", () => {
     // One row is on screen; the header still says what the project holds.
     expect(await screen.findByText("400 sessions")).toBeTruthy();
     expect(screen.getAllByText(/3 live/).length).toBeGreaterThan(0);
-    expect(view.requests.filter(({ path }) => path.startsWith("/v1/sessions?"))).toHaveLength(1);
+    // One list read, and a project's own page is the only other (`listProjectPage`).
+    expect(
+      view.requests.filter(
+        ({ path }) => path.startsWith("/v1/sessions?") && !path.includes("root="),
+      ),
+    ).toHaveLength(1);
     expect(view.requests.some(({ path }) => path === "/v1/projects/overview")).toBe(false);
   });
 });

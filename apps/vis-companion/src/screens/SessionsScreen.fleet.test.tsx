@@ -247,8 +247,13 @@ describe("the All view is a fleet of separate machines", () => {
 describe("a machine that misses one read is not an outage", () => {
   const betaReads = (view: ReturnType<typeof renderSessionsScreen>) => {
     const origin = new URL(view.conns[1].url).origin;
+    // A project's page is a read of ITS own (`GatewayClient.listProjectPage`); a
+  // FLEET read is the one asked without a `root=`.
     return view.requests.filter(
-      (request) => request.machine === origin && request.path.startsWith("/v1/sessions?"),
+      (request) =>
+        request.machine === origin &&
+        request.path.startsWith("/v1/sessions?") &&
+        !request.path.includes("root="),
     ).length;
   };
 
@@ -451,7 +456,9 @@ describe("a machine known to be dark reconnects in the background", () => {
     const listReads = (view: { requests: { machine: string; path: string }[]; conns: { url: string }[] }) =>
       view.requests.filter(
         (request) =>
-          request.machine === alphaOrigin(view.conns) && request.path.startsWith("/v1/sessions?"),
+          request.machine === alphaOrigin(view.conns) &&
+          request.path.startsWith("/v1/sessions?") &&
+          !request.path.includes("root="),
       ).length;
 
     it("lets the machines that answer keep their ten seconds", async () => {

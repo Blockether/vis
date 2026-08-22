@@ -12,7 +12,7 @@ import { render } from "@testing-library/react";
 
 import { App } from "./App";
 import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL } from "./lib/compat";
-import { rankSessions } from "./screens/sessions-screen-harness";
+import { sessionsWindow } from "./screens/sessions-screen-harness";
 import type { GatewayConn, Session } from "./lib/types";
 
 export interface AppMachine {
@@ -94,26 +94,8 @@ export function renderApp({
     const machine = entry.machine;
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);
-    if (url.pathname === "/v1/sessions") {
-      // The order is the GATEWAY's, and `dirty=` is the one part of it only this
-      // device knows — the same bands `state/session-ranking` answers with.
-      const dirty = new Set(
-        (url.searchParams.get("dirty") ?? "").split(",").filter((id) => id !== ""),
-      );
-      const sessions = rankSessions(machine.sessions ?? [], dirty);
-      return answer({
-        sessions,
-        total: sessions.length,
-        has_more: false,
-        overview: {
-          projects: [],
-          project_count: 0,
-          session_count: sessions.length,
-          live_count: 0,
-          awaiting_count: 0,
-        },
-      });
-    }
+    if (url.pathname === "/v1/sessions")
+      return answer(sessionsWindow(machine.sessions ?? [], url));
     if (url.pathname === "/v1/sessions/actions/search")
       return answer({ matches: [] });
     // The handshake every screen waits on: a gateway speaking this build's wire.

@@ -21,8 +21,13 @@ const settle = async (ms = 0) => {
   });
 };
 
+// A project's page is a read of ITS own now (`GatewayClient.listProjectPage`), so
+// the FLEET read — the one this poll owns — is the one without a `root=`.
 const listReads = (requests: { path: string }[]) =>
-  requests.filter((request) => request.path.startsWith("/v1/sessions?")).length;
+  requests.filter(
+    (request) =>
+      request.path.startsWith("/v1/sessions?") && !request.path.includes("root="),
+  ).length;
 let restore = () => {};
 
 // Regression, user report (paraphrased: "entering the session list makes it flicker, and

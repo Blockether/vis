@@ -188,6 +188,10 @@ REQUIRES WORK.
 
 - Phase 1 — DONE, `4fc1553fc`: the gateway owns the list, `?root=&limit=&after=` is the list a
   client paints, and the cursor is `<band>:<sort-key>:<id>`.
-- Phase 2 — DONE: the device sends `dirty=` and stops filtering and banding for itself.
+- Phase 2 — DONE, `49d39d5fc`: the device sends `dirty=` and stops filtering and banding for
+  itself.
+- Phase 3 — DONE: a project's page is the gateway's own window — `GatewayClient.listProjectPage`
+  asks `?root=&limit=&after=` at the size `useSessionsPerPage()` measured, `first`/`goToPage` are
+  cursor moves, and `projectPage` is gone from `src/lib/fleet.ts`.
 
-TODO, in order: Phase 3, Phase 4.
+TODO: Phase 4.

@@ -502,6 +502,18 @@ type SessionsWindow = {
 };
 
 /**
+ * ONE PROJECT'S PAGE, exactly as the gateway cut it (`listProjectPage`).
+ *
+ * `total` is the PROJECT's own count — what the group's header prints — so the
+ * pager's arithmetic and the header's are one number, never two.
+ */
+export interface ProjectPage {
+  rows: Session[];
+  total: number;
+  /** Cursor of this page's last row: what the page AFTER it is asked for, `""` at the end. */
+  nextCursor: string;
+}
+/**
  * Session-list page size. Measured on a 448-session gateway: the whole list is
  * ~326 ms / 315 KB to build and send, one 100-row window ~71 ms / 69 KB. The
  * first window is already more rows than any screen can show, so the list paints
@@ -648,6 +660,17 @@ export class GatewayClient {
     { full: Session[]; windows: Map<string, SessionsWindow> }
   >();
 
+  // A PAGE OF A PROJECT IS A WINDOW LIKE ANY OTHER (`listProjectPage`), pinned under
+  // the question it answered — this gateway, this project, this page size, this
+  // cursor, this device's overlay — so a poll over an unchanged page costs one 304
+  // with no body and hands back the SAME rows array, which React bails out on.
+  private static readonly projectWindows = new Map<
+    string,
+    { etag: string; page: ProjectPage }
+  >();
+
+  /** How many project windows keep a validator: the pages a reader walks between. */
+  private static readonly PROJECT_WINDOW_PINS = 24;
   /** Backing stores refreshed by the head of every list read. */
   private parked: Session[] = [];
   private overview: GatewayOverview | null;
@@ -2471,6 +2494,81 @@ export class GatewayClient {
     return rows;
   }
 
+  /**
+   * ONE PROJECT'S PAGE, CUT BY WHOEVER OWNS THE ORDER.
+   *
+   * `root` names the project, `limit` is the page the SCREEN measured
+   * (`useSessionsPerPage`) and `after` is the cursor of the row the page before it
+   * ended on — the same keyset window the fleet walk uses
+   * (`state/list-sessions-page`). Back come the rows, the project's own `total`,
+   * and the cursor of the page after this one.
+   *
+   * The pager used to print arithmetic over rows this device had filtered and
+   * re-ordered for itself: the gateway counted 1034 sessions in a project this
+   * list painted 763 of, which put its last page 27 pages beyond the pager's, and
+   * the reader saw the last page paint three rows and swap them for ten. The
+   * device decides nothing about the list any more — `dirty=` is the one fact it
+   * adds — so a header's count and the pages under it are one arithmetic again,
+   * and no page needs the whole fleet downloaded first.
+   *
+   * A JUMP IS STILL ONE REQUEST. A cursor names a ROW, so a page can only be asked
+   * for from a row the page before it ended on; a reader who taps a number they
+   * have not walked to is served from the deepest cursor their group HOLDS, with a
+   * `limit` spanning the gap, and paints the tail of that answer. The gateway
+   * decorates only the window it cuts, so one wide window is what a walk of
+   * conditional round trips would have cost.
+   */
+  async listProjectPage(
+    root: string,
+    limit: number,
+    after: string,
+    signal?: AbortSignal,
+  ): Promise<ProjectPage> {
+    // The overlay rides down here too: a session holding words typed on THIS device
+    // is in this device's list and in nobody else's, so a page cut without it is a
+    // page short (see `dirtySessionIds`).
+    await hydrateDraftMessages();
+    const overlay = dirtySessionIds(this.base).join(",");
+    const key = [this.base, root, String(limit), after, overlay].join("\u0000");
+    const pin = GatewayClient.projectWindows.get(key);
+    const res = await this.requestFull<{
+      sessions?: Session[];
+      total?: number;
+      next_cursor?: string | null;
+    }>(
+      "GET",
+      `/v1/sessions?root=${encodeURIComponent(root)}&limit=${limit}${
+        after ? `&after=${encodeURIComponent(after)}` : ""
+      }${overlay ? `&dirty=${encodeURIComponent(overlay)}` : ""}`,
+      undefined,
+      signal,
+      pin ? { "If-None-Match": pin.etag } : undefined,
+    );
+    if (res.status === 304 && pin) return pin.page;
+    // A row the wire repeated keeps the object the group is already rendering, so a
+    // page that only gained a title does not re-render every row on it.
+    const rows = reconcileRows(pin?.page.rows ?? null, res.data?.sessions ?? []);
+    // Every row names the model it runs on, so opening any of them paints the right
+    // chip on the FIRST frame instead of after a per-session round trip.
+    this.seedSessionModels(rows);
+    const page: ProjectPage = {
+      rows,
+      total: res.data?.total ?? rows.length,
+      nextCursor: res.data?.next_cursor ?? "",
+    };
+    if (!res.etag) {
+      GatewayClient.projectWindows.delete(key);
+      return page;
+    }
+    GatewayClient.projectWindows.set(key, { etag: res.etag, page });
+    // Oldest first, and only the pages behind the reader are ever dropped: a Map
+    // keeps insertion order, and the window just written is the last of it.
+    const spare = GatewayClient.projectWindows.size - GatewayClient.PROJECT_WINDOW_PINS;
+    if (spare > 0)
+      for (const stale of [...GatewayClient.projectWindows.keys()].slice(0, spare))
+        GatewayClient.projectWindows.delete(stale);
+    return page;
+  }
   // GET /v1/sessions/actions/search?q= searches the transcript store AND the session
   // titles server-side. Each hit carries the gateway's own `rank` band plus a short
   // snippet of the matching text, so the UI previews the conversation and paints the

@@ -104,7 +104,11 @@ describe("deleting a session does not re-download the fleet", () => {
 
   const listReads = (view: { requests: { method: string; path: string }[] }) =>
     view.requests.filter(
-      (request) => request.method === "GET" && request.path.startsWith("/v1/sessions?"),
+      (request) =>
+        request.method === "GET" &&
+        request.path.startsWith("/v1/sessions?") &&
+        // A project's page is a read of ITS own (`GatewayClient.listProjectPage`).
+        !request.path.includes("root="),
     );
 
   it("drops the row locally and re-lists nothing", async () => {

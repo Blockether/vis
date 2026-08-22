@@ -160,6 +160,48 @@ function overviewFor(rows: Session[]) {
     awaiting_count: rows.filter((row) => row.is_awaiting_input === true).length,
   };
 }
+/**
+ * The WINDOW a `/v1/sessions` read answers, and there is one of it: the gateway's
+ * own order, narrowed to ONE project by `root=` before it is cut, then cut by
+ * `limit=` at the row `after=` names (`state/list-sessions-page`). Both harnesses
+ * answer with this, because a page a client is served is the gateway's arithmetic
+ * and a fake that cut it a second way would prove the app against a list nobody
+ * runs.
+ */
+export function sessionsWindow(rows: Session[], url: URL) {
+  // The device sends the ONE fact this gateway cannot know: which of its sessions
+  // are holding words typed here. Everything else about the order is answered.
+  const dirty = new Set(
+    (url.searchParams.get("dirty") ?? "").split(",").filter((id) => id !== ""),
+  );
+  const ranked = rankSessions(rows, dirty);
+  const root = url.searchParams.get("root");
+  const listed = root ? ranked.filter((row) => projectPath(row) === root) : ranked;
+  // A real gateway answers a WINDOW, and a machine with more history than one page
+  // makes the client come back for the rest — which is what paints a second
+  // machine's rows a beat after the first machine's. The window is a KEYSET:
+  // `after` is the cursor of the last row the client holds, so the page after it is
+  // the same page however much the fleet moved meanwhile.
+  const limit = Number(url.searchParams.get("limit") ?? listed.length);
+  const after = url.searchParams.get("after");
+  const from = after ? listed.findIndex((row) => listCursor(row, dirty) === after) + 1 : 0;
+  const window =
+    after && from === 0 ? [] : listed.slice(from, from + (limit || listed.length));
+  const last = window[window.length - 1];
+  const hasMore = from + window.length < listed.length;
+  return {
+    sessions: window,
+    total: listed.length,
+    has_more: hasMore,
+    next_cursor: hasMore && last ? listCursor(last, dirty) : null,
+    // The real gateway answers parked runs and stable project totals BESIDE the
+    // head window, complete however deep the fleet sits. A project's page is not
+    // that head: it carries neither.
+    awaiting: ranked.filter((session) => session.is_awaiting_input === true),
+    ...(after || root ? {} : { overview: overviewFor(ranked) }),
+  };
+}
+
 export function renderSessionsScreen({
   machines = [{}] as MachineFixture[],
   query = "",
@@ -252,8 +294,13 @@ export function renderSessionsScreen({
         return answer(machine.routes[url.pathname]);
       return answer(overviewFor(machine.sessions ?? []));
     }
-    const seen = (reads.get(url.origin) ?? 0) + 1;
-    reads.set(url.origin, seen);
+    // A project's page is a read of ITS OWN (`GatewayClient.listProjectPage`) and it
+    // rides on whatever the machine is doing. What a fixture COUNTS is the fleet read
+    // the poll makes, so `drops`, `hangs` and `heals` still name the reads they were
+    // written for.
+    const isPage = url.searchParams.has("root");
+    const seen = (reads.get(url.origin) ?? 0) + (isPage ? 0 : 1);
+    if (!isPage) reads.set(url.origin, seen);
     if (machine.hangs && seen > 1) return blackhole(init?.signal);
     if (machine.drops?.includes(seen)) throw new TypeError("Failed to fetch");
     // Alive to the list, dark to the search: the machine whose transcripts nobody is
@@ -296,35 +343,7 @@ export function renderSessionsScreen({
           });
         await heldPages;
       }
-      // The device sends the ONE fact this gateway cannot know: which of its sessions
-      // are holding words typed here. Everything else about the order is answered.
-      const dirty = new Set(
-        (url.searchParams.get("dirty") ?? "").split(",").filter((id) => id !== ""),
-      );
-      const sessions = rankSessions(machine.sessions ?? [], dirty);
-      // A real gateway answers a WINDOW, and a machine with more history than one
-      // page makes the client come back for the rest — which is what paints a
-      // second machine's rows a beat after the first machine's. The window is a
-      // KEYSET: `after` is the cursor of the last row the client holds, so the page
-      // after it is the same page however much the fleet moved meanwhile
-      // (`state/list-sessions-page`).
-      const limit = Number(url.searchParams.get("limit") ?? sessions.length);
-      const after = url.searchParams.get("after");
-      const from = after ? sessions.findIndex((row) => listCursor(row, dirty) === after) + 1 : 0;
-      const window =
-        after && from === 0 ? [] : sessions.slice(from, from + (limit || sessions.length));
-      const last = window[window.length - 1];
-      return answer({
-        sessions: window,
-        total: sessions.length,
-        has_more: from + window.length < sessions.length,
-        next_cursor:
-          from + window.length < sessions.length && last ? listCursor(last, dirty) : null,
-        // The real gateway answers parked runs and stable project totals BESIDE
-        // the head window, complete however deep the fleet sits.
-        awaiting: sessions.filter((session) => session.is_awaiting_input === true),
-        ...(after ? {} : { overview: overviewFor(sessions) }),
-      });
+      return answer(sessionsWindow(machine.sessions ?? [], url));
     }
     if (url.pathname === "/v1/sessions/actions/search") return answer({ matches: [] });
     return answer({});

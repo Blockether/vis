@@ -8,9 +8,12 @@ import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
 const settle = (ms = 0) => new Promise((done) => setTimeout(done, ms));
 
 /** A read of the fleet's own list — not a search, not one session. */
+// A project's page is a read of ITS own (`GatewayClient.listProjectPage`); the
+// FLEET read this screen owns is the one asked without a `root=`.
 const isListRead = (request: { method: string; path: string }) =>
   request.method === "GET" &&
-  (request.path === "/v1/sessions" || request.path.startsWith("/v1/sessions?"));
+  (request.path === "/v1/sessions" ||
+    (request.path.startsWith("/v1/sessions?") && !request.path.includes("root=")));
 
 const fleet = () => [
   {
@@ -59,9 +62,11 @@ describe("a sessions list that is not on the glass", () => {
           : input instanceof URL
             ? input.href
             : input.url;
+      const asked = new URL(href);
       if (
         (init?.method ?? "GET") === "GET" &&
-        new URL(href).pathname === "/v1/sessions"
+        asked.pathname === "/v1/sessions" &&
+        !asked.searchParams.has("root")
       )
         listReads += 1;
       return inner(input, init);
