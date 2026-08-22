@@ -1945,7 +1945,9 @@
 
    `ending` says how it ended: `:reason` (`completed` by default), `:summary`,
    `:error`, `:artifact-id`, optional archive-only `:focus-snapshots`, and optional
-   compact string `:model-result`. The full verdict always remains in the artifact
+   compact string `:model-result`. A snapshot's PICTURE is read back from the wire
+   spelling first — the only view an extension holds is the one `state` answered it,
+   in the JSON it crossed with. The full verdict always remains in the artifact
    and human-facing close event. `human` is the person who stopped it — `{:note …}`,
    which only [[interrupt-live!]] passes, because a run does not get to claim a
    human ended it.
@@ -1968,7 +1970,13 @@
          (let [snapshots (mapv (fn [snapshot]
                                  (let [node-id (trimmed (pick* snapshot :node-id))
                                        focused-ids (mapv str (or (pick* snapshot :focused-ids) []))
-                                       snapshot-view (pick* snapshot :view)]
+                                       ;; The picture an extension archives is the one
+                                       ;; `state` ANSWERED it: snake_case keys, wire terms,
+                                       ;; JSON both ways. Read it back the same mechanical
+                                       ;; way every other frame crossing a process boundary
+                                       ;; is read — a no-op for an engine-shaped view — then
+                                       ;; hold it to the spec the materializer answers to.
+                                       snapshot-view (live<-wire (pick* snapshot :view))]
 
                                    (when-not (and node-id (seq focused-ids) (map? snapshot-view))
                                      (invalid-live-view!

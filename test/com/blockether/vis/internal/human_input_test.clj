@@ -1797,6 +1797,82 @@
                          first
                          :view
                          :id)))))))
+  ;; Regression, session f8115c8c-b997-49bf-a22b-81816d961fe3: the only picture an
+  ;; extension can hand back is the snake_case one `state` ANSWERED it with, and the engine
+  ;; held that to its own kebab-case vocabulary — so every archive snapshot was refused
+  ;; ("invalid focus snapshot") and a watch that ran to the end died at its own close
+  ;; instead of sealing what the human had been reading.
+  (it
+    "reads an archive snapshot spelled the way the extension holding it reads a view"
+    (recorded
+      (fn []
+        (let [spec
+              (live-spec {:id "jobs"
+                          :type "table"
+                          :columns [{:id "job" :label "Job"}]
+                          :rows [{:id "linux" :cells ["Linux"] :tone "ok"}]
+                          :is-focusable true
+                          :focused-ids ["linux"]})
+
+              view-id
+              (:id (hi/open-live! spec))
+
+              picture
+              (-> {"op" "state" "view_id" view-id}
+                  json/write-json-str
+                  hi/live-json!
+                  (json/read-json :key-fn identity)
+                  (get "view"))
+
+              _
+              (hi/live-json! (json/write-json-str {"op" "close"
+                                                   "view_id" view-id
+                                                   "ending" {"focus_snapshots"
+                                                             [{"node_id" "jobs"
+                                                               "focused_ids" ["linux"]
+                                                               "view" picture}]}}))
+
+              trailer
+              (-> (live-sink/read-range (live-sink/view-file (:session-id spec) view-id) 0 10)
+                  last
+                  :result)
+
+              snapshot
+              (first (:focus-snapshots trailer))]
+
+          (expect (= "jobs" (:node-id snapshot)))
+          (expect (= ["linux"] (:focused-ids snapshot)))
+          (expect (= view-id
+                     (-> snapshot
+                         :view
+                         :id)))
+          ;; ONE spelling per record: the archived picture leaves through the same encoder as
+          ;; the verdict's own, so a reader of either sees a live view rather than raw JSON
+          ;; the engine never read.
+          (expect (= (-> trailer
+                         :view
+                         :nodes
+                         first
+                         :type)
+                     (-> snapshot
+                         :view
+                         :nodes
+                         first
+                         :type)))
+          (expect (= (-> trailer
+                         :view
+                         :nodes
+                         first
+                         :rows
+                         first
+                         :tone)
+                     (-> snapshot
+                         :view
+                         :nodes
+                         first
+                         :rows
+                         first
+                         :tone)))))))
   (it "refuses to mount a view that names no session"
       (recorded (fn []
                   (expect (re-find #"names no session"

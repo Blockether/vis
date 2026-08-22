@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(companion): reveal live artifacts after an interrupt
 - refactor(extensions): expose one GitHub Actions watcher for both runs and pull-request checks
 - fix(gateway): supersede explicit GitHub run watches when replacement runs start
+- fix(live): read an archive focus snapshot from the wire spelling
 ## [v0.1.41] - 2026-08-21
 
 ### Changed

@@ -176,4 +176,43 @@
 
               (expect (true? (get answer "is_open")))
               (expect (= ["run" "progress" "score" "jobs" "steps" "output" "links"]
-                         (mapv #(get % "id") (get-in answer ["view" "nodes"]))))))))))
+                         (mapv #(get % "id") (get-in answer ["view" "nodes"])))))))))
+  ;; Regression, session f8115c8c-b997-49bf-a22b-81816d961fe3: a watch that ran to the end
+  ;; died at its own close. The archive pictures an extension seals are the ones `state`
+  ;; ANSWERED it — snake_case JSON — and the engine held them to its own kebab-case
+  ;; vocabulary, so every focus snapshot was refused as an invalid live view. The shared
+  ;; golden could not see it: the Python side drops `focus_snapshots` before recording ops.
+  (it
+    "seals the archive pictures the extension builds out of what `state` answered it"
+    (let [dir
+          (io/file (System/getProperty "java.io.tmpdir") (str "vis-views-" (random-uuid)))
+
+          opened
+          (first (fixture ops-file))]
+
+      (with-redefs-fn {live-views-dir (constantly dir)}
+        (fn []
+          (let [seam
+                (fn [envelope]
+                  (json/read-json (hi/live-json! (json/write-json-str envelope)) :key-fn identity))
+
+                view-id
+                (get (seam (assoc opened
+                             "view" (assoc (get opened "view")
+                                      "session_id" (str "vis-test-" (random-uuid)))))
+                     "view_id")
+
+                picture
+                (get (seam {"op" "state" "view_id" view-id}) "view")
+
+                answer
+                (seam {"op" "close"
+                       "view_id" view-id
+                       "ending" {"model_result" "1 of 6 jobs failed"
+                                 "focus_snapshots" [{"node_id" "jobs"
+                                                     "focused_ids" ["95742028770"]
+                                                     "view" picture}]}})]
+
+            ;; Archive-only: accepted, and still never folded into what the model reads.
+            (expect (false? (get answer "is_open")))
+            (expect (= "1 of 6 jobs failed" (get answer "result")))))))))
