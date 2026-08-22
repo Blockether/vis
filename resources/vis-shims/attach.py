@@ -337,7 +337,14 @@ def __vis_install_attach__():
     # model that types `name=` types it again next turn. The same idea named
     # TWICE (canonical and alias together) is still refused: that is two answers
     # to one question, not a slip.
-    __vis_attach_kwargs = ("source", "filename", "kind", "media_type", "label", "audience")
+    __vis_attach_kwargs = (
+        "source",
+        "filename",
+        "kind",
+        "media_type",
+        "label",
+        "audience",
+    )
 
     __vis_attach_kwarg_aliases = {
         "name": "filename",

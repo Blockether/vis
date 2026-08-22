@@ -21,7 +21,8 @@
          '[clojure.string :as str]
          '[babashka.fs :as fs])
 
-(defn- noise? [entry]
+(defn- noise?
+  [entry]
   (let [t (get entry "type")]
     (when (string? t)
       (or (re-find #"\$fn__\d+$" t)
@@ -29,28 +30,42 @@
                ;; bare: only a "type" key, no methods/fields/jni requested
                (= ["type"] (keys entry)))))))
 
-(defn- clean-file [path]
-  (let [data (json/parse-string (slurp path))
-        refl (get data "reflection")]
+(defn- clean-file
+  [path]
+  (let [data
+        (json/parse-string (slurp path))
+
+        refl
+        (get data "reflection")]
+
     (if-not (vector? refl)
       (do (println "skip (no reflection):" path) 0)
-      (let [kept (vec (remove noise? refl))
-            removed (- (count refl) (count kept))]
+      (let [kept
+            (vec (remove noise? refl))
+
+            removed
+            (- (count refl) (count kept))]
+
         (when (pos? removed)
-          (spit path (str (json/generate-string (assoc data "reflection" kept)
-                                                 {:pretty true})
-                          "\n")))
-        (println (format "%-70s %d -> %d (removed %d)"
-                         path (count refl) (count kept) removed))
+          (spit path
+                (str (json/generate-string (assoc data "reflection" kept) {:pretty true}) "\n")))
+        (println (format "%-70s %d -> %d (removed %d)" path (count refl) (count kept) removed))
         removed))))
 
-(defn- all-files []
+(defn- all-files
+  []
   (->> (fs/glob "." "**/META-INF/native-image/**/reachability-metadata.json")
        (map str)
        (remove #(re-find #"(^|/)target/" %))
        sort))
 
-(let [files (if (seq *command-line-args*) *command-line-args* (all-files))
-      total (reduce + 0 (map clean-file files))]
+(let [files
+      (if (seq *command-line-args*) *command-line-args* (all-files))
+
+      total
+      (reduce + 0 (map clean-file files))]
+
   (println (format "Done. Removed %d noise entr%s across %d file(s)."
-                   total (if (= total 1) "y" "ies") (count files))))
+                   total
+                   (if (= total 1) "y" "ies")
+                   (count files))))

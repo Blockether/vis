@@ -2776,8 +2776,12 @@
             _
             (when (fs/exists? phantom) (fs/delete-tree phantom))]
 
-        (with-redefs [workspace/allowed-roots (constantly [real phantom])
-                      workspace/no-search-roots (constantly #{})]
+        (with-redefs [workspace/allowed-roots
+                      (constantly [real phantom])
+
+                      workspace/no-search-roots
+                      (constantly #{})]
+
           (let [out (:result (rg {"query" "sweep-phantom-needle" "paths" ["."]}))]
             (expect (= 1 (get out "hit_count")))
             (expect (= 1 (get out "file_count")))))))

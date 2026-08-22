@@ -64,7 +64,7 @@ def __vis_install_ls__():
     def _section(path, entries):
         """One directory: the `path  Nd Nf` header, then its tree."""
         home = _os.path.expanduser("~")
-        shown = "~" + path[len(home):] if home and path.startswith(home) else path
+        shown = "~" + path[len(home) :] if home and path.startswith(home) else path
         dirs = sum(1 for e in entries if e.get("type") == "dir")
         head = "%s  %dd %df" % (shown, dirs, len(entries) - dirs)
         out = [head if entries else shown + "  empty"]
