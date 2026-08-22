@@ -9,6 +9,8 @@ def __vis_install_httpx__():
         return _r
 
     class Headers:
+        """Case-insensitive header mapping: `h['Content-Type']`, `.get(key, default)`, `.items()`; a repeated header keeps every value."""
+
         def __init__(self, data=None):
             self._store = {}
             if data:
@@ -45,6 +47,8 @@ def __vis_install_httpx__():
             return "Headers(" + repr(self.items()) + ")"
 
     class URL:
+        """Parsed URL — `scheme`, `host`, `port`, `path`, `query`, `params`, `.copy_with(...)`, and `str(url)` to render it back."""
+
         def __init__(self, raw):
             self._raw = str(raw)
 
@@ -152,71 +156,113 @@ def __vis_install_httpx__():
             return hash(self._raw)
 
     class HTTPError(Exception):
+        """Base class of every httpx error; catch it to catch both transport failures and `raise_for_status`."""
+
         pass
 
     class RequestError(HTTPError):
+        """Base class of the errors raised while SENDING — carries `.request`; a returned 4xx/5xx is not one of these."""
+
         def __init__(self, message, request=None):
             super().__init__(message)
             self.request = request
 
     class TimeoutException(RequestError):
+        """Base class of the timeout errors: connect, read, write, pool."""
+
         pass
 
     class TooManyRedirects(RequestError):
+        """Redirects kept going past the limit; raised only when `follow_redirects=True`."""
+
         pass
 
     class DecodingError(RequestError):
+        """The body could not be decoded with the encoding the response declared."""
+
         pass
 
     class StreamError(RuntimeError):
+        """A streaming operation was used out of order — reading a closed or already-consumed stream."""
+
         pass
 
     class ConnectTimeout(TimeoutException):
+        """Establishing the connection exceeded the connect timeout."""
+
         pass
 
     class ReadTimeout(TimeoutException):
+        """Reading the answer exceeded the read timeout."""
+
         pass
 
     class ConnectError(RequestError):
+        """The connection could never be established — DNS, refused, or TLS failure."""
+
         pass
 
     class InvalidURL(RequestError):
+        """The URL could not be parsed or lacked a host."""
+
         pass
 
     class UnsupportedProtocol(RequestError):
+        """The URL asked for a scheme this shim does not speak (only http and https)."""
+
         pass
 
     class NetworkError(RequestError):
+        """Base class of the socket-level failures: connect, read, write, proxy."""
+
         pass
 
     class ReadError(NetworkError):
+        """Reading the answer from the socket failed."""
+
         pass
 
     class WriteError(NetworkError):
+        """Writing the request body to the socket failed."""
+
         pass
 
     class ProxyError(ConnectError):
+        """A proxy refused or failed the connection."""
+
         pass
 
     class WriteTimeout(TimeoutException):
+        """Writing the request body exceeded the write timeout."""
+
         pass
 
     class PoolTimeout(TimeoutException):
+        """No connection became free within the pool timeout."""
+
         pass
 
     class RemoteProtocolError(RequestError):
+        """The server broke the protocol: a truncated or unparseable answer."""
+
         pass
 
     class LocalProtocolError(RequestError):
+        """The local side broke the protocol — a malformed request this shim refused to send."""
+
         pass
 
     class HTTPStatusError(HTTPError):
+        """A 4xx/5xx answer raised by `Response.raise_for_status()`; carries `.request` and `.response`."""
+
         def __init__(self, message, request=None, response=None):
             super().__init__(message)
             self.request = request
             self.response = response
 
     class Request:
+        """The request that was sent: `method`, `url`, `headers`, `content`. Available on a `Response` as `.request`."""
+
         def __init__(self, method="GET", url="", headers=None, content=None, **_kw):
             self.method = str(method).upper()
             self.url = url if isinstance(url, URL) else URL(url)
@@ -230,6 +276,8 @@ def __vis_install_httpx__():
             return "<Request(" + self.method + ", " + str(self.url) + ")>"
 
     class Response:
+        """The answer to a request: `status_code`, `headers`, `text`, `content`, `json()`, `raise_for_status()`, `is_success`, `url`."""
+
         def __init__(self, rr, req_url=None, elapsed=None, request=None):
             self._rr = rr
             self.status_code = rr.status_code
@@ -472,6 +520,8 @@ def __vis_install_httpx__():
             return False
 
     class Timeout:
+        """Per-phase timeout in seconds — `Timeout(5.0)` or `Timeout(connect=..., read=..., write=..., pool=...)`."""
+
         def __init__(
             self, timeout=None, connect=None, read=None, write=None, pool=None
         ):
@@ -481,6 +531,8 @@ def __vis_install_httpx__():
             self.pool = pool if pool is not None else timeout
 
     class Client:
+        """Reusable client holding `base_url`, headers, params, cookies, auth, timeout and redirect policy; use it as a context manager and call `.get`/`.post`/`.request`/`.stream`."""
+
         def __init__(
             self,
             base_url="",
@@ -574,6 +626,8 @@ def __vis_install_httpx__():
             return False
 
     class AsyncClient:
+        """Async-looking client whose coroutines run SYNCHRONOUS I/O: `await client.get(url)` returns a real `Response`, but nothing overlaps, so gathering requests gives no speedup."""
+
         def __init__(
             self,
             base_url="",
@@ -645,39 +699,53 @@ def __vis_install_httpx__():
             return False
 
     def _mod_request(method, url, **kw):
+        """Send one request by method name without keeping a client: `httpx.request('GET', url)`."""
         return _dispatch(method, url, kw)
 
     def _get(url, **kw):
+        """Send a GET request and return a `Response`: `httpx.get(url, params=..., headers=...)`."""
         return _dispatch("GET", url, kw)
 
     def _post(url, **kw):
+        """Send a POST request with `content`, `data`, `json` or `files` and return a `Response`."""
         return _dispatch("POST", url, kw)
 
     def _put(url, **kw):
+        """Send a PUT request with `content`/`data`/`json` and return a `Response`."""
         return _dispatch("PUT", url, kw)
 
     def _patch(url, **kw):
+        """Send a PATCH request with `content`/`data`/`json` and return a `Response`."""
         return _dispatch("PATCH", url, kw)
 
     def _delete(url, **kw):
+        """Send a DELETE request and return a `Response`."""
         return _dispatch("DELETE", url, kw)
 
     def _head(url, **kw):
+        """Send a HEAD request and return a `Response` (no body)."""
         return _dispatch("HEAD", url, kw)
 
     def _options(url, **kw):
+        """Send an OPTIONS request and return a `Response`."""
         return _dispatch("OPTIONS", url, kw)
 
     class Auth:
+        """Base class of the auth objects a request accepts; subclass it only to satisfy an isinstance check."""
+
         pass
 
     class BasicAuth(Auth):
+        """HTTP Basic authentication — `auth=BasicAuth(user, password)`, or pass the `(user, password)` tuple directly."""
+
         # The requests shim reads .username/.password off any auth object.
         def __init__(self, username, password):
             self.username = username
             self.password = password
 
     class DigestAuth(BasicAuth):
+        """Digest authentication; ACCEPTED but sends no Authorization header, so a server demanding digest still answers 401."""
+
         pass
 
     class _Codes:
@@ -731,6 +799,7 @@ def __vis_install_httpx__():
             setattr(codes, _n, _c)
 
     def _stream(method, url, **kw):
+        """Open a streaming response context: `with httpx.stream('GET', url) as r:`. The body is read in full first; `iter_bytes`/`iter_lines` then walk what is already in memory."""
         return _StreamContext(_dispatch(method, url, kw))
 
     mod = _types.ModuleType("httpx")

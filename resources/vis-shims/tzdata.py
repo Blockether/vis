@@ -9,9 +9,13 @@ def __vis_install_tzdata__():
 
     # ============================ zoneinfo ============================
     class ZoneInfoNotFoundError(KeyError):
+        """Raised when ZoneInfo is asked for a zone name the database does not carry."""
+
         pass
 
     class ZoneInfo(_dt.tzinfo):
+        """IANA time zone usable as a datetime tzinfo: ZoneInfo('Europe/Warsaw'), read from the JVM zone database."""
+
         _cache = {}
 
         def __new__(cls, key):
@@ -90,6 +94,7 @@ def __vis_install_tzdata__():
             return (self.__class__, (self.key,))
 
     def available_timezones():
+        """Return the set of every IANA time-zone name this sandbox can load."""
         return set(__vis_tz_available__())
 
     _zi_mod = _types.ModuleType("zoneinfo")
@@ -103,7 +108,12 @@ def __vis_install_tzdata__():
     _zi_mod.__version__ = "system"
     _zi_mod.available_timezones = available_timezones
     _zi_mod.TZPATH = ()
-    _zi_mod.reset_tzpath = lambda to=None: None
+
+    def reset_tzpath(to=None):
+        """Accept and ignore a tzpath override: zones come from the JVM database, not a path."""
+        return None
+
+    _zi_mod.reset_tzpath = reset_tzpath
     _zi_mod.__all__ = [
         "ZoneInfo",
         "ZoneInfoNotFoundError",
@@ -124,9 +134,13 @@ def __vis_install_tzdata__():
 
     # ============================ pytz ============================
     class UnknownTimeZoneError(KeyError):
+        """Raised when a time-zone name is not in the zone database (pytz.UnknownTimeZoneError)."""
+
         pass
 
     class Error(Exception):
+        """Base class for pytz errors raised by this shim."""
+
         pass
 
     class _BaseTz(_dt.tzinfo):
@@ -187,6 +201,7 @@ def __vis_install_tzdata__():
     _utc = _UTC()
 
     def _pytz_timezone(name):
+        """Look up an IANA time zone by name, raising UnknownTimeZoneError when it is unknown (pytz.timezone)."""
         name = str(name)
         if name in ("UTC", "GMT", "Etc/UTC", "Etc/GMT"):
             return _utc
@@ -196,6 +211,7 @@ def __vis_install_tzdata__():
             raise UnknownTimeZoneError(name)
 
     def _FixedOffset(minutes):
+        """Return a fixed-offset time zone that many minutes east of UTC (pytz.FixedOffset)."""
         return _dt.timezone(_dt.timedelta(minutes=minutes))
 
     _pytz_mod = _types.ModuleType("pytz")
@@ -242,6 +258,7 @@ def __vis_install_tzdata__():
         return _dt.timezone(td, name if name else None)
 
     _tz_mod = _types.ModuleType("dateutil.tz")
+    _tz_mod.__doc__ = "dateutil.tz: gettz, tzutc, tzlocal and tzoffset time zones over the JVM zone database."
     _tz_mod.gettz = _gettz
     _tz_mod.tzutc = lambda: _dt.timezone.utc
     _tz_mod.tzlocal = lambda: _gettz(None)
@@ -512,6 +529,7 @@ def __vis_install_tzdata__():
             return "relativedelta(" + ", ".join(parts) + ")"
 
     _rd_mod = _types.ModuleType("dateutil.relativedelta")
+    _rd_mod.__doc__ = "dateutil.relativedelta: relativedelta arithmetic — add months, years or weekday offsets to a datetime."
     _rd_mod.relativedelta = relativedelta
     _rd_mod.weekday = weekday
     (
@@ -794,6 +812,7 @@ def __vis_install_tzdata__():
         return r
 
     rrule_mod = _types.ModuleType("dateutil.rrule")
+    rrule_mod.__doc__ = "dateutil.rrule: rrule recurrence rules — DAILY/WEEKLY/MONTHLY/YEARLY iteration over datetimes."
     YEARLY, MONTHLY, WEEKLY, DAILY, HOURLY, MINUTELY, SECONDLY = range(7)
 
     class rrule:
@@ -857,6 +876,9 @@ def __vis_install_tzdata__():
     rrule_mod.rrule = rrule
 
     easter_mod = _types.ModuleType("dateutil.easter")
+    easter_mod.__doc__ = (
+        "dateutil.easter: easter(year) computes the Gregorian Easter date."
+    )
 
     def easter(year, method=3):
         # Meeus/Jones/Butcher Gregorian algorithm.
@@ -875,15 +897,18 @@ def __vis_install_tzdata__():
     easter_mod.EASTER_WESTERN = 3
 
     utils_mod = _types.ModuleType("dateutil.utils")
+    utils_mod.__doc__ = "dateutil.utils: today() and small datetime conveniences over the shim's tz support."
     utils_mod.today = lambda tzinfo=None: _dt.datetime.now(tzinfo)
     utils_mod.default_tzinfo = lambda dt, tzinfo: (
         dt.replace(tzinfo=tzinfo) if dt.tzinfo is None else dt
     )
 
     zoneinfo_mod = _types.ModuleType("dateutil.zoneinfo")
+    zoneinfo_mod.__doc__ = "dateutil.zoneinfo: gettz-style zone lookup backed by the JVM time-zone database."
     zoneinfo_mod.get_zonefile_instance = lambda: None
 
     _parser_mod = _types.ModuleType("dateutil.parser")
+    _parser_mod.__doc__ = "dateutil.parser: parse(timestr) reads an ISO-8601 or common date string into a datetime."
     _parser_mod.parse = parse
     _parser_mod.isoparse = isoparse
     _parser_mod.ParserError = ParserError

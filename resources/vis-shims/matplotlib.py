@@ -2180,6 +2180,7 @@ def __vis_install_matplotlib__():
     _backend = ["Agg"]
 
     def use(backend=None, *a, **k):
+        """Select a backend (accepted and ignored: plots always render headless through Agg)."""
         # matplotlib.use(...) — record the requested backend name; the vis shim
         # always renders through its imaging backend regardless of the choice.
         if backend is not None:
@@ -2190,12 +2191,15 @@ def __vis_install_matplotlib__():
         return use(backend)
 
     def get_backend():
+        """Name the active backend, always the headless Agg renderer of this sandbox."""
         return _backend[0]
 
     def rc(*a, **k):
+        """Set rc parameters (accepted; this renderer keeps its own defaults)."""
         return None
 
     def rcdefaults(*a, **k):
+        """Restore default rc parameters (accepted; this renderer keeps its own defaults)."""
         return None
 
     def ion(*a, **k):
@@ -2471,6 +2475,7 @@ def __vis_install_matplotlib__():
     pyplot.rcParams = _rcparams
 
     style = types.ModuleType("matplotlib.style")
+    style.__doc__ = "matplotlib.style: style.use(name) — accepted and ignored by this sandbox renderer."
     style.use = lambda *a, **k: None
     style.context = lambda *a, **k: _NullCtx()
     style.available = [
@@ -2486,6 +2491,7 @@ def __vis_install_matplotlib__():
     pyplot.style = style
 
     cm = types.ModuleType("matplotlib.cm")
+    cm.__doc__ = "matplotlib.cm: colormaps by name — cm.viridis, cm.plasma, get_cmap('coolwarm')."
     cm.get_cmap = get_cmap
     for _cname in _CMAPS:
         setattr(cm, _cname, get_cmap(_cname))
@@ -2525,6 +2531,7 @@ def __vis_install_matplotlib__():
     proj3d = types.ModuleType("mpl_toolkits.mplot3d.proj3d")
 
     mplot3d = types.ModuleType("mpl_toolkits.mplot3d")
+    mplot3d.__doc__ = "mpl_toolkits.mplot3d: 3-D axes — Axes3D, art3d and proj3d for surface, scatter and line plots."
     mplot3d.Axes3D = _Axes3D
     mplot3d.axes3d = axes3d
     mplot3d.art3d = art3d
@@ -3513,6 +3520,9 @@ def __vis_install_matplotlib__():
     _m_backend_agg.FigureCanvasAgg = _Canvas
     _m_backend_agg.FigureCanvas = _Canvas
     _m_backends = types.ModuleType("matplotlib.backends")
+    _m_backends.__doc__ = (
+        "matplotlib.backends: the Agg backend this sandbox renders PNG through."
+    )
     _m_backends.__path__ = []
     _m_backends.backend_agg = _m_backend_agg
     mpl.backends = _m_backends
@@ -3534,6 +3544,9 @@ def __vis_install_matplotlib__():
             return _new_axes()
 
     axes_grid1 = types.ModuleType("mpl_toolkits.axes_grid1")
+    axes_grid1.__doc__ = (
+        "mpl_toolkits.axes_grid1: the axes-grid helpers this sandbox supports."
+    )
     axes_grid1.make_axes_locatable = lambda ax=None: _AxesDivider(ax)
     axes_grid1.AxesGrid = _Inert
     axes_grid1.ImageGrid = _Inert

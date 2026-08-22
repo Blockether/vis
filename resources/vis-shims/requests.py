@@ -27,81 +27,131 @@ def __vis_install_requests_compat__():
 
     # ---- exceptions -------------------------------------------------------
     class RequestException(IOError):
+        """Base class of every requests error; catch it to catch both transport failures and `raise_for_status`."""
+
         def __init__(self, *args, response=None, request=None):
             super().__init__(*args)
             self.response = response
             self.request = request
 
     class HTTPError(RequestException):
+        """A 4xx/5xx answer raised by `Response.raise_for_status()`; carries `.response`."""
+
         pass
 
     class ConnectionError(RequestException):
+        """The connection could never be established — DNS, refused, or TLS failure."""
+
         pass
 
     class ProxyError(ConnectionError):
+        """A proxy refused or failed the connection."""
+
         pass
 
     class SSLError(ConnectionError):
+        """TLS failed — certificate verification, handshake or protocol."""
+
         pass
 
     class Timeout(RequestException):
+        """Base class of the timeout errors: connect and read."""
+
         pass
 
     class ConnectTimeout(ConnectionError, Timeout):
+        """The connection was not established within the connect timeout."""
+
         pass
 
     class ReadTimeout(Timeout):
+        """The server sent nothing within the read timeout."""
+
         pass
 
     class URLRequired(RequestException):
+        """A URL was required and none was given."""
+
         pass
 
     class TooManyRedirects(RequestException):
+        """Redirects kept going past the limit; raised only when `allow_redirects=True`."""
+
         pass
 
     class MissingSchema(RequestException, ValueError):
+        """The URL had no scheme — write `https://host`, not `host`; also a `ValueError`."""
+
         pass
 
     class InvalidSchema(RequestException, ValueError):
+        """The URL scheme is not one this shim speaks (only http and https); also a `ValueError`."""
+
         pass
 
     class InvalidURL(RequestException, ValueError):
+        """The URL could not be parsed; also a `ValueError`."""
+
         pass
 
     class InvalidProxyURL(InvalidURL):
+        """The proxy URL was not usable."""
+
         pass
 
     class InvalidHeader(RequestException, ValueError):
+        """A header name or value was not valid; also a `ValueError`."""
+
         pass
 
     class InvalidJSONError(RequestException):
+        """The `json=` argument could not be encoded."""
+
         pass
 
     class JSONDecodeError(InvalidJSONError, ValueError):
+        """`Response.json()` was called on a body that is not JSON; also a `ValueError`."""
+
         pass
 
     class ChunkedEncodingError(RequestException):
+        """The chunked body ended early or was malformed."""
+
         pass
 
     class ContentDecodingError(RequestException):
+        """The body could not be decompressed with the encoding the response declared."""
+
         pass
 
     class StreamConsumedError(RequestException, TypeError):
+        """The streamed body was already consumed — read it once, or keep the content."""
+
         pass
 
     class RetryError(RequestException):
+        """Retries were exhausted without a usable answer."""
+
         pass
 
     class UnrewindableBodyError(RequestException):
+        """A retried request could not rewind its body, so it was not sent again."""
+
         pass
 
     class RequestsWarning(Warning):
+        """Base class of every warning this module raises."""
+
         pass
 
     class FileModeWarning(RequestsWarning, DeprecationWarning):
+        """Warned when a file opened in text mode is used as a request body."""
+
         pass
 
     class RequestsDependencyWarning(RequestsWarning):
+        """Warned when a dependency version is not the one requests expects."""
+
         pass
 
     _EXC = {
@@ -134,6 +184,8 @@ def __vis_install_requests_compat__():
 
     # ---- structures -------------------------------------------------------
     class CaseInsensitiveDict(dict):
+        """Case-insensitive header mapping: `headers['content-type']` finds a header sent as `Content-Type`; keeps the casing it was given when iterated."""
+
         # Minimal case-insensitive headers mapping: preserves the last-set casing
         # but get/__getitem__/__contains__/__delitem__ match case-insensitively,
         # like requests.structures.CaseInsensitiveDict.
@@ -193,6 +245,8 @@ def __vis_install_requests_compat__():
             return self.__dict__.get(key, default)
 
     class RequestsCookieJar(dict):
+        """Cookie jar that also behaves like a dict: `jar['session']`, `.get(name, default)`, `.set(name, value)`, `.get_dict()`."""
+
         # Dict-backed cookie jar: enough for get/set/update + name access.
         def get_dict(self, domain=None, path=None):
             return dict(self)
@@ -533,6 +587,8 @@ def __vis_install_requests_compat__():
 
     # ---- Response ---------------------------------------------------------
     class Response:
+        """The answer to a request: `status_code`, `headers`, `text`, `content`, `json()`, `ok`, `url`, `history`, `cookies`, `raise_for_status()`, `iter_content()`, `iter_lines()`."""
+
         def __init__(self):
             self.status_code = None
             self.headers = CaseInsensitiveDict()
@@ -786,6 +842,7 @@ def __vis_install_requests_compat__():
         trust_env=True,
         **kwargs,
     ):
+        """Send one request by method name: `requests.request('GET', url, ...)`. Accepts params, data, json, headers, cookies, auth, timeout, allow_redirects, proxies, verify, stream and files."""
         method = str(method).upper()
         if not isinstance(url, str):
             raise URLRequired("Invalid URL " + repr(url) + ": must be a string")
@@ -926,29 +983,38 @@ def __vis_install_requests_compat__():
         return resp
 
     def get(url, params=None, **kwargs):
+        """Send a GET request and return a `Response`: `requests.get(url, params=..., headers=..., timeout=...)`."""
         return request("GET", url, params=params, **kwargs)
 
     def options(url, **kwargs):
+        """Send an OPTIONS request and return a `Response`."""
         return request("OPTIONS", url, **kwargs)
 
     def head(url, **kwargs):
+        """Send a HEAD request and return a `Response` (no body)."""
         kwargs.setdefault("allow_redirects", False)
         return request("HEAD", url, **kwargs)
 
     def post(url, data=None, json=None, **kwargs):
+        """Send a POST request with `data`, `json` or `files` and return a `Response`."""
         return request("POST", url, data=data, json=json, **kwargs)
 
     def put(url, data=None, **kwargs):
+        """Send a PUT request with `data`/`json` and return a `Response`."""
         return request("PUT", url, data=data, **kwargs)
 
     def patch(url, data=None, **kwargs):
+        """Send a PATCH request with `data`/`json` and return a `Response`."""
         return request("PATCH", url, data=data, **kwargs)
 
     def delete(url, **kwargs):
+        """Send a DELETE request and return a `Response`."""
         return request("DELETE", url, **kwargs)
 
     # ---- Session ----------------------------------------------------------
     class Session:
+        """Reusable session holding headers, cookies, auth, proxies and redirect policy across calls; use it as a context manager and call `.get`/`.post`/`.request`."""
+
         # Thin session: merges default headers/params/cookies/auth into every
         # call and persists response cookies. urllib opens a fresh connection per
         # request (no pooling), which is fine for the sandbox.
@@ -1053,6 +1119,8 @@ def __vis_install_requests_compat__():
 
     # ---- Request / PreparedRequest models --------------------------------
     class PreparedRequest:
+        """The fully rendered request that was sent: `method`, `url`, `headers`, `body`. Available on a `Response` as `.request`."""
+
         def __init__(self):
             self.method = None
             self.url = None
@@ -1086,6 +1154,8 @@ def __vis_install_requests_compat__():
             return "<PreparedRequest [" + str(self.method) + "]>"
 
     class Request:
+        """A request before it is prepared: method, url, headers, params, data, json, auth; `.prepare()` renders it into a `PreparedRequest`."""
+
         def __init__(
             self,
             method=None,
@@ -1121,11 +1191,26 @@ def __vis_install_requests_compat__():
             )
 
     def session():
+        """Return a new `Session` — `requests.session()` is the same as `Session()`."""
         return Session()
 
     # ---- submodules -------------------------------------------------------
+    _sub_docs = {
+        "requests.exceptions": "Every requests error, from `RequestException` down: HTTPError, ConnectionError, Timeout, TooManyRedirects, JSONDecodeError.",
+        "requests.structures": "`CaseInsensitiveDict`, the header mapping a `Response.headers` is.",
+        "requests.auth": "Authentication helpers: `HTTPBasicAuth`, `HTTPProxyAuth`. `HTTPDigestAuth` is accepted but sends no Authorization header.",
+        "requests.models": "`Request`, `PreparedRequest` and `Response` — the objects a call moves through.",
+        "requests.cookies": "`RequestsCookieJar` plus `dict_from_cookiejar`/`cookiejar_from_dict`.",
+        "requests.utils": "URL and header helpers: quote, unquote, urlparse, urlencode, dict_from_cookiejar, get_encoding_from_headers, default_headers.",
+        "requests.status_codes": "The `codes` lookup: `codes.ok` is 200, `codes.not_found` is 404.",
+        "requests.api": "The module-level verbs: request, get, options, head, post, put, patch, delete.",
+        "requests.sessions": "`Session` and `session()` — a client that keeps headers, cookies and auth across calls.",
+        "requests.adapters": "`HTTPAdapter`, accepted so mounting code runs; this shim has one transport and ignores the mount.",
+    }
+
     def _mk_module(name, attrs):
         m = types.ModuleType(name)
+        m.__doc__ = _sub_docs.get(name)
         for k, v in attrs.items():
             setattr(m, k, v)
         sys.modules[name] = m

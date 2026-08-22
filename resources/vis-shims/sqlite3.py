@@ -18,33 +18,53 @@ def __vis_install_sqlite3__():
     )
 
     class Warning(Exception):
+        """Base class for DB-API warnings raised by this shim."""
+
         pass
 
     class Error(Exception):
+        """Base class of every error this shim raises; catch it to catch them all."""
+
         pass
 
     class InterfaceError(Error):
+        """The database interface itself was misused — a closed connection or cursor, or a bad argument count."""
+
         pass
 
     class DatabaseError(Error):
+        """The database rejected the operation; base class of the five errors below."""
+
         pass
 
     class DataError(DatabaseError):
+        """A value was out of range or of a type the column cannot hold."""
+
         pass
 
     class OperationalError(DatabaseError):
+        """The database could not carry the operation out — a missing file, a locked database, a bad SQL statement."""
+
         pass
 
     class IntegrityError(DatabaseError):
+        """A constraint failed: UNIQUE, NOT NULL, CHECK or a foreign key."""
+
         pass
 
     class InternalError(DatabaseError):
+        """The database reported an internal inconsistency."""
+
         pass
 
     class ProgrammingError(DatabaseError):
+        """The SQL or its parameters were wrong — an unknown table or column, or a parameter count mismatch."""
+
         pass
 
     class NotSupportedError(DatabaseError):
+        """The requested feature is not implemented by this shim."""
+
         pass
 
     def _raise(msg):
@@ -122,6 +142,8 @@ def __vis_install_sqlite3__():
         return [_encode_param(x) for x in params]
 
     class Row:
+        """One result row, indexable by position and by column name, and convertible with `dict(row)`."""
+
         def __init__(self, cursor, values):
             self._keys = [d[0] for d in (cursor.description or [])]
             self._vals = list(values)
@@ -152,6 +174,8 @@ def __vis_install_sqlite3__():
             return "Row" + repr(tuple(self._vals))
 
     class Cursor:
+        """Iterates one statement's result rows: `execute`, `fetchone`, `fetchall`, `fetchmany`, `rowcount`, `lastrowid`, `description`."""
+
         def __init__(self, connection):
             self.connection = connection
             self.description = None
@@ -239,6 +263,8 @@ def __vis_install_sqlite3__():
             return False
 
     class Connection:
+        """A live database handle: `execute`, `executemany`, `cursor`, `commit`, `rollback`, `close`, and the context-manager protocol."""
+
         def __init__(self, database):
             self._h = _call(_connect, database)
             _rt("__vis_own__")(self, _KIND, self._h)
@@ -350,18 +376,23 @@ def __vis_install_sqlite3__():
         uri=False,
         **kw,
     ):
+        """Open a database and return a `Connection`. `database` is a path or `:memory:`; the remaining DB-API keywords (timeout, detect_types, isolation_level, factory, uri...) are accepted for signature compatibility and ignored."""
         return Connection(database if isinstance(database, str) else str(database))
 
     def register_adapter(*a, **k):
+        """Accepted and ignored — this shim stores Python values through its own binder, so no adapter is ever consulted."""
         return None
 
     def register_converter(*a, **k):
+        """Accepted and ignored — column values come back with their declared SQLite type, so no converter is ever consulted."""
         return None
 
     def complete_statement(sql):
+        """True when `sql` looks like a complete statement, i.e. it ends with a semicolon."""
         return sql.strip().endswith(";")
 
     def enable_callback_tracebacks(*a, **k):
+        """Accepted and ignored — this shim has no user-callback layer whose tracebacks could be printed."""
         return None
 
     mod.connect = connect

@@ -139,6 +139,8 @@ def __vis_install_pandas__():
 
     # ----- Series -----
     class Series:
+        """One-dimensional labelled column - elementwise arithmetic, boolean masking, value_counts, unique, and the reductions a pandas column answers."""
+
         def __init__(self, data=None, index=None, name=None, dtype=None):
             if isinstance(data, Series):
                 vals = list(data._v)
@@ -1042,6 +1044,8 @@ def __vis_install_pandas__():
             return self._map(lambda d: _dt.datetime(d.year, d.month, d.day))
 
     class DataFrame:
+        """Two-dimensional labelled table - dict-of-columns construction, `[]`/`loc`/`iloc` selection, groupby, merge, sort, and to_csv/to_dict export."""
+
         def __init__(self, data=None, columns=None, index=None):
             cols = {}
             idx = None
@@ -2111,6 +2115,7 @@ def __vis_install_pandas__():
 
     # ----- module funcs -----
     def read_csv(path_or_buf, sep=None, header="infer"):
+        """Read a CSV file or buffer into a DataFrame, inferring the header row and the separator."""
         sep = sep if sep is not None else _COMMA
         if hasattr(path_or_buf, "read"):
             text = path_or_buf.read()
@@ -2150,10 +2155,12 @@ def __vis_install_pandas__():
             return x
 
     def read_json(s, orient="records"):
+        """Read a JSON string into a DataFrame; `orient` selects the record layout."""
         obj = _json.loads(s) if isinstance(s, str) else s
         return DataFrame(obj)
 
     def concat(objs, axis=0, ignore_index=False):
+        """Concatenate DataFrames along an axis into one frame, optionally renumbering the index."""
         objs = [o for o in objs if o is not None]
         if not objs:
             return DataFrame()
@@ -2189,22 +2196,27 @@ def __vis_install_pandas__():
         return DataFrame(data, columns=allcols, index=idx)
 
     def merge(left, right, **kw):
+        """Join two DataFrames on their shared or named columns - the function form of DataFrame.merge."""
         return left.merge(right, **kw)
 
     def isna(x):
+        """True where a value is missing; a Series or DataFrame answers elementwise."""
         if isinstance(x, (Series, DataFrame)):
             return x.isna()
         return _isna(x)
 
     def notna(x):
+        """True where a value is present - the negation of isna."""
         if isinstance(x, Series):
             return x.notna()
         return not _isna(x)
 
     def unique(vals):
+        """The distinct values of a sequence, in first-seen order."""
         return Series(_to_list(vals)).unique()
 
     def to_numeric(s, errors="raise"):
+        """Coerce values to float; `errors='coerce'` turns what will not parse into NA."""
         if isinstance(s, Series):
 
             def cv(x):
@@ -2255,6 +2267,8 @@ def __vis_install_pandas__():
             raise ValueError("could not parse date: " + str(v))
 
     def to_datetime(arg, format=None, errors="raise"):
+        """Parse values into datetimes; `format` pins the layout, `errors='coerce'` yields NA."""
+
         def _one(v):
             try:
                 return _parse_dt(v, format)
@@ -2311,6 +2325,7 @@ def __vis_install_pandas__():
         return nxt - _dt.timedelta(days=1)
 
     def date_range(start=None, end=None, periods=None, freq="D"):
+        """Evenly spaced timestamps from start/end/periods at frequency `freq`."""
         kind, step = _freq_step(freq)
         st = _parse_dt(start) if start is not None else None
         en = _parse_dt(end) if end is not None else None
@@ -2357,6 +2372,7 @@ def __vis_install_pandas__():
     def pivot_table(
         data, values=None, index=None, columns=None, aggfunc="mean", fill_value=None
     ):
+        """Aggregate long data into a wide table of `index` by `columns`, one aggfunc per cell."""
         return data.pivot_table(
             values=values,
             index=index,
@@ -2366,6 +2382,7 @@ def __vis_install_pandas__():
         )
 
     def crosstab(rows, cols):
+        """Count how often two label sequences co-occur, as a frequency table."""
         a = rows._v if isinstance(rows, Series) else _to_list(rows)
         b = cols._v if isinstance(cols, Series) else _to_list(cols)
         df = DataFrame({"r": list(a), "c": list(b), "n": [1] * len(a)})
@@ -2408,6 +2425,7 @@ def __vis_install_pandas__():
     mod.__path__ = []
 
     api_mod = types.ModuleType("pandas.api")
+    api_mod.__doc__ = "pandas.api - dtype predicates under `pandas.api.types`: is_numeric_dtype, is_integer_dtype, is_float_dtype, is_bool_dtype, is_string_dtype."
     api_types = types.ModuleType("pandas.api.types")
 
     def _dtype_value(value):
@@ -2429,6 +2447,7 @@ def __vis_install_pandas__():
     api_mod.types = api_types
 
     testing_mod = types.ModuleType("pandas.testing")
+    testing_mod.__doc__ = "pandas.testing - assert_frame_equal and assert_series_equal for comparing results in a test."
 
     def _assert_frame_equal(left, right, **kwargs):
         if not isinstance(left, DataFrame) or not isinstance(right, DataFrame):
@@ -2450,10 +2469,14 @@ def __vis_install_pandas__():
     testing_mod.assert_series_equal = _assert_series_equal
 
     plotting_mod = types.ModuleType("pandas.plotting")
+    plotting_mod.__doc__ = "pandas.plotting - accepted so imports succeed; scatter_matrix draws nothing and register_matplotlib_converters is a no-op."
     plotting_mod.scatter_matrix = lambda frame, *args, **kwargs: []
     plotting_mod.register_matplotlib_converters = lambda: None
 
     tseries_mod = types.ModuleType("pandas.tseries")
+    tseries_mod.__doc__ = (
+        "pandas.tseries - offsets only; `offsets.Day(n)` is a timedelta of n days."
+    )
     offsets_mod = types.ModuleType("pandas.tseries.offsets")
 
     class Day(_dt.timedelta):

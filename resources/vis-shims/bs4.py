@@ -270,6 +270,8 @@ def __vis_install_bs4__():
             )
 
     class NavigableString(str, PageElement):
+        """A text node: a `str` that also knows its parent, siblings and position in the tree."""
+
         # Serialization affixes; PreformattedString subclasses override them and
         # bs4 code in the wild reads them to tell node kinds apart.
         PREFIX = ""
@@ -382,10 +384,14 @@ def __vis_install_bs4__():
             return self.PREFIX + str(self) + self.SUFFIX
 
     class Comment(PreformattedString):
+        """An HTML comment. It is a string, so `.text` skips it but `soup.find(string=Comment)` finds it."""
+
         PREFIX = _LT + "!--"
         SUFFIX = "--" + _GT
 
     class Tag(PageElement):
+        """One element of the tree: attributes by `tag["href"]`, children by `.contents`, and the whole search surface (`find`, `find_all`, `select`, `.text`)."""
+
         def __init__(
             self,
             parser=None,
@@ -3768,6 +3774,8 @@ def __vis_install_bs4__():
             return ResultSet(None, sieve.filter(self.tag.contents))
 
     class BeautifulSoup(Tag):
+        """Parse a document and give back its tree: `BeautifulSoup(markup, "html.parser")`, then `find`, `find_all`, `select`, `.text`. The only builder is Python's own html.parser — lxml and html5lib names resolve but refuse."""
+
         ROOT_TAG_NAME = "[document]"
         DEFAULT_BUILDER_FEATURES = ["html.parser"]
         ASCII_SPACES = _ASCII_SPACES
@@ -4277,10 +4285,14 @@ def __vis_install_bs4__():
             return _render(self)
 
     class CData(PreformattedString):
+        """A `<![CDATA[...]]>` section — a string that emits its own wrapper."""
+
         PREFIX = "<![CDATA["
         SUFFIX = "]]" + _GT
 
     class Doctype(PreformattedString):
+        """A `<!DOCTYPE ...>` declaration node."""
+
         PREFIX = _LT + "!DOCTYPE "
         SUFFIX = _GT + _NL
 
@@ -4297,10 +4309,14 @@ def __vis_install_bs4__():
             return Doctype(value)
 
     class Declaration(PreformattedString):
+        """An SGML `<! ... >` declaration node."""
+
         PREFIX = _LT + "?"
         SUFFIX = "?" + _GT
 
     class ProcessingInstruction(PreformattedString):
+        """An `<? ... >` processing instruction node."""
+
         PREFIX = _LT + "?"
         SUFFIX = _GT
 
@@ -4387,12 +4403,18 @@ def __vis_install_bs4__():
     # bs4 wraps the text of a few containers in its own NavigableString subclass,
     # so `type(soup.script.string)` tells you what kind of text you are holding.
     class Script(NavigableString):
+        """The string inside a `<script>` element, kept unescaped."""
+
         pass
 
     class Stylesheet(NavigableString):
+        """The string inside a `<style>` element, kept unescaped."""
+
         pass
 
     class TemplateString(NavigableString):
+        """A string inside a `<template>` element."""
+
         pass
 
     class RubyTextString(NavigableString):
@@ -4414,21 +4436,31 @@ def __vis_install_bs4__():
     Tag.DEFAULT_INTERESTING_STRING_TYPES = (NavigableString, CData)
 
     class FeatureNotFound(ValueError):
+        """Raised when the requested parser is not one this shim has — only `html.parser` is real here."""
+
         pass
 
     class ParserRejectedMarkup(Exception):
         pass
 
     class StopParsing(Exception):
+        """Raised internally to abandon a parse; catch it only if you drive the builder yourself."""
+
         pass
 
     class GuessedAtParserWarning(UserWarning):
+        """Warns that no parser was named, so `html.parser` was chosen for you."""
+
         pass
 
     class MarkupResemblesLocatorWarning(UserWarning):
+        """Warns that the markup looks like a filename or a URL rather than a document."""
+
         pass
 
     class XMLParsedAsHTMLWarning(UserWarning):
+        """Warns that XML markup is being parsed with the HTML parser."""
+
         MESSAGE = (
             "It looks like you're parsing an XML document using an HTML "
             "parser. If this really is an HTML document (maybe it's XHTML?), "
@@ -5692,6 +5724,7 @@ def __vis_install_bs4__():
     mod.__all__ = ["BeautifulSoup"]
 
     elem = types.ModuleType("bs4.element")
+    elem.__doc__ = "Node classes of the tree — Tag, NavigableString, Comment and the other string types."
     elem.Tag = Tag
     elem.PageElement = PageElement
     elem.NavigableString = NavigableString
@@ -5724,6 +5757,7 @@ def __vis_install_bs4__():
     mod.element = elem
 
     fmt_mod = types.ModuleType("bs4.formatter")
+    fmt_mod.__doc__ = "Output formatters: how attributes and entities are written back out by `str(soup)` and `prettify()`."
     fmt_mod.Formatter = Formatter
     fmt_mod.HTMLFormatter = HTMLFormatter
     fmt_mod.XMLFormatter = XMLFormatter
@@ -5731,6 +5765,7 @@ def __vis_install_bs4__():
     mod.formatter = fmt_mod
 
     builder_mod = types.ModuleType("bs4.builder")
+    builder_mod.__doc__ = "Tree builders and their registry; only the html.parser builder is real in this shim."
     builder_mod.TreeBuilder = TreeBuilder
     builder_mod.TreeBuilderRegistry = TreeBuilderRegistry
     builder_mod.HTMLParserTreeBuilder = HTMLParserTreeBuilder
@@ -5793,6 +5828,9 @@ def __vis_install_bs4__():
     mod.builder = builder_mod
 
     diag = types.ModuleType("bs4.diagnose")
+    diag.__doc__ = (
+        "Parser diagnostics — `diagnose(markup)` prints how this shim reads a document."
+    )
 
     def diagnose(data):
         """Print out information helpful for debugging a parse."""
@@ -5877,6 +5915,7 @@ def __vis_install_bs4__():
     mod.diagnose = diag
 
     dammit_mod = types.ModuleType("bs4.dammit")
+    dammit_mod.__doc__ = "Encoding detection (UnicodeDammit). No chardet or charset-normalizer here, so it is upstream's 'nothing installed' branch."
     dammit_mod.UnicodeDammit = UnicodeDammit
     dammit_mod.EncodingDetector = EncodingDetector
     dammit_mod.EntitySubstitution = EntitySubstitution
@@ -5884,6 +5923,7 @@ def __vis_install_bs4__():
     mod.UnicodeDammit = UnicodeDammit
 
     css_mod = types.ModuleType("bs4.css")
+    css_mod.__doc__ = "The CSS entry point behind `soup.select`, delegating to the bundled soupsieve engine."
     css_mod.CSS = CSS
     mod.css = css_mod
 
@@ -6000,6 +6040,7 @@ def __vis_install_bs4__():
     soupsieve_mod.SelectorSyntaxError = SelectorSyntaxError
 
     def _ss_compile(pattern, namespaces=None, flags=0, custom=None, **kwargs):
+        """Compile a CSS selector once and reuse it: the returned SoupSieve object carries `select`, `match`, `filter` and friends."""
         if isinstance(pattern, SoupSieve):
             # An already-compiled selector cannot be reconfigured, exactly as
             # soupsieve refuses to.
@@ -6021,23 +6062,29 @@ def __vis_install_bs4__():
     def _ss_select(
         pattern, tag, namespaces=None, limit=0, flags=0, custom=None, **kwargs
     ):
+        """Every tag matching a CSS selector, as a list."""
         return _ss_compile(pattern, namespaces, flags, **kwargs).select(tag, limit)
 
     def _ss_select_one(pattern, tag, namespaces=None, flags=0, custom=None, **kwargs):
+        """The first tag matching a CSS selector, or None."""
         return _ss_compile(pattern, namespaces, flags, **kwargs).select_one(tag)
 
     def _ss_iselect(
         pattern, tag, namespaces=None, limit=0, flags=0, custom=None, **kwargs
     ):
+        """Iterate the tags matching a CSS selector, yielding them one at a time."""
         yield from _ss_compile(pattern, namespaces, flags, **kwargs).iselect(tag, limit)
 
     def _ss_match(pattern, tag, namespaces=None, flags=0, custom=None, **kwargs):
+        """True when this one tag matches the selector."""
         return _ss_compile(pattern, namespaces, flags, **kwargs).match(tag)
 
     def _ss_closest(pattern, tag, namespaces=None, flags=0, custom=None, **kwargs):
+        """The nearest ancestor (or the tag itself) that matches the selector, or None."""
         return _ss_compile(pattern, namespaces, flags, **kwargs).closest(tag)
 
     def _ss_filter(pattern, iterable, namespaces=None, flags=0, custom=None, **kwargs):
+        """Keep only the tags of an iterable that match the selector."""
         return _ss_compile(pattern, namespaces, flags, **kwargs).filter(iterable)
 
     def _ss_purge():
@@ -6072,6 +6119,12 @@ def __vis_install_bs4__():
         "select_one",
     ]
     soupsieve_mod.bs4 = mod
+    _ss_sub_docs = {
+        "css_match": "Selector matching internals: the SoupSieve object that walks a tree and answers a selector.",
+        "css_parser": "Selector parsing internals, and the SelectorSyntaxError raised on a malformed selector.",
+        "css_types": "Immutable value types the parser produces (selector lists, patterns, namespaces).",
+        "util": "Small helpers shared by the selector engine, including SelectorSyntaxError.",
+    }
     for _ss_sub, _ss_alias, _ss_exports in (
         ("css_match", "cm", {"SoupSieve": SoupSieve}),
         ("css_parser", "cp", {"SelectorSyntaxError": SelectorSyntaxError}),
@@ -6079,6 +6132,7 @@ def __vis_install_bs4__():
         ("util", "util", {"SelectorSyntaxError": SelectorSyntaxError}),
     ):
         _ss_mod = types.ModuleType("soupsieve." + _ss_sub)
+        _ss_mod.__doc__ = _ss_sub_docs[_ss_sub]
         for _k, _v in _ss_exports.items():
             setattr(_ss_mod, _k, _v)
         setattr(soupsieve_mod, _ss_sub, _ss_mod)

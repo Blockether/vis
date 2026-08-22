@@ -29,17 +29,25 @@ def __vis_install_pytest_compat__():
 
     # ---- outcome exceptions -------------------------------------------------
     class OutcomeException(Exception):
+        """Base class of the outcomes tests raise -- `Skipped`, `Failed`, `XFailed`; carries `.msg`."""
+
         def __init__(self, msg=""):
             super().__init__(msg)
             self.msg = msg
 
     class Skipped(OutcomeException):
+        """The outcome `skip()` raises: the test asked not to run."""
+
         pass
 
     class Failed(OutcomeException):
+        """The outcome `fail()` raises: the test was failed deliberately."""
+
         pass
 
     class XFailed(OutcomeException):
+        """The outcome `xfail()` raises: this test was expected to fail."""
+
         pass
 
     class Exit(Exception):
@@ -49,21 +57,28 @@ def __vis_install_pytest_compat__():
             self.returncode = returncode
 
     class UsageError(Exception):
+        """Raised when pytest itself was called wrongly -- a bad argument, not a failing test."""
+
         pass
 
     def fail(reason="", pytrace=True):
+        """Fails the running test with that reason (raises, so nothing after it runs)."""
         raise Failed(reason)
 
     def skip(reason="", allow_module_level=False):
+        """Skips the running test with that reason (raises, so nothing after it runs)."""
         raise Skipped(reason)
 
     def xfail(reason=""):
+        """Marks the running test as an expected failure and stops it."""
         raise XFailed(reason)
 
     def exit(reason="", returncode=None):
+        """Ends the whole run immediately with that reason and exit code."""
         raise Exit(reason, returncode)
 
     def importorskip(modname, minversion=None, reason=None):
+        """Imports a module or skips the test when it is missing -- `pytest.importorskip("numpy")`."""
         try:
             return __import__(modname)
         except ImportError:
@@ -71,6 +86,8 @@ def __vis_install_pytest_compat__():
 
     # ---- approx -------------------------------------------------------------
     class approx:
+        """Compares numbers loosely: `assert 0.1 + 0.2 == approx(0.3)`, with `rel`/`abs`/`nan_ok`."""
+
         def __init__(self, expected, rel=None, abs=None, nan_ok=False):
             self.expected = expected
             self.rel = rel
@@ -125,6 +142,8 @@ def __vis_install_pytest_compat__():
 
     # ---- raises / warns -----------------------------------------------------
     class ExceptionInfo:
+        """The exception a `raises` block caught: `.type`, `.value`, `.traceback`, `.match(regex)`."""
+
         def __init__(self, tup):
             self._tup = tup
 
@@ -179,6 +198,8 @@ def __vis_install_pytest_compat__():
             return True
 
     def raises(expected_exception, *args, **kwargs):
+        """Asserts an exception is raised: a context manager (`with pytest.raises(ValueError, match=...)`)
+        or `raises(ValueError, fn, *args)`. Answers `ExceptionInfo` for the exception it caught."""
         match = kwargs.pop("match", None)
         if not args:
             return RaisesContext(expected_exception, match=match)
@@ -215,6 +236,7 @@ def __vis_install_pytest_compat__():
             return False
 
     def warns(expected_warning=Warning, *args, **kwargs):
+        """Asserts a warning is raised: a context manager, or `warns(UserWarning, fn, *args)`."""
         if not args:
             return WarningsChecker(expected_warning)
         func = args[0]
@@ -245,6 +267,10 @@ def __vis_install_pytest_compat__():
     def fixture(
         func=None, scope="function", params=None, autouse=False, name=None, ids=None
     ):
+        """Marks a function as a fixture -- `@pytest.fixture`, or `@pytest.fixture(scope="module", params=[...])`.
+
+        Scopes, params, autouse, ids and `yield` teardown all work; `conftest.py` discovery does not."""
+
         def wrap(f):
             f.__dict__[_FIXTURE_ATTR] = FixtureInfo(
                 f, scope=scope, params=params, autouse=autouse, name=name, ids=ids
@@ -256,6 +282,8 @@ def __vis_install_pytest_compat__():
         return wrap
 
     class FixtureRequest:
+        """The `request` fixture: the running test's `nodeid`, `param`, `function`, plus `getfixturevalue` and `addfinalizer`."""
+
         def __init__(self, manager, nodeid, func=None, cls=None, module=None):
             self._manager = manager
             self.nodeid = nodeid
@@ -576,6 +604,10 @@ def __vis_install_pytest_compat__():
     _NO_CAPTURE = _GlobalCapture(False)
 
     class MonkeyPatch:
+        """The `monkeypatch` fixture: `setattr`, `delattr`, `setitem`, `setenv`, `chdir`, `syspath_prepend`.
+
+        Every change is undone when the fixture's test ends."""
+
         def __init__(self):
             self._undo = []
 
@@ -897,6 +929,8 @@ def __vis_install_pytest_compat__():
         return _RecWarn(), _td
 
     class LineMatcher:
+        """Matches an output listing against patterns -- `fnmatch_lines`, `re_match_lines`, `no_fnmatch_line`."""
+
         def __init__(self, lines):
             self.lines = list(lines)
 
@@ -971,6 +1005,8 @@ def __vis_install_pytest_compat__():
             raise AssertionError("get_lines_after: not found: " + repr(pat))
 
     class RunResult:
+        """The outcome of a `Pytester` run: `ret`, `stdout`/`stderr` line matchers and `assert_outcomes`."""
+
         _OUTMAP = {
             "passed": "passed",
             "failed": "failed",
@@ -1042,6 +1078,8 @@ def __vis_install_pytest_compat__():
                 )
 
     class Pytester:
+        """A throwaway project directory for testing pytest itself: write files, then `runpytest()`."""
+
         def __init__(self, request):
             import tempfile as _tf, pathlib as _pl
 
@@ -1332,6 +1370,7 @@ def __vis_install_pytest_compat__():
             self.id = id
 
     def param(*values, **kwargs):
+        """One parametrised case with its own marks and id: `pytest.param(2, id="two")`."""
         return ParamSet(values, marks=kwargs.get("marks", ()), id=kwargs.get("id"))
 
     def _param_id(v):
@@ -2521,6 +2560,10 @@ def __vis_install_pytest_compat__():
         return rc
 
     def main(args=None, ns=None):
+        """Runs the tests in a namespace and prints the terminal report; answers pytest's exit code.
+
+        With no `args` it collects `test_*` functions from the CALLING module's globals, so
+        `pytest.main()` at the bottom of a sandbox block runs what that block just defined."""
         # The terminal report IS the run's product, so it goes to the stream the
         # run STARTED on and is written even when the run blows up:
         #   - a test (or a capture fixture whose teardown never happened) can

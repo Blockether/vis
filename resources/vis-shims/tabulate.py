@@ -65,6 +65,8 @@ def __vis_install_tabulate__():
 
         @dataclass
         class DataRow:
+            """Row separator description used by a table format: begin, sep, end characters."""
+
             begin: str
             sep: str
             end: str

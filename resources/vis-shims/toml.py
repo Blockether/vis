@@ -19,9 +19,12 @@ def __vis_install_toml__():
     _BS = chr(92)
 
     class TomlDecodeError(Exception):
+        """Raised when TOML text cannot be parsed (toml.TomlDecodeError)."""
+
         pass
 
     def loads(s, **kw):
+        """Parse a TOML string into a dict (toml.loads)."""
         if _tl is None:
             raise RuntimeError("tomllib not available in this sandbox")
         if isinstance(s, bytes):
@@ -32,6 +35,7 @@ def __vis_install_toml__():
             raise TomlDecodeError(str(e))
 
     def load(f, **kw):
+        """Parse TOML from an open text file or a path into a dict (toml.load)."""
         if hasattr(f, "read"):
             data = f.read()
             if isinstance(data, bytes):
@@ -130,6 +134,7 @@ def __vis_install_toml__():
                     _dump_table(item, path, out)
 
     def dumps(obj, **kw):
+        """Render a mapping as a TOML string (toml.dumps)."""
         if not isinstance(obj, dict):
             raise TypeError("toml.dumps requires a dict at the top level")
         out = []
@@ -140,6 +145,7 @@ def __vis_install_toml__():
         return text + _NL if text else ""
 
     def dump(obj, f, **kw):
+        """Write a mapping to an open text file as TOML (toml.dump)."""
         s = dumps(obj)
         f.write(s)
         return s

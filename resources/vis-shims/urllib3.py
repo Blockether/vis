@@ -10,6 +10,8 @@ def __vis_install_urllib3__():
         return _r
 
     class HTTPError(Exception):
+        """Base class of every urllib3 error the shim raises -- catch this to catch them all."""
+
         pass
 
     class PoolError(HTTPError):
@@ -19,6 +21,8 @@ def __vis_install_urllib3__():
         pass
 
     class MaxRetryError(RequestError):
+        """Raised when a request exhausts its retries; carries the pool and the URL that failed."""
+
         pass
 
     class TimeoutError(HTTPError):
@@ -55,6 +59,8 @@ def __vis_install_urllib3__():
         pass
 
     class Retry:
+        """Retry policy: counts and a backoff factor are recorded, never applied -- the shim never retries."""
+
         def __init__(
             self,
             total=10,
@@ -546,6 +552,10 @@ def __vis_install_urllib3__():
         """urllib3.response.BaseHTTPResponse -- the response base class."""
 
     class HTTPResponse(BaseHTTPResponse):
+        """One HTTP response: `status`, `reason`, `headers`, `data`, `read`, `json`.
+
+        The body is already buffered, so `preload_content` and `stream` chunking are advisory."""
+
         version = 11
         retries = None
 
@@ -932,6 +942,10 @@ def __vis_install_urllib3__():
         return HTTPResponse(rr)
 
     class PoolManager:
+        """The urllib3 entry point: `request`/`urlopen` against any URL, with shared headers and TLS options.
+
+        TLS options reach the socket; `num_pools` and other pooling knobs are accepted and ignored."""
+
         def __init__(self, num_pools=10, headers=None, **kw):
             self._headers = dict(headers or {})
             self._tls = _split_tls(kw)
@@ -985,6 +999,10 @@ def __vis_install_urllib3__():
             return False
 
     class HTTPConnectionPool:
+        """One host's connection pool: `request`/`urlopen` against a fixed host, port and scheme.
+
+        Pooling is best-effort -- every call goes out on its own connection."""
+
         scheme = "http"
         port_by_scheme = {"http": 80, "https": 443}
 
@@ -1014,6 +1032,8 @@ def __vis_install_urllib3__():
         urlopen = request
 
     class HTTPSConnectionPool(HTTPConnectionPool):
+        """HTTPS pool: an `HTTPConnectionPool` whose scheme is https and whose default port is 443."""
+
         scheme = "https"
 
         def __init__(self, host, port=443, **kw):
@@ -1046,12 +1066,15 @@ def __vis_install_urllib3__():
             return super().request(method, url, headers=hdr or None, **kw)
 
     def proxy_from_url(url, **kw):
+        """Answers a `ProxyManager` for that proxy URL; the proxy is recorded, never dialled."""
         return ProxyManager(proxy_url=url, **kw)
 
     def connection_from_url(url, **kw):
+        """Answers a connection pool bound to that URL's host, scheme and port."""
         return PoolManager(**kw).connection_from_url(url)
 
     def _top_request(method, url, **kw):
+        """Performs one request through a throwaway `PoolManager` -- `urllib3.request("GET", url)`."""
         return PoolManager().request(method, url, **kw)
 
     def disable_warnings(category=None):
@@ -1062,7 +1085,23 @@ def __vis_install_urllib3__():
         _warnings.simplefilter("ignore", category or InsecureRequestWarning)
 
     def add_stderr_logger(level=None):
+        """Accepts real code's debug-logging setup and does nothing; the sandbox has no urllib3 logger."""
         return None
+
+    _sub_docs = {
+        "urllib3.exceptions": "Every urllib3 error class: `HTTPError` and its `PoolError`, `TimeoutError`, `SSLError`, `ProxyError`, `MaxRetryError` descendants.",
+        "urllib3.filepost": "Multipart encoding: `encode_multipart_formdata(fields)` -> `(body, content_type)`.",
+        "urllib3.fields": "`RequestField`, one part of a multipart form -- name, data, filename, headers.",
+        "urllib3.response": "`HTTPResponse` and `BaseHTTPResponse`: status, headers and an already-buffered body.",
+        "urllib3.poolmanager": "`PoolManager` and `ProxyManager`, the two objects that issue requests.",
+        "urllib3.connectionpool": "`HTTPConnectionPool` / `HTTPSConnectionPool`, one host's pool.",
+        "urllib3.util": "URL parsing (`parse_url`, `Url`), `Retry`, `Timeout` and TLS helpers.",
+        "urllib3.util.ssl_": "TLS helpers: version constants and `create_urllib3_context`; `assert_fingerprint` and `ciphers` refuse.",
+        "urllib3.util.retry": "`Retry`, whose counts and backoff are recorded but never applied.",
+        "urllib3.util.timeout": "`Timeout`, whose connect/read seconds reach the underlying request.",
+        "urllib3.util.url": "`parse_url` and the `Url` named tuple it answers.",
+        "urllib3.util.request": "Request helpers, notably `make_headers` for accept-encoding, basic auth and user agent.",
+    }
 
     def _mk(name, parent, **attrs):
         """Creates a submodule, registers it in sys.modules and hangs it off `parent`.
@@ -1072,6 +1111,7 @@ def __vis_install_urllib3__():
         their own, so an unregistered name fails with "'urllib3' is not a package".
         """
         m = _types.ModuleType(name)
+        m.__doc__ = _sub_docs.get(name)
         for k, v in attrs.items():
             setattr(m, k, v)
         _sys.modules[name] = m

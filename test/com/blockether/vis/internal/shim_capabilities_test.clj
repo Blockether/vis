@@ -243,6 +243,17 @@ def __vis_harvest__(modules, names):
       ;; own __doc__ is empty ships a capability nothing can describe.
       (let [blank (sort (map key (filter #(str/blank? (:doc (val %))) (caps/capabilities))))]
         (expect (empty? blank) (str "no __doc__ in their Python: " (pr-str blank)))))
+  (it "documents every member it lends, not only the module"
+      ;; Cycle 2b: `doc("pandas.read_csv")` answers PROSE only when read_csv itself
+      ;; carries a docstring in its Python. A member kind of `data` never can, and
+      ;; a first line that merely echoes the signature is dropped by the harvester,
+      ;; so this expects zero — not a percentage that can quietly slide back.
+      (let [bare (for [[m entry] (caps/capabilities)
+                       member (:names entry)
+                       :when (and (not= "data" (:kind member)) (str/blank? (str (:doc member))))]
+
+                   (str m "." (:name member)))]
+        (expect (empty? (sort bare)) (str "lent, but nothing to read: " (pr-str (sort bare))))))
   (it "lends members under every importable module"
       ;; A module that harvests zero members is a failed import, not a small library.
       (let [empty-mods (sort (map key

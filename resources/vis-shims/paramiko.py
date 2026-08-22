@@ -61,20 +61,30 @@ def __vis_install_paramiko__():
         return base64.b64encode(bytes(b)).decode("ascii")
 
     class SSHException(Exception):
+        """Base of every paramiko failure; catch this to catch any SSH error from this shim."""
+
         pass
 
     class AuthenticationException(SSHException):
+        """Authentication was refused — wrong password, wrong key, or no accepted method."""
+
         pass
 
     class PasswordRequiredException(AuthenticationException):
+        """The private key is encrypted and no passphrase was given to load it."""
+
         pass
 
     class BadAuthenticationType(AuthenticationException):
+        """The server refused the method tried and named the ones it does allow."""
+
         def __init__(self, explanation="", types=None):
             super().__init__(explanation)
             self.allowed_types = types or []
 
     class BadHostKeyException(SSHException):
+        """The host key the server presented is not the one known_hosts records."""
+
         def __init__(self, hostname=None, got_key=None, expected_key=None):
             super().__init__(
                 "Host key for server " + str(hostname) + " does not match."
@@ -84,17 +94,25 @@ def __vis_install_paramiko__():
             self.expected_key = expected_key
 
     class ChannelException(SSHException):
+        """The channel could not be opened, or the server closed it with a failure code."""
+
         def __init__(self, code=0, text=""):
             super().__init__(text)
             self.code = code
 
     class ProxyCommandFailure(SSHException):
+        """The ProxyCommand process failed or closed before the session was up."""
+
         pass
 
     class ConfigParseError(SSHException):
+        """The ssh_config text could not be parsed."""
+
         pass
 
     class NoValidConnectionsError(SSHException):
+        """Every candidate address for that host refused the connection."""
+
         def __init__(self, errors=None):
             if isinstance(errors, dict):
                 super().__init__("Unable to connect to port")
@@ -129,22 +147,32 @@ def __vis_install_paramiko__():
         return payload
 
     class MissingHostKeyPolicy(object):
+        """Base policy for an unknown host key — subclass and implement missing_host_key()."""
+
         def missing_host_key(self, client, hostname, key):
             raise SSHException("Unknown server " + str(hostname))
 
     class AutoAddPolicy(MissingHostKeyPolicy):
+        """Accept an unknown host key and remember it. Convenient; trusts the first connection."""
+
         def missing_host_key(self, client, hostname, key):
             return None
 
     class WarningPolicy(MissingHostKeyPolicy):
+        """Accept an unknown host key but log a warning instead of storing it."""
+
         def missing_host_key(self, client, hostname, key):
             return None
 
     class RejectPolicy(MissingHostKeyPolicy):
+        """Refuse to connect to a host whose key is not already known. The safe default."""
+
         def missing_host_key(self, client, hostname, key):
             raise SSHException("Server " + str(hostname) + " not found in known_hosts")
 
     class PKey(object):
+        """Base of every key type: from_private_key_file/from_private_key, generate, get_fingerprint."""
+
         _key_kind = "rsa"
         _default_bits = 0
 
@@ -230,6 +258,8 @@ def __vis_install_paramiko__():
             return self.get_base64()
 
     class RSAKey(PKey):
+        """An RSA private or public key — from_private_key_file(path, password=None) or generate(bits)."""
+
         _key_kind = "rsa"
         _default_bits = 2048
 
@@ -239,6 +269,8 @@ def __vis_install_paramiko__():
                 self._name = "ssh-rsa"
 
     class DSSKey(PKey):
+        """A DSA (ssh-dss) key. Accepted for compatibility; most current servers refuse the algorithm."""
+
         _key_kind = "dss"
         _default_bits = 1024
 
@@ -248,6 +280,8 @@ def __vis_install_paramiko__():
                 self._name = "ssh-dss"
 
     class ECDSAKey(PKey):
+        """An ECDSA (NIST P-curve) key — from_private_key_file(path) or generate()."""
+
         _key_kind = "ecdsa"
         _default_bits = 256
 
@@ -257,6 +291,8 @@ def __vis_install_paramiko__():
                 self._name = "ecdsa-sha2-nistp256"
 
     class Ed25519Key(PKey):
+        """An Ed25519 key — the default modern host and user key type."""
+
         _key_kind = "ed25519"
         _default_bits = 0
 
@@ -266,6 +302,8 @@ def __vis_install_paramiko__():
                 self._name = "ssh-ed25519"
 
     class HostKeys(object):
+        """A known_hosts database — load, add, lookup, save; what a MissingHostKeyPolicy decides on."""
+
         def __init__(self, filename=None):
             self._entries = {}
 
@@ -382,6 +420,8 @@ def __vis_install_paramiko__():
             return False
 
     class SFTPAttributes(object):
+        """Stat of one remote path: st_size, st_uid, st_gid, st_mode, st_atime, st_mtime."""
+
         FLAG_SIZE = 1
         FLAG_UIDGID = 2
         FLAG_PERMISSIONS = 4
@@ -421,6 +461,8 @@ def __vis_install_paramiko__():
             )
 
     class SFTPFile(object):
+        """One remote file opened over SFTP — read/write/seek/close, and a context manager."""
+
         def __init__(self, sftp, path, mode="r"):
             self._sftp = sftp
             self._path = path
@@ -525,6 +567,8 @@ def __vis_install_paramiko__():
             return False
 
     class SFTPClient(object):
+        """SFTP over an open Transport: listdir, stat, open, get/put, mkdir, remove, rename."""
+
         def __init__(self, handle):
             self._h = handle
             self._cwd = None
@@ -673,6 +717,8 @@ def __vis_install_paramiko__():
             return False
 
     class Transport(object):
+        """The negotiated SSH session under a client: open_session(), open_sftp_client(), forwarding."""
+
         def __init__(self, sock=None, sess=None):
             self._sock = sock
             self._sess = sess
@@ -876,6 +922,8 @@ def __vis_install_paramiko__():
                     pass
 
     class SSHClient(object):
+        """High-level SSH connection: connect(), exec_command(), open_sftp(). No invoke_shell here."""
+
         def __init__(self):
             self._policy = RejectPolicy()
             self._sess = None
@@ -1027,6 +1075,8 @@ def __vis_install_paramiko__():
     SFTP_FLAG_EXCL = 32
 
     class InteractiveQuery(object):
+        """Server side: the prompt set returned by keyboard-interactive authentication."""
+
         def __init__(self, name="", instructions="", *prompts):
             self.name = name
             self.instructions = instructions
@@ -1041,6 +1091,8 @@ def __vis_install_paramiko__():
             self.prompts.append((prompt, bool(echo)))
 
     class ServerInterface(object):
+        """Server side: subclass to answer auth and channel requests for an incoming session."""
+
         def check_channel_request(self, kind, chanid):
             return OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
@@ -1118,6 +1170,8 @@ def __vis_install_paramiko__():
             return (None, None)
 
     class SubsystemHandler(object):
+        """Server side: base of a named subsystem handler, which is how SFTP is served."""
+
         def __init__(self, channel, name, server, *larg, **kwarg):
             self._channel = channel
             self._name = name
@@ -1133,6 +1187,8 @@ def __vis_install_paramiko__():
             pass
 
     class SFTPServerInterface(object):
+        """Server side: subclass this to serve SFTP — open, list_folder, stat, remove, rename."""
+
         def __init__(self, server, *larg, **kwarg):
             self.server = server
 
@@ -1186,6 +1242,8 @@ def __vis_install_paramiko__():
             return posixpath.normpath("/" + path)
 
     class SFTPHandle(object):
+        """Server side: one open file a SFTPServerInterface handed back — read/write/stat/chattr."""
+
         def __init__(self, flags=0):
             self._flags = flags
             self._name = None
@@ -1206,6 +1264,8 @@ def __vis_install_paramiko__():
             return SFTP_OP_UNSUPPORTED
 
     class SFTPServer(SubsystemHandler):
+        """Server side: the SFTP subsystem itself, driving one SFTPServerInterface per session."""
+
         def __init__(self, channel, name, server, sftp_si=None, *larg, **kwarg):
             super().__init__(channel, name, server)
             if isinstance(sftp_si, type):
@@ -1306,6 +1366,8 @@ def __vis_install_paramiko__():
         return s
 
     class Message(object):
+        """An SSH wire message being built or read — get_/add_ one typed field at a time."""
+
         big_int = 0xFF000000
 
         def __init__(self, content=None):
@@ -1439,18 +1501,28 @@ def __vis_install_paramiko__():
                 self._add(item)
 
     class Channel(_Channel):
+        """One multiplexed channel over a Transport: send/recv bytes, exec a command, close it."""
+
         pass
 
     class ChannelFile(_ChannelFile):
+        """The stdout of a channel as a file object — what exec_command() returns second."""
+
         pass
 
     class ChannelStderrFile(_ChannelFile):
+        """The stderr of a channel as a file object — what exec_command() returns third."""
+
         pass
 
     class ChannelStdinFile(_ChannelStdinFile):
+        """The stdin of a channel as a writable file object — exec_command()'s first return."""
+
         pass
 
     class BufferedFile(object):
+        """Base of the channel and SFTP file objects — buffered read/write with a context manager."""
+
         SEEK_SET = 0
         SEEK_CUR = 1
         SEEK_END = 2
@@ -1469,24 +1541,36 @@ def __vis_install_paramiko__():
             return False
 
     class SFTPError(SSHException):
+        """SFTP protocol failure — a bad handle, a refused operation, a malformed packet."""
+
         pass
 
     class CouldNotCanonicalize(SSHException):
+        """Hostname canonicalization asked for by the config could not be completed."""
+
         pass
 
     class IncompatiblePeer(SSHException):
+        """The peer offers no algorithm in common — no shared kex, cipher, MAC or host key type."""
+
         pass
 
     class MessageOrderError(SSHException):
+        """A protocol message arrived out of the order the SSH state machine allows."""
+
         pass
 
     class UnknownKeyType(Exception):
+        """The key type in this file or blob is not one this shim knows how to load."""
+
         def __init__(self, key_type=None, key_bytes=None):
             super().__init__("Unknown key type " + str(key_type))
             self.key_type = key_type
             self.key_bytes = key_bytes
 
     class PublicBlob(object):
+        """A raw public-key blob (an OpenSSH certificate or `.pub` body), from_string/from_file."""
+
         def __init__(self, type_, blob, comment=None):
             self.key_type = type_
             self.key_blob = bytes(blob)
@@ -1524,6 +1608,8 @@ def __vis_install_paramiko__():
             return hash((self.key_type, self.key_blob))
 
     class SecurityOptions(object):
+        """The negotiated algorithm preferences of a Transport — ciphers, macs, keys, kex."""
+
         def __init__(self, transport=None):
             self._transport = transport
             self._ciphers = ()
@@ -1553,6 +1639,8 @@ def __vis_install_paramiko__():
         )
 
     class AgentKey(PKey):
+        """One key the running ssh-agent holds, usable for publickey auth without its private half."""
+
         def __init__(self, agent=None, blob=b"", comment="", **kw):
             super().__init__()
             self.agent = agent
@@ -1573,6 +1661,8 @@ def __vis_install_paramiko__():
             )
 
     class Agent(object):
+        """The running ssh-agent seen through SSH_AUTH_SOCK — get_keys() lends them to a connection."""
+
         def __init__(self):
             self._keys = ()
 
@@ -1586,6 +1676,8 @@ def __vis_install_paramiko__():
             return None
 
     class ProxyCommand(object):
+        """A local command used as the transport socket — ProxyCommand from an ssh_config."""
+
         def __init__(self, command_line):
             self.cmd = command_line
             self.timeout = None
@@ -1610,6 +1702,8 @@ def __vis_install_paramiko__():
     SSH_PORT = 22
 
     class SSHConfigDict(dict):
+        """The dict SSHConfig.lookup answers, with as_bool/as_int readers for its string values."""
+
         def as_bool(self, key):
             val = self.get(key)
             if val is None:
@@ -1622,6 +1716,8 @@ def __vis_install_paramiko__():
             return int(self.get(key))
 
     class SSHConfig(object):
+        """A parsed ssh_config — from_path/from_text, then lookup(host) for the effective options."""
+
         def __init__(self):
             self._config = []
 
@@ -1858,10 +1954,12 @@ def __vis_install_paramiko__():
     mod.SFTP_FLAG_EXCL = SFTP_FLAG_EXCL
 
     _util = types.ModuleType("paramiko.util")
+    _util.__doc__ = "Helpers paramiko exposes: log_to_file, hexify/unhexify, retry_on_signal-style shims."
     _util.log_to_file = util_log_to_file
     mod.util = _util
 
     _exc = types.ModuleType("paramiko.ssh_exception")
+    _exc.__doc__ = "Every failure type: SSHException and its authentication, host-key and channel children."
     for _n in (
         "SSHException",
         "AuthenticationException",
@@ -1880,6 +1978,9 @@ def __vis_install_paramiko__():
     mod.ssh_exception = _exc
 
     _client = types.ModuleType("paramiko.client")
+    _client.__doc__ = (
+        "SSHClient and the host-key policies (AutoAdd, Reject, Warning) live here."
+    )
     _client.SSHClient = SSHClient
     _client.MissingHostKeyPolicy = MissingHostKeyPolicy
     _client.AutoAddPolicy = AutoAddPolicy
@@ -1888,47 +1989,63 @@ def __vis_install_paramiko__():
     mod.client = _client
 
     _sftp = types.ModuleType("paramiko.sftp_client")
+    _sftp.__doc__ = "SFTPClient — the client half of SFTP over an open Transport."
     _sftp.SFTPClient = SFTPClient
     mod.sftp_client = _sftp
 
     _sftpf = types.ModuleType("paramiko.sftp_file")
+    _sftpf.__doc__ = "SFTPFile — one remote file opened over SFTP."
     _sftpf.SFTPFile = SFTPFile
     mod.sftp_file = _sftpf
 
     _sftpa = types.ModuleType("paramiko.sftp_attr")
+    _sftpa.__doc__ = "SFTPAttributes — the stat record SFTP answers for a remote path."
     _sftpa.SFTPAttributes = SFTPAttributes
     mod.sftp_attr = _sftpa
 
     _trans = types.ModuleType("paramiko.transport")
+    _trans.__doc__ = (
+        "Transport and SecurityOptions — the negotiated session under a client."
+    )
     _trans.Transport = Transport
     _trans.SecurityOptions = SecurityOptions
     mod.transport = _trans
 
     _pkey = types.ModuleType("paramiko.pkey")
+    _pkey.__doc__ = "PKey and PublicBlob — the base key type and raw public-key blobs."
     _pkey.PKey = PKey
     _pkey.PublicBlob = PublicBlob
     _pkey.UnknownKeyType = UnknownKeyType
     mod.pkey = _pkey
 
     _rsa = types.ModuleType("paramiko.rsakey")
+    _rsa.__doc__ = "RSAKey — RSA private and public keys."
     _rsa.RSAKey = RSAKey
     mod.rsakey = _rsa
 
     _ed = types.ModuleType("paramiko.ed25519key")
+    _ed.__doc__ = "Ed25519Key — Ed25519 private and public keys."
     _ed.Ed25519Key = Ed25519Key
     mod.ed25519key = _ed
 
     _ec = types.ModuleType("paramiko.ecdsakey")
+    _ec.__doc__ = "ECDSAKey — ECDSA (NIST P-curve) keys."
     _ec.ECDSAKey = ECDSAKey
     mod.ecdsakey = _ec
 
     _server = types.ModuleType("paramiko.server")
+    _server.__doc__ = (
+        "Server side: ServerInterface, SubsystemHandler and InteractiveQuery."
+    )
     _server.ServerInterface = ServerInterface
     _server.InteractiveQuery = InteractiveQuery
     _server.SubsystemHandler = SubsystemHandler
     mod.server = _server
 
     _common = types.ModuleType("paramiko.common")
+    _common.__doc__ = (
+        "Protocol constants: auth and open failure codes, message numbers, log levels."
+    )
     for _cn in (
         "AUTH_SUCCESSFUL",
         "AUTH_PARTIALLY_SUCCESSFUL",
@@ -1943,6 +2060,9 @@ def __vis_install_paramiko__():
     mod.common = _common
 
     _sftpm = types.ModuleType("paramiko.sftp")
+    _sftpm.__doc__ = (
+        "SFTP protocol constants and the SFTPError raised on a protocol failure."
+    )
     for _cn in (
         "SFTP_OK",
         "SFTP_EOF",
@@ -1965,38 +2085,63 @@ def __vis_install_paramiko__():
     _sftpm.SFTPError = SFTPError
 
     _sftpsrv = types.ModuleType("paramiko.sftp_server")
+    _sftpsrv.__doc__ = (
+        "Server side: SFTPServer, the subsystem that serves SFTP over a channel."
+    )
     _sftpsrv.SFTPServer = SFTPServer
     mod.sftp_server = _sftpsrv
 
     _sftpsi = types.ModuleType("paramiko.sftp_si")
+    _sftpsi.__doc__ = (
+        "Server side: SFTPServerInterface — subclass it to answer SFTP requests."
+    )
     _sftpsi.SFTPServerInterface = SFTPServerInterface
     mod.sftp_si = _sftpsi
 
     _sftph = types.ModuleType("paramiko.sftp_handle")
+    _sftph.__doc__ = (
+        "Server side: SFTPHandle — one open file handed back by a SFTPServerInterface."
+    )
     _sftph.SFTPHandle = SFTPHandle
     mod.sftp_handle = _sftph
 
     _channelmod = types.ModuleType("paramiko.channel")
+    _channelmod.__doc__ = (
+        "Channel and its file wrappers — stdin, stdout and stderr of one exec_command."
+    )
     _channelmod.Channel = Channel
     _channelmod.ChannelFile = ChannelFile
     _channelmod.ChannelStderrFile = ChannelStderrFile
     _channelmod.ChannelStdinFile = ChannelStdinFile
     mod.channel = _channelmod
     _msgmod = types.ModuleType("paramiko.message")
+    _msgmod.__doc__ = (
+        "Message — an SSH wire message read or built one typed field at a time."
+    )
     _msgmod.Message = Message
     mod.message = _msgmod
     _configmod = types.ModuleType("paramiko.config")
+    _configmod.__doc__ = (
+        "SSHConfig, SSHConfigDict and the errors raised while parsing an ssh_config."
+    )
     _configmod.SSHConfig = SSHConfig
     _configmod.SSHConfigDict = SSHConfigDict
     mod.config = _configmod
     _agentmod = types.ModuleType("paramiko.agent")
+    _agentmod.__doc__ = (
+        "Agent and AgentKey — the keys a running ssh-agent lends over SSH_AUTH_SOCK."
+    )
     _agentmod.Agent = Agent
     _agentmod.AgentKey = AgentKey
     mod.agent = _agentmod
     _filemod = types.ModuleType("paramiko.file")
+    _filemod.__doc__ = (
+        "BufferedFile — the buffered base shared by the channel and SFTP file objects."
+    )
     _filemod.BufferedFile = BufferedFile
     mod.file = _filemod
     _proxymod = types.ModuleType("paramiko.proxy")
+    _proxymod.__doc__ = "ProxyCommand — a local process used as the transport socket."
     _proxymod.ProxyCommand = ProxyCommand
     mod.proxy = _proxymod
     sys.modules["paramiko"] = mod

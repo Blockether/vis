@@ -6,6 +6,8 @@ def __vis_install_nippy__():
     _encode = __vis_nippy_encode__
 
     class NippyError(Exception):
+        """Raised when nippy_encode/nippy_decode cannot encode or decode a value."""
+
         pass
 
     def _realize(value):

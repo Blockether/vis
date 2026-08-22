@@ -543,6 +543,7 @@ def __vis_install_pil__():
         return [r, g, b, a if bands == 4 else 255]
 
     ImageColor = types.ModuleType("PIL.ImageColor")
+    ImageColor.__doc__ = "PIL.ImageColor - getrgb and getcolor turn a colour name or a '#rrggbb' string into an RGB(A) tuple; colormap holds the known names."
     ImageColor.getrgb = _getrgb
     ImageColor.getcolor = _getcolor
     ImageColor.colormap = dict(_NAMED)
@@ -1702,6 +1703,7 @@ def __vis_install_pil__():
 
     # -- Image submodule -----------------------------------------------------
     Image_mod = types.ModuleType("PIL.Image")
+    Image_mod.__doc__ = "PIL.Image - open, new, frombytes, merge, blend, composite, and the Image object itself: convert, resize, crop, rotate, transpose, paste, split, getdata, thumbnail, save."
     Image_mod.Image = Image
     Image_mod.new = new
     Image_mod.open = _open
@@ -2325,6 +2327,7 @@ def __vis_install_pil__():
             self._im.paste(bitmap, (int(xy[0]), int(xy[1])), bitmap)
 
     ImageDraw = types.ModuleType("PIL.ImageDraw")
+    ImageDraw.__doc__ = "PIL.ImageDraw - Draw(im) then line, rectangle, ellipse, polygon, point, text and floodfill onto an existing image."
     ImageDraw.ImageDraw = _Draw
     ImageDraw.Draw = lambda im, mode=None: _Draw(im, mode)
 
@@ -2482,6 +2485,7 @@ def __vis_install_pil__():
             return self.font.getlength(text, *args, **kwargs)
 
     ImageFont = types.ModuleType("PIL.ImageFont")
+    ImageFont.__doc__ = "PIL.ImageFont - the font objects ImageDraw.text() accepts: load_default, load, load_path, truetype, and TransposedFont."
     ImageFont.FreeTypeFont = _Font
     ImageFont.ImageFont = _Font
     ImageFont.TransposedFont = _TransposedFont
@@ -2520,6 +2524,7 @@ def __vis_install_pil__():
 
     # -- ImageFilter ---------------------------------------------------------
     ImageFilter = types.ModuleType("PIL.ImageFilter")
+    ImageFilter.__doc__ = "PIL.ImageFilter - the filters Image.filter() accepts: BLUR, SHARPEN, SMOOTH, DETAIL, CONTOUR, EMBOSS, FIND_EDGES, EDGE_ENHANCE, GaussianBlur, BoxBlur, Kernel, MaxFilter."
 
     class Filter:
         """Pillow's abstract base: `isinstance(f, ImageFilter.Filter)` is a real
@@ -2950,6 +2955,7 @@ def __vis_install_pil__():
 
     # -- ImageChops ----------------------------------------------------------
     ImageChops = types.ModuleType("PIL.ImageChops")
+    ImageChops.__doc__ = "PIL.ImageChops - arithmetic between two images of one size: add, subtract, multiply, difference, blend, composite, lighter, darker, invert and the logical operators."
 
     def _chop(op):
         """Pillow names both operands `image1`/`image2`, and a caller who passes
@@ -3026,6 +3032,7 @@ def __vis_install_pil__():
 
     # -- ImageOps ------------------------------------------------------------
     ImageOps = types.ModuleType("PIL.ImageOps")
+    ImageOps.__doc__ = "PIL.ImageOps - whole-image operations: grayscale, invert, autocontrast, equalize, colorize, fit, contain, cover, expand, crop, deform, mirror, flip, exif_transpose."
 
     def _ops_grayscale(image):
         return image.convert("L")
@@ -3255,6 +3262,7 @@ def __vis_install_pil__():
 
     # -- ImageEnhance --------------------------------------------------------
     ImageEnhance = types.ModuleType("PIL.ImageEnhance")
+    ImageEnhance.__doc__ = "PIL.ImageEnhance - Color, Contrast, Brightness and Sharpness wrappers whose enhance(factor) answers a new image."
 
     class _Enhance:
         def enhance(self, factor):
@@ -3301,6 +3309,7 @@ def __vis_install_pil__():
 
     # -- ImageStat -----------------------------------------------------------
     ImageStat = types.ModuleType("PIL.ImageStat")
+    ImageStat.__doc__ = "PIL.ImageStat - Stat(image) reports per-band extrema, count, sum, mean, median and stddev."
 
     class _Stat:
         def __init__(self, image_or_list, mask=None):
@@ -3385,6 +3394,7 @@ def __vis_install_pil__():
 
     # -- ImageMath -----------------------------------------------------------
     ImageMath = types.ModuleType("PIL.ImageMath")
+    ImageMath.__doc__ = "PIL.ImageMath - eval/lambda_eval over single-band images: arithmetic, comparison and convert on pixel operands."
 
     def _operand_image(op):
         """The Image behind an ImageMath operand, whichever spelling arrived."""
@@ -3506,6 +3516,7 @@ def __vis_install_pil__():
 
     # -- ImageSequence -------------------------------------------------------
     ImageSequence = types.ModuleType("PIL.ImageSequence")
+    ImageSequence.__doc__ = "PIL.ImageSequence - Iterator(im) walks the frames of a multi-frame image; all_frames collects them."
 
     class _SeqIterator:
         def __init__(self, im):
@@ -3550,6 +3561,7 @@ def __vis_install_pil__():
 
     # -- ImagePalette --------------------------------------------------------
     ImagePalette = types.ModuleType("PIL.ImagePalette")
+    ImagePalette.__doc__ = "PIL.ImagePalette - the palette a P-mode image carries, plus the ready-made ones: raw, random, sepia, wedge, negative and the gamma/linear LUT builders."
 
     class _Palette:
         def __init__(self, mode="RGB", palette=None, size=0):
@@ -3674,6 +3686,7 @@ def __vis_install_pil__():
 
     # -- ImageTransform ------------------------------------------------------
     ImageTransform = types.ModuleType("PIL.ImageTransform")
+    ImageTransform.__doc__ = "PIL.ImageTransform - the transform descriptors Image.transform() accepts: Affine, Extent, Quad, Mesh and Perspective."
 
     class _Transform:
         def __init__(self, data):
@@ -3714,6 +3727,7 @@ def __vis_install_pil__():
 
     # -- PIL.features --------------------------------------------------------
     features = types.ModuleType("PIL.features")
+    features.__doc__ = "PIL.features - check, check_module, check_codec, check_feature and get_supported report which optional Pillow modules, codecs and features this reimplementation provides."
     # Pillow keys these three tables by name and `check()` dispatches on WHICH
     # table holds the name; publishing only a flag dict meant `features.modules`
     # and friends were missing and `check_codec`/`check_module` said True for
@@ -3827,6 +3841,7 @@ def __vis_install_pil__():
     # publishing a stub class left `ExifTags.Base.Make` an AttributeError while
     # `TAGS[271]` answered. One table, both spellings.
     ExifTags = types.ModuleType("PIL.ExifTags")
+    ExifTags.__doc__ = "PIL.ExifTags - the TAGS, GPSTAGS, IFD, Base, GPS and Interop enumerations that name the numeric Exif keys Image.getexif() answers with."
 
     class _TagEnum(int):
         """One member of a Pillow tag enum: an `int` that also knows its `name`,
@@ -4248,6 +4263,7 @@ def __vis_install_pil__():
 
     # -- TiffTags --------------------------------------------------------------
     TiffTags = types.ModuleType("PIL.TiffTags")
+    TiffTags.__doc__ = "PIL.TiffTags - the TIFF field-type constants (BYTE, ASCII, SHORT, LONG, RATIONAL, ...) and the tag tables that name a numeric TIFF tag."
     TiffTags.BYTE = 1
     TiffTags.ASCII = 2
     TiffTags.SHORT = 3
@@ -4511,6 +4527,7 @@ def __vis_install_pil__():
             return errcode
 
     ImageFile = types.ModuleType("PIL.ImageFile")
+    ImageFile.__doc__ = "PIL.ImageFile - the base classes a Pillow plugin subclasses (ImageFile, StubImageFile, Parser, PyDecoder, PyEncoder) plus LOAD_TRUNCATED_IMAGES."
     ImageFile.ImageFile = Image
     ImageFile.StubImageFile = Image
     ImageFile.Parser = _Parser
@@ -4531,6 +4548,7 @@ def __vis_install_pil__():
     ImageFile.PyDecoder = _PyDecoder
     ImageFile.PyEncoder = _PyEncoder
     ImageGrab = types.ModuleType("PIL.ImageGrab")
+    ImageGrab.__doc__ = "PIL.ImageGrab - screen and clipboard capture; grab and grabclipboard refuse, the sandbox has no host display."
     ImageGrab.grab = _host_unavailable("PIL.ImageGrab.grab")
     ImageGrab.grabclipboard = _host_unavailable("PIL.ImageGrab.grabclipboard")
 
@@ -4553,6 +4571,7 @@ def __vis_install_pil__():
         return type(name.rsplit(".", 1)[-1], (object,), ns)
 
     ImageTk = types.ModuleType("PIL.ImageTk")
+    ImageTk.__doc__ = "PIL.ImageTk - the Tk bridge; PhotoImage exists so an import succeeds and refuses when used, because there is no Tk here."
     ImageTk.PhotoImage = _unavailable_class(
         "PIL.ImageTk.PhotoImage", ("paste", "width", "height", "__str__")
     )
@@ -4562,6 +4581,7 @@ def __vis_install_pil__():
     ImageTk.getimage = _host_unavailable("PIL.ImageTk.getimage")
 
     ImageWin = types.ModuleType("PIL.ImageWin")
+    ImageWin.__doc__ = "PIL.ImageWin - the Windows HDC/HWND/Dib bridge; present so an import succeeds, and refusing when used."
     ImageWin.HDC = _unavailable_class("PIL.ImageWin.HDC", ("__int__",))
     ImageWin.HWND = _unavailable_class("PIL.ImageWin.HWND", ("__int__",))
     ImageWin.Dib = _unavailable_class(
@@ -4576,6 +4596,7 @@ def __vis_install_pil__():
     )
 
     ImageQt = types.ModuleType("PIL.ImageQt")
+    ImageQt.__doc__ = "PIL.ImageQt - the Qt bridge; ImageQt exists so an import succeeds and refuses when used, because no Qt binding is installed."
     ImageQt.qt_versions = [["6", "PyQt6"], ["side6", "PySide6"]]
     ImageQt.qt_version = None
     ImageQt.qt_is_installed = False
@@ -4614,6 +4635,7 @@ def __vis_install_pil__():
     ImageQt.align8to32 = _align8to32
 
     PSDraw = types.ModuleType("PIL.PSDraw")
+    PSDraw.__doc__ = "PIL.PSDraw - PSDraw(fp) writes text, lines, rectangles and images to a stream as PostScript."
 
     class _PSDraw:
         """Pillow's PostScript writer. It only ever writes bytes to a file
@@ -4714,6 +4736,7 @@ def __vis_install_pil__():
     )
 
     ImageShow = types.ModuleType("PIL.ImageShow")
+    ImageShow.__doc__ = "PIL.ImageShow - the viewer registry Image.show() consults; no viewer can open a window in the sandbox."
 
     class _Viewer:
         """Pillow's viewer base class. `show()` is a real template method here --
@@ -4809,6 +4832,7 @@ def __vis_install_pil__():
 
     # -- ImageMorph ------------------------------------------------------------
     ImageMorph = types.ModuleType("PIL.ImageMorph")
+    ImageMorph.__doc__ = "PIL.ImageMorph - morphological operators over 1-mode images: LutBuilder patterns and MorphOp apply, match and get_on_pixels."
 
     _MORPH_LUT_SIZE = 1 << 9
     _MORPH_ROTATION = [6, 3, 0, 7, 4, 1, 8, 5, 2]
@@ -4980,6 +5004,7 @@ def __vis_install_pil__():
 
     # -- ImagePath -------------------------------------------------------------
     ImagePath = types.ModuleType("PIL.ImagePath")
+    ImagePath.__doc__ = "PIL.ImagePath - Path, the coordinate sequence ImageDraw accepts, with transform, compact, map, tolist and getbbox."
 
     class _Path:
         """PIL's `ImagePath.Path`: the point sequence `ImageDraw` takes for polygons

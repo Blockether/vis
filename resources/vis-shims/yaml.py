@@ -21,6 +21,8 @@ def __vis_install_yaml_compat__():
     )
 
     class YAMLError(Exception):
+        """Raised when a document cannot be parsed or a value cannot be emitted — the one error type this shim raises."""
+
         pass
 
     def _realize(x):
@@ -63,28 +65,36 @@ def __vis_install_yaml_compat__():
         return stream if stream is not None else ""
 
     def load(stream, Loader=None):
+        """Parse the FIRST YAML document of `stream` (str, bytes or a file object) into Python data. `Loader` is accepted and ignored — this shim always parses safely, so `load` and `safe_load` are the same call."""
         return _call("__vis_yaml_load__", _text(stream))
 
     def load_all(stream, Loader=None):
+        """Iterate every YAML document in a multi-document stream, yielding one Python value per `---` section."""
         for d in _call("__vis_yaml_load_all__", _text(stream)) or []:
             yield d
 
     def safe_load(stream):
+        """Parse one YAML document safely — the only parse this shim has; identical to `load`."""
         return load(stream)
 
     def full_load(stream):
+        """Parse one YAML document; an alias of `safe_load` here, because no loader ever constructs arbitrary Python objects."""
         return load(stream)
 
     def unsafe_load(stream):
+        """Parse one YAML document. NOT unsafe here: it is the same safe parse as `load` — no Python object construction is ever performed."""
         return load(stream)
 
     def safe_load_all(stream):
+        """Iterate every document of a multi-document stream safely; identical to `load_all`."""
         return load_all(stream)
 
     def full_load_all(stream):
+        """Iterate every document of a multi-document stream; an alias of `safe_load_all`."""
         return load_all(stream)
 
     def unsafe_load_all(stream):
+        """Iterate every document of a multi-document stream; the same safe parse as `load_all`."""
         return load_all(stream)
 
     def _emit(bridge_name, value, stream):
@@ -95,15 +105,19 @@ def __vis_install_yaml_compat__():
         return None
 
     def dump(data, stream=None, Dumper=None, **kwargs):
+        """Serialize one Python value to a YAML string, or write it to `stream` and return None. `Dumper` and formatting keywords are accepted and ignored — the emitter has one deterministic style."""
         return _emit("__vis_yaml_dump__", data, stream)
 
     def dump_all(documents, stream=None, Dumper=None, **kwargs):
+        """Serialize a sequence of Python values as a multi-document YAML stream, separated by `---`."""
         return _emit("__vis_yaml_dump_all__", list(documents), stream)
 
     def safe_dump(data, stream=None, **kwargs):
+        """Serialize one Python value to YAML; identical to `dump`, since this emitter never writes Python-specific tags."""
         return _emit("__vis_yaml_dump__", data, stream)
 
     def safe_dump_all(documents, stream=None, **kwargs):
+        """Serialize a sequence of values as a multi-document YAML stream; identical to `dump_all`."""
         return _emit("__vis_yaml_dump_all__", list(documents), stream)
 
     def _sentinel(name):

@@ -3244,6 +3244,8 @@ def __vis_install_pptx__():
                 object.__setattr__(self, name, value)
 
     class Presentation(object):
+        """One presentation — slides, slide_layouts, slide_width/height, core_properties, save(path)."""
+
         def __init__(self, pptx=None):
             if pptx is None:
                 self._d = {"width": 9144000, "height": 6858000, "properties": {}}
@@ -3339,14 +3341,17 @@ def __vis_install_pptx__():
     mod.__path__ = []
 
     api = types.ModuleType("pptx.api")
+    api.__doc__ = "The Presentation(path=None) entry point — open an existing .pptx or start an empty one."
     api.Presentation = Presentation
     mod.api = api
 
     presentation_mod = types.ModuleType("pptx.presentation")
+    presentation_mod.__doc__ = "The Presentation object: slides, slide_layouts, slide_width/height, core_properties, save."
     presentation_mod.Presentation = Presentation
     mod.presentation = presentation_mod
 
     util = types.ModuleType("pptx.util")
+    util.__doc__ = "Length units — Emu, Inches, Pt, Cm, Mm, Centipoints — and the Length base they share."
     util.Length = Length
     util.Emu = Emu
     util.Pt = Pt
@@ -3357,19 +3362,32 @@ def __vis_install_pptx__():
     mod.util = util
 
     dml = types.ModuleType("pptx.dml")
+    dml.__doc__ = (
+        "Drawing-ML types: fills, lines and colors shared by shapes, text and charts."
+    )
     color_mod = types.ModuleType("pptx.dml.color")
+    color_mod.__doc__ = (
+        "RGBColor and the ColorFormat a fill, line or font paints through."
+    )
     color_mod.RGBColor = RGBColor
     dml.color = color_mod
     mod.dml = dml
 
     enum = types.ModuleType("pptx.enum")
+    enum.__doc__ = (
+        "The enumerations python-pptx exposes for text, shapes, fills and charts."
+    )
     enum_text = types.ModuleType("pptx.enum.text")
+    enum_text.__doc__ = "Text enumerations: PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE."
     enum_text.PP_ALIGN = PP_ALIGN
     enum_text.PP_PARAGRAPH_ALIGNMENT = PP_PARAGRAPH_ALIGNMENT
     enum_text.MSO_ANCHOR = MSO_ANCHOR
     enum_text.MSO_VERTICAL_ANCHOR = MSO_VERTICAL_ANCHOR
     enum_text.MSO_AUTO_SIZE = MSO_AUTO_SIZE
     enum_shapes = types.ModuleType("pptx.enum.shapes")
+    enum_shapes.__doc__ = (
+        "Shape enumerations: MSO_SHAPE, MSO_SHAPE_TYPE, PP_PLACEHOLDER."
+    )
     enum_shapes.MSO_SHAPE = MSO_SHAPE
     enum_shapes.MSO_AUTO_SHAPE_TYPE = MSO_AUTO_SHAPE_TYPE
     enum_shapes.MSO_SHAPE_TYPE = MSO_SHAPE_TYPE
@@ -3378,6 +3396,9 @@ def __vis_install_pptx__():
     enum_shapes.PP_PLACEHOLDER = PP_PLACEHOLDER
     enum_shapes.PP_PLACEHOLDER_TYPE = PP_PLACEHOLDER_TYPE
     enum_dml = types.ModuleType("pptx.enum.dml")
+    enum_dml.__doc__ = (
+        "Fill and line enumerations: MSO_FILL, MSO_THEME_COLOR, MSO_LINE."
+    )
     enum_dml.MSO_THEME_COLOR = MSO_THEME_COLOR
     enum_dml.MSO_FILL = MSO_FILL
     enum_dml.MSO_FILL_TYPE = MSO_FILL_TYPE
@@ -3388,13 +3409,22 @@ def __vis_install_pptx__():
     mod.enum = enum
 
     shapes_mod = types.ModuleType("pptx.shapes")
+    shapes_mod.__doc__ = "Shapes on a slide and the collections that hold them."
     base_mod = types.ModuleType("pptx.shapes.base")
+    base_mod.__doc__ = (
+        "BaseShape — the name, position, size and rotation every shape carries."
+    )
     base_mod.BaseShape = Shape
     autoshape_mod = types.ModuleType("pptx.shapes.autoshape")
+    autoshape_mod.__doc__ = (
+        "Shape and Adjustment — an autoshape with a text frame and a fill."
+    )
     autoshape_mod.Shape = Shape
     picture_mod = types.ModuleType("pptx.shapes.picture")
+    picture_mod.__doc__ = "Picture — an image placed on a slide, with crop and size."
     picture_mod.Picture = Picture
     graphfrm_mod = types.ModuleType("pptx.shapes.graphfrm")
+    graphfrm_mod.__doc__ = "GraphicFrame — the container a table or a chart sits in."
     graphfrm_mod.GraphicFrame = GraphicFrame
     shapes_mod.base = base_mod
     shapes_mod.autoshape = autoshape_mod
@@ -3403,6 +3433,9 @@ def __vis_install_pptx__():
     mod.shapes = shapes_mod
 
     table_mod = types.ModuleType("pptx.table")
+    table_mod.__doc__ = (
+        "Table, _Row, _Column and _Cell — a table shape and the cells you write into."
+    )
     table_mod.Table = _Table
     table_mod._Cell = _Cell
     table_mod._Row = _Row
@@ -3410,7 +3443,13 @@ def __vis_install_pptx__():
     mod.table = table_mod
 
     text_mod = types.ModuleType("pptx.text")
+    text_mod.__doc__ = (
+        "Rich text: a text frame, its paragraphs, their runs and the font on each."
+    )
     text_text_mod = types.ModuleType("pptx.text.text")
+    text_text_mod.__doc__ = (
+        "TextFrame, _Paragraph, _Run and Font — the text tree inside a shape."
+    )
     text_text_mod.TextFrame = _TextFrame
     text_text_mod._Paragraph = _Paragraph
     text_text_mod._Run = _Run
@@ -3419,7 +3458,11 @@ def __vis_install_pptx__():
     mod.text = text_mod
 
     chart_mod = types.ModuleType("pptx.chart")
+    chart_mod.__doc__ = "Charts: the chart shape, its data, plots, series, points, markers, axes and labels."
     chart_data_mod = types.ModuleType("pptx.chart.data")
+    chart_data_mod.__doc__ = (
+        "ChartData, CategoryChartData and XyChartData — what you hand add_chart()."
+    )
     chart_data_mod.ChartData = CategoryChartData
     chart_data_mod.CategoryChartData = CategoryChartData
     chart_data_mod.XyChartData = XyChartData
@@ -3427,12 +3470,18 @@ def __vis_install_pptx__():
     chart_mod.data = chart_data_mod
 
     chart_chart_mod = types.ModuleType("pptx.chart.chart")
+    chart_chart_mod.__doc__ = (
+        "Chart — the chart object on a slide: plots, series, legend, axes."
+    )
     chart_chart_mod.Chart = Chart
     chart_chart_mod.Legend = _Legend
     chart_chart_mod.PlotArea = _Plot
     chart_mod.chart = chart_chart_mod
 
     chart_plot_mod = types.ModuleType("pptx.chart.plot")
+    chart_plot_mod.__doc__ = (
+        "The plot inside a chart — its series, categories and gap/overlap settings."
+    )
     chart_plot_mod.Plot = _Plot
     chart_plot_mod.CategoryPlot = _Plot
     chart_plot_mod.BarPlot = _Plot
@@ -3443,6 +3492,9 @@ def __vis_install_pptx__():
     chart_mod.plot = chart_plot_mod
 
     chart_series_mod = types.ModuleType("pptx.chart.series")
+    chart_series_mod.__doc__ = (
+        "One data series of a plot — its values, format and data labels."
+    )
     chart_series_mod.SeriesCollection = _SeriesCollection
     chart_series_mod.BarSeries = _Series
     chart_series_mod.LineSeries = _Series
@@ -3452,15 +3504,20 @@ def __vis_install_pptx__():
     chart_mod.series = chart_series_mod
 
     chart_point_mod = types.ModuleType("pptx.chart.point")
+    chart_point_mod.__doc__ = "One point of a series — its marker and its own format."
     chart_point_mod.Point = _Point
     chart_point_mod.PointCollection = _Points
     chart_mod.point = chart_point_mod
 
     chart_marker_mod = types.ModuleType("pptx.chart.marker")
+    chart_marker_mod.__doc__ = "The marker drawn at a point — style, size and format."
     chart_marker_mod.Marker = _Marker
     chart_mod.marker = chart_marker_mod
 
     chart_axis_mod = types.ModuleType("pptx.chart.axis")
+    chart_axis_mod.__doc__ = (
+        "Category and value axes — scale, tick marks, title and gridlines."
+    )
     chart_axis_mod.CategoryAxis = _ChartAxis
     chart_axis_mod.ValueAxis = _ChartAxis
     chart_axis_mod.DateAxis = _ChartAxis
@@ -3469,16 +3526,23 @@ def __vis_install_pptx__():
     chart_mod.axis = chart_axis_mod
 
     chart_datalabel_mod = types.ModuleType("pptx.chart.datalabel")
+    chart_datalabel_mod.__doc__ = (
+        "Data labels on a plot or a point — number format, position and text."
+    )
     chart_datalabel_mod.DataLabels = _DataLabels
     chart_datalabel_mod.DataLabel = _DataLabels
     chart_mod.datalabel = chart_datalabel_mod
 
     chart_xmlwriter_mod = types.ModuleType("pptx.chart.xmlwriter")
+    chart_xmlwriter_mod.__doc__ = (
+        "Internal chart XML writing; nothing here is part of the public surface."
+    )
     chart_mod.xmlwriter = chart_xmlwriter_mod
 
     mod.chart = chart_mod
 
     enum_chart = types.ModuleType("pptx.enum.chart")
+    enum_chart.__doc__ = "Chart enumerations: XL_CHART_TYPE, XL_LEGEND_POSITION, XL_LABEL_POSITION, XL_TICK_MARK."
     enum_chart.XL_CHART_TYPE = XL_CHART_TYPE
     enum_chart.XL_LEGEND_POSITION = XL_LEGEND_POSITION
     enum_chart.XL_LABEL_POSITION = XL_LABEL_POSITION
@@ -3490,6 +3554,7 @@ def __vis_install_pptx__():
     enum.chart = enum_chart
 
     exc = types.ModuleType("pptx.exc")
+    exc.__doc__ = "The errors this shim raises: PackageNotFoundError and its InvalidXmlError siblings."
     exc.PythonPptxError = PptxException
     exc.PackageNotFoundError = PptxException
     exc.InvalidXmlError = PptxException

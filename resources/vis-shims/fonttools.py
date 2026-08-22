@@ -80,6 +80,10 @@ def __vis_fonttools_clear_errors__():
 
     ft.__getattr__ = _explain("fontTools")
     ttLib.__getattr__ = _explain("fontTools.ttLib")
+    ttLib.__doc__ = (
+        "fontTools.ttLib: `woff2.decompress(input, output)` turns a WOFF2 web font into a TTF. "
+        'TTFont, TTCollection and newTable are present but refuse; see `doc("fontTools")`.'
+    )
     ft.__doc__ = (
         "WOFF2 to TTF: `fontTools.ttLib.woff2.decompress(input, output)` plus "
         "`brotli.decompress(bytes)`. Not supported: `brotli.compress`, WOFF1, `TTFont`, the "
@@ -93,6 +97,9 @@ def __vis_fonttools_clear_errors__():
             "`brotli.compress` is not supported. Part of the vis `fontTools` shim; see "
             '`doc("fonttools")`.'
         )
+        _compress = getattr(brotli, "compress", None)
+        if _compress is not None and not _compress.__doc__:
+            _compress.__doc__ = "Refused: this shim only DECOMPRESSES Brotli. Use `brotli.decompress(bytes)`."
 
 
 __vis_install_fonttools__()

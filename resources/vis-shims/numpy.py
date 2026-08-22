@@ -151,6 +151,8 @@ def __vis_install_numpy__():
         return o
 
     class _DType:
+        """Element type of an ndarray (float64, int64, bool_), exposed as `numpy.dtype`."""
+
         def __init__(self, name):
             self.name = name
 
@@ -411,6 +413,8 @@ def __vis_install_numpy__():
         return out, oshape
 
     class ndarray:
+        """Dense N-dimensional array of Python numbers: shape, dtype, slicing, broadcasting arithmetic."""
+
         def __init__(self, data, shape, dtype):
             self._d = list(data)
             self._shape = tuple(shape)
@@ -884,6 +888,7 @@ def __vis_install_numpy__():
 
     # ---- creation --------------------------------------------------------------
     def array(obj, dtype=None, copy=True, ndmin=0):
+        """Build an ndarray from nested sequences, copying by default."""
         a = _asarray(obj, dtype)
         if a is obj and copy:
             a = a.copy()
@@ -892,6 +897,7 @@ def __vis_install_numpy__():
         return a
 
     def asarray(obj, dtype=None):
+        """Return the input as an ndarray, without copying when it already is one."""
         return _asarray(obj, dtype)
 
     def _shape_of(shape):
@@ -900,42 +906,51 @@ def __vis_install_numpy__():
         return tuple(shape)
 
     def zeros(shape, dtype=None):
+        """New array of the given shape filled with 0."""
         shp = _shape_of(shape)
         dn = _dtype_name(dtype) if dtype is not None else _FLOAT
         n = _prod(shp) if shp else 1
         return _mk([_cast(0, dn)] * n, shp, dn)
 
     def ones(shape, dtype=None):
+        """New array of the given shape filled with 1."""
         shp = _shape_of(shape)
         dn = _dtype_name(dtype) if dtype is not None else _FLOAT
         n = _prod(shp) if shp else 1
         return _mk([_cast(1, dn)] * n, shp, dn)
 
     def full(shape, fill_value, dtype=None):
+        """New array of the given shape filled with one value."""
         shp = _shape_of(shape)
         dn = _dtype_name(dtype) if dtype is not None else _values_dtype([fill_value])
         n = _prod(shp) if shp else 1
         return _mk([_cast(fill_value, dn)] * n, shp, dn)
 
     def empty(shape, dtype=None):
+        """New array of the given shape, contents unspecified (this shim fills it with 0)."""
         return zeros(shape, dtype)
 
     def zeros_like(a, dtype=None):
+        """Array of zeros with the same shape as the input."""
         A = _asarray(a)
         return zeros(A._shape, dtype if dtype is not None else A._dtype)
 
     def ones_like(a, dtype=None):
+        """Array of ones with the same shape as the input."""
         A = _asarray(a)
         return ones(A._shape, dtype if dtype is not None else A._dtype)
 
     def full_like(a, fill_value, dtype=None):
+        """Array of the same shape as the input, filled with one value."""
         A = _asarray(a)
         return full(A._shape, fill_value, dtype if dtype is not None else A._dtype)
 
     def empty_like(a, dtype=None):
+        """Uninitialized array with the same shape as the input."""
         return zeros_like(a, dtype)
 
     def arange(*args, dtype=None):
+        """Evenly spaced values over a half-open range, like `range` with floats."""
         if len(args) == 1:
             start, stop, step = 0, args[0], 1
         elif len(args) == 2:
@@ -965,6 +980,7 @@ def __vis_install_numpy__():
         return _mk([_cast(v, dn) for v in out], (len(out),), dn)
 
     def linspace(start, stop, num=50, endpoint=True, dtype=None):
+        """`num` evenly spaced samples from `start` to `stop`, endpoint included."""
         if num == 1:
             return _mk([float(start)], (1,), _FLOAT)
         div = (num - 1) if endpoint else num
@@ -976,6 +992,7 @@ def __vis_install_numpy__():
         return _mk([_cast(v, dn) for v in out], (num,), dn)
 
     def eye(n, m=None, k=0, dtype=None):
+        """Two-dimensional array with ones on a diagonal and zeros elsewhere."""
         m = n if m is None else m
         dn = _dtype_name(dtype) if dtype is not None else _FLOAT
         data = []
@@ -985,9 +1002,11 @@ def __vis_install_numpy__():
         return _mk(data, (n, m), dn)
 
     def identity(n, dtype=None):
+        """Square identity matrix of size n."""
         return eye(n, n, 0, dtype)
 
     def diag(v, k=0):
+        """Extract a diagonal from a matrix, or build a matrix from a diagonal vector."""
         A = _asarray(v)
         if A.ndim == 1:
             n = A._shape[0] + abs(k)
@@ -1007,6 +1026,7 @@ def __vis_install_numpy__():
 
     # ---- reductions ------------------------------------------------------------
     def sum(a, axis=None, keepdims=False):
+        """Sum of elements, over an axis or the whole array."""
         r = _reduce(a, axis, lambda acc, v: acc + v, 0, keepdims)
         if axis is None and not keepdims:
             return r
@@ -1015,6 +1035,7 @@ def __vis_install_numpy__():
         return _mk(out, oshape, A._dtype)
 
     def prod(a, axis=None, keepdims=False):
+        """Product of elements, over an axis or the whole array."""
         r = _reduce(a, axis, lambda acc, v: acc * v, 1, keepdims)
         if axis is None and not keepdims:
             return r
@@ -1022,6 +1043,7 @@ def __vis_install_numpy__():
         return _mk(out, oshape, _asarray(a)._dtype)
 
     def amin(a, axis=None, keepdims=False):
+        """Smallest element, over an axis or the whole array (also exported as `min`)."""
         A = _asarray(a)
         if axis is None and not keepdims:
             return min(A._d)
@@ -1031,6 +1053,7 @@ def __vis_install_numpy__():
         return _mk(out, oshape, A._dtype)
 
     def amax(a, axis=None, keepdims=False):
+        """Largest element, over an axis or the whole array (also exported as `max`)."""
         A = _asarray(a)
         if axis is None and not keepdims:
             return max(A._d)
@@ -1040,6 +1063,7 @@ def __vis_install_numpy__():
         return _mk(out, oshape, A._dtype)
 
     def mean(a, axis=None, keepdims=False):
+        """Arithmetic mean, over an axis or the whole array."""
         A = _asarray(a)
         if axis is None and not keepdims:
             return _bi.sum(A._d) / len(A._d) if A._d else float("nan")
@@ -1051,6 +1075,7 @@ def __vis_install_numpy__():
         return A._shape[_normalize_axis(axis, A.ndim)]
 
     def var(a, axis=None, ddof=0, keepdims=False):
+        """Variance, over an axis or the whole array."""
         A = _asarray(a)
         if axis is None and not keepdims:
             m = mean(a)
@@ -1062,6 +1087,7 @@ def __vis_install_numpy__():
         return _elementwise(s, n, lambda x, y: x / y)
 
     def std(a, axis=None, ddof=0, keepdims=False):
+        """Standard deviation, over an axis or the whole array."""
         v = var(a, axis, ddof, keepdims)
         if isinstance(v, ndarray):
             return _unary(v, lambda x: math.sqrt(x))
@@ -1076,6 +1102,7 @@ def __vis_install_numpy__():
         return _mk([reduced], tuple(nshape), _values_dtype([reduced]))
 
     def median(a, axis=None):
+        """Middle value, over an axis or the whole array."""
         A = _asarray(a)
 
         def _med(vals):
@@ -1102,6 +1129,7 @@ def __vis_install_numpy__():
         )
 
     def percentile(a, q, axis=None):
+        """Value below which the given percentage of the data falls."""
         A = _asarray(a)
         s = sorted(A._d)
 
@@ -1120,6 +1148,7 @@ def __vis_install_numpy__():
         return _p(q)
 
     def quantile(a, q, axis=None):
+        """Value below which the given fraction of the data falls."""
         if _is_seq(q):
             return percentile(a, [x * 100 for x in q])
         return percentile(a, q * 100)
@@ -1148,12 +1177,15 @@ def __vis_install_numpy__():
         return _mk(besti, oshape, _INT)
 
     def argmin(a, axis=None):
+        """Index of the smallest element."""
         return _argreduce(a, axis, lambda x, b: x < b)
 
     def argmax(a, axis=None):
+        """Index of the largest element."""
         return _argreduce(a, axis, lambda x, b: x > b)
 
     def cumsum(a, axis=None):
+        """Running total along an axis."""
         A = _asarray(a)
         if axis is None:
             out = []
@@ -1167,6 +1199,7 @@ def __vis_install_numpy__():
         )
 
     def cumprod(a, axis=None):
+        """Running product along an axis."""
         A = _asarray(a)
         out = []
         acc = 1
@@ -1176,6 +1209,7 @@ def __vis_install_numpy__():
         return _mk(out, (len(out),), A._dtype)
 
     def any(a, axis=None, keepdims=False):
+        """True when at least one element is truthy, over an axis or the whole array."""
         r = _reduce(a, axis, lambda acc, v: bool(acc) or bool(v), False, keepdims)
         if axis is None and not keepdims:
             return r
@@ -1183,6 +1217,7 @@ def __vis_install_numpy__():
         return _mk(out, oshape, _BOOL)
 
     def all(a, axis=None, keepdims=False):
+        """True when every element is truthy, over an axis or the whole array."""
         r = _reduce(a, axis, lambda acc, v: bool(acc) and bool(v), True, keepdims)
         if axis is None and not keepdims:
             return r
@@ -1190,14 +1225,18 @@ def __vis_install_numpy__():
         return _mk(out, oshape, _BOOL)
 
     def count_nonzero(a):
+        """How many elements are not zero."""
         return _bi.sum(1 for v in _asarray(a)._d if v)
 
     def nonzero(a):
+        """Indices of the elements that are not zero."""
         A = _asarray(a)
         idxs = [i for i, v in enumerate(A._d) if v]
         return (_mk(idxs, (len(idxs),), _INT),)
 
     def clip(a, a_min, a_max):
+        """Limit values to the interval [a_min, a_max]."""
+
         def f(x):
             if a_min is not None and x < a_min:
                 return a_min
@@ -1208,156 +1247,204 @@ def __vis_install_numpy__():
         return _unary(a, f)
 
     def around(a, decimals=0):
+        """Round to the given number of decimals (also exported as `round` and `round_`)."""
         return _unary(a, lambda x: round(x, decimals))
 
     round_ = around
 
     # ---- ufuncs ----------------------------------------------------------------
     def sqrt(a):
+        """Elementwise square root."""
         return _unary(a, lambda x: _ssqrt(x), dtype=_FLOAT)
 
     def exp(a):
+        """Elementwise e**x."""
         return _unary(a, lambda x: math.exp(x), dtype=_FLOAT)
 
     def log(a):
+        """Elementwise natural logarithm."""
         return _unary(a, lambda x: _slog(x), dtype=_FLOAT)
 
     def log2(a):
+        """Elementwise base-2 logarithm."""
         return _unary(a, lambda x: _slog2(x), dtype=_FLOAT)
 
     def log10(a):
+        """Elementwise base-10 logarithm."""
         return _unary(a, lambda x: _slog10(x), dtype=_FLOAT)
 
     def sin(a):
+        """Elementwise sine, in radians."""
         return _unary(a, lambda x: math.sin(x), dtype=_FLOAT)
 
     def cos(a):
+        """Elementwise cosine, in radians."""
         return _unary(a, lambda x: math.cos(x), dtype=_FLOAT)
 
     def tan(a):
+        """Elementwise tangent, in radians."""
         return _unary(a, lambda x: math.tan(x), dtype=_FLOAT)
 
     def arcsin(a):
+        """Elementwise inverse sine, in radians."""
         return _unary(a, lambda x: math.asin(x), dtype=_FLOAT)
 
     def arccos(a):
+        """Elementwise inverse cosine, in radians."""
         return _unary(a, lambda x: math.acos(x), dtype=_FLOAT)
 
     def arctan(a):
+        """Elementwise inverse tangent, in radians."""
         return _unary(a, lambda x: math.atan(x), dtype=_FLOAT)
 
     def arctan2(y, x):
+        """Elementwise inverse tangent of y/x, using the signs to pick the quadrant."""
         return _elementwise(y, x, lambda a, b: math.atan2(a, b))
 
     def sinh(a):
+        """Elementwise hyperbolic sine."""
         return _unary(a, lambda x: math.sinh(x), dtype=_FLOAT)
 
     def cosh(a):
+        """Elementwise hyperbolic cosine."""
         return _unary(a, lambda x: math.cosh(x), dtype=_FLOAT)
 
     def tanh(a):
+        """Elementwise hyperbolic tangent."""
         return _unary(a, lambda x: math.tanh(x), dtype=_FLOAT)
 
     def absolute(a):
+        """Elementwise absolute value (also exported as `abs` and `fabs`)."""
         return _unary(a, lambda x: abs(x))
 
     abs_ = absolute
 
     def floor(a):
+        """Elementwise round down to an integer."""
         return _unary(a, lambda x: math.floor(x), dtype=_FLOAT)
 
     def ceil(a):
+        """Elementwise round up to an integer."""
         return _unary(a, lambda x: math.ceil(x), dtype=_FLOAT)
 
     def trunc(a):
+        """Elementwise round toward zero."""
         return _unary(a, lambda x: math.trunc(x), dtype=_FLOAT)
 
     def sign(a):
+        """Elementwise sign: -1, 0 or 1."""
         return _unary(a, lambda x: (x > 0) - (x < 0))
 
     def rint(a):
+        """Elementwise round to the nearest integer."""
         return _unary(a, lambda x: float(round(x)), dtype=_FLOAT)
 
     def square(a):
+        """Elementwise square."""
         return _unary(a, lambda x: x * x)
 
     def reciprocal(a):
+        """Elementwise 1/x."""
         return _unary(a, lambda x: _srecip(x), dtype=_FLOAT)
 
     def degrees(a):
+        """Convert radians to degrees (also exported as `rad2deg`)."""
         return _unary(a, lambda x: math.degrees(x), dtype=_FLOAT)
 
     def radians(a):
+        """Convert degrees to radians (also exported as `deg2rad`)."""
         return _unary(a, lambda x: math.radians(x), dtype=_FLOAT)
 
     def isnan(a):
+        """Elementwise test for NaN."""
         return _unary(a, lambda x: x != x, dtype=_BOOL)
 
     def isinf(a):
+        """Elementwise test for positive or negative infinity."""
         return _unary(a, lambda x: x in (float("inf"), float("-inf")), dtype=_BOOL)
 
     def isfinite(a):
+        """Elementwise test for a finite number."""
         return _unary(
             a, lambda x: not (x != x or x in (float("inf"), float("-inf"))), dtype=_BOOL
         )
 
     def power(a, b):
+        """Elementwise exponentiation."""
         return _elementwise(a, b, lambda x, y: x**y)
 
     def mod(a, b):
+        """Elementwise remainder with the sign of the divisor."""
         return _elementwise(a, b, lambda x, y: x % y)
 
     def remainder(a, b):
+        """Elementwise remainder with the sign of the divisor (also exported as `mod`)."""
         return _elementwise(a, b, lambda x, y: x % y)
 
     def add(a, b):
+        """Elementwise sum of two arrays, with broadcasting."""
         return _elementwise(a, b, lambda x, y: x + y)
 
     def subtract(a, b):
+        """Elementwise difference of two arrays, with broadcasting."""
         return _elementwise(a, b, lambda x, y: x - y)
 
     def multiply(a, b):
+        """Elementwise product of two arrays, with broadcasting."""
         return _elementwise(a, b, lambda x, y: x * y)
 
     def divide(a, b):
+        """Elementwise true division (also exported as `true_divide`)."""
         return _elementwise(a, b, lambda x, y: _sdiv(x, y))
 
     true_divide = divide
 
     def floor_divide(a, b):
+        """Elementwise floor division, the `//` operator."""
         return _elementwise(a, b, lambda x, y: _sfloordiv(x, y))
 
     def maximum(a, b):
+        """Elementwise larger of two arrays."""
         return _elementwise(a, b, lambda x, y: x if x >= y else y)
 
     def minimum(a, b):
+        """Elementwise smaller of two arrays."""
         return _elementwise(a, b, lambda x, y: x if x <= y else y)
 
     def hypot(a, b):
+        """Elementwise Euclidean distance sqrt(x**2 + y**2)."""
         return _elementwise(a, b, lambda x, y: math.hypot(x, y))
 
     def logaddexp(a, b):
+        """Elementwise log(exp(x) + exp(y)), computed without overflow."""
         return _elementwise(a, b, lambda x, y: math.log(math.exp(x) + math.exp(y)))
 
     def fmax(a, b):
+        """Elementwise larger of two arrays, ignoring NaN."""
         return maximum(a, b)
 
     def fmin(a, b):
+        """Elementwise smaller of two arrays, ignoring NaN."""
         return minimum(a, b)
 
     def logical_and(a, b):
+        """Elementwise boolean AND."""
         return _elementwise(a, b, lambda x, y: bool(x) and bool(y), bool_out=True)
 
     def logical_or(a, b):
+        """Elementwise boolean OR."""
         return _elementwise(a, b, lambda x, y: bool(x) or bool(y), bool_out=True)
 
     def logical_xor(a, b):
+        """Elementwise boolean exclusive OR."""
         return _elementwise(a, b, lambda x, y: bool(x) != bool(y), bool_out=True)
 
     def logical_not(a):
+        """Elementwise boolean NOT."""
         return _unary(a, lambda x: not bool(x), dtype=_BOOL)
 
     def where(cond, x=None, y=None):
+        """Choose elementwise between two arrays by a boolean condition, or find true indices."""
         C = _asarray(cond)
         if x is None and y is None:
             return nonzero(C)
@@ -1378,6 +1465,7 @@ def __vis_install_numpy__():
 
     # ---- linear algebra --------------------------------------------------------
     def dot(a, b):
+        """Dot product: inner product for vectors, matrix product for 2-D (also `inner`)."""
         A = _asarray(a)
         B = _asarray(b)
         if A.ndim == 1 and B.ndim == 1:
@@ -1385,6 +1473,7 @@ def __vis_install_numpy__():
         return matmul(A, B)
 
     def matmul(a, b):
+        """Matrix product, the `@` operator."""
         A = _asarray(a)
         B = _asarray(b)
         if A.ndim == 1 and B.ndim == 1:
@@ -1417,12 +1506,14 @@ def __vis_install_numpy__():
         return _mk(out, (n, m), _values_dtype(out))
 
     def transpose(a, axes=None):
+        """Permute the axes of an array; for 2-D, the matrix transpose."""
         A = _asarray(a)
         if axes is None:
             return A.transpose()
         return A.transpose(axes)
 
     def outer(a, b):
+        """Outer product of two vectors."""
         A = _asarray(a)
         B = _asarray(b)
         out = []
@@ -1432,6 +1523,7 @@ def __vis_install_numpy__():
         return _mk(out, (len(A._d), len(B._d)), _values_dtype(out))
 
     def cross(a, b):
+        """Cross product of two 3-vectors."""
         A = _asarray(a)._d
         B = _asarray(b)._d
         return _mk(
@@ -1445,12 +1537,14 @@ def __vis_install_numpy__():
         )
 
     def trace(a):
+        """Sum along the main diagonal."""
         A = _asarray(a)
         n, m = A._shape
         return _bi.sum(A._d[i * m + i] for i in range(min(n, m)))
 
     # ---- manipulation ----------------------------------------------------------
     def concatenate(arrays, axis=0):
+        """Join a sequence of arrays along an existing axis."""
         arrs = [_asarray(x) for x in arrays]
         if axis is None or arrs[0].ndim <= 1:
             out = []
@@ -1474,11 +1568,13 @@ def __vis_install_numpy__():
         return out
 
     def stack(arrays, axis=0):
+        """Join a sequence of arrays along a NEW axis."""
         arrs = [_asarray(x) for x in arrays]
         expanded = [expand_dims(a, axis) for a in arrs]
         return concatenate(expanded, axis)
 
     def vstack(arrays):
+        """Stack arrays row-wise (along the first axis)."""
         arrs = [_asarray(x) for x in arrays]
         arrs = [
             a if a.ndim >= 2 else a.reshape(1, a._shape[0] if a.ndim else 1)
@@ -1487,17 +1583,20 @@ def __vis_install_numpy__():
         return concatenate(arrs, 0)
 
     def hstack(arrays):
+        """Stack arrays column-wise (along the second axis, or the first for 1-D)."""
         arrs = [_asarray(x) for x in arrays]
         if arrs[0].ndim <= 1:
             return concatenate(arrs, 0)
         return concatenate(arrs, 1)
 
     def column_stack(arrays):
+        """Stack 1-D arrays as the columns of a 2-D array."""
         arrs = [_asarray(x) for x in arrays]
         cols = [a.reshape(a._shape[0], 1) if a.ndim == 1 else a for a in arrs]
         return concatenate(cols, 1)
 
     def expand_dims(a, axis):
+        """Insert a new axis of length one at the given position."""
         A = _asarray(a)
         axis = axis if axis >= 0 else axis + A.ndim + 1
         nshape = list(A._shape)
@@ -1505,6 +1604,7 @@ def __vis_install_numpy__():
         return _mk(list(A._d), tuple(nshape), A._dtype)
 
     def broadcast_to(a, shape):
+        """View the input as if it had the given broadcast shape."""
         A = _asarray(a)
         shp = _shape_of(shape)
         if _broadcast_shapes(A._shape, shp) != shp:
@@ -1527,6 +1627,7 @@ def __vis_install_numpy__():
         return _mk(out, shp, A._dtype)
 
     def repeat(a, repeats, axis=None):
+        """Repeat each element the given number of times."""
         A = _asarray(a)
         if axis is None:
             out = []
@@ -1544,6 +1645,7 @@ def __vis_install_numpy__():
         return take(A, idx, axis)
 
     def tile(a, reps):
+        """Repeat the whole array to build a larger one."""
         A = _asarray(a)
         if isinstance(reps, int):
             out = A._d * reps
@@ -1553,6 +1655,7 @@ def __vis_install_numpy__():
         )
 
     def flip(a, axis=None):
+        """Reverse the order of elements along an axis."""
         A = _asarray(a)
         if axis is None or A.ndim == 1:
             return _mk(list(reversed(A._d)), A._shape, A._dtype)
@@ -1569,6 +1672,7 @@ def __vis_install_numpy__():
         )
 
     def sort(a, axis=-1):
+        """Return a sorted copy along an axis."""
         A = _asarray(a)
         if A.ndim <= 1:
             return _mk(sorted(A._d), A._shape, A._dtype)
@@ -1589,11 +1693,13 @@ def __vis_install_numpy__():
         )
 
     def argsort(a):
+        """Indices that would sort the array."""
         A = _asarray(a)
         order = sorted(range(len(A._d)), key=lambda i: A._d[i])
         return _mk(order, (len(order),), _INT)
 
     def unique(a, return_counts=False):
+        """Sorted unique values of an array."""
         A = _asarray(a)
         seen = sorted(set(A._d))
         u = _mk(list(seen), (len(seen),), A._dtype)
@@ -1603,6 +1709,7 @@ def __vis_install_numpy__():
         return u
 
     def diff(a, n=1):
+        """Differences between neighbouring elements along an axis."""
         A = _asarray(a)
         d = list(A._d)
         for _ in range(n):
@@ -1631,6 +1738,7 @@ def __vis_install_numpy__():
         return _mk(out, A._shape, A._dtype)
 
     def roll(a, shift, axis=None):
+        """Shift elements along an axis, wrapping around the end."""
         A = _asarray(a)
         if axis is None:
             d = list(A._d)
@@ -1653,21 +1761,26 @@ def __vis_install_numpy__():
         return [x for x in _asarray(a)._d if not (isinstance(x, float) and x != x)]
 
     def nansum(a, axis=None):
+        """Sum of elements, ignoring NaN."""
         return _bi.sum(_nonan(a))
 
     def nanmean(a, axis=None):
+        """Mean of elements, ignoring NaN."""
         vals = _nonan(a)
         return _bi.sum(vals) / len(vals) if vals else float("nan")
 
     def nanmax(a, axis=None):
+        """Largest element, ignoring NaN."""
         vals = _nonan(a)
         return _bi.max(vals) if vals else float("nan")
 
     def nanmin(a, axis=None):
+        """Smallest element, ignoring NaN."""
         vals = _nonan(a)
         return _bi.min(vals) if vals else float("nan")
 
     def nanstd(a, axis=None):
+        """Standard deviation, ignoring NaN."""
         vals = _nonan(a)
         if not vals:
             return float("nan")
@@ -1675,6 +1788,7 @@ def __vis_install_numpy__():
         return math.sqrt(_bi.sum([(x - m) ** 2 for x in vals]) / len(vals))
 
     def pad(a, pad_width, mode="constant", constant_values=0):
+        """Pad an array at both ends of an axis."""
         A = _asarray(a)
         if A.ndim != 1:
             raise NotImplementedError("pad supports 1-D arrays only in the vis shim")
@@ -1693,18 +1807,22 @@ def __vis_install_numpy__():
         return _mk(out, (len(out),), A._dtype)
 
     def ravel(a):
+        """Flatten to one dimension."""
         return _asarray(a).ravel()
 
     def reshape(a, newshape):
+        """Same data, new shape; one dimension may be -1 to be inferred."""
         return _asarray(a).reshape(newshape)
 
     def squeeze(a, axis=None):
+        """Drop axes of length one."""
         return _asarray(a).squeeze(axis)
 
     def flatten(a):
         return _asarray(a).ravel()
 
     def allclose(a, b, rtol=1e-05, atol=1e-08):
+        """True when two arrays agree everywhere within a tolerance."""
         A = _asarray(a)
         B = _asarray(b)
         for x, y in zip(A._d, B._d):
@@ -1713,16 +1831,19 @@ def __vis_install_numpy__():
         return True
 
     def array_equal(a, b):
+        """True when two arrays have the same shape and the same elements."""
         A = _asarray(a)
         B = _asarray(b)
         return A._shape == B._shape and A._d == B._d
 
     def isclose(a, b, rtol=1e-05, atol=1e-08):
+        """Elementwise test that two arrays agree within a tolerance."""
         return _elementwise(
             a, b, lambda x, y: abs(x - y) <= atol + rtol * abs(y), bool_out=True
         )
 
     def dstack(arrays):
+        """Stack arrays along the third axis."""
         arrs = []
         for x in arrays:
             a = _asarray(x)
@@ -1737,9 +1858,11 @@ def __vis_install_numpy__():
         return concatenate(arrs, 2)
 
     def atleast_3d(a):
+        """Return the input with at least three dimensions."""
         return dstack([a])
 
     def meshgrid(x, y):
+        """Coordinate matrices from coordinate vectors."""
         X = _asarray(x)._d
         Y = _asarray(y)._d
         gx = _mk([xv for _ in Y for xv in X], (len(Y), len(X)), _values_dtype(X))
@@ -1834,6 +1957,7 @@ def __vis_install_numpy__():
             return _mk([gen() for _ in range(n)], shp, dt)
 
     def take(a, indices, axis=None):
+        """Select elements along an axis by integer index."""
         A = _asarray(a)
         idx = list(indices._d) if isinstance(indices, ndarray) else list(indices)
         if axis is None:
@@ -1874,6 +1998,7 @@ def __vis_install_numpy__():
         return [(cuts[i], cuts[i + 1]) for i in range(len(cuts) - 1)]
 
     def split(a, indices_or_sections, axis=0):
+        """Split an array into equal parts along an axis."""
         A = _asarray(a)
         ax = _normalize_axis(axis, A.ndim) if A.ndim else 0
         n = A._shape[ax] if A._shape else len(A._d)
@@ -1883,6 +2008,7 @@ def __vis_install_numpy__():
         ]
 
     def array_split(a, indices_or_sections, axis=0):
+        """Split an array into parts along an axis, allowing an uneven last part."""
         A = _asarray(a)
         ax = _normalize_axis(axis, A.ndim) if A.ndim else 0
         n = A._shape[ax] if A._shape else len(A._d)
@@ -1892,6 +2018,7 @@ def __vis_install_numpy__():
         ]
 
     def histogram(a, bins=10, range=None):
+        """Counts per bin and the bin edges of a data set."""
         A = _asarray(a)
         data = list(A._d)
         if range is None:
@@ -1925,9 +2052,9 @@ def __vis_install_numpy__():
     mod = types.ModuleType("numpy")
     mod.__doc__ = (
         "Pure-Python `numpy` subset: ndarray, broadcasting, reductions, `linalg` "
-        "norm/det/inv/solve, random, histogram. No C speed or shared-memory views. Not "
-        "supported: eig/svd/qr, >2-D axis median/cumsum/sort/flip, >1-D pad, dstack "
-        "(`NotImplementedError`)."
+        "(norm/det/inv/solve/eig/svd/qr/lstsq), random, histogram. No C speed and no "
+        "shared-memory views. `numpy.fft` transforms, `pad` beyond 1-D and axis "
+        "`cumsum`/`flip` beyond 1-D raise `NotImplementedError`."
     )
     mod.__version__ = "1.26-vis-pure"
     mod.ndarray = ndarray
@@ -2489,6 +2616,7 @@ def __vis_install_numpy__():
             return (1.0 if d > 0.0 else -1.0), math.log(abs(d))
 
     linalg = types.ModuleType("numpy.linalg")
+    linalg.__doc__ = "Dense linear algebra on 2-D arrays: norm, det, inv, solve, matrix_power, matrix_rank, eig/eigh/eigvals, svd, qr, cholesky, pinv, lstsq, slogdet."
     _la = _LinAlg()
     for _n in (
         "norm",
@@ -2523,6 +2651,7 @@ def __vis_install_numpy__():
         return rows
 
     def cov(m, y=None, ddof=1):
+        """Covariance matrix of the rows."""
         rows = _cov_rows(m, y)
         k = len(rows)
         n = len(rows[0]) if k else 0
@@ -2545,6 +2674,7 @@ def __vis_install_numpy__():
         return _rows_arr(out)
 
     def corrcoef(m, y=None):
+        """Pearson correlation coefficient matrix of the rows."""
         c = cov(m, y)
         if isinstance(c, float):
             return 1.0
@@ -2562,6 +2692,7 @@ def __vis_install_numpy__():
         return _rows_arr(out)
 
     def polyfit(x, y, deg):
+        """Least-squares fit of a polynomial of the given degree."""
         xs = [float(v) for v in _asarray(x)._d]
         ys = [float(v) for v in _asarray(y)._d]
         V = [[xv ** (deg - j) for j in range(deg + 1)] for xv in xs]
@@ -2574,6 +2705,7 @@ def __vis_install_numpy__():
         return _mk([row[0] for row in sol], (deg + 1,), _FLOAT)
 
     def polyval(p, x):
+        """Evaluate a polynomial, highest power first, at the given points."""
         coeffs = [float(v) for v in _asarray(p)._d]
 
         def _ev(xv):
@@ -2588,6 +2720,7 @@ def __vis_install_numpy__():
         return _mk([_ev(v) for v in X._d], X._shape, _FLOAT)
 
     def interp(x, xp, fp):
+        """Piecewise-linear interpolation of a one-dimensional sampled function."""
         XP = [float(v) for v in _asarray(xp)._d]
         FP = [float(v) for v in _asarray(fp)._d]
 
@@ -2609,6 +2742,7 @@ def __vis_install_numpy__():
         return _mk([_one(v) for v in X._d], X._shape, _FLOAT)
 
     def gradient(a, spacing=1.0):
+        """Central-difference numerical gradient of a sampled function."""
         A = _asarray(a)
         v = [float(x) for x in A._d]
         n = len(v)
@@ -2630,6 +2764,7 @@ def __vis_install_numpy__():
     mod.gradient = gradient
 
     random_mod = types.ModuleType("numpy.random")
+    random_mod.__doc__ = "Seedable pseudo-random numbers: default_rng, RandomState/Generator, random_sample, ranf."
     _rnd = _Random()
     for _n in (
         "seed",
@@ -2654,12 +2789,26 @@ def __vis_install_numpy__():
     mod.random = random_mod
 
     def _mk_isscalar(x):
+        """True when the value is a single number or string, not an array or sequence."""
         return isinstance(x, (int, float, bool, complex))
 
     mod.isscalar = _mk_isscalar
-    mod.ndim = lambda a: _asarray(a).ndim
-    mod.shape = lambda a: _asarray(a).shape
-    mod.size = lambda a: _asarray(a).size
+
+    def _np_ndim(a):
+        """How many dimensions an array-like has."""
+        return _asarray(a).ndim
+
+    def _np_shape(a):
+        """The length of an array-like along each of its dimensions, as a tuple."""
+        return _asarray(a).shape
+
+    def _np_size(a):
+        """How many elements an array-like holds in total."""
+        return _asarray(a).size
+
+    mod.ndim = _np_ndim
+    mod.shape = _np_shape
+    mod.size = _np_size
 
     # Package-level compatibility modules.  The shim deliberately keeps their
     # numerical surface small, but imports must behave like NumPy imports rather
@@ -2667,6 +2816,7 @@ def __vis_install_numpy__():
     mod.__path__ = []
 
     fft_mod = types.ModuleType("numpy.fft")
+    fft_mod.__doc__ = "Only the frequency helpers are real here: fftfreq and rfftfreq. Every transform (fft, ifft, rfft, irfft, fftn, ifftn) raises NotImplementedError."
 
     def _fft_unavailable(*args, **kwargs):
         raise NotImplementedError(
@@ -2697,6 +2847,9 @@ def __vis_install_numpy__():
     )
 
     polynomial_mod = types.ModuleType("numpy.polynomial")
+    polynomial_mod.__doc__ = (
+        "The `Polynomial` class: build one from coefficients, call it to evaluate."
+    )
 
     class Polynomial:
         def __init__(self, coef, domain=None, window=None, symbol="x"):
@@ -2727,6 +2880,7 @@ def __vis_install_numpy__():
     polynomial_mod.Polynomial = Polynomial
 
     ma_mod = types.ModuleType("numpy.ma")
+    ma_mod.__doc__ = "Masked arrays: MaskedArray, masked_array, getdata/getmask/getmaskarray, isMaskedArray."
 
     class MaskedArray(ndarray):
         def __init__(self, data, mask=False, dtype=None):
@@ -2770,6 +2924,9 @@ def __vis_install_numpy__():
     ma_mod.nomask = False
 
     testing_mod = types.ModuleType("numpy.testing")
+    testing_mod.__doc__ = (
+        "Array assertions for tests: assert_allclose, assert_array_equal, assert_equal."
+    )
 
     def _assert_allclose(actual, desired, rtol=1e-07, atol=0, **kwargs):
         if not allclose(actual, desired, rtol=rtol, atol=atol):
@@ -2787,6 +2944,7 @@ def __vis_install_numpy__():
     testing_mod.assert_equal = _assert_array_equal
 
     typing_mod = types.ModuleType("numpy.typing")
+    typing_mod.__doc__ = "Annotation aliases only: `ArrayLike` and `NDArray` accept a subscript and check nothing."
 
     class _TypeAlias:
         def __class_getitem__(cls, item):

@@ -5,6 +5,8 @@ def __vis_install_xlsxwriter__():
     _build = __vis_xlsx_build__
 
     class XlsxWriterException(Exception):
+        """Base error raised by this xlsxwriter subset."""
+
         pass
 
     def _raise(ok, msg):
@@ -64,6 +66,8 @@ def __vis_install_xlsxwriter__():
         return base64.b64encode(bytes(raw)).decode("ascii")
 
     class Format:
+        """Cell format returned by Workbook.add_format: bold, italic, number format, alignment."""
+
         def __init__(self, props=None):
             self._props = dict(props or {})
 
@@ -89,6 +93,8 @@ def __vis_install_xlsxwriter__():
         return props or None
 
     class Worksheet:
+        """Worksheet: write, write_row, write_column, set_column and freeze_panes into one sheet of a workbook."""
+
         def __init__(self, wb, index, name):
             self._wb = wb
             self.index = index
@@ -415,6 +421,8 @@ def __vis_install_xlsxwriter__():
             return spec
 
     class Workbook:
+        """Create an .xlsx file at `path`: add_worksheet() sheets, add_format() formats, then close() to write it."""
+
         def __init__(self, filename=None, options=None):
             self.filename = filename
             self.options = dict(options or {})
@@ -500,15 +508,23 @@ def __vis_install_xlsxwriter__():
     mod.__version__ = "3.2.9"
 
     _wbmod = types.ModuleType("xlsxwriter.workbook")
+    _wbmod.__doc__ = "xlsxwriter.workbook: the Workbook object that creates worksheets and saves the .xlsx file."
     _wbmod.Workbook = Workbook
     mod.workbook = _wbmod
     _wsmod = types.ModuleType("xlsxwriter.worksheet")
+    _wsmod.__doc__ = "xlsxwriter.worksheet: the Worksheet object that writes cells, rows and columns."
     _wsmod.Worksheet = Worksheet
     mod.worksheet = _wsmod
     _fmtmod = types.ModuleType("xlsxwriter.format")
+    _fmtmod.__doc__ = (
+        "xlsxwriter.format: the Format cell-format object a workbook hands out."
+    )
     _fmtmod.Format = Format
     mod.format = _fmtmod
     _exc = types.ModuleType("xlsxwriter.exceptions")
+    _exc.__doc__ = (
+        "xlsxwriter.exceptions: XlsxWriterException, the base error this shim raises."
+    )
     _exc.XlsxWriterException = XlsxWriterException
     mod.exceptions = _exc
 
@@ -529,6 +545,7 @@ def __vis_install_xlsxwriter__():
         )
 
     _util = types.ModuleType("xlsxwriter.utility")
+    _util.__doc__ = "xlsxwriter.utility: xl_rowcol_to_cell and the other A1/rowcol cell-reference helpers."
     _util.xl_cell_to_rowcol = _cell_to_rowcol
     _util.xl_rowcol_to_cell = xl_rowcol_to_cell
     _util.xl_col_to_name = _col_to_name
