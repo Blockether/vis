@@ -32,7 +32,7 @@ Global flags precede the command: `--allowed-domains "example.com,*.example.com"
 ## Evidence
 
 - **Numbers, not adjectives.** The snapshot is the proposal: `link "Learn more" [@e6t2x4] [pos:256,186 82×18]` already states the overlap, indent, hit target or below-the-fold claim. `get box <sel>` measures one element; `snapshot -i -S --minimal` separates two boxes that measure the same but look different; `eval-js` supplies what the tree cannot — `visualViewport` and keyboard insets, scroll offsets, `getComputedStyle`.
-- **Every visual claim ships an annotated artifact.** `screenshot -a <path>` (or `overview`) outlines each actionable element and prints the ref table under the saved path; `annotate` draws it in the live page, `unannotate` clears it. The picture carries a bare number in its box's colour and nothing else, so the table is the whole legend and an image posted without it is unreadable.
+- **Every visual claim ships an annotated, high-resolution artifact.** For HTML→PNG, capture in a browser context with `deviceScaleFactor` / `:device-scale-factor` at least `2` (192-DPI equivalent), then verify the PNG is at least 2× the CSS viewport on each axis; DPI metadata alone adds no detail. `screenshot -a <path>` (or `overview`) outlines each actionable element and prints the ref table under the saved path, which must accompany the image.
 - **Scope before you capture,** or the table becomes the report — an unscoped Wikipedia article annotates hundreds of refs: `-s "<sel>"` on `annotate`/`overview`/`snapshot`, `-d N`, `--max-output N`. Only actionable elements are drawn; prose comes from `snapshot -i` or `--text`, sizes from `--dimensions`.
 
 ## Choose the surface
