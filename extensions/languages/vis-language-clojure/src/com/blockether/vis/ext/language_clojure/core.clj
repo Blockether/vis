@@ -564,7 +564,9 @@
 ;; touches. Deliberately NOT `.edn`: zprint sorts map keys + reflows, which would
 ;; churn hand-ordered config files (deps.edn, `.zprint.edn`) that are kept by
 ;; hand, making the format-on-write hook fight their authors.
-(def ^:private clj-source-exts [".clj" ".cljs" ".cljc" ".cljx"])
+;; A babashka `.bb` script counts: it is Clojure source carrying a shebang the
+;; reader and zprint both read straight through as a comment.
+(def ^:private clj-source-exts [".clj" ".cljs" ".cljc" ".cljx" ".bb"])
 
 (defn- clj-source-file?
   "True when `path` names a Clojure source file (by extension)."
@@ -592,7 +594,7 @@
 (defn- expand-clj-source-files
   "Expand `paths` (resolved against workspace `root` when relative) into concrete
    Clojure source files. A DIRECTORY is walked RECURSIVELY, collecting every
-   `.clj`/`.cljs`/`.cljc`/`.cljx` file under it; a plain file is kept
+   `.clj`/`.cljs`/`.cljc`/`.cljx`/`.bb` file under it; a plain file is kept
    as-is; a non-existent path is dropped. Returns a de-duplicated, sorted vector
    of absolute path strings."
   [^java.io.File root paths]
@@ -729,7 +731,7 @@
      - a raw code string / {\"code\": ...}   -> report changed? + char delta (NO text)
      - {\"path\": \"src/foo.clj\"}              -> format that file IN PLACE
      - {\"paths\": [\"src\" \"test\" ...]}        -> format those paths IN PLACE; a
-         DIRECTORY is walked RECURSIVELY (every .clj/.cljs/.cljc/.cljx under it)
+         DIRECTORY is walked RECURSIVELY (every .clj/.cljs/.cljc/.cljx/.bb under it)
      - nothing / {}                         -> format the whole project's source
          roots (every deps.edn module's :paths + test), skipping build/vendor
          dirs (target, dist, node_modules, .clj-kondo, .clojure-lsp, .cpcache…)

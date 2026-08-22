@@ -245,6 +245,23 @@
                         (finally (cleanup dir))))))
 
 (defdescribe
+  babashka-script-format-test
+  (it "walks a directory into the .bb scripts under it, shebang and all"
+      (let [dir (tmp-dir)]
+        (try (let [script (io/file dir "task.bb")]
+               (spit script "#!/usr/bin/env bb\n(defn f [x]\n(* x 2))\n")
+               (let [r (core/clj-format-fn {:workspace/root (str dir)} {"paths" [(str dir)]})
+                     files (get-in r [:result "files"])]
+
+                 (expect (:success? r))
+                 ;; a babashka script IS Clojure source: the walk must find it, and the
+                 ;; shebang survives because the reader treats `#!` as a comment
+                 (expect (= 1 (count files)))
+                 (expect (= "task.bb" (get (first files) "path")))
+                 (expect (= "#!/usr/bin/env bb\n(defn f [x]\n  (* x 2))\n" (slurp script)))))
+             (finally (cleanup dir))))))
+
+(defdescribe
   single-relative-path-format-test
   (it "resolves a RELATIVE {\"path\"} against the workspace root, not the process CWD"
       (let [dir (tmp-dir)]
