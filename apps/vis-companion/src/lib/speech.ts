@@ -6,13 +6,15 @@ import type { SpeechPrefs } from "./types";
 interface AndroidSpeechPlugin {
   speak(options: { text: string; voice?: string; rate?: number }): Promise<void>;
   stop(): Promise<void>;
-  /** Every voice this phone's engine has installed, the current one marked. */
+  /** Every voice this phone's engine has installed, with the OS quality verdict. */
   getVoices(): Promise<{
     voices: {
       id: string;
       label?: string;
       language?: string;
       is_default?: boolean;
+      quality?: number;
+      is_network_required?: boolean;
     }[];
   }>;
 }

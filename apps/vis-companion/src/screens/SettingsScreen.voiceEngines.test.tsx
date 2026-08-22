@@ -89,7 +89,12 @@ beforeEach(() => {
     value: {
       getVoices: () => [
         { voiceURI: "device-default", name: "Daniel", lang: "en-GB", default: true },
-        { voiceURI: "device-samantha", name: "Samantha", lang: "en-US", default: false },
+        { voiceURI: "com.apple.voice.premium.en-US.Samantha", name: "Samantha", lang: "en-US", default: false },
+        { voiceURI: "com.apple.voice.premium.en-US.Ava", name: "Ava", lang: "en-US", default: false },
+        { voiceURI: "com.apple.voice.enhanced.en-US.Alex", name: "Alex", lang: "en-US", default: false },
+        { voiceURI: "com.apple.voice.natural.en-US.Tom", name: "Tom", lang: "en-US", default: false },
+        { voiceURI: "com.apple.voice.enhanced.en-US.Zoe", name: "Zoe", lang: "en-US", default: false },
+        { voiceURI: "com.apple.voice.compact.en-US.Fred", name: "Fred Compact", lang: "en-US", default: false },
       ],
       speak: () => undefined,
       cancel: () => undefined,
@@ -119,11 +124,12 @@ describe("the speech-engines band", () => {
     expect(screen.queryByText("Listening")).toBeNull();
     expect(screen.queryByText("Speaking")).toBeNull();
     expect(screen.queryByText("Spoken replies")).toBeNull();
-    expect(screen.queryByText("Whisper (local)")).toBeNull();
+    expect(screen.queryByText("Whisper (gateway)")).toBeNull();
 
     fireEvent.click(asr);
-    expect(choice(/Parakeet \(local\)/)).toBeTruthy();
-    expect(screen.getByText("Whisper (local)")).toBeTruthy();
+    expect(choice(/Parakeet \(gateway\)/)).toBeTruthy();
+    expect(screen.getByText("Whisper (gateway)")).toBeTruthy();
+    expect(screen.queryByText("Whisper (local)")).toBeNull();
   });
 
   it("stores the specific ASR engine chosen from the expanded list", async () => {
@@ -131,7 +137,7 @@ describe("the speech-engines band", () => {
     render(<Harness client={client} />);
 
     fireEvent.click(await screen.findByRole("button", { name: /ASR/ }));
-    const whisper = await screen.findByRole("button", { name: /Whisper \(local\)/ });
+    const whisper = await screen.findByRole("button", { name: /Whisper \(gateway\)/ });
     fireEvent.click(whisper);
 
     await waitFor(async () =>
@@ -141,25 +147,41 @@ describe("the speech-engines band", () => {
     await waitFor(() => expect(asked).toContain("asr:whisper-local:read"));
   });
 
-  it("treats this device and every advertised machine engine as TTS choices", async () => {
+  it("labels machine TTS as gateway engines and offers only the best device voices", async () => {
     const { client } = machine();
     render(<Harness client={client} />);
 
     fireEvent.click(await screen.findByRole("button", { name: /TTS/ }));
     await waitFor(() => expect(choice(/This device/)).toBeTruthy());
     const device = choice(/This device/)!;
-    const pocket = screen.getByRole("button", { name: /Pocket TTS \(local\)/ });
+    const pocket = screen.getByRole("button", { name: /Pocket TTS \(gateway\)/ });
     expect(device.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: /Piper \(local\)/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Piper \(gateway\)/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Piper \(local\)/ })).toBeNull();
     expect(screen.getByRole("button", { name: /Samantha/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Ava/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Alex/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Tom/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Zoe/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Daniel/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Fred Compact/ })).toBeNull();
 
+    fireEvent.click(screen.getByRole("button", { name: /Samantha/ }));
+    await waitFor(async () =>
+      expect((await getSpeechPrefs()).deviceVoice).toBe(
+        "com.apple.voice.premium.en-US.Samantha",
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: /TTS.*This device · Samantha/ }),
+    ).toBeTruthy();
     fireEvent.click(pocket);
 
     await waitFor(async () =>
       expect((await getSpeechPrefs()).ttsEngine).toBe("pocket-tts-local"),
     );
     expect(pocket.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.queryByRole("button", { name: /Samantha/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Samantha/ })).toBeNull();
   });
 
   it("reports a failed selected engine and retries only that engine", async () => {

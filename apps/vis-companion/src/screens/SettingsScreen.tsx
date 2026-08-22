@@ -80,7 +80,7 @@ import {
   setThemePref,
 } from "../lib/storage";
 import { speechOutput } from "../lib/speech";
-import { deviceVoices, type DeviceVoice } from "../lib/speech-voices";
+import { bestDeviceVoices, deviceVoices, type DeviceVoice } from "../lib/speech-voices";
 import {
   DEFAULT_THEME,
   THEMES,
@@ -1288,6 +1288,14 @@ function selectedEngine(
   return engines[0]?.id ?? null;
 }
 
+/** A machine engine is local TO THE GATEWAY, which the Companion names explicitly. */
+function gatewayEngineLabel(engine: EngineChoice): string {
+  const source = (engine.label?.trim() || engine.id)
+    .replace(/\s*\((?:local|gateway)\)\s*$/i, "")
+    .replace(/[-_\s]+local$/i, "")
+    .trim();
+  return `${source} (gateway)`;
+}
 function engineWord(reading: EngineReading | null): string {
   if (reading === null) return "checking…";
   if (reading.absence) return "not installed";
@@ -1525,15 +1533,18 @@ export function SpeechEnginesPanel({
     }
   }
 
-  const asrLabel =
-    asrEngines.find((engine) => engine.id === asrEngine)?.label ??
-    asrEngine ??
-    (capabilities ? "Not installed" : "Checking…");
-  const ttsLabel =
-    ttsEngines.find((engine) => engine.id === chosenTtsEngine)?.label ??
-    chosenTtsEngine ??
-    "This device";
-  const deviceList = voices ?? [];
+  const asrChoice = asrEngines.find((engine) => engine.id === asrEngine);
+  const asrLabel = asrChoice
+    ? gatewayEngineLabel(asrChoice)
+    : asrEngine ?? (capabilities ? "Not installed" : "Checking…");
+  const ttsChoice = ttsEngines.find((engine) => engine.id === chosenTtsEngine);
+  const deviceList = bestDeviceVoices(voices ?? [], prefs.deviceVoice);
+  const chosenDeviceVoice = deviceList.find((voice) => voice.id === prefs.deviceVoice);
+  const ttsLabel = ttsChoice
+    ? gatewayEngineLabel(ttsChoice)
+    : chosenDeviceVoice
+      ? `This device · ${chosenDeviceVoice.label}`
+      : "This device";
 
   return (
     <SettingsPanel title="Speech engines">
@@ -1559,8 +1570,8 @@ export function SpeechEnginesPanel({
                   {asrEngines.map((engine) => (
                     <ChoiceCell
                       key={engine.id}
-                      title={engine.label ?? engine.id}
-                      sub={engine.id === asrEngine ? engineWord(listening) : engine.id}
+                      title={gatewayEngineLabel(engine)}
+                      sub={engine.id === asrEngine ? engineWord(listening) : "gateway"}
                       isSelected={engine.id === asrEngine}
                       onClick={() => void choose("asr", engine.id)}
                     />
@@ -1593,15 +1604,15 @@ export function SpeechEnginesPanel({
               <div className="grid grid-cols-1 gap-px bg-dialog-edge">
                 <ChoiceCell
                   title="This device"
-                  sub="system TTS"
+                  sub={chosenDeviceVoice?.label ?? "system TTS"}
                   isSelected={chosenTtsEngine === null}
                   onClick={() => void choose("tts", null)}
                 />
                 {ttsEngines.map((engine) => (
                   <ChoiceCell
                     key={engine.id}
-                    title={engine.label ?? engine.id}
-                    sub={engine.id === chosenTtsEngine ? engineWord(speaking) : engine.id}
+                    title={gatewayEngineLabel(engine)}
+                    sub={engine.id === chosenTtsEngine ? engineWord(speaking) : "gateway"}
                     isSelected={engine.id === chosenTtsEngine}
                     onClick={() => void choose("tts", engine.id)}
                   />
@@ -1610,17 +1621,6 @@ export function SpeechEnginesPanel({
 
               {chosenTtsEngine === null ? (
                 <>
-                  <div className="grid grid-cols-3 gap-px border-t border-dialog-edge bg-dialog-edge">
-                    {SPEECH_RATES.map((rate) => (
-                      <ChoiceCell
-                        key={rate}
-                        title={`${rate}×`}
-                        sub={SPEECH_RATE_WORDS[String(rate)] ?? "speed"}
-                        isSelected={prefs.rate === rate}
-                        onClick={() => void chooseDeviceSetting(() => setSpeechRate(rate))}
-                      />
-                    ))}
-                  </div>
                   {voices === null && (
                     <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
                       Asking this device what it can speak in…
@@ -1632,10 +1632,10 @@ export function SpeechEnginesPanel({
                     </p>
                   )}
                   {deviceList.length > 0 && (
-                    <div className="grid max-h-64 grid-cols-1 gap-px overflow-y-auto border-t border-dialog-edge bg-dialog-edge">
+                    <div className="grid grid-cols-1 gap-px border-t border-dialog-edge bg-dialog-edge">
                       <ChoiceCell
                         title="System default"
-                        sub="whatever this device prefers"
+                        sub="the voice this device prefers"
                         isSelected={prefs.deviceVoice === null}
                         onClick={() =>
                           void chooseDeviceSetting(() => setSpeechDeviceVoice(null))
@@ -1656,6 +1656,17 @@ export function SpeechEnginesPanel({
                       ))}
                     </div>
                   )}
+                  <div className="grid grid-cols-3 gap-px border-t border-dialog-edge bg-dialog-edge">
+                    {SPEECH_RATES.map((rate) => (
+                      <ChoiceCell
+                        key={rate}
+                        title={`${rate}×`}
+                        sub={SPEECH_RATE_WORDS[String(rate)] ?? "speed"}
+                        isSelected={prefs.rate === rate}
+                        onClick={() => void chooseDeviceSetting(() => setSpeechRate(rate))}
+                      />
+                    ))}
+                  </div>
                 </>
               ) : (
                 <EngineProblem

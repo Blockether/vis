@@ -851,6 +851,8 @@ public class NativeSpeechPlugin extends Plugin {
                     item.put("label", voice.getName());
                     item.put("language", voice.getLocale().toLanguageTag());
                     item.put("is_default", voice.getName().equals(defaultName));
+                    item.put("quality", voice.getQuality());
+                    item.put("is_network_required", voice.isNetworkConnectionRequired());
                     voices.put(item);
                 }
             }
