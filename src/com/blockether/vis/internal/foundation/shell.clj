@@ -1032,6 +1032,23 @@
                        not-empty)]
     (try (.getCanonicalPath (io/file d)) (catch Throwable _ d))))
 
+(defn- dir-conflict?
+  "Do a requested `cwd` and a registry entry's own directory name DIFFERENT places?
+
+   One rule answers it for the dedup that resolves a start to a live shell and for
+   the re-issue that then accepts or refuses that shell. While they disagreed, the
+   dedup handed back an id running elsewhere and the re-issue threw `id-in-use`
+   over the id it had just been given. A directory absent on either side is no
+   evidence of a conflict."
+  [want have]
+  (let [want
+        (canonical-dir want)
+
+        have
+        (canonical-dir have)]
+
+    (boolean (and want have (not= want have)))))
+
 (defn- reissue-live-entry
   "The live entry `id` may be RE-ATTACHED to, or nil when the id is free.
 
@@ -1046,12 +1063,11 @@
     (let [want-cmd (some-> command
                            str
                            not-empty)
-          want-dir (canonical-dir cwd)
-          have-dir (canonical-dir (:dir e))
-          mismatch (cond (and want-cmd (not= want-cmd (str (:command e))))
-                         (str "it is running a different command (" (one-line (:command e) 60) ")")
-                         (and want-dir have-dir (not= want-dir have-dir))
-                         (str "it is running in a different directory (" have-dir ")"))]
+          mismatch
+          (cond (and want-cmd (not= want-cmd (str (:command e))))
+                (str "it is running a different command (" (one-line (:command e) 60) ")")
+                (dir-conflict? cwd (:dir e))
+                (str "it is running in a different directory (" (canonical-dir (:dir e)) ")"))]
 
       (when mismatch
         (throw (ex-info (str "Shell '" id
@@ -1150,10 +1166,17 @@
    `id` failed a well-formed call over a name the caller had to invent — the most
    frequent shell dead end there is.
 
-   Re-issuing the SAME script while it runs returns that shell's own id, so the
-   duplicate start resolves to `already_running` instead of a second dev server;
-   otherwise the program name is suffixed until no shell HOLDS it, so an auto id
-   never hijacks an unrelated process.
+   Re-issuing the SAME script in the SAME directory while it runs returns that
+   shell's own id, so the duplicate start resolves to `already_running` instead of a
+   second dev server; otherwise the program name is suffixed until no shell HOLDS
+   it, so an auto id never hijacks an unrelated process.
+
+   `cwd` belongs in that key because a re-issue's identity is (id, command, cwd):
+   matching on the command alone resolved `git status` in a second repo to the first
+   repo's live shell, and `reissue-live-entry` then refused the id it had just been
+   handed. Only the SEQUENTIAL spelling hit it — concurrent starts derive their ids
+   inside the claim window, where nothing is live to match — so whether a start was
+   legal depended on being batched.
 
    The id is committed by the same `bg-procs` update that finds it. Searching
    through a plain read and registering afterwards is a check-then-act: two
@@ -1164,7 +1187,7 @@
    that already holds the winner's claim, and the committed id is read back by the
    claim token because an earlier attempt may have picked a different candidate.
    `release-bg-claim!` hands the id back if the start never spawns."
-  [env session command]
+  [env session command cwd]
   (let [origin
         (env-origin env)
 
@@ -1174,13 +1197,15 @@
         sk
         (str session)
 
-        ;; Only a shell THIS origin started can be resolved to; a live shell of
-        ;; another origin is skipped by the suffix loop like any other taken id.
+        ;; Only a shell THIS origin started IN THIS directory can be resolved to; a
+        ;; live shell of another origin, or of another `cwd`, is skipped by the
+        ;; suffix loop like any other taken id.
         running-same
         (->> (get @bg-procs sk)
              (filter (fn [[_ entry]]
                        (and (= wanted (:command entry))
                             (= origin (str (or (:origin entry) origin)))
+                            (not (dir-conflict? cwd (:dir entry)))
                             (live-entry? entry))))
              ffirst)
 
@@ -1844,7 +1869,7 @@
         (or (some-> (or (get opts "id") (get opts :id))
                     str
                     not-empty)
-            (auto-bg-id env session command))
+            (auto-bg-id env session command (or (get opts "cwd") (get opts :cwd))))
 
         ;; The log is a FILE, opened BEFORE the spawn so not one byte of a fast
         ;; command's output can be printed before there is somewhere to keep it.
@@ -2446,7 +2471,7 @@
                 (:session-id env)
 
                 run-id
-                (or id (auto-bg-id env session cmd))]
+                (or id (auto-bg-id env session cmd (opt opts :cwd)))]
 
             (releasing-claim
               session
@@ -2463,7 +2488,7 @@
       ;; other stage (no command) still names the shell it acts on.
       (do (reject-text)
           (let [bg-id (if (and (nil? id) valid-command)
-                        (auto-bg-id env (:session-id env) valid-command)
+                        (auto-bg-id env (:session-id env) valid-command (opt opts :cwd))
                         (need-id))]
             (releasing-claim (:session-id env)
                              bg-id

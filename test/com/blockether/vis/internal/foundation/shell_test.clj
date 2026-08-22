@@ -2502,6 +2502,42 @@
                        (expect (str/includes? out (str "payload-" i)))
                        (expect (not (str/includes? out (str "payload-" (mod (inc (long i)) n))))))))
                  (finally (resources/stop-all! sid)))))))))
+
+;; Regression, session report 6342aada-69e1-473b-a0cc-53a7e81e5bfd: two SEQUENTIAL
+;; starts of one command in two repositories derived the SAME auto id — the dedup
+;; matched on the command alone — and the re-issue, whose identity is (id, command,
+;; cwd), then threw "is already running and it is running in a different directory".
+;; Nothing started, and the concurrent spelling of the very same pair passed, so
+;; whether a start was legal depended on being batched.
+(defdescribe shell-auto-id-per-directory-test
+             (it "gives a second directory its own auto id, and still re-issues within one"
+                 (with-shell-on
+                   (fn []
+                     (binding [workspace/*workspace-root* (workspace/trunk-root)]
+                       (let [sid (str "shell-auto-id-cwd-" (System/nanoTime))
+                             env {:session-id sid}
+                             path-of (fn [rel]
+                                       (.getCanonicalPath (io/file (workspace/trunk-root) rel)))
+                             start (fn [rel]
+                                     (:result (shell* env
+                                                      {"op" "background"
+                                                       "command" "sleep 5; echo done"
+                                                       "cwd" rel})))]
+
+                         (try (let [in-src (start "src")
+                                    in-test (start "test")
+                                    again (start "src")]
+
+                                ;; A second directory is a second shell, not a refusal.
+                                (expect (not= (get in-src "id") (get in-test "id")))
+                                (expect (false? (get in-test "already_running")))
+                                (expect (= [(path-of "src") (path-of "test")]
+                                           [(get in-src "cwd") (get in-test "cwd")]))
+                                ;; The SAME command in the SAME directory is still the same shell.
+                                (expect (= (get in-src "id") (get again "id")))
+                                (expect (true? (get again "already_running"))))
+                              (finally (resources/stop-all! sid)))))))))
+
 ;; "Go down ten lines" — the switch a reader of a long log reaches for. It used to
 ;; exist nowhere: the only line-aware read was the whole negative tail, and a
 ;; near-miss spelling (`n`, `tail`, `secs`) was silently DROPPED by the options
