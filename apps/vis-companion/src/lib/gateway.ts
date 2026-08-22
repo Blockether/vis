@@ -484,13 +484,8 @@ type SessionsWindow = {
   /** The cursor this window was ASKED for; `HEAD_CURSOR` is the top of the list. */
   after: string;
   rows: Session[];
+  /** The gateway's own count of the WHOLE list this window is the head of. */
   total: number;
-  hasMore: boolean;
-  /**
-   * The cursor of this window's LAST row — what the next page is asked for. A cursor
-   * names a ROW (`state/list-sessions-page`), which is why a walk cannot tear.
-   */
-  nextCursor: string;
   /**
    * The sessions this gateway says are PARKED on an unanswered human-input request,
    * complete and from OUTSIDE the window (`state/list-sessions-page`). It rides the
@@ -514,10 +509,25 @@ export interface ProjectPage {
   nextCursor: string;
 }
 /**
- * Session-list page size. Measured on a 448-session gateway: the whole list is
- * ~326 ms / 315 KB to build and send, one 100-row window ~71 ms / 69 KB. The
- * first window is already more rows than any screen can show, so the list paints
- * at the cost of the window and the remainder streams in behind it.
+ * The project windows ONE reader is holding, and the validator each was issued
+ * under (`listProjectPage`).
+ *
+ * The pins used to live on the client, in a static map with a cap: a budget shared
+ * by every project of every machine, evicted oldest-first by a rule that could not
+ * know which page a reader was looking at. A window belongs to whoever is READING
+ * it — the project group — so it is passed in, prefetched into, and dropped when
+ * that group unmounts. There is nothing left to cap.
+ */
+export type ProjectWindows = Map<string, { etag: string; page: ProjectPage }>;
+
+/**
+ * How much of a machine's list this device holds: its newest window, and nothing
+ * below it.
+ *
+ * Measured on a 448-session gateway: the whole list is ~326 ms / 315 KB to build
+ * and send, one 100-row window ~71 ms / 69 KB. The window is more rows than any
+ * screen shows, and every number that used to need the rest is answered beside it
+ * (see `listSessions`).
  */
 const SESSIONS_PAGE = 100;
 
@@ -647,30 +657,17 @@ export class GatewayClient {
   // object URL, and a revoked URL is a permanently broken `<img>` — so a picture
   // that is on screen must never be the one handed back to the collector.
   private readonly attachmentHolds = new Map<string, number>();
-  // Last conditional-GET validators for the session LIST, per gateway: one per
-  // page window keyed by the CURSOR it was asked for, plus the merged array they
-  // were built from. Static because the screens build a throwaway client whenever
-  // the connection object changes, and the snapshot cache it pairs with is
-  // module-level too. Pinning by IDENTITY is what makes it safe: any other code path
-  // that rewrites the sessions snapshot (a local delete, a rename) swaps that array,
-  // every pin misses, and the next poll is an unconditional walk instead of 304s
-  // restoring stale rows.
+  // Last conditional-GET validator for the session LIST, per gateway: the head
+  // window keyed by the cursor it was asked for, plus the rows it was built from.
+  // Static because the screens build a throwaway client whenever the connection
+  // object changes, and the snapshot cache it pairs with is module-level too.
+  // Pinning by IDENTITY is what makes it safe: any other code path that rewrites the
+  // sessions snapshot (a local delete, a rename) swaps that array, the pin misses,
+  // and the next poll is an unconditional read instead of a 304 restoring stale rows.
   private static readonly sessionsValidators = new Map<
     string,
     { full: Session[]; windows: Map<string, SessionsWindow> }
   >();
-
-  // A PAGE OF A PROJECT IS A WINDOW LIKE ANY OTHER (`listProjectPage`), pinned under
-  // the question it answered — this gateway, this project, this page size, this
-  // cursor, this device's overlay — so a poll over an unchanged page costs one 304
-  // with no body and hands back the SAME rows array, which React bails out on.
-  private static readonly projectWindows = new Map<
-    string,
-    { etag: string; page: ProjectPage }
-  >();
-
-  /** How many project windows keep a validator: the pages a reader walks between. */
-  private static readonly PROJECT_WINDOW_PINS = 24;
   /** Backing stores refreshed by the head of every list read. */
   private parked: Session[] = [];
   private overview: GatewayOverview | null;
@@ -2217,37 +2214,32 @@ export class GatewayClient {
   }
 
   /**
-   * The session list — paged by CURSOR, and revalidated rather than re-downloaded.
+   * The session list — this machine's HEAD WINDOW, revalidated rather than
+   * re-downloaded.
    *
-   * This is the app's most frequent poll and by far its largest payload (~315 KB
-   * across a few hundred sessions). Three things keep it cheap:
+   * What this device holds of a machine is its newest `SESSIONS_PAGE` rows and
+   * nothing below them. It used to be every row: the walk cost one conditional round
+   * trip per window — measured against a 1192-session store, 12 serial requests every
+   * ten seconds per machine, eleven of them proving nothing had changed — and the
+   * ~315 KB it drained in was only ever re-cut into a page of ten. Every number that
+   * needed the whole list is answered BESIDE this window now: `total` and the
+   * per-project counts in `overview`, the runs parked on a human in `awaiting`, and a
+   * project's own page from `listProjectPage`. Nothing on this device asks for the
+   * fleet any more.
    *
-   * - **Paging.** Only `SESSIONS_PAGE` rows are asked for at a time. The first
-   *   window answers in ~71 ms with more rows than fit on any screen, is handed
-   *   to `onPage` immediately, and the rest of the list drains behind it.
-   * - **Conditional GETs.** Every window carries a weak `ETag`, so an unchanged
-   *   window costs one 304 with an empty body: nothing transferred, nothing
-   *   parsed, nothing reconciled.
-   * - **Cursors, not offsets.** Each window is asked for with the cursor of the last
-   *   row of the one before it, so the page after that row is the same page however
-     *   much the fleet moved in between.
-     * - **The device's overlay.** `dirty=` names the sessions holding unsent words
-     *   in this device's composer — the one thing about its own list the gateway
-     *   cannot see — and it is part of the key each window's validator is pinned
-     *   under, so a changed overlay is never answered from a stale window.
+   * - **Conditional GET.** The window carries a weak `ETag`, so an unchanged list
+   *   costs one 304 with an empty body: nothing transferred, nothing parsed, nothing
+   *   reconciled, and the SAME array handed back, which React bails out on.
+   * - **The device's overlay.** `dirty=` names the sessions holding unsent words in
+   *   this device's composer — the one thing about its own list the gateway cannot
+   *   see — and it is part of the key the validator is pinned under, so a changed
+   *   overlay is never answered from a stale window.
    *
-   * The list is recency-ordered and `total` is part of the validator, so any
-   * arrival, answer, deletion or rename moves the FIRST window. An unchanged head
-   * therefore ends the poll after a single 304 — with the SAME array identity
-   * handed back, which React bails out on, so the list does not even re-render.
-   *
-   * `onPage` only fires on a cold load: with rows already on screen, a partial
-   * list would paint as the list briefly shrinking.
+   * `total` rides INSIDE the validator (`server/sessions-etag`) together with the
+   * overview, so an unchanged head is also the gateway's word that the count printed
+   * under every project header is still true.
    */
-  async listSessions(
-    signal?: AbortSignal,
-    onPage?: (rows: Session[]) => void,
-  ): Promise<Session[]> {
+  async listSessions(signal?: AbortSignal): Promise<Session[]> {
     // THE ONE FACT THE GATEWAY CANNOT KNOW (see `dirtySessionIds`).
     //
     // Which sessions this list holds, and in what order, is the gateway's own
@@ -2271,17 +2263,21 @@ export class GatewayClient {
       : this.snapshotKey("sessions-pin");
     const cached = this.cachedSessions();
     let pinned = GatewayClient.sessionsValidators.get(pinKey);
-    // A webview kill clears the in-memory pin but not the rows it described. Put
-    // the durable head ETag back onto those exact rows, so the first cold-start
-    // request can be a 304 instead of re-downloading the complete list.
+    // A webview kill clears the in-memory pin but not the rows it described. Put the
+    // durable head ETag back onto those exact rows, so the first cold-start request
+    // can be a 304 instead of re-downloading the window.
     if (!pinned && cached?.length) {
       const persisted = readSnapshot<{ etag?: unknown; total?: unknown }>(
         durablePin,
       );
+      // The rows on disk have to BE the window that validator was issued for: the
+      // head of a list of `total`, which is the whole of a short list and
+      // `SESSIONS_PAGE` of a long one.
       if (
         typeof persisted?.etag === "string" &&
         persisted.etag &&
-        persisted.total === cached.length
+        typeof persisted.total === "number" &&
+        cached.length === Math.min(SESSIONS_PAGE, persisted.total)
       ) {
         pinned = {
           full: cached,
@@ -2291,14 +2287,8 @@ export class GatewayClient {
               {
                 etag: persisted.etag,
                 after: HEAD_CURSOR,
-                rows: cached.slice(0, SESSIONS_PAGE),
+                rows: cached,
                 total: persisted.total,
-                // A remembered pin is only ever ANSWERED by a 304, and a 304 on the
-                // head of a list this client holds in full returns below without
-                // walking, so it never needs a cursor to continue from. Anything else
-                // is a 200 that carries the gateway's own.
-                hasMore: false,
-                nextCursor: HEAD_CURSOR,
                 // The remembered pin says nothing about who is waiting on a human: a
                 // demand is a fact of the CURRENT answer, so it starts empty and the
                 // first read fills it. Its overview is durable and was issued beside
@@ -2312,8 +2302,8 @@ export class GatewayClient {
         GatewayClient.sessionsValidators.set(pinKey, pinned);
       }
     }
-    // Only ever ask conditionally when a 304 can actually be ANSWERED from the
-    // rows those validators were issued for.
+    // Only ever ask conditionally when a 304 can actually be ANSWERED from the rows
+    // that validator was issued for.
     const known =
       pinned && pinned.full === cached
         ? pinned.windows
@@ -2324,8 +2314,6 @@ export class GatewayClient {
       const res = await this.requestFull<{
         sessions?: Session[];
         total?: number;
-        has_more?: boolean;
-        next_cursor?: string | null;
         awaiting?: Session[];
         overview?: GatewayOverview;
       }>(
@@ -2354,139 +2342,35 @@ export class GatewayClient {
         after,
         rows,
         total: res.data?.total ?? rows.length,
-        hasMore: Boolean(res.data?.has_more),
-        nextCursor: res.data?.next_cursor ?? HEAD_CURSOR,
         awaiting,
         overview,
       };
     };
 
     const head = await fetchWindow(HEAD_CURSOR);
-    // Demand and stable project totals are answered by the HEAD and are complete
-    // there, before the walk decides whether there is anything left to read.
+    // The demand and the stable project totals ride BESIDE the window and are
+    // complete there, whatever depth this device is holding.
     this.parked = head.awaiting;
     this.overview = head.overview;
+
+    // AN UNCHANGED WINDOW IS THE SAME ARRAY, NOT AN EQUAL ONE.
+    //
+    // A 304 is answered from the pin, so `head` IS the pinned window and its rows are
+    // the very objects the screen is already rendering. Handing them back is what lets
+    // React bail out of the whole list: a poll that changed nothing re-renders no row.
     const headPin = known.get(HEAD_CURSOR);
-    const holdsWholeList = cached !== null && cached.length === head.total;
+    if (headPin && head === headPin) return headPin.rows;
 
-    // THE HEAD DECIDES WHETHER THERE IS A WALK AT ALL.
-    //
-    // Only the FIRST window moves minute to minute: the list is ordered by content
-    // time, so every arrival, answer and rename lands at the top. The windows below
-    // it would each cost a conditional round trip to be told 304 — measured against a
-    // 1192-session store, 12 serial requests every ten seconds per machine, eleven of
-    // them proving nothing had changed. That cascade is what a reader sees the moment
-    // the list is opened.
-    //
-    // `total` rides INSIDE the head's validator (`server/sessions-etag`), and that is
-    // what makes one request enough: a session created or deleted anywhere changes the
-    // count, and a session that gains content ranks to the very top, so it lands in
-    // this window. An unchanged head over a list held in full is therefore proof that
-    // nothing below it moved.
-    //
-    // What it does NOT prove is CONTENT below the head, and the trade is deliberate: a
-    // session renamed without re-ranking keeps its cached title until the ordering next
-    // moves. Everything else re-ranks or re-counts by construction — a turn, a
-    // deletion, a new session — and a mutation made HERE swaps the snapshot array,
-    // which misses every pin and walks for real.
-    if (headPin && holdsWholeList && head.etag !== "" && head.rows === headPin.rows) {
-      return cached;
-    }
-
-    // A HEAD THAT CHANGED STILL REJOINS THE LIST IT ALREADY HAS.
-    //
-    // A cursor names a ROW, so the head's last row is a JOIN: whatever moved above it,
-    // the rows after it are the rows already held here. That is the common case by far
-    // — a turn finishes, its session ranks to the top, and the head is the only window
-    // that changed — and splicing at the join answers it in ONE request where an offset
-    // could only re-walk the fleet. The promoted session is still in the cached tail at
-    // the place it left, so ids are de-duplicated with the head winning; and the result
-    // must come out at `total`, or something below the head moved after all and the
-    // honest answer is the walk.
-    if (
-      cached?.length &&
-      head.rows.length === Math.min(SESSIONS_PAGE, head.total)
-    ) {
-      const join = head.rows[head.rows.length - 1];
-      const at = join ? cached.findIndex((row) => row.id === join.id) : -1;
-      if (at >= 0) {
-        const held = new Set(head.rows.map((row) => row.id));
-        const spliced = head.rows.concat(
-          cached.slice(at + 1).filter((row) => !held.has(row.id)),
-        );
-        if (spliced.length === head.total) {
-          const rows = reconcileRows(cached, spliced);
-          writeSnapshot(key, rows);
-          // Re-pin the one window that was actually re-read, onto the reconciled rows.
-          // The windows below keep the pins they already have: a pin is only ever
-          // ANSWERED when its ETag still matches, which is the gateway's own word that
-          // those rows are unchanged.
-          const windows = new Map(known);
-          windows.set(HEAD_CURSOR, { ...head, rows: rows.slice(0, head.rows.length) });
-          GatewayClient.sessionsValidators.set(pinKey, { full: rows, windows });
-          writeSnapshot(durablePin, {
-            etag: head.etag,
-            total: head.total,
-          });
-          return rows;
-        }
-      }
-    }
-
-    const progressive = !cached || cached.length === 0;
-
-    /**
-     * ONE walk over the windows, each asked for with the CURSOR of the last row of
-     * the one before it.
-     *
-     * Windows used to be addressed by their offset into the gateway's ordering, which
-     * is recomputed per request: a session starting a turn jumped to the top and
-     * shifted everything below it, so one row arrived twice (a duplicate React key)
-     * and another dropped out entirely while `merged.length` still equalled `total`,
-     * and nothing downstream could notice. Every window was stamped with the ordering
-     * it was cut from only to make that detectable, and a torn walk was thrown away
-     * and re-walked. A cursor names a ROW instead of a count, so the page after it is
-     * the same page whatever moved: there is nothing left to stamp, detect, retry or
-     * de-duplicate. A SHORT window (a session deleted between the ordering and the
-     * decoration of its page) is no longer a special case either — the next cursor is
-     * the last row that actually arrived.
-     */
-    const drain = async (first: SessionsWindow) => {
-      const fetched: SessionsWindow[] = [];
-      let merged: Session[] = [];
-      let window = first;
-      for (;;) {
-        fetched.push(window);
-        merged = merged.length ? merged.concat(window.rows) : window.rows;
-        if (progressive && merged.length) onPage?.(merged);
-        if (!window.hasMore || !window.nextCursor) break;
-        window = await fetchWindow(window.nextCursor);
-        // A window that comes back empty ends the walk rather than looping forever.
-        if (!window.rows.length) break;
-      }
-      return { fetched, merged };
-    };
-
-    const pass = await drain(head);
-    const rows = reconcileRows(cached, pass.merged);
+    const rows = reconcileRows(cached, head.rows);
     writeSnapshot(key, rows);
-    // Re-pin each window onto the RECONCILED rows, so a later 304 restores the
-    // identities the screen is already rendering instead of the raw wire copies.
-    const windows = new Map<string, SessionsWindow>();
-    let start = 0;
-    for (const window of pass.fetched) {
-      const slice = rows.slice(start, start + window.rows.length);
-      start += window.rows.length;
-      if (!window.etag) continue;
-      windows.set(window.after, { ...window, rows: slice });
-    }
-    if (windows.size) {
-      GatewayClient.sessionsValidators.set(pinKey, { full: rows, windows });
-      const pin = windows.get(HEAD_CURSOR);
-      writeSnapshot(
-        durablePin,
-        pin ? { etag: pin.etag, total: pin.total } : null,
-      );
+    // Pin the window onto the RECONCILED rows, so a later 304 restores the identities
+    // the screen is rendering instead of the raw wire copies.
+    if (head.etag) {
+      GatewayClient.sessionsValidators.set(pinKey, {
+        full: rows,
+        windows: new Map([[HEAD_CURSOR, { ...head, rows }]]),
+      });
+      writeSnapshot(durablePin, { etag: head.etag, total: head.total });
     } else {
       GatewayClient.sessionsValidators.delete(pinKey);
       writeSnapshot(durablePin, null);
@@ -2517,11 +2401,19 @@ export class GatewayClient {
    * `limit` spanning the gap, and paints the tail of that answer. The gateway
    * decorates only the window it cuts, so one wide window is what a walk of
    * conditional round trips would have cost.
+   *
+   * THE VALIDATORS BELONG TO THE READER. `pins` is the group's own store
+   * (`ProjectWindows`): the window is pinned there under the question it answered —
+   * this gateway, this project, this page size, this cursor, this device's overlay —
+   * so a page the reader walks back to costs one 304 with no body and hands back the
+   * SAME rows array. Prefetching the pages ahead writes into that store, and closing
+   * the group forgets all of it.
    */
   async listProjectPage(
     root: string,
     limit: number,
     after: string,
+    pins: ProjectWindows,
     signal?: AbortSignal,
   ): Promise<ProjectPage> {
     // The overlay rides down here too: a session holding words typed on THIS device
@@ -2529,8 +2421,8 @@ export class GatewayClient {
     // page short (see `dirtySessionIds`).
     await hydrateDraftMessages();
     const overlay = dirtySessionIds(this.base).join(",");
-    const key = [this.base, root, String(limit), after, overlay].join("\u0000");
-    const pin = GatewayClient.projectWindows.get(key);
+    const key = this.projectWindowKey(root, limit, after);
+    const pin = pins.get(key);
     const res = await this.requestFull<{
       sessions?: Session[];
       total?: number;
@@ -2557,17 +2449,39 @@ export class GatewayClient {
       nextCursor: res.data?.next_cursor ?? "",
     };
     if (!res.etag) {
-      GatewayClient.projectWindows.delete(key);
+      pins.delete(key);
       return page;
     }
-    GatewayClient.projectWindows.set(key, { etag: res.etag, page });
-    // Oldest first, and only the pages behind the reader are ever dropped: a Map
-    // keeps insertion order, and the window just written is the last of it.
-    const spare = GatewayClient.projectWindows.size - GatewayClient.PROJECT_WINDOW_PINS;
-    if (spare > 0)
-      for (const stale of [...GatewayClient.projectWindows.keys()].slice(0, spare))
-        GatewayClient.projectWindows.delete(stale);
+    pins.set(key, { etag: res.etag, page });
     return page;
+  }
+
+  /**
+   * The page this reader ALREADY holds for that question, or `null`.
+   *
+   * A prefetched window is a real answer, not a promise of one: painting it the
+   * instant a page is turned is what makes the turn cost no wait, and the
+   * conditional read that follows either confirms it with a 304 — the same rows, the
+   * same objects, no repaint — or replaces it with what actually changed.
+   */
+  heldProjectPage(
+    root: string,
+    limit: number,
+    after: string,
+    pins: ProjectWindows,
+  ): ProjectPage | null {
+    return pins.get(this.projectWindowKey(root, limit, after))?.page ?? null;
+  }
+
+  /** The question a project window answered, as one string. */
+  private projectWindowKey(root: string, limit: number, after: string): string {
+    return [
+      this.base,
+      root,
+      String(limit),
+      after,
+      dirtySessionIds(this.base).join(","),
+    ].join("\u0000");
   }
   // GET /v1/sessions/actions/search?q= searches the transcript store AND the session
   // titles server-side. Each hit carries the gateway's own `rank` band plus a short

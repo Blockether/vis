@@ -5,10 +5,10 @@ import { act, waitFor } from "@testing-library/react";
 import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
 
 // Regression: with two gateways paired, the sessions list jumped under the reader
-// while the fleet was still loading. Every machine is its own round trip and a
-// machine with more history than one window patches its rows again per page, so
-// projects kept appearing ABOVE the section the reader was looking at and pushed
-// it down the glass, with nothing putting the reading position back.
+// while the fleet was still loading. Every machine is its own round trip, so a
+// machine that answers late lands its whole section ABOVE the one the reader is
+// looking at and pushes it down the glass, with nothing putting the reading
+// position back.
 
 const ROW = 100;
 /** What a project's own header takes, once folding leaves some of them alone. */
@@ -67,23 +67,22 @@ const ids = () =>
   );
 
 describe("the sessions list while a fleet loads", () => {
-  it("keeps the row under the top edge when a later page of another machine lands", async () => {
+  it("keeps the row under the top edge when a late machine lands its section", async () => {
     const view = renderSessionsScreen({
       machines: [
-        { label: "alpha", sessions: fleetOf(150, "alpha", 10), holdsPages: true },
+        { label: "alpha", sessions: fleetOf(150, "alpha", 10), holdsList: true },
         { label: "beta", sessions: fleetOf(3, "beta", 10) },
       ],
     });
     try {
-      // Alpha's first window and the whole of beta are on screen; alpha's later
-      // pages — five more projects — are still in flight. Only the top project of
-      // each machine paints its rows, so the rest are bands with a chevron.
+      // Beta has spoken and alpha has not: only beta's rows are on the glass, and
+      // alpha's projects — every one of them, counted beside its window — are still
+      // in flight.
       await waitFor(() => {
         expect(ids()).toContain("beta-0");
-        expect(ids()).toContain("alpha-0");
-        expect(view.getByLabelText("Expand alpha-p9")).toBeTruthy();
       });
-      expect(view.queryByLabelText("Expand alpha-p14")).toBeNull();
+      expect(ids()).not.toContain("alpha-0");
+      expect(view.queryByLabelText("Expand alpha-p9")).toBeNull();
       const viewport = view.container.querySelector<HTMLElement>(".overflow-y-auto");
       expect(viewport).not.toBeNull();
       unmeasure = measure(viewport!);
@@ -99,10 +98,10 @@ describe("the sessions list while a fleet loads", () => {
         viewport!.scrollTop = before;
       });
 
-      // Alpha's remaining projects land ABOVE everything beta owns.
+      // Alpha answers, and everything it owns lands ABOVE everything beta owns.
       view.releasePages();
       await waitFor(() => {
-        expect(view.getByLabelText("Expand alpha-p14")).toBeTruthy();
+        expect(view.getByLabelText("Expand alpha-p9")).toBeTruthy();
       });
 
       expect(laidTop("beta-0")).toBeGreaterThan(before);

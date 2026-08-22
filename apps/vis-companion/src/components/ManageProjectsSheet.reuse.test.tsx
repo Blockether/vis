@@ -58,8 +58,8 @@ function listing(asked: string): BrowseListing {
 }
 
 const PROJECTS: ManagedProject[] = [
-  { name: "vis", root: VIS, count: 3, live: 1 },
-  { name: "spel", root: SPEL, count: 1, live: 0 },
+  { name: "vis", root: VIS, projectId: "p-vis", count: 3, live: 1 },
+  { name: "spel", root: SPEL, projectId: "p-spel", count: 1, live: 0 },
 ];
 
 function machine() {

@@ -16,7 +16,10 @@ import type { GatewayConn, GatewayOverview, Session } from './types';
  */
 export interface FleetMachine {
   conn: GatewayConn;
-  /** `null` until this machine's first list lands — a machine still loading. */
+  /**
+   * The WINDOW this device holds of that machine's list — its newest rows, never the
+   * whole of it (`GatewayClient.listSessions`) — and `null` until the first one lands.
+   */
   sessions: Session[] | null;
   /**
    * This machine's sessions PARKED on an unanswered human-input request, as the gateway
@@ -291,18 +294,24 @@ export function startAsk(
   return { on: machine ? on : null, machine, choices: creatableMachines(machines) };
 }
 
-/** Per-machine tallies for its chip and its section header. */
+/**
+ * Per-machine tallies for its chip and its section header.
+ *
+ * WHAT IT HOLDS is the gateway's own count, never a count of the rows this device
+ * paged in: the list is a window, so counting it read low and moved as pages landed.
+ * Unread is the one number that stays local — it is this device's reading of the
+ * window it holds, and an answer older than that window is not news any more.
+ */
 export function machineCounts(
   machine: FleetMachine,
   isLive: (session: Session) => boolean,
   isUnread: (session: Session) => boolean,
 ): { sessions: number; live: number; unread: number } {
   const rows = machine.sessions ?? [];
-  return {
-    sessions: rows.length,
-    live: rows.filter(isLive).length,
-    unread: rows.filter(isUnread).length,
-  };
+  const counted = machine.overview
+    ? { sessions: machine.overview.session_count, live: machine.overview.live_count }
+    : { sessions: rows.length, live: rows.filter(isLive).length };
+  return { ...counted, unread: rows.filter(isUnread).length };
 }
 
 /**
@@ -432,32 +441,6 @@ export function sessionOrder(
   return rows.map((row) => row.session);
 }
 
-/**
- * What a group-header delete MEANS for the sessions under it.
- *
- * The list groups by LABEL, not by project id: a group is a real project row, a
- * bare workspace root nothing ever named, or the `No project` bucket. Only the
- * first can be deleted AS a project, and only when every row in it agrees on the
- * id — a mixed group would claim to delete one project while quietly taking
- * members of another with it. Everything else is a fan-out over sessions, and
- * the copy must not promise a project it cannot deliver.
- *
- * The ids come from every session of the group. An untitled, draft-less,
- * unstarred session is not listed by the gateway at all, so it is not in the
- * group either — what the reader sees IS the group.
- */
-export type ProjectDelete =
-  | { kind: 'project'; projectId: string; sessionIds: string[] }
-  | { kind: 'sessions'; sessionIds: string[] };
-
-export function projectDelete(sessions: Session[]): ProjectDelete {
-  const sessionIds = sessions.map((session) => session.id);
-  const ids = new Set(sessions.map((session) => session.project_id ?? ''));
-  const projectId = ids.size === 1 ? [...ids][0] : '';
-  return projectId
-    ? { kind: 'project', projectId, sessionIds }
-    : { kind: 'sessions', sessionIds };
-}
 
 /**
  * What the start menu's parked-drafts picker should read, and NOTHING about when.
@@ -672,40 +655,134 @@ export interface Tally {
 }
 
 /**
- * The counts a PROJECT header wears, from the gateway when it has answered one.
+ * The counts a MACHINE band wears, from the gateway when it has answered one.
  *
- * The rows on screen are a WINDOW — this device holds the pages it has walked,
- * never the project — so counting them said `12` under a project of 400 until
- * the whole fleet had drained in, and said a different number at every stage of
- * the drain. The gateway tallies its own store once (`/v1/projects/overview`);
- * the local tally survives only as the answer for a machine that has not spoken
- * yet, and for a FILTERED list, where the honest count is what is shown.
+ * The rows on screen are a WINDOW — this device holds the pages it has walked, never
+ * the fleet — so counting them said `12` under a machine of 400, and said a different
+ * number at every stage of the walk. The gateway tallies its own store once
+ * (`/v1/projects/overview`); summing the groups survives only as the answer for a
+ * machine that has not spoken yet, and for a FILTERED list, where the honest count is
+ * what is shown.
  */
-export function projectTally(
-  overview: GatewayOverview | null | undefined,
-  root: string,
-  sessions: Session[],
-): Tally {
-  const row = overview?.projects?.find((project) => project.root === root);
-  if (row && typeof row.session_count === 'number')
-    return { count: row.session_count, live: row.live_count ?? 0 };
-  return { count: sessions.length, live: sessions.filter(sessionIsLive).length };
-}
-
-/** The same, for the whole MACHINE band: its gateway's own totals. */
 export function machineTally(
   overview: GatewayOverview | null | undefined,
-  groups: Array<[string, Session[]]>,
+  groups: ProjectGroupView[],
 ): Tally {
   if (overview && typeof overview.session_count === 'number')
     return { count: overview.session_count, live: overview.live_count ?? 0 };
   return groups.reduce(
-    (total, [, rows]) => ({
-      count: total.count + rows.length,
-      live: total.live + rows.filter(sessionIsLive).length,
+    (total, group) => ({
+      count: total.count + group.tally.count,
+      live: total.live + group.tally.live,
     }),
     { count: 0, live: 0 },
   );
+}
+
+/** A group with no rows of its own yet — a stable identity so a memo can bail out. */
+const NO_SESSIONS: Session[] = [];
+
+/**
+ * ONE PROJECT AS THE LIST RENDERS IT: the gateway's own project row, plus whatever
+ * rows of it this device is holding.
+ *
+ * A group used to be a bucket of downloaded rows — the list drained every session of
+ * every machine and grouped what came back — so a project did not exist until its
+ * rows had landed, and its header counted the window instead of the project. The
+ * gateway tallies its own store (`/v1/projects/overview`) and cuts every page of it
+ * (`GatewayClient.listProjectPage`); the rows here are only what a group can paint
+ * before its own page answers.
+ */
+export interface ProjectGroupView {
+  /** Canonical workspace root — the group's identity, and what a page is asked for by. */
+  root: string;
+  /** The name the header wears. */
+  label: string;
+  /** The gateway's project id when this root is a saved project, `''` otherwise. */
+  projectId: string;
+  /** What the project HOLDS, as whoever owns the list counted it. */
+  tally: Tally;
+  /** The rows of the machine's window that fall in this project, in the machine's order. */
+  sessions: Session[];
+}
+
+/**
+ * A machine's projects, in the order a PROJECT owns: work running first, then the
+ * project's own last activity, then the root — the same key `groupByWorkDir` sorts
+ * by, decided from the gateway's counts instead of from rows this device happens to
+ * hold.
+ *
+ * A root the gateway did not tally — a draft workspace, or any root at all when the
+ * machine has answered no overview yet — is not in its ordering either, so it follows
+ * the projects that are, counted by what is on screen.
+ */
+export function projectGroups(
+  overview: GatewayOverview | null | undefined,
+  rows: Session[],
+): ProjectGroupView[] {
+  const held = groupByWorkDir(rows);
+  const byRoot = new Map(held);
+  const tallied = overview?.projects ?? [];
+  const groups = tallied
+    .map((project) => ({
+      root: project.root,
+      label: project.name.trim() ? homeifyPath(project.name.trim()) : rootLabel(project.root),
+      projectId: project.project_id ?? '',
+      tally: { count: project.session_count, live: project.live_count ?? 0 },
+      sessions: byRoot.get(project.root) ?? NO_SESSIONS,
+      when: project.last_activity_ms ?? 0,
+    }))
+    .sort((left, right) => {
+      const live = Number(left.tally.live === 0) - Number(right.tally.live === 0);
+      if (live !== 0) return live;
+      const recency = right.when - left.when;
+      if (recency !== 0) return recency;
+      return left.root < right.root ? -1 : left.root > right.root ? 1 : 0;
+    })
+    .map(({ when: _when, ...group }) => group);
+  const counted = new Set(tallied.map((project) => project.root));
+  return groups.concat(
+    held
+      .filter(([root]) => !counted.has(root))
+      .map(([root, sessions]) => localGroup(root, sessions)),
+  );
+}
+
+/**
+ * The same shape for a SEARCH — the one answer this device holds COMPLETE, since the
+ * fanout narrows a list it was given. What is on screen is then the honest count.
+ */
+export function searchGroups(rows: Session[]): ProjectGroupView[] {
+  return groupByWorkDir(rows).map(([root, sessions]) => localGroup(root, sessions));
+}
+
+/** A group nobody else counted: its own rows are the whole of it. */
+function localGroup(root: string, sessions: Session[]): ProjectGroupView {
+  return {
+    root,
+    label: projectLabel(sessions),
+    projectId: agreedProjectId(sessions),
+    tally: { count: sessions.length, live: sessions.filter(sessionIsLive).length },
+    sessions,
+  };
+}
+
+/**
+ * The project id every row of a group AGREES on, or `''`.
+ *
+ * Only a real project row can be deleted as a project, and only when the group is
+ * unanimous — a mixed group would claim to delete one project while quietly taking
+ * members of another with it.
+ */
+function agreedProjectId(sessions: Session[]): string {
+  const ids = new Set(sessions.map((session) => session.project_id ?? ''));
+  return ids.size === 1 ? ([...ids][0] ?? '') : '';
+}
+
+/** The name a bare root wears when nothing named the project: its last segment. */
+function rootLabel(root: string): string {
+  if (!root) return 'No project';
+  return root.split('/').pop() || homeifyPath(root);
 }
 
 /** When a PROJECT last moved: the newest of its sessions. */
@@ -724,14 +801,30 @@ export interface MachineProject {
 }
 
 /**
- * The project a machine is CURRENTLY in: the root of its most recently touched
- * session. "New session" needs no question because of this — the machine has been
- * somewhere, and that somewhere is the answer until the user switches it.
+ * The project a machine is CURRENTLY in: the one its gateway stamped with the most
+ * recent activity. "New session" needs no question because of this — the machine has
+ * been somewhere, and that somewhere is the answer until the user switches it.
  *
- * `null` only for a machine that has never run a session (or has not loaded yet);
- * then the menu offers browsing instead of naming a project that does not exist.
+ * Read from the gateway's own project tally, so it names a project this device may
+ * never have paged a row of; the window it holds answers for a machine whose overview
+ * has not landed yet.
+ *
+ * `null` only for a machine that has never run a session (or has not loaded yet); then
+ * the menu offers browsing instead of naming a project that does not exist.
  */
 export function machineProject(machine: FleetMachine | null): MachineProject | null {
+  let counted: { root: string; whenMs: number } | null = null;
+  for (const project of machine?.overview?.projects ?? []) {
+    if (!project.root) continue;
+    const whenMs = project.last_activity_ms ?? 0;
+    if (!counted || whenMs > counted.whenMs) counted = { root: project.root, whenMs };
+  }
+  if (counted)
+    return {
+      path: counted.root,
+      label: counted.root.split('/').filter(Boolean).pop() ?? counted.root,
+      when: counted.whenMs > 0 ? new Date(counted.whenMs).toISOString() : null,
+    };
   const sessions = machine?.sessions ?? [];
   let best: { path: string; whenMs: number; when: string | null } | null = null;
   for (const session of sessions) {

@@ -1765,7 +1765,7 @@ describe("where a new session starts", () => {
 
   it("always offers the draft half of the project header's button", () => {
     expect(sessionsListSource).toContain(
-      "onNewDraft={(anchor, root) => openDraftsAt(anchor, machine.conn, root)}",
+      "openDraftsAt(anchor, machine.conn, root, probe)",
     );
   });
 

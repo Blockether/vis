@@ -113,6 +113,8 @@ export interface ManagedProject {
   name: string;
   /** Canonical root on that machine — the identity, and what removal acts on. */
   root: string;
+  /** The gateway's project id when the root is a saved project, `''` otherwise. */
+  projectId: string;
   /** How many transcripts it holds. */
   count: number;
   /** How many of those are running right now. */

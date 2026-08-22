@@ -40,7 +40,7 @@ import {
   MENU_WIDTH,
   PANEL_SIZES,
 } from '../components/Menu';
-import { GatewayClient, type SessionMatch } from '../lib/gateway';
+import { GatewayClient, type ProjectWindows, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { ForkPoint, GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/types';
 import { homeifyPath } from '../lib/path';
@@ -98,7 +98,6 @@ import type { PendingAttachment } from '../lib/attachments';
 import { shareSummary, type SharedPayload } from '../lib/share-intake';
 import { favoriteRank, isFavorite, nextFavoriteRank } from '../lib/favorites';
 import {
-  groupByWorkDir,
   draftsRead,
   draftsReadKey,
   fleetError,
@@ -108,9 +107,9 @@ import {
   machineKey,
   machineLabel,
   newSessionTarget,
-  projectDelete,
+  projectGroups,
   projectLabel,
-  projectTally,
+  searchGroups,
   type Tally,
   reconcileMachines,
   resolveScope,
@@ -208,6 +207,14 @@ const NO_MACHINES: string[] = [];
 // A page whose read has not answered yet paints nothing rather than rows from
 // another place in the project (`ProjectGroup`).
 const NO_ROWS: Session[] = [];
+
+/**
+ * How many pages ahead of the one on screen a project group reads.
+ *
+ * Two, not three: the third is rarely reached and costs a full round trip and a
+ * validator to hold. Nothing is read ahead until the visible page has answered.
+ */
+const PAGES_AHEAD = 2;
 const NO_SEARCH: SearchAnswers = { needle: '', asked: NO_MACHINES, byMachine: new Map() };
 
 // A RETRY IS A GESTURE, so it answers on a gesture's clock. The transport gives every
@@ -585,14 +592,12 @@ export function SessionsScreen({
 
   // EVERY change to a machine's rows is anchored first.
   //
-  // A cold fleet does not arrive at once and cannot: each gateway is its own
-  // round trip, and a machine with more than one page of history patches its rows
-  // again per page (`listSessions`' progressive `onPage`). Every one of those
-  // patches inserts rows ABOVE the sections below it — with two gateways paired,
-  // the first machine's second page pushes the whole second machine down under a
+  // A cold fleet does not arrive at once and cannot: each gateway is its own round
+  // trip. Every patch inserts rows ABOVE the sections below it — with two gateways
+  // paired, the first machine's answer pushes the whole second machine down under a
   // reader who is looking at it, which is the list "jumping by itself" while its
   // projects load in. A failure does the same in reverse: a machine that stops
-  // answering is drained out of `All`, and its section leaves a hole.
+  // answering is dropped out of `All`, and its section leaves a hole.
   //
   // So the anchor belongs to the MUTATION, not to one caller: the top visible row
   // is measured here, and the layout effect below puts it back under the top edge.
@@ -682,13 +687,7 @@ export function SessionsScreen({
             isRemembered: false,
           }));
         };
-        // Paint the first page the moment it lands instead of waiting for the whole
-        // fleet to drain. Only ever called on a cold load (see `listSessions`).
-        const next = await api.listSessions(signal, (partial) => {
-          if (signal?.aborted) return;
-          alive();
-          settle(partial);
-        });
+        const next = await api.listSessions(signal);
         if (signal?.aborted) return null;
         alive();
         settle(next);
@@ -1494,17 +1493,23 @@ export function SessionsScreen({
   // Which project header opened the draft picker, so the list it reads is that
   // project's own and not merely the machine's most recent one.
   const [draftRoot, setDraftRoot] = useState<string | null>(null);
+  // A row of that very project, handed over by the header that was tapped: this device
+  // holds a WINDOW of the machine, so the project whose drafts are being asked for may
+  // have no row in it at all, and the group that asked is the one place a row of it is
+  // certain to exist.
+  const [draftProbeRow, setDraftProbeRow] = useState<Session | null>(null);
   // Parked drafts belong to a PROJECT, and the split button that asks for them sits on
   // that project's header — so the probe is a session in the very root that was tapped.
   // Falling back to any session of the machine keeps every other caller unchanged.
   const draftProbe = useMemo(
     () =>
+      (draftProbeRow && projectPath(draftProbeRow) === draftRoot ? draftProbeRow : null) ??
       targetMachine?.sessions?.find(
         (session) => draftRoot !== null && projectPath(session) === draftRoot,
       ) ??
       targetMachine?.sessions?.find((session) => projectPath(session)) ??
       null,
-    [targetMachine, draftRoot],
+    [targetMachine, draftRoot, draftProbeRow],
   );
   const draftRepo = draftProbe ? projectLabel([draftProbe]) : '';
   // Where that machine is working RIGHT NOW: the root of its most recent session.
@@ -1512,8 +1517,14 @@ export function SessionsScreen({
   const project = useMemo(() => machineProject(targetMachine), [targetMachine]);
   // Every root that machine already runs sessions in, so the browse sheet can badge
   // a folder the user has been in instead of making them recognise the path.
+  // Every root that machine already runs sessions in, so the browse sheet can badge a
+  // folder the user has been in instead of making them recognise the path. Read from
+  // the gateway's own project tally: a root this device has paged no row of is still a
+  // folder its owner has worked in.
   const knownRoots = useMemo(() => {
     const roots = new Set<string>();
+    for (const project of targetMachine?.overview?.projects ?? [])
+      if (project.root) roots.add(project.root);
     for (const session of targetMachine?.sessions ?? []) {
       const root = projectPath(session);
       if (root) roots.add(root);
@@ -1572,13 +1583,17 @@ export function SessionsScreen({
    * question with machine AND project already answered. It used to be a row inside a
    * machine-level menu, two headers above the project it actually forks.
    */
-  const openDraftsAt = useCallback((anchor: HTMLElement, on: GatewayConn, root: string) => {
-    startAnchorEl.current = anchor;
-    const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
-    if (!at) return;
-    setDraftRoot(root);
-    setStartFlow({ step: 'drafts', at, on });
-  }, []);
+  const openDraftsAt = useCallback(
+    (anchor: HTMLElement, on: GatewayConn, root: string, probe: Session | null) => {
+      startAnchorEl.current = anchor;
+      const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
+      if (!at) return;
+      setDraftRoot(root);
+      setDraftProbeRow(probe);
+      setStartFlow({ step: 'drafts', at, on });
+    },
+    [],
+  );
 
   // Leaving the order — tap outside, Escape, Cancel, or a session actually created
   // — forgets every answer in it, INCLUDING which machine. That machine used to
@@ -1797,14 +1812,19 @@ export function SessionsScreen({
 
   // The unit is the group ON THIS MACHINE, never "this project everywhere": the same
   // repo checked out on two machines is two projects and two deletes.
-  const startProjectDelete = useCallback(
-    (project: string, sessions: Session[], conn: GatewayConn) => {
-      setRowAction({ mode: 'project', project, sessions, conn });
-      setActionError(null);
-      setActionProgress(null);
-    },
-    [],
-  );
+  const startProjectDelete = useCallback((project: ManagedProject, conn: GatewayConn) => {
+    setRowAction({
+      mode: 'project',
+      project: project.name,
+      root: project.root,
+      projectId: project.projectId,
+      count: project.count,
+      live: project.live,
+      conn,
+    });
+    setActionError(null);
+    setActionProgress(null);
+  }, []);
 
   // Dismissable even mid-request. A delete is already on the wire and cannot be
   // taken back, but the SCREEN must always come back: a confirm dialog that
@@ -1887,35 +1907,37 @@ export function SessionsScreen({
         forgetDrafts([rowAction.session.id]);
         forgetRows([rowAction.session.id]);
       } else {
-        const plan = projectDelete(rowAction.sessions);
-        // One recursive request when a project row owns the whole group: the gateway
-        // deletes the members it knows about, which is more than this list paints.
-        if (plan.kind === 'project') {
-          const deleted = await api.deleteProject(plan.projectId);
+        // ONE REQUEST WHERE THE GATEWAY OWNS THE PROJECT: it deletes the members it
+        // knows about, which is more than any list paints.
+        if (rowAction.projectId) {
+          const deleted = await api.deleteProject(rowAction.projectId);
           forgetDrafts(deleted);
           forgetRows(deleted);
         } else {
-          // No project row to hand the group to, so the fan-out IS the delete. It
-          // keeps going past a failure and says what survived, instead of stopping
-          // half way with nothing said.
+          // No project row to hand the group to, so the fan-out IS the delete — over
+          // the ids the GATEWAY says the root holds, walked at the moment the purge is
+          // confirmed, because this device holds a window and never the project. It
+          // keeps going past a failure and says what survived, instead of stopping half
+          // way with nothing said.
+          const ids = await projectSessionIds(api, rowAction.root);
           const gone: string[] = [];
           let failed = 0;
-          setActionProgress({ done: 0, total: plan.sessionIds.length });
-          for (const sid of plan.sessionIds) {
+          setActionProgress({ done: 0, total: ids.length });
+          for (const sid of ids) {
             try {
               await api.deleteSession(sid);
               gone.push(sid);
             } catch {
               failed += 1;
             }
-            setActionProgress({ done: gone.length + failed, total: plan.sessionIds.length });
+            setActionProgress({ done: gone.length + failed, total: ids.length });
           }
           forgetDrafts(gone);
           // A partial fan-out is exactly known too: the ids that died leave, the ones
           // that refused keep their rows, and the note says how many refused.
           forgetRows(gone);
           if (failed > 0) {
-            setActionError(`${failed} of ${plan.sessionIds.length} sessions could not be deleted.`);
+            setActionError(`${failed} of ${ids.length} sessions could not be deleted.`);
             return;
           }
         }
@@ -1943,6 +1965,15 @@ export function SessionsScreen({
 
   // Machine → project → sessions. The machine is the organizer, so its sections
   // are built from ITS rows only.
+  // Machine → project → sessions. The machine is the organizer, so its sections are
+  // built from ITS projects only.
+  //
+  // Unfiltered, those projects are the GATEWAY's (`/v1/projects/overview`): every
+  // project it holds, with its own counts, whether or not a row of it is in the window
+  // this device read. They used to be a grouping of downloaded rows, so a project only
+  // existed once its rows had drained in and its header counted the window. A QUERY is
+  // the one answer this device holds complete, and its groups are the rows that
+  // matched, grouped here.
   const sections = useMemo(
     () =>
       heldRows.map((entry) => ({
@@ -1953,21 +1984,25 @@ export function SessionsScreen({
         // Group identity and every create action keep the gateway's canonical path.
         // Home-shortening is paint only; feeding `~/vis` back as an API root is how an
         // older gateway produced the impossible `/…/vis/~/vis` directory.
-        groups: groupByWorkDir(entry.rows),
+        groups: searching
+          ? searchGroups(entry.rows)
+          : projectGroups(entry.machine.overview, entry.rows),
       })),
-    [heldRows],
+    [heldRows, searching],
   );
 
-  // The projects the "remove sessions" step offers are the ones this machine is
-  // SHOWING, read from the same grouping the list renders — a row that promises to
-  // remove 975 transcripts under a header reading 712 is a row nobody should press.
+  // The projects the "remove sessions" step offers are the ones this machine HAS, as
+  // its gateway counted them — the same rows and the same numbers as the headers in
+  // the list, so a row that promises to remove 975 transcripts under a header reading
+  // 712 is impossible by construction.
   const managedProjects = useCallback(
     (machine: FleetMachine): ManagedProject[] =>
-      groupByWorkDir(machine.sessions ?? []).map(([, sessions]) => ({
-        name: projectLabel(sessions),
-        root: projectRoot(sessions),
-        count: sessions.length,
-        live: sessions.filter(sessionIsLive).length,
+      projectGroups(machine.overview, machine.sessions ?? []).map((group) => ({
+        name: group.label,
+        root: group.root,
+        projectId: group.projectId,
+        count: group.tally.count,
+        live: group.tally.live,
       })),
     [],
   );
@@ -2406,20 +2441,17 @@ export function SessionsScreen({
                           )}
                         </div>
                       )
-                    : groups.map(([groupRoot, projectSessions], groupIndex) => (
+                    : groups.map((group, groupIndex) => (
                         // Two projects used to be separated by the SAME hairline that
                         // separates two sessions of one project. Every group after the
                         // first opens on 8px of the machine's own paper instead.
-                        <Fragment key={`${key}\u0000${groupRoot}`}>
+                        <Fragment key={`${key}\u0000${group.root}`}>
                         {groupIndex > 0 && <SectionGap />}
                         <ProjectGroup
-                          project={projectLabel(projectSessions)}
-                          sessions={projectSessions}
-                          tally={
-                            searching
-                              ? projectTally(null, groupRoot, projectSessions)
-                              : projectTally(machine.overview, groupRoot, projectSessions)
-                          }
+                          project={group.label}
+                          root={group.root}
+                          sessions={group.sessions}
+                          tally={group.tally}
                           conn={machine.conn}
                           matches={matches}
                           needle={searchNeedle}
@@ -2441,7 +2473,9 @@ export function SessionsScreen({
                           creating={creating}
                           // A draft is not a preference: every project header offers
                           // the private copy beside its own "New session".
-                          onNewDraft={(anchor, root) => openDraftsAt(anchor, machine.conn, root)}
+                          onNewDraft={(anchor, root, probe) =>
+                            openDraftsAt(anchor, machine.conn, root, probe)
+                          }
                           pageSize={pageSize}
                           epoch={epoch}
                           admitted={admitted}
@@ -2687,14 +2721,9 @@ export function SessionsScreen({
           onCancel={() => setStartFlow(startFlowBack)}
           onChoose={(root) => void createSession({ kind: 'trunk' }, target, root)}
           onRemove={(entry) => {
-            const machine = targetMachine;
-            if (!machine) return;
+            if (!targetMachine) return;
             leaveStart();
-            startProjectDelete(
-              entry.name,
-              (machine.sessions ?? []).filter((session) => projectPath(session) === entry.root),
-              target,
-            );
+            startProjectDelete(entry, target);
           }}
         />
       )}
@@ -2706,20 +2735,20 @@ export function SessionsScreen({
           client={clientFor(manageProjects.machine.conn)}
           startAt={machineProject(manageProjects.machine)?.path ?? null}
           knownRoots={new Set(
-            (manageProjects.machine.sessions ?? [])
-              .map(projectPath)
-              .filter((path): path is string => !!path),
+            projectGroups(
+              manageProjects.machine.overview,
+              manageProjects.machine.sessions ?? [],
+            )
+              .map((group) => group.root)
+              .filter(Boolean),
           )}
           projects={managedProjects(manageProjects.machine)}
           onCancel={() => setManageProjects(null)}
           onChoose={(_root: string) => setManageProjects(null)}
           onRemove={(entry) => {
             const conn = manageProjects.machine.conn;
-            const sessions = (manageProjects.machine.sessions ?? []).filter(
-              (session) => projectPath(session) === entry.root,
-            );
             setManageProjects(null);
-            startProjectDelete(entry.name, sessions, conn);
+            startProjectDelete(entry, conn);
           }}
         />
       )}
@@ -2775,15 +2804,26 @@ export function SessionsScreen({
 type RowAction =
   | { mode: 'rename'; session: Session; conn: GatewayConn }
   | { mode: 'delete'; session: Session; conn: GatewayConn }
-  | { mode: 'project'; project: string; sessions: Session[]; conn: GatewayConn };
+  | {
+      mode: 'project';
+      /** The header's own name and canonical root. */
+      project: string;
+      root: string;
+      /** The gateway's project id, or `''` when the group is only a shared root. */
+      projectId: string;
+      /** What the GATEWAY says the group holds: the blast radius, not what is on screen. */
+      count: number;
+      live: number;
+      conn: GatewayConn;
+    };
 
 /**
  * What the confirm says.
  *
- * A group delete states the FULL blast radius: the count is every session in the
- * group — the gateway lists no others — and it names the machine:
- * the same repo on two machines is two groups. It also never claims to delete a
- * project when the group is only a shared label.
+ * A group delete states the FULL blast radius: the count is every session the gateway
+ * tallies in the group, never the rows this device happens to hold, and it names the
+ * machine — the same repo on two machines is two groups. It also never claims to
+ * delete a project when the group is only a shared root.
  */
 function rowActionCopy(
   action: RowAction,
@@ -2797,18 +2837,39 @@ function rowActionCopy(
       live: action.mode === 'delete' && sessionIsLive(action.session) ? 1 : 0,
     };
   }
-  const plan = projectDelete(action.sessions);
-  const count = plan.sessionIds.length;
-  const sessions = `${count} ${count === 1 ? 'session' : 'sessions'}`;
+  const sessions = `${action.count} ${action.count === 1 ? 'session' : 'sessions'}`;
   return {
     title: 'Purge sessions',
     subject: `${action.project} · ${machine}`,
-    body:
-      plan.kind === 'project'
-        ? `Purge all ${sessions} in this project, with every transcript, from ${machine}? This cannot be undone.`
-        : `Purge all ${sessions} in this group, with every transcript, from ${machine}? They share a workspace but no saved project, so nothing else is removed. This cannot be undone.`,
-    live: action.sessions.filter(sessionIsLive).length,
+    body: action.projectId
+      ? `Purge all ${sessions} in this project, with every transcript, from ${machine}? This cannot be undone.`
+      : `Purge all ${sessions} in this group, with every transcript, from ${machine}? They share a workspace but no saved project, so nothing else is removed. This cannot be undone.`,
+    live: action.live,
   };
+}
+
+/** How many rows one purge walk asks for at a time — a read nobody is watching. */
+const PURGE_WALK = 200;
+
+/**
+ * Every session id in one project, read the way the list reads its pages.
+ *
+ * A group with no saved project row can only be purged session by session, and this
+ * device holds a window of the MACHINE, never the project — so the ids are walked from
+ * the gateway at the moment the purge is confirmed, and the fan-out is over what the
+ * gateway says the root holds instead of over what happened to be on screen.
+ */
+async function projectSessionIds(api: GatewayClient, root: string): Promise<string[]> {
+  const pins: ProjectWindows = new Map();
+  const ids: string[] = [];
+  let after = '';
+  for (;;) {
+    const page = await api.listProjectPage(root, PURGE_WALK, after, pins);
+    for (const session of page.rows) ids.push(session.id);
+    if (!page.nextCursor || page.rows.length === 0 || ids.length >= page.total) break;
+    after = page.nextCursor;
+  }
+  return ids;
 }
 
 
@@ -2907,6 +2968,7 @@ const NeedsYou = memo(function NeedsYou({
 // (`reconcileSessions`), so an unchanged group must not re-render its rows.
 const ProjectGroup = memo(function ProjectGroup({
   project,
+  root,
   sessions,
   tally,
   conn,
@@ -2934,6 +2996,14 @@ const ProjectGroup = memo(function ProjectGroup({
   isTop,
 }: {
   project: string;
+  /** Canonical workspace root — the group's identity, and what its page is asked for by. */
+  root: string;
+  /**
+   * What this device is HOLDING of that project: the rows of the machine's window
+   * (`GatewayClient.listSessions`) that fall in it — never the project, which is read
+   * a page at a time. It is what the group paints before its own page lands, and the
+   * copy a star or a rename made here echoes out of.
+   */
   sessions: Session[];
   /**
    * What this project HOLDS, as its gateway counted it (`projectTally`) — not
@@ -2964,7 +3034,7 @@ const ProjectGroup = memo(function ProjectGroup({
    */
   creating: { at: string | null; label: string } | null;
   /** Opens the private-copy question for this project, anchored on the button. */
-  onNewDraft?: (anchor: HTMLElement, root: string) => void;
+  onNewDraft?: (anchor: HTMLElement, root: string, probe: Session | null) => void;
   pageSize: number;
   /** The order this reader agreed to, which the page below is held in (`lib/order-epoch`). */
   epoch: OrderEpoch | null;
@@ -2989,7 +3059,6 @@ const ProjectGroup = memo(function ProjectGroup({
    */
   isTop: boolean;
 }) {
-  const root = projectRoot(sessions);
   const base = useMemo(() => clientFor(conn).base, [conn]);
   // Row actions must reach the machine that OWNS the row. Bound here so a
   // memoized row does not re-render on every paint of its parent.
@@ -3033,6 +3102,16 @@ const ProjectGroup = memo(function ProjectGroup({
   // the place survives everything the fleet does under the reader, which an offset
   // into an ordering recomputed per request could not (`state/list-sessions-page`).
   const cursors = useRef(new Map<number, string>([[0, '']]));
+  // THE WINDOWS THIS GROUP HOLDS, and the validator each was issued under
+  // (`GatewayClient.listProjectPage`). They used to live in a static map on the client,
+  // capped at 24 for the whole fleet and evicted oldest-first: a budget shared by every
+  // project of every machine, spent by a rule that could not know which page anybody
+  // was looking at. A window belongs to whoever READS it — this store is read ahead
+  // into, answered from, and forgotten with the group.
+  const pins = useRef<ProjectWindows>(new Map());
+  // The question the last read asked, so a page TURN paints what is already held and a
+  // poll that only moved the list under an unchanged page repaints nothing.
+  const asked = useRef('');
   // The page LAST ANSWERED, whichever it is: the rows and the project's own count.
   const [paged, setPaged] = useState<{ rows: Session[]; total: number } | null>(null);
   // A project FOLDS, and only the top one starts open: the screen's job is to show
@@ -3057,6 +3136,14 @@ const ProjectGroup = memo(function ProjectGroup({
   // opened has no page to be wrong. A query is the one answer this device holds
   // COMPLETE (the search fanout narrows a list it was given), so its pages are cut
   // below instead of read here.
+  //
+  // AND THE PAGES AFTER IT ARE READ AHEAD. Turning a page is the one thing a reader
+  // asks for that this group could already know, so the next `PAGES_AHEAD` windows are
+  // read once the visible one has landed — serially, behind it, never beside it, and
+  // only for a group that is on the glass and open. What it buys is each of those
+  // pages' CURSOR and a validator for it: the turn then paints held rows in the frame
+  // of the tap and confirms them with one conditional read, instead of standing on the
+  // page before it for a whole round trip.
   useEffect(() => {
     if (!isVisible || !isShowing || searching) return;
     const control = new AbortController();
@@ -3067,14 +3154,27 @@ const ProjectGroup = memo(function ProjectGroup({
     // is the page — a cursor can only ever be the row a page ended on.
     let from = start;
     while (from > 0 && !cursors.current.has(from)) from -= 1;
-    void clientFor(conn)
-      .listProjectPage(
-        root,
-        start - from + pageSize,
-        cursors.current.get(from) ?? '',
-        control.signal,
-      )
-      .then((answer) => {
+    const after = cursors.current.get(from) ?? '';
+    const limit = start - from + pageSize;
+    const api = clientFor(conn);
+    // A page this group already HOLDS paints in the frame of the tap that asked for
+    // it. Only when the question changed: a poll that moved the list under an unchanged
+    // page must not repaint it from a validator that is about to be revalidated anyway.
+    const question = `${limit}\u0000${after}`;
+    if (question !== asked.current) {
+      asked.current = question;
+      const held = api.heldProjectPage(root, limit, after, pins.current);
+      if (held) setPaged({ rows: held.rows.slice(start - from), total: held.total });
+    }
+    void (async () => {
+      try {
+        const answer = await api.listProjectPage(
+          root,
+          limit,
+          after,
+          pins.current,
+          control.signal,
+        );
         if (!live) return;
         if (answer.nextCursor)
           cursors.current.set(from + answer.rows.length, answer.nextCursor);
@@ -3082,11 +3182,30 @@ const ProjectGroup = memo(function ProjectGroup({
           rows: answer.rows.slice(start - from),
           total: answer.total,
         });
-      })
-      .catch(() => {
+        // Behind the answer, never beside it: the reader's own page is never waiting on
+        // a read taken for a page they have not asked for. A project that has ended
+        // (`nextCursor === ''`) is not read past.
+        let at = from + answer.rows.length;
+        let cursor = answer.nextCursor;
+        for (let ahead = 0; ahead < PAGES_AHEAD && cursor; ahead += 1) {
+          const next = await api.listProjectPage(
+            root,
+            pageSize,
+            cursor,
+            pins.current,
+            control.signal,
+          );
+          if (!live) return;
+          if (next.rows.length === 0) break;
+          if (next.nextCursor) cursors.current.set(at + next.rows.length, next.nextCursor);
+          at += next.rows.length;
+          cursor = next.nextCursor;
+        }
+      } catch {
         // A read that failed, or one this effect replaced, leaves the page already
         // on screen standing: an unreachable machine is said once, by its own band.
-      });
+      }
+    })();
     return () => {
       live = false;
       control.abort();
@@ -3102,12 +3221,18 @@ const ProjectGroup = memo(function ProjectGroup({
   // lands a beat after the tap, and a group that painted nothing meanwhile lost its
   // rows, its height AND the pager the thumb had just pressed — the reflow this
   // whole seam exists to end. So the last page answered stays on the glass until the
-  // next one lands, and only page ONE has something else to open on: the head of
-  // this project as the fleet read left it, in the gateway's own order.
+  // next one lands, and only page ONE has something else to open on: what this device
+  // holds of this project, out of the machine's own window.
   const pageRows = paged?.rows ?? null;
+  // Those held rows are a HEAD, not a page — a project deeper than the machine's window
+  // has none of them — so they are only painted when they can fill the page. A group
+  // that would otherwise paint three rows and swap them for twelve waits the one read
+  // out instead, which is the reflow this seam exists to end.
+  const held = sessions.slice(0, pageSize);
   const painting = searching
     ? sessions.slice((shownPage - 1) * pageSize, shownPage * pageSize)
-    : (pageRows ?? (start === 0 ? sessions.slice(0, pageSize) : NO_ROWS));
+    : (pageRows ??
+      (start === 0 && held.length >= Math.min(pageSize, tally.count) ? held : NO_ROWS));
   // A ROW THIS DEVICE JUST CHANGED IS THE ROW IT PAINTS. A star or a rename is
   // echoed into the list this screen holds the moment the gateway answers the
   // PATCH; the window carrying it is a read of its own and lands a beat later, so
@@ -3147,42 +3272,35 @@ const ProjectGroup = memo(function ProjectGroup({
   // re-entered on page one.
   // Regression, user report: after starring, no star appeared on the session row
   // until the session was opened and closed again.
-  // The group FOLLOWS the row it moved — the page the row lands on is the page
-  // shown, and the row is brought back under the eye that starred it.
-  const starredHere = useMemo(() => {
-    const marked = new Set<string>();
-    for (const session of sessions) {
-      if (isFavorite(session)) marked.add(session.id);
-    }
-    return marked;
-  }, [sessions]);
-  const wasStarred = useRef(starredHere);
+  // The group FOLLOWS the row it moved — page one is where the list puts it, and the
+  // row is brought back under the eye that starred it.
+  //
+  // The flip is read off the ROWS ON SCREEN, and only for a row that was on the page
+  // before and after: a page TURN takes every starred row off the page at once, and
+  // reading that as an unstar would have snapped the reader straight back to page one.
+  const marks = useMemo(
+    () => new Map(rows.map((session) => [session.id, isFavorite(session)])),
+    [rows],
+  );
+  const wasMarked = useRef(marks);
   const rowsRef = useRef<HTMLDivElement>(null);
   const following = useRef<string | null>(null);
-  // The row a star just flipped, still owed the place the LIST will give it. The mark
-  // is this device repainting what it asked for; WHERE the row belongs is the
-  // gateway's answer and arrives one read later, so exactly one answer is followed —
-  // after that the row stays wherever the reader leaves it.
-  const placing = useRef<{ id: string; order: readonly Session[] } | null>(null);
   // Before paint: the reader must never see a frame of the page the row just left.
   useLayoutEffect(() => {
-    const before = wasStarred.current;
-    wasStarred.current = starredHere;
+    const before = wasMarked.current;
+    wasMarked.current = marks;
     // One tap flips one row. UNSTARRING moves a row just as far — down, out of the
     // pinned band — so it is followed the same way instead of being dropped
     // wherever the ordering sends it.
-    const flipped =
-      [...starredHere].find((id) => !before.has(id)) ??
-      [...before].find((id) => !starredHere.has(id));
-    const owed = placing.current;
-    const chased = flipped ?? (owed && owed.order !== sessions ? owed.id : null);
-    if (!chased) return;
-    placing.current = flipped ? { id: flipped, order: sessions } : null;
-    const index = sessions.findIndex((session) => session.id === chased);
-    if (index < 0) return;
-    following.current = chased;
-    setFirst(index);
-  }, [starredHere, sessions]);
+    let flipped: string | null = null;
+    for (const [id, marked] of marks) {
+      const was = before.get(id);
+      if (was !== undefined && was !== marked) flipped = id;
+    }
+    if (!flipped) return;
+    following.current = flipped;
+    setFirst(0);
+  }, [marks]);
   // The row may land on the page already shown (starred from page one) or on the
   // one this group just walked to; either way it is placed back under the eye on the
   // commit that paints it.
@@ -3242,7 +3360,7 @@ const ProjectGroup = memo(function ProjectGroup({
               creating && creating.at === `${base}\u0000${root}` ? creating.label : null
             }
             onPress={() => onNewSession(root)}
-            onDraft={onNewDraft ? (anchor) => onNewDraft(anchor, root) : undefined}
+            onDraft={onNewDraft ? (anchor) => onNewDraft(anchor, root, rows[0] ?? null) : undefined}
           />
         </HeaderActions>
       </SectionHeader>
@@ -3872,10 +3990,6 @@ function reconcileSessions(current: Session[] | null, incoming: Session[]): Sess
 
 function shortId(id: string): string {
   return id.split('-')[0]?.slice(0, 8) || id.slice(0, 8);
-}
-
-function projectRoot(sessions: Session[]): string {
-  return sessions.map(projectPath).find(Boolean) ?? '';
 }
 
 function statusLabel(session: Session): string {

@@ -61,3 +61,46 @@ describe("what a project header counts", () => {
     expect(view.requests.some(({ path }) => path === "/v1/projects/overview")).toBe(false);
   });
 });
+
+// Regression, measured against a 1192-session machine: opening the list drained the
+// WHOLE fleet — twelve serial windows per machine per poll, ~315 KB of rows re-cut
+// into a page of ten — and every project header counted the part that had landed so
+// far. The head window is all this device reads now, the totals ride beside it, and a
+// project's own page is asked for by the group that paints it.
+describe("a fleet far deeper than one window", () => {
+  it("costs one list read per machine, and counts what the gateway holds", async () => {
+    const deep = (prefix: string, count: number, perProject: number) =>
+      Array.from({ length: count }, (_, index) =>
+        listSession({
+          id: `${prefix}-${index}`,
+          title: `${prefix} ${index}`,
+          workspace: { root: `/Users/dev/${prefix}-p${Math.floor(index / perProject)}` },
+          modified_at: new Date(Date.UTC(2024, 4, 1, 0, 0, count - index)).toISOString(),
+        }),
+      );
+    const view = renderSessionsScreen({
+      machines: [
+        { label: "alpha", sessions: deep("alpha", 1200, 150) },
+        { label: "beta", sessions: deep("beta", 30, 30) },
+      ],
+    });
+    restore = view.restore;
+    await screen.findByText("alpha 0");
+
+    // The counts are the gateway's own, not a tally of the rows that landed.
+    expect(screen.getAllByText("1200 sessions").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("150 sessions").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("30 sessions").length).toBeGreaterThan(0);
+    // Every project the machine holds has a band, whether or not a row of it was
+    // in the window: eight of alpha's, however deep the last one sits.
+    expect(view.getByLabelText("Expand alpha-p7")).toBeTruthy();
+
+    // ONE fleet read per machine, for the head window alone — no `after`, no walk.
+    const fleetReads = view.requests.filter(
+      ({ path }) => path.startsWith("/v1/sessions?") && !path.includes("root="),
+    );
+    expect(fleetReads).toHaveLength(2);
+    expect(fleetReads.every(({ path }) => !path.includes("after="))).toBe(true);
+    expect(new Set(fleetReads.map(({ machine }) => machine)).size).toBe(2);
+  });
+});

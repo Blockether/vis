@@ -184,14 +184,17 @@ has actually read; the snapshot store is on disk, so the shape is declared befor
 
 ## State of the plan
 
-REQUIRES WORK.
+DONE.
 
 - Phase 1 — DONE, `4fc1553fc`: the gateway owns the list, `?root=&limit=&after=` is the list a
   client paints, and the cursor is `<band>:<sort-key>:<id>`.
 - Phase 2 — DONE, `49d39d5fc`: the device sends `dirty=` and stops filtering and banding for
   itself.
-- Phase 3 — DONE: a project's page is the gateway's own window — `GatewayClient.listProjectPage`
-  asks `?root=&limit=&after=` at the size `useSessionsPerPage()` measured, `first`/`goToPage` are
-  cursor moves, and `projectPage` is gone from `src/lib/fleet.ts`.
-
-TODO: Phase 4.
+- Phase 3 — DONE, `509950bfc`: a project's page is the gateway's own window —
+  `GatewayClient.listProjectPage` asks `?root=&limit=&after=` at the size the screen measured,
+  `first`/`goToPage` are cursor moves, and `projectPage` is gone from `src/lib/fleet.ts`.
+- Phase 4 — DONE: the drain is deleted — `listSessions` reads the head window alone, project
+  groups are built from `overview.projects` so a project exists and counts truthfully before any
+  row of it lands, and each group reads its own page (and the next two ahead, so a page turn is a
+  paint rather than a wait) into a store it owns. A 1200-session fleet costs one list read per
+  machine (`SessionsScreen.projectCounts.test.tsx`).

@@ -40,11 +40,16 @@ export interface MachineFixture {
   /** Answers its list reads, but never answers a search. */
   searchHangs?: boolean;
   /**
-   * Answers its FIRST page and holds every later one until `releasePages`, the way
-   * a machine with more history than one window trickles in behind the machines
-   * beside it.
+   * Answers its FIRST list read and holds every one after it until `releasePages`,
+   * the way a machine whose deeper pages are slower than its head window is.
    */
   holdsPages?: boolean;
+  /**
+   * Answers NOTHING until `releasePages`: its reads are accepted and held, the way a
+   * paired machine that is slow to speak keeps its whole section off the glass while
+   * the machines beside it paint.
+   */
+  holdsList?: boolean;
   routes?: Record<string, unknown>;
 }
 
@@ -261,10 +266,14 @@ export function renderSessionsScreen({
   // the fleet to drain (a create opens its session while the rows are still in
   // flight). Held reads resolve normally the moment `releaseList` runs.
   let held: Promise<void> | null = null;
-  // A machine that answers its first window and holds the rest, so a test can put
-  // a later page on the glass at a moment of its choosing.
+  // A machine that trickles: its reads are accepted and answered only when the test
+  // says so, so a section or a later page lands at a moment of its choosing. Released
+  // for good — a machine that has spoken is not made slow again by the next poll.
   let heldPages: Promise<void> | null = null;
+  let pagesReleased = false;
   let releasePagesFn: (() => void) | null = null;
+  // List reads per machine, so `holdsPages` can answer the first and hold the rest.
+  const listReads = new Map<MachineFixture, number>();
   let release: (() => void) | null = null;
 
   const previousFetch = globalThis.fetch;
@@ -336,7 +345,9 @@ export function renderSessionsScreen({
       if ((init?.method ?? "GET") === "POST")
         return answer({ id: `created-${++created}`, channel: "web", title: null });
       if (held) await held;
-      if (machine.holdsPages && url.searchParams.has("after")) {
+      const reads = (listReads.get(machine) ?? 0) + 1;
+      listReads.set(machine, reads);
+      if (!pagesReleased && (machine.holdsList || (machine.holdsPages && reads > 1))) {
         if (!heldPages)
           heldPages = new Promise<void>((resolve) => {
             releasePagesFn = resolve;
@@ -378,8 +389,9 @@ export function renderSessionsScreen({
         release = resolve;
       });
     },
-    /** Let every held later page answer. */
+    /** Let every held read answer, and every read after them. */
     releasePages() {
+      pagesReleased = true;
       releasePagesFn?.();
       heldPages = null;
       releasePagesFn = null;

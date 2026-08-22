@@ -11,9 +11,8 @@ import {
   machineKey,
   machineLabel,
   newSessionTarget,
-  projectDelete,
+  projectGroups,
   projectLabel,
-  projectTally,
   machineTally,
   reconcileMachines,
   resolveScope,
@@ -714,34 +713,86 @@ describe('draftsRead', () => {
   });
 });
 
-describe('projectDelete', () => {
-  it('deletes a real project recursively when every row agrees on the id', () => {
-    const rows = [
-      session('a', { project_id: 'p1' }),
-      session('b', { project_id: 'p1' }),
-    ];
-    expect(projectDelete(rows)).toEqual({
-      kind: 'project',
-      projectId: 'p1',
-      sessionIds: ['a', 'b'],
-    });
+describe('projectGroups', () => {
+  const rows = (extra: Array<Partial<Session>>) =>
+    extra.map((fields, index) =>
+      session(String.fromCharCode(97 + index), { workspace: { root: '/repo/a' }, ...fields }),
+    );
+
+  it('claims the project id when every row of a group agrees on it', () => {
+    const groups = projectGroups(null, rows([{ project_id: 'p1' }, { project_id: 'p1' }]));
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.projectId).toBe('p1');
+    expect(groups[0]?.sessions.map((row) => row.id)).toEqual(['a', 'b']);
   });
 
   it('never claims a project for a label-only or mixed group', () => {
-    expect(projectDelete([session('a'), session('b')])).toEqual({
-      kind: 'sessions',
-      sessionIds: ['a', 'b'],
-    });
+    expect(projectGroups(null, rows([{}, {}]))[0]?.projectId).toBe('');
+    expect(projectGroups(null, rows([{ project_id: 'p1' }, {}]))[0]?.projectId).toBe('');
     expect(
-      projectDelete([session('a', { project_id: 'p1' }), session('b')]),
-    ).toEqual({ kind: 'sessions', sessionIds: ['a', 'b'] });
-    expect(
-      projectDelete([
-        session('a', { project_id: 'p1' }),
-        session('b', { project_id: 'p2' }),
-      ]),
-    ).toEqual({ kind: 'sessions', sessionIds: ['a', 'b'] });
-    expect(projectDelete([])).toEqual({ kind: 'sessions', sessionIds: [] });
+      projectGroups(null, rows([{ project_id: 'p1' }, { project_id: 'p2' }]))[0]?.projectId,
+    ).toBe('');
+    expect(projectGroups(null, [])).toEqual([]);
+  });
+
+  it('is the gateway\'s own projects, counted and ordered by IT, even with no rows held', () => {
+    const overview: GatewayOverview = {
+      projects: [
+        {
+          root: '/repo/quiet',
+          project_id: 'p-q',
+          name: 'Quiet',
+          session_count: 400,
+          live_count: 0,
+          awaiting_count: 0,
+          last_activity_ms: 900,
+        },
+        {
+          root: '/repo/busy',
+          project_id: 'p-b',
+          name: 'Busy',
+          session_count: 12,
+          live_count: 2,
+          awaiting_count: 0,
+          last_activity_ms: 100,
+        },
+      ],
+      project_count: 2,
+      session_count: 412,
+      live_count: 2,
+      awaiting_count: 0,
+    };
+    const groups = projectGroups(overview, []);
+    expect(groups.map((group) => group.root)).toEqual(['/repo/busy', '/repo/quiet']);
+    expect(groups.map((group) => group.tally)).toEqual([
+      { count: 12, live: 2 },
+      { count: 400, live: 0 },
+    ]);
+    expect(groups.every((group) => group.sessions.length === 0)).toBe(true);
+  });
+
+  it('follows the counted projects with a root only this device holds', () => {
+    const overview: GatewayOverview = {
+      projects: [
+        {
+          root: '/repo/a',
+          project_id: 'p-a',
+          name: 'A',
+          session_count: 9,
+          live_count: 0,
+          awaiting_count: 0,
+          last_activity_ms: 10,
+        },
+      ],
+      project_count: 1,
+      session_count: 9,
+      live_count: 0,
+      awaiting_count: 0,
+    };
+    const draft = session('d', { workspace: { root: '/drafts/x', is_draft: true } });
+    const groups = projectGroups(overview, [draft]);
+    expect(groups.map((group) => group.root)).toEqual(['/repo/a', '/drafts/x']);
+    expect(groups[1]?.tally).toEqual({ count: 1, live: 0 });
   });
 });
 
@@ -811,7 +862,7 @@ describe('StartFlow', () => {
 // Regression, user report (paraphrased: switching gateways flickered the project
 // list and then the counts inside it): the numbers were a tally of the session
 // windows this device had paged in, so they read low and moved as pages landed.
-describe('projectTally / machineTally', () => {
+describe('machineTally', () => {
   const overview: GatewayOverview = {
     projects: [
       {
@@ -830,19 +881,28 @@ describe('projectTally / machineTally', () => {
     awaiting_count: 1,
   };
 
+  const window = () => [
+    session('s1', { live: true, workspace: { root: '/repo/a' } }),
+    session('s2', { workspace: { root: '/repo/a' } }),
+  ];
+
   it('says what the GATEWAY holds, not what this device has paged in', () => {
-    const window = [session('s1', { live: true }), session('s2')];
-    expect(projectTally(overview, '/repo/a', window)).toEqual({ count: 400, live: 3 });
-    expect(machineTally(overview, [['/repo/a', window]])).toEqual({ count: 412, live: 4 });
+    const groups = projectGroups(overview, window());
+    expect(groups[0]?.tally).toEqual({ count: 400, live: 3 });
+    expect(machineTally(overview, groups)).toEqual({ count: 412, live: 4 });
   });
 
   it('falls back to the rows on screen for a machine that has not answered one', () => {
-    const window = [session('s1', { live: true }), session('s2')];
-    expect(projectTally(null, '/repo/a', window)).toEqual({ count: 2, live: 1 });
-    expect(machineTally(undefined, [['/repo/a', window]])).toEqual({ count: 2, live: 1 });
+    const groups = projectGroups(null, window());
+    expect(groups[0]?.tally).toEqual({ count: 2, live: 1 });
+    expect(machineTally(undefined, groups)).toEqual({ count: 2, live: 1 });
   });
 
   it('falls back for a project the overview does not carry', () => {
-    expect(projectTally(overview, '/repo/gone', [session('s9')])).toEqual({ count: 1, live: 0 });
+    const groups = projectGroups(overview, [session('s9', { workspace: { root: '/repo/gone' } })]);
+    expect(groups.find((group) => group.root === '/repo/gone')?.tally).toEqual({
+      count: 1,
+      live: 0,
+    });
   });
 });
