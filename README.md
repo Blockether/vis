@@ -50,14 +50,12 @@ vis-agent gateway start --host 0.0.0.0 --pair --jvm # gateway for the phone app;
 
 ## Companion app (iPhone / Android)
 
-Vis Companion is the phone client for a Vis gateway you run yourself — it drives the same sessions as the TUI (see [Gateway & pairing](resources/vis-docs/gateway.md)). Both stores are in public testing; no invite, no tester list, just the link.
+The phone client for the gateway above: install it, scan the QR, and it drives the same sessions as the TUI. Both stores are in open public testing — no invite, no tester list.
 
-| Platform | Public test link | Status |
-|---|---|---|
-| iOS / iPadOS | **https://testflight.apple.com/join/4anYT4Wk** | TestFlight public link, open to anyone with the URL (requires the free TestFlight app) |
-| Android | **https://play.google.com/apps/testing/com.blockether.viscompanion** | Play open testing (`beta` track), package `com.blockether.viscompanion` |
+- iOS / iPadOS — <https://testflight.apple.com/join/4anYT4Wk>
+- Android — <https://play.google.com/apps/testing/com.blockether.viscompanion>
 
-The app requires a gateway. Start one with `vis-agent gateway`, then pair by scanning the QR code it displays. For application questions and feedback, email `contact@blockether.com` (or use the TestFlight feedback button).
+Questions and beta feedback: `contact@blockether.com`.
 
 ## License
 
