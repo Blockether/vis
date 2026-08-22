@@ -94,6 +94,7 @@ import {
   Modal,
   NotifyConnectionRow,
   PROSE,
+  SettingsChoiceGroup,
   SettingsDisclosure,
   Switch,
 } from "../components/ui";
@@ -1598,23 +1599,25 @@ export function SpeechEnginesPanel({
           />
           {open === "tts" && (
             <div id="speech-tts-engines" className="border-t border-dialog-edge">
-              <div className="grid grid-cols-1 gap-px bg-dialog-edge">
-                <ChoiceCell
-                  title="This device"
-                  sub={chosenDeviceVoice?.label ?? "system TTS"}
-                  isSelected={chosenTtsEngine === null}
-                  onClick={() => void choose("tts", null)}
-                />
-                {ttsEngines.map((engine) => (
+              <SettingsChoiceGroup label="TTS engines">
+                <div className="grid grid-cols-1 gap-px bg-dialog-edge">
                   <ChoiceCell
-                    key={engine.id}
-                    title={gatewayEngineLabel(engine)}
-                    sub={engine.id === chosenTtsEngine ? engineWord(speaking) : "gateway"}
-                    isSelected={engine.id === chosenTtsEngine}
-                    onClick={() => void choose("tts", engine.id)}
+                    title="This device"
+                    sub={chosenDeviceVoice?.label ?? "system TTS"}
+                    isSelected={chosenTtsEngine === null}
+                    onClick={() => void choose("tts", null)}
                   />
-                ))}
-              </div>
+                  {ttsEngines.map((engine) => (
+                    <ChoiceCell
+                      key={engine.id}
+                      title={gatewayEngineLabel(engine)}
+                      sub={engine.id === chosenTtsEngine ? engineWord(speaking) : "gateway"}
+                      isSelected={engine.id === chosenTtsEngine}
+                      onClick={() => void choose("tts", engine.id)}
+                    />
+                  ))}
+                </div>
+              </SettingsChoiceGroup>
 
               {chosenTtsEngine === null ? (
                 <>
@@ -1629,41 +1632,45 @@ export function SpeechEnginesPanel({
                     </p>
                   )}
                   {deviceList.length > 0 && (
-                    <div className="grid grid-cols-1 gap-px border-t border-dialog-edge bg-dialog-edge">
-                      <ChoiceCell
-                        title="System default"
-                        sub="the voice this device prefers"
-                        isSelected={prefs.deviceVoice === null}
-                        onClick={() =>
-                          void chooseDeviceSetting(() => setSpeechDeviceVoice(null))
-                        }
-                      />
-                      {deviceList.map((voice) => (
+                    <SettingsChoiceGroup label="This device voices">
+                      <div className="grid grid-cols-1 gap-px bg-dialog-edge">
                         <ChoiceCell
-                          key={voice.id}
-                          title={voice.label}
-                          sub={[voice.language, voice.isDefault ? "device default" : null]
-                            .filter(Boolean)
-                            .join(" · ")}
-                          isSelected={prefs.deviceVoice === voice.id}
+                          title="System default"
+                          sub="the voice this device prefers"
+                          isSelected={prefs.deviceVoice === null}
                           onClick={() =>
-                            void chooseDeviceSetting(() => setSpeechDeviceVoice(voice.id))
+                            void chooseDeviceSetting(() => setSpeechDeviceVoice(null))
                           }
+                        />
+                        {deviceList.map((voice) => (
+                          <ChoiceCell
+                            key={voice.id}
+                            title={voice.label}
+                            sub={[voice.language, voice.isDefault ? "device default" : null]
+                              .filter(Boolean)
+                              .join(" · ")}
+                            isSelected={prefs.deviceVoice === voice.id}
+                            onClick={() =>
+                              void chooseDeviceSetting(() => setSpeechDeviceVoice(voice.id))
+                            }
+                          />
+                        ))}
+                      </div>
+                    </SettingsChoiceGroup>
+                  )}
+                  <SettingsChoiceGroup label="Speech rate">
+                    <div className="grid grid-cols-3 gap-px bg-dialog-edge">
+                      {SPEECH_RATES.map((rate) => (
+                        <ChoiceCell
+                          key={rate}
+                          title={`${rate}×`}
+                          sub={SPEECH_RATE_WORDS[String(rate)] ?? "speed"}
+                          isSelected={prefs.rate === rate}
+                          onClick={() => void chooseDeviceSetting(() => setSpeechRate(rate))}
                         />
                       ))}
                     </div>
-                  )}
-                  <div className="grid grid-cols-3 gap-px border-t border-dialog-edge bg-dialog-edge">
-                    {SPEECH_RATES.map((rate) => (
-                      <ChoiceCell
-                        key={rate}
-                        title={`${rate}×`}
-                        sub={SPEECH_RATE_WORDS[String(rate)] ?? "speed"}
-                        isSelected={prefs.rate === rate}
-                        onClick={() => void chooseDeviceSetting(() => setSpeechRate(rate))}
-                      />
-                    ))}
-                  </div>
+                  </SettingsChoiceGroup>
                 </>
               ) : (
                 <EngineProblem

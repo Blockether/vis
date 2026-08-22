@@ -3,6 +3,7 @@ import {
   forwardRef,
   useContext,
   useEffect,
+  useId,
   useRef,
   useState,
   type ButtonHTMLAttributes,
@@ -1254,6 +1255,29 @@ export function ChoiceCell({
   );
 }
 
+/** A NAMED CLUSTER OF SETTINGS CHOICES, distinct from its neighbouring clusters. */
+export function SettingsChoiceGroup({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  const headingId = useId();
+  return (
+    <section role="group" aria-labelledby={headingId} className="min-w-0">
+      <header className="flex min-h-7 items-center border-y border-dialog-edge bg-panel-2 px-3 py-1">
+        <h4
+          id={headingId}
+          className="border-l-2 border-accent pl-2 font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint"
+        >
+          {label}
+        </h4>
+      </header>
+      {children}
+    </section>
+  );
+}
 /**
  * A SETTINGS DIRECTION THAT OPENS its concrete choices.
  *

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 
@@ -147,20 +147,24 @@ describe("the speech-engines band", () => {
     await waitFor(() => expect(asked).toContain("asr:whisper-local:read"));
   });
 
-  it("labels machine TTS as gateway engines and offers up to three premium device voices", async () => {
+  it("separates gateway engines from the selected device's premium voices", async () => {
     const { client } = machine();
     render(<Harness client={client} />);
 
     fireEvent.click(await screen.findByRole("button", { name: /TTS/ }));
-    await waitFor(() => expect(choice(/This device/)).toBeTruthy());
-    const device = choice(/This device/)!;
-    const pocket = screen.getByRole("button", { name: /Pocket TTS \(gateway\)/ });
+    const engines = await screen.findByRole("group", { name: "TTS engines" });
+    const device = within(engines).getByRole("button", { name: /This device/ });
+    const pocket = within(engines).getByRole("button", { name: /Pocket TTS \(gateway\)/ });
     expect(device.getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: /Piper \(gateway\)/ })).toBeTruthy();
+    expect(within(engines).getByRole("button", { name: /Piper \(gateway\)/ })).toBeTruthy();
+    expect(within(engines).queryByRole("button", { name: /Samantha/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Piper \(local\)/ })).toBeNull();
-    expect(screen.getByRole("button", { name: /Samantha/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Ava/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /Tom/ })).toBeTruthy();
+
+    const deviceVoices = screen.getByRole("group", { name: "This device voices" });
+    expect(within(deviceVoices).getByRole("button", { name: /Samantha/ })).toBeTruthy();
+    expect(within(deviceVoices).getByRole("button", { name: /Ava/ })).toBeTruthy();
+    expect(within(deviceVoices).getByRole("button", { name: /Tom/ })).toBeTruthy();
+    expect(within(deviceVoices).queryByRole("button", { name: /Piper/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Alex/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Zoe/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Daniel/ })).toBeNull();
