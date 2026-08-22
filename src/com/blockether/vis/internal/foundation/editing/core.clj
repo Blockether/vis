@@ -4720,6 +4720,7 @@
      :call {:pos ["path"] :opt-pos ["start" "end"]}
      :before-fn (fs-access-before-fn :cat :file "file-read" read-arg-paths)
      :tag :observation
+     :presenter :observation
      :on-error-fn (tool-failure-on-error :cat :file)}))
 
 (def patch-symbol
@@ -4745,6 +4746,7 @@
      :call {:pos ["path" "edits"]}
      :before-fn (plan-gated-before-fn :patch :file read-arg-paths)
      :tag :mutation
+     :presenter :patch
      :on-error-fn (tool-failure-on-error :patch :file)}))
 
 (def grep-symbol
@@ -4781,6 +4783,7 @@
      :call {:pos ["options"] :rest :always}
      :before-fn (fs-access-before-fn :grep :dir "file-read" find-arg-paths)
      :tag :observation
+     :presenter :observation
      :on-error-fn (tool-failure-on-error :grep :dir)}))
 
 (defn available-editing-symbols [] [cat-symbol patch-symbol grep-symbol])

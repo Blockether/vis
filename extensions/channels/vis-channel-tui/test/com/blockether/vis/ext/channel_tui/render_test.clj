@@ -4722,6 +4722,45 @@
         (expect (str/includes? (render-row false) "▸ RUN CI"))
         (expect (str/includes? (render-row true) "▾ RUN CI"))
         (expect (str/includes? (render-row false) "▸ RUN CI"))))
+  (it "renders Activity as the form's collapsed chronological receipt"
+      (render/invalidate-cache!)
+      (let [trace
+            [{:forms [{:code "grep({...})" :success? true}]}]
+
+            run
+            {:view-id "activity-1"
+             :title "Activity"
+             :is-activity true
+             :status-text "1 settled · 1 running"
+             :status-tone :running
+             :anchor {:iteration-index 0 :form-index 0}}
+
+            render-row
+            (fn [is-reopened]
+              (-> (render/format-answer-with-thinking-data
+                    "Done."
+                    trace
+                    80
+                    nil
+                    nil
+                    false
+                    {:session-id "s1" :runs [(assoc run :is-reopened is-reopened)]})
+                  :text
+                  strip-ansi
+                  strip-sentinels))
+
+            collapsed
+            (render-row false)
+
+            expanded
+            (render-row true)]
+
+        (expect (str/includes? collapsed "▸ ACTIVITY 1 settled · 1 running"))
+        (expect (str/includes? expanded "▾ ACTIVITY 1 settled · 1 running"))
+        (expect (not (str/includes? collapsed "RUN Activity")))
+        (expect (< (.indexOf ^String collapsed "grep({...})")
+                   (.indexOf ^String collapsed "ACTIVITY")
+                   (.indexOf ^String collapsed "Done.")))))
   (it "a turn that watched nothing carries no rail at all"
       (render/invalidate-cache!)
       (let [payload (render/format-answer-with-thinking-data "Nothing here."

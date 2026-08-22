@@ -1103,3 +1103,62 @@
                      (.refresh ^TerminalScreen screen)))})]
       (is (str/ends-with? png "vis-live-view-settled.png"))
       (is (pos? (long (cap/ink png))) "the band belongs entirely to the run still going"))))
+
+(defn- activity-view
+  ([] (activity-view "activity-1"))
+  ([id]
+   (assoc (ci-view :id id)
+     :title "Activity"
+     :classification :activity)))
+
+(deftest activity-transcript-receipt-test
+  (testing "Activity starts as one transcript receipt and never becomes an independent stop target"
+    (let [p
+          (lv/opened (activity-view))
+
+          row
+          (lv/run-row p)]
+
+      (is (lv/activity? p))
+      (is (lv/dormant? p) "the default receipt gives no rows to the live band")
+      (is (nil? (lv/interruptible [p])) "turn cancellation remains the only stop action")
+      (is (:is-activity row))
+      (is (= "Polling the run" (:status-text row)))
+      (is (= :activity (get-in p [:view :classification])))))
+  (testing "explicit disclosure opens bounded detail and the same action folds it again"
+    (let [p
+          (lv/opened (activity-view))
+
+          open
+          (lv/reopened p)]
+
+      (is (not (lv/dormant? open)))
+      (is (:is-reopened open))
+      (is (nil? (lv/interruptible [open])))
+      (is (not-any? #(= "Esc" (first %)) (lv/hint open []))
+          "expanded Activity never advertises an impossible independent interrupt")
+      (is (not-any? #(= "Esc" (first %)) (lv/hint (lv/minimized open) []))
+          "collapsed Activity remains read-only")
+      (is (lv/dormant? (lv/reopened open))))))
+
+(deftest activity-transcript-state-test
+  (testing "open, patch, and close replace one anchored Activity row"
+    (with-db
+      (fn []
+        (swap! state/app-db assoc
+          :messages [{:role :user :text "work"} {:role :assistant :text "working"}]
+          :progress {:iterations [{:forms [{:code "await work()"}]}]})
+        (let [view (assoc (activity-view) :session-id "s1")]
+          (state/dispatch [:live-view-open view])
+          (is (= 1 (count (get-in @state/app-db [:messages 1 :runs]))))
+          (is (= {:iteration-index 0 :form-index 0}
+                 (get-in @state/app-db [:messages 1 :runs 0 :anchor])))
+          (state/dispatch
+            [:live-view-patch
+             (engine/normalize-patch
+               view
+               [{:op :set :node-id "now" :text "1 settled · 1 running" :tone :running}])])
+          (is (= "1 settled · 1 running" (get-in @state/app-db [:messages 1 :runs 0 :status-text])))
+          (state/dispatch [:live-view-close "activity-1" {:reason :completed}])
+          (is (= 1 (count (get-in @state/app-db [:messages 1 :runs]))))
+          (is (= :completed (get-in @state/app-db [:messages 1 :runs 0 :reason]))))))))

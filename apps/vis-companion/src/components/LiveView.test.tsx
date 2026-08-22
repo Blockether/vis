@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LiveView as LiveViewList, LiveViewPanel, useLiveViews } from './LiveView';
 import liveViewSource from './LiveView.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
+import activityFixture from '../lib/activity.fixture.json';
 import type { GatewayClient } from '../lib/gateway';
 import {
   LIVE_NOTE_CHARS,
@@ -24,6 +25,12 @@ afterEach(cleanup);
 function opened(): LiveView {
   const view = liveViewFromWire(fixture);
   if (!view) throw new Error('the engine fixture must be paintable');
+  return view;
+}
+
+function activityView(): LiveView {
+  const view = liveViewFromWire(activityFixture);
+  if (!view) throw new Error('the engine Activity fixture must be paintable');
   return view;
 }
 
@@ -117,6 +124,31 @@ describe('a live view on the phone', () => {
     paint();
     expect(screen.queryByRole('link', { name: 'report.md' })).toBeNull();
     expect(document.body.innerHTML).toContain('/tmp/report.md');
+  });
+  it('renders Activity as a collapsed chronological receipt with no independent stop', () => {
+    const onInterrupt = vi.fn();
+    paint({ view: activityView(), onInterrupt });
+
+    expect(screen.getByText('ACTIVITY · LIVE')).toBeTruthy();
+    expect(screen.getByText('Running 1 · Succeeded 1')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
+    expect(screen.queryByRole('list', { name: 'Invocation chronology' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    const chronology = screen.getByRole('list', { name: 'Invocation chronology' });
+    const chronologyText = chronology.textContent ?? '';
+    expect(chronologyText.indexOf('grep · 18 matches')).toBeLessThan(
+      chronologyText.indexOf('run_tests · suite'),
+    );
+    expect(screen.getByText('24 passed')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Collapse Activity' })).toBeTruthy();
+    expect(onInterrupt).not.toHaveBeenCalled();
+  });
+
+  it('labels the settled receipt without claiming it is still live', () => {
+    paint({ view: activityView(), isSettled: true });
+    expect(screen.getByText('ACTIVITY')).toBeTruthy();
+    expect(screen.queryByText('ACTIVITY · LIVE')).toBeNull();
   });
 });
 

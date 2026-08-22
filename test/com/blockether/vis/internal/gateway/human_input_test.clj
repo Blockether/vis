@@ -12,6 +12,7 @@
    bridge at the same time — is
    `com.blockether.vis.ext.channel-tui.human-input-cross-channel-test`."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.activity :as activity]
             [com.blockether.vis.internal.gateway.human-input :as gw-hi]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -941,14 +942,15 @@
      :links [{:id "run" :label "The run on GitHub" :target "https://example.com/run/42"}
              {:id "report" :label "report.md" :target-kind "path" :target "/tmp/report.md"}]}]})
 
-(defn- live-fixture-file
-  "`apps/vis-companion/src/lib/live-view.fixture.json`, found from the working
-   directory upwards so the test runs from the repo root or a sub-project."
-  []
+(defn- companion-fixture-file
+  "A Companion engine fixture, found from the repository root or a sub-project."
+  [filename]
   (loop [dir (.getCanonicalFile (io/file (System/getProperty "user.dir")))]
     (when dir
-      (let [f (io/file dir "apps/vis-companion/src/lib/live-view.fixture.json")]
+      (let [f (io/file dir "apps/vis-companion/src/lib" filename)]
         (if (.isFile f) f (recur (.getParentFile dir)))))))
+
+(defn- live-fixture-file [] (companion-fixture-file "live-view.fixture.json"))
 
 (defn- without-mint
   "The view without the two values every view mints for ITSELF."
@@ -982,3 +984,46 @@
                                               (get node "fields"))
                                             %)
                                  (get fixture "nodes"))))))))))
+
+(deftest the-app-activity-fixture-is-the-host-projection-test
+  (let [state
+        {:schema-version 1
+         :state :running
+         :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
+         :rows [{:id "call-1"
+                 :sequence 1
+                 :operation :grep
+                 :presenter :observation
+                 :classification :observation
+                 :state :succeeded
+                 :summary "18 matches"
+                 :duration-ms 41
+                 :resources []
+                 :evidence []}
+                {:id "call-2"
+                 :sequence 2
+                 :operation :run_tests
+                 :presenter :tests
+                 :classification :verification
+                 :state :running
+                 :summary "suite"
+                 :result-summary "24 passed"
+                 :resources []
+                 :evidence []}]
+         :omitted {:rows 0 :by-classification {}}}
+
+        file
+        (companion-fixture-file "activity.fixture.json")
+
+        fixture
+        (some-> file
+                slurp
+                wire/parse-json)
+
+        expected-nodes
+        (wire/parse-json (wire/json-str (activity/live-nodes state)))]
+
+    (is (some? file))
+    (when fixture
+      (is (= "activity" (get fixture "classification")))
+      (is (= expected-nodes (get fixture "nodes"))))))

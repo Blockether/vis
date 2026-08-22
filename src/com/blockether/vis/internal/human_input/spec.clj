@@ -147,7 +147,7 @@
    "steps" :steps       ; an ORDERED keyed checklist, each item carrying its tone
    "log" :log           ; append-only lines — the scrollback
    "table" :table       ; rows upserted and removed by row id, in a DECLARED order
-   "link" :link})                      ; labeled pointers the human OPENS
+   "link" :link})       ; labeled pointers the human OPENS
 
 (def keyed-node-types
   "Live node types holding a KEYED collection: every item is addressed by its own
@@ -267,12 +267,8 @@
     :total-lines})
 
 (def live-view-keys
-  "Every key a live view may carry, engine stamps included — a view crossing a
-   process boundary is rebuilt from exactly this.
-
-   No cancellable flag lives here: a question may be mandatory, a view never is,
-   so the human can stop watching ANY view — see `human-input/interrupt-live!`."
-  (into #{:title :description :source :session-id :channel-ids :nodes :timeout-ms}
+  "Every key a live view may carry, engine stamps included."
+  (into #{:title :description :source :session-id :channel-ids :nodes :timeout-ms :classification}
         live-view-stamp-keys))
 
 (def live-picture-keys
@@ -663,6 +659,7 @@
 (s/def ::cancel-label non-blank-string?)
 (s/def ::is-cancellable boolean?)
 (s/def ::timeout-ms nat-int?)
+(s/def ::classification #{:activity})
 
 (s/def ::channel-ids
   ;; One id twice would open the same dialog twice and answer it once.
@@ -831,6 +828,8 @@
 (s/def ::window-lines (s/int-in 1 (inc (long (:window-lines-cap log-defaults)))))
 (s/def ::done nat-int?)
 (s/def ::total pos-int?)
+(s/def ::path non-blank-string?)
+(s/def ::language non-blank-string?)
 (s/def ::align (set (vals live-aligns)))
 (s/def ::cells (s/coll-of string? :kind vector?))
 (s/def ::value-text string?)                                ; a stat's value AS SHOWN ("3.4 MB/s")
@@ -910,6 +909,7 @@
          (s/keys :req-un [::id ::label ::target-kind ::target] :opt-un [::tone])))
 
 (s/def ::links (s/coll-of ::link :kind vector? :max-count (long (:max-links link-defaults))))
+
 
 ;; A table is a KEYED collection, so its paint order has to be DECLARED or the
 ;; terminal and the phone are free to disagree. `:insertion` (the default) keeps
@@ -1023,10 +1023,7 @@
 (s/def ::live-view
   (s/and #(closed? live-view-keys %)
          (s/keys :req-un [::id ::title ::channel-ids ::nodes ::timeout-ms ::seq ::created-at]
-                 ;; `::session-id` is optional HERE and required at `open-live!`, exactly
-                 ;; as a request's is: a view can be declared by a builder that has no
-                 ;; session yet, and it is the MOUNT that must name the session it runs in.
-                 :opt-un [::description ::source ::session-id])))
+                 :opt-un [::description ::source ::session-id ::classification])))
 
 ;; One patch. `:seq` is monotonic PER VIEW, so a surface that sees a gap re-reads
 ;; the snapshot instead of painting a torn view.

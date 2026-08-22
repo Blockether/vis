@@ -2,6 +2,7 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.activity :as activity]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl]
@@ -2046,6 +2047,44 @@
           (expect (= (:view-id result) (:view-id row)))
           ;; The picture stays in the VERDICT — a row is a row.
           (expect (nil? (:view row))))))
+  (it
+    "settles system Activity as one bounded receipt without persisting replacement patches"
+    (recorded
+      (fn []
+        (let [sink
+              (atom [])
+
+              session-id
+              (str "activity-test-" (random-uuid))
+
+              state
+              (activity/empty-state {:evaluation-id (str (random-uuid)) :iteration 2 :form-index 1})
+
+              view
+              (binding [mpl/*attachment-sink* sink]
+                (hi/open-activity! {:session-id session-id
+                                    :iteration-id "iteration-2"
+                                    :iteration 2
+                                    :form-index 1
+                                    :state state}))
+
+              file
+              (live-sink/view-file session-id (:id view))]
+
+          (hi/patch-activity! (:id view) state)
+          (let [result
+                (binding [mpl/*attachment-sink* sink]
+                  (hi/close-live! (:id view) {:summary "Activity settled"}))
+
+                lines
+                (live-sink/read-range file 0 20)]
+
+            (expect (= 1 (count @sink)))
+            (expect (= (:artifact-id result) (:id (first @sink))))
+            (expect (= "activity.live.ndjson" (:filename (first @sink))))
+            (expect (= ["open" "close"] (mapv :kind lines)))
+            (expect (= "activity" (get-in (first lines) [:view :classification])))
+            (expect (nil? (hi/live-view (:id view)))))))))
   (it "seals the record with the artifact it filed, so a view read back off disk names it too"
       (let [{:keys [result file]}
             (filed (live-spec {:id "now" :type "status" :text "Polling…"}))

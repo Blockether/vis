@@ -3161,6 +3161,7 @@
      :ticker-fn (shell-ticker "run")
      :inject-env? true
      :tag :mutation
+     :presenter :shell
      :on-error-fn (shell-on-error :shell)}))
 
 
@@ -3189,6 +3190,7 @@
               {:name "lines" :note "N lines; negative scrolls up"}]
      :inject-env? true
      :tag :observation
+     :presenter :shell
      :ticker-fn (shell-ticker "logs")
      :on-error-fn (shell-on-error :_shell-logs)}))
 
@@ -3207,6 +3209,7 @@
           "lives here so no caller writes one.")
      :inject-env? true
      :tag :observation
+     :presenter :shell
      :ticker-fn (shell-ticker "wait")
      :on-error-fn (shell-on-error :_shell-wait)}))
 
@@ -3220,6 +3223,7 @@
      "TRANSPORT for `sh.type(text, is_enter=True)` — call the handle. Writes keystrokes to a background shell's stdin."
      :inject-env? true
      :tag :mutation
+     :presenter :shell
      :ticker-fn (shell-ticker "send")
      :on-error-fn (shell-on-error :_shell-type)}))
 
@@ -3233,6 +3237,7 @@
      "TRANSPORT for `sh.stop()` — call the handle. Kills a background shell's process tree and drops its retained logs and resource."
      :inject-env? true
      :tag :mutation
+     :presenter :shell
      :ticker-fn (shell-ticker "stop")
      :on-error-fn (shell-on-error :_shell-stop)}))
 

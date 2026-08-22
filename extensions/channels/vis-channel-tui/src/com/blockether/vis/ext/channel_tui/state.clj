@@ -2934,48 +2934,65 @@
                       message))
                   (or messages [])))))
 
+(defn- upsert-run-row
+  "Place one transcript receipt on the assistant message that owns its form.
+
+   A running Activity replaces the same row after every patch; an ordinary run
+   reaches this helper only once when it settles."
+  [workspace pane]
+  (let [messages
+        (vec (:messages workspace))
+
+        idx
+        (last (keep-indexed (fn [i message]
+                              (when (= :assistant (:role message)) i))
+                            messages))
+
+        row
+        (lv/run-row pane)]
+
+    (if-not idx
+      workspace
+      (assoc workspace
+        :messages (update-in messages
+                             [idx :runs]
+                             (fn [runs]
+                               (let [runs (vec (or runs []))]
+                                 (if (some #(= (:view-id row) (:view-id %)) runs)
+                                   (mapv #(if (= (:view-id row) (:view-id %)) row %) runs)
+                                   (conj runs row)))))))))
+
+(defn- mount-live-pane
+  [workspace view]
+  (if (some #(= (:id view) (lv/view-id %)) (:live-views workspace))
+    workspace
+    (let [pane (assoc (lv/opened view) :trace-anchor (current-live-trace-anchor workspace))]
+      (cond-> (update workspace :live-views (fnil conj []) pane)
+        (lv/activity? pane)
+        (upsert-run-row pane)))))
+
 (reg-event-db :live-view-open
               ;; Mounted on the session's own tab and idempotent by view id. Capture the
               ;; executing form now; by close time a later form may already be active.
               (fn [db [_ view]]
                 (let [target (session-target-tab db (:session-id view))]
-                  (if (= :not-here target)
-                    db
-                    (update-tab db
-                                target
-                                (fn [workspace]
-                                  (if (some #(= (:id view) (lv/view-id %)) (:live-views workspace))
-                                    workspace
-                                    (update workspace
-                                            :live-views
-                                            (fnil conj [])
-                                            (assoc (lv/opened view)
-                                              :trace-anchor (current-live-trace-anchor
-                                                              workspace))))))))))
+                  (if (= :not-here target) db (update-tab db target #(mount-live-pane % view))))))
 
-(reg-event-db :live-view-patch
-              (fn [db [_ patch]]
-                (update-live-pane db (:view-id patch) #(lv/patched % patch))))
-
-(defn- file-run-row
-  "Hang a FINISHED run's row on the assistant message the turn is writing.
-
-   The transcript is where a run that has ended belongs: it is what the human is
-   already reading, and it keeps every run instead of only the last one. Nothing
-   is filed when the tab has no assistant message yet — a run with no turn to
-   belong to has nowhere to be read."
-  [w pane]
-  (let [messages
-        (vec (:messages w))
-
-        idx
-        (last (keep-indexed (fn [i m]
-                              (when (= :assistant (:role m)) i))
-                            messages))]
-
-    (if idx
-      (assoc w :messages (update-in messages [idx :runs] (fnil conj []) (lv/run-row pane)))
-      w)))
+(reg-event-db
+  :live-view-patch
+  (fn [db [_ patch]]
+    (across-tabs
+      db
+      (fn [workspace]
+        (if-let [pane (first (filter #(= (:view-id patch) (lv/view-id %)) (:live-views workspace)))]
+          (let [next-pane (lv/patched pane patch)]
+            (cond-> (update workspace
+                            :live-views
+                            (fn [panes]
+                              (mapv #(if (= (:view-id patch) (lv/view-id %)) next-pane %) panes)))
+              (lv/activity? next-pane)
+              (upsert-run-row next-pane)))
+          workspace)))))
 
 (reg-event-db :live-view-close
               ;; The verdict is the RUN's answer, not the pane's: the extension reads
@@ -3003,7 +3020,7 @@
                                                (fn [panes]
                                                  (mapv #(if (= view-id (lv/view-id %)) settled %)
                                                        panes)))
-                                       (file-run-row settled)))
+                                       (upsert-run-row settled)))
                                  w)))))
 
 (reg-event-db :live-view-reopen

@@ -929,6 +929,94 @@
                  (catch Throwable _ nil))
             (try (.close ^org.graalvm.polyglot.Context pc true) (catch Throwable _ nil))))))))
 
+(defdescribe
+  python-tool-activity-lifecycle-test
+  ;; Regression, issue td-3614f0: opening Activity lifted the evaluation wall,
+  ;; so a tool that hung after its start event never timed out or settled.
+  ;; Regression, issue td-1ec00e: settlement marked Activity closed before its
+  ;; close succeeded, so one storage failure stranded a running receipt forever.
+  (it
+    "pairs a real guest tool call and settles its Activity receipt on timeout"
+    (let [env {:activity/evaluation-id "00000000-0000-4000-8000-000000000007"
+               :activity/form-index 4
+               :activity/iteration 3
+               :session-id "session-activity"
+               :iteration-id "iteration-activity"
+               :workspace/root (System/getProperty "user.dir")
+               :workspace {:root (System/getProperty "user.dir")
+                           :repo-root (System/getProperty "user.dir")}}]
+      (tpc/with-own
+        [pc (extension/builtin-sandbox-bindings (constantly env))]
+        (let [events (atom [])
+              close-attempts (atom 0)
+              close-live! hi/close-live!]
+
+          (with-redefs-fn {(requiring-resolve
+                             'com.blockether.vis.internal.human-input.live-sink/views-dir)
+                           (constantly (java.io.File. (System/getProperty "java.io.tmpdir")
+                                                      (str "vis-activity-" (random-uuid))))
+                           #'hi/close-live! (fn [& args]
+                                              (if (= 1 (swap! close-attempts inc))
+                                                (throw (ex-info "simulated first close failure" {}))
+                                                (apply close-live! args)))}
+            #(let
+               [result
+                (binding [rt/*eval-timeout-ms* 400]
+                  ((deref #'lp/run-python-code)
+                    pc
+                    "grep({'query': 'org.clojure', 'paths': ['deps.edn']})\nwhile True:\n    pass"
+                    :tool-event-fn
+                    (fn [event]
+                      (swap! events conj event))
+                    :env
+                    env))] (expect (true? (:timeout? result))) (expect (= [:start :terminal]
+                                                                          (mapv :phase @events)))
+               (expect (= 1 (count (set (map :invocation-id @events)))))
+               (expect (= #{"00000000-0000-4000-8000-000000000007"}
+                          (set (map :evaluation-id @events)))) (expect (= #{4}
+                                                                          (set (map :form-index
+                                                                                    @events))))
+               (expect (= [2 ["activity.live.ndjson"]]
+                          [@close-attempts (mapv :filename (:attachments result))]))
+               (expect (str/includes? (:stdout result) "**timeout**")) (expect (str/includes?
+                                                                                 (:stdout result)
+                                                                                 "[ok]"))
+               (expect (not (str/includes? (:stdout result) "[running]")))
+               (expect (empty? (hi/open-live-ids))))))))))
+
+(defdescribe activity-dispatch-order-test
+             ;; Regression, issue td-74427c: concurrent callbacks could reduce S2 before
+             ;; publishing stale S1, while a slow listener blocked the tool callback itself.
+             (it "publishes snapshots FIFO without blocking their callback threads"
+                 (let [[dispatch! drain! shutdown!]
+                       (#'lp/serial-activity-dispatcher)
+
+                       release-first
+                       (promise)
+
+                       entered-first
+                       (promise)
+
+                       snapshots
+                       (atom [])
+
+                       submit
+                       (fn [n]
+                         (dispatch! (fn []
+                                      (when (= 1 n) (deliver entered-first true) @release-first)
+                                      (swap! snapshots conj n))))]
+
+                   (try (submit 1)
+                        @entered-first
+                        (let [started (System/nanoTime)]
+                          (submit 2)
+                          (submit 3)
+                          (expect (< (/ (- (System/nanoTime) started) 1e6) 100.0)))
+                        (deliver release-first true)
+                        (drain!)
+                        (expect (= [1 2 3] @snapshots))
+                        (finally (shutdown!))))))
+
 (defdescribe tool-call-execution-test
              ;; REGRESSION: tool calling once shipped 100% broken — `run-iteration`
              ;; synthesized `env* (assoc environment)` (a 1-arg assoc) before execute-code, so
