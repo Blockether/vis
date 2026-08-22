@@ -4959,37 +4959,49 @@
                      (when-not (seq body-rows) [{:line (str result-marker "") :meta nil}])))))))
 
 (defn- run-row-entries
-  "Finished-run disclosures. Anchored rows sit directly after their executing
-   form; unplaced legacy rows receive one leading transcript margin."
+  "Transcript-native run disclosures. Activity is present from its first host call;
+   ordinary extension runs appear when finished. Anchored rows sit directly after
+   their executing form and unplaced legacy rows receive one leading margin."
   ([runs max-w session-id] (run-row-entries runs max-w session-id true))
   ([runs max-w session-id leading-margin?]
    (if (empty? runs)
      []
-     (into (if leading-margin? [{:line "" :meta nil}] [])
-           (map
-             (fn [{:keys [view-id title reason lines elapsed-ms is-reopened]}]
-               (let [verdict
-                     (some-> reason
-                             name)
+     (into
+       (if leading-margin? [{:line "" :meta nil}] [])
+       (map
+         (fn [{:keys [view-id title reason lines elapsed-ms is-reopened is-activity status-text
+                      status-tone]}]
+           (let [verdict
+                 (some-> reason
+                         name)
 
-                     verdict
-                     (if (contains? #{:failed :interrupted} reason)
-                       (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
-                       verdict)
+                 verdict
+                 (if (contains? #{:failed :interrupted :timeout :cancelled} reason)
+                   (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
+                   verdict)
 
-                     parts
-                     (remove str/blank?
-                       [title verdict
-                        (when (pos? (long (or lines 0)))
-                          (str lines (if (= 1 (long lines)) " line" " lines")))
-                        (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))])]
+                 status
+                 (if (= :error status-tone)
+                   (str p/INLINE_ERR_ON status-text p/INLINE_ERR_OFF)
+                   status-text)
 
-                 {:line
-                  (ellipsize-cols
-                    (str (if is-reopened " ▾ " " ▸ ") (band-label "RUN") " " (str/join " · " parts))
-                    (max 1 (long max-w)))
-                  :meta {:kind :live-reopen :view-id (str view-id) :session-id (str session-id)}}))
-             runs)))))
+                 parts
+                 (remove str/blank?
+                   (if is-activity
+                     [status verdict
+                      (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))]
+                     [title verdict
+                      (when (pos? (long (or lines 0)))
+                        (str lines (if (= 1 (long lines)) " line" " lines")))
+                      (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))]))]
+
+             {:line (ellipsize-cols (str (if is-reopened " ▾ " " ▸ ")
+                                         (band-label (if is-activity "ACTIVITY" "RUN"))
+                                         " "
+                                         (str/join " · " parts))
+                                    (max 1 (long max-w)))
+              :meta {:kind :live-reopen :view-id (str view-id) :session-id (str session-id)}}))
+         runs)))))
 
 (defn- place-run-rows
   "Attach run rows to their captured zero-based iteration/form positions.

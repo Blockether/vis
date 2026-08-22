@@ -692,3 +692,77 @@
         (doseq [k ["is_pass" "pass" "fail" "errored" "skipped" "total" "failures" "message"
                    "output"]]
           (expect (contains? named k) (str "run_tests never names `" k "`: " result))))))
+
+
+(defn activity-success-probe
+  "Observed test operation that returns one canonical successful envelope."
+  [_]
+  (extension/success {:result {:ok true}}))
+
+(defn activity-failure-probe
+  "Observed test operation that fails before producing an envelope."
+  [_]
+  (throw (ex-info "probe failed" {:probe true})))
+
+(defn activity-cancel-probe
+  "Observed test operation interrupted like a cancelled host wait."
+  [_]
+  (throw (InterruptedException. "cancelled")))
+
+(defdescribe invocation-lifecycle-event-test
+             (it "emits exactly one start and public-success terminal"
+                 (let [events
+                       (atom [])
+
+                       sym
+                       (extension/symbol #'activity-success-probe
+                                         {:tag :observation :presenter :tests})
+
+                       ext
+                       {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
+
+                       result
+                       (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                         (extension/invoke-symbol-wrapper ext sym [{}] {}))]
+
+                   (expect (true? (:ok result)))
+                   (expect (= [:start :terminal] (mapv :phase @events)))
+                   (expect (= [:tests :tests] (mapv :presenter @events)))
+                   (expect (= [:observation :observation] (mapv :classification @events)))
+                   (expect (= 1 (count (set (map :invocation-id @events)))))
+                   (expect (true? (:succeeded (second @events))))))
+             (it "emits one failed terminal while preserving the thrown exception"
+                 (let [events
+                       (atom [])
+
+                       sym
+                       (extension/symbol #'activity-failure-probe {:tag :observation})
+
+                       ext
+                       {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
+
+                       message
+                       (try (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                              (extension/invoke-symbol-wrapper ext sym [{}] {}))
+                            nil
+                            (catch Throwable t (ex-message t)))]
+
+                   (expect (= "probe failed" message))
+                   (expect (= [:start :terminal] (mapv :phase @events)))
+                   (expect (true? (:failed (second @events))))))
+             (it "classifies interruption as cancellation rather than failure"
+                 (let [events
+                       (atom [])
+
+                       sym
+                       (extension/symbol #'activity-cancel-probe {:tag :observation})
+
+                       ext
+                       {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}]
+
+                   (try (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                          (extension/invoke-symbol-wrapper ext sym [{}] {}))
+                        (catch Throwable _ nil))
+                   (expect (= 2 (count @events)))
+                   (expect (true? (:cancelled (second @events))))
+                   (expect (nil? (:failed (second @events)))))))

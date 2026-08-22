@@ -76,7 +76,6 @@ export const LIVE_SORT_DIRS = ['asc', 'desc'] as const;
 
 /** A log holds this many lines in its window; the record keeps them all. */
 export const LIVE_LOG_WINDOW = 2000;
-
 /** A table holds this many rows. */
 export const LIVE_TABLE_MAX_ROWS = 5000;
 
@@ -226,12 +225,8 @@ export interface LiveView {
   seq: number;
   created_at?: number;
   source?: string;
-  /**
-   * NOT on the wire: this app's own note that a patch frame arrived for a seq
-   * it never saw the predecessor of, so the picture is behind and the snapshot
-   * has to be re-read. A view that quietly drops a frame paints a table with a
-   * missing row and says nothing about it.
-   */
+  classification?: 'activity';
+  /** Local reconnect marker, never sent on the wire. */
   is_stale?: boolean;
 }
 
@@ -454,7 +449,7 @@ function liveNodesFromWire(raw: unknown): LiveNode[] {
     .map(liveNodeFromWire)
     .filter((node): node is LiveNode => node !== null);
 }
-/** One view, or `null` when it carries no id, no title or nothing to paint. */
+/** One view, or `null` when its current closed contract cannot be painted. */
 export function liveViewFromWire(raw: unknown): LiveView | null {
   const view = record(raw);
   if (!view) return null;
@@ -462,10 +457,12 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
   const title = text(view.title).trim();
   if (id === '' || title === '') return null;
   const nodes = liveNodesFromWire(view.nodes);
-  // A view IS its nodes — `human-input.spec/::nodes` refuses an empty vector — so
-  // a frame this app cannot paint a single node of is dropped rather than painted
-  // as an empty box the operator would read as "nothing is happening here".
   if (nodes.length === 0) return null;
+
+  const classification = optionalText(view.classification);
+  const activity = classification === 'activity';
+  if (classification !== undefined && !activity) return null;
+
   return {
     id,
     title,
@@ -474,6 +471,7 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     seq: count(view.seq, 0),
     created_at: optionalNumber(view.created_at),
     source: optionalText(view.source),
+    ...(activity ? { classification: 'activity' as const } : {}),
   };
 }
 

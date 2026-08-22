@@ -27,7 +27,9 @@
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.anomaly.core :as anomaly]
+            [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.egress-proxy :as egress-proxy]
             [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.paths :as paths]
@@ -100,12 +102,28 @@
            (if success? (nil? error) (or (nil? success?) (some? error))))))
 
 (def ^:dynamic *tool-event-sink*
-  "Optional per-eval sink for observable tool lifecycle events. Bound by
-   tests and UI/progress adapters that need to know a tool started before
-   its fn returns. The sink receives plain event maps."
+  "Optional per-eval sink for immutable tool lifecycle events. The sink is a
+   presentation observer: a failure is logged and cannot change tool behavior."
   nil)
 
-(defn- record-tool-event! [event] (when *tool-event-sink* (*tool-event-sink* event)) event)
+(def ^:dynamic *tool-event-context*
+  "Evaluation-scoped Activity identity, sequence allocators, and form anchor."
+  nil)
+
+(def ^:dynamic *current-invocation-id*
+  "Invocation whose body is running, used only as observed parentage."
+  nil)
+
+(defn- record-tool-event!
+  [event]
+  (when *tool-event-sink*
+    (try (*tool-event-sink* event)
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::tool-event-sink-failed
+                      :error t
+                      :msg "Activity observer rejected a lifecycle event"}))))
+  event)
 
 (def ^:dynamic *current-form-idx*
   "Zero-based index of the top-level form currently evaluating, bound
@@ -396,6 +414,7 @@
 ;; and `register-extension!` walks the symbol vec to populate the
 ;; op-keyword -> tag index automatically.
 (s/def :ext.symbol/tag #{:observation :mutation})
+(s/def :ext.symbol/presenter keyword?)
 ;; High-fan-out batch-hint threshold (Phase 4). When a single display-block
 ;; accumulates MORE than this many ops with the same `:op`, the iteration
 ;; surfaces a soft "BATCH HINT" note nudging the agent to call the tool once
@@ -477,11 +496,11 @@
          seq))
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc :ext.symbol/arglists]
-          :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/batch-hint
-                :ext.symbol/before-fn :ext.symbol/active-fn :ext.symbol/inject-env?
-                :ext.symbol/after-fn :ext.symbol/on-error-fn :ext.symbol/ticker-fn
-                :ext.symbol/source :ext.symbol/name :ext.symbol/call :ext.symbol/description
-                :ext.symbol/result :ext.symbol/params]))
+          :opt [:ext.symbol/raw? :ext.symbol/hidden? :ext.symbol/tag :ext.symbol/presenter
+                :ext.symbol/batch-hint :ext.symbol/before-fn :ext.symbol/active-fn
+                :ext.symbol/inject-env? :ext.symbol/after-fn :ext.symbol/on-error-fn
+                :ext.symbol/ticker-fn :ext.symbol/source :ext.symbol/name :ext.symbol/call
+                :ext.symbol/description :ext.symbol/result :ext.symbol/params]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc] :opt [:ext.symbol/source]))
@@ -1140,6 +1159,9 @@
           (:tag opts)
           (assoc :ext.symbol/tag (:tag opts))
 
+          (:presenter opts)
+          (assoc :ext.symbol/presenter (:presenter opts))
+
           ;; :call — how a Python call's folded kwargs re-expand onto this symbol's
           ;; positional parameters. See the `:ext.symbol/call` spec above.
           (:call opts)
@@ -1683,28 +1705,6 @@
       (when-not (str/blank? (or line ""))
         (if (> (count line) 96) (str (subs line 0 93) "…") line)))))
 
-(defn- tool-start-event
-  [ext sym-entry args started-at-ms env]
-  (let [sym
-        (:ext.symbol/symbol sym-entry)
-
-        label
-        (tool-start-label args)
-
-        phrase
-        (tool-start-phrase sym-entry env args)]
-
-    (cond-> {:phase :tool-start
-             :status :running
-             :op (keyword (tool-call-name ext sym))
-             :extension (:ext/name ext)
-             :symbol sym
-             :started-at-ms (long started-at-ms)}
-      label
-      (assoc :label label)
-
-      phrase
-      (assoc :phrase phrase))))
 
 (defn- default-tool-op-keyword
   [ext sym-entry]
@@ -2183,7 +2183,7 @@
         args))
     args))
 
-(defn invoke-symbol-wrapper
+(defn- invoke-symbol-wrapper*
   "Full invocation pipeline for an observed tool symbol entry:
    before-fn -> fn -> after-fn, with on-error-fn catching :fn errors.
 
@@ -2238,12 +2238,6 @@
         (let [{call-env :env f :fn call-args :args}
               before-out
 
-              ;; PRE-injection user args — the live ticker's `Vis is running:
-              ;; <op> <label>` reads the primary arg (cmd/path/query), not the
-              ;; env map a later `:inject-env?` prepends.
-              clean-args
-              call-args
-
               ;; :inject-env? prepends the live env as the first arg — decoupled
               ;; from before-fn, which is now a pure hook (not a gate / injector).
               call-args
@@ -2253,19 +2247,9 @@
               (run-op-before-hooks op-kw call-env call-args)
 
               call-result
-              (let [ct0
-                    (System/nanoTime)
-
-                    call-started-at-ms
-                    (now-ms)]
-
-                (record-tool-event!
-                  (tool-start-event ext sym-entry clean-args call-started-at-ms call-env))
-                (try (let [r
-                           (invoke-operation op-kw call-env f call-args)
-
-                           ms
-                           (elapsed-ms ct0)]
+              (let [ct0 (System/nanoTime)]
+                (try (let [r (invoke-operation op-kw call-env f call-args)
+                           ms (elapsed-ms ct0)]
 
                        (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
                        {:result r})
@@ -2295,6 +2279,70 @@
 
           (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
           (tool-result->public-value result))))))
+
+(defn invoke-symbol-wrapper
+  "Run one observed tool invocation and emit paired Activity lifecycle events.
+
+   Identity and wrapper-entry order are allocated before hooks. The terminal is
+   emitted only after recovery, hooks, envelope validation, and public-value
+   conversion determine exactly what Python receives. Nested wrappers inherit the
+   actual parent invocation id; concurrent terminal order follows observation."
+  [ext sym-entry args env]
+  (if-not *tool-event-sink*
+    (invoke-symbol-wrapper* ext sym-entry args env)
+    (let [ctx
+          (or *tool-event-context* (activity-event/context {}))
+
+          invocation
+          (activity-event/invocation ctx *current-invocation-id*)
+
+          sym
+          (:ext.symbol/symbol sym-entry)
+
+          operation
+          (keyword (tool-call-name ext sym))
+
+          presenter
+          (or (:ext.symbol/presenter sym-entry) :generic)
+
+          started-at-ms
+          (now-ms)
+
+          details
+          {:operation operation
+           :presenter presenter
+           :classification (:ext.symbol/tag sym-entry)
+           :extension (:ext/name ext)
+           :symbol sym
+           :label (tool-start-label args)
+           :phrase (tool-start-phrase sym-entry env args)
+           :args args}]
+
+      (record-tool-event! (activity-event/start-event ctx invocation details))
+      (binding [*tool-event-context*
+                ctx
+
+                *current-invocation-id*
+                (:invocation-id invocation)]
+
+        (try (let [value (invoke-symbol-wrapper* ext sym-entry args env)]
+               (record-tool-event! (activity-event/terminal-event ctx
+                                                                  invocation
+                                                                  (assoc details
+                                                                    :started-at-ms started-at-ms
+                                                                    :outcome :succeeded
+                                                                    :result value)))
+               value)
+             (catch Throwable t
+               (record-tool-event! (activity-event/terminal-event
+                                     ctx
+                                     invocation
+                                     (assoc details
+                                       :started-at-ms started-at-ms
+                                       :outcome
+                                       (if (cancellation/cancellation? t) :cancelled :failed)
+                                       :error t)))
+               (throw t)))))))
 
 (def ^:private ^:dynamic *log-writer*
   "Writer that sends output to the log file instead of stdout/stderr.

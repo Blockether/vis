@@ -485,6 +485,63 @@ function NodeCell({
   );
 }
 
+function ActivityViewPanel({
+  view,
+  isSettled,
+}: {
+  view: LiveViewModel;
+  isSettled: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const status = view.nodes.find((node): node is LiveStatusNode => node.type === 'status');
+  const steps = view.nodes.find((node): node is LiveStepsNode => node.type === 'steps');
+  const stats = view.nodes.find((node): node is LiveStatNode => node.type === 'stat');
+  const facts = stats?.stats.filter((stat) => stat.value_text !== '0') ?? [];
+
+  return (
+    <section className="overflow-hidden border border-dialog-edge bg-panel" aria-label="Activity">
+      <header className="border-b border-dialog-edge bg-panel-2 px-3 py-1.5">
+        <Disclosure
+          isOpen={expanded}
+          aria-label={expanded ? 'Collapse Activity' : 'Expand Activity'}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          <span className="min-w-0 flex-1 text-left">
+            <span className="block font-mono text-body font-bold text-white">
+              {isSettled ? 'ACTIVITY' : 'ACTIVITY · LIVE'}
+            </span>
+            <span className={`block truncate font-mono text-chip ${status ? TONE_INK[status.tone] : 'text-dialog-hint'}`}>
+              {status?.text ?? 'running'}
+            </span>
+          </span>
+        </Disclosure>
+      </header>
+      {!expanded && facts.length > 0 && (
+        <p className="px-3 py-2 font-mono text-chip text-dialog-hint">
+          {facts.map((fact) => `${fact.label} ${fact.value_text}`).join(' · ')}
+        </p>
+      )}
+      {expanded && (
+        <ol className="divide-y divide-dialog-edge" aria-label="Invocation chronology">
+          {(steps?.steps ?? []).map((step, index) => (
+            <li key={step.id} className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] gap-2 px-3 py-2 font-mono text-chip">
+              <span className="text-right text-dialog-hint">{index + 1}</span>
+              <span className="min-w-0">
+                <span className={`block break-words ${TONE_INK[step.tone]}`}>{step.label}</span>
+                {step.detail && <span className="block break-words text-dialog-hint">{step.detail}</span>}
+              </span>
+              {step.value && <span className="text-dialog-hint">{step.value}</span>}
+            </li>
+          ))}
+          {(steps?.steps.length ?? 0) === 0 && (
+            <li className="px-3 py-2 font-mono text-chip text-dialog-hint">No retained invocations</li>
+          )}
+        </ol>
+      )}
+    </section>
+  );
+}
+
 /**
  * ONE view, painted. Pure: everything it knows arrived as a prop, which is what
  * lets the whole picture be rendered from the engine's own fixture in a test.
@@ -526,6 +583,10 @@ export function LiveViewPanel({
     setNote(null);
     send(typed.trim() === '' ? null : typed.trim());
   };
+  if (view.classification === 'activity') {
+    return <ActivityViewPanel view={view} isSettled={isSettled} />;
+  }
+
   return (
     <section
       className="overflow-hidden border border-dialog-edge bg-panel"

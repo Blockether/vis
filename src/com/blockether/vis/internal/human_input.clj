@@ -38,6 +38,7 @@
    event is worthless."
   (:require [charred.api :as json]
             [clojure.string :as str]
+            [com.blockether.vis.internal.activity :as activity]
             [com.blockether.vis.internal.channel-events :as channel-events]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.gateway.wire :as wire]
@@ -72,6 +73,10 @@
   (zero? (long (or timeout-ms no-timeout-ms))))
 
 (defonce ^:private pending (atom {}))
+
+(def ^:private ^:dynamic *system-live-declaration*
+  "True only while the host declares its own non-interruptible Activity view."
+  false)
 
 (defonce ^:private secrets (atom {}))
 
@@ -1158,7 +1163,19 @@
                                    (str/join ", " (sort (mapv :id nodes))))))
 
         session-id
-        (or (trimmed (pick* view :session-id)) (ambient-session-id))]
+        (or (trimmed (pick* view :session-id)) (ambient-session-id))
+
+        classification
+        (some-> (trimmed (pick* view :classification))
+                str/lower-case)
+
+        activity?
+        (= "activity" classification)
+
+        _
+        (when (and activity? (not *system-live-declaration*))
+          (invalid-live-view!
+            "Activity views are host-owned and cannot be declared by an extension"))]
 
     (checked-live-view (cond-> {:id (str (random-uuid))
                                 :title title
@@ -1175,7 +1192,10 @@
                          (assoc :description (trimmed (pick* view :description)))
 
                          (trimmed (pick* view :source))
-                         (assoc :source (trimmed (pick* view :source)))))))
+                         (assoc :source (trimmed (pick* view :source)))
+
+                         activity?
+                         (assoc :classification :activity)))))
 
 (def ^:private live-op-value
   "How ONE key of a patch operation is normalized, by key. A table rather than a
@@ -1726,6 +1746,7 @@
 
         entry
         {:kind :live
+         :is-system *system-live-declaration*
          :id view-id
          :view (atom view)
          :file (live-sink/open! view)
@@ -1761,6 +1782,22 @@
                            "and it still ends in the verdict the model reads")}))
     view))
 
+(defn open-activity!
+  "Open one host-owned Activity projection through the ordinary Live View rail."
+  [{:keys [session-id state]}]
+  (binding [*system-live-declaration*
+            true
+
+            ;; Activity reports work inside the enclosing evaluation; unlike an
+            ;; extension-owned watch view, it must never disable that watchdog.
+            rt/*blocking-wall-hold*
+            nil]
+
+    (open-live!
+      (cond-> {:title "Activity" :classification "activity" :nodes (activity/live-nodes state)}
+        session-id
+        (assoc :session-id session-id)))))
+
 (defn patch-live!
   "Apply `patch` to live view `view-id` and return the view it made.
 
@@ -1783,13 +1820,27 @@
             (live/apply-patch @cell applied)]
 
         (reset! cell patched)
-        (live-sink/append! (:file entry) applied)
+        ;; Activity replacement patches are ephemeral; its final verdict already
+        ;; carries the bounded materialized picture used for restore.
+        (when-not (:is-system entry) (live-sink/append! (:file entry) applied))
         (publish! (:channel-ids entry)
                   {:op :human-input/live-patch
                    :view-id view-id
                    :session-id (:session-id entry)
                    :patch applied})
         patched))))
+
+(defn patch-activity!
+  "Replace a running Activity's bounded status, counters, and chronological rows."
+  ([view-id state] (patch-activity! view-id state false))
+  ([view-id state settled?]
+   (let [[status counts rows] ((if settled? activity/settled-live-nodes activity/live-nodes) state)]
+     (patch-live!
+       view-id
+       {:ops
+        [{:op "set" :node-id "activity-status" :text (:text status) :tone (name (:tone status))}
+         {:op "set" :node-id "activity-counts" :stats (:stats counts)}
+         {:op "set" :node-id "activity-rows" :steps (:steps rows)}]}))))
 
 (defn focus-live!
   "Focus `item-ids` in focusable table `node-id` of open view `view-id`.
@@ -2053,17 +2104,15 @@
                model-result))))))))
 
 (defn interrupt-live!
-  "End live view `view-id` because a human stopped watching — Escape in the
-   terminal, Stop in the app — with `note`, the comment they left, when they left
-   one. ALWAYS allowed: a view asks nothing, so stopping it leaves nothing
-   unanswered, and work being SHOWN can always be told to stop showing itself.
-
-   The verdict reads `interrupted`, is stamped `:is-from-human true`, carries the
-   note, and still carries the picture of everything that had happened: what the
-   human saw before they stopped it is exactly what the model has to read, and
-   their own words say why it is not the whole story."
+  "End an extension-owned live view because a human stopped watching. Host-owned
+   Activity has no independent stop control; cancelling its enclosing evaluation
+   remains authoritative."
   ([view-id] (interrupt-live! view-id nil))
-  ([view-id note] (close-live! view-id {:reason :interrupted} {:note note})))
+  ([view-id note]
+   (when-let [entry (live-entry view-id)]
+     (when (:is-system entry)
+       (invalid-live-view! "Activity cannot be stopped independently; cancel its evaluation"))
+     (close-live! view-id {:reason :interrupted} {:note note}))))
 
 (defn with-live!
   "Open the view `view` declares, hand its id to `body`, and CLOSE it — on a

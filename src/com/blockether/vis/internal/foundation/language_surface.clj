@@ -616,7 +616,8 @@
               {:name "config" :note "python — pin one ruff config"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
-     :tag :mutation}))
+     :tag :mutation
+     :presenter :format}))
 
 (def lint-symbol
   (vis/symbol
@@ -645,7 +646,8 @@
               {:name "config" :note "python — pin one ruff config"}]
      :call {:lead-opt "language" :rest :always}
      :inject-env? true
-     :tag :observation}))
+     :tag :observation
+     :presenter :lint}))
 
 (def test-symbol
   (vis/symbol
@@ -688,7 +690,8 @@
      ;; run_tests can exceed the generic Python eval watchdog; dispatch it
      ;; directly in Clojure so the language pack's own timeout budget wins.
      :inject-env? true
-     :tag :mutation}))
+     :tag :mutation
+     :presenter :tests}))
 
 (def repl-eval-symbol
   (vis/symbol
@@ -718,6 +721,7 @@
               {:name "host" :note "clojure — with `port`; default localhost"}
               {:name "timeout_ms" :note "this eval's budget"}]
      :call {:lead-opt "language" :rest :always}
+     :presenter :repl
      ;; repl_eval's own `timeout_ms` can exceed the generic Python eval
      ;; watchdog (DEFAULT_EVAL_TIMEOUT_MS, five minutes); dispatch it directly in
      ;; Clojure so the language pack's own timeout budget wins (parity with

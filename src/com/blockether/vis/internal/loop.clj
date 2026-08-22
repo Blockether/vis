@@ -10,6 +10,8 @@
     [com.blockether.svar.internal.llm :as svar-llm]
     [com.blockether.svar.internal.router :as svar-router]
     [com.blockether.svar.internal.util :as util]
+    [com.blockether.vis.internal.activity :as activity]
+    [com.blockether.vis.internal.activity.event :as activity-event]
     [com.blockether.vis.internal.attachments :as attachments]
     [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
     [com.blockether.vis.internal.config :as config]
@@ -904,6 +906,31 @@
                 (fn [printed]
                   (if (str/blank? (str printed)) document (str printed "\n\n" document))))))))
 
+(defn- serial-activity-dispatcher
+  "Run Activity lifecycle transitions FIFO off the tool-callback threads.
+
+   Returns `[dispatch! drain! shutdown!]`. `dispatch!` captures the caller's
+   dynamic bindings, `drain!` waits for every transition already submitted, and
+   the daemon worker owns no process lifetime."
+  []
+  (let [executor
+        (java.util.concurrent.Executors/newSingleThreadExecutor
+          (reify
+            ThreadFactory
+              (newThread [_ runnable]
+                (doto (Thread. ^Runnable runnable "vis-activity-dispatch") (.setDaemon true)))))
+
+        dispatch!
+        (fn [f]
+          (let [^java.util.concurrent.Callable task (bound-fn [] (f))]
+            (.submit ^ExecutorService executor task)))
+
+        drain!
+        (fn []
+          (.get ^Future (dispatch! (constantly nil))))]
+
+    [dispatch! drain! #(.shutdown ^ExecutorService executor)]))
+
 (defn- run-python-code
   "Run an agent code block through the embedded GraalPy sandbox. Wraps the
    worker-future + cancellation + tool-event/render sinks + `*1`/`*e` recovery
@@ -913,8 +940,40 @@
   (let [thrown
         (atom nil)
 
-        tool-counts
-        (atom {})
+        activity-collector
+        (activity-event/collector)
+
+        activity-context
+        (activity-event/context {:evaluation-id (or (:activity/evaluation-id env)
+                                                    (str (random-uuid)))
+                                 :form-index (long (or (:activity/form-index env) 0))})
+
+        activity-state
+        (atom (activity/empty-state {:evaluation-id (:evaluation-id activity-context)
+                                     :iteration (:activity/iteration env)
+                                     :form-index (:form-index activity-context)}))
+
+        activity-view-id
+        (atom nil)
+
+        activity-phase
+        (atom :open)
+
+        [dispatch-activity! _drain-activity! shutdown-activity!]
+        (serial-activity-dispatcher)
+
+        close-activity-view!
+        (fn [settlement]
+          (when-let [view-id @activity-view-id]
+            (when-not (= :closed @activity-phase)
+              (reset! activity-phase :closing)
+              (try (human-input/patch-activity! view-id @activity-state true)
+                   (let [result (human-input/close-live! view-id settlement nil)]
+                     (reset! activity-phase :closed)
+                     result)
+                   (catch Throwable t
+                     (reset! activity-phase (if (human-input/live-view view-id) :open :closed))
+                     (throw t))))))
 
         cancel-token
         (:cancel-token env)
@@ -952,18 +1011,23 @@
 
         record-tool-event
         (fn [event]
-          (let [op
-                (:op event)
-
-                n
-                (get (swap! tool-counts update op (fnil inc 0)) op)
-
-                event*
-                (cond-> event
-                  (not= n 1)
-                  (assoc :id (str (name (or op :tool)) "-" n)))]
-
-            (when tool-event-fn (tool-event-fn event*))))
+          (try (dispatch-activity! (fn []
+                                     (when (= :open @activity-phase)
+                                       (activity-event/accept! activity-collector event)
+                                       (let [state (swap! activity-state activity/reduce-event
+                                                     event)]
+                                         (when (:session-id env)
+                                           (if-let [view-id @activity-view-id]
+                                             (human-input/patch-activity! view-id state)
+                                             (reset! activity-view-id
+                                               (:id (human-input/open-activity!
+                                                      {:session-id (:session-id env)
+                                                       :iteration-id (:iteration-id env)
+                                                       :iteration (:activity/iteration env)
+                                                       :form-index (:form-index activity-context)
+                                                       :state state})))))))
+                                     (when tool-event-fn (tool-event-fn event))))
+               (catch java.util.concurrent.RejectedExecutionException _ nil)))
 
         reinspection-sink
         (atom [])
@@ -1028,6 +1092,9 @@
                           extension/*tool-event-sink*
                           record-tool-event
 
+                          extension/*tool-event-context*
+                          activity-context
+
                           mpl-capture/*attachment-reader*
                           attachment-reader
 
@@ -1058,6 +1125,54 @@
                                        (try (.cancel ^java.util.concurrent.Future exec-future true)
                                             (catch Throwable _ nil))))))
 
+        settle-activity!
+        (fn [envelope]
+          (let [settlement
+                (cond (:timeout? envelope) {:reason :timeout :summary "Evaluation timed out"}
+                      (:error envelope) {:reason :failed
+                                         :error (or (:message (:error envelope))
+                                                    "Evaluation failed")}
+                      :else {:reason :completed :summary "Evaluation activity"})
+
+                outcome
+                (cond (:timeout? envelope) :cancelled
+                      (:error envelope) :failed
+                      :else :cancelled)
+
+                sink
+                (atom [])
+
+                result
+                (binding [mpl-capture/*attachment-sink* sink]
+                  (let [attempt! (fn []
+                                   (try {:result
+                                         (.get ^Future
+                                               (dispatch-activity!
+                                                 (fn []
+                                                   (binding [mpl-capture/*attachment-sink* sink]
+                                                     (swap! activity-state activity/settle-running
+                                                       outcome
+                                                       (or (:summary settlement)
+                                                           (:error settlement)))
+                                                     (close-activity-view! settlement)))))}
+                                        (catch ExecutionException e {:error (.getCause e)})))
+                        first-attempt (attempt!)
+                        final-attempt (if (:error first-attempt) (attempt!) first-attempt)]
+
+                    (when-let [error (:error final-attempt)]
+                      (tel/log! {:level :warn
+                                 :id ::activity-settlement-failed
+                                 :error error
+                                 :msg "Activity settlement failed after retry"}))
+                    (:result final-attempt)))]
+
+            (shutdown-activity!)
+            (if result
+              (envelope-with-settled-views envelope
+                                           {:verdicts [result]
+                                            :attachments (mpl-capture/drain sink)})
+              envelope)))
+
         timeout-sentinel
         (Object.)
 
@@ -1080,52 +1195,56 @@
           ;; The unwinding guest cannot reach the host any more, so its `with` never
           ;; closes: the wall that killed the block ends its views too, and the model
           ;; still reads the picture they held.
-          (let [swept
-                (sweep-abandoned! {:reason :timeout
-                                   :error (str "the run watching this view was stopped at its "
-                                               (/ timeout-ms 1000)
-                                               "s wall")})
-
-                ;; What the block PRINTED before the wall is real work — progress lines
+          (let [;; What the block PRINTED before the wall is real work — progress lines
                 ;; of a fetch loop, results already computed. The guest never reaches
                 ;; its own `{:stdout}` outcome here, so drain the capture buffer onto
                 ;; the envelope instead of answering with a bare `Timeout` and
                 ;; nothing else: that is unactionable, and the model re-runs the whole
                 ;; block blind.
-                envelope
-                {:result nil
-                 :lru {}
-                 :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
-                 :timeout? true}
-
                 out
-                (env/partial-stdout python-context)]
+                (env/partial-stdout python-context)
 
-            (envelope-with-settled-views (cond-> envelope
-                                           out
-                                           (assoc :stdout out))
-                                         swept)))
+                envelope
+                (cond-> {:result nil
+                         :lru {}
+                         :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
+                         :timeout? true}
+                  out
+                  (assoc :stdout out))
+
+                activity-envelope
+                (settle-activity! envelope)
+
+                swept
+                (sweep-abandoned! {:reason :timeout
+                                   :error (str "the run watching this view was stopped at its "
+                                               (/ timeout-ms 1000)
+                                               "s wall")})]
+
+            (envelope-with-settled-views activity-envelope swept)))
       (let [;; A cancel unwinds the same way a wall does. An ordinary Python
             ;; exception does NOT — `with vis.live` closes on its way out — so this
             ;; finds nothing to sweep and says nothing.
-            swept
-            (when (:error execution-result)
-              (sweep-abandoned! {:reason :failed
-                                 :error (or (:message (:error execution-result))
-                                            "the run that opened this view ended")}))
-
             ;; A cancel kills the block from OUTSIDE the guest, so it never reaches its
             ;; own `{:stdout}` outcome and every line it printed dies with the frame —
             ;; the same loss the wall drains the capture buffer for. A Python exception
             ;; carries its own stdout already and is left alone.
             printed
             (when (and (:error execution-result) (nil? (:stdout execution-result)))
-              (env/partial-stdout python-context))]
+              (env/partial-stdout python-context))
 
-        (envelope-with-settled-views (cond-> execution-result
-                                       printed
-                                       (assoc :stdout printed))
-                                     swept)))))
+            activity-envelope
+            (settle-activity! (cond-> execution-result
+                                printed
+                                (assoc :stdout printed)))
+
+            swept
+            (when (:error execution-result)
+              (sweep-abandoned! {:reason :failed
+                                 :error (or (:message (:error execution-result))
+                                            "the run that opened this view ended")}))]
+
+        (envelope-with-settled-views activity-envelope swept)))))
 
 (defn- run-with-timing
   [python-context code _sandbox-ns timeout-ms start-time tool-event-fn env]
@@ -4911,6 +5030,7 @@
           ;; executable tool code.
           suppress-form-start? (some :vis/preflight-error code-entries)
           total-blocks (count code-entries)
+          activity-evaluation-id (str (random-uuid))
           executed
           (mapv
             (fn [idx
@@ -4937,41 +5057,48 @@
               (swap! turn-state-atom assoc :form-idx idx)
               (let [scope (form-scope idx)
                     raw-result
-                    (cond preflight-error {:result nil
-                                           :error (op-error preflight-error
-                                                            {:code expr :phase :vis/preflight})
-                                           :duration-ms 0
-                                           :op :vis/guard}
-                          :else
-                          (if-let [err (literal-code-block-error (:python-context environment)
-                                                                 expr)]
-                            {:result nil
-                             :error (op-error err {:code expr :phase :vis/guard})
-                             :duration-ms 0
-                             :op :vis/guard}
-                            (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
-                                                  (fn [tool-event]
-                                                    (on-chunk {:phase :tool-start
-                                                               :iteration iteration-position
-                                                               :position idx
-                                                               :count total-blocks
-                                                               :scope scope
-                                                               :code expr
-                                                               :render-segments render-segments
-                                                               :tool-event tool-event})))
-                                  r (if tool-event-fn
-                                      (execute-code environment expr :tool-event-fn tool-event-fn)
-                                      (execute-code environment expr))]
+                    (cond
+                      preflight-error {:result nil
+                                       :error (op-error preflight-error
+                                                        {:code expr :phase :vis/preflight})
+                                       :duration-ms 0
+                                       :op :vis/guard}
+                      :else
+                      (if-let [err (literal-code-block-error (:python-context environment) expr)]
+                        {:result nil
+                         :error (op-error err {:code expr :phase :vis/guard})
+                         :duration-ms 0
+                         :op :vis/guard}
+                        (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
+                                              (fn [tool-event]
+                                                ;; The legacy ticker consumes starts only. Terminal
+                                                ;; truth feeds Activity without changing that stream.
+                                                (when (= :start (:phase tool-event))
+                                                  (on-chunk {:phase :tool-start
+                                                             :iteration iteration-position
+                                                             :position idx
+                                                             :count total-blocks
+                                                             :scope scope
+                                                             :code expr
+                                                             :render-segments render-segments
+                                                             :tool-event tool-event}))))
+                              r (let [activity-env (assoc environment
+                                                     :activity/evaluation-id activity-evaluation-id
+                                                     :activity/iteration iteration-position
+                                                     :activity/form-index idx)]
+                                  (if tool-event-fn
+                                    (execute-code activity-env expr :tool-event-fn tool-event-fn)
+                                    (execute-code activity-env expr)))]
 
-                              (log-stage! :code-result
-                                          iteration
-                                          {:idx (inc (long idx))
-                                           :total total-blocks
-                                           :duration-ms (:duration-ms r)
-                                           :error (:error r)
-                                           :timeout? (:timeout? r)
-                                           :result (:result r)})
-                              r)))
+                          (log-stage! :code-result
+                                      iteration
+                                      {:idx (inc (long idx))
+                                       :total total-blocks
+                                       :duration-ms (:duration-ms r)
+                                       :error (:error r)
+                                       :timeout? (:timeout? r)
+                                       :result (:result r)})
+                          r)))
                     ;; Carry parinfer's whole-source
                     ;; rebalance flag into the block
                     ;; result. `execute-code` may also

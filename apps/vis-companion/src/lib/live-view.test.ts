@@ -473,3 +473,22 @@ describe('the record of a settled view', () => {
     expect(liveRecordFromText(JSON.stringify({ kind: 'open', view: { id: 'x' } }))).toBeNull();
   });
 });
+
+describe('the current Activity wire contract', () => {
+  const raw = {
+    id: 'activity-1',
+    title: 'Activity',
+    classification: 'activity',
+    nodes: [{ id: 'activity-status', type: 'status', text: 'running', tone: 'running' }],
+  };
+
+  it('keeps the host Activity classification', () => {
+    const view = liveViewFromWire(raw);
+    expect(view).toMatchObject({ classification: 'activity' });
+  });
+
+  it('rejects unknown classifications', () => {
+    expect(liveViewFromWire({ ...raw, classification: 'extension' })).toBeNull();
+  });
+
+});

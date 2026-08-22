@@ -1,0 +1,62 @@
+{
+  "id": "activity-fixture-1",
+  "title": "Activity",
+  "classification": "activity",
+  "seq": 0,
+  "nodes": [
+    {
+      "id": "activity-status",
+      "type": "status",
+      "text": "running · 1 settled · 1 running",
+      "tone": "running"
+    },
+    {
+      "id": "activity-counts",
+      "type": "stat",
+      "stats": [
+        {
+          "id": "running",
+          "label": "Running",
+          "value_text": "1",
+          "tone": "idle"
+        },
+        {
+          "id": "succeeded",
+          "label": "Succeeded",
+          "value_text": "1",
+          "tone": "idle"
+        },
+        {
+          "id": "failed",
+          "label": "Failed",
+          "value_text": "0",
+          "tone": "idle"
+        },
+        {
+          "id": "cancelled",
+          "label": "Cancelled",
+          "value_text": "0",
+          "tone": "idle"
+        }
+      ]
+    },
+    {
+      "id": "activity-rows",
+      "type": "steps",
+      "steps": [
+        {
+          "id": "call-1",
+          "label": "grep · 18 matches",
+          "tone": "ok",
+        "detail": "41 ms"
+        },
+        {
+          "id": "call-2",
+          "label": "run_tests · suite",
+          "tone": "running",
+          "detail": "24 passed"
+        }
+      ]
+    }
+  ]
+}

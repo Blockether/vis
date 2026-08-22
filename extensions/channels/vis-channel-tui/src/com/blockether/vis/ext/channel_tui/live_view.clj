@@ -296,11 +296,18 @@
   [pane]
   (contains? pane :settled))
 
-(defn dormant?
-  "True when the pane is settled and nobody has reopened it: it paints as one
-   collapsed line and takes none of the band's body."
+(defn activity?
+  "True only for the host-owned Activity specialization."
   [pane]
-  (and (settled? pane) (not (:is-reopened pane))))
+  (contains? #{:activity "activity"} (get-in pane [:view :classification])))
+
+(defn dormant?
+  "True when a pane belongs in its transcript receipt instead of the live band.
+
+   Generic views move there after settlement. Activity starts there and enters the
+   band only when the human explicitly opens its bounded detail."
+  [pane]
+  (and (or (settled? pane) (activity? pane)) (not (:is-reopened pane))))
 
 (defn minimized?
   "True when a still-running pane was folded to its compact status line. This is
@@ -325,20 +332,22 @@
   (dissoc pane :is-minimized))
 
 (defn reopened
-  "The pane after the human pressed its collapsed line: a settled view reads
-   again, READ-ONLY — every node it ended with, the wheel over the band, and the
-   same press to put it away. Nothing about it can be stopped or answered; the
-   run it reports on is over."
+  "Toggle a transcript disclosure into the read-only band.
+
+   Activity is transcript-native from its first event, so it uses this same toggle
+   while running without gaining the generic Live View stop control."
   [pane]
   (cond-> (restored pane)
-    (settled? pane)
+    (or (settled? pane) (activity? pane))
     (-> (update :is-reopened not)
         (assoc :is-following true
                :offset 0))))
 
 (defn run-row
-  "The transcript row for a finished run, including the form position captured
-   when the view opened. Pressing the row reads the settled record back."
+  "The transcript receipt for a run or host Activity, anchored at its form.
+
+   Activity rows exist while running and are replaced in place by patches. Generic
+   extension runs are filed only after settlement."
   [pane]
   (let [{:keys [reason ended-at]}
         (:settled pane)
@@ -346,16 +355,30 @@
         view
         (:view pane)
 
+        activity
+        (activity? pane)
+
+        status-node
+        (when activity (first (filter #(= :status (:type %)) (:nodes view))))
+
         lines
-        (reduce + 0 (keep #(when (= :log (:type %)) (:total-lines %)) (:nodes view)))]
+        (reduce + 0 (keep #(when (= :log (:type %)) (:total-lines %)) (:nodes view)))
+
+        end
+        (long (or ended-at (System/currentTimeMillis)))]
 
     (cond-> {:view-id (:id view)
              :title (flat-text (:title view))
              :reason reason
              :lines (long lines)
-             :elapsed-ms (max 0
-                              (- (long (or ended-at 0)) (long (or (:created-at view) ended-at 0))))
-             :is-reopened false}
+             :elapsed-ms (max 0 (- end (long (or (:created-at view) end))))
+             :is-reopened (boolean (:is-reopened pane))}
+      activity
+      (assoc :is-activity
+        true :status-text
+        (flat-text (:text status-node)) :status-tone
+        (:tone status-node))
+
       (:trace-anchor pane)
       (assoc :anchor (:trace-anchor pane)))))
 
@@ -1044,17 +1067,13 @@
       (str/join " · " (remove str/blank? [(flat-text (get-in pane [:view :title])) text])))))
 
 (defn interruptible
-  "The pane a stop would hit: the NEWEST open view, or nil when the band is empty.
+  "The pane a stop would hit: the newest open extension view.
 
-   EVERY view answers. A form may refuse to be cancelled because the run cannot
-   continue without an answer; a view asks nothing, so refusing to stop it would
-   only trap the human in front of work they already told to stop.
-
-   ONE place decides WHICH one. The footer advertises the abort key by asking here
-   and the terminal's abort branch acts by asking here, so the row the human reads
-   and the key they press can never name different views."
+   Host Activity reports the enclosing Python evaluation and cannot be stopped
+   independently; the ordinary turn cancel remains authoritative. The footer and
+   abort branch both ask here, so neither can advertise or invoke a false action."
   [panes]
-  (last (remove settled? panes)))
+  (last (remove #(or (settled? %) (activity? %)) panes)))
 
 (defn stopping
   "The note the human is typing into an ARMED stop on `pane` — `\"\"` the moment
@@ -1129,12 +1148,12 @@
   (boolean (some #(and (= :table (:type %)) (:is-focusable %)) (get-in pane [:view :nodes]))))
 
 (defn hint
-  "The hint bar under the band. Escape is the ONE key a view takes, and while
-   several are open it says WHICH one it will hit — the newest, the one the band
-   is painting. A running view exposes its fold control without taking a composer
-   key; a focusable table advertises its click for the same reason. Once the stop is
-   armed the bar says the two keys that end the typing: Escape or Enter interrupt
-   with whatever was written, Backspace on an empty line keeps watching."
+  "The hint bar under the band. Escape is the ONE key an interruptible view takes,
+   and while several are open it says WHICH one it will hit — the newest, the one
+   the band is painting. System Activity is read-only: its expanded rail offers only
+   fold/restore controls. A focusable table advertises its click. Once a stop is armed,
+   the bar says the two keys that end typing: Escape or Enter interrupt with whatever
+   was written, Backspace on an empty line keeps watching."
   [pane others]
   (let [open (remove settled? others)]
     (if-let [note (stopping pane)]
@@ -1142,8 +1161,9 @@
         [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
         [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
       (if (minimized? pane)
-        [["click ▴" "restore live view"]
-         ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]]
+        (cond-> [["click ▴" "restore live view"]]
+          (not (activity? pane))
+          (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]))
         (cond-> []
           (and (some? pane) (not (settled? pane)))
           (conj ["click ▾" "minimize"])
@@ -1151,7 +1171,7 @@
           (and (some? pane) (not (settled? pane)) (has-focusable-table? pane))
           (conj ["click" "focus a row"])
 
-          (and (some? pane) (not (settled? pane)))
+          (and (some? pane) (not (settled? pane)) (not (activity? pane)))
           (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
 
           ;; A record read back is a photograph: the only gesture it answers is the
