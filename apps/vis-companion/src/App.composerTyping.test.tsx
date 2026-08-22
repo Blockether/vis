@@ -2,16 +2,16 @@
 import { fireEvent, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// The list's fleet-wide filter and sort, counted where it actually runs: once
+// The list's fleet-wide pass over the rows, counted where it actually runs: once
 // per machine in scope, every time the sessions list recomputes what it shows.
-const counters = vi.hoisted(() => ({ orders: 0 }));
+const counters = vi.hoisted(() => ({ passes: 0 }));
 vi.mock("./lib/fleet", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/fleet")>();
   return {
     ...actual,
-    sessionOrder: (...args: Parameters<typeof actual.sessionOrder>) => {
-      counters.orders += 1;
-      return actual.sessionOrder(...args);
+    withSearchHits: (...args: Parameters<typeof actual.withSearchHits>) => {
+      counters.passes += 1;
+      return actual.withSearchHits(...args);
     },
   };
 });
@@ -68,8 +68,9 @@ const type = async (composer: HTMLTextAreaElement, text: string) => {
 // MOUNTED behind an open transcript, and every keystroke in the composer wrote
 // the draft message through the store that list subscribes to. Each write
 // published a fresh snapshot object, so a character re-ran the fleet-wide
-// filter and sort — every machine, every session — and re-rendered every
-// project group, for a screen the reader cannot see.
+// published a fresh snapshot object, so a character re-ran the fleet-wide pass
+// over every machine and every session, and re-rendered every project group, for
+// a screen the reader cannot see.
 describe("typing in the composer", () => {
   it("does not re-run the sessions list behind it", async () => {
     const { view, composer } = await openFirstSession();
@@ -77,11 +78,11 @@ describe("typing in the composer", () => {
     // The first character is real news: this session now holds unsent work, so
     // its row is dirty. Everything after it tells the list nothing new.
     await type(composer, "h");
-    const before = counters.orders;
+    const before = counters.passes;
     await type(composer, "hello there");
 
     expect(composer.value).toBe("hello there");
-    expect(counters.orders - before).toBe(0);
+    expect(counters.passes - before).toBe(0);
     view.unmount();
   });
 

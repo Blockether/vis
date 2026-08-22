@@ -300,6 +300,25 @@ export function draftMessageHasUnsent(message: DraftMessage | undefined): boolea
   return Boolean(message && (message.text.trim() || message.attachments.length > 0));
 }
 
+/**
+ * Sessions of ONE gateway holding unsent words right now, ascending by id.
+ *
+ * The single fact about the navigator list the gateway cannot know. It rides
+ * down with every list read (`dirty=`), so the row of an untitled session whose
+ * composer is full is KEPT and banded by whoever owns the order, instead of
+ * being hidden there and rescued back here. Sorted, because the same overlay
+ * has to be the same STRING: it is part of the key a window's validator is
+ * pinned under.
+ */
+export function dirtySessionIds(gatewayBase: string): string[] {
+  const prefix = `${gatewayBase}\u0000`;
+  const ids: string[] = [];
+  for (const [key, message] of Object.entries(store ?? {})) {
+    if (!key.startsWith(prefix)) continue;
+    if (draftMessageHasUnsent(message)) ids.push(key.slice(prefix.length));
+  }
+  return ids.sort();
+}
 function prune(current: DraftMessageStore): DraftMessageStore {
   const keys = Object.keys(current);
   if (keys.length <= MAX_DRAFT_MESSAGES) return current;

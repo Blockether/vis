@@ -80,6 +80,7 @@ import {
 } from '../lib/fleet-outage';
 import {
   clearDraftMessage,
+  dirtySessionIds,
   draftMessageHasUnsent,
   draftMessageKey,
   EMPTY_DRAFT_MESSAGE,
@@ -116,7 +117,6 @@ import {
   searchFanout,
   searchOrder,
   searchTally,
-  sessionIsListed,
   sessionIsLive,
   sessionNeedsInput,
   sessionMillis,
@@ -614,39 +614,6 @@ export function SessionsScreen({
   // of taps and keeps the set from growing for the life of the screen.
   const [minted, setMinted] = useState<readonly string[]>([]);
 
-  // The star belongs to the GATEWAY, and this is the one place that asks it to move.
-  // The row is repainted first so the mark lands in the SAME commit as the tap, the
-  // PATCH follows, and the row the gateway echoes replaces the guess. A star this
-  // device could not deliver goes back: a screen must never keep saying something
-  // the machine never heard.
-  const toggleStar = useCallback(
-    (session: Session, conn: GatewayConn) => {
-      const key = machineKey(conn);
-      const api = clientFor(conn);
-      const before = favoriteRank(session);
-      const starring = before === null;
-      const withRank = (rank: number | null) => (machine: FleetMachine) =>
-        machine.sessions
-          ? {
-              ...machine,
-              sessions: machine.sessions.map((row) =>
-                row.id === session.id ? { ...row, favorite_rank: rank } : row,
-              ),
-            }
-          : machine;
-      patchMachine(key, (machine) =>
-        withRank(starring ? nextFavoriteRank(machine.sessions ?? []) : null)(machine),
-      );
-      // A star DOES move its row (`sessionOrder` bands starred rows first) and the
-      // reader asked for that, so this is a safe moment to take the order.
-      adoptRef.current();
-      void api
-        .setSessionFavorite(session.id, starring)
-        .then((row) => patchMachine(key, withRank(favoriteRank(row))))
-        .catch(() => patchMachine(key, withRank(before)));
-    },
-    [patchMachine],
-  );
   // ONE machine's list. Machines load independently on purpose: a gateway that is
   // asleep must not keep the machines next to it off the screen, and its failure
   // drops that machine out of the fleet view instead of taking the whole list down.
@@ -746,6 +713,49 @@ export function SessionsScreen({
       }
     },
     [patchMachine],
+  );
+
+  // The star belongs to the GATEWAY, and this is the one place that asks it to move.
+  // The row is repainted first so the mark lands in the SAME commit as the tap, the
+  // PATCH follows, and the row the gateway echoes replaces the guess. A star this
+  // device could not deliver goes back: a screen must never keep saying something
+  // the machine never heard.
+  //
+  // WHERE the row then belongs is not this device's arithmetic. A star bands its row
+  // to the top of the list, and the list is the gateway's — so the mark is echoed
+  // here and the ORDER is read back from whoever owns it, one read, right away
+  // instead of at the next poll.
+  const toggleStar = useCallback(
+    (session: Session, conn: GatewayConn) => {
+      const key = machineKey(conn);
+      const api = clientFor(conn);
+      const before = favoriteRank(session);
+      const starring = before === null;
+      const withRank = (rank: number | null) => (machine: FleetMachine) =>
+        machine.sessions
+          ? {
+              ...machine,
+              sessions: machine.sessions.map((row) =>
+                row.id === session.id ? { ...row, favorite_rank: rank } : row,
+              ),
+            }
+          : machine;
+      patchMachine(key, (machine) =>
+        withRank(starring ? nextFavoriteRank(machine.sessions ?? []) : null)(machine),
+      );
+      void api
+        .setSessionFavorite(session.id, starring)
+        .then(async (row) => {
+          patchMachine(key, withRank(favoriteRank(row)));
+          await loadMachine(conn);
+          // The order is taken only once the list that OWNS it has answered. Adopting
+          // on the tap froze the order the star was tapped IN, and the promotion the
+          // gateway then sent waited behind the pill (see `lib/order-epoch`).
+          adoptRef.current();
+        })
+        .catch(() => patchMachine(key, withRank(before)));
+    },
+    [loadMachine, patchMachine],
   );
 
   // WHAT A RETRY IS DOING, on the tile that asked for it.
@@ -877,6 +887,32 @@ export function SessionsScreen({
     },
     [loadMachine, reconnectMachine],
   );
+
+  // WORDS THIS DEVICE IS HOLDING ARE PART OF THE QUESTION IT ASKS.
+  //
+  // The overlay a list read carries (`dirty=`) is the one fact about the order
+  // only this device knows, so the moment it changes the answer on screen is
+  // stale — a session that was hidden at the bottom of its project now belongs
+  // in the dirty band. The read is awaited first and the order adopted after it
+  // lands: the reader WROTE those words, so the move is their own action, not
+  // the surprise the pill exists for (see `lib/order-epoch`).
+  const dirtyOverlay = useMemo(
+    () =>
+      Object.entries(draftMessages)
+        .filter(([, message]) => draftMessageHasUnsent(message))
+        .map(([key]) => key)
+        .sort()
+        .join('|'),
+    [draftMessages],
+  );
+  const overlayRef = useRef(dirtyOverlay);
+  useEffect(() => {
+    if (overlayRef.current === dirtyOverlay) return;
+    overlayRef.current = dirtyOverlay;
+    const controller = new AbortController();
+    void load(controller.signal).then(() => adoptRef.current());
+    return () => controller.abort();
+  }, [dirtyOverlay, load]);
 
   // A machine's NAME is not its transport, so renaming it must not refetch a thing —
   // but the banner reads that name off `machine.conn`, and `fleetKey` deliberately
@@ -1236,16 +1272,13 @@ export function SessionsScreen({
         needle.length > 0 &&
         (sessionSearchText(session).includes(needle) ||
           draftSearchText(draftFor(session)).includes(needle));
-      const sessions = withSearchHits(machine.sessions ?? [], hits).filter((session) => {
-        const listed = sessionIsListed(session, {
-          hasDraftMessage: draftMessageHasUnsent(draftFor(session)),
-          isFavorite: isFavorite(session),
-        });
-        if (!listed) return false;
-        return (
-          !needle || titleHit(session) || metaHit(session) || matches?.has(session.id) === true
-        );
-      });
+      // WHICH ROWS THESE ARE IS THE GATEWAY'S ANSWER (`GatewayClient.listSessions`):
+      // it drops the abandoned taps itself and keeps the ones this device told it are
+      // holding unsent words. A query NARROWS that list; it never re-decides it.
+      const sessions = withSearchHits(machine.sessions ?? [], hits).filter(
+        (session) =>
+          !needle || titleHit(session) || metaHit(session) || matches?.has(session.id) === true,
+      );
       // A query RE-ORDERS what it matched and the GATEWAY decides how: the
       // search answer arrives running-sessions-first, then FRESHEST first — the
       // very order the gateway lists sessions in — so a query narrows the list
@@ -1254,17 +1287,20 @@ export function SessionsScreen({
       // words, then the assistant's) buried this morning's session under every
       // year-old title holding the word. Rows the gateway did not place — an
       // unsent draft in this device's composer, local metadata — fall in behind.
-      const ranked = needle
-        ? searchOrder(sessions, (session) => searchPlaces?.get(session.id) ?? SEARCH_UNPLACED)
-        : sessions;
-      // Starred rows first, then unsent work, and with them the project group that
-      // owns them: see `sessionOrder`.
+      // A SEARCH is the one answer this device still bands for itself: it is a
+      // COMPLETE match set, so lifting starred and unsent rows inside it can move
+      // nothing out of a page. The unqueried list is the gateway's own, banded there,
+      // and is handed on exactly as it arrived.
+      if (!needle) return { machine, sessions };
       return {
         machine,
-        sessions: sessionOrder(ranked, {
-          favoriteRank,
-          hasDraftMessage: (session) => draftMessageHasUnsent(draftFor(session)),
-        }),
+        sessions: sessionOrder(
+          searchOrder(sessions, (session) => searchPlaces?.get(session.id) ?? SEARCH_UNPLACED),
+          {
+            favoriteRank,
+            hasDraftMessage: (session) => draftMessageHasUnsent(draftFor(session)),
+          },
+        ),
       };
     });
   }, [inScope, searchNeedle, matches, searchPlaces, searchHits, draftMessages]);
@@ -1312,19 +1348,29 @@ export function SessionsScreen({
 
   const heldRows = useMemo(
     () =>
-      filtered.map((entry) => ({
-        machine: entry.machine,
-        ...holdOrder(
-          epoch,
-          entry.sessions,
-          (session) => ({
-            id: session.id,
-            millis: sessionMillis(session),
-          }),
-          mintedSet,
-        ),
-      })),
-    [epoch, filtered, mintedSet],
+      filtered.map((entry) => {
+        // A row this device is HOLDING WORDS for is the reader's own action too.
+        // The gateway lifted it into the dirty band BECAUSE this device said so
+        // (`dirty=`), so the move is already agreed to: making the writer tap a
+        // pill to see where their own unsent sentence went is the same complaint
+        // that admitted a just-created session.
+        const admitted = new Set(mintedSet);
+        for (const id of dirtySessionIds(clientFor(entry.machine.conn).base))
+          admitted.add(id);
+        return {
+          machine: entry.machine,
+          ...holdOrder(
+            epoch,
+            entry.sessions,
+            (session) => ({
+              id: session.id,
+              millis: sessionMillis(session),
+            }),
+            admitted,
+          ),
+        };
+      }),
+    [epoch, filtered, mintedSet, draftMessages],
   );
 
   const pendingCount = useMemo(
@@ -2719,7 +2765,7 @@ type RowAction =
  * What the confirm says.
  *
  * A group delete states the FULL blast radius: the count is every session in the
- * group, including the ones `sessionIsListed` hides, and it names the machine —
+ * group — the gateway lists no others — and it names the machine:
  * the same repo on two machines is two groups. It also never claims to delete a
  * project when the group is only a shared label.
  */
@@ -2979,6 +3025,11 @@ const ProjectGroup = memo(function ProjectGroup({
   const wasStarred = useRef(starredHere);
   const rowsRef = useRef<HTMLDivElement>(null);
   const following = useRef<string | null>(null);
+  // The row a star just flipped, still owed the place the LIST will give it. The mark
+  // is this device repainting what it asked for; WHERE the row belongs is the
+  // gateway's answer and arrives one read later, so exactly one answer is followed —
+  // after that the row stays wherever the reader leaves it.
+  const placing = useRef<{ id: string; order: readonly Session[] } | null>(null);
   // Before paint: the reader must never see a frame of the page the row just left.
   useLayoutEffect(() => {
     const before = wasStarred.current;
@@ -2989,10 +3040,13 @@ const ProjectGroup = memo(function ProjectGroup({
     const flipped =
       [...starredHere].find((id) => !before.has(id)) ??
       [...before].find((id) => !starredHere.has(id));
-    if (!flipped) return;
-    const index = sessions.findIndex((session) => session.id === flipped);
+    const owed = placing.current;
+    const chased = flipped ?? (owed && owed.order !== sessions ? owed.id : null);
+    if (!chased) return;
+    placing.current = flipped ? { id: flipped, order: sessions } : null;
+    const index = sessions.findIndex((session) => session.id === chased);
     if (index < 0) return;
-    following.current = flipped;
+    following.current = chased;
     setFirst(index);
   }, [starredHere, sessions]);
   // The row may land on the page already shown (starred from page one) or on the

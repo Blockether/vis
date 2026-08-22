@@ -378,20 +378,6 @@ export function sessionNeedsInput(session: Session): boolean {
   return session.is_awaiting_input === true;
 }
 
-
-/**
- * Nothing has happened in this session yet: no name, no turns, nothing running.
- * "New session" creates the row BEFORE the first message exists, so every
- * abandoned tap leaves one of these behind and the list keeps them out.
- */
-export function sessionIsEmpty(session: Session): boolean {
-  return (
-    !session.title?.trim() &&
-    Number(session.turn_count ?? 0) === 0 &&
-    !sessionIsLive(session)
-  );
-}
-
 /** Bands of the list order, best first. Every row is in exactly one. */
 const FAVORITE_BAND = 0;
 const DIRTY_BAND = 1;
@@ -399,6 +385,10 @@ const REST_BAND = 2;
 
 /**
  * Starred work FIRST, then unsent work, then the order the gateway sent.
+ *
+ * Only a SEARCH answer needs this now: the navigator list arrives already
+ * banded from the gateway, which owns it. A search is a COMPLETE match set in
+ * the gateway's own order, so re-banding it here is honest arithmetic.
  *
  * A star is the one piece of ordering the human typed in themselves, so it wins
  * outright: a favorite sits on top whether it is live, unread, or a year cold.
@@ -443,20 +433,6 @@ export function sessionOrder(
 }
 
 /**
- * Rows the list paints. An empty session earns its place only by holding unsent
- * work or a star: that keeps abandoned "New session" taps out of the list
- * without stranding what you typed — hiding those rows left no way back to the
- * words and no way to delete the session holding them — and a session you
- * starred yourself is never hidden for being quiet.
- */
-export function sessionIsListed(
-  session: Session,
-  flags: { hasDraftMessage: boolean; isFavorite: boolean },
-): boolean {
-  return !sessionIsEmpty(session) || flags.hasDraftMessage || flags.isFavorite;
-}
-
-/**
  * What a group-header delete MEANS for the sessions under it.
  *
  * The list groups by LABEL, not by project id: a group is a real project row, a
@@ -466,9 +442,9 @@ export function sessionIsListed(
  * members of another with it. Everything else is a fan-out over sessions, and
  * the copy must not promise a project it cannot deliver.
  *
- * The ids come from ALL of the group's sessions, never from the painted rows:
- * `sessionIsListed` hides empty, draft-less sessions, and a delete that stops at
- * what you can see leaves the invisible ones behind.
+ * The ids come from every session of the group. An untitled, draft-less,
+ * unstarred session is not listed by the gateway at all, so it is not in the
+ * group either — what the reader sees IS the group.
  */
 export type ProjectDelete =
   | { kind: 'project'; projectId: string; sessionIds: string[] }
@@ -740,18 +716,11 @@ function projectMillis(sessions: Session[]): number {
 /**
  * ONE page of a project's history, cut from the rows the screen is PAINTING.
  *
- * The pager walks the list a reader can SEE, and that list belongs to this
- * client: `sessionIsListed` hides the empty taps, `sessionOrder` lifts starred
- * and unsent work above the gateway's own ranking, and a live query narrows it
- * again. `GET /v1/sessions?root=` knows none of that, so its window at the same
- * offset is a DIFFERENT list — on one machine the gateway counted 1034 sessions
- * in a project this list paints 763 of, which puts the gateway's last page 27
- * pages beyond the pager's. Cutting page 1 and the page COUNT locally while
- * asking the gateway for pages 2 and up is what made the last page paint its
- * three real rows (239px tall) and then swap them 119ms later for an unrelated
- * ten-row window (582px): one tap, two paints, and neither of them the list.
- * The fleet poll already drains every window of every machine, so every row is
- * here already — one list, one arithmetic, one paint.
+ * Which rows those ARE is the gateway's answer now — the device sends the one
+ * fact it cannot know (`dirty=`) and gets its own list back — so a local cut
+ * and a `?root=` window are finally the same arithmetic. They were not: on one
+ * machine the gateway counted 1034 sessions in a project this list painted 763
+ * of, which put the gateway's last page 27 pages beyond the pager's.
  *
  * `page` is CLAMPED, so a list that shrank under the reader (a deletion, a
  * filter, a smaller step) never gets a frame with an empty band in it.

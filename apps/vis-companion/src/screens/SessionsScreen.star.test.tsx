@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -77,16 +77,22 @@ describe("starring a session", () => {
         .getByRole("group", { name: `${title} actions` })
         .querySelector('button[aria-label="Star"]')!;
       await userEvent.click(star);
+
+      // The pin moved the row the thumb was on — and the LIST is what moves it. The
+      // star is the gateway's own fact, so the tap is answered by a read of the list
+      // it owns, never by this device re-sorting rows behind the reader.
+      await waitFor(() => expect(rowOrder()).toEqual([last, before[0]]));
     } finally {
       Element.prototype.scrollIntoView = scrollIntoView;
     }
 
-    // The pin moved the row the thumb was on; the row itself is what scrolls back,
-    // so the user keeps looking at the session they just starred.
-    expect(rowOrder()).toEqual([last, before[0]]);
+    // The row itself is what scrolls back, so the user keeps looking at the session
+    // they just starred.
     expect(seen).not.toHaveLength(0);
     expect(
-      seen[0].contains(document.querySelector(`[data-session-id="${last}"]`)),
+      seen.some((element) =>
+        element.contains(document.querySelector(`[data-session-id="${last}"]`)),
+      ),
     ).toBe(true);
   });
 
@@ -231,12 +237,13 @@ describe("starring a session", () => {
     );
 
     // The row the thumb was on is still on screen, wearing its mark — on page one,
-    // where the pin put it, and at the top of its project.
+    // where the pin put it, and at the top of its project. The gateway is what put
+    // it there: the tap is answered by a read of the list it owns.
+    await waitFor(() => expect(rowOrder()[0]).toBe("s12"));
     const row =
       document.querySelector('[data-session-id="s12"]')?.parentElement ?? null;
     expect(row).not.toBeNull();
     expect(row!.querySelector("svg.fill-accent")).not.toBeNull();
-    expect(rowOrder()[0]).toBe("s12");
   });
   // Regression, user report on iOS (paraphrased: slide the LAST row open, tap the
   // star, the row moves up wearing no mark, and only the next slide shows it — with

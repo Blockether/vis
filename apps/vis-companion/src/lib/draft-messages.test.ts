@@ -28,6 +28,7 @@ vi.mock('@capacitor/preferences', () => ({
 
 import {
   clearDraftMessage,
+  dirtySessionIds,
   draftMessageHasUnsent,
   draftMessageKey,
   flushDraftMessages,
@@ -191,5 +192,46 @@ describe('draft message bytes', () => {
     await flushDraftMessages();
     expect(written()).toContain('vis.draftAttachments');
     expect(peekDraftMessage(key).attachments).toEqual([]);
+  });
+});
+
+// The list is the GATEWAY's now — which rows it holds and in what order — and
+// the one fact it cannot see is which of them hold words typed on THIS device.
+// That fact rides down with every list read, so what it names has to be exactly
+// the sessions of that gateway that are really holding something.
+describe('the overlay a device sends the gateway', () => {
+  const home = 'http://studio.local:7890';
+  const mine = ['abc', 'aaa', 'bbb'].map((sid) => draftMessageKey(home, sid));
+  const away = draftMessageKey('http://laptop.local:7890', 'zzz');
+  const photo = (): PendingAttachment => ({
+    id: 'id-shot',
+    filename: 'shot.png',
+    media_type: 'image/png',
+    base64: 'data:image/png;base64,shot',
+    previewUrl: 'data:image/png;base64,shot',
+    size: 26,
+  });
+
+  beforeEach(async () => {
+    await hydrateDraftMessages();
+    for (const id of [...mine, away]) clearDraftMessage(id);
+  });
+
+  it('names the sessions of this gateway that hold something, and nobody else', () => {
+    writeDraftMessage(mine[0], { text: 'half a thought' });
+    // Whitespace is not unsent work; a staged picture with no words is.
+    writeDraftMessage(mine[1], { text: '   ' });
+    writeDraftMessage(mine[2], { text: '', attachments: [photo()] });
+    // The same sid on another machine is another thread, in another list.
+    writeDraftMessage(away, { text: 'elsewhere' });
+
+    expect(dirtySessionIds(home)).toEqual(['abc', 'bbb']);
+  });
+
+  it('answers the same string for the same overlay, so a validator can be pinned to it', () => {
+    writeDraftMessage(mine[2], { text: 'second' });
+    writeDraftMessage(mine[0], { text: 'first' });
+
+    expect(dirtySessionIds(home).join(',')).toBe('abc,bbb');
   });
 });

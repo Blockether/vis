@@ -12,6 +12,7 @@ import { render } from "@testing-library/react";
 
 import { App } from "./App";
 import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL } from "./lib/compat";
+import { rankSessions } from "./screens/sessions-screen-harness";
 import type { GatewayConn, Session } from "./lib/types";
 
 export interface AppMachine {
@@ -73,6 +74,8 @@ export function renderApp({
       headers: { "Content-Type": "application/json", ETag: `"${origins}"` },
     });
 
+  /** Every request the fakes answered, newest last, as hrefs. */
+  const requests: string[] = [];
   const previousFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = new URL(
@@ -82,6 +85,7 @@ export function renderApp({
           ? input.href
           : input.url,
     );
+    requests.push(url.href);
     // An address that answers NOTHING fails the way a dead LAN address does:
     // a network error, never a status, so failover has to see it as one.
     if (dead.has(url.origin)) throw new TypeError("Failed to fetch");
@@ -91,7 +95,12 @@ export function renderApp({
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);
     if (url.pathname === "/v1/sessions") {
-      const sessions = machine.sessions ?? [];
+      // The order is the GATEWAY's, and `dirty=` is the one part of it only this
+      // device knows — the same bands `state/session-ranking` answers with.
+      const dirty = new Set(
+        (url.searchParams.get("dirty") ?? "").split(",").filter((id) => id !== ""),
+      );
+      const sessions = rankSessions(machine.sessions ?? [], dirty);
       return answer({
         sessions,
         total: sessions.length,
@@ -153,6 +162,7 @@ export function renderApp({
   return {
     ...view,
     conns,
+    requests,
     /** Put the real `fetch` and an empty pairing back; every mount must call it. */
     restore() {
       globalThis.fetch = previousFetch;

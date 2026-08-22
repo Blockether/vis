@@ -74,6 +74,39 @@ describe('GatewayClient session-list validators', () => {
   });
 });
 
+// The one fact about its own list the gateway cannot know is which sessions are
+// holding words typed on THIS device. It is SENT — and a window whose ETag was
+// issued while the overlay said one thing must never answer a list asked for
+// with another, or the row just typed into stays missing until something else
+// moves.
+describe('GatewayClient session-list overlay', () => {
+  it('sends the sessions holding unsent words, and re-asks when they change', async () => {
+    const answered = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ sessions, total: 1, has_more: false }), {
+          headers: { ETag: '"sessions-v1"' },
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', answered);
+    const mod = await import('./gateway');
+    const drafts = await import('./draft-messages');
+    const client = new mod.GatewayClient(conn);
+
+    await client.listSessions();
+    expect(String(answered.mock.calls[0][0])).not.toContain('dirty=');
+
+    drafts.writeDraftMessage(drafts.draftMessageKey(client.base, 'session-2'), {
+      text: 'half a thought',
+    });
+    await client.listSessions();
+
+    expect(String(answered.mock.calls[1][0])).toContain('dirty=session-2');
+    const init = answered.mock.calls[1][1] as RequestInit;
+    expect(new Headers(init.headers).get('If-None-Match')).toBe(null);
+  });
+});
+
 // Regression, user report (paraphrased: "opening the session list fires request after
 // request for every page, over and over, as though the totals kept accumulating"): the
 // poll re-walked EVERY window on every tick. Only the FIRST one had changed — a session

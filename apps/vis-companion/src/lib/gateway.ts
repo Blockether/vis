@@ -13,6 +13,7 @@ import {
   readCachedAttachment,
   writeCachedAttachment,
 } from "./attachment-cache";
+import { dirtySessionIds, hydrateDraftMessages } from "./draft-messages";
 import type {
   AuthFlow,
   AuthVerdict,
@@ -2206,7 +2207,11 @@ export class GatewayClient {
    *   parsed, nothing reconciled.
    * - **Cursors, not offsets.** Each window is asked for with the cursor of the last
    *   row of the one before it, so the page after that row is the same page however
-   *   much the fleet moved in between.
+     *   much the fleet moved in between.
+     * - **The device's overlay.** `dirty=` names the sessions holding unsent words
+     *   in this device's composer — the one thing about its own list the gateway
+     *   cannot see — and it is part of the key each window's validator is pinned
+     *   under, so a changed overlay is never answered from a stale window.
    *
    * The list is recency-ordered and `total` is part of the validator, so any
    * arrival, answer, deletion or rename moves the FIRST window. An unchanged head
@@ -2220,15 +2225,35 @@ export class GatewayClient {
     signal?: AbortSignal,
     onPage?: (rows: Session[]) => void,
   ): Promise<Session[]> {
+    // THE ONE FACT THE GATEWAY CANNOT KNOW (see `dirtySessionIds`).
+    //
+    // Which sessions this list holds, and in what order, is the gateway's own
+    // answer now — except for words parked in THIS device's composer, which
+    // exist nowhere else. They ride down as `dirty=`, so an untitled session
+    // holding unsent work is kept and banded THERE instead of being hidden and
+    // rescued back here. Hydration is awaited because a first read that forgot
+    // the overlay would paint the list without those rows and move them in a
+    // second later; it is one shared promise, and a silent storage bridge
+    // answers it with nothing rather than hanging (see `lib/bridge`).
+    await hydrateDraftMessages();
+    const overlay = dirtySessionIds(this.base).join(",");
     const key = this.snapshotKey("sessions");
+    // A VALIDATOR BELONGS TO THE QUESTION IT ANSWERED: an ETag issued for one
+    // overlay cannot answer a list asked for with another. So the overlay is
+    // part of the key every pin is held under, while the ROWS keep the plain
+    // key — a cold start still paints what it has.
+    const pinKey = overlay ? `${key}\u0000${overlay}` : key;
+    const durablePin = overlay
+      ? `${this.snapshotKey("sessions-pin")}\u0000${overlay}`
+      : this.snapshotKey("sessions-pin");
     const cached = this.cachedSessions();
-    let pinned = GatewayClient.sessionsValidators.get(key);
+    let pinned = GatewayClient.sessionsValidators.get(pinKey);
     // A webview kill clears the in-memory pin but not the rows it described. Put
     // the durable head ETag back onto those exact rows, so the first cold-start
     // request can be a 304 instead of re-downloading the complete list.
     if (!pinned && cached?.length) {
       const persisted = readSnapshot<{ etag?: unknown; total?: unknown }>(
-        this.snapshotKey("sessions-pin"),
+        durablePin,
       );
       if (
         typeof persisted?.etag === "string" &&
@@ -2261,7 +2286,7 @@ export class GatewayClient {
             ],
           ]),
         };
-        GatewayClient.sessionsValidators.set(key, pinned);
+        GatewayClient.sessionsValidators.set(pinKey, pinned);
       }
     }
     // Only ever ask conditionally when a 304 can actually be ANSWERED from the
@@ -2284,7 +2309,7 @@ export class GatewayClient {
         "GET",
         `/v1/sessions?limit=${SESSIONS_PAGE}${
           after ? `&after=${encodeURIComponent(after)}` : ""
-        }`,
+        }${overlay ? `&dirty=${encodeURIComponent(overlay)}` : ""}`,
         undefined,
         signal,
         pin ? { "If-None-Match": pin.etag } : undefined,
@@ -2375,8 +2400,8 @@ export class GatewayClient {
           // those rows are unchanged.
           const windows = new Map(known);
           windows.set(HEAD_CURSOR, { ...head, rows: rows.slice(0, head.rows.length) });
-          GatewayClient.sessionsValidators.set(key, { full: rows, windows });
-          writeSnapshot(this.snapshotKey("sessions-pin"), {
+          GatewayClient.sessionsValidators.set(pinKey, { full: rows, windows });
+          writeSnapshot(durablePin, {
             etag: head.etag,
             total: head.total,
           });
@@ -2433,15 +2458,15 @@ export class GatewayClient {
       windows.set(window.after, { ...window, rows: slice });
     }
     if (windows.size) {
-      GatewayClient.sessionsValidators.set(key, { full: rows, windows });
+      GatewayClient.sessionsValidators.set(pinKey, { full: rows, windows });
       const pin = windows.get(HEAD_CURSOR);
       writeSnapshot(
-        this.snapshotKey("sessions-pin"),
+        durablePin,
         pin ? { etag: pin.etag, total: pin.total } : null,
       );
     } else {
-      GatewayClient.sessionsValidators.delete(key);
-      writeSnapshot(this.snapshotKey("sessions-pin"), null);
+      GatewayClient.sessionsValidators.delete(pinKey);
+      writeSnapshot(durablePin, null);
     }
     return rows;
   }

@@ -186,4 +186,8 @@ has actually read; the snapshot store is on disk, so the shape is declared befor
 
 REQUIRES WORK.
 
-TODO, in order: Phase 1, Phase 2, Phase 3, Phase 4.
+- Phase 1 — DONE, `4fc1553fc`: the gateway owns the list, `?root=&limit=&after=` is the list a
+  client paints, and the cursor is `<band>:<sort-key>:<id>`.
+- Phase 2 — DONE: the device sends `dirty=` and stops filtering and banding for itself.
+
+TODO, in order: Phase 3, Phase 4.

@@ -88,15 +88,55 @@ export function listSession(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
-/**
- * The cursor that NAMES a row, in the gateway's own form: `<recency_ms>:<id>`, where
- * the recency is content time (`state/list-sessions-page`). A window is asked for with
- * the cursor of the last row a client holds, never with an offset.
- */
-function listCursor(row: Session): string {
+/** Bands of the list order the GATEWAY owns, best first (`state/session-ranking`). */
+const FAVORITE_BAND = 0;
+const DIRTY_BAND = 1;
+const REST_BAND = 2;
+
+function bandOf(row: Session, dirty: ReadonlySet<string>): number {
+  if (typeof row.favorite_rank === "number") return FAVORITE_BAND;
+  return dirty.has(row.id) ? DIRTY_BAND : REST_BAND;
+}
+
+/** Where a row sits inside its band: the rank it was starred with, else its recency. */
+function sortKey(row: Session, band: number): number {
+  if (band === FAVORITE_BAND) return row.favorite_rank ?? 0;
   const stamp = row.modified_at ?? row.created_at ?? null;
   const millis = stamp ? Date.parse(String(stamp)) : 0;
-  return `${Number.isFinite(millis) ? millis : 0}:${row.id}`;
+  return -(Number.isFinite(millis) ? millis : 0);
+}
+
+/**
+ * The order the gateway ANSWERS: starred rows first, by the rank they were
+ * starred with, then the rows this device said were holding unsent words
+ * (`dirty=`), then everything else in the order the fixture lists them.
+ *
+ * No client bands anything for itself any more, so a test that expects a star or
+ * an unsent draft to move a row is testing THIS — the same arithmetic
+ * `state/session-ranking` does, over a fixture instead of a store.
+ */
+export function rankSessions(rows: Session[], dirty: ReadonlySet<string>): Session[] {
+  return rows
+    .map((row, index) => ({ row, index, band: bandOf(row, dirty) }))
+    .sort((a, b) => {
+      if (a.band !== b.band) return a.band - b.band;
+      if (a.band === FAVORITE_BAND) {
+        const keys = sortKey(a.row, a.band) - sortKey(b.row, b.band);
+        if (keys !== 0) return keys;
+      }
+      return a.index - b.index;
+    })
+    .map((entry) => entry.row);
+}
+
+/**
+ * The cursor that NAMES a row, in the gateway's own form: `<band>:<sort-key>:<id>`
+ * (`state/->session-cursor`). A window is asked for with the cursor of the last
+ * row a client holds, never with an offset.
+ */
+function listCursor(row: Session, dirty: ReadonlySet<string>): string {
+  const band = bandOf(row, dirty);
+  return `${band}:${sortKey(row, band)}:${row.id}`;
 }
 
 /** The stable totals the real gateway carries beside its session-list head. */
@@ -256,7 +296,12 @@ export function renderSessionsScreen({
           });
         await heldPages;
       }
-      const sessions = machine.sessions ?? [];
+      // The device sends the ONE fact this gateway cannot know: which of its sessions
+      // are holding words typed here. Everything else about the order is answered.
+      const dirty = new Set(
+        (url.searchParams.get("dirty") ?? "").split(",").filter((id) => id !== ""),
+      );
+      const sessions = rankSessions(machine.sessions ?? [], dirty);
       // A real gateway answers a WINDOW, and a machine with more history than one
       // page makes the client come back for the rest — which is what paints a
       // second machine's rows a beat after the first machine's. The window is a
@@ -265,7 +310,7 @@ export function renderSessionsScreen({
       // (`state/list-sessions-page`).
       const limit = Number(url.searchParams.get("limit") ?? sessions.length);
       const after = url.searchParams.get("after");
-      const from = after ? sessions.findIndex((row) => listCursor(row) === after) + 1 : 0;
+      const from = after ? sessions.findIndex((row) => listCursor(row, dirty) === after) + 1 : 0;
       const window =
         after && from === 0 ? [] : sessions.slice(from, from + (limit || sessions.length));
       const last = window[window.length - 1];
@@ -273,7 +318,8 @@ export function renderSessionsScreen({
         sessions: window,
         total: sessions.length,
         has_more: from + window.length < sessions.length,
-        next_cursor: from + window.length < sessions.length && last ? listCursor(last) : null,
+        next_cursor:
+          from + window.length < sessions.length && last ? listCursor(last, dirty) : null,
         // The real gateway answers parked runs and stable project totals BESIDE
         // the head window, complete however deep the fleet sits.
         awaiting: sessions.filter((session) => session.is_awaiting_input === true),

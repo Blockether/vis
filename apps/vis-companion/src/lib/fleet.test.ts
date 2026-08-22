@@ -26,8 +26,6 @@ import {
   searchOrder,
   searchTally,
   scopedSessions,
-  sessionIsEmpty,
-  sessionIsListed,
   sessionOrder,
   timeLabel,
   withSearchHits,
@@ -487,36 +485,6 @@ describe('search across the fleet', () => {
   });
 });
 
-// A session with a composer full of unsent words is DIRTY, not empty: the list
-// used to hide every untitled turn-less session, so tapping "New session",
-// typing, and going back left the words in a row nobody could see, reopen, or
-// delete. Dirty rows stay listed until they are sent or thrown away.
-describe('dirty sessions', () => {
-  const fresh = (extra: Partial<Session> = {}): Session => ({ id: 's1', title: '', ...extra });
-
-  it('treats an untitled, turn-less, idle session as empty', () => {
-    expect(sessionIsEmpty(fresh())).toBe(true);
-    expect(sessionIsEmpty(fresh({ title: '  ' }))).toBe(true);
-    expect(sessionIsEmpty(fresh({ turn_count: 0 }))).toBe(true);
-  });
-
-  it('never calls a named, used, or running session empty', () => {
-    expect(sessionIsEmpty(fresh({ title: 'Fix the parser' }))).toBe(false);
-    expect(sessionIsEmpty(fresh({ turn_count: 1 }))).toBe(false);
-    expect(sessionIsEmpty(fresh({ status: 'running' }))).toBe(false);
-    expect(sessionIsEmpty(fresh({ live: true }))).toBe(false);
-  });
-
-  it('lists a dirty session and keeps hiding the abandoned taps', () => {
-    expect(sessionIsListed(fresh(), { hasDraftMessage: true, isFavorite: false })).toBe(true);
-    expect(sessionIsListed(fresh(), { hasDraftMessage: false, isFavorite: false })).toBe(false);
-    expect(sessionIsListed(fresh(), { hasDraftMessage: false, isFavorite: true })).toBe(true);
-    expect(
-      sessionIsListed(fresh({ title: 'Named' }), { hasDraftMessage: false, isFavorite: false }),
-    ).toBe(true);
-  });
-});
-
 // Regression (reported in-app: "I have the problem with searching the sessions …
 // on iOS"): the session list is paged, and the filter intersected the gateway's
 // server-side transcript hits with the rows already loaded — a match in a session
@@ -775,17 +743,6 @@ describe('projectDelete', () => {
       ]),
     ).toEqual({ kind: 'sessions', sessionIds: ['a', 'b'] });
     expect(projectDelete([])).toEqual({ kind: 'sessions', sessionIds: [] });
-  });
-
-  it('covers the hidden rows too, not just the ones the list paints', () => {
-    const rows = [
-      session('named', { project_id: 'p1' }),
-      { id: 'hidden', title: '', project_id: 'p1' } as Session,
-    ];
-    expect(
-      rows.filter((row) => sessionIsListed(row, { hasDraftMessage: false, isFavorite: false })),
-    ).toHaveLength(1);
-    expect(projectDelete(rows).sessionIds).toEqual(['named', 'hidden']);
   });
 });
 
