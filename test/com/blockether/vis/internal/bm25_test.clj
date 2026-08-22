@@ -225,6 +225,14 @@
                   :aliases ["read_csv" "DataFrame"])]]
         (expect (= "pandas" (:name (first (bm25/search ds "read_csv")))))
         (expect (= "pandas" (:name (first (bm25/search ds "DataFrame")))))))
+  ;; A row that answers `pandas` for `read_csv` has to be able to say
+  ;; `pandas.read_csv` — which module the member is attached to.
+  (it "names the lent name that answered, so a row can qualify it"
+      (let [ds [(assoc (doc* "pandas" "Pure-Python pandas subset over plain Python.")
+                  :aliases ["read_csv" "DataFrame" "read_excel"])]]
+        (expect (= "read_csv" (:alias (first (bm25/search ds "read_csv")))))
+        (expect (= "DataFrame" (:alias (first (bm25/search ds "DataFrame")))))
+        (expect (nil? (:alias (first (bm25/search ds "pandas")))))))
   (it "wants the whole lent name, never the English half of it"
       (let [ds [(doc* "read_attachment" "Read one attachment's bytes by id.")
                 (assoc (doc* "pandas" "Pure-Python pandas subset over plain Python.")

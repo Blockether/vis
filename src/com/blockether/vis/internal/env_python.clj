@@ -1312,14 +1312,30 @@
                   (into [] (if described? (comp public (take apropos-limit)) public) ranked)
 
                   shown
-                  (mapv #(doc-corpus/preview (:text %) terms) hits)]
+                  (mapv #(doc-corpus/preview (:text %) terms) hits)
+
+                  ;; WHICH lent name answered. One shim page is the document for
+                  ;; hundreds of members, so a row that says `pandas` for `read_csv`
+                  ;; also says `pandas.read_csv`: the module a function is attached
+                  ;; to, and the exact string `doc()` reads that one member with.
+                  members
+                  (mapv (fn [h]
+                          (let [a
+                                (str/trim (str (:alias h)))
+
+                                nm
+                                (str (:name h))]
+
+                            (if (or (str/blank? a) (= a nm)) "" (str nm "." a))))
+                        hits)]
 
               ;; Return a REAL native Python dict {name -> row} in RANK order by
               ;; zipping parallel arrays guest-side — no ProxyHashMap crosses the
               ;; boundary, so `list()/in/sorted/set/**` all behave natively.
               ;;
-              ;; TWO SHAPES, because `at` and `hit` mean something only RELATIVE to a
-              ;; query: a described ask answers {kind, gist, at, hit}, while the bare
+              ;; TWO SHAPES, because `at`, `hit` and `member` mean something only
+              ;; RELATIVE to a query: a described ask answers {kind, gist, at, hit}
+              ;; (plus `member` when a lent name is what answered), while the bare
               ;; LISTING answers {kind, gist} instead of repeating a dead `at: 0` and
               ;; `hit: ''` on every name the session can reach.
               (.putMember g "__vis_apropos_names__" (->py (mapv :name hits)))
@@ -1327,23 +1343,27 @@
               (.putMember g "__vis_apropos_gists__" (->py (mapv :gist shown)))
               (when described?
                 (.putMember g "__vis_apropos_ats__" (->py (mapv :at shown)))
-                (.putMember g "__vis_apropos_hits__" (->py (mapv #(str/join " " (:hit %)) shown))))
-              (try (.eval
-                     ctx
-                     "python"
-                     (if described?
-                       (str "dict(zip(list(__vis_apropos_names__), "
-                            "[{'kind': _k, 'gist': _g, 'at': _a, 'hit': _h} for _k, _g, _a, _h in "
-                            "zip(list(__vis_apropos_kinds__), list(__vis_apropos_gists__), "
-                            "list(__vis_apropos_ats__), list(__vis_apropos_hits__))]))")
-                       (str "dict(zip(list(__vis_apropos_names__), "
-                            "[{'kind': _k, 'gist': _g} for _k, _g in "
-                            "zip(list(__vis_apropos_kinds__), list(__vis_apropos_gists__))]))")))
+                (.putMember g "__vis_apropos_hits__" (->py (mapv #(str/join " " (:hit %)) shown)))
+                (.putMember g "__vis_apropos_members__" (->py members)))
+              (try (.eval ctx
+                          "python"
+                          (if described?
+                            (str "dict(zip(list(__vis_apropos_names__), "
+                                 "[{'kind': _k, 'gist': _g, 'at': _a, 'hit': _h, "
+                                 "**({'member': _m} if _m else {})} for _k, _g, _a, _h, _m in "
+                                 "zip(list(__vis_apropos_kinds__), list(__vis_apropos_gists__), "
+                                 "list(__vis_apropos_ats__), list(__vis_apropos_hits__), "
+                                 "list(__vis_apropos_members__))]))")
+                            (str
+                              "dict(zip(list(__vis_apropos_names__), "
+                              "[{'kind': _k, 'gist': _g} for _k, _g in "
+                              "zip(list(__vis_apropos_kinds__), list(__vis_apropos_gists__))]))")))
                    (finally (.putMember g "__vis_apropos_names__" nil)
                             (.putMember g "__vis_apropos_kinds__" nil)
                             (.putMember g "__vis_apropos_gists__" nil)
                             (.putMember g "__vis_apropos_ats__" nil)
-                            (.putMember g "__vis_apropos_hits__" nil)))))))
+                            (.putMember g "__vis_apropos_hits__" nil)
+                            (.putMember g "__vis_apropos_members__" nil)))))))
     (.putMember
       g
       "doc"
@@ -1407,7 +1427,7 @@
     (set-python-binding-doc!
       ctx
       'apropos
-      "apropos(query='') -> {name: {kind, gist, at, hit}}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the document that covers most of it and a word nothing carries costs nothing. A query that IS a handle wins that handle; a typo is spell-corrected and a prefix completed, and `hit` names the terms that landed, showing any rewrite (`pathc→patch`). `kind` is what the document IS — tool · shim · page · skill · mcp · local (a helper this session defined — its own DOCSTRING is its document, so a documented helper answers a described ask while an undocumented one is listed and never searched). `gist` is a BOUNDED excerpt, never the body: the document's opening, the region your terms landed in, and a fragment from deeper down; `at` is the line that region starts on, so a long document is read from where it answers. Ranked best-first and capped at 10 — a described ask matches half the corpus, so read down, not around. Called with NO argument (or an empty one) it LISTS instead of searching: every name this session can reach, in name order, uncapped, each row just {kind, gist} — `at` and `hit` exist only relative to a query. Read one whole with `doc(name)`.")
+      "apropos(query='') -> {name: {kind, gist, at, hit, member}}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the document that covers most of it and a word nothing carries costs nothing. A query that IS a handle wins that handle; a typo is spell-corrected and a prefix completed, and `hit` names the terms that landed, showing any rewrite (`pathc→patch`). `kind` is what the document IS — tool · shim · page · skill · mcp · local (a helper this session defined — its own DOCSTRING is its document, so a documented helper answers a described ask while an undocumented one is listed and never searched). `gist` is a BOUNDED excerpt, never the body: the document's opening, the region your terms landed in, and a fragment from deeper down; `at` is the line that region starts on, so a long document is read from where it answers. A row that answered for a name its document LENDS — one shim page documents hundreds of classes and functions — carries `member`, the dotted name that lent it (`read_csv` answers `pandas` with `member: 'pandas.read_csv'`), which is also exactly what `doc()` takes to read that one member. Ranked best-first and capped at 10 — a described ask matches half the corpus, so read down, not around. Called with NO argument (or an empty one) it LISTS instead of searching: every name this session can reach, in name order, uncapped, each row just {kind, gist} — `at` and `hit` exist only relative to a query. Read one whole with `doc(name)`.")
     (set-python-binding-doc!
       ctx
       'doc

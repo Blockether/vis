@@ -3791,7 +3791,10 @@ def __vis_dotted_doc__(target):
     import importlib
     import inspect
 
-    dotted = "".join(str(target or "").split())
+    # Python spells attribute access with a DOT. A reader arriving from a pytest
+    # node id or an entry point writes `pandas::read_csv` or `pandas:read_csv` — it
+    # is the same member, so a colon is read as the dot it meant, never refused.
+    dotted = "".join(str(target or "").split()).replace("::", ".").replace(":", ".")
     parts = [p for p in dotted.split(".") if p]
     if not parts:
         return ""

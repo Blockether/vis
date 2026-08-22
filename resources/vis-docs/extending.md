@@ -1548,12 +1548,24 @@ apropos("how do I replace lines in a file")
 #                   '… patch(path, [{"from": a, "replace": new}]) …'}
 ```
 
+A page that LENDS names (a shim documents hundreds) also says which one answered,
+spelled the way Python attaches it:
+
+```python
+apropos("read_csv")
+# 'pandas': {'kind': 'shim', 'at': 1, 'hit': 'read csv', 'member': 'pandas.read_csv',
+#            'gist': 'Pure-Python pandas subset over plain Python lists and dicts …'}
+```
+
 `kind` is the source that seeded the document (`tool` · `shim` · `page` · `skill`
 · `mcp` · `local`), `gist` is a bounded excerpt — the opening, the window the
 query landed in, and a fragment from deeper down — `at` is the 1-based line that
 window starts on, so a 70 KB skill is read from where it answers, and `hit` names
-the terms that matched (a spell correction shows as `pathc→patch`). Your page is
-RANKED by its first line, PREVIEWED by its opening, and READ from `at`.
+the terms that matched (a spell correction shows as `pathc→patch`). `member` is
+present only when a LENT name won the hit — it is the dotted address to read next,
+and `doc()` takes it in either spelling: `doc("pandas.read_csv")` or
+`doc("pandas::read_csv")`. Your page is RANKED by its first line, PREVIEWED by its
+opening, and READ from `at`.
 
 Six rules follow, each measured against Vis's own corpus:
 

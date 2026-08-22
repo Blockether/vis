@@ -453,6 +453,20 @@
           (expect (str/includes? out "at=True"))
           (expect (str/includes? out "searched=False"))
           (expect (str/includes? out "listed=local"))))
+    ;; A page that lends hundreds of names answered `pandas` for `read_csv`, but the
+    ;; row never said WHICH lent name did it, so the reader had to open the page to
+    ;; learn where the member hangs. Python spells that attachment `pandas.read_csv`,
+    ;; and reads `pandas::read_csv` as the same address.
+    (it "qualifies a lent hit with the module its member is attached to"
+        (let [out (run (str "hits = apropos('read_csv')\n" "print('first=' + list(hits)[0])\n"
+                            "print('member=' + hits['pandas'].get('member', ''))\n"
+                            "plain = apropos('how do I replace lines in a file')['patch']\n"
+                            "print('plain=' + str('member' in plain))\n"
+                            "print('colon=' + str('read_csv' in doc('pandas::read_csv')))"))]
+          (expect (str/includes? out "first=pandas"))
+          (expect (str/includes? out "member=pandas.read_csv"))
+          (expect (str/includes? out "plain=False"))
+          (expect (str/includes? out "colon=True"))))
     ;; Regression: the bare call already answered the whole listing, but in the
     ;; SEARCH row's shape — `at: 0` and `hit: ''` repeated on every reachable
     ;; name, two keys that say nothing without a query to be relative to.

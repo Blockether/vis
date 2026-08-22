@@ -372,9 +372,17 @@
            (aset handle-toks i ht)
            (doseq [t ht]
              (.put handle-ids t (conj (or (.get handle-ids t) []) (int i)))))
-         (let [ats (into [] (comp (map terms) (filter seq) (distinct)) (:aliases d))]
+         ;; A lent name is kept WITH its tokens: the ranker answers WHICH name a
+         ;; lookup covered, so a row that comes back for `read_csv` can name the
+         ;; member, not just the page.
+         (let [ats (into []
+                         (comp (map (fn [a]
+                                      [(str a) (terms a)]))
+                               (filter (comp seq second))
+                               (distinct))
+                         (:aliases d))]
            (aset alias-toks i ats)
-           (doseq [t (into #{} cat ats)]
+           (doseq [t (into #{} (mapcat second) ats)]
              (.put alias-ids t (conj (or (.get alias-ids t) []) (int i)))))
          (dotimes [f (long field-count)]
            (let [ts (terms (get d (nth field-keys f)))]
@@ -838,8 +846,12 @@
    ordinary verb; and the query must cover the alias WHOLE, because half of
    `read_csv` is the English word `read`, which half the corpus uses. What is
    left is scaled by how much of the query the alias accounts for: an exact
-   `read_csv` takes all of it, `Image` for `Image.open` half."
-  [^doubles scores ^objects alias-toks alias-ids bonus query-terms query-words]
+   `read_csv` takes all of it, `Image` for `Image.open` half.
+
+   The winning name is written into `winners`, because a row that answers
+   `pandas` for `read_csv` has to be able to say `pandas.read_csv` — the ranker
+   is the only place that knows which of hundreds of lent names was covered."
+  [^doubles scores ^objects alias-toks alias-ids bonus query-terms query-words ^objects winners]
   (let [bonus
         (double bonus)
 
@@ -855,14 +867,21 @@
                                       (contains? qset tok)))
                             (mapcat val))
                       alias-ids)]
-        (let [best (double (reduce (fn [^double best ht]
-                                     (if (every? #(contains? qset %) ht)
-                                       (max best (/ (double (count ht)) (double qn)))
-                                       best))
-                                   0.0
-                                   (aget alias-toks (int i))))]
-          (when (pos? best)
-            (aset scores (int i) (+ (aget scores (int i)) (* bonus (min 1.0 best))))))))))
+        (let [won (reduce (fn [acc [nm ht]]
+                            (if (every? #(contains? qset %) ht)
+                              (let [r (/ (double (count ht)) (double qn))
+                                    b (double (or (first acc) 0.0))]
+
+                                (if (or (> r b)
+                                        (and (== r b) (> (count nm) (count (str (second acc))))))
+                                  [r nm]
+                                  acc))
+                              acc))
+                          nil
+                          (aget alias-toks (int i)))]
+          (when won
+            (aset scores (int i) (+ (aget scores (int i)) (* bonus (min 1.0 (double (first won))))))
+            (aset winners (int i) (second won))))))))
 
 (defn- top-k
   "The `k` best of `hits` by (score desc, name asc) through a bounded heap: a
@@ -892,7 +911,8 @@
    The answer carries the RESOLVED query terms as metadata
    (`{:terms [{:term :as :idf}]}`), because prefix completion and spell
    correction happen in here: a reader that wants to show WHY a document
-   came back cannot re-derive them from the query string."
+   came back cannot re-derive them from the query string. A document that came
+   back for a name it LENDS carries that name as `:alias`, for the same reason."
   ([ix query] (rank ix query nil))
   ([ix query {:keys [limit]}]
    (let [raw
@@ -921,6 +941,11 @@
              scores
              (double-array (max 1 nd))
 
+             ;; Which lent name each document was covered by — filled by the alias
+             ;; bonus, read by the caller that has to name the member.
+             ^objects winners
+             (object-array (max 1 nd))
+
              ^doubles bn
              (:bn ix)
 
@@ -948,11 +973,15 @@
                            (:alias-ids ix)
                            (:alias-bonus ix)
                            hit
-                           (count (re-seq #"\S+" (str query))))
+                           (count (re-seq #"\S+" (str query)))
+                           winners)
          (let [hits (into []
                           (keep (fn [i]
                                   (let [s (aget scores (int i))]
-                                    (when (pos? s) (assoc (:value (nth docs i)) :score s)))))
+                                    (when (pos? s)
+                                      (cond-> (assoc (:value (nth docs i)) :score s)
+                                        (aget winners (int i))
+                                        (assoc :alias (aget winners (int i))))))))
                           (range nd))]
            (with-meta (if (and limit (> (count hits) (long limit)))
                         (top-k hits limit)
