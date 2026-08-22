@@ -14,7 +14,8 @@
       :text \"...\"           ;; the whole document; its FIRST LINE is the gist
       :kind \"tool\"          ;; what it IS, out of the closed `kinds` vocabulary
       :call \"grep({\"query\": …})\" ;; the python that USES it; absent = prose
-      :params \"Keys: query (REQUIRED) · paths\"} ;; its options-dict vocabulary
+       :params \"Keys: query (REQUIRED) · paths\" ;; its options-dict vocabulary
+       :aliases [\"read_csv\"]}  ;; other names that must ANSWER this document
 
    `kind` says what a reader should DO with a hit; `call` spells the vocabulary
    out — a function answers `grep({\"query\": …})`, an MCP tool answers
@@ -56,6 +57,7 @@
 (s/def :vis.doc/text string?)
 (s/def :vis.doc/call (s/nilable string?))
 (s/def :vis.doc/params (s/nilable string?))
+(s/def :vis.doc/aliases (s/nilable (s/coll-of string?)))
 (def kinds
   "The closed vocabulary of `:kind` — what a document IS, which is how a reader
    decides what to DO with it: `tool` a callable verb's contract, `shim` an
@@ -68,7 +70,7 @@
 (s/def :vis.doc/kind kinds)
 (s/def :vis.doc/entry
   (s/keys :req-un [:vis.doc/name :vis.doc/text]
-          :opt-un [:vis.doc/call :vis.doc/params :vis.doc/kind]))
+          :opt-un [:vis.doc/call :vis.doc/params :vis.doc/kind :vis.doc/aliases]))
 (s/def :vis.doc/entries (s/coll-of :vis.doc/entry :kind vector?))
 (s/def :vis.doc/result
   (s/or :index (s/keys :req-un [:vis.doc/entries])
@@ -510,11 +512,17 @@
    The field is the FIRST LINE, breadcrumb and all: a measured attempt to rank
    the breadcrumb-plus-next-line `opening` instead lost 2 of 51 asks (MRR .898
    → .872), because lengthening one field spends its length normalization on
-   pages while every tool's one-line description keeps its own."
+    pages while every tool's one-line description keeps its own.
+
+    `aliases` are the names a document LENDS — a shim page's members. They are
+    not text: the ranker scores them as extra HANDLES, so `read_csv` answers the
+    `pandas` page without `read_csv` becoming a document of its own."
   [es]
   (mapv (fn [e]
           (let [t (str (:text e))]
-            {:name (str (:name e)) :gist (gist t) :body t :value e}))
+            (cond-> {:name (str (:name e)) :gist (gist t) :body t :value e}
+              (seq (:aliases e))
+              (assoc :aliases (:aliases e)))))
         es))
 
 (defn search

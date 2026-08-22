@@ -1150,46 +1150,57 @@
         documents
         (into {} (map (juxt :name identity)) (try (doc-corpus/entries) (catch Throwable _ nil)))]
 
-    (into []
-          (map
-            (fn [nm]
-              (let [document
-                    (get documents nm)
+    (into
+      []
+      (map
+        (fn [nm]
+          (let [document
+                (get documents nm)
 
-                    text
-                    (let [registered (str (get docs nm ""))]
-                      (cond (seq registered) registered
-                            (seq (str (:text document))) (str (:text document))
-                            :else (str (get def-docs nm ""))))
+                text
+                (let [registered (str (get docs nm ""))]
+                  (cond (seq registered) registered
+                        (seq (str (:text document))) (str (:text document))
+                        :else (str (get def-docs nm ""))))
 
-                    ;; The CALL LINE `doc(name)` prints under the handle: the explicit
-                    ;; expression when the handle is not a Python name of its own
-                    ;; (`mcp__call(...)`), otherwise the DECLARED signature —
-                    ;; `patch(path, edits)`. Prose can describe a tool; only the call
-                    ;; line says which parameters are required and in what order.
-                    call
-                    (or (not-empty (str (get calls nm)))
-                        (not-empty (str (:call document)))
-                        (when-let [sig (get sigs nm)]
-                          (str nm "(" sig ")"))
-                        (not-empty (str (get def-calls nm))))]
+                ;; The CALL LINE `doc(name)` prints under the handle: the explicit
+                ;; expression when the handle is not a Python name of its own
+                ;; (`mcp__call(...)`), otherwise the DECLARED signature —
+                ;; `patch(path, edits)`. Prose can describe a tool; only the call
+                ;; line says which parameters are required and in what order.
+                call
+                (or (not-empty (str (get calls nm)))
+                    (not-empty (str (:call document)))
+                    (when-let [sig (get sigs nm)]
+                      (str nm "(" sig ")"))
+                    (not-empty (str (get def-calls nm))))
 
-                (cond-> {:name nm
-                         :text text
-                         ;; A REGISTERED document is what makes a handle a tool: a helper
-                         ;; that shadows one keeps the tool's page, and a documented `def`
-                         ;; stays `local` however much it says about itself.
-                         :kind (or (get kinds nm)
-                                   (:kind document)
-                                   (if (and (str/blank? (str (get docs nm))) (nil? document))
-                                     "local"
-                                     "tool"))}
-                  (seq (str call))
-                  (assoc :call call)
+                ;; The names this document LENDS. A shim's page is ONE document
+                ;; for hundreds of members and the reader looks up the MEMBER,
+                ;; so `read_csv` has to answer `pandas`. Scored as extra
+                ;; handles by the ranker, never as text.
+                aliases
+                (shim-caps/member-names nm)]
 
-                  (seq (str (get params nm)))
-                  (assoc :params (str (get params nm)))))))
-          (distinct (concat (names-fn) (sort (keys docs)) (sort (keys documents)))))))
+            (cond-> {:name nm
+                     :text text
+                     ;; A REGISTERED document is what makes a handle a tool: a helper
+                     ;; that shadows one keeps the tool's page, and a documented `def`
+                     ;; stays `local` however much it says about itself.
+                     :kind (or (get kinds nm)
+                               (:kind document)
+                               (if (and (str/blank? (str (get docs nm))) (nil? document))
+                                 "local"
+                                 "tool"))}
+              (seq (str call))
+              (assoc :call call)
+
+              (seq (str (get params nm)))
+              (assoc :params (str (get params nm)))
+
+              (seq aliases)
+              (assoc :aliases aliases)))))
+      (distinct (concat (names-fn) (sort (keys docs)) (sort (keys documents)))))))
 
 (defn- install-introspection!
   "Wire Python `apropos(pat)` and `doc(name)` over the live globals — the

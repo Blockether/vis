@@ -23,7 +23,10 @@
      outranks a 350 B contract by containing every word.
    - **A covered handle wins.** A document whose whole handle appears in the
      query takes a bonus scaled by how much of the query that handle is, so
-     `patch` answers `patch` outright and still leads `patch anchors`.
+      `patch` answers `patch` outright and still leads `patch anchors`.
+    - **A lent name answers the page that documents it.** A document may declare
+      ALIASES — a shim's members — and a NAME LOOKUP that covers one of them
+      whole takes a smaller bonus, so `read_csv` answers `pandas`.
 
    Terms are compared after a plural fold and the tokenizer is Unicode-aware,
    so `run tests`/`run test` and an accented word are not three different
@@ -77,8 +80,15 @@
                      normalized (1.0) — that is what stops a 70 KB skill from
                      outranking a 350 B contract.
    - `:handle-bonus` full bonus for a document whose handle the query covers
-                     completely; scaled down by how little of the query it is."
-  {:k1 8.0 :field-weights [12.0 6.0 1.0] :field-b [0.75 0.75 1.0] :handle-bonus 100.0})
+                     completely; scaled down by how little of the query it is.
+   - `:alias-bonus`  bonus for a document that LENDS the name typed — one of a
+                     shim's members. Below `:handle-bonus`, because the document
+                     is still named after something else."
+  {:k1 8.0
+   :field-weights [12.0 6.0 1.0]
+   :field-b [0.75 0.75 1.0]
+   :handle-bonus 100.0
+   :alias-bonus 80.0})
 
 (def ^:private ^:const field-count
   "Slots per document: name, gist, body. Every flat array is strided by it."
@@ -345,6 +355,15 @@
          (object-array (max 1 nd))
 
          handle-ids
+         (HashMap.)
+
+         ;; The names a document LENDS — a shim page's members. Kept apart from
+         ;; the handle so an alias can never be scored like the document's own
+         ;; name.
+         alias-toks
+         (object-array (max 1 nd))
+
+         alias-ids
          (HashMap.)]
 
      (dotimes [i nd]
@@ -353,6 +372,10 @@
            (aset handle-toks i ht)
            (doseq [t ht]
              (.put handle-ids t (conj (or (.get handle-ids t) []) (int i)))))
+         (let [ats (into [] (comp (map terms) (filter seq) (distinct)) (:aliases d))]
+           (aset alias-toks i ats)
+           (doseq [t (into #{} cat ats)]
+             (.put alias-ids t (conj (or (.get alias-ids t) []) (int i)))))
          (dotimes [f (long field-count)]
            (let [ts (terms (get d (nth field-keys f)))]
              (aset lens (+ (* i (long field-count)) f) (double (count ts)))
@@ -391,6 +414,10 @@
         ;; term -> the documents whose HANDLE uses it, so the covered-handle bonus
         ;; visits a candidate or two instead of every document in the corpus.
         :handle-ids (into {} handle-ids)
+        :alias-bonus (double (:alias-bonus o))
+        :alias-toks alias-toks
+        ;; term -> the documents that LEND it, the same shortlist trick.
+        :alias-ids (into {} alias-ids)
         :opts o
         ;; Bucketed by FIRST LETTER, unsorted: prefix completion and spell
         ;; correction both scan one bucket, and a term whose first letter no
@@ -642,16 +669,19 @@
               (recur (next ts) best bd bdl))))))))
 
 (defn- resolve-term
-  "A term NO document contains is a partial handle or a typo: complete it as a
-   HANDLE first, then as an ordinary prefix, else spell-correct it, else drop it.
+  "A term NO document contains is a LENT name, a partial handle or a typo: keep it
+   when a document lends it as an alias, else complete it as a HANDLE, then as an
+   ordinary prefix, else spell-correct it, else drop it. A lent name is often
+   absent from every body — `csv` is only ever half of `read_csv` — and dropping
+   it there would leave the alias half-covered, which scores nothing.
 
    The handle vocabulary is small enough to scan whole; the other two only ever
    look inside the term's OWN first-letter bucket. That is what makes an
    off-corpus query honest AND cheap: a word starting with a letter no document
    uses costs one map miss and contributes nothing, instead of walking the
    vocabulary to hand back a confident, unrelated document."
-  [{:keys [postings vocab-by-head handle-ids]} ^String term]
-  (if (contains? postings term)
+  [{:keys [postings vocab-by-head handle-ids alias-ids]} ^String term]
+  (if (or (contains? postings term) (contains? alias-ids term))
     term
     (when (>= (.length term) 3)
       (or (complete-handle-prefix handle-ids term)
@@ -735,6 +765,13 @@
    or a handle plus one qualifier - rather than a described sentence."
   2)
 
+(def ^:private ^:const name-lookup-words
+  "At most this many WHITESPACE-separated words and the ask is someone typing a
+   NAME. Counted in words, never in terms: `DataFrame` is one word but three
+   terms (`data`, `fram`, `datafram`), so a term count would refuse the very
+   lookups a lent name exists for."
+  2)
+
 (defn- names-token?
   "Whether a query term NAMES a handle token: the token outright, or - when the
    ask is a name lookup - a prefix of at least three characters, so `attach`
@@ -789,6 +826,43 @@
                      (* bonus
                         (/ (double covered) (double (count ht)))
                         (/ (double covered) (double qn)))))))))))
+
+(defn- add-alias-bonus!
+  "A document that LENDS a name takes a bonus when the ask IS that name. One shim
+   page documents hundreds of members, so `read_csv` has to answer `pandas` even
+   though nothing is CALLED `read_csv` — the alias is how a member reaches the
+   page that describes it.
+
+   Two guards keep a lent name from ranking like an owned one. It fires only on a
+   NAME LOOKUP (`name-lookup-words`), because inside a sentence `open` is an
+   ordinary verb; and the query must cover the alias WHOLE, because half of
+   `read_csv` is the English word `read`, which half the corpus uses. What is
+   left is scaled by how much of the query the alias accounts for: an exact
+   `read_csv` takes all of it, `Image` for `Image.open` half."
+  [^doubles scores ^objects alias-toks alias-ids bonus query-terms query-words]
+  (let [bonus
+        (double bonus)
+
+        qset
+        (set query-terms)
+
+        qn
+        (count qset)]
+
+    (when (and (pos? qn) (<= (long query-words) (long name-lookup-words)))
+      (doseq [i (into #{}
+                      (comp (filter (fn [[tok _]]
+                                      (contains? qset tok)))
+                            (mapcat val))
+                      alias-ids)]
+        (let [best (double (reduce (fn [^double best ht]
+                                     (if (every? #(contains? qset %) ht)
+                                       (max best (/ (double (count ht)) (double qn)))
+                                       best))
+                                   0.0
+                                   (aget alias-toks (int i))))]
+          (when (pos? best)
+            (aset scores (int i) (+ (aget scores (int i)) (* bonus (min 1.0 best))))))))))
 
 (defn- top-k
   "The `k` best of `hits` by (score desc, name asc) through a bounded heap: a
@@ -869,6 +943,12 @@
            (when-let [p (get postings t)]
              (accumulate! scores bn weights k1 p)))
          (add-handle-bonus! scores (:handle-toks ix) (:handle-ids ix) (:handle-bonus ix) hit)
+         (add-alias-bonus! scores
+                           (:alias-toks ix)
+                           (:alias-ids ix)
+                           (:alias-bonus ix)
+                           hit
+                           (count (re-seq #"\S+" (str query))))
          (let [hits (into []
                           (keep (fn [i]
                                   (let [s (aget scores (int i))]

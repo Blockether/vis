@@ -42,6 +42,13 @@
   [nm]
   (get (capabilities) nm))
 
+(defn member-names
+  "Every public member `nm` lends, as the search ALIASES of its page: one shim page
+   is the document for hundreds of members, and a reader looks up `read_csv`, not
+   `pandas`. Empty for a name the index never saw."
+  [nm]
+  (into [] (comp (map :name) (filter seq)) (:names (entry nm))))
+
 (def ^:private kind-labels
   "Print order and label for a member kind."
   [["class" "Classes"] ["function" "Functions"] ["module" "Modules"] ["data" "Data"]])
