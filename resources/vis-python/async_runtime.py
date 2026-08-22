@@ -1010,9 +1010,11 @@ class __VisShell__(__VisResult__):
 
     @property
     def stdout(self):
-        # Quiet compatibility alias for the guess Python process APIs invite. Keep it
-        # out of the result map and docs: `out` remains the canonical result field.
+        # Quiet compatibility aliases for the guesses Python process APIs invite.
+        # Keep them out of the result map and docs: `out` remains canonical.
         return self["out"]
+
+    stderr = stdout
 
     @property
     def logs(self):
