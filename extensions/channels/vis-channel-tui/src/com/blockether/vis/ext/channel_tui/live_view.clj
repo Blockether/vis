@@ -1160,28 +1160,26 @@
       (if (str/blank? note)
         [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
         [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
-      (if (minimized? pane)
-        (cond-> [["click ▴" "restore live view"]]
-          (not (activity? pane))
-          (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]))
-        (cond-> []
-          (and (some? pane) (not (settled? pane)))
-          (conj ["click ▾" "minimize"])
+      (if (activity? pane)
+        [["click ▴" "close Activity"]]
+        (if (minimized? pane)
+          [["click ▴" "restore live view"]
+           ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]]
+          (cond-> []
+            (and (some? pane) (not (settled? pane)))
+            (conj ["click ▾" "minimize"])
 
-          (and (some? pane) (not (settled? pane)) (has-focusable-table? pane))
-          (conj ["click" "focus a row"])
+            (and (some? pane) (not (settled? pane)) (has-focusable-table? pane))
+            (conj ["click" "focus a row"])
 
-          (and (some? pane) (not (settled? pane)) (not (activity? pane)))
-          (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
+            (and (some? pane) (not (settled? pane)))
+            (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
 
-          ;; A record read back is a photograph: the only gesture it answers is the
-          ;; one that puts it away. Nothing about it can be stopped — the run it
-          ;; reports on is over, and its row is waiting in the transcript.
-          (and (some? pane) (settled? pane))
-          (conj ["click" "close the record"])
+            (and (some? pane) (settled? pane))
+            (conj ["click" "close the record"])
 
-          (seq open)
-          (conj [(str (+ (if pane 1 0) (count open))) "views open"]))))))
+            (seq open)
+            (conj [(str (+ (if pane 1 0) (count open))) "views open"])))))))
 
 ;;; ── Painting ────────────────────────────────────────────────────────────────
 
@@ -1432,24 +1430,40 @@
                              (when (> (long pane-count) 1) (str pane-count " views open"))])))}))
 
 (defn- paint-fold-control!
-  "Paint and register the right-edge ▾/▴ control on a running view's title rule."
+  "Paint the title control. Activity closes its transcript disclosure; generic live
+   views retain minimize/restore semantics."
   [g {:keys [left inner-w]} row pane]
-  (when (and pane (not (settled? pane)))
-    (let [label
-          (if (minimized? pane) " ▴ " " ▾ ")
+  (when pane
+    (let [activity
+          (activity? pane)
 
-          width
-          (long (p/display-width label))
+          generic-running
+          (not (settled? pane))]
 
-          col
-          (max (inc (long left)) (- (+ (long left) (long inner-w) 1) width))]
+      (when (or activity generic-running)
+        (let [label
+              (if activity " ▴ " (if (minimized? pane) " ▴ " " ▾ "))
 
-      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-      (p/styled g [p/BOLD] (p/put-str! g col row label))
-      (cr/register! {:bounds {:row row :col col :width width}
-                     :kind (if (minimized? pane) :live-restore :live-minimize)
-                     :view-id (view-id pane)
-                     :enabled? true}))))
+              width
+              (long (p/display-width label))
+
+              col
+              (max (inc (long left)) (- (+ (long left) (long inner-w) 1) width))]
+
+          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+          (p/styled g [p/BOLD] (p/put-str! g col row label))
+          (cr/register!
+            {:bounds {:row row :col col :width width}
+             :kind (if activity :live-reopen (if (minimized? pane) :live-restore :live-minimize))
+             :view-id (view-id pane)
+             :enabled? true}))))))
+
+(defn- band-title
+  "Dedicated Activity chrome, otherwise the generic Live View title."
+  [pane now-ms]
+  (if (activity? pane)
+    (str "ACTIVITY · " (if (settled? pane) "COMPLETED" "LIVE"))
+    (title-line pane now-ms)))
 
 (defn- band-shape
   "PURE: what the band is made of on `region` — the live panes oldest first, the
@@ -1606,7 +1620,7 @@
              (tr/draw-rule! g
                             region
                             sep-row
-                            (p/ellipsize (title-line (or front (last panes)) now-ms)
+                            (p/ellipsize (band-title (or front (last panes)) now-ms)
                                          (max 1 (- inner-w 10))))
              (paint-fold-control! g region sep-row front))
            (when (> rule-at (max (long sep-row) (long top-limit))) (tr/draw-rule! g region rule-at))

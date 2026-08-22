@@ -467,6 +467,37 @@ describe('the record of a settled view', () => {
     expect(log.total_lines).toBe(1);
   });
 
+  // Regression, issue td-03e5cf: the settled Activity receipt kept its opening
+  // "running" projection because close views intentionally omit immutable metadata.
+  it('hydrates a partial close view from the opening declaration', () => {
+    const running = {
+      id: 'activity-1',
+      title: 'Activity',
+      classification: 'activity',
+      seq: 0,
+      nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
+    };
+    const record = liveRecordFromText(
+      [
+        JSON.stringify({ kind: 'open', at: 1, view: running }),
+        closeLine({
+          view_id: 'activity-1',
+          reason: 'completed',
+          is_completed: true,
+          view: {
+            title: 'Activity',
+            nodes: [{ id: 'status', type: 'status', text: 'succeeded', tone: 'ok' }],
+          },
+        }),
+      ].join('\n'),
+    );
+
+    expect(record?.view).toMatchObject({
+      id: 'activity-1',
+      classification: 'activity',
+      nodes: [{ text: 'succeeded', tone: 'ok' }],
+    });
+  });
   it('is null when not one line of it is paintable', () => {
     expect(liveRecordFromText('')).toBeNull();
     expect(liveRecordFromText('not json at all')).toBeNull();
