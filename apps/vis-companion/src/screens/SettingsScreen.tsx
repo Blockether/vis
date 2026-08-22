@@ -64,14 +64,11 @@ import {
   unregisterFromPush,
 } from "../lib/relay";
 import {
-  DEFAULT_SESSION_PAGE_SIZE,
   DEFAULT_SPEECH_PREFS,
   SPEECH_RATES,
   getGatewayNotify,
-  getSessionsPerPage,
   getThemePref,
   getSpeechPrefs,
-  setSessionsPerPage,
   setSpeechAsrEngine,
   setSpeechDeviceVoice,
   setSpeechGatewayVoice,
@@ -1798,7 +1795,7 @@ function machineId(conn: GatewayConn): string {
  *
  * One dialog, two columns, one rule between them. MACHINES owns the fleet — which
  * machines this device is paired with, how to add another, and what each of them
- * decides — and APPLICATION owns what this copy of Vis decides (theme, page size).
+ * decides — and APPLICATION owns what this copy of Vis decides (its theme).
  * Machines leads, because the cog is opened to reach a machine far more often than to
  * repaint the app, and below `sm:` the columns stack in that same order.
  *
@@ -1856,7 +1853,6 @@ export function SettingsDialog({
   onClose: () => void;
 }) {
   const [pref, setPref] = useState<ThemePref>(DEFAULT_THEME.id);
-  const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
   const [speechPrefs, setSpeechPrefs] = useState<SpeechPrefs>(DEFAULT_SPEECH_PREFS);
   const [pending, setPending] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -1867,14 +1863,9 @@ export function SettingsDialog({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [theme, sessions, speech] = await Promise.all([
-        getThemePref(),
-        getSessionsPerPage(),
-        getSpeechPrefs(),
-      ]);
+      const [theme, speech] = await Promise.all([getThemePref(), getSpeechPrefs()]);
       if (cancelled) return;
       setPref(theme);
-      setPageSize(sessions);
       setSpeechPrefs(speech);
     })();
     return () => {
@@ -1904,18 +1895,6 @@ export function SettingsDialog({
       await setThemePref(next.id);
       setPref(next.id);
       applyTheme(next);
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setPending(null);
-    }
-  }
-
-  async function choosePageSize(next: number) {
-    setPending(`pageSize:${next}`);
-    try {
-      await setSessionsPerPage(next);
-      setPageSize(next);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -2051,28 +2030,6 @@ export function SettingsDialog({
                     isSelected={pref === choice.id}
                     disabled={pending?.startsWith("theme:") ?? false}
                     onClick={() => void chooseTheme(choice)}
-                  />
-                ))}
-              </div>
-            </SettingsPanel>
-
-            <SettingsPanel
-              title="Sessions per project"
-              meta="saved on this device"
-            >
-              <div className="grid grid-cols-1 gap-px bg-dialog-edge min-[420px]:grid-cols-3">
-                {[
-                  { size: 5, label: "compact" },
-                  { size: 10, label: "balanced" },
-                  { size: 15, label: "detailed" },
-                ].map(({ size, label }) => (
-                  <ChoiceCell
-                    key={size}
-                    title={String(size)}
-                    sub={label}
-                    isSelected={size === pageSize}
-                    disabled={pending?.startsWith("pageSize:") ?? false}
-                    onClick={() => void choosePageSize(size)}
                   />
                 ))}
               </div>

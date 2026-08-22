@@ -1770,7 +1770,7 @@ describe("where a new session starts", () => {
   });
 
   it("picks every setting with the one ChoiceCell, spelled once", () => {
-    // Every segmented choice the dialog offers - theme, page size, where a reply is
+    // Every segmented choice the dialog offers - theme, where a reply is spoken,
     // spoken, which voice speaks it - is the SAME cell.
     expect(settingsSource.match(/<ChoiceCell/g)?.length).toBeGreaterThanOrEqual(
       2,
@@ -1780,6 +1780,17 @@ describe("where a new session starts", () => {
       undefined,
     );
     expect(uiSource.match(/function ChoiceCell\(/g)?.length).toBe(1);
+  });
+
+  it("asks the SCREEN how many sessions a project's page holds", () => {
+    // Reported over a screenshot of a 390x844 phone: the list stopped after five
+    // rows with the bottom half of the screen empty, because a settings panel had
+    // been asked how tall the device is. The panel, its key and its three
+    // spellings are gone and the page is measured (`lib/fit-rows`).
+    expect(settingsSource).not.toContain("Sessions per project");
+    expect(settingsSource).not.toContain("setSessionsPerPage");
+    expect(storageSource).not.toContain("sessionsPerProject");
+    expect(sessionsListSource).toContain("useFitRows(");
   });
 });
 

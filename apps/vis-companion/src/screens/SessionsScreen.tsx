@@ -71,7 +71,7 @@ import {
   StarIcon,
   TrashIcon,
 } from '../components/icons';
-import { DEFAULT_SESSION_PAGE_SIZE, getSessionsPerPage, subscribeSessionsPerPage } from '../lib/storage';
+import { useFitRows, useMouseDensity } from '../lib/fit-rows';
 import { hostOf } from '../lib/endpoints';
 import {
   clearMachineOutage,
@@ -304,20 +304,39 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
 // one track, one raised tile for the machine you are on, no per-tab borders.
 
 
+/**
+ * The list's geometry in px, read off the live screen (dev server, Chromium, one
+ * machine whose top project holds 102 pages of sessions):
+ *
+ *   - a session row is 48px with a 1px rule under it, and 34px + 1px under
+ *     `mouse:`, where the density follows the pointer (`index.css`);
+ *   - the first row of a project starts at y=211 (y=215 under `mouse:`) — the app
+ *     bar, the filter row, the scope strip, the project's own band and the shelf
+ *     carrying its pager, all of which a page pays for before its first row;
+ *   - PEEK is what a page leaves UNDER its last row, so the next project's band
+ *     shows and the list never ends flush with the bottom of the screen.
+ *
+ * Three rows is the shortest page that still reads as a list rather than as a
+ * pager with a row attached.
+ */
+const LIST_PEEK = 40;
+const LIST_GEOMETRY = {
+  touch: { row: 49, chrome: 211 + LIST_PEEK, min: 3 },
+  mouse: { row: 35, chrome: 215 + LIST_PEEK, min: 3 },
+} as const;
+
+/**
+ * How many sessions one project's page holds — the SCREEN's answer, not a
+ * setting's.
+ *
+ * `vis.sessionsPerProject` (5/10/15) sized this page for a device it never
+ * measured; the panel, the key and the hook that read it are gone. Paging is
+ * presentational either way: `projectPage` cuts rows the fleet poll already
+ * holds (`lib/fleet`), so a page recut on rotation costs no request.
+ */
 function useSessionsPerPage(): number {
-  const [pageSize, setPageSize] = useState(DEFAULT_SESSION_PAGE_SIZE);
-  useEffect(() => {
-    let active = true;
-    void getSessionsPerPage().then((value) => {
-      if (active) setPageSize(value);
-    });
-    const unsubscribe = subscribeSessionsPerPage((value) => setPageSize(value));
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
-  return pageSize;
+  const isMouse = useMouseDensity();
+  return useFitRows(isMouse ? LIST_GEOMETRY.mouse : LIST_GEOMETRY.touch);
 }
 
 /**
@@ -2905,7 +2924,16 @@ const ProjectGroup = memo(function ProjectGroup({
   // A project is WALKED, page by page, and every page is cut from the rows this
   // screen already paints: `projectPage` owns that arithmetic and the reason it
   // is not the gateway's.
-  const [page, setPage] = useState(1);
+  // A PAGE IS A PLACE IN THE PROJECT, NOT A NUMBER. The step belongs to the
+  // screen (`useSessionsPerPage`), so it changes when the device is rotated or
+  // the window opened wider — and page 77 of 102 then names a different stretch
+  // of the history. What the reader is holding is the FIRST ROW on screen, so its
+  // INDEX is what is kept and the page is cut from it again at the new step;
+  // keeping the number would have sent a reader deep in a project back to page
+  // one through the clamp below.
+  const [first, setFirst] = useState(0);
+  const page = Math.floor(first / pageSize) + 1;
+  const goToPage = (next: number) => setFirst((next - 1) * pageSize);
   // A project FOLDS, and only the top one starts open: the screen's job is to show
   // the work that moved last, not four checkouts' history at once. What the reader
   // folds afterwards is theirs and outlives this component — see `lib/project-fold`.
@@ -2930,7 +2958,7 @@ const ProjectGroup = memo(function ProjectGroup({
     // The fleet moved under the pager (a deletion, a filter, a smaller step): the
     // page that no longer exists becomes the first one rather than the last one a
     // reader never asked for.
-    if (page > pageCount) setPage(1);
+    if (page > pageCount) setFirst(0);
   }, [page, pageCount]);
   // A star PINS its row to the top of the project, and the top of the project is
   // PAGE ONE — so a row starred from any other page LEFT the page under the thumb
@@ -2965,8 +2993,8 @@ const ProjectGroup = memo(function ProjectGroup({
     const index = sessions.findIndex((session) => session.id === flipped);
     if (index < 0) return;
     following.current = flipped;
-    setPage(Math.floor(index / Math.max(1, Math.floor(pageSize) || 1)) + 1);
-  }, [starredHere, sessions, pageSize]);
+    setFirst(index);
+  }, [starredHere, sessions]);
   // The row may land on the page already shown (starred from page one) or on the
   // one this group just walked to; either way it is placed back under the eye on the
   // commit that paints it.
@@ -3044,7 +3072,7 @@ const ProjectGroup = memo(function ProjectGroup({
             <HeaderTally count={tally.count} unit="session" />
             <LiveCount count={tally.live} />
           </HeaderMeta>
-          <Pager page={shownPage} pageCount={pageCount} onPage={setPage} label={`${project} sessions`} />
+          <Pager page={shownPage} pageCount={pageCount} onPage={goToPage} label={`${project} sessions`} />
         </SectionShelf>
         <div ref={rowsRef}>
           {rows.map((session) => (

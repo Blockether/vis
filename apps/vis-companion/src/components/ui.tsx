@@ -1208,7 +1208,7 @@ export function TextButton({
 /**
  * ONE VALUE OF A SETTING, and there is only one of it.
  *
- * Theme, sessions per project, where a session starts: a segmented grid where
+ * Theme, where a session starts: a segmented grid where
  * every cell is one of the values and exactly one of them is yours. Three
  * hand-spelled copies of it had already drifted apart in height and gap.
  *

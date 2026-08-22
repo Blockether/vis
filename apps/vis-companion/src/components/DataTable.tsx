@@ -1,4 +1,5 @@
 import { memo, useCallback, useId, useMemo, useRef, useState } from 'react';
+import { useFitRows, type ListGeometry } from '../lib/fit-rows';
 import { SortIcon } from './icons';
 import { Button } from './ui';
 
@@ -210,32 +211,27 @@ const COLUMN_RULE = 'border-l border-code-edge';
 type Sort = { index: number; dir: 'asc' | 'desc' } | null;
 type Cell = { row: number; col: number } | null;
 
-/**
- * Rows that FILL the box. Measured off the viewport, never off the grid's own
- * content: a page sized from the scroller's current height feeds its own height
- * back into the measurement and oscillates.
- */
-function fitRows(): number {
-  if (typeof window === 'undefined') return PAGE_SIZES[1];
-  return Math.max(4, Math.floor((window.innerHeight * VIEW_FRACTION - HEAD_H) / ROW_H));
-}
+/** The `Fit` page of this sheet: what one row costs, and the head above it. */
+const SHEET_FIT: ListGeometry = { row: ROW_H, chrome: HEAD_H, fraction: VIEW_FRACTION, min: 4 };
 
 /** Sheet metrics: the `Fit` page size, and whether it really scrolls sideways. */
 function useSheet(): [{ rows: number; overflowX: boolean }, (node: HTMLDivElement | null) => void] {
-  const [sheet, setSheet] = useState({ rows: fitRows(), overflowX: false });
+  // The page is the SCREEN's answer (`lib/fit-rows`); this observer is asked one
+  // thing only — whether the grid runs off its own box sideways.
+  const rows = useFitRows(SHEET_FIT);
+  const [overflowX, setOverflowX] = useState(false);
   const observer = useRef<ResizeObserver | null>(null);
   const ref = useCallback((node: HTMLDivElement | null) => {
     observer.current?.disconnect();
     observer.current = null;
     if (!node) return;
-    const measure = () =>
-      setSheet({ rows: fitRows(), overflowX: node.scrollWidth > node.clientWidth + 1 });
+    const measure = () => setOverflowX(node.scrollWidth > node.clientWidth + 1);
     const ro = new ResizeObserver(measure);
     ro.observe(node);
     observer.current = ro;
     measure();
   }, []);
-  return [sheet, ref];
+  return [{ rows, overflowX }, ref];
 }
 
 export const DataTable = memo(function DataTable({
