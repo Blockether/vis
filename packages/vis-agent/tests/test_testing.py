@@ -89,3 +89,48 @@ def test_live_recorder_returns_the_terminal_materialized_picture():
     assert result["reason"] == "interrupted"
     assert result["is_completed"] is False
     assert_tree(result["view"]["nodes"][0]["lines"], ["done"], path="view.log.lines")
+
+
+def test_live_recorder_starts_a_cleared_log_record_over():
+    LiveRecorder = vis.testing.LiveRecorder
+
+    recorder = LiveRecorder(vis._host)
+    opened = json.loads(
+        recorder.live(
+            json.dumps(
+                {
+                    "op": "open",
+                    "view": {
+                        "title": "Logs",
+                        "nodes": [
+                            {"id": "log", "type": "log", "label": "Log", "lines": []}
+                        ],
+                    },
+                }
+            )
+        )
+    )
+
+    def patch(*ops):
+        recorder.host_live(
+            json.dumps(
+                {
+                    "op": "patch",
+                    "view_id": opened["view_id"],
+                    "patch": {"ops": list(ops)},
+                }
+            )
+        )
+
+    patch({"op": "append", "node_id": "log", "lines": ["one", "two"]})
+    assert recorder.node("log")["total_lines"] == 2
+
+    patch({"op": "clear", "node_id": "log"})
+
+    # `live/apply-clear`: the RECORD starts over with the window, so a pane rewritten in
+    # place never claims earlier lines the gateway's record reader cannot serve.
+    assert recorder.node("log")["lines"] == []
+    assert recorder.node("log")["total_lines"] == 0
+
+    patch({"op": "append", "node_id": "log", "lines": ["again"]})
+    assert recorder.node("log")["total_lines"] == 1

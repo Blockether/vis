@@ -846,7 +846,7 @@
 (s/def ::focused-ids (s/and (s/coll-of ::id :kind vector?) #(= (count %) (count (distinct %)))))
 (s/def ::note (s/and non-blank-string? #(<= (count %) (long note-chars))))
 (s/def ::summary non-blank-string?)
-(s/def ::total-lines nat-int?)                              ; the size of a log's record, engine-stamped
+(s/def ::total-lines nat-int?)                              ; a log's record since its last clear, engine-stamped
 (s/def ::artifact-id non-blank-string?)
 
 ;; What a SETTLED view is: the record it wrote, addressed rather than copied.

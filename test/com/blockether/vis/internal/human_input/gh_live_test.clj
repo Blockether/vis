@@ -120,10 +120,15 @@
       ;; The checklist follows the job in focus: the failing job's steps, not the running one's.
       (expect (= 10 (count (:steps (node view "steps")))))
       (expect (some #(= :error (:tone %)) (:steps (node view "steps"))))
-      ;; The selected-job log proves running work is moving before GitHub publishes raw logs.
+      ;; A running selection's log pane states only what GitHub still withholds. Repeating the
+      ;; steps panel there wrote one more copy of the same placeholder into the record per tick.
       (expect (some (fn [op]
                       (and (= "output" (get op "node_id"))
-                           (some #(= "▶ Run test suite · 10m 00s" %) (get op "lines"))))
+                           (= ["── tests / macos-latest · log"
+                               "· GitHub publishes this job's raw log when the job ends"
+                               "── tests / ubuntu-latest · log"
+                               "· GitHub publishes this job's raw log when the job ends"]
+                              (get op "lines"))))
                     patch-ops))
       ;; The run-wide Activity duplicate is not part of the extension contract.
       (expect (not-any? #(= "activity" (get % "node_id")) patch-ops))

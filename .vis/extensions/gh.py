@@ -18,9 +18,11 @@ job's `databaseId`, so a job that changes state keeps its slot and the eye keeps
 what CHANGED since the last poll crosses the wire.
 
 GitHub serves a log per JOB, not per run: the REST endpoint `actions/jobs/N/logs` returns 404 while
-that job is writing, then answers with the whole log the moment the job ends. A running selection
-therefore shows its current step and live elapsed time; that pulse is replaced by the raw log as soon
-as GitHub publishes it. Temporary CLI, network, malformed JSON, rate-limit, and provider failures
+that job is writing, then answers with the whole log the moment the job ends. The log pane of a
+running selection therefore says only that the log is still unpublished — the current step and its
+live elapsed time belong to the steps panel, and repeating them in the log would write a fresh copy
+of the same placeholder into the view's record on every tick. The raw log replaces that line the
+moment GitHub publishes it. Temporary CLI, network, malformed JSON, rate-limit, and provider failures
 retain the last good picture and retry visibly in the run status; three consecutive failures settle
 the view as failed instead of turning an outage or deleted run into an infinite watch. A missing job
 log is never cached as final. When a running watch is overtaken by a newer commit for the same
@@ -732,14 +734,14 @@ def _model_report(payload, log_of, cache, superseded=None, failure=None):
 
 
 def _focus_signature(shape):
-    """The focused rows and the state that decides whether their logs are ready."""
+    """The focused rows and the state that decides whether their logs are ready.
+
+    Deliberately free of anything that TICKS: elapsed time changes every poll, and a
+    signature that moved with it rewrote the log pane once per tick.
+    """
     rows = {row["id"]: row for row in shape.get("rows") or []}
     return tuple(
-        (
-            job_id,
-            rows.get(job_id, {}).get("tone"),
-            tuple(rows.get(job_id, {}).get("cells") or []),
-        )
+        (job_id, rows.get(job_id, {}).get("tone"))
         for job_id in shape.get("focus_ids") or []
     )
 
@@ -769,31 +771,19 @@ def _job_log_tail(job_id, lines, log_of, cache):
 
 
 def _focus_log_lines(shape, log_of, cache, lines):
-    """Raw tails for finished focus, or a live step pulse while GitHub still withholds them."""
+    """Raw tails for finished focus, and one line for a job GitHub still withholds."""
     rows = {row["id"]: row for row in shape.get("rows") or []}
     shown = []
     for job_id in shape.get("focus_ids") or []:
         row = rows.get(job_id)
         if not row:
             continue
-        if row["tone"] == "running":
-            shown.append(f"── {row['cells'][0]} · live progress")
-            prefix = f"{job_id}:"
-            active_ids = set(shape.get("active_step_ids") or [])
-            active = [
-                step
-                for step in shape.get("steps") or []
-                if step["id"].startswith(prefix) and step["id"] in active_ids
-            ]
-            for step in active:
-                label = step["label"]
-                job_prefix = f"{row['cells'][0]} · "
-                shown.append(f"▶ {label.removeprefix(job_prefix)}")
-            if not active:
-                shown.append("▶ Waiting for this job to start")
-            shown.append("· GitHub publishes the raw job log when this job ends")
-            continue
         shown.append(f"── {row['cells'][0]} · log")
+        if row["tone"] == "running":
+            # The steps panel already carries this job's current step and its elapsed
+            # time. The log pane states only what it cannot show yet, once.
+            shown.append("· GitHub publishes this job's raw log when the job ends")
+            continue
         tail = _job_log_tail(job_id, lines, log_of, cache)
         if tail:
             shown.extend(tail)

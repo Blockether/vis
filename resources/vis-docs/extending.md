@@ -791,6 +791,9 @@ keeps the position it first took, so a table does not reshuffle under the eye of
 whoever is reading it. Log lines are the exception that proves it: they have no
 id, so they concatenate, and the node is unbounded — `window_lines` is only how
 much of the tail a surface holds hot, never how much the view's record keeps.
+`.clear()` on a log is a PHOTOGRAPH: window and record both start over, so a pane
+you rewrite in place (a details panel following a selection) never leaves copies
+of itself behind for "load earlier lines" to page through.
 
 When a view has exactly ONE node of a type, the verb is on the view itself:
 `view.status(...)`, `view.progress(...)`, `view.stat(...)`, `view.step(...)`,

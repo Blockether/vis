@@ -237,7 +237,7 @@ def test_the_log_window_ends_where_the_job_failed():
     assert all(line.startswith("2026-08-18T") for line in window)
 
 
-def test_running_focus_shows_current_step_before_raw_logs_exist():
+def test_a_running_focus_pane_says_the_log_is_not_published_yet():
     payload = fixture("run-mid.json")
     shape = gh.run_shape(
         payload,
@@ -251,16 +251,46 @@ def test_running_focus_shows_current_step_before_raw_logs_exist():
     )
     lines = gh._focus_log_lines(shape, None, {}, gh.FAILED_TAIL_LINES)
 
-    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a running job left its
-    # focused details static while GitHub withheld the raw log until the job completed.
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: the pane repeated the steps
+    # panel as a ticking three-line pulse, so its signature changed every tick and a long job
+    # left hundreds of copies of the same placeholder in the log's record.
     assert shape["rows"][0]["cells"][2] == "10m 34s"
     assert lines == [
-        "── tests / macos-latest · live progress",
-        "▶ Run test suite · 10m 00s",
-        "· GitHub publishes the raw job log when this job ends",
+        "── tests / macos-latest · log",
+        "· GitHub publishes this job's raw log when the job ends",
     ]
     assert later["rows"][0]["cells"][2] == "10m 37s"
-    assert gh._focus_signature(shape) != gh._focus_signature(later)
+    assert gh._focus_signature(shape) == gh._focus_signature(later)
+
+
+def test_a_ticking_run_writes_its_log_pane_once_per_change(recorder, monkeypatch):
+    clock = [gh._timestamp("2026-08-18T14:20:47Z")]
+    monkeypatch.setattr(gh, "_wall_time", lambda: clock[0])
+    polls = []
+
+    def poll():
+        clock[0] += 3
+        polls.append(len(polls))
+        return fixture("run-mid.json") if len(polls) < 6 else fixture("run-final.json")
+
+    gh.watch(TITLE, DESCRIPTION, poll, lambda job_id, lines: failing_log())
+    written = [op for op in recorder.patched() if op.get("node_id") == "output"]
+
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: elapsed time in the focused
+    # rows made every tick look like a new focus, so the log's record grew by one copy of the
+    # placeholder per tick and the Companion offered hundreds of "earlier lines" of it.
+    assert [op["lines"] for op in written if op["op"] == "append"] == [
+        [
+            "── tests / macos-latest · log",
+            "· GitHub publishes this job's raw log when the job ends",
+            "── tests / ubuntu-latest · log",
+            "· GitHub publishes this job's raw log when the job ends",
+        ],
+        [
+            "── tests / vis-agent + vis-contract (PyPI packages) · log",
+            *failing_log(),
+        ],
+    ]
 
 
 def test_running_focus_waits_while_finished_focus_gets_its_log(watched):
@@ -268,12 +298,10 @@ def test_running_focus_waits_while_finished_focus_gets_its_log(watched):
     output = [op for op in recorder.patched() if op.get("node_id") == "output"]
 
     assert output[0]["lines"] == [
-        "── tests / macos-latest · live progress",
-        "▶ Run test suite · 10m 00s",
-        "· GitHub publishes the raw job log when this job ends",
-        "── tests / ubuntu-latest · live progress",
-        "▶ Waiting for this job to start",
-        "· GitHub publishes the raw job log when this job ends",
+        "── tests / macos-latest · log",
+        "· GitHub publishes this job's raw log when the job ends",
+        "── tests / ubuntu-latest · log",
+        "· GitHub publishes this job's raw log when the job ends",
     ]
     assert recorder.asked[0] == ("95742028770", gh.LOG_TAIL_LINES)
     assert {job_id for job_id, _lines in recorder.asked} == {

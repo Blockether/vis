@@ -961,6 +961,8 @@ class Log(_Node):
         return self._op("append", lines=[str(line) for line in given])
 
     def clear(self):
+        # A PHOTOGRAPH, not a scroll: the record starts over with the window, so a
+        # pane rewritten in place never offers earlier lines nothing can serve.
         return self._op("clear")
 
 
@@ -1581,6 +1583,9 @@ class _LiveRecorder:
         elif action == "clear":
             key = "lines" if node["type"] == "log" else self._COLLECTION[node["type"]]
             node[key] = []
+            if node["type"] == "log":
+                # `live/apply-clear`: a cleared log starts its RECORD over too.
+                node["total_lines"] = 0
         elif action == "remove":
             key = self._COLLECTION[node["type"]]
             removed = set(op.get("item_ids") or [])

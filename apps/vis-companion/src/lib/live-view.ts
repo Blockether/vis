@@ -634,11 +634,15 @@ function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
   }
 }
 
-/** `clear` empties a log's WINDOW, never its record (`live/apply-clear`). */
+/**
+ * `clear` empties a log's WINDOW and starts its record over (`live/apply-clear`):
+ * `live-sink/log-range` folds a `clear` to nothing, so a kept `total_lines` would
+ * offer earlier lines the gateway can no longer serve.
+ */
 function applyClear(node: LiveLeafNode): LiveNode {
   switch (node.type) {
     case 'log':
-      return { ...node, lines: [] };
+      return { ...node, lines: [], total_lines: 0 };
     case 'table':
       return { ...node, rows: [], focused_ids: [] };
     case 'stat':

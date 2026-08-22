@@ -145,12 +145,12 @@ describe('a patch frame', () => {
     expect(log.total_lines).toBe(LIVE_LOG_WINDOW + 2);
   });
 
-  // `clear` frees the window, never the record: the count stays, so the section
-  // can still offer the earlier lines the gateway can still serve.
-  it('empties a log window without forgetting the record', () => {
+  // `clear` is a PHOTOGRAPH: the window and the record both start again, because
+  // `live-sink/log-range` cannot serve what came before a clear either.
+  it('starts a log record over when the pane is cleared', () => {
     const log = nodeOfType(patched(opened(), 1, [{ op: 'clear', node_id: 'tail' }]), 'tail', 'log');
     expect(log.lines).toEqual([]);
-    expect(log.total_lines).toBe(2);
+    expect(log.total_lines).toBe(0);
   });
 
   it('merges what `set` carries and leaves the rest of the node alone', () => {

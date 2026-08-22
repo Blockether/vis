@@ -249,12 +249,10 @@
       "ops": [
         {
           "lines": [
-            "── tests / macos-latest · live progress",
-            "▶ Run test suite · 10m 00s",
-            "· GitHub publishes the raw job log when this job ends",
-            "── tests / ubuntu-latest · live progress",
-            "▶ Waiting for this job to start",
-            "· GitHub publishes the raw job log when this job ends"
+            "── tests / macos-latest · log",
+            "· GitHub publishes this job's raw log when the job ends",
+            "── tests / ubuntu-latest · log",
+            "· GitHub publishes this job's raw log when the job ends"
           ],
           "op": "append",
           "node_id": "output"

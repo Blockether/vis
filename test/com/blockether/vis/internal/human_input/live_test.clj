@@ -189,15 +189,22 @@
                                                                      hs/log-defaults)))))}))]
         (expect (str/includes? why "one patch carries at most"))
         (expect (str/includes? why "split it"))))
-  (it "keeps a log's WINDOW while counting the record, and clearing empties the window only"
+  ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a cleared log kept counting the
+  ;; lines it had dropped, so a surface offered to load earlier lines the RECORD no longer
+  ;; serves — `live-sink/log-range` starts its own count again at every `clear`.
+  (it "keeps a log's WINDOW while counting the record, and clearing starts that count again"
       (let [v (-> (view (log-node 4))
                   (patched {:op :append :node-id "log" :lines ["1" "2" "3"]})
                   (patched {:op :append :node-id "log" :lines ["4" "5" "6"]}))]
         (expect (= ["3" "4" "5" "6"] (:lines (node v "log"))))
         (expect (= 6 (:total-lines (node v "log"))))
-        (let [cleared (patched v {:op :clear :node-id "log"})]
+        (let [cleared (patched v {:op :clear :node-id "log"})
+              rewritten (patched cleared {:op :append :node-id "log" :lines ["a" "b"]})]
+
           (expect (= [] (:lines (node cleared "log"))))
-          (expect (= 6 (:total-lines (node cleared "log")))))))
+          (expect (= 0 (:total-lines (node cleared "log"))))
+          (expect (= ["a" "b"] (:lines (node rewritten "log"))))
+          (expect (= 2 (:total-lines (node rewritten "log")))))))
   (it "keeps the materialized view legal after every patch"
       (let [v (-> (view (log-node)
                         (table-node :insertion)

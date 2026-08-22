@@ -280,12 +280,15 @@
       prune-focused)))
 
 (defn- apply-clear
-  "A node emptied. Clearing a log empties the WINDOW, never the record: the
-   count of what came before is what the model is later told about."
+  "A node emptied. Clearing a log empties the WINDOW and starts its RECORD over: the
+   record reader (`live-sink/log-range`) cannot serve what came before a clear either,
+   so a kept count would offer earlier lines nothing can answer."
   [node]
   (case (:type node)
     :log
-    (assoc node :lines [])
+    (assoc node
+      :lines []
+      :total-lines 0)
 
     (let [{:keys [key]} (spec/item-bounds (:type node))]
       (when (nil? key)
