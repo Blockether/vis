@@ -367,8 +367,8 @@
         ;; document that merely mentions attaching.
         (expect (= ["attach" "get_attachment" "list_attachments" "read_attachment"
                     "show_attachment"]
-                   (vec (ev pctx "sorted(list(apropos('attach'))[:5])"))))
-        (expect (false? (ev pctx "'attachments' in apropos('attach')")))
+                   (vec (ev pctx "sorted([i.name for i in apropos('attach')][:5])"))))
+        (expect (false? (ev pctx "'attachments' in [i.name for i in apropos('attach')]")))
         (expect (true? (ev pctx "'callable' in doc('attach')")))
         (expect (true? (ev pctx "'callable' in doc('show_attachment')")))))
   (it "discovers declared capabilities instead of the internal shim identity"
@@ -379,10 +379,10 @@
                                                           "vis-shims-test/discovery.py"}])]
         (let [pctx (ctx-with-root (temp-root))]
           (expect (= ["actual_global" "actual_module"]
-                     (vec (ev pctx "sorted(list(apropos('actual'))[:2])"))))
+                     (vec (ev pctx "sorted([i.name for i in apropos('actual')][:2])"))))
           (expect (= 42 (ev pctx "import actual_module; actual_module.answer")))
           (expect (= 42 (ev pctx "actual_global()")))
-          (expect (false? (ev pctx "'internal-id' in apropos('internal')")))
+          (expect (false? (ev pctx "'internal-id' in [i.name for i in apropos('internal')]")))
           (expect (true? (ev pctx "'Synthetic discovery contract.' in doc('actual_module')"))))))
   (it "raises when called with no active capture sink (outside a driven block)"
       (let [pctx (ctx-with-root (temp-root))]

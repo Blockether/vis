@@ -1,5 +1,6 @@
 import ast as __vis_ast__
 import builtins as __vis_builtins__
+import collections as __vis_collections__
 import errno as __vis_errno__
 import gc as __vis_gc__
 import io as __vis_io__
@@ -3745,6 +3746,16 @@ def __vis_user_defs__():
     return __vis_out__
 
 
+class __vis_AproposItem__(
+    __vis_collections__.namedtuple("AproposItem", ["type", "name", "rank", "body"])
+):
+    """One ranked hit: `type` (function/class/module/tool/doc/skill), the `name` you pass
+    to `doc(...)`, its 1-based `rank`, and `body` — the first 100 characters of its own
+    documentation. `doc(item)` reads the whole of it."""
+
+    __slots__ = ()
+
+
 def __vis_def_gist__(text, limit=72):
     # The one line a LISTING can afford: the docstring's first non-blank line,
     # whitespace collapsed and bounded. The whole of it stays one `doc(name)`
@@ -3960,7 +3971,7 @@ def defs(name=None):
             + str(bare)
             + (" has" if bare == 1 else " have")
             + " no docstring — one line of it would be the gist above, the whole"
-            + " of it a doc(name) page the next turn can search."
+            + " of it a doc(name) page the next turn can read."
         )
     return head + "\n" + body + "\n" + tail
 

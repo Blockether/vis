@@ -214,40 +214,6 @@
                 (doc* "patch" "Edit a file by address.")]]
         (expect (= "patch" (:name (first (bm25/search ds "patch"))))))))
 
-;; Cycle 2: a shim page is filed under `pandas`, but the model types `read_csv`.
-(defdescribe
-  alias-bonus-test
-  "A page was reachable only by the name it was filed under, so `read_csv`
-   answered `read_attachment` — a document that merely carries the word `read`."
-  (it "answers the page that LENDS the name, not one that only spells it"
-      (let [ds [(doc* "read_attachment" "Read one attachment's bytes by id.")
-                (assoc (doc* "pandas" "Pure-Python pandas subset over plain Python.")
-                  :aliases ["read_csv" "DataFrame"])]]
-        (expect (= "pandas" (:name (first (bm25/search ds "read_csv")))))
-        (expect (= "pandas" (:name (first (bm25/search ds "DataFrame")))))))
-  ;; A row that answers `pandas` for `read_csv` has to be able to say
-  ;; `pandas.read_csv` — which module the member is attached to.
-  (it "names the lent name that answered, so a row can qualify it"
-      (let [ds [(assoc (doc* "pandas" "Pure-Python pandas subset over plain Python.")
-                  :aliases ["read_csv" "DataFrame" "read_excel"])]]
-        (expect (= "read_csv" (:alias (first (bm25/search ds "read_csv")))))
-        (expect (= "DataFrame" (:alias (first (bm25/search ds "DataFrame")))))
-        (expect (nil? (:alias (first (bm25/search ds "pandas")))))))
-  (it "wants the whole lent name, never the English half of it"
-      (let [ds [(doc* "read_attachment" "Read one attachment's bytes by id.")
-                (assoc (doc* "pandas" "Pure-Python pandas subset over plain Python.")
-                  :aliases ["read_csv"])]]
-        (expect (= "read_attachment" (:name (first (bm25/search ds "read")))))))
-  (it "leaves a described ask to the text that answers it"
-      (let [ds [(assoc (doc* "pandas"
-                             "Pure-Python pandas subset."
-                             "Series and DataFrame over plain Python.")
-                  :aliases ["open" "read_csv"])
-                (doc* "attach"
-                      "Persist an artifact."
-                      "Open and read the bytes of an attachment you saved earlier.")]]
-        (expect (= "attach"
-                   (:name (first (bm25/search ds "open and read the bytes of an attachment"))))))))
 (defdescribe
   limit-test
   "`rank` scored, kept and sorted EVERY positive document, so a ten-row answer

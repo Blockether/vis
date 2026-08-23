@@ -175,12 +175,12 @@
       (expect (str/includes? text "`shell(...)` runs programs"))
       (expect (str/includes? text "No shell TOOL"))
       (expect (< (str/index-of text "`grep(...)` FIRST")
-                 (str/index-of text "`apropos(text)` full-text searches")))
+                 (str/index-of text "`apropos(text)` ranks every SYMBOL")))
       (doseq [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces"
                        "## 3. Inspect" "## 4. Edit + verify" "## 5. Act autonomously"
                        "## 6. Manage context" "## 7. Style and finish"]]
         (expect (str/includes? text heading)))
-      (doseq [required ["Host project default" "`apropos(text)` full-text searches"
+      (doseq [required ["Host project default" "`apropos(text)` ranks every SYMBOL"
                         "`doc(name)` returns" "runtime > source > docs > assumption"
                         "obey its stated preconditions" "the curated index"
                         "A skill is one of those documents" "`python_execution`" "ONE call exists"

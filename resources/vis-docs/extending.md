@@ -1550,34 +1550,30 @@ FIND WHERE something is — the codebase-wide search …      <- `:description` 
 Raw result: Text, not a map: line 1 summarizes …          <- `:result`
 ```
 
-A search never answers a body. It answers one bounded ROW per hit, built from the
-same text:
+A search never answers a body. It answers a VECTOR, ranked, one item per SYMBOL:
 
 ```python
 apropos("how do I replace lines in a file")
-# 'patch': {'kind': 'tool', 'at': 1, 'hit': 'replace',
-#           'gist': 'Apply EVERY anchored edit for one file in a single atomic write … '
-#                   '… patch(path, [{"from": a, "replace": new}]) …'}
+# [AproposItem(type='tool', name='patch', rank=1,
+#              body='Apply EVERY anchored edit for one file in a single atomic write — prose, c…'),
+#  AproposItem(type='doc', name='token-optimization', rank=2, body='…')]
 ```
 
-A page that LENDS names (a shim documents hundreds) also says which one answered,
-spelled the way Python attaches it:
+A shim lends hundreds of names, and every one is its own item, under the address Python
+attaches it to:
 
 ```python
 apropos("read_csv")
-# 'pandas': {'kind': 'shim', 'at': 1, 'hit': 'read csv', 'member': 'pandas.read_csv',
-#            'gist': 'Pure-Python pandas subset over plain Python lists and dicts …'}
+# [AproposItem(type='function', name='pandas.read_csv', rank=1,
+#              body='Read a CSV file into a DataFrame. Ignores dtype and parse_dates …')]
 ```
 
-`kind` is the source that seeded the document (`tool` · `shim` · `page` · `skill`
-· `mcp` · `local`), `gist` is a bounded excerpt — the opening, the window the
-query landed in, and a fragment from deeper down — `at` is the 1-based line that
-window starts on, so a 70 KB skill is read from where it answers, and `hit` names
-the terms that matched (a spell correction shows as `pathc→patch`). `member` is
-present only when a LENT name won the hit — it is the dotted address to read next,
-and `doc()` takes it in either spelling: `doc("pandas.read_csv")` or
-`doc("pandas::read_csv")`. Your page is RANKED by its first line, PREVIEWED by its
-opening, and READ from `at`.
+`type` is what the symbol IS (`function` · `class` · `module` · `tool` · `doc` · `skill`),
+`name` is the handle to read next, `rank` is its 1-based position, and `body` is the first
+100 characters of the docstring — never the document, because `doc()` answers one whole.
+`doc()` takes the item itself, or its name in either spelling: `doc(item)`,
+`doc("pandas.read_csv")`, `doc("pandas::read_csv")`. A symbol is RANKED by its first
+docstring line and PREVIEWED by it, so write that line as the question it answers.
 
 Six rules follow, each measured against Vis's own corpus:
 

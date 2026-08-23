@@ -4,13 +4,14 @@ Vis follows one rule: **do not pay tokens for data that can stay addressable.** 
 
 ## Discover before guessing
 
-The live runtime is the source of truth, and it answers exactly two questions. `apropos(text)` **searches** every document the session can reach — each function's whole contract, every Vis documentation page, every skill's whole `SKILL.md`, every MCP tool's description — and `doc(target)` **retrieves** one of them whole:
+The live runtime is the source of truth, and it answers exactly two questions. `apropos(text)` **searches** every SYMBOL the session can reach — each function's and class's whole docstring, every tool's contract, every Vis documentation page, every skill's whole `SKILL.md` — and `doc(target)` **retrieves** one of them whole:
 
 ```python
 apropos("skeleton")      # full text: the word need not be in any name
 apropos("wire contract") # ask in words: terms are ORed and ranked by relevance
-apropos()                # the listing: every reachable name, {kind, gist}
+apropos()                # the listing: every reachable symbol, in name order
 doc("patch")             # one function's whole contract
+doc(apropos("read csv")[0])  # an item reads back: doc() takes it directly
 doc("gateway")           # a Vis documentation page, by slug
 doc("spel")              # a skill, whole — reading it is the whole of using it
 doc()                    # the curated index: the verbs a session starts from
@@ -18,7 +19,7 @@ doc()                    # the curated index: the verbs a session starts from
 
 Rank is relevance, not a filter: BM25 over the handle, the first line and the body, with terms ORed and priced by how rare they are — so a whole question ranks the document that covers most of it, a query that IS a handle wins that handle, and a mistyped name is spell-corrected. `doc` states the raw-result shape for bare sandbox verbs too (`doc("resource_stop")`), which nothing else describes.
 
-Each hit answers a ROW, not the document: `{kind, gist, at, hit}` — what it IS (`tool` · `shim` · `page` · `skill` · `mcp` · `local`), a bounded excerpt built from the document's opening, the region your terms landed in and a fragment from deeper down, the LINE that region starts on, and the terms that matched (a correction shows as `pathc→patch`). The body is never in a search result — `doc(name)` answers one whole, and `at` says where to start reading it. Bare `apropos()` LISTS instead of searching: every reachable name in name order, uncapped, each row just `{kind, gist}`, because `at` and `hit` only mean something relative to a query.
+Each hit is an `AproposItem`, never a document: `type` is what the symbol IS (`function` · `class` · `module` · `tool` · `doc` · `skill`), `name` is the handle to read next — a shim member carries its dotted address, `pandas.read_csv` — `rank` is its 1-based position, and `body` is the first 100 characters of its docstring. The result is a VECTOR, so you iterate it, slice it and pass an item straight back to `doc()`. The document itself is never in a search result. Bare `apropos()` LISTS instead of searching: every reachable symbol in name order, uncapped, with `rank` following that order. Helpers you define in the sandbox are reachable by `doc("name")` and listed by `defs()`, but they are never ranked.
 
 Use them before inventing a name or a call shape. They read the live registry and the live document corpus, so an extension appears the moment it binds and a copied catalog cannot go stale.
 
@@ -96,11 +97,11 @@ print(defs())            # 2 definitions in this sandbox
                          #   hits(needles, *paths, ctx=0)  <prog:1>  3 lines  Anchored `line:hash│ text`
                          #                                                    rows only, across every page.
                          # defs("name") returns one's source. 1 has no docstring — one line of it would be
-                         # the gist above, the whole of it a doc(name) page the next turn can search.
+                         # the gist above, the whole of it a doc(name) page the next turn can read.
 print(defs("hits"))      # its source — edit THAT, never re-paste from memory
 ```
 
-A helper's **docstring is its document** — the only page you write while the session runs. Its first line is the gist `defs()` prints beside the name, the whole of it is what `doc("hits")` answers, and it is the only text `apropos` can match a helper by: an undocumented `def` is still listed by bare `apropos()` as `local` with an empty gist, but no described ask will ever reach it. One line is the difference between a helper the next turn FINDS and one it re-types.
+A helper's **docstring is its document** — the only page you write while the session runs. Its first line is the gist `defs()` prints beside the name, and the whole of it is what `doc("hits")` answers. Sandbox helpers are never ranked by `apropos` — `defs()` is their catalogue — so the docstring is what the NEXT turn reads before it re-types the helper from memory.
 
 What does **not** persist is anything written into `session`. That map is host-owned and rebuilt from the engine snapshot before every block, so `session["helpers"] = …` succeeds and is gone by the next one — a silent loss, not an error. Keep state in ordinary names — and give a helper its OWN name: a top-level `def cat(...)` or `class grep:` named after a bound tool is refused where it is written, because that definition could only ever shadow the tool inside its own block and would never be persisted or restored.
 

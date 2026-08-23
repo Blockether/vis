@@ -1159,57 +1159,50 @@
         documents
         (into {} (map (juxt :name identity)) (try (doc-corpus/entries) (catch Throwable _ nil)))]
 
-    (into
-      []
-      (map
-        (fn [nm]
-          (let [document
-                (get documents nm)
+    (into []
+          (mapcat
+            (fn [nm]
+              (let [document
+                    (get documents nm)
 
-                text
-                (let [registered (str (get docs nm ""))]
-                  (cond (seq registered) registered
-                        (seq (str (:text document))) (str (:text document))
-                        :else (str (get def-docs nm ""))))
+                    text
+                    (let [registered (str (get docs nm ""))]
+                      (cond (seq registered) registered
+                            (seq (str (:text document))) (str (:text document))
+                            :else (str (get def-docs nm ""))))
 
-                ;; The CALL LINE `doc(name)` prints under the handle: the explicit
-                ;; expression when the handle is not a Python name of its own
-                ;; (`mcp__call(...)`), otherwise the DECLARED signature —
-                ;; `patch(path, edits)`. Prose can describe a tool; only the call
-                ;; line says which parameters are required and in what order.
-                call
-                (or (not-empty (str (get calls nm)))
-                    (not-empty (str (:call document)))
-                    (when-let [sig (get sigs nm)]
-                      (str nm "(" sig ")"))
-                    (not-empty (str (get def-calls nm))))
+                    ;; The CALL LINE `doc(name)` prints under the handle: the explicit
+                    ;; expression when the handle is not a Python name of its own
+                    ;; (`mcp__call(...)`), otherwise the DECLARED signature —
+                    ;; `patch(path, edits)`. Prose can describe a tool; only the call
+                    ;; line says which parameters are required and in what order.
+                    call
+                    (or (not-empty (str (get calls nm)))
+                        (not-empty (str (:call document)))
+                        (when-let [sig (get sigs nm)]
+                          (str nm "(" sig ")"))
+                        (not-empty (str (get def-calls nm))))]
 
-                ;; The names this document LENDS. A shim's page is ONE document
-                ;; for hundreds of members and the reader looks up the MEMBER,
-                ;; so `read_csv` has to answer `pandas`. Scored as extra
-                ;; handles by the ranker, never as text.
-                aliases
-                (shim-caps/member-names nm)]
+                (cons (cond-> {:name nm
+                               :text text
+                               ;; A REGISTERED document is what makes a handle a tool: a helper
+                               ;; that shadows one keeps the tool's page, and a documented `def`
+                               ;; stays `local` however much it says about itself.
+                               :kind (or (get kinds nm)
+                                         (:kind document)
+                                         (if (and (str/blank? (str (get docs nm))) (nil? document))
+                                           "local"
+                                           "tool"))}
+                        (seq (str call))
+                        (assoc :call call)
 
-            (cond-> {:name nm
-                     :text text
-                     ;; A REGISTERED document is what makes a handle a tool: a helper
-                     ;; that shadows one keeps the tool's page, and a documented `def`
-                     ;; stays `local` however much it says about itself.
-                     :kind (or (get kinds nm)
-                               (:kind document)
-                               (if (and (str/blank? (str (get docs nm))) (nil? document))
-                                 "local"
-                                 "tool"))}
-              (seq (str call))
-              (assoc :call call)
-
-              (seq (str (get params nm)))
-              (assoc :params (str (get params nm)))
-
-              (seq aliases)
-              (assoc :aliases aliases)))))
-      (distinct (concat (names-fn) (sort (keys docs)) (sort (keys documents)))))))
+                        (seq (str (get params nm)))
+                        (assoc :params (str (get params nm))))
+                      ;; A shim's members are entries of their OWN. `pandas.read_csv` is the
+                      ;; name a reader types and the name Python addresses it by, so it is
+                      ;; the name the index carries — a module never answers for its members.
+                      (shim-caps/member-entries nm)))))
+          (distinct (concat (names-fn) (sort (keys docs)) (sort (keys documents)))))))
 
 (defn- install-introspection!
   "Wire Python `apropos(pat)` and `doc(name)` over the live globals — the
@@ -1293,16 +1286,13 @@
                   public
                   (remove #(str/starts-with? (str (:name %)) "_"))
 
-                  ;; A callable with NO document — an undocumented `def`, a stdlib
-                  ;; name that leaked into the globals — is a NAME and nothing else.
-                  ;; It stays in the LISTING, because a callable the model can type
-                  ;; must never be invisible, but it is not in the corpus a described
-                  ;; ask searches: it has no text to answer with, and its handle
-                  ;; (`vars`, `where`, `hits`) is a common English word that would
-                  ;; win rows off real contracts. One DOCSTRING is the whole
-                  ;; difference — a helper that carries text is searched like a page.
+                  ;; A LOCAL — a `def` this session wrote — is never ranked and never
+                  ;; listed here: `doc(name)`/`defs()` reach it by the name the author
+                  ;; already knows, while its handle (`vars`, `where`, `hits`) is a
+                  ;; common English word that would win rows off real contracts.
+                  ;; A document with no text cannot answer a described ask either.
                   corpus
-                  (cond->> (sandbox-corpus g names)
+                  (cond->> (into [] (remove #(= "local" (str (:kind %)))) (sandbox-corpus g names))
                     described?
                     (into [] (remove #(str/blank? (str (:text %))))))
 
@@ -1311,68 +1301,28 @@
                                      query
                                      (when described? {:limit (+ (long apropos-limit) 8)}))
 
-                  ;; The RESOLVED terms — what a prefix completed to, what a typo was
-                  ;; corrected to — ride on the ranking's metadata, which the
-                  ;; transducer below would drop.
-                  terms
-                  (:terms (meta ranked))
-
                   hits
-                  (into [] (if described? (comp public (take apropos-limit)) public) ranked)
+                  (into [] (if described? (comp public (take apropos-limit)) public) ranked)]
 
-                  shown
-                  (mapv #(doc-corpus/preview (:text %) terms) hits)
-
-                  ;; WHICH lent name answered. One shim page is the document for
-                  ;; hundreds of members, so a row that says `pandas` for `read_csv`
-                  ;; also says `pandas.read_csv`: the module a function is attached
-                  ;; to, and the exact string `doc()` reads that one member with.
-                  members
-                  (mapv (fn [h]
-                          (let [a
-                                (str/trim (str (:alias h)))
-
-                                nm
-                                (str (:name h))]
-
-                            (if (or (str/blank? a) (= a nm)) "" (str nm "." a))))
-                        hits)]
-
-              ;; Return a REAL native Python dict {name -> row} in RANK order by
-              ;; zipping parallel arrays guest-side — no ProxyHashMap crosses the
-              ;; boundary, so `list()/in/sorted/set/**` all behave natively.
-              ;;
-              ;; TWO SHAPES, because `at`, `hit` and `member` mean something only
-              ;; RELATIVE to a query: a described ask answers {kind, gist, at, hit}
-              ;; (plus `member` when a lent name is what answered), while the bare
-              ;; LISTING answers {kind, gist} instead of repeating a dead `at: 0` and
-              ;; `hit: ''` on every name the session can reach.
+              ;; Return a REAL native Python list of `AproposItem` in RANK order by
+              ;; zipping parallel arrays guest-side — nothing proxied crosses the
+              ;; boundary, so iterating, slicing and unpacking all behave natively.
+              ;; ONE shape for a search and for a listing alike: what it IS, the name
+              ;; `doc()` takes, where it ranked, and the opening of its own text.
               (.putMember g "__vis_apropos_names__" (->py (mapv :name hits)))
               (.putMember g "__vis_apropos_kinds__" (->py (mapv #(str (:kind % "tool")) hits)))
-              (.putMember g "__vis_apropos_gists__" (->py (mapv :gist shown)))
-              (when described?
-                (.putMember g "__vis_apropos_ats__" (->py (mapv :at shown)))
-                (.putMember g "__vis_apropos_hits__" (->py (mapv #(str/join " " (:hit %)) shown)))
-                (.putMember g "__vis_apropos_members__" (->py members)))
+              (.putMember g
+                          "__vis_apropos_bodies__"
+                          (->py (mapv #(doc-corpus/body-text (:text %)) hits)))
               (try (.eval ctx
                           "python"
-                          (if described?
-                            (str "dict(zip(list(__vis_apropos_names__), "
-                                 "[{'kind': _k, 'gist': _g, 'at': _a, 'hit': _h, "
-                                 "**({'member': _m} if _m else {})} for _k, _g, _a, _h, _m in "
-                                 "zip(list(__vis_apropos_kinds__), list(__vis_apropos_gists__), "
-                                 "list(__vis_apropos_ats__), list(__vis_apropos_hits__), "
-                                 "list(__vis_apropos_members__))]))")
-                            (str
-                              "dict(zip(list(__vis_apropos_names__), "
-                              "[{'kind': _k, 'gist': _g} for _k, _g in "
-                              "zip(list(__vis_apropos_kinds__), list(__vis_apropos_gists__))]))")))
+                          (str "[__vis_AproposItem__(_t, _n, _i + 1, _b) "
+                               "for _i, (_n, _t, _b) in enumerate("
+                               "zip(list(__vis_apropos_names__), "
+                               "list(__vis_apropos_kinds__), " "list(__vis_apropos_bodies__)))]"))
                    (finally (.putMember g "__vis_apropos_names__" nil)
                             (.putMember g "__vis_apropos_kinds__" nil)
-                            (.putMember g "__vis_apropos_gists__" nil)
-                            (.putMember g "__vis_apropos_ats__" nil)
-                            (.putMember g "__vis_apropos_hits__" nil)
-                            (.putMember g "__vis_apropos_members__" nil)))))))
+                            (.putMember g "__vis_apropos_bodies__" nil)))))))
     (.putMember
       g
       "doc"
@@ -1380,7 +1330,15 @@
         ProxyExecutable
           (execute [_ args]
             (let [target
-                  (when (pos? (alength args)) (.asString ^Value (aget args 0)))
+                  (when (pos? (alength args))
+                    (let [^Value a (aget args 0)]
+                      (cond (.isString a) (.asString a)
+                            ;; An `AproposItem` IS a target: a row answers with the
+                            ;; exact name `doc` reads, so a reader passes the row back
+                            ;; instead of retyping the name off it.
+                            (and (.hasMember a "name") (.isString (.getMember a "name")))
+                            (.asString (.getMember a "name"))
+                            :else (str a))))
 
                   es
                   (sandbox-corpus g names)]
@@ -1421,7 +1379,7 @@
                         ;; A shim the generated index never saw — an extension declares its
                         ;; own — carries its prose only on the live object, so the placeholder
                         ;; is a cue to import THIS one module, which is what the reader asked for.
-                        (and (= "shim" (str (:kind hit)))
+                        (and (= "module" (str (:kind hit)))
                              (contains? #{"" unharvested-shim-page} (str (:text hit))))
                         (let [live (dotted-doc g target)]
                           (if (str/blank? live) page live))
@@ -1436,11 +1394,11 @@
     (set-python-binding-doc!
       ctx
       'apropos
-      "apropos(query='') -> {name: {kind, gist, at, hit, member}}. FULL-TEXT SEARCH over every document this session can reach — every function's contract, every skill's whole SKILL.md, every Vis documentation page, every MCP tool's description. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the document that covers most of it and a word nothing carries costs nothing. A query that IS a handle wins that handle; a typo is spell-corrected and a prefix completed, and `hit` names the terms that landed, showing any rewrite (`pathc→patch`). `kind` is what the document IS — tool · shim · page · skill · mcp · local (a helper this session defined — its own DOCSTRING is its document, so a documented helper answers a described ask while an undocumented one is listed and never searched). `gist` is a BOUNDED excerpt, never the body: the document's opening, the region your terms landed in, and a fragment from deeper down; `at` is the line that region starts on, so a long document is read from where it answers. A row that answered for a name its document LENDS — one shim page documents hundreds of classes and functions — carries `member`, the dotted name that lent it (`read_csv` answers `pandas` with `member: 'pandas.read_csv'`), which is also exactly what `doc()` takes to read that one member. Ranked best-first and capped at 10 — a described ask matches half the corpus, so read down, not around. Called with NO argument (or an empty one) it LISTS instead of searching: every name this session can reach, in name order, uncapped, each row just {kind, gist} — `at` and `hit` exist only relative to a query. Read one whole with `doc(name)`.")
+      "apropos(query='') -> [AproposItem(type, name, rank, body)]. FULL-TEXT SEARCH over every SYMBOL this session can reach — every Vis verb, every class, function and module a sandbox shim lends, every Vis documentation page, every skill. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the symbol that covers most of it and a word nothing carries costs nothing. A query that IS a name wins that name; a typo is spell-corrected and a prefix completed. The answer is a LIST in rank order — iterate it, slice it, pass a row straight back to `doc(item)`. `type` is what the symbol IS: function · class · module · tool · doc · skill. `name` is exactly what `doc()` reads, dotted the way Python addresses it (`pandas.read_csv`). `rank` is 1 for the best answer. `body` is the first 100 characters of the symbol's own text, never a window cut around the query — read the whole with `doc(item)`. Capped at 10, so read down, not around. Called with NO argument it LISTS instead of searching: every symbol, in name order, uncapped. A `def` this session wrote is never here — `defs()` lists those.")
     (set-python-binding-doc!
       ctx
       'doc
-      "doc(target) -> str. RETRIEVE one document whole: a function name, a Vis documentation slug or a skill name — case, whitespace and a trailing `.md` do not matter, and a function wins a name collision. A DOTTED target reads ONE MEMBER live off the object itself — `doc(\"pandas.read_csv\")` prints that member's own signature and docstring, so a module's page names what it lends and this says what one of them does. `doc()` with no argument prints the curated index of the verbs a session starts from. A skill is one of these documents and nothing more: reading it is the whole of using it.")
+      "doc(target) -> str. RETRIEVE one symbol whole: an `AproposItem` a search answered with, a function name, a Vis documentation slug or a skill name — case, whitespace and a trailing `.md` do not matter, and a callable wins a name collision. What comes back is what the target IS: a function's or class's own docstring, a module's, a whole documentation page, a whole `SKILL.md`. A DOTTED target reads ONE MEMBER live off the object itself — `doc(\"pandas.read_csv\")` prints that member's signature and docstring. `doc()` with no argument prints the curated index of the verbs a session starts from. A skill is one of these documents and nothing more: reading it is the whole of using it.")
     (set-python-binding-doc!
       ctx
       'gather
@@ -2433,7 +2391,10 @@
                       "__vis_kinds__"
                       (into {}
                             (map (fn [n]
-                                   [n "shim"]))
+                                   [n
+                                    (or (some-> (shim-caps/entry n)
+                                                :kind)
+                                        "module")]))
                             names)))
       (catch Throwable _ nil))
     ;; DOCUMENTS — every skill, every documentation page, every MCP tool — are NOT

@@ -261,13 +261,20 @@ def __vis_harvest__(modules, names):
                                                 (empty? (:names (val %))))
                                           (caps/capabilities))))]
         (expect (empty? empty-mods) (str "modules lending nothing: " (pr-str empty-mods)))))
-  (it "lends every member name to the ranker as a search alias"
-      ;; Cycle 2: a reader looks up `read_csv`, never `pandas`. The page is filed
-      ;; under the module name, so its members reach it as ALIASES, not as text.
-      (let [members (set (caps/member-names "pandas"))]
-        (expect (contains? members "read_csv"))
-        (expect (contains? members "DataFrame"))
-        (expect (empty? (caps/member-names "never-harvested")))))
+  (it "lends every member as its own searchable entry"
+      ;; Cycle 3: a reader looks up `read_csv`, never `pandas`. The unit of the index
+      ;; is the SYMBOL, so each member is its own document under its dotted name.
+      (let [members
+            (caps/member-entries "pandas")
+
+            by-name
+            (into {} (map (juxt :name identity)) members)]
+
+        (expect (contains? by-name "pandas.read_csv"))
+        (expect (contains? by-name "pandas.DataFrame"))
+        (expect (= "class" (:kind (get by-name "pandas.DataFrame"))))
+        (expect (seq (:text (get by-name "pandas.read_csv"))))
+        (expect (empty? (caps/member-entries "never-harvested")))))
   (it "matches a live harvest"
       ;; The pin. Changing what a shim installs without regenerating leaves the
       ;; model reading yesterday's surface.

@@ -14,8 +14,7 @@
       :text \"...\"           ;; the whole document; its FIRST LINE is the gist
       :kind \"tool\"          ;; what it IS, out of the closed `kinds` vocabulary
       :call \"grep({\"query\": …})\" ;; the python that USES it; absent = prose
-       :params \"Keys: query (REQUIRED) · paths\" ;; its options-dict vocabulary
-       :aliases [\"read_csv\"]}  ;; other names that must ANSWER this document
+       :params \"Keys: query (REQUIRED) · paths\"} ;; its options-dict vocabulary
 
    `kind` says what a reader should DO with a hit; `call` spells the vocabulary
    out — a function answers `grep({\"query\": …})`, an MCP tool answers
@@ -25,10 +24,10 @@
    caller cannot omit.
 
    How a verb is CALLED is STRUCTURE, never text: `call` and `params` are printed
-   above the document and are not part of it. The first line is what `apropos`
-   PREVIEWS and a scored field besides, so a tool whose text opened with its own
-   signature previewed as a signature and stopped matching the words its prose is
-   written in.
+   above the document and are not part of it. The first line is a scored field of
+   its own AND the `body` an `apropos` row shows, so a tool whose text opened with
+   its own signature answered with a signature and stopped matching the words its
+   prose is written in.
 
    There is no stored `gist`. Two texts for one entry are two places to
    drift, invisibly, because nothing reads both at once: `gist` is a RENDERING
@@ -57,29 +56,29 @@
 (s/def :vis.doc/text string?)
 (s/def :vis.doc/call (s/nilable string?))
 (s/def :vis.doc/params (s/nilable string?))
-(s/def :vis.doc/aliases (s/nilable (s/coll-of string?)))
 (def kinds
   "The closed vocabulary of `:kind` — what a document IS, which is how a reader
-   decides what to DO with it: `tool` a callable verb's contract, `shim` an
-   importable sandbox module, `page` a Vis documentation page, `skill` a whole
-   `SKILL.md`, `mcp` an MCP server's tool, `local` a callable this session
-   defined that carries no contract at all. A source that invents a kind is a
-   bug, not a new category."
-  #{"tool" "shim" "page" "skill" "mcp" "local"})
+   decides what to DO with it, and what `doc` RETURNS for it: `function` a
+   callable's docstring, `class` a class's, `module` an importable module's,
+   `tool` a Vis verb's contract, `doc` a whole documentation page, `skill` a whole
+   `SKILL.md`, `local` a callable this session defined that carries no contract at
+   all — reachable by name through `doc`, never ranked by `apropos`. A source that
+   invents a kind is a bug, not a new category."
+  #{"function" "class" "module" "tool" "doc" "skill" "local"})
 
 (s/def :vis.doc/kind kinds)
 (s/def :vis.doc/entry
   (s/keys :req-un [:vis.doc/name :vis.doc/text]
-          :opt-un [:vis.doc/call :vis.doc/params :vis.doc/kind :vis.doc/aliases]))
+          :opt-un [:vis.doc/call :vis.doc/params :vis.doc/kind]))
 (s/def :vis.doc/entries (s/coll-of :vis.doc/entry :kind vector?))
 (s/def :vis.doc/result
   (s/or :index (s/keys :req-un [:vis.doc/entries])
         :entry :vis.doc/entry))
 
-;; `apropos` = the same records, ranked. The rank ORDER is one answer and the
-;; `preview` of each hit is the other: a row shows where the query landed in
-;; that document and how deep, so a reader never opens a 70 KB skill to find
-;; out it was matched once in a table.
+;; `apropos` = the same records, ranked. A row is what a reader needs to decide
+;; whether to open it: what it IS, its name, its rank, and the opening of its own
+;; text — never a window cut around the query, because the unit of the index is
+;; the SYMBOL, and a symbol's first line already describes the whole of it.
 (s/def :vis.apropos/score number?)
 (s/def :vis.apropos/hit (s/merge :vis.doc/entry (s/keys :req-un [:vis.apropos/score])))
 (s/def :vis.apropos/result (s/coll-of :vis.apropos/hit :kind vector?))
@@ -125,234 +124,28 @@
            :else line))))
 
 
-(def ^:private ^:const preview-head-len
-  "Characters of the document's own opening. Long enough for a contract's first
-   clause, short enough that ten rows stay scannable."
-  110)
+(def ^:private body-max-len
+  "Characters of a document's own opening that an `apropos` row carries. One
+   sentence of a docstring — enough to choose between two hits, short enough that
+   ten rows cost less than one page."
+  100)
 
-(def ^:private ^:const preview-mid-len 90)
-(def ^:private ^:const preview-tail-len 60)
+(defn body-text
+  "The opening of `text` as ONE line, capped at `body-max-len`: the `body` an
+   `apropos` row shows. Whitespace collapses so a wrapped docstring reads as the
+   sentence its author wrote, and a leading markdown heading goes the way `gist`
+   drops it. The first PARAGRAPH is the whole of it — a docstring's opening sentence
+   describes the symbol; what follows is one `doc(name)` away."
+  [text]
+  (let [para
+        (first (str/split (str/trim (str text)) #"\n\s*\n"))
 
-(def ^:private ^:const preview-lead-in
-  "Characters of lead-in before a match. Enough to know which sentence the
-   window cut into, not so much that the match itself is the tail of the row."
-  35)
+        s
+        (str/trim (str/replace (str/replace (str para) #"\s+" " ") #"^#+\s*" ""))]
 
-(def ^:private ^:const preview-tail-lead 12)
-
-(def ^:private ^:const preview-tail-gap
-  "How far below the matched region a second match must sit to be worth showing:
-   closer than this it is the same passage twice."
-  400)
-
-(def ^:private ^:const preview-short-head
-  "An opening this short is a breadcrumb (`Drafts · Using Vis`), not a
-   summary — the line under it carries the meaning, so take both."
-  45)
-
-(def ^:private ^:const preview-hit-terms 3)
-
-(defn- collapse
-  "One line: every whitespace run becomes a single space and markdown scaffolding
-   is trimmed off the ends, so a window cut out of a table or a bullet reads as
-   prose."
-  ^String [^String s]
-  (-> s
-      (str/replace #"\s+" " ")
-      (str/replace #"^[\s#*`|>_-]+" "")
-      (str/replace #"[\s|]+$" "")
-      str/trim))
-
-(defn- clip
-  "`s` capped at `n` characters, cut at a word boundary when that keeps most of
-   it, marked with an ellipsis when anything was dropped."
-  ^String [^String s ^long n]
-  (if (<= (count s) n)
-    s
-    (let [cut
-          (subs s 0 n)
-
-          sp
-          (.lastIndexOf cut " ")]
-
-      (str (if (> sp (long (* 0.6 n))) (subs cut 0 sp) cut) "…"))))
-
-(defn- word-start?
-  "Is offset `i` the start of a word — nothing alphanumeric to its left? Matching
-   mid-word would put `cat` inside `concatenate`."
-  [^String s ^long i]
-  (or (zero? i) (not (Character/isLetterOrDigit (.charAt s (dec i))))))
-
-(defn- find-term
-  "First word-start offset of `term` in `low` at or after `from`, or -1."
-  ^long [^String low ^String term ^long from]
-  (loop [i (.indexOf low term (int from))]
-    (cond (neg? i) -1
-          (word-start? low i) i
-          :else (recur (.indexOf low term (int (inc i)))))))
-
-(defn- last-term
-  "Last word-start offset of `term` in `low`, or -1."
-  ^long [^String low ^String term]
-  (loop [i (.lastIndexOf low term)]
-    (cond (neg? i) -1
-          (word-start? low i) i
-          :else (recur (.lastIndexOf low term (int (dec i)))))))
-
-(defn- line-of
-  "The 1-based line `pos` falls on."
-  ^long [^String s ^long pos]
-  (loop [from
-         0
-
-         line
-         1]
-
-    (let [j (.indexOf s "\n" (int from))]
-      (if (or (neg? j) (>= j pos)) line (recur (inc j) (inc line))))))
-
-(defn- word-window
-  "The text around `pos`, widened to whole words: `back` characters of lead-in
-   and `fwd` after it, never reaching back before `floor` — so a window never
-   re-shows what the caller already printed. A match is worth more forwards than
-   backwards, which is why the two spans differ."
-  ^String [^String s pos back fwd floor]
-  (let [p
-        (long pos)
-
-        fl
-        (long floor)
-
-        n
-        (.length s)
-
-        lo
-        (loop [i (max fl (- p (long back)))]
-          (if (and (> i fl) (Character/isLetterOrDigit (.charAt s (dec i)))) (recur (dec i)) i))
-
-        hi
-        (loop [i (min n (+ p (long fwd)))]
-          (if (and (< i n) (Character/isLetterOrDigit (.charAt s i))) (recur (inc i)) i))]
-
-    (collapse (subs s lo hi))))
-
-(defn- opening
-  "`[rendered-head raw-end]` — the document's first non-blank line, plus the next
-   one when the first is only a breadcrumb."
-  [^String s ^long start]
-  (let [n
-        (.length s)
-
-        eol
-        (let [j (.indexOf s "\n" (int start))]
-          (if (neg? j) n j))
-
-        head
-        (collapse (subs s start eol))]
-
-    (if (or (>= (long (count head)) (long preview-short-head)) (>= (long eol) n))
-      [head eol]
-      (let [nxt
-            (loop [i (inc eol)]
-              (if (and (< i n) (Character/isWhitespace (.charAt s i))) (recur (inc i)) i))
-
-            eol2
-            (let [j (.indexOf s "\n" (int nxt))]
-              (if (neg? j) n j))
-
-            more
-            (collapse (subs s nxt eol2))]
-
-        (if (str/blank? more) [head eol] [(str head " — " more) eol2])))))
-
-(defn preview
-  "A BOUNDED excerpt of one document for the terms that matched it — what a
-   search row shows instead of the body, which `doc(name)` answers whole.
-
-   Three parts, joined by ellipses: the document's own OPENING (its first line,
-   plus the line under it when the first is a breadcrumb), the best MATCHED
-   region below what the opening already showed, and — when the terms recur far
-   deeper — a fragment from DOWN the document, which is what separates a page
-   that is about the query from one that mentions it once.
-
-   `terms` is `bm25/rank`'s resolved-term metadata; the rarest term (highest
-   `:idf`) picks the window, and `:hit` names the terms that landed, rendering a
-   correction as `pathc→patch` so a rewritten query is never silent.
-
-   Answers `{:gist :at :hit}`. `:at` is the 1-based LINE the matched region
-   starts on — 0 when the opening already held the match — so a 70 KB skill can
-   be read from where it answers."
-  ([text] (preview text nil))
-  ([text terms]
-   (let [s
-         (str text)
-
-         n
-         (.length s)
-
-         start
-         (loop [i 0]
-           (if (and (< i n) (Character/isWhitespace (.charAt s i))) (recur (inc i)) i))
-
-         [raw-head head-end]
-         (opening s start)
-
-         head
-         (clip (str/replace raw-head #"^#+\s*" "") preview-head-len)
-
-         ;; Where the rendered opening stops in the RAW text: a window may never
-         ;; reach back into it.
-         shown
-         (min (long head-end) (+ (long start) (long (count head))))
-
-         low
-         (str/lower-case s)
-
-         found
-         (into []
-               (comp (filter #(>= (count (str (:as %))) 3))
-                     (keep (fn [{:keys [as] :as t}]
-                             (let [f (find-term low (str as) 0)]
-                               (when-not (neg? f)
-                                 (assoc t
-                                   :below (find-term low (str as) shown)
-                                   :last (last-term low (str as))))))))
-               (sort-by (comp - :idf) terms))
-
-         ;; A term the corpus almost never uses says what the document is; one it
-         ;; uses everywhere ("file", "the") would put the window on noise.
-         strong
-         (if-let [top (when (seq found) (apply max (map :idf found)))]
-           (or (seq (filter #(>= (double (:idf %)) (* 0.5 (double top))) found)) found)
-           [])
-
-         mpos
-         (let [bs (remove neg? (map :below strong))]
-           (when (seq bs) (apply min bs)))
-
-         deepest
-         (when mpos (apply max (map :last strong)))
-
-         mid
-         (when mpos
-           (clip (word-window s mpos preview-lead-in preview-mid-len shown) preview-mid-len))
-
-         tail
-         (when (and deepest (> (long deepest) (+ (long mpos) (long preview-tail-gap))))
-           (clip (word-window s
-                              deepest
-                              preview-tail-lead
-                              preview-tail-len
-                              (+ (long mpos) (long preview-mid-len)))
-                 preview-tail-len))]
-
-     {:gist (str/join " … " (remove str/blank? [head mid tail]))
-      :at (if mpos (line-of s mpos) 0)
-      :hit (into []
-                 (comp (take preview-hit-terms)
-                       (map (fn [{:keys [term as]}]
-                              (if (= (str term) (str as)) (str as) (str term "→" as)))))
-                 strong)})))
+    (if (> (count s) (long body-max-len))
+      (str (str/trim (subs s 0 (dec (long body-max-len)))) "…")
+      s)))
 (defn normalize-name
   "Coerce a caller's target to a comparable handle: unwrap the map/kwargs shape,
    trim, drop a trailing `.md` (pages cross-link by filename), lower-case. This
@@ -414,7 +207,7 @@
         (keep (fn [{:keys [slug title section blurb md]}]
                 (when (and (seq (str slug)) (seq (str md)))
                   {:name (str slug)
-                   :kind "page"
+                   :kind "doc"
                    ;; The TITLE is the first line, unheaded: `entry-text` already
                    ;; prints `# <slug>`, and two headings in a row read as a
                    ;; mistake rather than as a document.
@@ -514,15 +307,12 @@
    → .872), because lengthening one field spends its length normalization on
     pages while every tool's one-line description keeps its own.
 
-    `aliases` are the names a document LENDS — a shim page's members. They are
-    not text: the ranker scores them as extra HANDLES, so `read_csv` answers the
-    `pandas` page without `read_csv` becoming a document of its own."
+    A document is one SYMBOL, so its name IS the handle a reader types and its
+    first line IS what a reader is shown; nothing is lent, aliased or previewed."
   [es]
   (mapv (fn [e]
           (let [t (str (:text e))]
-            (cond-> {:name (str (:name e)) :gist (gist t) :body t :value e}
-              (seq (:aliases e))
-              (assoc :aliases (:aliases e)))))
+            {:name (str (:name e)) :gist (gist t) :body t :value e}))
         es))
 
 (defn search

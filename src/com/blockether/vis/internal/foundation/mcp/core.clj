@@ -950,7 +950,7 @@
               (keep (fn [t]
                       (when-let [nm (not-empty (str (get t "name")))]
                         {:name (str server "/" nm)
-                         :kind "mcp"
+                         :kind "tool"
                          :call (str "mcp__call(" (pr-str (str server)) ", " (pr-str nm) ", {})")
                          :text (str "MCP tool `"
                                     nm

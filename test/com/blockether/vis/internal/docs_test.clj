@@ -75,11 +75,11 @@
         (doseq [needle [":description" ":params" ":result" ":call" "Keys:" "(REQUIRED)"
                         "Raw result:"]]
           (expect (str/includes? md needle) (str "extending.md never mentions " needle)))))
-  (it "shows an `apropos` row with all four of its keys"
+  (it "shows an `apropos` item with all four of its fields"
       (let [md (extending-md)]
-        (doseq [needle ["'kind'" "'gist'" "'at'" "'hit'"]]
+        (doseq [needle ["AproposItem(" "type=" "name=" "rank=" "body="]]
           (expect (str/includes? md needle)
-                  (str "extending.md never shows " needle " in an apropos row")))))
+                  (str "extending.md never shows " needle " in an apropos item")))))
   (it "names the shim keys that drive discovery and the page they answer with"
       (let [md (extending-md)]
         (doseq [needle [":shim/imports" ":shim/globals" ":shim/source" ":shim/docs"]]

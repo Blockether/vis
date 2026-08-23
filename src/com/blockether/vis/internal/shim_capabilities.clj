@@ -42,12 +42,27 @@
   [nm]
   (get (capabilities) nm))
 
-(defn member-names
-  "Every public member `nm` lends, as the search ALIASES of its page: one shim page
-   is the document for hundreds of members, and a reader looks up `read_csv`, not
-   `pandas`. Empty for a name the index never saw."
+(defn member-entries
+  "Every public member `nm` lends, as doc-corpus ENTRIES of their own: one entry
+   per SYMBOL, named the way Python addresses it (`pandas.read_csv`), so a lookup
+   answers the name that was typed instead of the module that happens to hold it.
+   A member with no prose is skipped — there would be nothing to answer with.
+   Empty for a name the index never saw."
   [nm]
-  (into [] (comp (map :name) (filter seq)) (:names (entry nm))))
+  (into []
+        (keep (fn [{mnm :name mkind :kind sig :sig d :doc}]
+                (let [mnm
+                      (str mnm)
+
+                      d
+                      (str/trim (str d))]
+
+                  (when (and (seq mnm) (seq d))
+                    {:name (if (str/starts-with? mnm (str nm ".")) mnm (str nm "." mnm))
+                     :kind (or (#{"function" "class" "module"} (str mkind)) "function")
+                     :text d
+                     :call (when (#{"function" "class"} (str mkind)) (str sig))}))))
+        (:names (entry nm))))
 
 (def ^:private kind-labels
   "Print order and label for a member kind."
