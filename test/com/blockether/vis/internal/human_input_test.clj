@@ -2071,7 +2071,10 @@
               file
               (live-sink/view-file session-id (:id view))]
 
+          (expect (= 1 (get-in view [:activity :schema-version])))
+          (expect (= "idle" (get-in view [:activity :state])))
           (hi/patch-activity! (:id view) state)
+          (expect (= (activity/presentation state) (:activity (hi/live-view (:id view)))))
           (let [result
                 (binding [mpl/*attachment-sink* sink]
                   (hi/close-live! (:id view) {:summary "Activity settled"}))
@@ -2084,11 +2087,17 @@
             (expect (= "activity.live.ndjson" (:filename (first @sink))))
             (expect (= ["open" "close"] (mapv :kind lines)))
             (expect (= "activity" (get-in (first lines) [:view :classification])))
+            (expect (= 1 (get-in (first lines) [:view :activity :schema-version])))
+            (expect (= (activity/presentation state) (get-in result [:view :activity])))
             ;; Regression: an Activity view crossing the gateway was dropped as
             ;; unreadable — the wire decoder never keywordized :classification,
             ;; the string failed ::classification, and every cross-process
             ;; surface (the TUI) silently painted no Activity at all.
             (expect (= :activity (:classification (hi/live-view<-wire (:view (first lines))))))
+            (expect (nil? (hi/live-view<-wire
+                            (assoc-in (:view (first lines)) [:activity :schema-version] 2))))
+            (expect (nil? (hi/live-view<-wire
+                            (assoc-in (:view (first lines)) [:activity :rows] [{:id "broken"}]))))
             (expect (nil? (hi/live-view (:id view)))))))))
   (it "seals the record with the artifact it filed, so a view read back off disk names it too"
       (let [{:keys [result file]}

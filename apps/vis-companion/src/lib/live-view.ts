@@ -216,6 +216,65 @@ export type LiveLeafNode =
 /** A node either paints something, or arranges the nodes it holds. */
 export type LiveNode = LiveLeafNode | LiveGroupNode;
 
+export const ACTIVITY_SCHEMA_VERSION = 1;
+export const ACTIVITY_PRESENTERS = [
+  'generic',
+  'shell',
+  'tests',
+  'patch',
+  'observation',
+  'lint',
+  'repl',
+  'format',
+  'list',
+] as const;
+export const ACTIVITY_SIGNALS = ['generic', 'observation', 'mutation', 'verification'] as const;
+export const ACTIVITY_STATES = ['idle', 'running', 'succeeded', 'failed', 'cancelled'] as const;
+
+export type ActivityPresenter = (typeof ACTIVITY_PRESENTERS)[number];
+export type ActivitySignal = (typeof ACTIVITY_SIGNALS)[number];
+export type ActivityState = (typeof ACTIVITY_STATES)[number];
+
+export interface ActivityResource {
+  type: string;
+  id: string;
+}
+
+export interface ActivityEvidence {
+  kind: 'arguments' | 'result' | 'error';
+  text: string;
+}
+
+export interface ActivityRow {
+  id: string;
+  sequence: number;
+  operation: string;
+  presenter: ActivityPresenter;
+  signal: ActivitySignal;
+  state: ActivityState;
+  summary: string;
+  group_token?: string;
+  duration_ms?: number;
+  result_summary?: string;
+  error_summary?: string;
+  resources: ActivityResource[];
+  evidence: ActivityEvidence[];
+  children?: ActivityRow[];
+  is_truncated?: boolean;
+}
+
+export interface ActivityProjection {
+  schema_version: typeof ACTIVITY_SCHEMA_VERSION;
+  anchor?: Record<string, unknown>;
+  state: ActivityState;
+  counts: Record<'running' | 'succeeded' | 'failed' | 'cancelled', number>;
+  rows: ActivityRow[];
+  omitted: {
+    rows: number;
+    by_classification: Record<string, number>;
+  };
+}
+
 export interface LiveView {
   id: string;
   title: string;
@@ -226,6 +285,7 @@ export interface LiveView {
   created_at?: number;
   source?: string;
   classification?: 'activity';
+  activity?: ActivityProjection;
   /** Local reconnect marker, never sent on the wire. */
   is_stale?: boolean;
 }
@@ -273,6 +333,128 @@ function rows(value: unknown): Record<string, unknown>[] {
 
 function lines(value: unknown): string[] {
   return Array.isArray(value) ? value.map((line) => text(line)) : [];
+}
+
+function activityEnum<T extends string>(value: unknown, values: readonly T[]): T | null {
+  const candidate = text(value);
+  return values.includes(candidate as T) ? (candidate as T) : null;
+}
+
+function activityCount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function activityResourceFromWire(value: unknown): ActivityResource | null {
+  const raw = record(value);
+  if (!raw) return null;
+  const type = text(raw.type).trim();
+  const id = text(raw.id).trim();
+  return type && id ? { type, id } : null;
+}
+
+function activityEvidenceFromWire(value: unknown): ActivityEvidence | null {
+  const raw = record(value);
+  if (!raw) return null;
+  const kind = activityEnum(raw.kind, ['arguments', 'result', 'error'] as const);
+  const evidenceText = text(raw.text);
+  return kind ? { kind, text: evidenceText } : null;
+}
+
+function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
+  if (depth > 2) return null;
+  const raw = record(value);
+  if (!raw) return null;
+  const id = text(raw.id).trim();
+  const sequence = activityCount(raw.sequence);
+  const operation = text(raw.operation).trim();
+  const presenter = activityEnum(raw.presenter, ACTIVITY_PRESENTERS);
+  const signal = activityEnum(raw.signal, ACTIVITY_SIGNALS);
+  const state = activityEnum(raw.state, ACTIVITY_STATES);
+  const resourcesRaw = Array.isArray(raw.resources) ? raw.resources : null;
+  const evidenceRaw = Array.isArray(raw.evidence) ? raw.evidence : null;
+  const resources = resourcesRaw
+    ? resourcesRaw.map(activityResourceFromWire).filter((item): item is ActivityResource => item !== null)
+    : null;
+  const evidence = evidenceRaw
+    ? evidenceRaw.map(activityEvidenceFromWire).filter((item): item is ActivityEvidence => item !== null)
+    : null;
+  if (
+    !id ||
+    sequence === null ||
+    !operation ||
+    !presenter ||
+    !signal ||
+    !state ||
+    resources === null ||
+    resources.length !== resourcesRaw!.length ||
+    resources.length > 8 ||
+    evidence === null ||
+    evidence.length !== evidenceRaw!.length
+  ) {
+    return null;
+  }
+  const children = Array.isArray(raw.children)
+    ? raw.children.map((child) => activityRowFromWire(child, depth + 1))
+    : undefined;
+  if (children?.some((child) => child === null)) return null;
+  return {
+    id,
+    sequence,
+    operation,
+    presenter,
+    signal,
+    state,
+    summary: text(raw.summary),
+    resources,
+    evidence,
+    ...(optionalText(raw.group_token) ? { group_token: optionalText(raw.group_token) } : {}),
+    ...(optionalNumber(raw.duration_ms) !== undefined
+      ? { duration_ms: Math.max(0, Math.trunc(optionalNumber(raw.duration_ms)!)) }
+      : {}),
+    ...(optionalText(raw.result_summary) ? { result_summary: optionalText(raw.result_summary) } : {}),
+    ...(optionalText(raw.error_summary) ? { error_summary: optionalText(raw.error_summary) } : {}),
+    ...(children ? { children: children as ActivityRow[] } : {}),
+    ...(raw.is_truncated === true ? { is_truncated: true } : {}),
+  };
+}
+
+export function activityProjectionFromWire(value: unknown): ActivityProjection | null {
+  const raw = record(value);
+  if (!raw || raw.schema_version !== ACTIVITY_SCHEMA_VERSION) return null;
+  const state = activityEnum(raw.state, ACTIVITY_STATES);
+  const countsRaw = record(raw.counts);
+  const omittedRaw = record(raw.omitted);
+  const omittedBy = record(omittedRaw?.by_classification);
+  if (!state || !countsRaw || !omittedRaw || !omittedBy || !Array.isArray(raw.rows)) return null;
+  const counts = {
+    running: activityCount(countsRaw.running),
+    succeeded: activityCount(countsRaw.succeeded),
+    failed: activityCount(countsRaw.failed),
+    cancelled: activityCount(countsRaw.cancelled),
+  };
+  const omittedRows = activityCount(omittedRaw.rows);
+  const byClassification = Object.fromEntries(
+    Object.entries(omittedBy).filter(([, amount]) => activityCount(amount) !== null),
+  ) as Record<string, number>;
+  const parsedRows = raw.rows.map((row) => activityRowFromWire(row));
+  if (
+    Object.values(counts).some((amount) => amount === null) ||
+    omittedRows === null ||
+    Object.keys(byClassification).length !== Object.keys(omittedBy).length ||
+    parsedRows.some((row) => row === null) ||
+    parsedRows.length > 128 ||
+    new TextEncoder().encode(JSON.stringify(raw)).length > 64 * 1024
+  ) {
+    return null;
+  }
+  return {
+    schema_version: ACTIVITY_SCHEMA_VERSION,
+    ...(record(raw.anchor) ? { anchor: record(raw.anchor)! } : {}),
+    state,
+    counts: counts as ActivityProjection['counts'],
+    rows: parsedRows as ActivityRow[],
+    omitted: { rows: omittedRows, by_classification: byClassification },
+  };
 }
 
 /** Distinct selected ids which still name a row, in the engine's order. */
@@ -462,6 +644,8 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
   const classification = optionalText(view.classification);
   const activity = classification === 'activity';
   if (classification !== undefined && !activity) return null;
+  const activityProjection = activityProjectionFromWire(view.activity);
+  if ((activity && !activityProjection) || (!activity && view.activity !== undefined)) return null;
 
   return {
     id,
@@ -472,6 +656,7 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     created_at: optionalNumber(view.created_at),
     source: optionalText(view.source),
     ...(activity ? { classification: 'activity' as const } : {}),
+    ...(activityProjection ? { activity: activityProjection } : {}),
   };
 }
 
@@ -730,6 +915,10 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
   const op = record(raw);
   if (!op) return view;
   const name = text(op.op);
+  if (name === 'set-activity') {
+    const activity = activityProjectionFromWire(op.activity);
+    return view.classification === 'activity' && activity ? { ...view, activity } : view;
+  }
   if (name === 'add-node') {
     const node = liveNodeFromWire(op.node_spec);
     if (!node) return view;

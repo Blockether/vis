@@ -60,20 +60,23 @@
         (and (string? value) (str/starts-with? value "vis-secret:")) "[SECRET HANDLE]"
         :else value))
 
-(defn- bounded-redact
+(defn- bounded-redact-result
   "Redact a representative prefix without traversing an unbounded result graph."
   [value]
   (let [remaining
         (volatile! max-summary-nodes)
+
+        truncated?
+        (volatile! false)
 
         omitted
         "…"]
 
     (letfn
       [(visit [x]
-         (if-not (pos? @remaining)
-           omitted
-           (do (vswap! remaining dec)
+         (if-not (pos? (long @remaining))
+           (do (vreset! truncated? true) omitted)
+           (do (vswap! remaining #(unchecked-dec (long %)))
                (cond (map? x)
                      (loop [entries
                             (seq x)
@@ -82,7 +85,9 @@
                             (transient {})]
 
                        (cond (nil? entries) (persistent! result)
-                             (not (pos? @remaining)) (persistent! (assoc! result omitted "omitted"))
+                             (not (pos? (long @remaining)))
+                             (do (vreset! truncated? true)
+                                 (persistent! (assoc! result omitted "omitted")))
                              :else (let [[k v] (first entries)]
                                      (recur (next entries)
                                             (assoc! result
@@ -96,14 +101,30 @@
                             (transient [])]
 
                        (cond (nil? items) (persistent! result)
-                             (not (pos? @remaining)) (persistent! (conj! result omitted))
+                             (not (pos? (long @remaining)))
+                             (do (vreset! truncated? true) (persistent! (conj! result omitted)))
                              :else (recur (next items) (conj! result (visit (first items))))))
                      (and (string? x) (str/starts-with? x "vis-secret:")) "[SECRET HANDLE]"
                      (string? x) (bounded-text x max-detail-bytes)
                      :else x))))]
-      (visit value))))
+      {:value (visit value) :is-truncated @truncated?})))
 
-(defn safe-summary [value] (bounded-text (pr-str (bounded-redact value)) max-summary-bytes))
+(defn- bounded-rendered
+  [rendered limit]
+  (let [bounded (bounded-text rendered limit)]
+    {:text bounded :is-truncated (not= rendered bounded)}))
+
+(defn- bounded-summary
+  [value limit]
+  (let [{:keys [value is-truncated]}
+        (bounded-redact-result value)
+
+        bounded
+        (bounded-rendered (pr-str value) limit)]
+
+    (update bounded :is-truncated #(or % is-truncated))))
+
+(defn safe-summary [value] (:text (bounded-summary value max-summary-bytes)))
 
 (defn context
   "Create one concurrency-safe event context for an evaluation/form anchor."
@@ -274,12 +295,15 @@
         (resource-refs details)
 
         token
-        (or group-token (some explicit-group-token args))]
+        (or group-token (some explicit-group-token args))
+
+        argument
+        (bounded-summary args max-summary-bytes)]
 
     (checked
       (cond-> (merge (base-event ctx invocation operation presenter :start)
                      (select-keys invocation [:parent-invocation-id])
-                     {:status :running :argument-summary (safe-summary args)})
+                     {:status :running :argument-summary (:text argument)})
         extension
         (assoc :extension extension)
 
@@ -299,7 +323,10 @@
         (assoc :group-token (bounded-text token max-summary-bytes))
 
         refs
-        (assoc :resources refs)))))
+        (assoc :resources refs)
+
+        (:is-truncated argument)
+        (assoc :argument-truncated true)))))
 
 (defn terminal-event
   [ctx invocation
@@ -320,7 +347,15 @@
         (resource-refs details*)
 
         token
-        (or group-token (explicit-group-token result))]
+        (or group-token (explicit-group-token result))
+
+        summary
+        (if (= outcome :succeeded)
+          (bounded-summary result max-detail-bytes)
+          (bounded-rendered (or (some-> error*
+                                        ex-message)
+                                (str error*))
+                            max-detail-bytes))]
 
     (checked
       (cond-> (merge (base-event ctx invocation operation presenter :terminal)
@@ -336,14 +371,10 @@
                                 :failed)
                       :duration-ms duration})
         (= outcome :succeeded)
-        (assoc :result-summary (bounded-text (pr-str (bounded-redact result)) max-detail-bytes))
+        (assoc :result-summary (:text summary))
 
         (not= outcome :succeeded)
-        (assoc :error-summary
-          (bounded-text (or (some-> error*
-                                    ex-message)
-                            (str error*))
-                        max-detail-bytes))
+        (assoc :error-summary (:text summary))
 
         classification
         (assoc :classification classification)
@@ -352,4 +383,7 @@
         (assoc :group-token (bounded-text token max-summary-bytes))
 
         refs
-        (assoc :resources refs)))))
+        (assoc :resources refs)
+
+        (:is-truncated summary)
+        (assoc :result-truncated true)))))

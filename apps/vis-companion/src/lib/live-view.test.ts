@@ -66,6 +66,31 @@ function nodeOfType<K extends LiveNode['type']>(
 
 const ids = (view: LiveView) => view.nodes.map((node) => node.id);
 
+const activityProjection = (state: 'running' | 'succeeded' = 'running') => ({
+  schema_version: 1,
+  state,
+  counts: {
+    running: state === 'running' ? 1 : 0,
+    succeeded: state === 'succeeded' ? 1 : 0,
+    failed: 0,
+    cancelled: 0,
+  },
+  rows: [
+    {
+      id: 'call-1',
+      sequence: 1,
+      operation: 'run_tests',
+      presenter: 'tests',
+      signal: 'verification',
+      state,
+      summary: 'suite',
+      resources: [],
+      evidence: [{ kind: 'arguments', text: 'suite' }],
+    },
+  ],
+  omitted: { rows: 0, by_classification: {} },
+});
+
 describe('a live view read off the wire', () => {
   it('reads the engine fixture node for node, in the order it was declared', () => {
     const view = opened();
@@ -475,6 +500,7 @@ describe('the record of a settled view', () => {
       title: 'Activity',
       classification: 'activity',
       seq: 0,
+      activity: activityProjection(),
       nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
     };
     const record = liveRecordFromText(
@@ -486,6 +512,7 @@ describe('the record of a settled view', () => {
           is_completed: true,
           view: {
             title: 'Activity',
+            activity: activityProjection('succeeded'),
             nodes: [{ id: 'status', type: 'status', text: 'succeeded', tone: 'ok' }],
           },
         }),
@@ -509,13 +536,27 @@ describe('the current Activity wire contract', () => {
   const raw = {
     id: 'activity-1',
     title: 'Activity',
-    classification: 'activity',
-    nodes: [{ id: 'activity-status', type: 'status', text: 'running', tone: 'running' }],
+      classification: 'activity',
+      activity: activityProjection(),
+      nodes: [{ id: 'activity-status', type: 'status', text: 'running', tone: 'running' }],
   };
 
   it('keeps the host Activity classification', () => {
     const view = liveViewFromWire(raw);
-    expect(view).toMatchObject({ classification: 'activity' });
+    expect(view).toMatchObject({ classification: 'activity', activity: { schema_version: 1 } });
+  });
+
+  it('rejects missing, malformed, and unknown Activity projection versions', () => {
+    expect(liveViewFromWire({ ...raw, activity: undefined })).toBeNull();
+    expect(liveViewFromWire({ ...raw, activity: { ...activityProjection(), schema_version: 2 } })).toBeNull();
+    expect(liveViewFromWire({ ...raw, activity: { ...activityProjection(), rows: [{ id: 'broken' }] } })).toBeNull();
+  });
+
+  it('replaces semantic Activity data atomically with its ordinary node patch', () => {
+    const running = liveViewFromWire(raw)!;
+    const settled = activityProjection('succeeded');
+    const next = applyLivePatch(running, frame(running, 1, [{ op: 'set-activity', activity: settled }]));
+    expect(next.activity).toMatchObject({ state: 'succeeded', counts: { running: 0, succeeded: 1 } });
   });
 
   it('rejects unknown classifications', () => {

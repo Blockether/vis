@@ -24,7 +24,8 @@
    in `human-input`, which owns the error envelope every surface already
    handles."
   (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [com.blockether.vis.internal.activity :as activity]))
 
 ;; The closed vocabulary
 
@@ -160,14 +161,16 @@
   {"attachment" :attachment "path" :path "url" :url})
 
 (def live-ops
-  "What one patch operation DOES. The first four address ONE node BY ID; the last
-   two change the view's SHAPE while it runs. CLOSED."
+  "What one patch operation DOES. The first four address ONE node BY ID, the next
+   two change the view's SHAPE, and `set-activity` replaces the host-owned bounded
+   semantic projection beside Activity's ordinary nodes. CLOSED."
   {"set" :set           ; replace a node's own state (status text, progress value …)
    "append" :append     ; add lines to a log; upsert rows, steps, stats, links by id
    "remove" :remove     ; drop keyed ITEMS by id
    "clear" :clear       ; empty a log, table, step list, stat strip or link list
    "add-node" :add-node ; add a WHOLE node mid-run (a second table, a per-device log)
-   "remove-node" :remove-node})        ; drop a whole node, its items with it
+   "remove-node" :remove-node ; drop a whole node, its items with it
+   "set-activity" :set-activity}) ; replace host Activity semantics atomically
 
 (def live-tones
   "How a surface COLOURS one line, row, step or stat. CLOSED."
@@ -273,7 +276,8 @@
 
 (def live-view-keys
   "Every key a live view may carry, engine stamps included."
-  (into #{:title :description :source :session-id :channel-ids :nodes :timeout-ms :classification}
+  (into #{:title :description :source :session-id :channel-ids :nodes :timeout-ms :classification
+          :activity}
         live-view-stamp-keys))
 
 (def live-picture-keys
@@ -281,7 +285,7 @@
    bookkeeping (`:id`, `:session-id`, `:channel-ids`, the stamps) left behind. It
    is what the verdict hands the model and what a parsed document answers, so one
    shape crosses in both directions."
-  #{:title :description :nodes})
+  #{:title :description :nodes :activity})
 
 (def live-elided-keys
   "Every key one elision carries: which node a budget cut and how many items it
@@ -301,7 +305,8 @@
    :remove #{:op :node-id :item-ids}
    :clear #{:op :node-id}
    :add-node #{:op :node-spec :after}
-   :remove-node #{:op :node-id}})
+   :remove-node #{:op :node-id}
+   :set-activity #{:op :activity}})
 
 (def live-op-keys
   "Every key any patch operation may carry — the union the parser derives its
@@ -1025,10 +1030,17 @@
          #(<= (count (live-tree %)) (long (:max-nodes view-defaults)))
          #(apply distinct? (map :id (live-tree %)))))
 
+(s/def ::activity (s/and map? #(nil? (activity/presentation-error %))))
+
+(defn- activity-payload-matches-classification?
+  [{:keys [classification activity]}]
+  (if (= :activity classification) (map? activity) (nil? activity)))
+
 (s/def ::live-view
   (s/and #(closed? live-view-keys %)
          (s/keys :req-un [::id ::title ::channel-ids ::nodes ::timeout-ms ::seq ::created-at]
-                 :opt-un [::description ::source ::session-id ::classification])))
+                 :opt-un [::description ::source ::session-id ::classification ::activity])
+         activity-payload-matches-classification?))
 
 ;; One patch. `:seq` is monotonic PER VIEW, so a surface that sees a gap re-reads
 ;; the snapshot instead of painting a torn view.
@@ -1049,6 +1061,7 @@
 (defmethod live-op-form :clear [_] (s/keys :req-un [::op ::node-id]))
 (defmethod live-op-form :add-node [_] (s/keys :req-un [::op ::node-spec] :opt-un [::after]))
 (defmethod live-op-form :remove-node [_] (s/keys :req-un [::op ::node-id]))
+(defmethod live-op-form :set-activity [_] (s/keys :req-un [::op ::activity]))
 
 (s/def ::live-op
   (s/and #(closed? (get live-op-key-sets (:op %) #{}) %) (s/multi-spec live-op-form :op)))

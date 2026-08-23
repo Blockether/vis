@@ -1172,30 +1172,48 @@
         activity?
         (= "activity" classification)
 
+        activity-presentation
+        (pick* view :activity)
+
         _
         (when (and activity? (not *system-live-declaration*))
           (invalid-live-view!
-            "Activity views are host-owned and cannot be declared by an extension"))]
+            "Activity views are host-owned and cannot be declared by an extension"))
 
-    (checked-live-view (cond-> {:id (str (random-uuid))
-                                :title title
-                                :nodes nodes
-                                :timeout-ms
-                                (normalize-timeout view no-timeout-ms invalid-live-view!)
-                                :channel-ids (normalize-channel-ids view invalid-live-view!)
-                                :seq 0
-                                :created-at (System/currentTimeMillis)}
-                         session-id
-                         (assoc :session-id session-id)
+        _
+        (when (and activity? (nil? activity-presentation))
+          (invalid-live-view! "host Activity needs its versioned :activity projection"))
 
-                         (trimmed (pick* view :description))
-                         (assoc :description (trimmed (pick* view :description)))
+        _
+        (when (and (not activity?) (some? activity-presentation))
+          (invalid-live-view! ":activity only exists on the host Activity view"))
 
-                         (trimmed (pick* view :source))
-                         (assoc :source (trimmed (pick* view :source)))
+        _
+        (when-let [reason (and activity-presentation
+                               (activity/presentation-error activity-presentation))]
+          (invalid-live-view! reason))]
 
-                         activity?
-                         (assoc :classification :activity)))))
+    (checked-live-view
+      (cond-> {:id (str (random-uuid))
+               :title title
+               :nodes nodes
+               :timeout-ms (normalize-timeout view no-timeout-ms invalid-live-view!)
+               :channel-ids (normalize-channel-ids view invalid-live-view!)
+               :seq 0
+               :created-at (System/currentTimeMillis)}
+        session-id
+        (assoc :session-id session-id)
+
+        (trimmed (pick* view :description))
+        (assoc :description (trimmed (pick* view :description)))
+
+        (trimmed (pick* view :source))
+        (assoc :source (trimmed (pick* view :source)))
+
+        activity?
+        (assoc :classification
+          :activity :activity
+          activity-presentation)))))
 
 (def ^:private live-op-value
   "How ONE key of a patch operation is normalized, by key. A table rather than a
@@ -1233,6 +1251,10 @@
             (normalize-live-items fail! :steps value))
    :links (fn [fail! value]
             (normalize-live-items fail! :links value))
+   :activity (fn [fail! value]
+               (if-let [reason (activity/presentation-error value)]
+                 (fail! reason)
+                 value))
    :node-spec (fn [fail! value]
                 (live-node fail! value))})
 
@@ -1794,10 +1816,12 @@
             rt/*blocking-wall-hold*
             nil]
 
-    (open-live!
-      (cond-> {:title "Activity" :classification "activity" :nodes (activity/live-nodes state)}
-        session-id
-        (assoc :session-id session-id)))))
+    (open-live! (cond-> {:title "Activity"
+                         :classification "activity"
+                         :activity (activity/presentation state)
+                         :nodes (activity/live-nodes state)}
+                  session-id
+                  (assoc :session-id session-id)))))
 
 (defn patch-live!
   "Apply `patch` to live view `view-id` and return the view it made.
@@ -1841,7 +1865,8 @@
        {:ops
         [{:op "set" :node-id "activity-status" :text (:text status) :tone (name (:tone status))}
          {:op "set" :node-id "activity-counts" :stats (:stats counts)}
-         {:op "set" :node-id "activity-rows" :steps (:steps rows)}]}))))
+         {:op "set" :node-id "activity-rows" :steps (:steps rows)}
+         {:op "set-activity" :activity (activity/presentation state)}]}))))
 
 (defn focus-live!
   "Focus `item-ids` in focusable table `node-id` of open view `view-id`.

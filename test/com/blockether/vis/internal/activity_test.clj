@@ -86,6 +86,36 @@
         (expect (= [:generic :tests :patch] (mapv :presenter (:rows state))))
         (expect (= [:observation :mutation :mutation] (mapv :classification (:rows state))))
         (expect (= :failed (:state state)))))
+  (it "exports the current bounded semantic projection without channel markup"
+      (let [ctx
+            (event/context {})
+
+            anchor
+            {:evaluation-id (:evaluation-id ctx) :iteration 3 :form-index 1}
+
+            events
+            (mapcat identity
+                    [(event-pair ctx
+                                 :patch
+                                 :succeeded
+                                 {:edits 2}
+                                 {:presenter :patch :classification :mutation})])
+
+            presentation
+            (activity/presentation (activity/replay anchor events))
+
+            row
+            (first (:rows presentation))]
+
+        (expect (= 1 (:schema-version presentation)))
+        (expect (= anchor (:anchor presentation)))
+        (expect (= "patch" (:presenter row)))
+        (expect (= "mutation" (:signal row)))
+        (expect (= "succeeded" (:state row)))
+        (expect (= [:arguments :result] (mapv (comp keyword :kind) (:evidence row))))
+        (expect (nil? (activity/presentation-error presentation)))
+        (expect (= "unknown Activity schema version"
+                   (activity/presentation-error (assoc presentation :schema-version 2))))))
   (it "terminalizes rows still running when the evaluation is killed"
       (let [ctx
             (event/context {})
@@ -158,7 +188,7 @@
                                     (swap! serializations inc)
                                     (json-str value))]
         (activity/settled-live-nodes state))
-      (expect (<= 1 @serializations (inc activity/max-rows)))))
+      (expect (<= 1 (long @serializations) (inc (long activity/max-rows))))))
   (it "coalesces one typed shell handle while preserving child chronology"
       (let [ctx
             (event/context {})
@@ -189,7 +219,8 @@
 
         (expect (= 1 (count (:rows snapshot))))
         (expect (= :shell (:operation group)))
-        (expect (= "shell · 3 operations" (:summary group)))))
+        (expect (= "shell · 3 operations" (:summary group)))
+        (expect (= [:shell :_shell_logs :_shell_wait] (mapv :operation (:children group))))))
   (it "groups only adjacent observations with the same explicit token"
       (let [ctx
             (event/context {})

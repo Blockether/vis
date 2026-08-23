@@ -111,6 +111,7 @@
 
         (expect (true? (:succeeded terminal)))
         (expect (re-find #"…" (:result-summary terminal)))
+        (expect (true? (:result-truncated terminal)))
         (expect (<= (event/utf8-bytes (:result-summary terminal)) event/max-detail-bytes))))
   (it "records actual parentage and independent wrapper order"
       (let [ctx

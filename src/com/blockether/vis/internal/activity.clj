@@ -2,7 +2,8 @@
   "Pure bounded reducer from immutable lifecycle events to channel-neutral Activity.
 
    Wrapper-entry sequence owns row placement and terminal events update rows in place."
-  (:require [com.blockether.vis.internal.activity.event :as event]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.activity.presenter :as presenter]
             [com.blockether.vis.internal.gateway.wire :as wire]))
 
@@ -10,8 +11,13 @@
 (def max-receipt-bytes (* 64 1024))
 (defn empty-state
   "Initial rendered Activity state."
-  [_anchor]
-  {:state :idle :rows [] :counts {:running 0 :succeeded 0 :failed 0 :cancelled 0}})
+  [anchor]
+  {:schema-version event/schema-version
+   :anchor anchor
+   :state :idle
+   :rows []
+   :counts {:running 0 :succeeded 0 :failed 0 :cancelled 0}
+   :omitted {:rows 0 :by-classification {}}})
 
 (defn- terminal-state
   [event]
@@ -40,15 +46,24 @@
 
 (defn- start-row
   [event]
-  {:id (:invocation-id event)
-   :sequence (:invocation-sequence event)
-   :operation (:operation event)
-   :presenter (presenter/presenter-for (:operation event) (:presenter event))
-   :classification (presenter/classification event)
-   :state :running
-   :summary (presenter/row-summary event)
-   :group-token (:group-token event)
-   :resources (vec (take event/max-resources (:resources event)))})
+  (cond-> {:id (:invocation-id event)
+           :sequence (:invocation-sequence event)
+           :operation (:operation event)
+           :presenter (presenter/presenter-for (:operation event) (:presenter event))
+           :classification (presenter/classification event)
+           :state :running
+           :summary (presenter/row-summary event)
+           :group-token (:group-token event)
+           :resources (vec (take event/max-resources (:resources event)))
+           :evidence [{:kind :arguments :text (:argument-summary event)}]}
+    (:argument-truncated event)
+    (assoc :is-truncated true)))
+
+(defn- note-omitted
+  [state classification]
+  (-> state
+      (update-in [:omitted :rows] (fnil inc 0))
+      (update-in [:omitted :by-classification classification] (fnil inc 0))))
 
 (defn- update-counts
   [counts before after]
@@ -76,7 +91,9 @@
       (-> state
           (update :rows conj row)
           (update :counts update-counts nil :running))
-      (update state :counts update :running (fnil inc 0)))))
+      (-> state
+          (update :counts update :running (fnil inc 0))
+          (note-omitted (:classification row))))))
 
 (defn- terminal-row
   [row event]
@@ -89,7 +106,10 @@
     (cond-> (assoc row
               :state state
               :duration-ms (:duration-ms event)
-              :resources refs)
+              :resources refs
+              :evidence (conj (vec (:evidence row))
+                              {:kind (if (:error-summary event) :error :result)
+                               :text (or (:error-summary event) (:result-summary event) "")}))
       (:group-token event)
       (assoc :group-token (:group-token event))
 
@@ -99,7 +119,10 @@
       (:error-summary event)
       (assoc :error-summary
         (:error-summary event) :summary
-        (:error-summary event)))))
+        (:error-summary event))
+
+      (:result-truncated event)
+      (assoc :is-truncated true))))
 
 (defn- retain-late-failure
   [state event]
@@ -205,6 +228,11 @@
                           :observation)
              :classification (:classification first-row)
              :state state
+             :children (vec children)
+             :resources (vec (take
+                               event/max-resources
+                               (distinct (mapcat :resources children))))
+             :evidence []
              :summary (str
                         (if (= kind :shell) "shell" "observations")
                         " · "
@@ -278,7 +306,10 @@
 
 (defn- drop-row
   [state idx]
-  (update state :rows #(into (subvec % 0 (long idx)) (subvec % (inc (long idx))))))
+  (let [row (get (:rows state) idx)]
+    (-> state
+        (update :rows #(into (subvec % 0 (long idx)) (subvec % (inc (long idx)))))
+        (note-omitted (:classification row)))))
 
 (defn bounded
   "Receipt no larger than 64 KiB. Low-priority routine rows leave first."
@@ -293,6 +324,141 @@
   "Bounded running/final projection consumed by both channels."
   [state]
   (bounded state))
+
+(defn- enum-name [value] (if (keyword? value) (name value) (str value)))
+
+(defn- presentation-resource [{:keys [type id]}] {:type (enum-name type) :id (str id)})
+
+(defn- presentation-evidence [{:keys [kind text]}] {:kind (enum-name kind) :text (str text)})
+
+(defn- presentation-row
+  [{:keys [id sequence operation presenter classification state summary group-token resources
+           duration-ms result-summary error-summary evidence children is-truncated]}]
+  (cond-> {:id (str id)
+           :sequence (long sequence)
+           :operation (enum-name operation)
+           :presenter (enum-name presenter)
+           :signal (enum-name classification)
+           :state (enum-name state)
+           :summary (str (or summary ""))
+           :resources (mapv presentation-resource resources)
+           :evidence (mapv presentation-evidence evidence)}
+    group-token
+    (assoc :group-token (str group-token))
+
+    duration-ms
+    (assoc :duration-ms (long duration-ms))
+
+    result-summary
+    (assoc :result-summary (str result-summary))
+
+    error-summary
+    (assoc :error-summary (str error-summary))
+
+    (seq children)
+    (assoc :children (mapv presentation-row children))
+
+    is-truncated
+    (assoc :is-truncated true)))
+
+(defn presentation
+  "Versioned bounded Activity data shared by TUI, Companion, and settled replay.
+
+   It contains semantic values only. Channel markup stays in each painter, while
+   presenter and signal names arrive as strings so cross-process readers never
+   infer them from operation names."
+  [state]
+  (let [state (snapshot state)]
+    {:schema-version event/schema-version
+     :anchor (:anchor state)
+     :state (enum-name (:state state))
+     :counts (:counts state)
+     :rows (mapv presentation-row (:rows state))
+     :omitted (:omitted state)}))
+
+(def ^:private presentation-states #{"idle" "running" "succeeded" "failed" "cancelled"})
+(def ^:private presentation-presenters (set (map name presenter/presenters)))
+(def ^:private presentation-signals #{"generic" "observation" "mutation" "verification"})
+(def ^:private evidence-kinds #{"arguments" "result" "error"})
+(def ^:private row-required-keys
+  #{:id :sequence :operation :presenter :signal :state :summary :resources :evidence})
+(def ^:private row-optional-keys
+  #{:group-token :duration-ms :result-summary :error-summary :children :is-truncated})
+
+(defn- non-negative-integer? [value] (and (integer? value) (not (neg? (long value)))))
+
+(defn- closed? [allowed value] (and (map? value) (every? allowed (keys value))))
+
+(defn- non-blank-string? [value] (and (string? value) (not (str/blank? value))))
+
+(defn- resource?
+  [value]
+  (and (closed? #{:type :id} value)
+       (= #{:type :id} (set (keys value)))
+       (non-blank-string? (:type value))
+       (non-blank-string? (:id value))))
+
+(defn- evidence?
+  [value]
+  (and (closed? #{:kind :text} value)
+       (= #{:kind :text} (set (keys value)))
+       (contains? evidence-kinds (:kind value))
+       (string? (:text value))))
+
+(defn- presentation-row?
+  [value depth]
+  (and (<= (long depth) 2)
+       (closed? (into row-required-keys row-optional-keys) value)
+       (every? #(contains? value %) row-required-keys)
+       (non-blank-string? (:id value))
+       (non-negative-integer? (:sequence value))
+       (non-blank-string? (:operation value))
+       (contains? presentation-presenters (:presenter value))
+       (contains? presentation-signals (:signal value))
+       (contains? presentation-states (:state value))
+       (string? (:summary value))
+       (vector? (:resources value))
+       (<= (long (count (:resources value))) (long event/max-resources))
+       (every? resource? (:resources value))
+       (vector? (:evidence value))
+       (every? evidence? (:evidence value))
+       (or (nil? (:duration-ms value)) (non-negative-integer? (:duration-ms value)))
+       (or (nil? (:is-truncated value)) (true? (:is-truncated value)))
+       (or (nil? (:children value))
+           (and (vector? (:children value))
+                (every? #(presentation-row? % (inc (long depth))) (:children value))))))
+
+(defn- counts?
+  [value]
+  (and (closed? #{:running :succeeded :failed :cancelled} value)
+       (= #{:running :succeeded :failed :cancelled} (set (keys value)))
+       (every? non-negative-integer? (vals value))))
+
+(defn- omitted?
+  [value]
+  (and (closed? #{:rows :by-classification} value)
+       (= #{:rows :by-classification} (set (keys value)))
+       (non-negative-integer? (:rows value))
+       (map? (:by-classification value))
+       (every? non-negative-integer? (vals (:by-classification value)))))
+
+(defn presentation-error
+  "Nil for the current bounded Activity projection, otherwise its refusal."
+  [value]
+  (cond (not (map? value)) "Activity presentation must be a map"
+        (not (closed? #{:schema-version :anchor :state :counts :rows :omitted} value))
+        "Activity presentation has unknown keys"
+        (not= event/schema-version (:schema-version value)) "unknown Activity schema version"
+        (not (contains? presentation-states (:state value))) "unknown Activity state"
+        (not (counts? (:counts value))) "Activity counts are malformed"
+        (not (vector? (:rows value))) "Activity rows must be a vector"
+        (> (long (count (:rows value))) (long max-rows)) "Activity exceeds its row bound"
+        (not (every? #(presentation-row? % 0) (:rows value))) "Activity rows are malformed"
+        (and (seq (:rows value)) (not (apply distinct? (map :id (:rows value)))))
+        "Activity row ids must be distinct"
+        (not (omitted? (:omitted value))) "Activity omission counts are malformed"
+        (> (byte-size value) (long max-receipt-bytes)) "Activity exceeds its byte bound"
+        :else nil))
 
 (defn- row-tone
   [{:keys [state]}]

@@ -988,6 +988,7 @@
 (deftest the-app-activity-fixture-is-the-host-projection-test
   (let [state
         {:schema-version 1
+         :anchor {:evaluation-id "fixture-evaluation" :iteration 0 :form-index 0}
          :state :running
          :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
          :rows [{:id "call-1"
@@ -999,7 +1000,8 @@
                  :summary "18 matches"
                  :duration-ms 41
                  :resources []
-                 :evidence []}
+                 :evidence [{:kind :arguments :text "[{query: needle}]"}
+                            {:kind :result :text "18 matches"}]}
                 {:id "call-2"
                  :sequence 2
                  :operation :run_tests
@@ -1009,7 +1011,7 @@
                  :summary "suite"
                  :result-summary "24 passed"
                  :resources []
-                 :evidence []}]
+                 :evidence [{:kind :arguments :text "suite"}]}]
          :omitted {:rows 0 :by-classification {}}}
 
         file
@@ -1026,4 +1028,6 @@
     (is (some? file))
     (when fixture
       (is (= "activity" (get fixture "classification")))
-      (is (= expected-nodes (get fixture "nodes"))))))
+      (is (= expected-nodes (get fixture "nodes")))
+      (is (= (wire/parse-json (wire/json-str (activity/presentation state)))
+             (get fixture "activity"))))))

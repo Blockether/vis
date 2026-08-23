@@ -357,6 +357,11 @@
   "The view after ONE operation."
   [view op]
   (case (:op op)
+    :set-activity
+    (if (= :activity (:classification view))
+      (assoc view :activity (:activity op))
+      (invalid-patch! nil "set-activity only applies to the host Activity view"))
+
     :add-node
     (apply-add-node view op)
 
@@ -738,7 +743,10 @@
 
      {:view (cond-> {:title (:title view) :nodes budgeted}
               (:description view)
-              (assoc :description (:description view)))
+              (assoc :description (:description view))
+
+              (:activity view)
+              (assoc :activity (:activity view)))
       :elided (into []
                     (keep (fn [node]
                             (let [items (long (or (:elided (meta node)) 0))]
