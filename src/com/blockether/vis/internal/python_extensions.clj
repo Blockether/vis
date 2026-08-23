@@ -75,6 +75,13 @@
 ;; polyglot members before this runs) are handed in through the module
 ;; dict.
 
+(defn- python-string-literal
+  "Encode source as a Python string literal. JSON string syntax is almost the same,
+   but JSON may escape a forward slash; Python preserves that unknown escape and
+   the nested compile then sees a line-continuation backslash in ordinary code."
+  [source]
+  (str/replace (json/write-json-str source) "\\/" "/"))
+
 (def ^:no-doc bootstrap-python
   "The `vis` module bootstrap. Evaluated in each extension context BEFORE the
    extension file: it builds a real `vis` module (registered in `sys.modules`, so
@@ -90,7 +97,7 @@
    extension's globals. The INJECTOR is `vis-python/extension_bootstrap.py`.
    Both are embedded in the native image by build.clj's
    `-H:IncludeResources` patterns (see `env-python/runtime-python-src`)."
-  (str "_vis_body = " (json/write-json-str (env/runtime-python-src "vis/__init__.py"))
+  (str "_vis_body = " (python-string-literal (env/runtime-python-src "vis/__init__.py"))
        "\n" (env/runtime-python-src "vis-python/extension_bootstrap.py")))
 
 (def ^:no-doc redirect-repair-python

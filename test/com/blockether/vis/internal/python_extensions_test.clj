@@ -30,6 +30,12 @@
 
 ;; Harness
 
+(defdescribe bootstrap-python-test
+             ;; Regression, td-f2732d: JSON slash escaping made the embedded API invalid Python.
+             (it "embeds division operators without JSON-only slash escapes"
+                 (expect (str/includes? pyx/bootstrap-python "float(slice_ms) / 1000.0"))
+                 (expect (not (str/includes? pyx/bootstrap-python "\\/")))))
+
 (defn- temp-dir
   ^java.io.File []
   (.toFile (Files/createTempDirectory "vis-pyext-test" (make-array FileAttribute 0))))
