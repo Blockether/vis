@@ -957,7 +957,7 @@ export function SessionsScreen({
   // replaced it, and a phone reaching a laptop over Wi-Fi pays the whole round trip in
   // that same place. So the read that gives this list its rows AT ALL happens wherever
   // the reader is. It is ONE read: it stands down the moment there is something to paint
-  // (a cached fleet already is), and the ten-second poll below stays the business of the
+  // (a cached fleet already is), and the five-second poll below stays the business of the
   // screen that is on the glass.
   const hasRows = machines.some((machine) => machine.sessions !== null);
   useEffect(() => {
@@ -969,7 +969,7 @@ export function SessionsScreen({
 
   // Behind an open transcript this screen is mounted but invisible, and a list
   // nobody can see must not do fleet-wide work: this poll refetched every machine
-  // every 10s and re-ran the filter and the sort of the whole fleet — under the
+  // every 5s and re-ran the filter and the sort of the whole fleet — under the
   // composer the reader was typing in. Becoming visible re-runs the effect, whose
   // first act is a full load, so the rows are fresh the moment they are back on
   // the glass.
@@ -981,13 +981,15 @@ export function SessionsScreen({
     };
 
     void load(controller.signal);
-    // 10s: slow enough to stay cheap, fast enough that a phone picked up mid-turn
-    // shows the truth. Cheap on BOTH ends — an unchanged fleet comes back as a 304
-    // with no body (see `GatewayClient.listSessions`), and `load(_, true)` drops a
-    // tick that fires while the previous one is still in flight instead of queueing
-    // A frozen webview runs no timers. Do not trust `document.visibilityState` here: a resumed
-    // Capacitor webview can keep reporting `hidden` while this screen is on the glass.
-    const timer = window.setInterval(refreshLiveStates, 10_000);
+    // The session-list head is already the reachability check and carries live/idle
+    // totals, so do not add a second health request. Five seconds bounds how long a
+    // machine can still look active after it stops answering. Cheap on BOTH ends — an
+    // unchanged fleet comes back as a 304 with no body (see `GatewayClient.listSessions`),
+    // and `load(_, true)` drops a tick that fires while the previous one is still in
+    // flight instead of queueing it. A frozen webview runs no timers. Do not trust
+    // `document.visibilityState` here: a resumed Capacitor webview can keep reporting
+    // `hidden` while this screen is on the glass.
+    const timer = window.setInterval(refreshLiveStates, 5_000);
     // Waking is the one moment the rows are guaranteed stale, and a suspended
     // poll may still be latched: drop the latch, then refresh.
     const stopWake = onWake(({ awayMs }) => {
@@ -1451,6 +1453,16 @@ export function SessionsScreen({
   // hue rides the scope chip above the list and the rail down its left.
   const machineColors = useMemo(
     () => assignMachineColors(machines.map((machine) => machineKey(machine.conn))),
+    [machines],
+  );
+  // Pairing order still owns sections, hues and every persisted identity. The switch is
+  // only a destination list: keep each group's original order, but put every destination
+  // that no longer answers after all the destinations the reader can still enter.
+  const switcherMachines = useMemo(
+    () => [
+      ...machines.filter((machine) => !machine.error),
+      ...machines.filter((machine) => Boolean(machine.error)),
+    ],
     [machines],
   );
 
@@ -2103,7 +2115,7 @@ export function SessionsScreen({
                   All
                 </MachineTab>
               )}
-              {machines.map((machine) => {
+              {switcherMachines.map((machine) => {
                 const key = machineKey(machine.conn);
                 const tally = tallies.get(key);
                 const name = machineLabel(machine.conn);
