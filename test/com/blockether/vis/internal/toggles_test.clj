@@ -192,12 +192,34 @@
           (expect (= "quick" (t/value-of "test_mode")))))))
 
 (defdescribe host-defaults-test
-             (it "the reasoning_level toggle is registered as an enum"
-                 (let [spec (t/toggle-spec "reasoning_level")]
-                   (expect (some? spec))
-                   (expect (= :enum (:type spec)))
-                   (expect (= ["low" "balanced" "deep"] (:choices spec)))
-                   (expect (= "balanced" (:default spec)))))
+             ;; Regression, td-410a36: a Companion-only wording change replaced the shared
+             ;; reasoning choice with verbosity's low value, contaminating later TUI tests.
+             (it "keeps reasoning choices and listener events independent from verbosity"
+                 (let [reasoning
+                       (t/toggle-spec "reasoning_level")
+
+                       verbosity
+                       (t/toggle-spec "verbosity")
+
+                       events
+                       (atom [])
+
+                       dispose
+                       (t/add-listener! #(swap! events conj %))]
+
+                   (try (expect
+                          (= {:type :enum :choices ["quick" "balanced" "deep"] :default "balanced"}
+                             (select-keys reasoning [:type :choices :default])))
+                        (expect (= {:type :enum :choices ["low" "medium" "high"] :default "low"}
+                                   (select-keys verbosity [:type :choices :default])))
+                        (t/reset-to-default! "reasoning_level")
+                        (t/reset-to-default! "verbosity")
+                        (t/cycle-value! "verbosity")
+                        (expect (= "balanced" (t/value-of "reasoning_level")))
+                        (expect (= ["verbosity"] (mapv :id @events)))
+                        (finally (dispose)
+                                 (t/reset-to-default! "reasoning_level")
+                                 (t/reset-to-default! "verbosity")))))
              (it "retired display toggles do not exist (code always shows)"
                  ;; Render-fn op cards were removed — tool output is now stdout, and the TUI
                  ;; renders the model's raw :code unconditionally (the canonical contract,
