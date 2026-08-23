@@ -13,6 +13,7 @@ import {
   TableFocusRow,
 } from './ui';
 import { InlineMarkdown } from './ChatContent';
+import { AlertIcon, ArrowOutIcon } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -513,7 +514,7 @@ const ACTIVITY_FACE = {
   failed: {
     rail: 'border-err',
     ink: 'text-err-ink',
-    mark: '×',
+    mark: <AlertIcon className="size-3" />,
     label: 'Failed',
   },
   cancelled: {
@@ -573,7 +574,7 @@ const ACTIVITY_PRESENTER = {
   generic: { label: 'GENERIC', mark: '◇' },
   shell: { label: 'SHELL', mark: '┌' },
   tests: { label: 'TESTS', mark: '✓' },
-  patch: { label: 'PATCH', mark: '↗' },
+  patch: { label: 'PATCH', mark: <ArrowOutIcon className="size-3" /> },
   observation: { label: 'OBSERVE', mark: '⌕' },
   lint: { label: 'LINT', mark: '✓' },
   repl: { label: 'REPL', mark: '✓' },
@@ -598,7 +599,7 @@ function activityRowFace(row: ActivityRow) {
     return {
       ink: 'text-err-ink',
       rail: 'border-err',
-      mark: '×',
+      mark: <AlertIcon className="size-3" />,
       surface: 'bg-err-surface',
     };
   if (row.state === 'running')
@@ -619,7 +620,7 @@ function activityRowFace(row: ActivityRow) {
     return {
       ink: 'text-warn',
       rail: 'border-warn-strong',
-      mark: '↗',
+      mark: <ArrowOutIcon className="size-3" />,
       surface: 'bg-warn-surface',
     };
   if (row.signal === 'verification')
