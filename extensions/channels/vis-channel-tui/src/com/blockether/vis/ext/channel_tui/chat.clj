@@ -18,8 +18,8 @@
   "Build a log-friendly map from an exception that preserves EVERYTHING
    diagnostic: class, message, ex-data, full stack trace, and the
    cause chain. The whole point is that when an error reaches the
-   chat boundary, the next person reading `~/.vis/vis.log` should not
-   have to guess where it came from - the stack is right there.
+   chat boundary, the next person reading the role-labelled file under
+   `~/.vis/logs/` should not have to guess where it came from - the stack is right there.
 
    `.printStackTrace` includes nested causes (\"Caused by: ...\" blocks)
    by default, so a single string captures the entire chain without

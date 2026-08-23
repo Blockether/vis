@@ -36,7 +36,8 @@
             PolyglotException]
            [org.graalvm.polyglot.io IOAccess]
            [org.graalvm.polyglot.proxy ProxyExecutable ProxyArray ProxyHashMap]
-           [java.util ArrayList LinkedHashMap]))
+           [java.util ArrayList LinkedHashMap]
+           [java.util.logging Handler Level LogRecord]))
 
 (set! *warn-on-reflection* true)
 
@@ -458,26 +459,33 @@
 
 
 
-(def polyglot-noise-silenced
-  ;; Route Truffle's own logging into the vis log file — the same sink
-  ;; telemere's :file handler writes — instead of the controlling
-  ;; terminal. Also removes the "[To redirect Truffle log output ...]"
-  ;; startup hint, which prints whenever Truffle logs without a
-  ;; configured destination. Honors an explicit operator override.
-  ;;
-  ;; The virtual-thread warning is silenced on the BUILDERS below
-  ;; (`engine.WarnVirtualThreadSupport` is an EXPERIMENTAL option:
-  ;; setting it as a system property makes every Engine/Context build
-  ;; THROW "must be enabled with allowExperimentalOptions").
-  ;;
-  ;; A `delay` forced from `new-engine!`, never a load-time `defonce`:
-  ;; `native-image` initializes this namespace at BUILD time, so an eager body
-  ;; would create the BUILDER's `~/.vis/logs` and bake that path into the image.
-  (delay (when-not (System/getProperty "polyglot.log.file")
-           ;; Its OWN file, not vis's: two writers on one path break rotation,
-           ;; and GraalPy holds this fd for the life of the process.
-           (System/setProperty "polyglot.log.file" (paths/log-file "graalpy")))
-         true))
+(def polyglot-log-routing
+  ;; An Engine.Builder Handler keeps Truffle/GraalPy diagnostics in Telemere's
+  ;; gateway stream without opening a second long-lived file descriptor. Preserve
+  ;; an operator's explicit `-Dpolyglot.log.file=…` override.
+  (delay (if (System/getProperty "polyglot.log.file") :operator-file :telemere)))
+
+(defn- jul-level->telemere
+  [^Level level]
+  (let [value (.intValue level)]
+    (cond (>= value (.intValue Level/SEVERE)) :error
+          (>= value (.intValue Level/WARNING)) :warn
+          (>= value (.intValue Level/INFO)) :info
+          :else :debug)))
+
+(defn- polyglot-log-handler
+  "Bridge Truffle's JUL records into the owning process's Telemere stream."
+  ^Handler []
+  (proxy [Handler] []
+    (publish [record]
+      (when record
+        (let [^LogRecord record record]
+          (tel/log! {:level (jul-level->telemere (.getLevel record))
+                     :id ::graalpy
+                     :data {:logger (.getLoggerName record)}}
+                    (or (.getMessage record) "")))))
+    (flush [] nil)
+    (close [] nil)))
 
 (def graal-resource-cache-redirected
   ;; GraalPy materializes its Python stdlib ("internal resources", from the
@@ -631,16 +639,17 @@
    warm-up. Cap at 2 and let idle compiler threads retire after 5s (default 10s)
    — fewer live threads, smaller CPU bursts, at a slightly slower warm-up."
   ^Engine []
-  ;; Both are load-order sensitive system properties: force them HERE, before
-  ;; the first Engine exists, so the RUNNING process (not the native-image
-  ;; builder) decides the Truffle log file and the resource-cache root.
-  @polyglot-noise-silenced
+  ;; Both are load-order sensitive: decide them HERE, before the first Engine
+  ;; exists, so the running process (not the native-image builder) owns routing.
+  @polyglot-log-routing
   @graal-resource-cache-redirected
   (let [build-engine
         (fn ^Engine [^java.io.File load-file tune?]
           (let [b (-> (Engine/newBuilder (into-array String ["python"]))
                       (.allowExperimentalOptions true)
                       (.option "engine.WarnVirtualThreadSupport" "false"))]
+            (when (= :telemere @polyglot-log-routing)
+              (.logHandler b ^Handler (polyglot-log-handler)))
             ;; Compiler-thread tuning only exists when the Truffle optimizing
             ;; runtime is present (JVM, or an Oracle/enterprise native image).
             ;; The community native image runs GraalPy in interpreter mode with

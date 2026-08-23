@@ -345,9 +345,9 @@ VIS_BENCH_REMOTE_HOME_MOUNT_MODE=rw \
   ./dev/benches/senior_swe_bench/run_smoke.sh
 ```
 
-Read-only home mounts are rejected. Vis opens `~/.vis/vis.log` during CLI
-startup before provider execution, so a read-only mounted home fails even when
-the provider config itself is readable.
+Read-only home mounts are rejected. Vis opens a diagnostic file under
+`~/.vis/logs/` during CLI startup before provider execution, so a read-only
+mounted home fails even when the provider config itself is readable.
 
 Native artifacts built before runtime config-home resolution was fixed may have
 `/root/.vis` baked in from the Linux build container. Rebuild and repackage the

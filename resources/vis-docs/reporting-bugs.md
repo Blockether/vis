@@ -56,9 +56,9 @@ Never paste, attach, or screenshot:
   gateway event logs `~/.vis/gateway/events/*.ndjson` contain complete verbatim
   transcripts — every prompt, file read, diff, and tool result of every session
   on that machine. Never attach them.
-- **Raw log dumps.** `~/.vis/vis.log` is a debugging log, not a sanitized one:
-  it records prompts, file paths, and command lines. Attach the handful of
-  lines around the failure, after reading them.
+- **Raw log dumps.** Role-labelled files under `~/.vis/logs/` are debugging logs,
+  not sanitized ones: they record prompts, file paths, and command lines. Attach
+  only the handful of lines around the failure, after reading them.
 - **Proprietary source.** Diffs, file contents, schema, internal API shapes.
   If a snippet is genuinely needed, retype it as a neutral minimal example.
 - **Commercial context.** Employer, client, product codename, repository name,

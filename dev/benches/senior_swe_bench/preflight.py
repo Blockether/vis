@@ -193,7 +193,7 @@ def build_remote_home_mounts(
     if mode == "ro":
         raise PreflightError(
             "VIS_BENCH_REMOTE_HOME_MOUNT_MODE=ro is not supported when the mount target is VIS_BENCH_REMOTE_HOME; "
-            "Vis writes ~/.vis/vis.log during startup. Use rw."
+            "Vis writes diagnostic files under ~/.vis/logs/ during startup. Use rw."
         )
 
     source_path = Path(source)

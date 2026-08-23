@@ -92,11 +92,11 @@
 ;; Optional usage line shown in `vis-agent help` (defaults to "vis-agent channels <cmd>").
 (s/def :channel/usage non-blank-string?)
 
-;; When true, the channel takes over the controlling terminal
-;; (Lanterna, ncurses, anything that writes to /dev/tty directly).
-;; The CLI dispatcher reroutes stderr to ~/.vis/vis.log BEFORE any
-;; channel code (or its transitive class loading) executes, so JVM
-;; warnings and library prints never corrupt the screen.
+ ;; When true, the channel takes over the controlling terminal
+ ;; (Lanterna, ncurses, anything that writes to /dev/tty directly).
+ ;; The CLI dispatcher reroutes stderr to its role-labelled file under
+ ;; ~/.vis/logs/ BEFORE any channel code (or its transitive class loading)
+ ;; executes, so JVM warnings and library prints never corrupt the screen.
 ;; Defaults to false.
 (s/def :channel/owns-tty? boolean?)
 

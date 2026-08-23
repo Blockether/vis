@@ -393,7 +393,7 @@ def test_build_remote_home_mounts_rejects_ro(tmp_path):
     try:
         preflight.build_remote_home_mounts(home, "/root", "ro")
     except preflight.PreflightError as exc:
-        assert "Vis writes ~/.vis/vis.log" in str(exc)
+        assert "Vis writes diagnostic files under ~/.vis/logs/" in str(exc)
     else:
         raise AssertionError("expected PreflightError")
 

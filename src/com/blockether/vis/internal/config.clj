@@ -6,9 +6,9 @@
    Two halves:
 
      - On-disk config under `~/.vis/`: `state.yml` (machine-written), `vis.mdb/`, and
-       this process's log `logs/vis-<pid>.log` (`log-path`).
+       this process's role/start-time/pid-stamped file under `logs/` (`log-path`).
        `init!` / `init-cli!` / `shutdown!` redirect stdout/stderr into
-       the log file and bring up Telemere's file handler.
+       that log file and bring up Telemere's file handler.
      - Live process state: the `active-config` atom holds the
        currently-selected provider config; `current-config`,
        `active-provider`, `active-model`, `provider-ids`,
@@ -64,6 +64,15 @@
    `internal.paths/log-file` for why a shared path corrupts rotation."
   ^String []
   (paths/log-file))
+
+(def diagnostic-log-options
+  "Shared rolling policy for the boot and steady-state Telemere handlers. The
+   active file stays plain; every rotated part is explicitly gzip-compressed."
+  {:interval :monthly
+   :max-file-size 4000000
+   :max-num-parts 8
+   :max-num-intervals 6
+   :gzip-archives? true})
 
 (def tty-in (delay (FileInputStream. "/dev/tty")))
 
@@ -206,18 +215,13 @@
   (route-svar-logs!)
   (tel/remove-handler! :default/console)
   ;; `main/configure-logging!` may have already installed a `:file`
-  ;; handler that points at the same `vis.log` path. Without this
-  ;; removal both handlers stay live and every signal is appended
-  ;; twice. We own `:file/vis` here
-  ;; (rolling, sized, retention-aware); drop the simpler `:file`
-  ;; handler so only one writer remains.
+  ;; handler that points at this process's log path. Without this removal both
+  ;; handlers stay live and every signal is appended twice. We own `:file/vis`
+  ;; here (rolling, sized, retention-aware); drop the boot handler so only one
+  ;; writer remains.
   (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
-                    (tel/handler:file {:path (log-path)
-                                       :interval :monthly
-                                       :max-file-size 4000000
-                                       :max-num-parts 8
-                                       :max-num-intervals 6})
+                    (tel/handler:file (assoc diagnostic-log-options :path (log-path)))
                     {:min-level :info})
   (tel/call-on-shutdown! (fn []
                            (tel/stop-handlers!))))
@@ -255,11 +259,7 @@
   ;; takes over as the single writer.
   (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
-                    (tel/handler:file {:path (log-path)
-                                       :interval :monthly
-                                       :max-file-size 4000000
-                                       :max-num-parts 8
-                                       :max-num-intervals 6})
+                    (tel/handler:file (assoc diagnostic-log-options :path (log-path)))
                     {:min-level :info}))
 
 (defn shutdown!

@@ -923,8 +923,8 @@
    `wl-clipboard`/`xclip`/`xsel` installed — falls back to the terminal's
    own OSC 52 clipboard over the controlling TTY, so copy still works with
    zero binaries. Returns true on success, false when both paths failed.
-   Logs the winning mechanism so \"the copy didn't work\" reports can be
-   diagnosed against `~/.vis/vis.log`."
+   Logs the winning mechanism so failed-copy reports can be diagnosed against
+   this process's role-labelled file under `~/.vis/logs/`."
   [^String text]
   (let [helper
         (shell-clipboard-copy! text)

@@ -76,20 +76,25 @@
 ;; did not rotate went on appending into a deleted inode and everything it
 ;; logged after that point — including the SSE stream trace — was unreadable.
 (defdescribe log-file-test
-             (it "stamps THIS process's pid into the name, inside ~/.vis/logs"
+             (it "stamps the process role, UTC start time, and pid into the name"
                  (let [f
-                       (paths/unixify (paths/log-file))
+                       (paths/log-file "gateway")
+
+                       filename
+                       (.getName (java.io.File. ^String f))
 
                        pid
                        (paths/process-id)]
 
-                   (expect (str/ends-with? f (str "/.vis/logs/vis-" pid ".log")))
-                   (expect (= f (paths/unixify (paths/log-file))))
+                   (expect (some? (re-matches #"gateway-\d{8}T\d{6}Z-pid\d+\.log" filename)))
+                   (expect (str/ends-with? filename (str "pid" pid ".log")))
+                   (expect (= f (paths/log-file "gateway")))
                    (expect (pos? pid))
                    (expect (.isDirectory (java.io.File. ^String (paths/logs-dir))))))
-             (it "gives a second sink in the same process its OWN file"
-                 ;; A raw FileOutputStream (GraalPy's polyglot log) keeps a stale fd
-                 ;; across the handler's rotation rename, so it must not share a name.
-                 (expect (not= (paths/log-file) (paths/log-file "graalpy")))
-                 (expect (str/ends-with? (paths/unixify (paths/log-file "graalpy"))
-                                         (str "/.vis/logs/graalpy-" (paths/process-id) ".log")))))
+             (it "uses the process role for the default log path"
+                 (let [previous (System/getProperty "vis.log.role")]
+                   (try (paths/set-log-role! "tui")
+                        (expect (str/includes? (paths/unixify (paths/log-file)) "/tui-"))
+                        (finally (if previous
+                                   (System/setProperty "vis.log.role" previous)
+                                   (System/clearProperty "vis.log.role")))))))

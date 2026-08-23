@@ -352,7 +352,8 @@ vis.log("info", "loaded 3 rules")       # levels: trace debug info warn error
 vis.notify("Rules reloaded", "success") # user-facing toast: info success warn error
 ```
 
-`vis.log` writes to `~/.vis/vis.log`; `vis.notify` shows in whatever channel
+`vis.log` writes to the owning process's file under `~/.vis/logs/` (normally the
+`gateway-<UTC-start>-pid<PID>.log` stream); `vis.notify` shows in whatever channel
 is active (TUI banner, web toast, …).
 
 ### Asking the human

@@ -7477,8 +7477,8 @@
                          ;;
                          ;; Why catches now `notify!` instead of `tel/log!` only
                          ;; ─────────────────────────────────────────
-                         ;; A silent log line buried under ~/.vis/vis.log
-                         ;; is invisible from the TUI. Mic permission
+                         ;; A silent line in the TUI's file under ~/.vis/logs/
+                         ;; is invisible from the screen. Mic permission
                          ;; denied / no audio device / ASR native lib
                          ;; missing all surfaced as nothing at all. Each
                          ;; throw now also pushes a user-visible
@@ -7798,9 +7798,9 @@
 
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,
-   library prints, JVM warnings) MUST be redirected to this process's log
-   (`~/.vis/logs/vis-<pid>.log`, see `internal.paths/log-file`) before any
-   other code runs - otherwise stray bytes corrupt the screen."
+   library prints, JVM warnings) MUST be redirected to this process's role- and
+   start-time-labelled file under `~/.vis/logs/` before any other code runs -
+   otherwise stray bytes corrupt the screen."
   []
   (try (require 'taoensso.telemere)
        ((resolve 'taoensso.telemere/remove-handler!) :default/console)

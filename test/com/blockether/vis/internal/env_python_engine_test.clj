@@ -15,9 +15,24 @@
    the memory behaviour, and the Truffle deadlock the shared engine was
    originally introduced to dodge."
   (:require [com.blockether.vis.internal.env-python :as ep]
-            [lazytest.core :refer [defdescribe expect it]])
+            [lazytest.core :refer [defdescribe expect it]]
+            [taoensso.telemere :as tel])
   (:import (java.util.concurrent CountDownLatch TimeUnit)
+           (java.util.logging Handler Level LogRecord)
            (org.graalvm.polyglot Context Engine)))
+
+(defdescribe polyglot-log-handler-test
+             (it "routes GraalPy records through Telemere instead of a second file"
+                 (let [^Handler handler
+                       (#'ep/polyglot-log-handler)
+
+                       signal
+                       (tel/with-signal (.publish handler
+                                                  (LogRecord. Level/WARNING "guest warning")))]
+
+                   (expect (= :warn (:level signal)))
+                   (expect (= :com.blockether.vis.internal.env-python/graalpy (:id signal)))
+                   (expect (= "guest warning" (force (:msg_ signal)))))))
 
 (def ^:private heavy-python
   "Enough of the stdlib that a retained context is measurable rather than noise.

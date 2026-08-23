@@ -4720,8 +4720,8 @@
                  :managed? managed?})
 
         ;; `config/init-cli!` has already redirected System/out AND `*out*` into
-        ;; ~/.vis/logs/vis.log, so a plain `println` here is invisible — the
-        ;; daemon looked completely silent (no listen line, no pairing QR).
+        ;; the gateway's role-labelled file under ~/.vis/logs/, so a plain
+        ;; `println` here is invisible — the daemon looked completely silent.
         ;; Write the human banner to the process' ORIGINAL stdout instead.
         emit!
         (fn [line]

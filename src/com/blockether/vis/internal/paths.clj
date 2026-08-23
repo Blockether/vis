@@ -1,7 +1,10 @@
 (ns com.blockether.vis.internal.paths
   "Cross-platform path helpers. A LEAF namespace (no project deps) so any
    layer — core, extensions, tests — can normalize without a require cycle."
-  (:import [java.nio.file Path Paths]))
+  (:import [java.nio.file Path Paths]
+           [java.time Instant ZoneOffset]
+           [java.time.format DateTimeFormatter]
+           [java.util Locale]))
 
 (defn unixify
   "Normalize a path string to `/` separators on every OS. Java's `File`/`Path`
@@ -104,30 +107,47 @@
   (str (sandbox-defs-dir) "/" (.replaceAll (str session-id) "[^A-Za-z0-9_.-]" "_") ".py"))
 
 (defn process-id
-  "This JVM's OS process id. Its only job is to make `log-file` unique per
-   process, so it is read fresh (never a load-time `def`): `native-image`
-   would otherwise bake the BUILDER's pid into the image."
+  "This JVM's OS process id. Read fresh so native-image never bakes the builder's
+   pid into the installed binary."
   ^long []
   (.pid (java.lang.ProcessHandle/current)))
 
+(def ^:private log-roles #{"gateway" "tui" "vis"})
+
+(def ^:private process-start-stamp
+  ;; Delayed for native-image: forcing this at namespace initialization would put
+  ;; the image builder's clock into every installed binary.
+  (delay (.format (.withZone (DateTimeFormatter/ofPattern "yyyyMMdd'T'HHmmss'Z'" Locale/ROOT)
+                             ZoneOffset/UTC)
+                  (Instant/now))))
+
+(defn set-log-role!
+  "Set this process's diagnostic role before its first log path is opened.
+   Accepted roles are `tui`, `gateway`, and `vis` (short-lived CLI work)."
+  [role]
+  (let [role (name role)]
+    (when-not (contains? log-roles role)
+      (throw (ex-info (str "unknown log role: " role) {:role role :allowed log-roles})))
+    (System/setProperty "vis.log.role" role)
+    role))
+
+(defn- current-log-role
+  []
+  (let [role (System/getProperty "vis.log.role")]
+    (if (contains? log-roles role) role "vis")))
+
 (defn log-file
-  "Diagnostic log file for THIS process — `~/.vis/logs/vis-<pid>.log`, or
-   `~/.vis/logs/<prefix>-<pid>.log` for a second sink in the same process.
+  "Diagnostic log file for this process. The name carries its role, UTC start
+   time, and pid: `~/.vis/logs/<role>-<yyyyMMddTHHmmssZ>-pid<pid>.log`.
 
-   ONE WRITER PER FILE, by construction. Telemere's rolling file handler owns
-   the file it writes and rotates by RENAMING it; with several vis processes
-   (TUI, gateway daemon, CLI) on a single shared path, whichever one rotates
-   pulls the file out from under the others, and they go on appending into a
-   deleted inode — observed as a gateway writing 13.8 MB of stream traces into
-   a file nobody could read. Stamping the pid into the name makes that
-   impossible instead of merely unlikely.
-
-   Two sinks in the same process must NOT share one name either (a raw
-   `FileOutputStream` survives the rename with a stale fd), hence `prefix` —
-   GraalPy's polyglot log takes its own.
-
-   Growth is bounded by `foundation.housekeeping/sweep-stale!`, which prunes
-   `~/.vis/logs` by age — including the per-command `shell` subdirectories; the
-   rolling handler bounds each live file."
-  (^String [] (log-file "vis"))
-  (^String [prefix] (str (ensure-logs-dir!) "/" prefix "-" (process-id) ".log")))
+   TUI and gateway are separate writers because Telemere rotates by renaming its
+   file; sharing a path lets the non-rotating process keep writing to an orphaned
+   descriptor. Embedded Python belongs to the gateway stream rather than a third
+   file. The active `.log` remains tail-able and Telemere gzip-compresses rotated
+   parts; housekeeping removes stale generations by age."
+  (^String [] (log-file (current-log-role)))
+  (^String [role]
+   (let [role (name role)]
+     (when-not (contains? log-roles role)
+       (throw (ex-info (str "unknown log role: " role) {:role role :allowed log-roles})))
+     (str (ensure-logs-dir!) "/" role "-" @process-start-stamp "-pid" (process-id) ".log"))))

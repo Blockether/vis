@@ -1260,11 +1260,16 @@
 ;; the Telemere rolling handler rotates by renaming — the process that did not
 ;; rotate kept appending into a deleted inode.
 (defdescribe log-path-test
-             "`config/log-path` is this process's own file, never a shared one."
-             (it "is `paths/log-file`, pid-stamped, under ~/.vis/logs"
-                 (expect (= (paths/log-file) (config/log-path)))
-                 (expect (str/ends-with? (paths/unixify (config/log-path))
-                                         (str "/.vis/logs/vis-" (paths/process-id) ".log")))))
+             "`config/log-path` is this process's own role-labelled file."
+             (it "is `paths/log-file`, start-time- and pid-stamped, under ~/.vis/logs"
+                 (let [filename (.getName (java.io.File. ^String (config/log-path)))]
+                   (expect (= (paths/log-file) (config/log-path)))
+                   (expect (some? (re-matches #"[a-z]+-\d{8}T\d{6}Z-pid\d+\.log" filename)))
+                   (expect (str/ends-with? filename (str "pid" (paths/process-id) ".log")))))
+             (it "keeps active logs tail-able and gzip-compresses every rotated part"
+                 (expect (= true (:gzip-archives? config/diagnostic-log-options)))
+                 (expect (= 4000000 (:max-file-size config/diagnostic-log-options)))
+                 (expect (= 8 (:max-num-parts config/diagnostic-log-options)))))
 
 ;; Regression, issue #140: `<cwd>/vis.yml` is the COMMITTED, team-shared project
 ;; file, yet it was deep-merged whole and merges over `~/.vis` — so one author's

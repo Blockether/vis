@@ -11,11 +11,11 @@
    Public entry point:
 
      (-main & args)   - invoked by the `:vis` alias / `bin/vis-agent`.
-                        Configures logging, runs the unified extension
-                        discovery scan, redirects stderr to this process's
-                        log (`~/.vis/logs/vis-<pid>.log`) for any TTY-owning
-                        channel, then dispatches to
-                        the resolved command's `:cmd/run-fn`.
+                       Configures logging, runs the unified extension
+                       discovery scan, redirects stderr to this process's
+                       role/start-time/pid-stamped file under `~/.vis/logs/` for
+                       any TTY-owning channel, then dispatches to the resolved
+                       command's `:cmd/run-fn`.
 
    Built-in commands registered here:
      vis-agent providers          - provider inspection, auth, and limits
@@ -4343,10 +4343,11 @@
 ;; signal to stdout. That fills the terminal with registration noise
 ;; before the user ever sees the help text -- painful UX for a CLI.
 ;;
-;; Default behavior:
-;;   - stdout stays clean
-;;   - every signal is appended to `~/.vis/logs/vis-<pid>.log`
-;;
+ ;; Default behavior:
+ ;;   - stdout stays clean
+ ;;   - every signal is appended to the process role's timestamped log file
+ ;;     (`tui-…`, `gateway-…`, or `vis-…` for short-lived CLI work)
+ ;;
 ;; Pass `--debug` / `--verbose` / `-v` (or set `VIS_DEBUG=1`) to KEEP
 ;; the console handler in addition to the file handler.
 
@@ -4354,11 +4355,15 @@
 
 (defn- debug-mode? [args] (or (some debug-flags args) (= "1" (System/getenv "VIS_DEBUG"))))
 
-(defn- log-file-path
-  []
-  ;; One file per process (`~/.vis/logs/vis-<pid>.log`); `config/log-path` is
-  ;; the same call, so both boot paths agree on the file.
-  (config/log-path))
+(defn- log-file-path [] (config/log-path))
+
+(defn- log-role-for-args
+  "Classify only the two long-lived process surfaces. Embedded Python executes
+   inside gateway; every short-lived command keeps the neutral `vis` role."
+  [args]
+  (cond (= ["channels" "tui"] (vec (take 2 args))) "tui"
+        (= ["gateway" "start"] (vec (take 2 args))) "gateway"
+        :else "vis"))
 
 (defn- configure-logging!
   "Route Telemere signals: file handler always on, persistence-backed
@@ -4376,7 +4381,9 @@
         (log-file-path)]
 
     ;; File handler ALWAYS on, so post-mortem reads always have data.
-    (try (tel/add-handler! :file (tel/handler:file {:path path}) {:min-level :info})
+    (try (tel/add-handler! :file
+                           (tel/handler:file (assoc config/diagnostic-log-options :path path))
+                           {:min-level :info})
          (catch Throwable _ nil))
     ;; Console handler: re-add only when the user asked for verbosity.
     ;; Boot-time noise is already gone (registry.clj removed it during
@@ -4398,9 +4405,9 @@
 (defn- print-extension-load-failures!
   "Print every classpath extension namespace whose `(require)` blew
    up during the most recent scan to stderr, along with the
-   user-actionable hint. Pre-fix the failure was a buried
-   `~/.vis/vis.log` ERROR line and the user had no surface clue
-   that an entire alias namespace was unbound - the LLM in the
+   user-actionable hint. Pre-fix the failure was a buried ERROR line in the
+   process log under `~/.vis/logs/` and the user had no surface clue that an
+   entire alias namespace was unbound - the LLM in the
    sandbox would loop on `Unable to resolve symbol: cat` until
    the user manually dug through the log file. Now the launcher
    shouts the failure on every startup so the user can `git diff`
@@ -4885,6 +4892,7 @@
             rewrite-tui-shortcut
             rewrite-ext-alias)]
 
+    (paths/set-log-role! (log-role-for-args args))
     (when measure? (System/setProperty "vis.measure" "1"))
     ;; Opt-in JFR profiling (VIS_JFR set by `bin/vis-agent --jfr`). Role-tagged so a
     ;; spawned gateway daemon (`vis-agent gateway start`) records to its OWN file,

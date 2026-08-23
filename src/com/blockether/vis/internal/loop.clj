@@ -456,7 +456,7 @@
 (defn- log-stage-level
   "Severity for loop-stage telemetry.
 
-   Routine stage breadcrumbs are debug-only to keep ~/.vis/vis.log cheap. Actual
+   Routine stage breadcrumbs are debug-only to keep the process log cheap. Actual
    failed turns and tool timeouts must survive the default :info file handler,
    otherwise the first post-mortem clue disappears exactly when the user needs it.
    User cancellation is an intentional stop, not an error."

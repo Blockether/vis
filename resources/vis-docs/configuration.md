@@ -7,7 +7,7 @@ Vis reads config from four YAML sources, deep-merged in order — later sources 
 3. `<project>/vis.yml` (or `vis.yaml`) — **project root**, visible. The natural home for team-shared, committed settings.
 4. `<project>/.vis/config.yml` (or `.vis/config.yaml`) — **project overlay**, hidden. The nested overlay wins over the root file: personal beats committed.
 
-"Project" means the directory you launched `vis-agent` from. Everything else Vis owns lives next to the global config: the session database at `~/.vis/vis.mdb` and the log at `~/.vis/vis.log`.
+"Project" means the directory you launched `vis-agent` from. Everything else Vis owns lives next to the global config: the session database at `~/.vis/vis.mdb` and diagnostic logs under `~/.vis/logs/`. Long-lived processes are immediately identifiable as `tui-<UTC-start>-pid<PID>.log` and `gateway-<UTC-start>-pid<PID>.log`; embedded Python logs through the gateway stream. Active files stay as plain `.log` files for following, while rotated parts are gzip-compressed and stale generations are removed automatically.
 
 ## Gateway-managed MCP servers
 

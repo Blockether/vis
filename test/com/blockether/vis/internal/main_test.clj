@@ -127,6 +127,13 @@
   (it "refuses a token with no address instead of silently using the local daemon"
       (expect (throws? clojure.lang.ExceptionInfo #(#'main/connect-gateway! {:token "t"})))))
 
+(defdescribe log-role-for-args-test
+             (it "labels only the long-lived TUI and gateway server processes"
+                 (expect (= "tui" (#'main/log-role-for-args ["channels" "tui"])))
+                 (expect (= "gateway" (#'main/log-role-for-args ["gateway" "start"])))
+                 (expect (= "vis" (#'main/log-role-for-args ["gateway" "status"])))
+                 (expect (= "vis" (#'main/log-role-for-args ["python" "-c" "print(1)"])))))
+
 (defdescribe
   gateway-command-help-test
   (it
