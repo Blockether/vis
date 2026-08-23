@@ -16,6 +16,7 @@
 (def max-summary-bytes 512)
 (def max-detail-bytes (* 2 1024))
 (def max-resources 8)
+(def ^:private max-summary-nodes 128)
 
 (def ^:private secret-key?
   #(boolean (re-find #"(?i)(password|passwd|secret|token|authorization|cookie|otp|api[_-]?key)"
@@ -59,7 +60,50 @@
         (and (string? value) (str/starts-with? value "vis-secret:")) "[SECRET HANDLE]"
         :else value))
 
-(defn safe-summary [value] (bounded-text (pr-str (redact value)) max-summary-bytes))
+(defn- bounded-redact
+  "Redact a representative prefix without traversing an unbounded result graph."
+  [value]
+  (let [remaining
+        (volatile! max-summary-nodes)
+
+        omitted
+        "…"]
+
+    (letfn
+      [(visit [x]
+         (if-not (pos? @remaining)
+           omitted
+           (do (vswap! remaining dec)
+               (cond (map? x)
+                     (loop [entries
+                            (seq x)
+
+                            result
+                            (transient {})]
+
+                       (cond (nil? entries) (persistent! result)
+                             (not (pos? @remaining)) (persistent! (assoc! result omitted "omitted"))
+                             :else (let [[k v] (first entries)]
+                                     (recur (next entries)
+                                            (assoc! result
+                                                    k
+                                                    (if (secret-key? k) "[REDACTED]" (visit v)))))))
+                     (or (vector? x) (set? x) (sequential? x))
+                     (loop [items
+                            (seq x)
+
+                            result
+                            (transient [])]
+
+                       (cond (nil? items) (persistent! result)
+                             (not (pos? @remaining)) (persistent! (conj! result omitted))
+                             :else (recur (next items) (conj! result (visit (first items))))))
+                     (and (string? x) (str/starts-with? x "vis-secret:")) "[SECRET HANDLE]"
+                     (string? x) (bounded-text x max-detail-bytes)
+                     :else x))))]
+      (visit value))))
+
+(defn safe-summary [value] (bounded-text (pr-str (bounded-redact value)) max-summary-bytes))
 
 (defn context
   "Create one concurrency-safe event context for an evaluation/form anchor."
@@ -264,22 +308,19 @@
   (let [duration
         (max 0 (- (System/currentTimeMillis) (long started-at-ms)))
 
-        result*
-        (redact result)
-
         error*
         (redact error)
 
         details*
         (assoc details
-          :result result*
+          :result result
           :error error*)
 
         refs
         (resource-refs details*)
 
         token
-        (or group-token (explicit-group-token result*))]
+        (or group-token (explicit-group-token result))]
 
     (checked
       (cond-> (merge (base-event ctx invocation operation presenter :terminal)
@@ -295,7 +336,7 @@
                                 :failed)
                       :duration-ms duration})
         (= outcome :succeeded)
-        (assoc :result-summary (bounded-text (pr-str result*) max-detail-bytes))
+        (assoc :result-summary (bounded-text (pr-str (bounded-redact result)) max-detail-bytes))
 
         (not= outcome :succeeded)
         (assoc :error-summary

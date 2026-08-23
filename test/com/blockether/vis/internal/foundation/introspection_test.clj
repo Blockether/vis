@@ -8,6 +8,7 @@
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt]
             [com.blockether.vis.internal.foundation.core]
+            [com.blockether.vis.internal.resources :as resources]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe patch-diagnosis-contract-test
@@ -282,6 +283,38 @@
                    (expect (map? data))
                    (expect (contains? data "usage"))
                    (expect (map? (get data "usage"))))))
+
+(defdescribe
+  read-session-python-boundary-test
+  ;; Regression, td-ba1627: awaiting `read_session()` inside `python_execution`
+  ;; never resolved, so the following shell call was never reached.
+  (it "settles read_session before running the next host call"
+      (let [s (vis/db-create-connection! :memory)]
+        (try
+          (let [sid (h/store-session! s {:channel :tui :title "Await fixture"})
+                env {:session-id sid :db-info s}
+                bindings (extension/builtin-sandbox-bindings (constantly env))
+                {:keys [python-context python-engine]} (env-python/create-python-context bindings)
+                events (atom [])
+                result (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                         (env-python/run-python-block
+                           python-context
+                           (str "s = await read_session()\n"
+                                "sid = s.get('session', {}).get('id') or s.get('id')\n"
+                                "print('sid:', sid)\n"
+                                "sh = await shell('cd " (System/getProperty "user.dir")
+                                " && git branch --show-current')\n" "print(sh.wait(10)['out'])")))]
+
+            (try (expect (nil? (:error result)))
+                 (expect (str/includes? (:stdout result) (str "sid: " sid)))
+                 (expect (= [:read-session :read-session :shell :shell :_shell-wait :_shell-wait]
+                            (mapv :operation @events)))
+                 (expect (= [:start :terminal :start :terminal :start :terminal]
+                            (mapv :phase @events)))
+                 (finally (resources/stop-all! (str sid))
+                          (.close python-context)
+                          (.close python-engine))))
+          (finally (vis/db-dispose-connection! s))))))
 
 (defdescribe
   read-session-strings-only-test

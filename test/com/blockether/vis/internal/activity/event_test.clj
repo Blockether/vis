@@ -88,6 +88,30 @@
         (expect (not (re-find #"密" (:argument-summary start))))
         (expect (re-find #"REDACTED" (:argument-summary start)))
         (expect (<= (event/utf8-bytes (:argument-summary start)) event/max-summary-bytes))))
+  ;; Regression, td-ba1627: a `read_session()` terminal event recursively copied
+  ;; and printed the whole transcript before truncating it, leaving the await open.
+  (it "bounds result traversal before rendering a terminal summary"
+      (let [ctx
+            (event/context {})
+
+            invocation
+            (event/invocation ctx nil)
+
+            beyond-budget
+            (concat (range 200) (lazy-seq (throw (ex-info "summary traversed too far" {}))))
+
+            terminal
+            (event/terminal-event ctx
+                                  invocation
+                                  {:operation :read-session
+                                   :presenter :generic
+                                   :started-at-ms (System/currentTimeMillis)
+                                   :outcome :succeeded
+                                   :result {:transcript beyond-budget}})]
+
+        (expect (true? (:succeeded terminal)))
+        (expect (re-find #"…" (:result-summary terminal)))
+        (expect (<= (event/utf8-bytes (:result-summary terminal)) event/max-detail-bytes))))
   (it "records actual parentage and independent wrapper order"
       (let [ctx
             (event/context {})
