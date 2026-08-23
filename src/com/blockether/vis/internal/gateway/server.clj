@@ -3330,25 +3330,27 @@
                 (= "WAVE" (String. head 8 4 "US-ASCII")))))))
 
 (defn- model-handler
-  "GET  /v1/{voice,speech}/model — the selected engine's readiness (clients poll this
-         before recording, or before asking for a spoken reply).
-   POST the same path — ask the engine to prepare itself (a local model starts
-         downloading; idempotent, returns immediately).
-   JSON: {:status \"ready|downloading|failed|absent|unavailable\" :progress 0..100?
-   :error \"…\" :engine \"…\"}. An engine that needs no preparation is simply ready.
-
-   Session-less, like `/speech/voices`: whether a model is on disk is a fact about the
-   MACHINE, so a settings screen with no conversation open can still show it and start
-   the download."
+  "GET/POST /v1/{voice,speech}/model reads or starts engine preparation. Speech may
+   name `voice_id`; an opt-in voice additionally requires `is_license_accepted=true`
+   on POST, so merely selecting it can never accept its terms."
   [direction request]
   (with-engine direction
                request
                (fn [engine]
-                 (json-response 200
-                                (assoc (voice-state->json (if (= :post (:request-method request))
-                                                            (voice/prepare! engine)
-                                                            (voice/readiness engine)))
-                                  :engine (name (:id engine)))))))
+                 (let [voice-id
+                       (when (= :synthesize direction) (query-str request "voice_id"))
+
+                       opts
+                       (when voice-id
+                         {:voice-id voice-id
+                          :is-license-accepted (= "true"
+                                                  (query-str request "is_license_accepted"))})]
+
+                   (json-response 200
+                                  (assoc (voice-state->json (if (= :post (:request-method request))
+                                                              (voice/prepare! engine opts)
+                                                              (voice/readiness engine opts)))
+                                    :engine (name (:id engine))))))))
 
 (defn- voice-model-handler [request] (model-handler :transcribe request))
 

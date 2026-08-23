@@ -137,6 +137,10 @@
         "engine :label must be a string"
         (and (contains? engine :voices) (not (ifn? (:voices engine))))
         "engine :voices must be a function"
+        (and (contains? engine :voice-model-state) (not (ifn? (:voice-model-state engine))))
+        "engine :voice-model-state must be a function"
+        (and (contains? engine :start-voice-download) (not (ifn? (:start-voice-download engine))))
+        "engine :start-voice-download must be a function"
         (and (contains? engine :import-voice) (not (ifn? (:import-voice engine))))
         "engine :import-voice must be a function"
         (and (contains? engine :forget-voice) (not (ifn? (:forget-voice engine))))
@@ -153,11 +157,13 @@
    `:on-progress` takes `{:phase :progress}` (either key optional, `:progress` 0..100)
    and is how the human sees where the work is.
 
-   A speaking engine that CLONES a recording may also declare `:import-voice`
-   (`{:path :voice-name :language :text}` -> the voice it became) and
-   `:forget-voice` (id -> true when one was deleted). Declaring them is what makes
-   \"add a voice\" appear on every surface at once; declaring neither is a refusal
-   the gateway reports by name instead of a button that does nothing."
+   A speaking engine may expose per-voice installation with `:voice-model-state`
+   (voice id -> readiness) and `:start-voice-download` (`{:voice-id
+   :is-license-accepted}` -> readiness). A speaking engine that CLONES a recording may
+   also declare `:import-voice` (`{:path :voice-name :language :text}` -> the voice it
+   became) and `:forget-voice` (id -> true when one was deleted). Those declarations
+   make their controls appear on every surface; omitting them is an explicit unsupported
+   capability, never a button that fails later."
   [direction engine]
   (when-let [reason (engine-error direction engine)]
     (throw (ex-info
@@ -319,40 +325,57 @@
     (assoc :is-voice-import true)))
 
 (defn readiness
-  "What an engine says about its ability to work RIGHT NOW, in the shape the wire
-   already speaks: `{:state :ready|:absent|:downloading|:failed :progress? :phase?
-   :error?}`. An engine that needs no preparation (a remote server) simply omits
-   `:model-state` and is always ready — readiness is the ENGINE's question, never a fact
-   the gateway knows about one particular model."
-  [engine]
-  (if-let [f (:model-state engine)]
-    (try (or (f) {:state :ready}) (catch Throwable t {:state :failed :error (error-message t)}))
-    {:state :ready}))
+  "What an engine says about its ability to work right now. With a `:voice-id`, ask
+   the optional per-voice callback instead of the engine default."
+  ([engine] (readiness engine nil))
+  ([engine {:keys [voice-id]}]
+   (let [f (if voice-id (:voice-model-state engine) (:model-state engine))]
+     (if f
+       (try (or (if voice-id (f voice-id) (f)) {:state :ready})
+            (catch Throwable t {:state :failed :error (error-message t)}))
+       {:state :ready}))))
 
 (defn prepare!
-  "Ask the engine to start making itself ready (idempotent, NON-blocking) and
-   return its readiness. A no-op for an engine that declares none."
-  [engine]
-  (if-let [f (:start-download engine)]
-    (try (or (f) (readiness engine)) (catch Throwable t {:state :failed :error (error-message t)}))
-    (readiness engine)))
+  "Ask an engine, or one named voice, to start making itself ready."
+  ([engine] (prepare! engine nil))
+  ([engine {:keys [voice-id] :as opts}]
+   (let [f (if voice-id (:start-voice-download engine) (:start-download engine))]
+     (if f
+       (try (or (if voice-id (f opts) (f)) (readiness engine opts))
+            (catch Throwable t {:state :failed :error (error-message t)}))
+       (readiness engine opts)))))
 
 (defn ready? "Can this engine take work right now?" [engine] (= :ready (:state (readiness engine))))
 
 ;; Voices - the catalogue only a SPEAKING engine has
 
-(defn public-voice
-  "One voice in the shape every surface reports: the id a caller sends back, a human
-   label, and the language it speaks. A voice a user has to install DELIBERATELY says so,
-   so a picker can mark it instead of discovering the refusal after somebody chose it.
+(defn- public-readiness
+  [state]
+  (cond-> {:status (name (or (:state state) :ready))}
+    (number? (:progress state))
+    (assoc :progress (:progress state))
 
-   `:is-imported` marks a voice that came from a recording somebody handed to Vis
-   rather than one that shipped: the surface offering \"add a voice\" is the one that
-   has to offer \"remove it\" too."
+    (:phase state)
+    (assoc :phase (name (:phase state)))
+
+    (:error state)
+    (assoc :error (:error state))))
+
+(defn public-voice
+  "One voice in the wire vocabulary, including terms needed for explicit opt-in."
   [voice]
   (cond-> {:id (name (:id voice)) :label (or (not-empty (str (:label voice))) (name (:id voice)))}
     (:language voice)
     (assoc :language (name (:language voice)))
+
+    (:license voice)
+    (assoc :license (:license voice))
+
+    (:notice voice)
+    (assoc :notice (:notice voice))
+
+    (:source-url voice)
+    (assoc :source-url (:source-url voice))
 
     (:is-opt-in voice)
     (assoc :is-opt-in true)
@@ -361,13 +384,17 @@
     (assoc :is-imported true)))
 
 (defn voices
-  "The voices `engine` can speak in, in the shape every surface reports. An engine with
-   ONE fixed voice declares no `:voices` and answers `[]` — a caller then names none. A
-   refusal from the engine PROPAGATES: an empty list means \"nothing to choose\", never
-   \"the catalogue failed\", and the surface reports the reason it was given."
+  "The voices `engine` can speak in, with per-voice readiness when it declares that seam."
   [engine]
-  (if-let [f (:voices engine)]
-    (mapv public-voice (f))
+  (if-let [catalogue (:voices engine)]
+    (mapv (fn [entry]
+            (cond-> (public-voice entry)
+              (:voice-model-state engine)
+              (assoc :model
+                (public-readiness (try ((:voice-model-state engine) (:id entry))
+                                       (catch Throwable t
+                                         {:state :failed :error (error-message t)}))))))
+          (catalogue))
     []))
 (defn import-voice!
   "Hand `engine` a recording and get back the voice it became, in the shape every

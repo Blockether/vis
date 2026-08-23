@@ -1002,17 +1002,23 @@ export class GatewayClient {
     );
   }
 
-  /** [[voiceModel]] for the speaking direction. */
+  /** [[voiceModel]] for the speaking direction, optionally scoped to one voice. */
   speechModel(
-    { start = false, signal, engine }: {
+    { start = false, signal, engine, voice, isLicenseAccepted = false }: {
       start?: boolean;
       signal?: AbortSignal;
       engine?: string | null;
+      voice?: string;
+      isLicenseAccepted?: boolean;
     } = {},
   ): Promise<VoiceModelState> {
+    const query = new URLSearchParams();
+    if (voice) query.set("voice_id", voice);
+    if (isLicenseAccepted) query.set("is_license_accepted", "true");
+    const path = `/v1/speech/model${query.size ? `?${query.toString()}` : ""}`;
     return this.request<VoiceModelState>(
       start ? "POST" : "GET",
-      withEngine("/v1/speech/model", engine),
+      withEngine(path, engine),
       undefined,
       signal,
     );

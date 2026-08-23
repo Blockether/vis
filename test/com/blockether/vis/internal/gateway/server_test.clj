@@ -3004,6 +3004,33 @@
       (is (nil? (match-by-path router (str "/v1/sessions/" (random-uuid) "/voice/model"))))
       (is (nil? (match-by-path router (str "/v1/sessions/" (random-uuid) "/speech/model")))))))
 
+(deftest speech-model-route-forwards-explicit-voice-consent
+  (let [seen
+        (atom nil)
+
+        engine
+        (assoc (speaking-engine)
+          :voice-model-state (fn [_]
+                               {:state :absent})
+          :start-voice-download (fn [opts]
+                                  (reset! seen opts)
+                                  {:state :downloading :progress 0}))]
+
+    (with-only-speech-engine! engine
+                              (fn []
+                                (let [response
+                                      ((rv 'speech-model-handler)
+                                        {:request-method :post
+                                         :query-params {"voice_id" "ryan"
+                                                        "is_license_accepted" "true"}})
+
+                                      body
+                                      (wire/parse-json (:body response))]
+
+                                  (is (= 200 (:status response)))
+                                  (is (= "downloading" (get body "status")))
+                                  (is (= {:voice-id "ryan" :is-license-accepted true} @seen)))))))
+
 (deftest neither-speaking-nor-listening-is-required-to-run-vis
   ;; Vis is an agent that CAN speak, not one that needs to. Speech and transcription are
   ;; extensions, so a machine with neither installed is the ordinary one: the gateway

@@ -4,10 +4,9 @@
    Two families, one shape: make the assets present, build one `OfflineTts`,
    generate. They differ only in what a VOICE is.
 
-     :piper       a voice IS a model — one 63 MB VITS network per speaker,
-                  phonemized by the SYSTEM's espeak-ng. Vis mirrors no voice
-                  and no phoneme tables: each comes from its publisher, and
-                  a machine without espeak-ng is told so instead of failing.
+     :piper       a voice IS a model — one VITS network per speaker, phonemized
+                  through eSpeak NG tables. Vis uses a system copy when present or the
+                  verified tables carried by a downloaded publisher model archive.
      :pocket-tts  a voice is a reference CLIP the model clones, so the catalogue
                   is a WAV per voice: the clips the bundle ships and the ones
                    somebody imported through `voices.clj`. Vis exports those
@@ -34,13 +33,8 @@
 
 (def ^:const pocket-asset-id "pocket-tts-int8")
 
-;; espeak-ng, which is the SYSTEM's to install and not Vis' to ship
-
-;; Piper phonemizes through espeak-ng, whose tables Vis does not ship:
-;; GPL-3.0-or-later, one package away, read from their own directory at run time
-;; and shared by everything else on the machine. Missing tables are a REFUSAL that
-;; names the install command for this platform, never a silent failure or a
-;; download.
+;; Piper can use an existing system installation, an explicitly named directory, or the
+;; verified data directory carried by every publisher model archive.
 (def ^:const espeak-data-env "VIS_ESPEAK_NG_DATA")
 
 (def espeak-data-files
@@ -63,11 +57,15 @@
                 (every? #(.isFile (io/file (str dir) ^String %)) espeak-data-files))))
 
 (defn espeak-data-dir
-  "The system's espeak-ng phoneme tables, or nil. `VIS_ESPEAK_NG_DATA` wins so a
-   machine with them somewhere unusual - or a test - can say where."
+  "Usable eSpeak NG phoneme tables. An explicitly named directory wins, then a
+   Piper archive installed in Vis' model store, then a system package."
   []
   (or (let [named (assets/env-value espeak-data-env)]
         (when (espeak-data-dir? named) named))
+      (some (fn [entry]
+              (let [dir (str (io/file (assets/install-dir entry) "espeak-ng-data"))]
+                (when (espeak-data-dir? dir) dir)))
+            (assets/for-engine :piper))
       (first (filter espeak-data-dir? espeak-data-candidates))))
 
 (defn espeak-install-hint
@@ -100,15 +98,18 @@
 ;; Catalogue
 
 (defn piper-assets
-  "Every Piper voice in the manifest, in manifest order. The FIRST is the default
-   voice: the one a caller who names none gets, and the only one downloaded
-   before somebody asks for another."
+  "Every Piper voice in the manifest, in manifest order. The FIRST is the default."
   []
   (assets/for-engine :piper))
 
 (defn pocket-asset [] (assets/entry pocket-asset-id))
 
-(defn piper-voices [] (mapv :voice (piper-assets)))
+(defn piper-voices
+  "Piper voices with the licence facts a consent surface must show."
+  []
+  (mapv (fn [entry]
+          (merge (:voice entry) (select-keys entry [:license :notice :source-url :is-opt-in])))
+        (piper-assets)))
 
 (defn pocket-voice-catalogue
   "The pocket catalogue with each clip resolved to an absolute path: the clips
@@ -243,34 +244,22 @@
 
 (defn model-state
   ([family] (model-state family nil))
-  ([family voice-id]
-   ;; A voice on disk with no phoneme tables under it is not ready, and saying
-   ;; `:ready` there would only move the failure to the first spoken word.
-   (if (and (= :piper family) (not (espeak-data-dir)))
-     {:state :failed :error (espeak-missing-message)}
-     (combined-state (mapv asset-state (required-assets family voice-id))))))
+  ([family voice-id] (combined-state (mapv asset-state (required-assets family voice-id)))))
 
 (defn start-download!
-  "Begin (or report) the download every surface polls. A LICENCE-gated model - one
-   whose terms Vis will not accept for a user - is never started here, and neither
-   is a Piper voice on a machine without espeak-ng: the refusal names the command
-   that fixes it, because a silent `:absent` forever is the one answer a user
-   cannot act on."
-  ([family] (start-download! family nil))
-  ([family voice-id]
-   (if (and (= :piper family) (not (espeak-data-dir)))
-     {:state :failed :error (espeak-missing-message)}
-     (let [needed (required-assets family voice-id)]
-       (if-let [opt-in (first (filter #(and (:is-opt-in %) (not (assets/installed? %))) needed))]
-         {:state :failed
-          :error (str (:id opt-in)
-                      " is not downloaded automatically. Install it with "
-                      "`vis-agent extension voice models download --"
-                      (name family)
-                      (when-let [voice (:voice opt-in)]
-                        (str " --voice " (name (:id voice))))
-                      "`.")}
-         (combined-state (mapv start-asset-download! needed)))))))
+  "Begin every required download without blocking. An opt-in voice starts only when
+   `is-license-accepted` is true for this explicit request."
+  ([family] (start-download! family nil false))
+  ([family voice-id] (start-download! family voice-id false))
+  ([family voice-id is-license-accepted]
+   (let [needed (required-assets family voice-id)]
+     (if-let [opt-in (first (filter #(and (:is-opt-in %)
+                                          (not (assets/installed? %))
+                                          (not is-license-accepted))
+                                    needed))]
+       {:state :failed
+        :error (str "Accept " (:license opt-in) " before downloading " (:id opt-in) ".")}
+       (combined-state (mapv start-asset-download! needed))))))
 
 (defn install-model!
   "Blocking install of everything `family` needs before it can speak, for the
@@ -438,9 +427,6 @@
 
 (defn- ensure-assets!
   [family voice-id report]
-  ;; Refuse BEFORE the download: a 63 MB voice that cannot be phonemized is a
-  ;; wasted download and a worse error message.
-  (when (= :piper family) (espeak-data-dir!))
   (report {:phase :preparing :progress 0})
   (sherpa/ensure-native!)
   (mapv #(do (assets/ensure! %

@@ -33,7 +33,11 @@
                                                               (tts/synthesize! :piper %)))
                            :voices tts/piper-voices
                            :model-state #(tts/model-state :piper)
-                           :start-download #(tts/start-download! :piper)})
+                           :start-download #(tts/start-download! :piper)
+                           :voice-model-state #(tts/model-state :piper %)
+                           :start-voice-download
+                           (fn [{:keys [voice-id is-license-accepted]}]
+                             (tts/start-download! :piper voice-id is-license-accepted))})
   (voice/register-engine! :synthesize
                           {:id pocket-engine-id
                            :label "Pocket TTS (local)"

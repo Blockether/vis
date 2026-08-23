@@ -134,7 +134,10 @@
               [lang speaker level] (str/split voice #"-")]
 
           (expect (= (str "vits-piper-" voice) (:install-dir entry)))
-          (expect (= [(str voice ".onnx") "tokens.txt"] (:requires entry)))
+          (expect (= [(str voice ".onnx") "tokens.txt"] (take 2 (:requires entry))))
+          (expect (= #{"espeak-ng-data/phontab" "espeak-ng-data/phondata"
+                       "espeak-ng-data/phonindex"}
+                     (set (drop 2 (:requires entry)))))
           (expect (str/ends-with? (:source-url entry)
                                   (str/join "/" [(subs lang 0 2) lang speaker level])))
           (doseq [source (:sources entry)
@@ -221,9 +224,8 @@
                                            "sherpa-onnx-pocket-tts-int8"))))
              (it "mirrors nothing it may not host, and hosts nothing it did not make"
                  ;; The pack is a release of ASSETS WE OWN: our own exports and the
-                 ;; models we may mirror outright. A voice is never in it - each comes
-                 ;; from its publisher - and neither are espeak-ng's GPL tables, which
-                 ;; the SYSTEM installs.
+                 ;; models we may mirror outright. Each Piper voice and its GPL phoneme
+                 ;; tables come together from that voice's publisher, never from our pack.
                  (doseq [entry (assets/manifest)]
                    (let [pack (filter #(= :pack (:host %)) (:sources entry))]
                      (when (seq pack)

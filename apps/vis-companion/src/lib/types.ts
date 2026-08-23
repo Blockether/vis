@@ -645,6 +645,11 @@ export interface SpeechVoice {
   label?: string;
   language?: string;
   is_imported?: boolean;
+  is_opt_in?: boolean;
+  license?: string;
+  notice?: string;
+  source_url?: string;
+  model?: VoiceModelState;
 }
 
 /** One synthesis engine as the gateway advertises it. */

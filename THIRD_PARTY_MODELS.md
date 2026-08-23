@@ -51,9 +51,8 @@ Piper voice en_US-kristin-medium by Bryce Beattie (https://brycebeattie.com/file
 - Upstream: <https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/kristin/medium>
 - Voices: Kristin (en-US)
 - Installs into: `~/.vis/models/vits-piper-en_US-kristin-medium`
-- Cannot speak until espeak-ng's phoneme tables are on the system.
+- Includes eSpeak NG phoneme tables from the publisher archive (GPL-3.0-or-later).
 - Downloaded from, in order:
-  - Hugging Face, 64 MB, 2 files, when a Hugging Face token is configured - <https://huggingface.co/csukuangfj/vits-piper-en_US-kristin-medium>
   - the publisher, 67 MB - <https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-kristin-medium.tar.bz2>
 
 ## `piper-en_GB-cori-high`
@@ -65,9 +64,8 @@ Piper voice en_GB-cori-high by Bryce Beattie (https://brycebeattie.com/files/tts
 - Upstream: <https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/cori/high>
 - Voices: Cori (en-GB)
 - Installs into: `~/.vis/models/vits-piper-en_GB-cori-high`
-- Cannot speak until espeak-ng's phoneme tables are on the system.
+- Includes eSpeak NG phoneme tables from the publisher archive (GPL-3.0-or-later).
 - Downloaded from, in order:
-  - Hugging Face, 114 MB, 2 files, when a Hugging Face token is configured - <https://huggingface.co/csukuangfj/vits-piper-en_GB-cori-high>
   - the publisher, 116 MB - <https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-cori-high.tar.bz2>
 
 ## `piper-en_US-john-medium`
@@ -79,9 +77,8 @@ Piper voice en_US-john-medium by Bryce Beattie (https://brycebeattie.com/files/t
 - Upstream: <https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/john/medium>
 - Voices: John (en-US)
 - Installs into: `~/.vis/models/vits-piper-en_US-john-medium`
-- Cannot speak until espeak-ng's phoneme tables are on the system.
+- Includes eSpeak NG phoneme tables from the publisher archive (GPL-3.0-or-later).
 - Downloaded from, in order:
-  - Hugging Face, 64 MB, 2 files, when a Hugging Face token is configured - <https://huggingface.co/csukuangfj/vits-piper-en_US-john-medium>
   - the publisher, 67 MB - <https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-john-medium.tar.bz2>
 
 ## `piper-en_US-ljspeech-high`
@@ -93,9 +90,8 @@ Piper voice en_US-ljspeech-high by Bryce Beattie (https://brycebeattie.com/files
 - Upstream: <https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ljspeech/high>
 - Voices: LJ (en-US)
 - Installs into: `~/.vis/models/vits-piper-en_US-ljspeech-high`
-- Cannot speak until espeak-ng's phoneme tables are on the system.
+- Includes eSpeak NG phoneme tables from the publisher archive (GPL-3.0-or-later).
 - Downloaded from, in order:
-  - Hugging Face, 114 MB, 2 files, when a Hugging Face token is configured - <https://huggingface.co/csukuangfj/vits-piper-en_US-ljspeech-high>
   - the publisher, 116 MB - <https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ljspeech-high.tar.bz2>
 
 ## `piper-en_US-ryan-high`
@@ -109,14 +105,13 @@ Piper voice en_US-ryan-high by Michael Hansen (rhasspy/piper), trained from scra
 - Upstream: <https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ryan/high>
 - Voices: Ryan (en-US, high)
 - Installs into: `~/.vis/models/vits-piper-en_US-ryan-high`
-- Cannot speak until espeak-ng's phoneme tables are on the system.
+- Includes eSpeak NG phoneme tables from the publisher archive (GPL-3.0-or-later).
 - Opt-in: Vis never fetches this on its own; it is installed only when asked for by name.
 - Downloaded from, in order:
   - the publisher, 116 MB - <https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ryan-high.tar.bz2>
 
-## espeak-ng
+## eSpeak NG phoneme data
 
-Not a model and not in the manifest. The Piper voices above phonemize through espeak-ng's
-tables, which are GPL-3.0-or-later DATA, so Vis ships neither them nor a native library with
-espeak-ng compiled in. The system installs them once (`brew install espeak-ng`,
-`apt install espeak-ng`) and every voice on the machine shares that copy.
+Piper phonemizes through eSpeak NG's GPL-3.0-or-later data. Each publisher archive above
+carries the tables its voice needs; Vis downloads that archive into its model store without
+administrator access and never mirrors the data in a Vis release.

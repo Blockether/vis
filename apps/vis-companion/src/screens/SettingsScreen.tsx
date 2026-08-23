@@ -974,7 +974,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
  * installs do not carry it; a band explaining a feature that is not there is noise on
  * every one of them.
  */
-function VoicesPanel({
+export function VoicesPanel({
   client,
   prefs,
   onChange,
@@ -993,6 +993,7 @@ function VoicesPanel({
   const [says, setSays] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [confirmingInstall, setConfirmingInstall] = useState<string | null>(null);
   // Which of THIS machine's voices this device asks for. Stored by id: a machine
   // that no longer has it speaks in its selected engine's default instead.
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1031,6 +1032,11 @@ function VoicesPanel({
     return () => controller.abort();
   }, [load]);
 
+  useEffect(() => {
+    if (!catalogue?.voices?.some((voice) => voice.model?.status === "downloading")) return;
+    const timer = window.setTimeout(() => void load(), ENGINE_POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [catalogue, load]);
 
   async function chooseVoice(id: string | null) {
     await onChange(() => setSpeechGatewayVoice(id));
@@ -1091,6 +1097,35 @@ function VoicesPanel({
     }
   }
 
+  async function prepareVoice(voice: SpeechVoice, isLicenseAccepted: boolean) {
+    setPending(`install:${voice.id}`);
+    setErr(null);
+    try {
+      const state = await client.speechModel({
+        start: true,
+        engine: prefs.ttsEngine,
+        voice: voice.id,
+        isLicenseAccepted,
+      });
+      setConfirmingInstall(null);
+      if (state.status === "failed") {
+        setErr(state.error ?? `Could not download ${voice.label ?? voice.id}.`);
+        setNote(null);
+      } else {
+        setNote(
+          state.status === "ready"
+            ? `${voice.label ?? voice.id} is ready.`
+            : `${voice.label ?? voice.id} is downloading.`,
+        );
+      }
+      await load();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPending(null);
+    }
+  }
+
   if (isAbsent) return null;
 
   const voices = catalogue?.voices ?? [];
@@ -1135,47 +1170,108 @@ function VoicesPanel({
           />
         )}
 
-        {voices.map((voice) => (
-          <div key={voice.id}>
-            <div
-              className={
-                voice.is_imported
-                  ? "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 pr-3"
-                  : "min-w-0"
-              }
-            >
-              <ChoiceCell
-                className="w-full min-w-0"
-                title={voice.label ?? voice.id}
-                sub={[
-                  voice.language,
-                  voice.is_imported ? "imported here" : "ships with the engine",
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-                isSelected={prefs?.gatewayVoice === voice.id}
-                onClick={() => void chooseVoice(voice.id)}
-              />
-              {voice.is_imported && confirming !== voice.id && (
-                <Button
-                  variant="secondary"
-                  onClick={() => setConfirming(voice.id)}
-                >
-                  Forget
-                </Button>
+        {voices.map((voice) => {
+          const model = voice.model;
+          const canPrepare = model?.status === "absent" || model?.status === "failed";
+          const modelWord =
+            model?.status === "downloading"
+              ? `${model.phase === "extracting" ? "unpacking" : "downloading"}${
+                  typeof model.progress === "number" ? ` ${Math.round(model.progress)}%` : ""
+                }`
+              : model?.status === "absent"
+                ? "not downloaded yet"
+                : model?.status === "failed"
+                  ? "failed"
+                  : model?.status === "ready"
+                    ? "ready"
+                    : null;
+          return (
+            <div key={voice.id}>
+              <div
+                className={
+                  voice.is_imported || canPrepare
+                    ? "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 pr-3"
+                    : "min-w-0"
+                }
+              >
+                <ChoiceCell
+                  className="w-full min-w-0"
+                  title={voice.label ?? voice.id}
+                  sub={[
+                    voice.language,
+                    voice.is_imported ? "imported here" : modelWord ?? "ships with the engine",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                  isSelected={prefs?.gatewayVoice === voice.id}
+                  disabled={!!model && model.status !== "ready"}
+                  onClick={() => void chooseVoice(voice.id)}
+                />
+                {voice.is_imported && confirming !== voice.id && (
+                  <Button variant="secondary" onClick={() => setConfirming(voice.id)}>
+                    Forget
+                  </Button>
+                )}
+                {canPrepare && confirmingInstall !== voice.id && (
+                  <Button
+                    variant="secondary"
+                    disabled={pending === `install:${voice.id}`}
+                    onClick={() =>
+                      voice.is_opt_in
+                        ? setConfirmingInstall(voice.id)
+                        : void prepareVoice(voice, false)
+                    }
+                  >
+                    {pending === `install:${voice.id}`
+                      ? "Starting…"
+                      : model?.status === "failed"
+                        ? "Try again"
+                        : "Download"}
+                  </Button>
+                )}
+              </div>
+              {model?.status === "failed" && model.error && (
+                <div className="border-t border-dialog-edge p-3">
+                  <Banner kind="err">{model.error}</Banner>
+                </div>
+              )}
+              {confirmingInstall === voice.id && (
+                <div className="border-t border-dialog-edge">
+                  <div className="space-y-2 px-3 pt-3 font-mono text-meta text-dialog-hint sm:px-4">
+                    <p>{voice.notice ?? `This voice requires acceptance of ${voice.license}.`}</p>
+                    {voice.license && <p className="font-bold text-white">{voice.license}</p>}
+                    {voice.source_url && (
+                      <a
+                        className="block truncate text-accent underline"
+                        href={voice.source_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Read the source and licence
+                      </a>
+                    )}
+                  </div>
+                  <ConfirmRow
+                    question={`Accept ${voice.license ?? "these terms"} and download ${voice.label ?? voice.id}?`}
+                    confirmLabel="Accept and download"
+                    isBusy={pending === `install:${voice.id}`}
+                    onKeep={() => setConfirmingInstall(null)}
+                    onConfirm={() => void prepareVoice(voice, true)}
+                  />
+                </div>
+              )}
+              {confirming === voice.id && (
+                <ConfirmRow
+                  question={`Forget ${voice.label ?? voice.id}?`}
+                  confirmLabel="Forget"
+                  isBusy={pending === voice.id}
+                  onKeep={() => setConfirming(null)}
+                  onConfirm={() => void forget(voice)}
+                />
               )}
             </div>
-            {confirming === voice.id && (
-              <ConfirmRow
-                question={`Forget ${voice.label ?? voice.id}?`}
-                confirmLabel="Forget"
-                isBusy={pending === voice.id}
-                onKeep={() => setConfirming(null)}
-                onConfirm={() => void forget(voice)}
-              />
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {canImport && (

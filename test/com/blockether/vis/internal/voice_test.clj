@@ -180,6 +180,37 @@
         (is (= [:uploading :queued :preparing :synthesizing :done :failed]
                (voice/direction-phases :synthesize)))))))
 
+(deftest a-licence-gated-voice-exposes-terms-and-has-its-own-preparation
+  (let [asked
+        (atom [])
+
+        engine
+        (assoc (speaker-engine :piper)
+          :voices (constantly [{:id :ryan
+                                :label "Ryan"
+                                :is-opt-in true
+                                :license "CC-BY-NC-SA-4.0"
+                                :notice "Non-commercial use only."
+                                :source-url "https://example.com/voice"}])
+          :voice-model-state (fn [id]
+                               (swap! asked conj [:read id])
+                               {:state :absent})
+          :start-voice-download (fn [opts]
+                                  (swap! asked conj [:start opts])
+                                  {:state :downloading :progress 0}))]
+
+    (is (= [{:id "ryan"
+             :label "Ryan"
+             :license "CC-BY-NC-SA-4.0"
+             :notice "Non-commercial use only."
+             :source-url "https://example.com/voice"
+             :is-opt-in true
+             :model {:status "absent"}}]
+           (voice/voices engine)))
+    (is (= {:state :downloading :progress 0}
+           (voice/prepare! engine {:voice-id "ryan" :is-license-accepted true})))
+    (is (= [[:read :ryan] [:start {:voice-id "ryan" :is-license-accepted true}]] @asked))))
+
 (deftest each-direction-resolves-only-its-own-default
   (with-only-engines!
     {:transcribe [(echo-engine :parakeet-local "heard it") (echo-engine :whisper-server "remote")]

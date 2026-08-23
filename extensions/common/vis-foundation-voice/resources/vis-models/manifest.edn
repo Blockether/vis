@@ -11,16 +11,10 @@
 ;;              does not host.
 ;; Every source of one entry delivers the same bytes, so one `:sha256` covers all.
 ;;
-;; `:needs-espeak-ng true` - silent until espeak-ng's phoneme tables are ON THE
-;; SYSTEM. Vis does not ship them: GPL-3.0-or-later, one package away, read from
-;; their own directory at run time, and shared by every Piper voice.
+;; `:needs-espeak-ng true` - each publisher archive carries the GPL-3.0-or-later
+;; phoneme tables beside its Piper voice. Vis installs that verified archive into its own
+;; model store; it never invokes a package manager or needs administrator privileges.
 ;;
-;; `:is-commercial-ok true` is the bar for anything Vis MIRRORS or fetches by
-;; itself. An entry that fails it is listed with `:is-opt-in true`: never in the
-;; pack, refused by `assets/ensure!`, fetched only when a user names it. Only a
-;; LICENCE earns that gate. Size never does - a model the user has to ask for a
-;; second time is an engine that stays silent - so `models download` takes every
-;; entry whose terms Vis may accept on their behalf, however big it is.
 [{:attribution
   "Parakeet TDT 0.6B v3 by NVIDIA (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), CC BY 4.0. ONNX export by k2-fsa/sherpa-onnx."
   :engine :parakeet
@@ -116,24 +110,11 @@
   :is-redistributed false
   :license "LicenseRef-public-domain"
   :needs-espeak-ng true
-  :requires ["en_US-kristin-medium.onnx" "tokens.txt"]
+  :requires ["en_US-kristin-medium.onnx" "tokens.txt" "espeak-ng-data/phontab"
+             "espeak-ng-data/phondata" "espeak-ng-data/phonindex"]
   :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/kristin/medium"
   :sources
-  [{:files
-    [{:bytes 63531507
-      :path "en_US-kristin-medium.onnx"
-      :sha256 "f9a5c375c70ddc33ccdb3969c76a4d7cc5255ac08119a312b0034a1d07041be6"
-      :url
-      "https://huggingface.co/csukuangfj/vits-piper-en_US-kristin-medium/resolve/main/en_US-kristin-medium.onnx"}
-     {:bytes 940
-      :path "tokens.txt"
-      :sha256 "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d"
-      :url
-      "https://huggingface.co/csukuangfj/vits-piper-en_US-kristin-medium/resolve/main/tokens.txt"}]
-    :host :hf
-    :is-token-required true
-    :kind :files}
-   {:bytes 67259230
+  [{:bytes 67259230
     :host :upstream
     :kind :archive
     :sha256 "c2206f572df2956c50b1ae3367eebce3853c663e890cba8048cd62b1e4dbe6c7"
@@ -149,23 +130,11 @@
   :is-redistributed false
   :license "LicenseRef-public-domain"
   :needs-espeak-ng true
-  :requires ["en_GB-cori-high.onnx" "tokens.txt"]
+  :requires ["en_GB-cori-high.onnx" "tokens.txt" "espeak-ng-data/phontab" "espeak-ng-data/phondata"
+             "espeak-ng-data/phonindex"]
   :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_GB/cori/high"
   :sources
-  [{:files
-    [{:bytes 114219480
-      :path "en_GB-cori-high.onnx"
-      :sha256 "006bb4db48e066f7f1be91d218db3b76617a707196271694ca6455d7bbd13842"
-      :url
-      "https://huggingface.co/csukuangfj/vits-piper-en_GB-cori-high/resolve/main/en_GB-cori-high.onnx"}
-     {:bytes 940
-      :path "tokens.txt"
-      :sha256 "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d"
-      :url "https://huggingface.co/csukuangfj/vits-piper-en_GB-cori-high/resolve/main/tokens.txt"}]
-    :host :hf
-    :is-token-required true
-    :kind :files}
-   {:bytes 115574061
+  [{:bytes 115574061
     :host :upstream
     :kind :archive
     :sha256 "42922f07738fcde2e49eed4e959635692f73b933de35a6b7c1010162ff566292"
@@ -181,24 +150,11 @@
   :is-redistributed false
   :license "LicenseRef-public-domain"
   :needs-espeak-ng true
-  :requires ["en_US-john-medium.onnx" "tokens.txt"]
+  :requires ["en_US-john-medium.onnx" "tokens.txt" "espeak-ng-data/phontab"
+             "espeak-ng-data/phondata" "espeak-ng-data/phonindex"]
   :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/john/medium"
   :sources
-  [{:files
-    [{:bytes 63531507
-      :path "en_US-john-medium.onnx"
-      :sha256 "7ab60237f77e06c8f32b811080b7ad82d23bc5bacc4bba2c35e58aeae6833364"
-      :url
-      "https://huggingface.co/csukuangfj/vits-piper-en_US-john-medium/resolve/main/en_US-john-medium.onnx"}
-     {:bytes 940
-      :path "tokens.txt"
-      :sha256 "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d"
-      :url
-      "https://huggingface.co/csukuangfj/vits-piper-en_US-john-medium/resolve/main/tokens.txt"}]
-    :host :hf
-    :is-token-required true
-    :kind :files}
-   {:bytes 67249181
+  [{:bytes 67249181
     :host :upstream
     :kind :archive
     :sha256 "d90362cfa48e429d3096f644785184446145b6e38216f2eaf4c0601b8aad5a36"
@@ -214,24 +170,11 @@
   :is-redistributed false
   :license "LicenseRef-public-domain"
   :needs-espeak-ng true
-  :requires ["en_US-ljspeech-high.onnx" "tokens.txt"]
+  :requires ["en_US-ljspeech-high.onnx" "tokens.txt" "espeak-ng-data/phontab"
+             "espeak-ng-data/phondata" "espeak-ng-data/phonindex"]
   :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ljspeech/high"
   :sources
-  [{:files
-    [{:bytes 114199139
-      :path "en_US-ljspeech-high.onnx"
-      :sha256 "fea8faae21240174e972568a004f1d7afb01a93dbc7b3a58c36ecdc1bae82e33"
-      :url
-      "https://huggingface.co/csukuangfj/vits-piper-en_US-ljspeech-high/resolve/main/en_US-ljspeech-high.onnx"}
-     {:bytes 940
-      :path "tokens.txt"
-      :sha256 "ef3a7e4a8d1af0c9d4dc45aaae1a6242ebe24a7ed6f3d025a49eb29682784c6d"
-      :url
-      "https://huggingface.co/csukuangfj/vits-piper-en_US-ljspeech-high/resolve/main/tokens.txt"}]
-    :host :hf
-    :is-token-required true
-    :kind :files}
-   {:bytes 115817679
+  [{:bytes 115817679
     :host :upstream
     :kind :archive
     :sha256 "00c6408d2409050312193b0d40ae07fde28af7d3d45a56efcc55440db516b935"
@@ -255,7 +198,8 @@
   :needs-espeak-ng true
   :notice
   "RyanSpeech is CC BY-NC-SA 4.0: non-commercial use only, with attribution, and anything derived from it carries the same licence. Vis never mirrors this voice and never installs it on its own."
-  :requires ["en_US-ryan-high.onnx" "tokens.txt"]
+  :requires ["en_US-ryan-high.onnx" "tokens.txt" "espeak-ng-data/phontab" "espeak-ng-data/phondata"
+             "espeak-ng-data/phonindex"]
   :source-url "https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/ryan/high"
   :sources
   [{:bytes 115630708

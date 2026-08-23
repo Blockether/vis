@@ -92,7 +92,7 @@
          (when (seq voices) (str "- Voices: " (str/join ", " voices)))
          (str "- Installs into: `~/.vis/models/" (:install-dir entry) "`")
          (when (:needs-espeak-ng entry)
-           "- Cannot speak until espeak-ng's phoneme tables are on the system.")
+           "- Includes eSpeak NG phoneme tables from the publisher archive (GPL-3.0-or-later).")
          (when (:is-opt-in entry)
            "- Opt-in: Vis never fetches this on its own; it is installed only when asked for by name.")
          "- Downloaded from, in order:" (str/join "\n" (map source-line (:sources entry)))]))))
@@ -114,11 +114,10 @@
 (def ^:private espeak-section
   (str/join
     "\n"
-    ["## espeak-ng" ""
-     "Not a model and not in the manifest. The Piper voices above phonemize through espeak-ng's"
-     "tables, which are GPL-3.0-or-later DATA, so Vis ships neither them nor a native library with"
-     "espeak-ng compiled in. The system installs them once (`brew install espeak-ng`,"
-     "`apt install espeak-ng`) and every voice on the machine shares that copy."]))
+    ["## eSpeak NG phoneme data" ""
+     "Piper phonemizes through eSpeak NG's GPL-3.0-or-later data. Each publisher archive above"
+     "carries the tables its voice needs; Vis downloads that archive into its model store without"
+     "administrator access and never mirrors the data in a Vis release."]))
 
 (defn markdown
   "The entire `THIRD_PARTY_MODELS.md`, rendered from the manifest."
