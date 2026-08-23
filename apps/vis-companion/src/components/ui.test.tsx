@@ -2110,7 +2110,7 @@ describe("MachineSwitcher", () => {
 // Regression, user report ("the plus is here and here" — a plus on the machine band and
 // a plus on every project header below it, meaning two different creations): the machine
 // band's control never was a create at all. `openManageProjects` opens the sheet on
-// `Projects · <machine>` — choose one, remove one, `New project…` at its foot — so the
+// `Projects` — choose one, remove one, `New project…` at its foot — so the
 // word promised one of the three things behind it and a plus would have promised a
 // session's meaning one row up.
 describe("MachineProjectsButton", () => {

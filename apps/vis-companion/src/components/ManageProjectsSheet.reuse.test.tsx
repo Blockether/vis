@@ -153,7 +153,9 @@ describe("ManageProjectsSheet paints no box of its own", () => {
 
   it("names itself with the menu's own band and its one way out", async () => {
     const { onCancel } = sheet();
-    expect(await screen.findByText("Projects · tower")).toBeInTheDocument();
+    // The band says what the rows act on, and never the machine's address; the
+    // machine survives in the way out, which a screen reader still reaches.
+    expect(await screen.findByText("Projects")).toBeInTheDocument();
 
     await userEvent.click(
       screen.getByRole("button", { name: "Close projects on tower" }),
@@ -167,7 +169,7 @@ describe("ManageProjectsSheet paints no box of its own", () => {
   // band carries the close, and the scrim dismisses it.
   it("closes out of adding instead of retreating into the inventory", async () => {
     const { onCancel } = sheet({ isAdding: true });
-    expect(await screen.findByText("New project · tower")).toBeInTheDocument();
+    expect(await screen.findByText("New project")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /back/i })).toBeNull();
 
     await userEvent.click(

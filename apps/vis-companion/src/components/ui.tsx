@@ -3327,7 +3327,7 @@ export function NewSessionButton({
  * names that gateway.
  *
  * IT IS NOT A CREATE, and for a long time it said it was. `openManageProjects` opens
- * `ManageProjectsSheet` on `Projects · <machine>` — choose the machine's current
+ * `ManageProjectsSheet` on `Projects` — choose the machine's current
  * project, remove one, or take the `New project…` at its foot — so a control spelled
  * "New project" promised the last of the three things behind it, and a plus on the
  * band would have promised the same plus one row below meant a session. So it wears

@@ -329,7 +329,13 @@ export function ManageProjectsSheet({
           question: one loud band naming what the rows act on, the app's one way
           out inside it, and rows that are `MenuItem`s. It used to be a full-height
           `DialogFrame` — a different box, a different header and a different
-          entrance for a list one tap away from the menu that opened it. */}
+          entrance for a list one tap away from the menu that opened it.
+
+          The band does NOT name the machine. It read `Projects · 100.123.200.103:7890`
+          for any machine whose pairing had no label — an address in the loudest strip of
+          the sheet, in a panel that was opened FROM that machine's own rail. The name
+          survives where a reader who cannot see that rail still needs it: the panel's
+          `aria-label` and the way out. */}
       {!adding && (
         <MenuHeading
           action={
@@ -339,7 +345,7 @@ export function ManageProjectsSheet({
           }
           onClose={onCancel}
           closeLabel={`Close projects on ${label}`}
-        >{`Projects · ${label}`}</MenuHeading>
+        >Projects</MenuHeading>
       )}
 
       {!adding ? (
@@ -390,13 +396,13 @@ export function ManageProjectsSheet({
           action={projectActions}
           onClose={onCancel}
           closeLabel={`Close new project on ${label}`}
-        >{`New project · ${label}`}</MenuHeading>
+        >New project</MenuHeading>
       ) : (
         <MenuBack
           label={`Back to projects on ${label}`}
           onBack={() => setAdding(false)}
           action={projectActions}
-        >{`New project · ${label}`}</MenuBack>
+        >New project</MenuBack>
       )}
 
       {alreadyProject && <MenuNote>It’s already a project</MenuNote>}
