@@ -78,7 +78,6 @@ import {
   SearchField,
   SectionGap,
   SectionHeader,
-  SectionShelf,
   Slider,
   Spinner,
   UnreadBadge,
@@ -905,13 +904,13 @@ describe("Pager", () => {
     const html = renderToStaticMarkup(
       <Pager page={4} pageCount={73} onPage={() => {}} label="vis sessions" />,
     );
-    // Content-sized: `>` ends the cluster, the cluster ends at the shelf's trailing
-    // edge, so the window can only breathe to the LEFT.
+    // Content-sized: `>` ends the cluster, the cluster ends where the band's verb
+    // begins, so the window can only breathe to the LEFT.
     expect(html).toContain('class="flex items-center gap-1"');
     expect(html).not.toContain("max-w-[19rem]");
-    // It never grows and never negotiates a basis on the shelf's wrapping row; from
-    // `sm` up, where the numbers are painted, it takes the shelf's trailing end.
-    expect(html).toContain('class="flex min-w-0 shrink-0 justify-end sm:grow"');
+    // It never grows and never negotiates a basis in the band's trailing column: any
+    // width it won there would come off the project's own name.
+    expect(html).toContain('class="flex min-w-0 shrink-0 justify-end"');
   });
 
   // Regression, user report with a screenshot of a phone ("this is not looking
@@ -967,126 +966,73 @@ describe("Pager", () => {
   });
 });
 
-// Regression, user report ("I think there's no visual differentiation between the
-// paging and also there is no visual differentiation between the projects and it all
-// looks like kind of the same thing"): the pager was painted at the FOOT of a group's
-// rows — `border-t border-dialog-edge` on the rows' own paper, one hairline above the
-// next project's header — so `1 2 … 80 ›` read as the last row of `vis` or the first
-// row of `vis-companion`. It rides on the header's shelf now, and two projects are
-// separated by a trough instead of by the hairline two sessions share.
-describe("SectionShelf", () => {
-  const html = renderToStaticMarkup(
-    <SectionShelf>
-      <HeaderMeta>
-        <HeaderTally count={794} unit="session" />
-      </HeaderMeta>
-      <Pager page={2} pageCount={100} onPage={() => {}} label="vis sessions" />
-    </SectionShelf>,
+// Regression, user report (paraphrased: what stands under the project band belongs
+// in the band itself): a project heading was TWO boxes — the band, and a
+// `SectionShelf` stuck under it carrying the count and the pager on a second paper,
+// behind a second hairline and a second sticky layer. It cost 40px of the screen
+// under the band for the whole of a project, and it is gone: the pager is a cluster
+// in the band's own trailing column and the count rides on the name's second line.
+describe("a project band carries its own count and its own pager", () => {
+  const band = /<ProjectCrumb[\s\S]*?<\/SectionHeader>/.exec(sessionsListSource)?.[0] ?? "";
+  const qualifier = band.slice(
+    band.indexOf("qualifier={"),
+    band.indexOf("qualifierTitle="),
   );
+  const cluster = /<HeaderActions>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? "";
 
-  const face = /^<div class="([^"]*)"/.exec(html)?.[1] ?? "";
-
-  it("stands on the header's paper, not on the rows'", () => {
-    expect(face).toContain("bg-level-project");
-    expect(face).not.toContain("bg-panel");
-    // One closing hairline for the header/shelf pair, and none above it: a rule
-    // between a band and its own shelf is the doubled line this list was reported for.
-    expect(face).toContain("border-b border-dialog-edge");
-    expect(face).not.toContain("border-t");
+  it("walks the project from the band's own trailing cluster", () => {
+    expect(cluster).toContain("<Pager page={shownPage}");
+    expect(cluster).toContain("<NewSessionButton");
+    // ...and it is the ONLY pager on this screen.
+    expect(sessionsListSource.match(/<Pager /g)?.length).toBe(1);
   });
 
-  it("hangs under the band at exactly the band's own height, and behind it", () => {
-    const band = renderToStaticMarkup(<SectionHeader>project</SectionHeader>);
-    expect(band).toContain("min-h-13");
-    expect(face).toContain("sticky top-13");
-    expect(band).toContain("mouse:min-h-9");
-    expect(face).toContain("mouse:top-9");
-    // A group scrolling away passes its shelf UNDER the next header.
-    expect(band).toContain("z-10");
-    expect(face).toContain("z-9");
+  it("counts the project under its name, never in that cluster", () => {
+    expect(qualifier).toContain('<HeaderTally count={tally.count} unit="session" />');
+    expect(qualifier).toContain("<LiveCount count={tally.live} />");
+    // Measured at 320px: the count, the live pulse and the amber verb take the
+    // cluster's width first and leave the project NAME 24px — which is the reason
+    // the qualifier line exists at all.
+    expect(cluster).not.toContain("HeaderTally");
+    expect(cluster).not.toContain("LiveCount");
   });
 
-  it("is shorter than the band it hangs from", () => {
-    expect(face).toContain("min-h-10");
-    expect(face).toContain("mouse:min-h-8");
+  it("hangs no second box under the band, in the list or in its skeleton", () => {
+    expect(sessionsListSource).not.toContain("SectionShelf");
+    expect(uiSource).not.toContain("export function SectionShelf");
   });
 
-  // Regression, user report with a screenshot of a phone: while typing in the search
-  // field the header block jumped, because a project whose hits fit one page renders
-  // no pager and the shelf then stood 4px shorter than the same shelf one match later.
-  it("holds the paged height even when there is no pager to hold", () => {
-    const unpaged = renderToStaticMarkup(
-      <SectionShelf>
-        <HeaderMeta>
-          <HeaderTally count={3} unit="session" />
-        </HeaderMeta>
-        <Pager page={1} pageCount={1} onPage={() => {}} label="vis sessions" />
-      </SectionShelf>,
-    );
-    const unpagedFace = /^<div class="([^"]*)"/.exec(unpaged)?.[1] ?? "";
-    expect(unpaged).not.toContain("Previous page");
-    expect(unpagedFace).toBe(face);
-  });
-
-  // Regression, user report with a screenshot of a phone: the shelf wrapped as soon
-  // as the pager's window opened, so it was 41px on page 1 and 59px on page 4 — a
-  // STICKY strip changing height under the thumb that pressed it, with the count
-  // stranded beside 300px of empty paper. The pager carries a fixed-width phone form
-  // now, so both halves share one line at 320px.
-  it("holds one line, and wraps rather than crushing either of its two halves", () => {
-    const pager = renderToStaticMarkup(
-      <Pager page={4} pageCount={100} onPage={() => {}} label="vis sessions" />,
-    );
-    // The phone form is 56px on every page: 115px of count and 132px of pager fit a
-    // 320px line with room to spare.
-    expect(pager).toContain("min-w-14");
-    expect(pager).toContain("shrink-0");
-    // Kept for the honest case only — a count so long it cannot share the line.
-    expect(face).toContain("flex-wrap");
-    expect(html).toContain("794 sessions");
-    expect(face).not.toContain("truncate");
-  });
-
-  it("owns the list's two edges, so the pager spells neither", () => {
-    expect(face).toContain("pl-3");
-    expect(face).toContain("sm:pl-4");
-    expect(face).toContain("pr-3");
-    expect(face).toContain("sm:pr-4");
+  it("spells none of the list's edges and no paper of its own", () => {
     const pager = renderToStaticMarkup(
       <Pager page={2} pageCount={100} onPage={() => {}} label="vis sessions" />,
     );
+    // The band owns both edges (`HeaderTitle` the leading one, `HeaderActions` the
+    // trailing one), so the pager standing in it owns neither.
     expect(pager).not.toContain("pl-3");
     expect(pager).not.toContain("pr-3");
     expect(pager).not.toContain("border-t border-dialog-edge");
-    // It never grows on the phone line it shares with the count, and takes the
-    // shelf's trailing end from `sm` up, where its numbers are painted.
-    expect(pager).toContain(
-      'class="flex min-w-0 shrink-0 justify-end sm:grow"',
-    );
+    expect(pager).not.toContain("bg-level-project");
+    expect(pager).not.toContain("sticky");
+    expect(pager).toContain('class="flex min-w-0 shrink-0 justify-end"');
   });
 
-  it("carries the group's count, which the header's cluster no longer does", () => {
-    const shelf = /<SectionShelf>[\s\S]*?<\/SectionShelf>/.exec(
-      sessionsListSource,
-    )?.[0];
-    expect(shelf).toContain(
-      '<HeaderTally count={tally.count} unit="session" />',
-    );
-    expect(shelf).toContain("<LiveCount count={tally.live} />");
-    expect(shelf).toContain("<Pager page={shownPage}");
-    // ...and it is the ONLY place either of them is rendered on this screen.
-    expect(sessionsListSource.match(/<Pager /g)?.length).toBe(1);
-    // Scoped to the PROJECT header: the fleet view's machine band keeps a tally of
-    // its own, which is a different section counting a different thing.
-    const projectBand = /<ProjectCrumb[\s\S]*?<\/SectionHeader>/.exec(
-      sessionsListSource,
-    )?.[0];
-    expect(projectBand).toContain("<NewSessionButton");
-    expect(projectBand).not.toContain("HeaderTally");
-    expect(projectBand).not.toContain("LiveCount");
-    // The loading band stands in for a shelf too, or the list jumps by one when the
-    // rows land.
-    expect(sessionsListSource).toMatch(/<SectionShelf>\s*<SkeletonBar/);
+  // Regression, user report with a screenshot of a phone: the strip wrapped as soon
+  // as the pager's window opened — 41px on page 1, 59px on page 4 — a STICKY box
+  // changing height under the thumb that pressed it. The phone form is one fixed
+  // width, so the band it now stands in cannot move as the reader walks.
+  it("is the same width on every page, so the band never moves under the thumb", () => {
+    const face = (page: number) =>
+      /<nav [^>]*>([\s\S]*?)<\/nav>/.exec(
+        renderToStaticMarkup(
+          <Pager page={page} pageCount={100} onPage={() => {}} label="vis sessions" />,
+        ),
+      )?.[0] ?? "";
+    expect(face(4)).toContain("min-w-14");
+    expect(face(4)).toContain("shrink-0");
+    // The window that opens on page 4 is the DESKTOP form only; the phone form says
+    // `4 / 100` in the same box `1 / 100` stood in.
+    expect(face(1)).toContain("1 / 100");
+    expect(face(4)).toContain("4 / 100");
   });
 });
 

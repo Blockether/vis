@@ -28,7 +28,6 @@ import {
   RowDisclosure,
   SectionGap,
   SectionHeader,
-  SectionShelf,
   Spinner,
 } from '../components/ui';
 import {
@@ -3334,7 +3333,7 @@ const ProjectGroup = memo(function ProjectGroup({
   return (
     <>
     <section aria-label={`${project} sessions`}>
-      {/* The project band wears the accent as its outgoing rule — one shelf per
+      {/* The project band wears the accent as its outgoing rule — one band per
           project, and the yellow line under it says the rows below belong to the
           name above them rather than to the machine two bands up. */}
       <SectionHeader rule="border-accent">
@@ -3346,17 +3345,36 @@ const ProjectGroup = memo(function ProjectGroup({
             all, which is what a reader with four checkouts on one machine needs. */}
         <ProjectCrumb
           name={project}
-          qualifier={homeifyPath(root) || 'No workspace path'}
+          qualifier={
+            // The path says WHICH checkout this is, the count says how much of it
+            // there is: one quiet line under the name, in the hint ink both already
+            // wear. The count had a shelf of its own under this band until the pager
+            // took the band's trailing column and left it nothing to stand on.
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 truncate">{homeifyPath(root) || 'No workspace path'}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                <span aria-hidden>·</span>
+                <HeaderTally count={tally.count} unit="session" />
+                <LiveCount count={tally.live} />
+              </span>
+            </span>
+          }
           qualifierTitle={root}
           isOpen={isShowing}
           onToggle={() => fold(!isShowing)}
           label={`${isShowing ? 'Collapse' : 'Expand'} ${project}`}
         />
-        {/* The trailing cluster now holds only what this group OFFERS. What it
-            reports moved down to the shelf: on a 320px screen the count, the live
-            pulse, the yellow verb and the `⋯` took this cluster's width first and
-            left the project name 24px wide. */}
+        {/* The trailing cluster holds how this group is WALKED and what it OFFERS:
+            the project's pages, then its one verb. The pager rode on a shelf hung
+            under this band — a second paper, a second hairline and a second sticky
+            layer for one heading, 40px of the screen taken under the band for the
+            whole of a project. What the group REPORTS cannot come up here with it:
+            measured on a 320px screen, the count, the live pulse and the yellow verb
+            take this cluster's width first and leave the project name 24px. */}
         <HeaderActions>
+          {isShowing && (
+            <Pager page={shownPage} pageCount={pageCount} onPage={goToPage} label={`${project} sessions`} />
+          )}
           <NewSessionButton
             machine={machineLabel(conn)}
             where={project}
@@ -3371,19 +3389,6 @@ const ProjectGroup = memo(function ProjectGroup({
       {/* The rows carry no bottom rule of their own: the trough that opens the next
           project, or the card's own bottom border, closes the group. */}
       {isShowing && rows.length > 0 && (
-        <>
-        {/* The group's own shelf, hung under its header and sticking with it: what
-            the project counts, then the pages it is walked by. The pager used to
-            stand at the FOOT of these rows, in the rows' paper, one hairline above
-            the next project's header — a strip that read as a row of whichever of
-            the two projects the eye picked. */}
-        <SectionShelf>
-          <HeaderMeta>
-            <HeaderTally count={tally.count} unit="session" />
-            <LiveCount count={tally.live} />
-          </HeaderMeta>
-          <Pager page={shownPage} pageCount={pageCount} onPage={goToPage} label={`${project} sessions`} />
-        </SectionShelf>
         <div ref={rowsRef}>
           {rows.map((session) => (
             <SessionRow
@@ -3406,7 +3411,6 @@ const ProjectGroup = memo(function ProjectGroup({
             />
           ))}
         </div>
-        </>
       )}
     </section>
     </>
@@ -3910,12 +3914,6 @@ function NavigatorSkeleton() {
                 <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/25" />
               </HeaderActions>
             </SectionHeader>
-            {/* The shelf stands in too: a group is a band, a shelf and its rows, and
-                a skeleton missing one of the three is a 36px jump the moment data
-                lands. */}
-            <SectionShelf>
-              <SkeletonBar type="text-chip" width="w-20" baz="h-1.5" tone="bg-muted/25" />
-            </SectionShelf>
             {/* Mirrors `SessionRow` — the SAME grid, the same leading edge, the same
                 trailing column — because a skeleton that stands anywhere else is a
                 layout jump the user pays for on every cold open. It used to carry an

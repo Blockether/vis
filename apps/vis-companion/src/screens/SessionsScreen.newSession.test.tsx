@@ -105,8 +105,10 @@ describe('where "New session" lives', () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText("First");
-    // The header SHOWS the short path...
-    expect(screen.getByTitle("/Users/dev/project").textContent).toBe("~/project");
+    // The header SHOWS the short path, with what the project holds beside it...
+    const qualifier = screen.getByTitle("/Users/dev/project");
+    expect(qualifier.textContent).toContain("~/project");
+    expect(qualifier.textContent).toContain("1 session");
 
     view.requests.length = 0;
     await userEvent.click(screen.getByRole("button", { name: "New session on alpha" }));

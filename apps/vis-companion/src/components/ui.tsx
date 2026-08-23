@@ -2477,59 +2477,6 @@ export function SectionHeader({
 }
 
 /**
- * THE SHELF a section hangs under its own header: what the section REPORTS, and
- * how it is WALKED.
- *
- * Reported ("there is no visual differentiation between the paging"): the pager
- * was painted at the FOOT of a group's rows, in the rows' own paper, closing with
- * the same hairline every row draws — and the element directly after it was the
- * next project's header. So the strip that walks `vis` looked like the last row of
- * `vis` or the first row of `vis-companion`, and nothing on the screen said which.
- * A control that belongs to a HEADING has to stand on the heading's paper: the
- * shelf is the header's own `bg-level-project`, half a band tall, and it closes the
- * pair with one hairline instead of drawing a second one mid-list.
- *
- * It STICKS to the underside of the band it belongs to — `top-13`, exactly
- * `HEADER_BAND`'s `min-h-13`, and `mouse:top-9` for the compact one — so header and
- * shelf travel as one object: at row 40 of a 794-session project the reader can
- * still see which project they are in AND jump to page 12 without scrolling back.
- * It is one step BEHIND the band in z-order (`z-9` against `z-10`), because when a
- * group scrolls out its own shelf must pass UNDER the next header rather than over
- * it.
- *
- * It is ONE LINE on a phone, and it stays one line at every page. It used to wrap:
- * a 100-page pager asks for 304px of steps and numbers, the count beside it 115px,
- * and a 430px screen has 400 — so stepping from page 1 to page 4 opened the window,
- * broke the row in two and grew a STICKY strip from 41px to 59px under the thumb
- * that pressed it, with the count marooned beside 300px of empty paper. The pager
- * carries a phone form of fixed width for exactly this reason (see `Pager`), so the
- * shelf holds its height; `flex-wrap` remains for the honest case, a count so long
- * it cannot share the line, because a truncated count is not an option.
- *
- * Its height is the PAGED height at EVERY page count. Reported from a phone with a
- * screenshot, while typing in the search field: a project whose hits fit one page
- * renders no pager at all, so the strip stood 36px there and 40px the moment one
- * more match spilled onto a second page — the block jumped on every keystroke.
- * `min-h-10` is `Pager`'s own 32px compact face plus this shelf's `py-1`, so the
- * pager arriving or leaving changes ink and nothing else (`mouse:min-h-8` is
- * already that sum for the 24px desktop face).
- *
- * The count lives here rather than in the header's trailing cluster for the same
- * reason the qualifier moved under the name: measured on a 320px screen, `699
- * sessions`, `3 live`, the amber verb and the `⋯` took the cluster's width first
- * and left the project NAME — the thing the reader came for — 24px wide.
- */
-export function SectionShelf({ children }: { children: ReactNode }) {
-  return (
-    <div
-      className={`sticky top-13 z-9 flex min-h-10 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-dialog-edge bg-level-project py-1 mouse:top-9 mouse:min-h-8 ${LIST_EDGE} ${LIST_EDGE_END}`}
-    >
-      {children}
-    </div>
-  );
-}
-
-/**
  * THE TROUGH between two sections, and the only thing between them that is not a
  * line.
  *
@@ -2710,6 +2657,12 @@ export function HeaderTitle({
  * It is a `HeaderTitle` inside a pressable, not a button beside one: the whole
  * naming half answers the thumb, and the trailing cluster (`HeaderActions`) keeps
  * its own controls, so "New session" is never swallowed by the fold.
+ *
+ * Its qualifier line carries what the project HOLDS as well as where it lives. The
+ * count stood on a shelf of its own under this band, so one heading was two papers,
+ * two hairlines and two sticky boxes; it cannot move into the trailing cluster
+ * either, because measured at 320px the count, the live pulse and the amber verb
+ * take that cluster's width first and leave the NAME 24px.
  */
 export function ProjectCrumb({
   name,
@@ -2786,21 +2739,23 @@ export function pageWindow(page: number, pageCount: number, span = 1): (number |
  * disclosure chevron on the header hid the whole project behind a tap for the
  * same reason. A page number answers both: where you are, and how much there is.
  *
- * It is NOT a band of its own: it rides on the group's `SectionShelf`, under the
- * project header and on the header's paper. Painted at the FOOT of the rows it was
- * indistinguishable from one — a `border-t border-dialog-edge` strip at the end of
- * a group, one hairline above the next project's header — so `1 2 … 80 ›` read
- * either as the last session of `vis` or as the first thing in `vis-companion`,
- * which is the report this shelf exists for. The shelf also STICKS, so the control
- * that walks a 794-session project is still on screen at row 40 of that project.
+ * It is NOT a band of its own: it is a cluster in the project band's own trailing
+ * column, beside the verb that band offers. It rode on a `SectionShelf` hung under
+ * that band — a second paper, a second hairline and a second sticky layer for one
+ * heading — and before that it was painted at the FOOT of the rows, a `border-t
+ * border-dialog-edge` strip on the rows' own paper one hairline above the next
+ * project's header, so `1 2 … 80 ›` read either as the last session of `vis` or as
+ * the first thing in `vis-companion`. In the band it travels with the name it walks:
+ * at row 40 of a 794-session project the reader still sees which project they are in
+ * and can still jump to page 12, because the band itself sticks.
  *
  * What the pager owns is the steps at its ends and what stands between them: from
  * `sm` up the NUMBERS, every one of them pressable, so page 5 of 73 is ONE tap and
- * not four; on a phone, where the numbers cannot share a line with the group's
- * count, the position itself (`4 / 80`) at a width that never changes. The paper,
- * the two list edges and the closing hairline belong to the shelf. Below one page it
- * renders nothing at all — a pager for a project with four sessions is a control
- * that can never be pressed, and its shelf then carries only the group's count.
+ * not four; on a phone, where no line holds the numbers beside a project's name,
+ * the position itself (`4 / 80`) at a width that never changes. The paper, the
+ * list's trailing edge and the band's closing rule belong to the band. Below one
+ * page it renders nothing at all — a pager for a project with four sessions is a
+ * control that can never be pressed.
  *
  * A step that cannot be taken is not painted. It used to render disabled, so page
  * one wore a `<` that answered nothing and the eye still had to check it.
@@ -2847,12 +2802,11 @@ export function Pager({
   return (
     <nav
       aria-label={`Pages of ${label}`}
-      // On a phone the cluster is exactly as wide as its own content and never grows
-      // (`shrink-0`, no basis to negotiate); from `sm` up it takes the shelf's trailing
-      // end. The shelf is a flex row that WRAPS, and a pager that asks for 304px there
-      // is a pager that pushes the group's count onto a line of its own — see the two
-      // forms below.
-      className="flex min-w-0 shrink-0 justify-end sm:grow"
+      // The cluster is exactly as wide as its own content and never grows
+      // (`shrink-0`, no basis to negotiate): it stands in the band's trailing column
+      // beside the verb, and a control that negotiated for width there would take it
+      // from the project's own name — see the two forms below.
+      className="flex min-w-0 shrink-0 justify-end"
     >
       {/* The pager is LIVE: pressing a step or a number changes nothing else on the
           shelf, so without this a screen reader hears silence after the press. It is
@@ -2861,15 +2815,15 @@ export function Pager({
       <span aria-live="polite" className="sr-only">
         Page {page} of {pageCount}
       </span>
-      {/* The shelf runs the width of the list; the CONTROL does not. Steps pinned to
+      {/* The band runs the width of the list; the CONTROL does not. Steps pinned to
           the paper's two edges put `<` and `>` 360px apart on a phone, so paging is a
           two-handed reach and no thumb can rest between them — you cannot tap `>`
-          twice without moving. The cluster is held at the shelf's trailing end
+          twice without moving. The cluster is held in the band's trailing column
           instead, which puts the two steps a thumb's width from the numbers they
           belong to and in the column every other trailing control already uses.
 
           It is sized by its CONTENT, and `>` is what that buys: `>` ends the cluster,
-          the cluster ends at the shelf's trailing edge, so `>` is at the same x on
+          the cluster ends where the band's verb begins, so `>` is at the same x on
           every page of every project and the window can only breathe to the LEFT. A
           capped box (`w-full max-w-[19rem]`) promised the same thing and did not keep
           it — measured at 768px, `1 2 3 4 5 … 80` needs 319px of a 304px cap, and
@@ -2892,8 +2846,8 @@ export function Pager({
             No phone line holds both: at 390px the count and the widest window want
             431px of a 362px line. The numbers are the half that can be said in fewer
             characters, so below `sm` they become `4 / 80` — 56px, the SAME 56px on
-            every page of every project, so the shelf keeps one line and one height
-            for the whole walk. `<` and `>` still step, and the strip comes back whole
+            every page of every project, so the band holds one height for the whole
+            walk. `<` and `>` still step, and the strip comes back whole
             at `sm`, where a number is a tap and not a squeeze between two others. */}
         <span
           aria-hidden="true"
