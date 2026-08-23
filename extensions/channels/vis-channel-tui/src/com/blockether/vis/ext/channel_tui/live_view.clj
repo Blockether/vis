@@ -284,12 +284,13 @@
    and this line is the door to it."
   ([pane result] (settled pane result (System/currentTimeMillis)))
   ([pane result ended-at]
-   (-> pane
-       (dissoc :stop :is-minimized)
-       (update :view merge (:view result))
-       (assoc :settled (-> (select-keys result [:reason :artifact-id :is-from-human])
-                           (assoc :ended-at ended-at))
-              :is-reopened false))))
+   (let [activity (contains? #{:activity "activity"} (get-in pane [:view :classification]))]
+     (-> pane
+         (dissoc :stop :is-minimized)
+         (update :view merge (:view result))
+         (assoc :settled (-> (select-keys result [:reason :artifact-id :is-from-human])
+                             (assoc :ended-at ended-at))
+                :is-reopened (and activity (boolean (:is-reopened pane))))))))
 
 (defn settled?
   "True when this view has ENDED and the pane is its record."
@@ -304,10 +305,10 @@
 (defn dormant?
   "True when a pane belongs in its transcript receipt instead of the live band.
 
-   Generic views move there after settlement. Activity starts there and enters the
-   band only when the human explicitly opens its bounded detail."
+   Activity is always transcript-native, including its independently expanded detail.
+   Generic views move to the transcript after settlement."
   [pane]
-  (and (or (settled? pane) (activity? pane)) (not (:is-reopened pane))))
+  (or (activity? pane) (and (settled? pane) (not (:is-reopened pane)))))
 
 (defn minimized?
   "True when a still-running pane was folded to its compact status line. This is
@@ -377,7 +378,10 @@
       (assoc :is-activity
         true :status-text
         (flat-text (:text status-node)) :status-tone
-        (:tone status-node))
+        (:tone status-node) :activity-view
+        view :activity-focused
+        (:activity-focused pane) :activity-evidence
+        (set (:activity-evidence pane)))
 
       (:trace-anchor pane)
       (assoc :anchor (:trace-anchor pane)))))

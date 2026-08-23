@@ -2962,6 +2962,20 @@
                                    (mapv #(if (= (:view-id row) (:view-id %)) row %) runs)
                                    (conj runs row)))))))))
 
+(defn- update-activity-pane
+  "Update one Activity pane and its transcript-native receipt together."
+  [db view-id f]
+  (across-tabs db
+               (fn [workspace]
+                 (if-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views workspace)))]
+                   (let [next-pane (f pane)]
+                     (-> workspace
+                         (update :live-views
+                                 (fn [panes]
+                                   (mapv #(if (= view-id (lv/view-id %)) next-pane %) panes)))
+                         (upsert-run-row next-pane)))
+                   workspace))))
+
 (defn- mount-live-pane
   [workspace view]
   (if (some #(= (:id view) (lv/view-id %)) (:live-views workspace))
@@ -3061,11 +3075,11 @@
 
 (reg-event-db :activity-focus
               (fn [db [_ view-id item-id]]
-                (update-live-pane db view-id #(lv/activity-focused % item-id))))
+                (update-activity-pane db view-id #(lv/activity-focused % item-id))))
 
 (reg-event-db :activity-evidence
               (fn [db [_ view-id item-id]]
-                (update-live-pane db view-id #(lv/activity-evidence-toggled % item-id))))
+                (update-activity-pane db view-id #(lv/activity-evidence-toggled % item-id))))
 (reg-event-db :live-view-painted
               ;; Pushed back by the render thread with what the frame measured, the
               ;; way `:set-layout` is — and like it, deliberately NOT a redraw request.

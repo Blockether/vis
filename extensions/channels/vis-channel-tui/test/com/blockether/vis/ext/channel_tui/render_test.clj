@@ -4828,6 +4828,59 @@
         (expect (< (.indexOf ^String collapsed "grep({...})")
                    (.indexOf ^String collapsed "ACTIVITY")
                    (.indexOf ^String collapsed "Done.")))))
+  ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
+  ;; shared rail, so only the newest receipt could show its detail.
+  (it
+    "keeps several expanded Activity receipts inline after their Python results"
+    (render/invalidate-cache!)
+    (let [trace
+          [{:forms [{:code "first()" :result "FIRST RESULT" :success? true}
+                    {:code "second()" :result "SECOND RESULT" :success? true}]}]
+
+          activity-view
+          (fn [label]
+            {:classification :activity
+             :nodes [{:id "now" :type :status :text label :tone :running}
+                     {:id "counts" :type :stat :stats [{:label "Succeeded" :value-text "1"}]}]})
+
+          runs
+          [{:view-id "activity-1"
+            :is-activity true
+            :is-reopened true
+            :status-text "first receipt"
+            :status-tone :running
+            :activity-view (activity-view "FIRST DETAIL")
+            :anchor {:iteration-index 0 :form-index 0}}
+           {:view-id "activity-2"
+            :is-activity true
+            :is-reopened true
+            :status-text "second receipt"
+            :status-tone :running
+            :activity-view (activity-view "SECOND DETAIL")
+            :anchor {:iteration-index 0 :form-index 1}}]
+
+          body
+          (-> (render/format-answer-with-thinking-data "Done."
+                                                       trace
+                                                       80
+                                                       nil
+                                                       nil
+                                                       false
+                                                       {:session-id "s1" :runs runs})
+              :text
+              strip-ansi
+              strip-sentinels)]
+
+      (expect (< (.indexOf ^String body "first()")
+                 (.indexOf ^String body "FIRST RESULT")
+                 (.indexOf ^String body "first receipt")
+                 (.indexOf ^String body "FIRST DETAIL")
+                 (.indexOf ^String body "second()")))
+      (expect (< (.indexOf ^String body "second()")
+                 (.indexOf ^String body "SECOND RESULT")
+                 (.indexOf ^String body "second receipt")
+                 (.indexOf ^String body "SECOND DETAIL")
+                 (.indexOf ^String body "Done.")))))
   (it "a turn that watched nothing carries no rail at all"
       (render/invalidate-cache!)
       (let [payload (render/format-answer-with-thinking-data "Nothing here."

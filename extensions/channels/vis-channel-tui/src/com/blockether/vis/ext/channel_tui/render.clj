@@ -4958,6 +4958,42 @@
                      body-rows
                      (when-not (seq body-rows) [{:line (str result-marker "") :meta nil}])))))))
 
+(defn- activity-detail-entries
+  "Inline rows for one expanded Activity receipt."
+  [{:keys [view-id activity-view activity-focused activity-evidence]} max-w session-id]
+  (let [evidence
+        (set activity-evidence)
+
+        meta-base
+        {:view-id (str view-id) :session-id (str session-id)}
+
+        row
+        (fn [text meta]
+          {:line (ellipsize-cols (str "   ▎ " text) (max 1 (long max-w)))
+           :meta (merge meta-base meta)})]
+
+    (vec
+      (mapcat
+        (fn [node]
+          (case (:type node)
+            :status
+            [(row (:text node) nil)]
+
+            :stat
+            [(row (str/join "   " (map #(str (:label %) " " (:value-text %)) (:stats node))) nil)]
+
+            :steps
+            (mapcat (fn [{:keys [id label detail]}]
+                      (let [head (row (str (if (= activity-focused id) "› " "  ") label)
+                                      {:kind :activity-focus :item-id id})]
+                        (if (and (contains? evidence id) (not (str/blank? (str detail))))
+                          [head (row (str "  ↳ " detail) {:kind :activity-evidence :item-id id})]
+                          [head])))
+                    (:steps node))
+
+            [(row (or (:label node) (name (:type node))) nil)]))
+        (:nodes activity-view)))))
+
 (defn- run-row-entries
   "Transcript-native run disclosures. Activity is present from its first host call;
    ordinary extension runs appear when finished. Anchored rows sit directly after
@@ -4968,9 +5004,10 @@
      []
      (into
        (if leading-margin? [{:line "" :meta nil}] [])
-       (map
+       (mapcat
          (fn [{:keys [view-id title reason lines elapsed-ms is-reopened is-activity status-text
-                      status-tone]}]
+                      status-tone]
+               :as run}]
            (let [verdict
                  (some-> reason
                          name)
@@ -4993,14 +5030,19 @@
                      [title verdict
                       (when (pos? (long (or lines 0)))
                         (str lines (if (= 1 (long lines)) " line" " lines")))
-                      (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))]))]
+                      (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))]))
 
-             {:line (ellipsize-cols (str (if is-reopened " ▾ " " ▸ ")
-                                         (band-label (if is-activity "ACTIVITY" "RUN"))
-                                         " "
-                                         (str/join " · " parts))
-                                    (max 1 (long max-w)))
-              :meta {:kind :live-reopen :view-id (str view-id) :session-id (str session-id)}}))
+                 receipt
+                 {:line (ellipsize-cols (str (if is-reopened " ▾ " " ▸ ")
+                                             (band-label (if is-activity "ACTIVITY" "RUN"))
+                                             " "
+                                             (str/join " · " parts))
+                                        (max 1 (long max-w)))
+                  :meta {:kind :live-reopen :view-id (str view-id) :session-id (str session-id)}}]
+
+             (if (and is-activity is-reopened)
+               (into [receipt] (activity-detail-entries run max-w session-id))
+               [receipt])))
          runs)))))
 
 (defn- place-run-rows

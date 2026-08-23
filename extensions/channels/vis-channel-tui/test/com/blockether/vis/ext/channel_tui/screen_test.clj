@@ -2151,6 +2151,7 @@
                                :status-text "1 settled · 1 running"
                                :status-tone :running
                                :is-reopened true
+                               :activity-view (:view pane)
                                :anchor {:iteration-index 0 :form-index 0}}]}]
            :scroll scroll/follow
            :input (input/empty-input)
@@ -2227,10 +2228,10 @@
               (row-containing @after-grid "▾ ACTIVITY 1 settled · 1 running")
 
               before-surface
-              (row-containing @before-grid "ACTIVITY · LIVE")
+              (row-containing @before-grid "Polling the run")
 
               after-surface
-              (row-containing @after-grid "ACTIVITY · LIVE")]
+              (row-containing @after-grid "Polling the run")]
 
           (expect (str/ends-with? before-png "vis-activity-anchor-before-scroll.png"))
           (expect (str/ends-with? after-png "vis-activity-anchor-after-scroll.png"))
