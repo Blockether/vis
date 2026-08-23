@@ -8,7 +8,7 @@ import {
   mediaTileFrameClass,
 } from "../lib/media-frame";
 import { ImageGallery } from "../lib/gallery";
-import { Disclosure } from "./ui";
+import { Disclosure, PROSE } from "./ui";
 
 /**
  * ONE picture on its own plate: the reserved frame from `lib/media-frame` with
@@ -112,7 +112,7 @@ export function MediaRecording({
             TRANSCRIPTION
           </Disclosure>
           {isTranscriptOpen ? (
-            <p className="min-w-0 hyphens-auto whitespace-pre-wrap break-words border-l-2 border-code-edge bg-code px-3 py-2 text-meta italic text-dialog-hint text-justify">
+            <p className={`min-w-0 whitespace-pre-wrap break-words border-l-2 border-code-edge bg-code px-3 py-2 text-meta italic text-dialog-hint ${PROSE}`}>
               {`“${transcript}”`}
             </p>
           ) : null}

@@ -40,7 +40,7 @@ const count = (html: string, pattern: RegExp) =>
   (html.match(pattern) ?? []).length;
 
 describe("spoken transcript", () => {
-  it("opens as a justified transcript under a waveform you can seek", () => {
+  it("opens as naturally spaced transcript under a waveform you can seek", () => {
     const html = renderToStaticMarkup(
       <ContentBlockView
         block={{
@@ -54,7 +54,7 @@ describe("spoken transcript", () => {
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain('role="slider"');
     expect(html).toContain('aria-label="Speech position"');
-    expect(html).toContain("text-justify");
+    expect(html).toContain("text-left");
     expect(html).toContain('lang="en"');
   });
 
@@ -940,9 +940,9 @@ describe("a markdown table", () => {
     expect(text(markup)).toContain("manifest.edn");
   });
 
-  // A code span or fenced shell result inside justified prose inherited the paragraph
-  // alignment, stretching spaces in commands and output into wide gaps.
-  it("keeps every Markdown code surface ragged inside justified prose", () => {
+  // A narrow phone transcript used full justification, stretching ordinary spaces
+  // around inline code into conspicuous gaps.
+  it("keeps Markdown prose and every code surface naturally spaced", () => {
     const markdown = renderToStaticMarkup(
       <Markdown>{"Release `update version files for v0.7.126, bump next dev version`.\n\n```shell\ngit status --short\n```"}</Markdown>,
     );
@@ -954,7 +954,7 @@ describe("a markdown table", () => {
       expect(/<code class="[^"]*inline-block/.test(markup)).toBe(true);
       expect(/<code class="[^"]*text-left/.test(markup)).toBe(true);
     }
-    expect(/<p class="[^"]*text-justify/.test(markdown)).toBe(true);
+    expect(/<p class="[^"]*text-left/.test(markdown)).toBe(true);
     expect(/<code class="[^"]*break-all/.test(markdown)).toBe(true);
     expect(/<pre class="[^"]*text-left/.test(markdown)).toBe(true);
   });

@@ -27,7 +27,7 @@ import {
 import { Markdown } from "./ChatContent";
 import { readArtifactText } from "./TextArtifact";
 import { TrashIcon } from "./icons";
-import { BandButton, Button, IconButton } from "./ui";
+import { BandButton, Button, IconButton, PROSE } from "./ui";
 import { useSafeBottomStyle } from "../lib/viewport";
 
 /** The blocks a tap may quote: one paragraph, heading, item or cell. */
@@ -585,10 +585,9 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
                       ? GENERAL_LABEL
                       : `“${comment.quote}”`}
                   </span>
-                  {/* A REMARK IS SET AS QUOTED PROSE — italic, and justified to
-                      the card's own edges — so a stack of them reads as somebody
-                      TALKING BACK to the document rather than as more of it. */}
-                  <span className="block text-justify text-body italic text-foreground">
+                  {/* A remark remains visually distinct from the document as italic
+                      quoted prose, while preserving natural word spacing. */}
+                  <span className={`block text-body italic text-foreground ${PROSE}`}>
                     {comment.body}
                   </span>
                 </span>

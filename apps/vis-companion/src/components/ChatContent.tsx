@@ -37,7 +37,6 @@ import {
   IconButton,
   LoadMore,
   PROSE,
-  PROSE_RAGGED,
   Spinner,
   Waveform,
 } from "./ui";
@@ -547,19 +546,8 @@ export const Markdown = memo(function Markdown({
       diff blocks drop their own border so the card shows ONE frame, not two. */
   nested?: boolean;
 }) {
-  // Justification is a WIDTH trade. Word-spacing is the only slack a justified line has, so an
-  // atom the line breaker refuses to split — an inline `code` path, a URL — is paid for by
-  // stretching the handful of words that DID fit, and that is where the rivers come from.
-  // `overflow-wrap: anywhere` does NOT rescue it: it is a LAST-RESORT break (CSS Text 3 §5.5),
-  // so a long path sitting after three words is kept whole and those three words absorb the
-  // whole deficit (measured in Chromium at a 360px column: 32.9px between words against a
-  // 4.2px space, an 8x stretch). The fix is to remove the unbreakable atom instead of removing
-  // the justification: `break-all` on inline `code` and on links gives the breaker a stop at
-  // every character, so the atom fills the line to the right margin and the gaps stay at their
-  // natural width. Justification is therefore UNCONDITIONAL — a folded receipt's gist and its
-  // Metric bullets are all one flush-both-margins column, matching the TUI
-  // (`markdown-layout/justify-line-runs` → lanterna `justifyLine`). The rule itself is
-  // `PROSE` in `ui.tsx` — one spelling for every running paragraph in the app.
+  // Transcript prose keeps natural word spacing on narrow screens. Inline code and
+  // links remain breakable so a long atom cannot force the whole column to overflow.
   const runningText = PROSE;
   // A heading inside a tool result card is a STRUCTURAL divider — one file in a
   // multi-file `cat`, one occurrence in an index, one step in a batch — not a
@@ -718,9 +706,8 @@ export const Markdown = memo(function Markdown({
               {/* The table sits on the SAME step as the surrounding prose — hardcoding
                   `text-ui` made a tool result's table one step BIGGER than the compact
                   code blocks (`text-meta`) in the very same card.
-                  A CELL IS NOT JUSTIFIED PROSE. Inline `code` and links carry `break-all`
-                  so the justifier has a stop inside an atom it cannot break — and inside a
-                  table that makes the atom's MIN-CONTENT one character, which is a column
+                  A CELL IS NOT RUNNING PROSE. Inline `code` and links carry `break-all`,
+                  which gives the auto layout a one-character column it is free to starve.
                   the auto layout is free to starve. Measured at 390px: the file column got
                   58px of a 366px bubble and painted `manifest.edn` down six lines, while
                   the scroller around this table had nothing left to scroll. Word-break goes
@@ -3407,22 +3394,16 @@ export const UserMessage = memo(function UserMessage({
       className={fill ? mediaTileContentClass : mediaContentClass}
     />
   );
-  // The user bubble keeps its OWN best-effort rule, decided in JS. `Markdown` can justify
-  // unconditionally because it owns elements to scope `break-all` to (inline `code`, links);
-  // this bubble is ONE raw-text run, so `break-all` here would chop ordinary words too. A
-  // pasted path or URL is therefore still an unbreakable atom, and a non-text part (an image
-  // chip, a collapsed paste) is an atom too, so either one sends the whole bubble ragged
-  // instead of letting one line stretch to a river.
-  const isJustifiable = parts.every(
-    (part) => part.type === "text" && !/\S{24,}/u.test(part.text),
-  );
+  // The bubble uses the same ragged prose rule as answers. Its raw text can contain
+  // paths and URLs that the renderer cannot scope separately, so `break-words` remains
+  // the last-resort overflow guard without changing ordinary word spacing.
   return (
     <article className="mt-4 w-full">
       <div className="mb-1 font-mono text-meta font-bold text-you-role">
         You
       </div>
       <div
-        className={`block w-full whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${isJustifiable ? PROSE : PROSE_RAGGED}`}
+        className={`block w-full whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${PROSE}`}
       >
         {parts.map((part) =>
           part.type === "text" ? (
