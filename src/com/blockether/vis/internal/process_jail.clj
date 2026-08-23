@@ -928,6 +928,17 @@
                             " — got "
                             (pr-str v)
                             ".")))
+                   (when (= "command" source)
+                     (let [command (get entry source)]
+                       (when-not (and (sequential? command)
+                                      (seq command)
+                                      (every? #(and (string? %) (not (str/blank? %))) command))
+                         (refuse-call-env
+                           k
+                           (str "command source must be a non-empty argv list of non-blank strings"
+                                (if (string? command)
+                                  ", not a shell string."
+                                  (str " — got " (pr-str command) ".")))))))
                    (or (config/inline-environment-value k entry)
                        (refuse-call-env k (str "the " source ": source resolved to no value."))))
         :else (refuse-call-env k

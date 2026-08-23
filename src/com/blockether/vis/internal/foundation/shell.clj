@@ -3152,8 +3152,9 @@
        "a pipeline's exit is its LAST stage's, so a failed build looks green — run it plain, "
        "then tail-clip a log page directly (`sh.logs()[-4000:]`) or filter `log_path` in Python. "
        "`env` carries THIS run's variables over the project's — a literal for a switch, a "
-       "source map for a secret ({\"keychain\"|\"env\"|\"dotenv\"|\"command\": …}, since a "
-       "literal stays in the transcript for good), null to unset. "
+       "source map for a secret ({\"keychain\"|\"env\"|\"dotenv\": …} or "
+       "{\"command\": [\"executable\", \"arg\", …]}; command is an argv list, never a shell string), "
+       "since a literal stays in the transcript for good), null to unset. "
        "`print((await shell(\"npm test\", {\"env\": {\"NODE_ENV\": \"test\"}})).wait(300)[\"out\"])`.")
      :params [{:name "id" :note "reuse to re-attach a live shell"} {:name "cwd"}
               {:name "timeout_secs"} {:name "env" :note "THIS run's variables, over the project's"}]

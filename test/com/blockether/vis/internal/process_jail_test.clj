@@ -1172,6 +1172,12 @@
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"must name its source"
                           (pj/call-env-values {"TOKEN" {"vault" "prod"}})))
+    (is
+      (thrown-with-msg?
+        clojure.lang.ExceptionInfo
+        #"env SSH_PASSWORD: command source must be a non-empty argv list of non-blank strings, not a shell string"
+        (pj/call-env-values {"SSH_PASSWORD" {"command"
+                                             "security find-generic-password -w -s server"}})))
     ;; A standing `environment:` declaration that resolves to nothing is simply
     ;; unset; ONE call that asked for that variable is an error instead.
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
