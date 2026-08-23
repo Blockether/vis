@@ -23,6 +23,7 @@ import {
   liveFraction,
   livePercent,
   orderedRows,
+  type ActivityDiffEvidence,
   type ActivityProjection,
   type ActivityRow,
   type LiveLinkNode,
@@ -630,6 +631,71 @@ function activityRowFace(row: ActivityRow) {
   };
 }
 
+const DIFF_LINE_FACE = {
+  header: { mark: '◆', label: 'diff header', className: 'bg-panel-2 text-dialog-hint' },
+  hunk: { mark: '@@', label: 'diff hunk', className: 'bg-panel-2 text-accent-ink' },
+  context: { mark: ' ', label: 'unchanged line', className: 'bg-result text-code-result' },
+  addition: { mark: '+', label: 'added line', className: 'bg-ok-surface text-ok-foreground' },
+  deletion: { mark: '−', label: 'deleted line', className: 'bg-err-surface text-err-ink' },
+} as const;
+
+function ActivityDiff({ evidence }: { evidence: ActivityDiffEvidence }) {
+  return (
+    <figure
+      className="mt-1.5 min-w-0 overflow-hidden border-l-2 border-warn-strong bg-result font-mono text-meta"
+      aria-label={`Diff ${evidence.text}`}
+    >
+      <figcaption className="flex min-w-0 items-center gap-2 bg-panel-2 px-2 py-1 text-code-duration">
+        <BandLabel className="shrink-0">DIFF</BandLabel>
+        <span className="min-w-0 flex-1 truncate">{evidence.text}</span>
+        <span className="shrink-0 tabular-nums" aria-label={`${evidence.additions} additions`}>
+          +{ACTIVITY_NUMBER.format(evidence.additions)}
+        </span>
+        <span className="shrink-0 tabular-nums" aria-label={`${evidence.deletions} deletions`}>
+          −{ACTIVITY_NUMBER.format(evidence.deletions)}
+        </span>
+        {evidence.modifications > 0 && (
+          <span
+            className="shrink-0 tabular-nums"
+            aria-label={`${evidence.modifications} modifications`}
+          >
+            ~{ACTIVITY_NUMBER.format(evidence.modifications)}
+          </span>
+        )}
+      </figcaption>
+      <div className="min-w-0" role="list" aria-label="Diff lines">
+        {evidence.lines.map((line, index) => {
+          const face = DIFF_LINE_FACE[line.kind];
+          return (
+            <div
+              key={`${line.kind}-${index}`}
+              role="listitem"
+              aria-label={`${face.label}${line.is_redacted ? ', redacted' : ''}`}
+              className={`grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] ${face.className}`}
+            >
+              <span aria-hidden="true" className="select-none px-1.5 text-right font-bold">
+                {face.mark}
+              </span>
+              <code className="min-w-0 whitespace-pre-wrap break-all px-1.5 py-0.5">
+                {line.text}
+              </code>
+            </div>
+          );
+        })}
+      </div>
+      {(evidence.is_truncated || evidence.is_redacted) && (
+        <p className="border-t border-code-edge px-2 py-1 text-warn">
+          {evidence.is_truncated
+            ? `Evidence truncated${evidence.omitted_lines > 0 ? ` · ${ACTIVITY_NUMBER.format(evidence.omitted_lines)} more lines omitted` : ''}`
+            : null}
+          {evidence.is_truncated && evidence.is_redacted ? ' · ' : null}
+          {evidence.is_redacted ? 'Sensitive lines redacted' : null}
+        </p>
+      )}
+    </figure>
+  );
+}
+
 function ActivityRailRow({
   row,
   child = false,
@@ -640,8 +706,11 @@ function ActivityRailRow({
   const presenter = activityPresenter(row);
   const face = activityRowFace(row);
   const duration = activityElapsed(0, row.duration_ms);
+  const diffs = row.evidence.filter(
+    (item): item is ActivityDiffEvidence => item.kind === 'diff',
+  );
   const evidence = [
-    ...row.evidence,
+    ...row.evidence.filter((item) => item.kind !== 'diff'),
     ...(row.result_summary
       ? [{ kind: 'result' as const, text: row.result_summary }]
       : []),
@@ -690,6 +759,9 @@ function ActivityRailRow({
           {row.is_truncated && <p className="text-warn">… evidence truncated</p>}
         </div>
       )}
+      {diffs.map((diff, index) => (
+        <ActivityDiff key={`${diff.text}-${index}`} evidence={diff} />
+      ))}
       {(row.children?.length ?? 0) > 0 && (
         <ol
           className="mt-1.5 border-l border-code-edge"

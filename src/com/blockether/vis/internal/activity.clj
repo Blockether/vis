@@ -110,6 +110,9 @@
               :evidence (conj (vec (:evidence row))
                               {:kind (if (:error-summary event) :error :result)
                                :text (or (:error-summary event) (:result-summary event) "")}))
+      (:diff-evidence event)
+      (update :evidence conj (:diff-evidence event))
+
       (:group-token event)
       (assoc :group-token (:group-token event))
 
@@ -329,7 +332,26 @@
 
 (defn- presentation-resource [{:keys [type id]}] {:type (enum-name type) :id (str id)})
 
-(defn- presentation-evidence [{:keys [kind text]}] {:kind (enum-name kind) :text (str text)})
+(defn- presentation-evidence
+  [{:keys [kind text lines additions deletions modifications omitted-lines is-truncated
+           is-redacted]}]
+  (cond-> {:kind (enum-name kind) :text (str text)}
+    (seq lines)
+    (assoc :lines
+      (mapv (fn [{:keys [kind text is-redacted]}]
+              (cond-> {:kind (enum-name kind) :text (str text)}
+                is-redacted
+                (assoc :is-redacted true)))
+            lines))
+
+    (= :diff kind)
+    (assoc :additions
+      (long (or additions 0)) :deletions
+      (long (or deletions 0)) :modifications
+      (long (or modifications 0)) :omitted-lines
+      (long (or omitted-lines 0)) :is-truncated
+      (boolean is-truncated) :is-redacted
+      (boolean is-redacted))))
 
 (defn- presentation-row
   [{:keys [id sequence operation presenter classification state summary group-token resources
@@ -379,7 +401,8 @@
 (def ^:private presentation-states #{"idle" "running" "succeeded" "failed" "cancelled"})
 (def ^:private presentation-presenters (set (map name presenter/presenters)))
 (def ^:private presentation-signals #{"generic" "observation" "mutation" "verification"})
-(def ^:private evidence-kinds #{"arguments" "result" "error"})
+(def ^:private evidence-kinds #{"arguments" "result" "error" "diff"})
+(def ^:private diff-line-kinds #{"header" "hunk" "context" "addition" "deletion"})
 (def ^:private row-required-keys
   #{:id :sequence :operation :presenter :signal :state :summary :resources :evidence})
 (def ^:private row-optional-keys
@@ -398,12 +421,32 @@
        (non-blank-string? (:type value))
        (non-blank-string? (:id value))))
 
+(defn- diff-line?
+  [value]
+  (and (closed? #{:kind :text :is-redacted} value)
+       (= #{:kind :text} (set (keys (dissoc value :is-redacted))))
+       (contains? diff-line-kinds (:kind value))
+       (string? (:text value))
+       (or (not (contains? value :is-redacted)) (true? (:is-redacted value)))))
+
 (defn- evidence?
   [value]
-  (and (closed? #{:kind :text} value)
-       (= #{:kind :text} (set (keys value)))
-       (contains? evidence-kinds (:kind value))
-       (string? (:text value))))
+  (and (contains? evidence-kinds (:kind value))
+       (string? (:text value))
+       (if (= "diff" (:kind value))
+         (and (closed? #{:kind :text :lines :additions :deletions :modifications :omitted-lines
+                         :is-truncated :is-redacted}
+                       value)
+              (= #{:kind :text :lines :additions :deletions :modifications :omitted-lines
+                   :is-truncated :is-redacted}
+                 (set (keys value)))
+              (vector? (:lines value))
+              (every? diff-line? (:lines value))
+              (every? non-negative-integer?
+                      ((juxt :additions :deletions :modifications :omitted-lines) value))
+              (boolean? (:is-truncated value))
+              (boolean? (:is-redacted value)))
+         (and (closed? #{:kind :text} value) (= #{:kind :text} (set (keys value)))))))
 
 (defn- presentation-row?
   [value depth]

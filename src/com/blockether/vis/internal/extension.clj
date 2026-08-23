@@ -1890,6 +1890,18 @@
       ;; already persisted via the sink entry for anyone who needs fidelity.
       (throw (ex-info (or (:message err) "Tool failed")
                       {:type :vis/tool-failure :symbol (:symbol result) :error err})))))
+
+(def ^:private ^:dynamic *tool-result-observer*
+  "Receives the canonical envelope immediately before its payload crosses to
+   Python. Activity binds this only while observing a tool call, so semantic
+   metadata such as a patch diff can become evidence without changing the value
+   the extension receives."
+  nil)
+
+(defn- observed-public-value
+  [result]
+  (when *tool-result-observer* (*tool-result-observer* result))
+  (tool-result->public-value result))
 ;; ── GATE ops ────────────────────────────────────────────────────────────────
 ;; A gate is the one op shape that is ASKED rather than wrapped. Every hook
 ;; registered for it is consulted in registration order, none of them receives
@@ -2234,7 +2246,7 @@
                    (assert-symbol-envelope! sym))]
 
           (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
-          (tool-result->public-value result))
+          (observed-public-value result))
         (let [{call-env :env f :fn call-args :args}
               before-out
 
@@ -2278,7 +2290,7 @@
               (elapsed-ms t0)]
 
           (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
-          (tool-result->public-value result))))))
+          (observed-public-value result))))))
 
 (defn invoke-symbol-wrapper
   "Run one observed tool invocation and emit paired Activity lifecycle events.
@@ -2325,13 +2337,19 @@
                 *current-invocation-id*
                 (:invocation-id invocation)]
 
-        (try (let [value (invoke-symbol-wrapper* ext sym-entry args env)]
+        (try (let [envelope
+                   (volatile! nil)
+
+                   value
+                   (binding [*tool-result-observer* #(vreset! envelope %)]
+                     (invoke-symbol-wrapper* ext sym-entry args env))]
                (record-tool-event! (activity-event/terminal-event ctx
                                                                   invocation
                                                                   (assoc details
                                                                     :started-at-ms started-at-ms
                                                                     :outcome :succeeded
-                                                                    :result value)))
+                                                                    :result value
+                                                                    :result-envelope @envelope)))
                value)
              (catch Throwable t
                (record-tool-event! (activity-event/terminal-event

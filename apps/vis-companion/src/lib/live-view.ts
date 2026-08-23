@@ -240,10 +240,30 @@ export interface ActivityResource {
   id: string;
 }
 
-export interface ActivityEvidence {
+export interface ActivityTextEvidence {
   kind: 'arguments' | 'result' | 'error';
   text: string;
 }
+
+export interface ActivityDiffLine {
+  kind: 'header' | 'hunk' | 'context' | 'addition' | 'deletion';
+  text: string;
+  is_redacted?: true;
+}
+
+export interface ActivityDiffEvidence {
+  kind: 'diff';
+  text: string;
+  lines: ActivityDiffLine[];
+  additions: number;
+  deletions: number;
+  modifications: number;
+  omitted_lines: number;
+  is_truncated: boolean;
+  is_redacted: boolean;
+}
+
+export type ActivityEvidence = ActivityTextEvidence | ActivityDiffEvidence;
 
 export interface ActivityRow {
   id: string;
@@ -355,9 +375,57 @@ function activityResourceFromWire(value: unknown): ActivityResource | null {
 function activityEvidenceFromWire(value: unknown): ActivityEvidence | null {
   const raw = record(value);
   if (!raw) return null;
-  const kind = activityEnum(raw.kind, ['arguments', 'result', 'error'] as const);
-  const evidenceText = text(raw.text);
-  return kind ? { kind, text: evidenceText } : null;
+  const kind = activityEnum(raw.kind, ['arguments', 'result', 'error', 'diff'] as const);
+  if (!kind || typeof raw.text !== 'string') return null;
+  const evidenceText = raw.text;
+  if (kind !== 'diff') return { kind, text: evidenceText };
+
+  const rawLines = Array.isArray(raw.lines) ? raw.lines : null;
+  const additions = activityCount(raw.additions);
+  const deletions = activityCount(raw.deletions);
+  const modifications = activityCount(raw.modifications);
+  const omittedLines = activityCount(raw.omitted_lines);
+  if (
+    !rawLines ||
+    additions === null ||
+    deletions === null ||
+    modifications === null ||
+    omittedLines === null ||
+    typeof raw.is_truncated !== 'boolean' ||
+    typeof raw.is_redacted !== 'boolean'
+  )
+    return null;
+  const parsedLines = rawLines.map((line): ActivityDiffLine | null => {
+    const entry = record(line);
+    if (!entry) return null;
+    const lineKind = activityEnum(
+      entry.kind,
+      ['header', 'hunk', 'context', 'addition', 'deletion'] as const,
+    );
+    if (
+      !lineKind ||
+      typeof entry.text !== 'string' ||
+      (entry.is_redacted !== undefined && entry.is_redacted !== true)
+    )
+      return null;
+    return {
+      kind: lineKind,
+      text: entry.text,
+      ...(entry.is_redacted === true ? { is_redacted: true as const } : {}),
+    };
+  });
+  if (parsedLines.some((line) => line === null)) return null;
+  return {
+    kind,
+    text: evidenceText,
+    lines: parsedLines as ActivityDiffLine[],
+    additions,
+    deletions,
+    modifications,
+    omitted_lines: omittedLines,
+    is_truncated: raw.is_truncated,
+    is_redacted: raw.is_redacted,
+  };
 }
 
 function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {

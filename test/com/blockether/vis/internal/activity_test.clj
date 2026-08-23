@@ -116,6 +116,34 @@
         (expect (nil? (activity/presentation-error presentation)))
         (expect (= "unknown Activity schema version"
                    (activity/presentation-error (assoc presentation :schema-version 2))))))
+  (it "preserves structured patch evidence through the presentation boundary"
+      (let [ctx
+            (event/context {})
+
+            anchor
+            {:evaluation-id (:evaluation-id ctx) :iteration 0 :form-index 0}
+
+            events
+            (event-pair ctx
+                        :patch :succeeded
+                        "patched fixture.clj" {:presenter :patch
+                                               :classification :mutation
+                                               :result-envelope
+                                               {:metadata {:target {:resolved "fixture.clj"}
+                                                           :diff "@@ -1 +1 @@\n-before\n+after"
+                                                           :lines
+                                                           {"added" 0 "removed" 0 "modified" 1}}}})
+
+            presentation
+            (activity/presentation (activity/replay anchor events))
+
+            evidence
+            (last (get-in presentation [:rows 0 :evidence]))]
+
+        (expect (= "diff" (:kind evidence)))
+        (expect (= ["hunk" "deletion" "addition"] (mapv :kind (:lines evidence))))
+        (expect (= 1 (:modifications evidence)))
+        (expect (nil? (activity/presentation-error presentation)))))
   (it "terminalizes rows still running when the evaluation is killed"
       (let [ctx
             (event/context {})

@@ -16,6 +16,7 @@ import {
 } from './LiveArtifact';
 import liveArtifactSource from './LiveArtifact.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
+import activityFixture from '../lib/activity.fixture.json';
 import { liveViewFromWire, type LiveRecord } from '../lib/live-view';
 import type { GatewayClient } from '../lib/gateway';
 import type { IterationAttachment } from '../lib/types';
@@ -291,5 +292,59 @@ describe('the settled run in the transcript', () => {
     expect(liveRunName('release.live.ndjson')).toBe('release');
     expect(liveRunName('scan.LIVE.NDJSON')).toBe('scan');
     expect(liveRunName(undefined)).toBe('run');
+  });
+
+  it('replays structured Activity diff evidence through the settled artifact', async () => {
+    const activity = {
+      ...activityFixture,
+      activity: {
+        ...activityFixture.activity,
+        state: 'succeeded',
+        rows: [
+          {
+            ...activityFixture.activity.rows[0],
+            presenter: 'patch',
+            signal: 'mutation',
+            operation: 'patch',
+            state: 'succeeded',
+            evidence: [
+              {
+                kind: 'diff',
+                text: 'fixture.clj',
+                lines: [
+                  { kind: 'deletion', text: 'before' },
+                  { kind: 'addition', text: 'after' },
+                ],
+                additions: 0,
+                deletions: 0,
+                modifications: 1,
+                omitted_lines: 0,
+                is_truncated: false,
+                is_redacted: false,
+              },
+            ],
+          },
+        ],
+      },
+    };
+    serve(
+      [
+        JSON.stringify({ kind: 'open', at: 1, view: activity }),
+        closeLine({ reason: 'completed', is_completed: true, view: activity }),
+      ].join('\n'),
+    );
+    const { client: c } = rowClient();
+    render(
+      <LiveRunRow
+        client={c}
+        sid="s1"
+        attachment={{ ...record(), filename: 'activity.live.ndjson' }}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText('ACTIVITY')).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    expect(screen.getByRole('figure', { name: 'Diff fixture.clj' })).toBeTruthy();
+    expect(screen.getByRole('listitem', { name: 'deleted line' })).toBeTruthy();
+    expect(screen.getByRole('listitem', { name: 'added line' })).toBeTruthy();
   });
 });

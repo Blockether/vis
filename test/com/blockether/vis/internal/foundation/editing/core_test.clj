@@ -2063,6 +2063,38 @@
 
 (defdescribe
   patch-diff-text-test
+  (it "carries a real patch's bounded diff through the Activity wrapper"
+      (let [rel
+            (write-temp! "patch/activity-diff.txt" "before\nkeep\n")
+
+            sym
+            (private-fn "patch-symbol")
+
+            events
+            (atom [])
+
+            result
+            (binding [extension/*tool-event-sink* #(swap! events conj %)]
+              (extension/invoke-symbol-wrapper
+                {:ext/name "foundation.editing" :ext/engine {:ext.engine/symbols [sym]}}
+                sym
+                [rel [{"from" (hashline/line-anchor 1 "before") "replace" "after"}]]
+                {:workspace/root (System/getProperty "user.dir")
+                 :workspace {:root (System/getProperty "user.dir")
+                             :repo-root (System/getProperty "user.dir")}}))
+
+            evidence
+            (:diff-evidence (second @events))]
+
+        (expect (string/starts-with? result "patched "))
+        (expect (= [:deletion :addition]
+                   (->> (:lines evidence)
+                        (filter #(contains? #{:deletion :addition} (:kind %)))
+                        (mapv :kind))))
+        (expect (= ["before" "after"]
+                   (->> (:lines evidence)
+                        (filter #(contains? #{:deletion :addition} (:kind %)))
+                        (mapv :text))))))
   (it "patch diff stays compact for large files"
       (let [diff-fn
             (private-fn "unified-diff-text")

@@ -709,6 +709,15 @@
   [_]
   (throw (InterruptedException. "cancelled")))
 
+(defn activity-patch-probe
+  "Observed patch operation whose internal envelope carries renderer metadata."
+  [_]
+  (extension/success {:result "patched fixture.clj"
+                      :op :patch
+                      :metadata {:target {:resolved "fixture.clj"}
+                                 :diff "@@ -1 +1 @@\n-before\n+after"
+                                 :lines {"added" 0 "removed" 0 "modified" 1}}}))
+
 (defdescribe invocation-lifecycle-event-test
              (it "emits exactly one start and public-success terminal"
                  (let [events
@@ -765,4 +774,25 @@
                         (catch Throwable _ nil))
                    (expect (= 2 (count @events)))
                    (expect (true? (:cancelled (second @events))))
-                   (expect (nil? (:failed (second @events)))))))
+                   (expect (nil? (:failed (second @events))))))
+             (it "captures patch metadata before returning only the public value"
+                 (let [events
+                       (atom [])
+
+                       sym
+                       (extension/symbol #'activity-patch-probe {:tag :mutation :presenter :patch})
+
+                       ext
+                       {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
+
+                       result
+                       (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                         (extension/invoke-symbol-wrapper ext sym [{}] {}))
+
+                       evidence
+                       (:diff-evidence (second @events))]
+
+                   (expect (= "patched fixture.clj" result))
+                   (expect (= :diff (:kind evidence)))
+                   (expect (= "fixture.clj" (:text evidence)))
+                   (expect (= [:hunk :deletion :addition] (mapv :kind (:lines evidence)))))))

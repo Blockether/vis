@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.activity.event-test
   (:require [com.blockether.vis.internal.activity.event :as event]
+            [com.blockether.vis.internal.gateway.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -88,6 +89,44 @@
         (expect (not (re-find #"密" (:argument-summary start))))
         (expect (re-find #"REDACTED" (:argument-summary start)))
         (expect (<= (event/utf8-bytes (:argument-summary start)) event/max-summary-bytes))))
+  (it
+    "bounds, classifies, and redacts structured patch diff evidence"
+    (let [ctx
+          (event/context {})
+
+          invocation
+          (event/invocation ctx nil)
+
+          diff
+          (str "@@ -1,2 +1,3 @@\n"
+               " context\n" "-api_token = old-value\n"
+               "+api_token = new-value\n"
+               (apply str (repeat 200 (str "+" (apply str (repeat 600 "x")) "\n"))))
+
+          terminal
+          (event/terminal-event ctx
+                                invocation
+                                {:operation :patch
+                                 :presenter :patch
+                                 :started-at-ms (System/currentTimeMillis)
+                                 :outcome :succeeded
+                                 :result "patched fixture.clj"
+                                 :result-envelope
+                                 {:metadata {:target {:resolved "fixture.clj"}
+                                             :diff diff
+                                             :lines {"added" 201 "removed" 1 "modified" 0}}}})
+
+          evidence
+          (:diff-evidence terminal)]
+
+      (expect (= :diff (:kind evidence)))
+      (expect (= [:hunk :context :deletion :addition] (mapv :kind (take 4 (:lines evidence)))))
+      (expect (= ["[REDACTED]" "[REDACTED]"] (mapv :text (take 2 (drop 2 (:lines evidence))))))
+      (expect (:is-redacted evidence))
+      (expect (:is-truncated evidence))
+      (expect (pos? (:omitted-lines evidence)))
+      (expect (<= (count (:lines evidence)) event/max-diff-lines))
+      (expect (<= (event/utf8-bytes (wire/json-str evidence)) event/max-diff-bytes))))
   ;; Regression, td-ba1627: a `read_session()` terminal event recursively copied
   ;; and printed the whole transcript before truncating it, leaving the await open.
   (it "bounds result traversal before rendering a terminal summary"

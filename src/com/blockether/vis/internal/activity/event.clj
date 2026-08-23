@@ -16,6 +16,9 @@
 (def max-summary-bytes 512)
 (def max-detail-bytes (* 2 1024))
 (def max-resources 8)
+(def max-diff-lines 120)
+(def max-diff-bytes (* 8 1024))
+(def max-diff-line-bytes 512)
 (def ^:private max-summary-nodes 128)
 
 (def ^:private secret-key?
@@ -226,6 +229,103 @@
 
 (defn- map-value [m k] (when (map? m) (or (get m k) (get m (name k)))))
 
+(def ^:private sensitive-diff-text?
+  #(boolean (re-find #"(?i)(password|passwd|secret|token|authorization|cookie|otp|api[_-]?key)"
+                     (str %))))
+
+(defn- diff-line
+  [line]
+  (let [line
+        (str line)
+
+        kind
+        (cond (str/starts-with? line "@@") :hunk
+              (str/starts-with? line "--- (") :header
+              (str/starts-with? line "+") :addition
+              (str/starts-with? line "-") :deletion
+              :else :context)
+
+        text
+        (if (and (contains? #{:addition :deletion :context} kind)
+                 (contains? #{\+ \- \space} (first line)))
+          (subs line 1)
+          line)
+
+        redacted?
+        (sensitive-diff-text? text)]
+
+    (cond-> {:kind kind :text (if redacted? "[REDACTED]" (bounded-text text max-diff-line-bytes))}
+      redacted?
+      (assoc :is-redacted true))))
+
+(defn- bounded-diff-lines
+  [source]
+  (let [raw (vec (str/split-lines (str source)))]
+    (loop [remaining raw
+           lines []
+           bytes 0]
+
+      (if-let [line (first remaining)]
+        (let [entry (diff-line line)
+              entry-bytes (utf8-bytes (wire/json-str entry))]
+
+          (if (or (>= (count lines) (long max-diff-lines))
+                  (> (+ (long bytes) entry-bytes) (long max-diff-bytes)))
+            {:lines lines :omitted-lines (count remaining)}
+            (recur (next remaining) (conj lines entry) (+ (long bytes) entry-bytes))))
+        {:lines lines :omitted-lines 0}))))
+
+(defn- fit-diff-evidence
+  [evidence]
+  (loop [evidence evidence]
+    (if (<= (utf8-bytes (wire/json-str evidence)) (long max-diff-bytes))
+      evidence
+      (let [lines (:lines evidence)]
+        (if (seq lines)
+          (let [kept (pop lines)]
+            (recur (assoc evidence
+                     :lines kept
+                     :omitted-lines (inc (long (:omitted-lines evidence)))
+                     :is-truncated true
+                     :is-redacted (boolean (some :is-redacted kept)))))
+          (recur (update evidence :text bounded-text max-summary-bytes)))))))
+
+(defn- patch-diff-evidence
+  [{:keys [presenter result-envelope]}]
+  (when (= :patch (presenter/presenter-for nil presenter))
+    (let [metadata
+          (map-value result-envelope :metadata)
+
+          source
+          (map-value metadata :diff)]
+
+      (when (and (string? source) (not (str/blank? source)))
+        (let [{:keys [lines omitted-lines]}
+              (bounded-diff-lines source)
+
+              counts
+              (map-value metadata :lines)
+
+              target
+              (map-value metadata :target)
+
+              path
+              (or (map-value target :resolved) (map-value target :requested))
+
+              upstream-truncated?
+              (some #(and (= :context (:kind %)) (str/includes? (:text %) "omitted")) lines)]
+
+          (fit-diff-evidence {:kind :diff
+                              :text (str (or path "patch"))
+                              :lines lines
+                              :additions (long (or (map-value counts :added) 0))
+                              :deletions (long (or (map-value counts :removed) 0))
+                              :modifications (long (or (map-value counts :modified) 0))
+                              :omitted-lines (long omitted-lines)
+                              :is-truncated (boolean (or (pos? (long omitted-lines))
+                                                         upstream-truncated?))
+                              :is-redacted (boolean (some :is-redacted lines))}))))))
+
 (defn- explicit-group-token
   [value]
   (let [token (or (map-value value :activity/group-token)
@@ -355,7 +455,10 @@
           (bounded-rendered (or (some-> error*
                                         ex-message)
                                 (str error*))
-                            max-detail-bytes))]
+                            max-detail-bytes))
+
+        diff-evidence
+        (when (= outcome :succeeded) (patch-diff-evidence details))]
 
     (checked
       (cond-> (merge (base-event ctx invocation operation presenter :terminal)
@@ -384,6 +487,9 @@
 
         refs
         (assoc :resources refs)
+
+        diff-evidence
+        (assoc :diff-evidence diff-evidence)
 
         (:is-truncated summary)
         (assoc :result-truncated true)))))

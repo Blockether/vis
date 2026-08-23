@@ -546,6 +546,47 @@ describe('the current Activity wire contract', () => {
     expect(view).toMatchObject({ classification: 'activity', activity: { schema_version: 1 } });
   });
 
+  it('reads structured diff evidence and rejects incomplete lines', () => {
+    const projection = activityProjection();
+    const diff = {
+      kind: 'diff',
+      text: 'fixture.clj',
+      lines: [
+        { kind: 'hunk', text: '@@ -1 +1 @@' },
+        { kind: 'deletion', text: '[REDACTED]', is_redacted: true },
+        { kind: 'addition', text: 'after' },
+      ],
+      additions: 0,
+      deletions: 0,
+      modifications: 1,
+      omitted_lines: 7,
+      is_truncated: true,
+      is_redacted: true,
+    };
+    const withDiff = {
+      ...raw,
+      activity: {
+        ...projection,
+        rows: [{ ...projection.rows[0], evidence: [diff] }],
+      },
+    };
+    expect(liveViewFromWire(withDiff)?.activity?.rows[0].evidence[0]).toEqual(diff);
+    expect(
+      liveViewFromWire({
+        ...withDiff,
+        activity: {
+          ...withDiff.activity,
+          rows: [
+            {
+              ...withDiff.activity.rows[0],
+              evidence: [{ ...diff, lines: [{ kind: 'addition' }] }],
+            },
+          ],
+        },
+      }),
+    ).toBeNull();
+  });
+
   it('rejects missing, malformed, and unknown Activity projection versions', () => {
     expect(liveViewFromWire({ ...raw, activity: undefined })).toBeNull();
     expect(liveViewFromWire({ ...raw, activity: { ...activityProjection(), schema_version: 2 } })).toBeNull();

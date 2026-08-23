@@ -371,6 +371,55 @@ describe('a live view on the phone', () => {
     for (const [, , label] of presenters) expect(chronology.textContent).toContain(label);
   });
 
+  it('renders patch diff semantics without relying on color', () => {
+    const view = activityView();
+    const patch = {
+      ...view.activity!.rows[0],
+      id: 'patch-diff',
+      presenter: 'patch' as const,
+      signal: 'mutation' as const,
+      operation: 'patch',
+      evidence: [
+        {
+          kind: 'diff' as const,
+          text: 'fixture.clj',
+          lines: [
+            { kind: 'hunk' as const, text: '@@ -1 +1 @@' },
+            {
+              kind: 'deletion' as const,
+              text: '[REDACTED]',
+              is_redacted: true as const,
+            },
+            { kind: 'addition' as const, text: 'after_with_a_very_long_unbroken_value' },
+          ],
+          additions: 0,
+          deletions: 0,
+          modifications: 1,
+          omitted_lines: 7,
+          is_truncated: true,
+          is_redacted: true,
+        },
+      ],
+    };
+    paint({
+      view: {
+        ...view,
+        activity: { ...view.activity!, rows: [patch] },
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+
+    const diff = screen.getByRole('figure', { name: 'Diff fixture.clj' });
+    expect(screen.getByRole('listitem', { name: 'deleted line, redacted' })).toBeTruthy();
+    expect(screen.getByRole('listitem', { name: 'added line' })).toBeTruthy();
+    expect(diff.textContent).toContain('−0');
+    expect(diff.textContent).toContain('~1');
+    expect(diff.textContent).toContain('Evidence truncated · 7 more lines omitted');
+    expect(diff.textContent).toContain('Sensitive lines redacted');
+    expect(diff.querySelector('code')?.className).toContain('break-all');
+    expect(diff.className).toContain('overflow-hidden');
+  });
+
   it('settles rows in place without reordering their keyed rail positions', () => {
     const view = activityView();
     const mounted = render(<LiveViewPanel view={view} />);
