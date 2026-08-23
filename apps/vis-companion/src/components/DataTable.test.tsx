@@ -1,5 +1,8 @@
+// @vitest-environment jsdom
+import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   DataTable,
   clampPage,
@@ -27,6 +30,8 @@ const fence = [
   'yak,10,second',
   'zed,120,third',
 ].join('\n');
+
+afterEach(cleanup);
 
 const rows = (cells: string[][]): TableRow[] => cells.map((c, key) => ({ key, cells: c }));
 
@@ -80,6 +85,13 @@ describe('CSV parsing', () => {
     expect(parseCsv('a,b\r\n1,2\r\n')).toEqual([
       ['a', 'b'],
       ['1', '2'],
+    ]);
+  });
+
+  it('detects the semicolon columns in a UTF-8 spreadsheet export', () => {
+    expect(parseCsv('\ufefflp;stanowisko;firma\r\n1;Koordynator;EOL Energia\r\n')).toEqual([
+      ['lp', 'stanowisko', 'firma'],
+      ['1', 'Koordynator', 'EOL Energia'],
     ]);
   });
 });
@@ -258,5 +270,31 @@ describe('DataTable', () => {
     expect(paged).toContain('aria-label="Rows per page of events.csv"');
     expect(text(paged)).toContain('row-24');
     expect(text(paged)).not.toContain('row-25');
+  });
+
+  it('keeps paging controls above the grid', () => {
+    const long = [
+      '[Table: events.csv 60 rows × 2 cols, 1 KB]',
+      'events.csv',
+      'text/csv',
+      '2x60',
+      '1 KB',
+      'n,label',
+      ...Array.from({ length: 60 }, (_, i) => `${i},row-${i}`),
+    ].join('\n');
+    const paged = renderToStaticMarkup(<DataTable body={long} compact />);
+    expect(paged.indexOf('aria-label="Next page"')).toBeLessThan(paged.indexOf('role="grid"'));
+  });
+
+  it('closes a selected value when that cell is pressed again', async () => {
+    const user = userEvent.setup();
+    render(<DataTable body={fence} compact />);
+    const cell = screen.getByText('first').closest('td');
+    expect(cell).not.toBeNull();
+
+    await user.click(cell!);
+    expect(screen.getByRole('button', { name: 'Copy value' })).toBeInTheDocument();
+    await user.click(cell!);
+    expect(screen.queryByRole('button', { name: 'Copy value' })).not.toBeInTheDocument();
   });
 });

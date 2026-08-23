@@ -40,13 +40,40 @@ export function parseTableBlock(body: string): TableArtifact {
   };
 }
 
+/** Pick the delimiter from the first logical row, ignoring separators inside quotes. */
+function csvDelimiter(source: string): ',' | ';' | '\t' {
+  const counts = new Map<',' | ';' | '\t', number>([
+    [',', 0],
+    [';', 0],
+    ['\t', 0],
+  ]);
+  let quoted = false;
+  for (let i = 0; i < source.length; i += 1) {
+    const c = source[i];
+    if (c === '"') {
+      if (quoted && source[i + 1] === '"') i += 1;
+      else quoted = !quoted;
+    } else if (!quoted && c === '\n') {
+      break;
+    } else if (!quoted && counts.has(c as ',' | ';' | '\t')) {
+      const delimiter = c as ',' | ';' | '\t';
+      counts.set(delimiter, (counts.get(delimiter) ?? 0) + 1);
+    }
+  }
+  return [...counts].reduce((best, entry) => (entry[1] > best[1] ? entry : best))[0];
+}
+
 /**
- * RFC-4180 parse into row vectors: quoted fields, doubled `""` escapes and
- * embedded newlines included. Every row is padded to the widest one, so
- * `row[i]` is total across the grid.
+ * RFC-4180-style parse into row vectors. Comma, semicolon and tab exports are
+ * detected from their first logical row; quoted fields, doubled `""` escapes
+ * and embedded newlines remain one cell. A UTF-8 BOM is file metadata, not
+ * part of the first column name. Every row is padded to the widest one.
  */
 export function parseCsv(text: string): string[][] {
-  const source = String(text ?? '').replace(/\r\n/g, '\n');
+  const source = String(text ?? '')
+    .replace(/^\ufeff/, '')
+    .replace(/\r\n/g, '\n');
+  const delimiter = csvDelimiter(source);
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';
@@ -68,7 +95,7 @@ export function parseCsv(text: string): string[][] {
     if (c === '"') {
       quoted = true;
       started = true;
-    } else if (c === ',') {
+    } else if (c === delimiter) {
       row.push(field);
       field = '';
       started = true;
@@ -387,6 +414,72 @@ export const DataTable = memo(function DataTable({
         </Button>
       </div>
 
+      {cell !== null && (
+        <div className="flex items-start gap-2 border-b-2 border-warn-strong bg-panel px-2 py-1.5">
+          <span className="shrink-0 pt-0.5 text-chip text-warn">
+            {`${header[cell.col] ?? ''} · row ${cell.row + 1}`}
+          </span>
+          <pre className="max-h-20 min-w-0 flex-1 overflow-auto text-meta break-all whitespace-pre-wrap text-code-foreground">
+            {focused === '' ? 'NULL' : focused}
+          </pre>
+          <Button
+            variant="secondary"
+            density="compact"
+            onClick={() => void navigator.clipboard?.writeText(focused ?? '')}
+          >
+            Copy value
+          </Button>
+        </div>
+      )}
+
+      {paged && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
+          <label className="flex shrink-0 items-center gap-1 text-ui text-code-foreground">
+            Rows
+            <select
+              value={pageSize}
+              aria-label={`Rows per page of ${label}`}
+              onChange={(event) => {
+                const next = event.target.value;
+                setPageSize(next === 'fit' ? 'fit' : Number(next));
+                setPage(0);
+              }}
+              className="min-h-11 bg-input px-2 text-ui text-code-foreground"
+            >
+              <option value="fit">Fit</option>
+              {PAGE_SIZES.map((size) => (
+                <option key={size} value={size}>
+                  {size}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="min-w-0 flex-1 truncate text-ui text-code-foreground">
+            {`${range.first}–${range.last} of ${ordered.length}`}
+          </span>
+          <span className="hidden shrink-0 text-chip text-muted sm:inline">PgUp/PgDn</span>
+          <Button
+            variant="secondary"
+            density="compact"
+            onClick={() => goPage(current - 1)}
+            disabled={current === 0}
+            aria-label="Previous page"
+          >
+            Prev
+          </Button>
+          <span className="shrink-0 text-ui tabular-nums text-code-foreground">{`Page ${current + 1}/${pages}`}</span>
+          <Button
+            variant="secondary"
+            density="compact"
+            onClick={() => goPage(current + 1)}
+            disabled={current >= pages - 1}
+            aria-label="Next page"
+          >
+            Next
+          </Button>
+        </div>
+      )}
+
       <div className="relative flex min-h-0 flex-1">
         <div
           ref={sheetRef}
@@ -483,7 +576,13 @@ export const DataTable = memo(function DataTable({
                         <td
                           key={index}
                           id={cellId(row.key, index)}
-                          onClick={() => setCell({ row: row.key, col: index })}
+                          onClick={() =>
+                            setCell((currentCell) =>
+                              currentCell?.row === row.key && currentCell.col === index
+                                ? null
+                                : { row: row.key, col: index },
+                            )
+                          }
                           className={`${BODY_CELL} ${index > 0 ? COLUMN_RULE : ''} ${
                             here ? 'bg-warn-surface ring-2 ring-warn-strong ring-inset' : ''
                           }`}
@@ -524,71 +623,6 @@ export const DataTable = memo(function DataTable({
         )}
       </div>
 
-      {cell !== null && (
-        <div className="flex items-start gap-2 border-t-2 border-warn-strong bg-panel px-2 py-1.5">
-          <span className="shrink-0 pt-0.5 text-chip text-warn">
-            {`${header[cell.col] ?? ''} · row ${cell.row + 1}`}
-          </span>
-          <pre className="max-h-20 min-w-0 flex-1 overflow-auto text-meta break-all whitespace-pre-wrap text-code-foreground">
-            {focused === '' ? 'NULL' : focused}
-          </pre>
-          <Button
-            variant="secondary"
-            density="compact"
-            onClick={() => void navigator.clipboard?.writeText(focused ?? '')}
-          >
-            Copy value
-          </Button>
-        </div>
-      )}
-
-      {paged && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-code-edge bg-panel px-2 py-1">
-          <label className="flex shrink-0 items-center gap-1 text-ui text-code-foreground">
-            Rows
-            <select
-              value={pageSize}
-              aria-label={`Rows per page of ${label}`}
-              onChange={(event) => {
-                const next = event.target.value;
-                setPageSize(next === 'fit' ? 'fit' : Number(next));
-                setPage(0);
-              }}
-              className="min-h-11 bg-input px-2 text-ui text-code-foreground"
-            >
-              <option value="fit">Fit</option>
-              {PAGE_SIZES.map((size) => (
-                <option key={size} value={size}>
-                  {size}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="min-w-0 flex-1 truncate text-ui text-code-foreground">
-            {`${range.first}–${range.last} of ${ordered.length}`}
-          </span>
-          <span className="hidden shrink-0 text-chip text-muted sm:inline">PgUp/PgDn</span>
-          <Button
-            variant="secondary"
-            density="compact"
-            onClick={() => goPage(current - 1)}
-            disabled={current === 0}
-            aria-label="Previous page"
-          >
-            Prev
-          </Button>
-          <span className="shrink-0 text-ui tabular-nums text-code-foreground">{`Page ${current + 1}/${pages}`}</span>
-          <Button
-            variant="secondary"
-            density="compact"
-            onClick={() => goPage(current + 1)}
-            disabled={current >= pages - 1}
-            aria-label="Next page"
-          >
-            Next
-          </Button>
-        </div>
-      )}
     </div>
   );
 });
