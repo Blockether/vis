@@ -236,12 +236,9 @@
                                event/max-resources
                                (distinct (mapcat :resources children))))
              :evidence []
-             :summary (str
-                        (if (= kind :shell) "shell" "observations")
-                        " · "
-
-                        (count children)
-                        " operations")
+             :summary (if (= kind :shell)
+                        (:summary first-row)
+                        (str "observations · " (count children) " operations"))
              :duration-ms (reduce (fn [total duration]
                                     (Math/addExact (long total) (long duration)))
                             0

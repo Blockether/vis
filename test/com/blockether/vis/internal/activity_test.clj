@@ -217,38 +217,42 @@
                                     (json-str value))]
         (activity/settled-live-nodes state))
       (expect (<= 1 (long @serializations) (inc (long activity/max-rows))))))
-  (it "coalesces one typed shell handle while preserving child chronology"
-      (let [ctx
-            (event/context {})
+  ;; Regression, issue td-1ccd13: shell-handle groups replaced the command with a generic
+  ;; operation count, so distinct invocations looked identical in Activity.
+  (it
+    "coalesces one typed shell handle while preserving its command and child chronology"
+    (let [ctx
+          (event/context {})
 
-            pairs
-            [(event-pair ctx
-                         :shell
-                         :succeeded
-                         {"id" "build-1" "status" "running"}
-                         {:args ["npm test"] :presenter :shell})
-             (event-pair ctx
-                         :_shell_logs
-                         :succeeded
-                         {"id" "build-1" "out" "42 lines" "status" "running"}
-                         {:args ["build-1"] :presenter :shell})
-             (event-pair ctx
-                         :_shell_wait
-                         :succeeded
-                         {"id" "build-1" "exit" 0 "status" "exited"}
-                         {:args ["build-1" 30] :presenter :shell})]
+          pairs
+          [(event-pair ctx
+                       :shell
+                       :succeeded
+                       {"id" "build-1" "status" "running"}
+                       {:args ["npm test"] :presenter :shell})
+           (event-pair ctx
+                       :_shell_logs
+                       :succeeded
+                       {"id" "build-1" "out" "42 lines" "status" "running"}
+                       {:args ["build-1"] :presenter :shell})
+           (event-pair ctx
+                       :_shell_wait
+                       :succeeded
+                       {"id" "build-1" "exit" 0 "status" "exited"}
+                       {:args ["build-1" 30] :presenter :shell})]
 
-            snapshot
-            (activity/snapshot (activity/replay {:evaluation-id (:evaluation-id ctx)}
-                                                (mapcat identity pairs)))
+          snapshot
+          (activity/snapshot (activity/replay {:evaluation-id (:evaluation-id ctx)}
+                                              (mapcat identity pairs)))
 
-            group
-            (first (:rows snapshot))]
+          group
+          (first (:rows snapshot))]
 
-        (expect (= 1 (count (:rows snapshot))))
-        (expect (= :shell (:operation group)))
-        (expect (= "shell · 3 operations" (:summary group)))
-        (expect (= [:shell :_shell_logs :_shell_wait] (mapv :operation (:children group))))))
+      (expect (= 1 (count (:rows snapshot))))
+      (expect (= :shell (:operation group)))
+      (expect (= "npm test" (:summary group)))
+      (expect (= "shell · npm test" (get-in (activity/live-nodes snapshot) [2 :steps 0 :label])))
+      (expect (= [:shell :_shell_logs :_shell_wait] (mapv :operation (:children group))))))
   (it "groups only adjacent observations with the same explicit token"
       (let [ctx
             (event/context {})

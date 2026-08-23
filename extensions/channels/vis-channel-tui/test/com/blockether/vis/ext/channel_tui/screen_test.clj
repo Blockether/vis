@@ -2222,10 +2222,10 @@
               (:layout @state/app-db)
 
               before-receipt
-              (row-containing @before-grid "▾ Activity · finished 0/1 · running")
+              (row-containing @before-grid "▾ ACTIVITY · finished 0/1 · running")
 
               after-receipt
-              (row-containing @after-grid "▾ Activity · finished 0/1 · running")
+              (row-containing @after-grid "▾ ACTIVITY · finished 0/1 · running")
 
               before-surface
               (row-containing @before-grid "Inspect source")

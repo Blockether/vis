@@ -397,6 +397,13 @@
         token
         (or group-token (some explicit-group-token args))
 
+        phrase
+        (or phrase
+            (when (and (shell-presenter? operation presenter)
+                       (not (follow-up-shell-operation? operation))
+                       (string? (first args)))
+              (first args)))
+
         argument
         (bounded-summary args max-summary-bytes)]
 

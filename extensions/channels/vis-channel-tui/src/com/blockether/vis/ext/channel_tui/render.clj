@@ -4970,7 +4970,7 @@
 
         row
         (fn [text meta]
-          {:line (ellipsize-cols (str "   ▎ " text) (max 1 (long max-w)))
+          {:line (p/ellipsize (str "   ▎ " text) (max 1 (long max-w)))
            :meta (merge meta-base meta)})]
 
     (vec
@@ -5033,9 +5033,11 @@
                       (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))]))
 
                  receipt
-                 {:line (ellipsize-cols (str (if is-reopened " ▾ " " ▸ ")
+                 {:line (ellipsize-cols (str (if is-activity
+                                               (if is-reopened "  ▾ " "  ▸ ")
+                                               (if is-reopened " ▾ " " ▸ "))
                                              (if is-activity
-                                               (str (band-label "Activity") " · ")
+                                               (str (band-label "ACTIVITY") " · ")
                                                (str (band-label "RUN") " "))
                                              (str/join " · " parts))
                                         (max 1 (long max-w)))
