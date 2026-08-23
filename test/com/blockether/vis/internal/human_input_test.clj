@@ -2084,6 +2084,11 @@
             (expect (= "activity.live.ndjson" (:filename (first @sink))))
             (expect (= ["open" "close"] (mapv :kind lines)))
             (expect (= "activity" (get-in (first lines) [:view :classification])))
+            ;; Regression: an Activity view crossing the gateway was dropped as
+            ;; unreadable — the wire decoder never keywordized :classification,
+            ;; the string failed ::classification, and every cross-process
+            ;; surface (the TUI) silently painted no Activity at all.
+            (expect (= :activity (:classification (hi/live-view<-wire (:view (first lines))))))
             (expect (nil? (hi/live-view (:id view)))))))))
   (it "seals the record with the artifact it filed, so a view read back off disk names it too"
       (let [{:keys [result file]}

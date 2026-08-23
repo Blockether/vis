@@ -1605,7 +1605,8 @@
    :align hi-spec/live-aligns
    :direction hi-spec/group-directions
    :target-kind hi-spec/link-targets
-   :reason hi-spec/live-reasons})
+   :reason hi-spec/live-reasons
+   :classification hi-spec/live-classifications})
 
 (defn- live<-wire
   "One decoded live value as the engine holds it: canonical keys back to their
