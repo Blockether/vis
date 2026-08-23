@@ -344,6 +344,61 @@
         (assoc :is-following true
                :offset 0))))
 
+(defn- activity-count
+  "The non-negative count for one host Activity stat id. Activity's wire projection stays
+   unchanged; this is presentation-only interpretation for the terminal receipt."
+  [view stat-id]
+  (let [value (some (fn [node]
+                      (when (= :stat (:type node))
+                        (some (fn [stat]
+                                (when (= stat-id (name (:id stat))) (:value-text stat)))
+                              (:stats node))))
+                    (:nodes view))]
+    (max 0
+         (long (try (Long/parseLong (str/trim (flat-text value)))
+                    (catch NumberFormatException _ 0))))))
+
+(defn- activity-state
+  "The concise user-facing state for one Activity receipt. Internal settlement vocabulary
+   remains untouched; only the terminal says finished/succeeded/failed/cancelled."
+  [pane]
+  (case (get-in pane [:settled :reason])
+    nil
+    "running"
+
+    :completed
+    "succeeded"
+
+    :failed
+    "failed"
+
+    :timeout
+    "failed"
+
+    :interrupted
+    "cancelled"
+
+    :cancelled
+    "cancelled"
+
+    "finished"))
+
+(defn- activity-status-text
+  "Option A's single Activity progress summary: one finished fraction and one state."
+  [pane]
+  (let [view
+        (:view pane)
+
+        finished
+        (+ (long (activity-count view "succeeded"))
+           (long (activity-count view "failed"))
+           (long (activity-count view "cancelled")))
+
+        total
+        (+ (long finished) (long (activity-count view "running")))]
+
+    (str "finished " finished "/" total " · " (activity-state pane))))
+
 (defn run-row
   "The transcript receipt for a run or host Activity, anchored at its form.
 
@@ -377,7 +432,7 @@
       activity
       (assoc :is-activity
         true :status-text
-        (flat-text (:text status-node)) :status-tone
+        (activity-status-text pane) :status-tone
         (:tone status-node) :activity-view
         view :activity-focused
         (:activity-focused pane) :activity-evidence

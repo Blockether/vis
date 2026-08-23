@@ -4959,7 +4959,8 @@
                      (when-not (seq body-rows) [{:line (str result-marker "") :meta nil}])))))))
 
 (defn- activity-detail-entries
-  "Inline rows for one expanded Activity receipt."
+  "Operation rows for one expanded Activity receipt. Identity, progress, and state live on
+   the receipt itself, so status and stat nodes never repeat inside the disclosure."
   [{:keys [view-id activity-view activity-focused activity-evidence]} max-w session-id]
   (let [evidence
         (set activity-evidence)
@@ -4973,26 +4974,26 @@
            :meta (merge meta-base meta)})]
 
     (vec
-      (mapcat
-        (fn [node]
-          (case (:type node)
-            :status
-            [(row (:text node) nil)]
+      (mapcat (fn [node]
+                (case (:type node)
+                  :status
+                  []
 
-            :stat
-            [(row (str/join "   " (map #(str (:label %) " " (:value-text %)) (:stats node))) nil)]
+                  :stat
+                  []
 
-            :steps
-            (mapcat (fn [{:keys [id label detail]}]
-                      (let [head (row (str (if (= activity-focused id) "› " "  ") label)
-                                      {:kind :activity-focus :item-id id})]
-                        (if (and (contains? evidence id) (not (str/blank? (str detail))))
-                          [head (row (str "  ↳ " detail) {:kind :activity-evidence :item-id id})]
-                          [head])))
-                    (:steps node))
+                  :steps
+                  (mapcat (fn [{:keys [id label detail]}]
+                            (let [head (row (str (if (= activity-focused id) "› " "  ") label)
+                                            {:kind :activity-focus :item-id id})]
+                              (if (and (contains? evidence id) (not (str/blank? (str detail))))
+                                [head
+                                 (row (str "  ↳ " detail) {:kind :activity-evidence :item-id id})]
+                                [head])))
+                          (:steps node))
 
-            [(row (or (:label node) (name (:type node))) nil)]))
-        (:nodes activity-view)))))
+                  [(row (or (:label node) (name (:type node))) nil)]))
+              (:nodes activity-view)))))
 
 (defn- run-row-entries
   "Transcript-native run disclosures. Activity is present from its first host call;
@@ -5025,8 +5026,7 @@
                  parts
                  (remove str/blank?
                    (if is-activity
-                     [status verdict
-                      (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))]
+                     [status]
                      [title verdict
                       (when (pos? (long (or lines 0)))
                         (str lines (if (= 1 (long lines)) " line" " lines")))
@@ -5034,8 +5034,9 @@
 
                  receipt
                  {:line (ellipsize-cols (str (if is-reopened " ▾ " " ▸ ")
-                                             (band-label (if is-activity "ACTIVITY" "RUN"))
-                                             " "
+                                             (if is-activity
+                                               (str (band-label "Activity") " · ")
+                                               (str (band-label "RUN") " "))
                                              (str/join " · " parts))
                                         (max 1 (long max-w)))
                   :meta {:kind :live-reopen :view-id (str view-id) :session-id (str session-id)}}]

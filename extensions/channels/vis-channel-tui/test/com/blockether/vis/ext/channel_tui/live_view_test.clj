@@ -1114,7 +1114,8 @@
               (hi/stat "counts"
                        [{:id "succeeded" :label "Succeeded" :value-text "2" :tone :ok}
                         {:id "running" :label "Running" :value-text "1" :tone :running}
-                        {:id "failed" :label "Failed" :value-text "0" :tone :idle}])
+                        {:id "failed" :label "Failed" :value-text "0" :tone :idle}
+                        {:id "cancelled" :label "Cancelled" :value-text "0" :tone :idle}])
               [(hi/steps "operations"
                          (mapv (fn [idx]
                                  {:id (str "op-" idx)
@@ -1196,6 +1197,8 @@
     (-> (ended pane {:reason reason :view {:nodes nodes}})
         lv/reopened)))
 
+;; Regression, issue td-1a38ec: Activity repeated its status sentence and four separate
+;; counters across the receipt and expanded disclosure.
 (deftest activity-transcript-receipt-test
   (testing "Activity starts as one transcript receipt and never becomes an independent stop target"
     (let [p
@@ -1208,8 +1211,11 @@
       (is (lv/dormant? p) "the default receipt gives no rows to the live band")
       (is (nil? (lv/interruptible [p])) "turn cancellation remains the only stop action")
       (is (:is-activity row))
-      (is (= "Polling the run" (:status-text row)))
+      (is (= "finished 2/3 · running" (:status-text row)))
       (is (= :activity (get-in p [:view :classification])))))
+  (testing "settlement becomes one finished fraction plus one visible outcome"
+    (is (= ["finished 6/6 · succeeded" "finished 6/6 · failed" "finished 6/6 · cancelled"]
+           (mapv (comp :status-text lv/run-row settled-activity) [:succeeded :failed :cancelled]))))
   (testing "explicit disclosure expands only its transcript receipt"
     (let [p
           (lv/opened (activity-view))
@@ -1272,7 +1278,8 @@
              (engine/normalize-patch
                view
                [{:op :set :node-id "now" :text "1 settled · 1 running" :tone :running}])])
-          (is (= "1 settled · 1 running" (get-in @state/app-db [:messages 1 :runs 0 :status-text])))
+          (is (= "finished 2/3 · running" (get-in @state/app-db [:messages 1 :runs 0 :status-text]))
+              "shared status prose does not leak into the TUI summary")
           (state/dispatch [:live-view-close "activity-1" {:reason :completed}])
           (is (= 1 (count (get-in @state/app-db [:messages 1 :runs]))))
           (is (= :completed (get-in @state/app-db [:messages 1 :runs 0 :reason]))))))))

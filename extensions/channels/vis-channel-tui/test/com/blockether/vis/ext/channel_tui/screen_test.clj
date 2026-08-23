@@ -2148,7 +2148,7 @@
                        :runs [{:view-id "activity-scroll"
                                :title "Activity"
                                :is-activity true
-                               :status-text "1 settled · 1 running"
+                               :status-text "finished 0/1 · running"
                                :status-tone :running
                                :is-reopened true
                                :activity-view (:view pane)
@@ -2222,16 +2222,16 @@
               (:layout @state/app-db)
 
               before-receipt
-              (row-containing @before-grid "▾ ACTIVITY 1 settled · 1 running")
+              (row-containing @before-grid "▾ Activity · finished 0/1 · running")
 
               after-receipt
-              (row-containing @after-grid "▾ ACTIVITY 1 settled · 1 running")
+              (row-containing @after-grid "▾ Activity · finished 0/1 · running")
 
               before-surface
-              (row-containing @before-grid "Polling the run")
+              (row-containing @before-grid "Inspect source")
 
               after-surface
-              (row-containing @after-grid "Polling the run")]
+              (row-containing @after-grid "Inspect source")]
 
           (expect (str/ends-with? before-png "vis-activity-anchor-before-scroll.png"))
           (expect (str/ends-with? after-png "vis-activity-anchor-after-scroll.png"))

@@ -1080,7 +1080,7 @@
              :elapsed-ms 1200
              :is-reopened false
              :is-activity true
-             :status-text "Running 1 · succeeded 1"
+             :status-text "finished 1/2 · running"
              :status-tone :ok
              :anchor {:iteration-index 0 :form-index 0}}
 
@@ -1094,8 +1094,8 @@
             body
             (strip-ansi (str/join "\n" (:lines payload)))]
 
-        (expect (str/includes? body "ACTIVITY"))
-        (expect (str/includes? body "Running 1 · succeeded 1"))))
+        (expect (str/includes? body "Activity"))
+        (expect (str/includes? body "finished 1/2 · running"))))
   (it "paints an unanchored Activity receipt after the live trace, never dropping it"
       ;; Regression, td-821868: same gap, receipt without a form anchor.
       (render/invalidate-cache!)
@@ -1107,7 +1107,7 @@
              :elapsed-ms 800
              :is-reopened false
              :is-activity true
-             :status-text "Running 2"
+             :status-text "finished 0/2 · running"
              :status-tone :ok}
 
             payload
@@ -1120,8 +1120,8 @@
             body
             (strip-ansi (str/join "\n" (:lines payload)))]
 
-        (expect (str/includes? body "ACTIVITY"))
-        (expect (str/includes? body "Running 2"))
+        (expect (str/includes? body "Activity"))
+        (expect (str/includes? body "finished 0/2 · running"))
         (expect (str/includes? body "Vis is calling the provider"))))
   (it
     "uses the same trace renderer for live progress and cancelled bubbles"
@@ -4798,7 +4798,7 @@
             {:view-id "activity-1"
              :title "Activity"
              :is-activity true
-             :status-text "1 settled · 1 running"
+             :status-text "finished 1/2 · running"
              :status-tone :running
              :anchor {:iteration-index 0 :form-index 0}}
 
@@ -4822,11 +4822,12 @@
             expanded
             (render-row true)]
 
-        (expect (str/includes? collapsed "▸ ACTIVITY 1 settled · 1 running"))
-        (expect (str/includes? expanded "▾ ACTIVITY 1 settled · 1 running"))
-        (expect (not (str/includes? collapsed "RUN Activity")))
+        (expect (str/includes? collapsed "▸ Activity · finished 1/2 · running"))
+        (expect (str/includes? expanded "▾ Activity · finished 1/2 · running"))
+        (expect (= 1 (count (re-seq #"Activity" expanded)))
+                "the expanded hierarchy does not repeat its identity")
         (expect (< (.indexOf ^String collapsed "grep({...})")
-                   (.indexOf ^String collapsed "ACTIVITY")
+                   (.indexOf ^String collapsed "Activity")
                    (.indexOf ^String collapsed "Done.")))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
@@ -4840,23 +4841,26 @@
           activity-view
           (fn [label]
             {:classification :activity
-             :nodes [{:id "now" :type :status :text label :tone :running}
-                     {:id "counts" :type :stat :stats [{:label "Succeeded" :value-text "1"}]}]})
+             :nodes [{:id "now" :type :status :text (str label " STATUS") :tone :running}
+                     {:id "counts" :type :stat :stats [{:label "Succeeded" :value-text "1"}]}
+                     {:id "operations"
+                      :type :steps
+                      :steps [{:id label :label (str label " OPERATION") :tone :running}]}]})
 
           runs
           [{:view-id "activity-1"
             :is-activity true
             :is-reopened true
-            :status-text "first receipt"
+            :status-text "finished 1/2 · running"
             :status-tone :running
-            :activity-view (activity-view "FIRST DETAIL")
+            :activity-view (activity-view "FIRST")
             :anchor {:iteration-index 0 :form-index 0}}
            {:view-id "activity-2"
             :is-activity true
             :is-reopened true
-            :status-text "second receipt"
+            :status-text "finished 1/2 · running"
             :status-tone :running
-            :activity-view (activity-view "SECOND DETAIL")
+            :activity-view (activity-view "SECOND")
             :anchor {:iteration-index 0 :form-index 1}}]
 
           body
@@ -4873,14 +4877,16 @@
 
       (expect (< (.indexOf ^String body "first()")
                  (.indexOf ^String body "FIRST RESULT")
-                 (.indexOf ^String body "first receipt")
-                 (.indexOf ^String body "FIRST DETAIL")
+                 (.indexOf ^String body "finished 1/2 · running")
+                 (.indexOf ^String body "FIRST OPERATION")
                  (.indexOf ^String body "second()")))
       (expect (< (.indexOf ^String body "second()")
                  (.indexOf ^String body "SECOND RESULT")
-                 (.indexOf ^String body "second receipt")
-                 (.indexOf ^String body "SECOND DETAIL")
-                 (.indexOf ^String body "Done.")))))
+                 (.lastIndexOf ^String body "finished 1/2 · running")
+                 (.indexOf ^String body "SECOND OPERATION")
+                 (.indexOf ^String body "Done.")))
+      (expect (not (str/includes? body "STATUS")) "expanded detail does not repeat status")
+      (expect (not (str/includes? body "Succeeded 1")) "expanded detail does not repeat counters")))
   (it "a turn that watched nothing carries no rail at all"
       (render/invalidate-cache!)
       (let [payload (render/format-answer-with-thinking-data "Nothing here."
