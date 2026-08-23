@@ -56,9 +56,11 @@ describe("a poll that changes nothing leaves the list alone", () => {
     const painted = badge.syncBadge.mock.calls.length;
     const read = listReads(view.requests);
 
-    await settle(10_000);
+    await settle(4_900);
+    expect(listReads(view.requests)).toBe(read);
+    await settle(100);
 
-    // The poll really ran...
+    // The five-second reachability poll really ran...
     expect(listReads(view.requests)).toBeGreaterThan(read);
     // ...and said nothing new, so the fleet the whole list is derived from is the
     // very array it was before.
@@ -75,7 +77,7 @@ describe("a poll that changes nothing leaves the list alone", () => {
     await settle(50);
     const read = listReads(view.requests);
 
-    await settle(10_000);
+    await settle(5_000);
 
     expect(listReads(view.requests)).toBeGreaterThan(read);
   });

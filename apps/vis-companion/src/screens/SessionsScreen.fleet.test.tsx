@@ -142,6 +142,33 @@ describe("the All view is a fleet of separate machines", () => {
     expect(document.body.textContent).not.toContain("No sessions yet");
   });
 
+  // Regression, user report (paraphrased: "inactive machines should be at the end of the
+  // switcher"): the strip repeated pairing order even after it knew a machine was dark,
+  // leaving a dead destination between machines the reader could still visit.
+  it("puts machines that are not answering after every active machine", async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        { label: "sleeping-one", down: true },
+        fleet()[0],
+        { label: "sleeping-two", down: true },
+        fleet()[1],
+      ],
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+
+    const labels = within(screen.getByLabelText("Machines"))
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label") ?? button.textContent);
+    expect(labels).toEqual([
+      "All",
+      "alpha",
+      "beta",
+      "Reconnect to sleeping-one",
+      "Reconnect to sleeping-two",
+    ]);
+  });
+
   // Regression, user report ("offline stuff should just not be accessible... and maybe
   // more visually shown that they are disabled instead of showing offline"): a machine
   // that was not answering took a named section in the middle of the fleet whose whole
