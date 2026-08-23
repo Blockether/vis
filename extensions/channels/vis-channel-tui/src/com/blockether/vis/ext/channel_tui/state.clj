@@ -3058,6 +3058,14 @@
               (fn [db [_ view-id node-id]]
                 (update-live-pane db view-id #(lv/expanded % node-id))))
 
+
+(reg-event-db :activity-focus
+              (fn [db [_ view-id item-id]]
+                (update-live-pane db view-id #(lv/activity-focused % item-id))))
+
+(reg-event-db :activity-evidence
+              (fn [db [_ view-id item-id]]
+                (update-live-pane db view-id #(lv/activity-evidence-toggled % item-id))))
 (reg-event-db :live-view-painted
               ;; Pushed back by the render thread with what the frame measured, the
               ;; way `:set-layout` is — and like it, deliberately NOT a redraw request.

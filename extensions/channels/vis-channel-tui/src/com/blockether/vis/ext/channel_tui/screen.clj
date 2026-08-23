@@ -725,6 +725,16 @@
     :live-focus
     (do (focus-live-row! db hit) true)
 
+    :activity-focus
+    (do (state/dispatch [:activity-focus (:view-id hit) (:item-id hit)])
+        (state/dispatch [:bump-render-version])
+        true)
+
+    :activity-evidence
+    (do (state/dispatch [:activity-evidence (:view-id hit) (:item-id hit)])
+        (state/dispatch [:bump-render-version])
+        true)
+
     false))
 
 (defn- interrupt-front-live-view!
@@ -6716,6 +6726,12 @@
                                  :live-focus
                                  (activate-live-region! db hit)
 
+                                 :activity-focus
+                                 (activate-live-region! db hit)
+
+                                 :activity-evidence
+                                 (activate-live-region! db hit)
+
                                  (open-click-target! screen hit))
                                (let [point (selection/point mx my)
                                      disclosure-hit
@@ -6857,6 +6873,12 @@
                                  (activate-live-region! db hit)
 
                                  :live-focus
+                                 (activate-live-region! db hit)
+
+                                 :activity-focus
+                                 (activate-live-region! db hit)
+
+                                 :activity-evidence
                                  (activate-live-region! db hit)
 
                                  ;; Default: hand any direct-open hit to

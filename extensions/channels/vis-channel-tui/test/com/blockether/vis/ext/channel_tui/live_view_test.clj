@@ -1105,11 +1105,29 @@
       (is (pos? (long (cap/ink png))) "the band belongs entirely to the run still going"))))
 
 (defn- activity-view
-  ([] (activity-view "activity-1"))
-  ([id]
-   (assoc (ci-view :id id)
-     :title "Activity"
-     :classification :activity)))
+  ([] (activity-view "activity-1" 6))
+  ([id] (activity-view id 6))
+  ([id step-count]
+   (-> (apply mounted
+              {:id id}
+              (hi/status "now" "Polling the run" {:label "Now" :tone :running})
+              (hi/stat "counts"
+                       [{:id "succeeded" :label "Succeeded" :value-text "2" :tone :ok}
+                        {:id "running" :label "Running" :value-text "1" :tone :running}
+                        {:id "failed" :label "Failed" :value-text "0" :tone :idle}])
+              [(hi/steps "operations"
+                         (mapv (fn [idx]
+                                 {:id (str "op-" idx)
+                                  :label (str (if (zero? (mod idx 3)) "Run tests" "Inspect source")
+                                              " · operation "
+                                              (inc idx))
+                                  :detail (str "Evidence for operation "
+                                               (inc idx)
+                                               ": bounded terminal-native detail")
+                                  :tone (if (= idx (dec step-count)) :running :ok)})
+                               (range step-count)))])
+       (assoc :title "Activity"
+              :classification :activity))))
 
 (deftest activity-transcript-receipt-test
   (testing "Activity starts as one transcript receipt and never becomes an independent stop target"
@@ -1141,7 +1159,7 @@
       (is (not (lv/dormant? open)))
       (is (:is-reopened open))
       (is (str/includes? text "ACTIVITY · LIVE"))
-      (is (str/includes? text "Ran 314 tests"))
+      (is (str/includes? text "Run tests · operation 1"))
       (is (not (str/includes? text "CI · fix(loop)"))
           "Activity never inherits generic Live View title chrome")
       (is (some #(and (= :live-reopen (:kind %)) (= "activity-1" (:view-id %))) controls)
@@ -1163,6 +1181,123 @@
         (is (str/ends-with? png "vis-activity-expanded.png"))
         (is (pos? (long (cap/ink png))) "the approved expanded Activity state really painted")))))
 
+
+
+;; Regression, td-5d63b6: expanded Activity reused the generic four-fifths Live View
+;; shell, and its screenshot assertion proved only that the PNG contained some ink.
+(deftest activity-dedicated-painter-test
+  (let [running
+        (lv/reopened (lv/opened (activity-view)))
+
+        settled
+        (lv/reopened (ended (lv/opened (activity-view))))]
+
+    (testing "running and settled Activity use the same bounded transcript geometry"
+      (doseq [terminal-rows [24 40]]
+        (let [[from to] (lv/band-rows 96 terminal-rows [running] 1 3)]
+          (is (= 10 (inc (- (long to) (long from))))
+              (str "Activity stays ten rows on a " terminal-rows "-row terminal"))))
+      (is (= (lv/band-rows 96 24 [running] 1 3) (lv/band-rows 96 24 [settled] 1 3))
+          "settlement changes semantics, never expanded geometry"))
+    (testing "the grid carries only Activity chrome and the semantic rail"
+      (let [running-lines
+            (str/split-lines (painted-text [running] 96 24))
+
+            settled-lines
+            (str/split-lines (painted-text [settled] 96 24))
+
+            [from to]
+            (lv/band-rows 96 24 [running] 1 3)
+
+            painted
+            (subvec (vec running-lines) from (inc to))]
+
+        (is (str/starts-with? (str/triml (nth running-lines from)) "▎ ▾ ACTIVITY · LIVE"))
+        (is (str/starts-with? (str/triml (nth settled-lines from)) "▎ ▾ ACTIVITY · COMPLETED"))
+        (is (every? #(str/starts-with? (str/triml %) "▎") painted)
+            "every owned row has the one semantic edge")
+        (is (not (str/includes? (str/join "\n" painted) "close Activity"))
+            "there is no persistent generic hint footer")
+        (is (every? str/blank? (take from running-lines))
+            "nothing is painted above the ten rows the wheel claims")))
+    (testing "narrow, scrolling, evidence, and focus are terminal-grid behavior"
+      (let [narrow
+            (painted-text [running] 58 20)
+
+            many
+            (-> (lv/opened (activity-view "activity-many" 24))
+                lv/reopened)
+
+            first-frame
+            (paint-frames [many] 96 24)
+
+            measured
+            (lv/painted many (:geometry first-frame))
+
+            parked
+            (lv/scrolled measured -5)
+
+            parked-frame
+            (paint-frames [parked] 96 24)
+
+            focus-pane
+            (-> (lv/opened (activity-view "activity-focus" 8))
+                lv/reopened
+                (lv/activity-evidence-toggled "op-2"))
+
+            controls
+            (regions-of [focus-pane])]
+
+        (is (str/includes? narrow "ACTIVITY · LIVE") "the headline survives at 58 columns")
+        (is (every? #(<= (count %) 58) (str/split-lines narrow))
+            "nothing crosses the terminal grid")
+        (is (> (long (get-in first-frame [:geometry :total]))
+               (long (get-in first-frame [:geometry :visible])))
+            "long evidence is bounded by a real viewport")
+        (is (< (long (get-in parked-frame [:geometry :offset]))
+               (long (get-in first-frame [:geometry :offset])))
+            "wheel movement reveals earlier evidence")
+        (is (some #(= :activity-evidence (:kind %)) controls)
+            "an operation row discloses its bounded evidence")
+        (is (some #(= :activity-focus (:kind %)) controls)
+            "an operation row has Activity-local focus")
+        (let [focus-grid (painted-text [focus-pane] 96 24)]
+          (is (str/includes? focus-grid "›") "the focused operation has a visible marker")
+          (is (str/includes? focus-grid "↳ Evidence for operation 3")
+              "disclosed evidence occupies exactly one presenter row"))))
+    (testing "the approved states are captured by DefaultVirtualTerminal"
+      (let [scrolling
+            (-> (lv/opened (activity-view "activity-shot-scroll" 24))
+                lv/reopened
+                (lv/painted (:geometry (paint-frames
+                                         [(lv/reopened
+                                            (lv/opened (activity-view "activity-shot-scroll" 24)))]
+                                         96
+                                         24)))
+                (lv/scrolled -5))
+
+            focus
+            (-> (lv/opened (activity-view "activity-shot-focus" 8))
+                lv/reopened
+                (lv/activity-evidence-toggled "op-2"))]
+
+        (doseq [[name cols terminal-rows pane]
+                [["vis-activity-running" 96 24 running] ["vis-activity-settled" 96 24 settled]
+                 ["vis-activity-narrow" 58 20 running] ["vis-activity-scrolling" 96 24 scrolling]
+                 ["vis-activity-focus" 96 24 focus]]]
+          (let [png (cap/shot! {:cols cols
+                                :rows terminal-rows
+                                :font-size 14
+                                :out name
+                                :paint! (fn [{:keys [screen]}]
+                                          (let [g (.newTextGraphics ^TerminalScreen screen)]
+                                            (lv/paint! g cols terminal-rows [pane] 1 3)
+                                            (.refresh ^TerminalScreen screen)))})]
+            (is (str/ends-with? png (str name ".png")))))))
+    (testing "fold returns all expanded rows to the transcript receipt"
+      (is (lv/dormant? (lv/reopened running)))
+      (is (nil? (lv/band-rows 96 24 [(lv/reopened running)] 1 3))))))
+
 (deftest activity-transcript-state-test
   (testing "open, patch, and close replace one anchored Activity row"
     (with-db
@@ -1175,6 +1310,11 @@
           (is (= 1 (count (get-in @state/app-db [:messages 1 :runs]))))
           (is (= {:iteration-index 0 :form-index 0}
                  (get-in @state/app-db [:messages 1 :runs 0 :anchor])))
+          (state/dispatch [:activity-focus "activity-1" "op-2"])
+          (state/dispatch [:activity-evidence "activity-1" "op-2"])
+          (let [pane (first (:live-views @state/app-db))]
+            (is (= "op-2" (:activity-focused pane)))
+            (is (= #{"op-2"} (:activity-evidence pane))))
           (state/dispatch
             [:live-view-patch
              (engine/normalize-patch

@@ -437,7 +437,19 @@
                         (deliver local-called args))]
 
           (expect (true? (activate-live-region! db hit)))
-          (expect (= ["view-1" "jobs" ["macos"]] (deref local-called 1000 ::timed-out)))))))
+          (expect (= ["view-1" "jobs" ["macos"]] (deref local-called 1000 ::timed-out))))))
+  (it "routes Activity focus and evidence through terminal-local pane state"
+      (let [events (atom [])]
+        (with-redefs [state/dispatch #(swap! events conj %)]
+          (expect (true? (activate-live-region!
+                           {}
+                           {:kind :activity-focus :view-id "activity-1" :item-id "op-2"})))
+          (expect (true? (activate-live-region!
+                           {}
+                           {:kind :activity-evidence :view-id "activity-1" :item-id "op-2"}))))
+        (expect (= [[:activity-focus "activity-1" "op-2"] [:bump-render-version]
+                    [:activity-evidence "activity-1" "op-2"] [:bump-render-version]]
+                   @events)))))
 
 (defdescribe drag-coalescing-test
              (it "coalesces drag bursts and keeps last drag event + first non-drag"
