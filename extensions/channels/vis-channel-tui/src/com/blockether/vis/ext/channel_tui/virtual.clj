@@ -1205,6 +1205,13 @@
                                                            ;; the provider" before the activity chunk
                                                            ;; lands.
                                                            :command-label (:command-phase-label m)
+                                                           ;; Run receipts filed on this
+                                                           ;; placeholder (Activity rows,
+                                                           ;; settled extension runs) must
+                                                           ;; paint in the LIVE bubble too;
+                                                           ;; without them nothing showed
+                                                           ;; until the turn settled.
+                                                           :runs (:runs m)
                                                            :detail-expansions detail-expansions))]
                     (assoc m
                       :text text

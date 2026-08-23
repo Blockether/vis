@@ -1464,6 +1464,19 @@
    the composer on short ones."
   10)
 
+(defn- anchor-floated-region
+  "REGION lifted so the expanded Activity surface's TOP row sits directly under its
+   collapsed transcript receipt at `anchor-row` (a screen row; nil docks the band
+   above the prompt as before). The surface is the receipt's disclosure, so it must
+   move WITH the receipt as the transcript scrolls, not hang at the bottom of the
+   terminal while its anchor walks away."
+  [region anchor-row]
+  (if (nil? anchor-row)
+    region
+    (assoc region
+      :hint-row (min (long (:hint-row region))
+                     (+ (long anchor-row) 1 (long activity-detail-rows))))))
+
 (defn activity-focused
   "Move the terminal-local Activity operation focus to `item-id`. This never publishes a
    shared Live View focus patch: Activity focus only controls its own evidence disclosure."
@@ -1664,18 +1677,22 @@
 
 (defn band-rows
   "The rows an expanded surface covers, inclusive. Activity uses its dedicated fixed
-   transcript-detail bound; ordinary Live Views retain [[band-shape]] geometry."
-  [cols rows panes content-top prompt-h]
-  (when-let [front (last (remove dormant? panes))]
-    (let [region (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))]
-      (if (activity? front)
-        (let [n (:n (activity-shape front region))
-              to (dec (long (:hint-row region)))]
+   transcript-detail bound; ordinary Live Views retain [[band-shape]] geometry. When
+   `anchor-row` names the screen row of the front Activity's collapsed receipt, the
+   surface floats directly under it (see [[anchor-floated-region]])."
+  ([cols rows panes content-top prompt-h] (band-rows cols rows panes content-top prompt-h nil))
+  ([cols rows panes content-top prompt-h anchor-row]
+   (when-let [front (last (remove dormant? panes))]
+     (let [region (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))]
+       (if (activity? front)
+         (let [region (anchor-floated-region region anchor-row)
+               n (:n (activity-shape front region))
+               to (dec (long (:hint-row region)))]
 
-          (when (pos? (long n)) [(- (inc to) (long n)) to]))
-        (let [{:keys [sep-row foot-row]}
-              (tr/band-geometry region (:n (band-shape panes region)) false)]
-          [(long sep-row) (long foot-row)])))))
+           (when (pos? (long n)) [(- (inc to) (long n)) to]))
+         (let [{:keys [sep-row foot-row]}
+               (tr/band-geometry region (:n (band-shape panes region)) false)]
+           [(long sep-row) (long foot-row)]))))))
 
 (defn- paint-generic!
   "Draw the ordinary Live View band. Activity is dispatched by [[paint!]] before this
@@ -1847,9 +1864,11 @@
    and concise headline are the only chrome; there are no dialog rails, title rule,
    stop footer, generic hint bar, or reserved blank dashboard. Body entries retain the
    existing evidence and focus click contracts."
-  [g cols rows pane content-top prompt-h now-ms]
+  [g cols rows pane content-top prompt-h now-ms anchor-row]
   (let [{:keys [left inner-w hint-row] :as region}
-        (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
+        (anchor-floated-region
+          (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
+          anchor-row)
 
         {:keys [rows-plan n]}
         (activity-shape pane region)]
@@ -1904,11 +1923,16 @@
 
 (defn paint!
   "Paint the newest expanded surface. Host Activity always takes the dedicated bounded
-   transcript painter; ordinary Live Views keep their established generic painter."
+   transcript painter; ordinary Live Views keep their established generic painter.
+   `anchor-row` is the screen row of the front Activity's collapsed transcript
+   receipt: the expanded surface floats directly under it instead of docking above
+   the prompt, so scrolling the transcript never separates the pair."
   ([g cols rows panes content-top prompt-h]
    (paint! g cols rows panes content-top prompt-h (System/currentTimeMillis)))
   ([g cols rows panes content-top prompt-h now-ms]
+   (paint! g cols rows panes content-top prompt-h now-ms nil))
+  ([g cols rows panes content-top prompt-h now-ms anchor-row]
    (when-let [front (last (remove dormant? panes))]
      (if (activity? front)
-       (paint-activity! g cols rows front content-top prompt-h now-ms)
+       (paint-activity! g cols rows front content-top prompt-h now-ms anchor-row)
        (paint-generic! g cols rows panes content-top prompt-h now-ms)))))

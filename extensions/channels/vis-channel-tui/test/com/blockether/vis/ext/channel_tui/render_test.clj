@@ -1056,6 +1056,73 @@
             (strip-ansi (str/join "\n" (:lines payload)))]
 
         (expect (str/includes? body "Vis is parsing model response (iter 1)"))))
+  (it "paints a running Activity receipt inside the live bubble, anchored to its form"
+      ;; Regression, td-821868: run receipts landed on the loading placeholder's
+      ;; `:runs` but `progress->lines-data` never read them, so Activity was
+      ;; invisible until the turn settled.
+      (render/invalidate-cache!)
+      (let [iter
+            {:forms [{:code "(+ 1 1)"
+                      :comment nil
+                      :render-segments nil
+                      :stdout "2"
+                      :error nil
+                      :started-at-ms nil
+                      :duration-ms 10
+                      :success? true
+                      :silent? false}]}
+
+            run
+            {:view-id "v1"
+             :title "Evaluation activity"
+             :reason nil
+             :lines 0
+             :elapsed-ms 1200
+             :is-reopened false
+             :is-activity true
+             :status-text "Running 1 · succeeded 1"
+             :status-tone :ok
+             :anchor {:iteration-index 0 :form-index 0}}
+
+            payload
+            (render/progress->lines-data
+              {:iterations [iter]}
+              80
+              {:show-thinking true :show-iterations true}
+              {:now-ms 1000 :turn-start-ms 0 :session-id "s1" :runs [run]})
+
+            body
+            (strip-ansi (str/join "\n" (:lines payload)))]
+
+        (expect (str/includes? body "ACTIVITY"))
+        (expect (str/includes? body "Running 1 · succeeded 1"))))
+  (it "paints an unanchored Activity receipt after the live trace, never dropping it"
+      ;; Regression, td-821868: same gap, receipt without a form anchor.
+      (render/invalidate-cache!)
+      (let [run
+            {:view-id "v2"
+             :title "Evaluation activity"
+             :reason nil
+             :lines 0
+             :elapsed-ms 800
+             :is-reopened false
+             :is-activity true
+             :status-text "Running 2"
+             :status-tone :ok}
+
+            payload
+            (render/progress->lines-data
+              {:iterations []}
+              80
+              {:show-thinking true :show-iterations true}
+              {:now-ms 1000 :turn-start-ms 0 :session-id "s1" :runs [run]})
+
+            body
+            (strip-ansi (str/join "\n" (:lines payload)))]
+
+        (expect (str/includes? body "ACTIVITY"))
+        (expect (str/includes? body "Running 2"))
+        (expect (str/includes? body "Vis is calling the provider"))))
   (it
     "uses the same trace renderer for live progress and cancelled bubbles"
     (let [;; Tool output paints purely as the program's stdout — both live

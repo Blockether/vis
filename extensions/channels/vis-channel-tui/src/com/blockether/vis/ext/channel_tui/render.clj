@@ -6301,7 +6301,10 @@
      :session-id - current session id; enables live detail rows
      :session-turn-id - optional turn id, when known
      :detail-expansions - detail expansion state keyed by session/node
-     :live-title - title of the live view the band paints, when one is up"
+     :live-title - title of the live view the band paints, when one is up
+     :runs          - live run receipts (`lv/run-row` rows) landed on the loading
+                      placeholder message; placed under their executing form so an
+                      Activity is visible WHILE the turn runs, not only at settlement"
   ([progress bubble-w settings] (progress->lines-data progress bubble-w settings nil))
   ([progress bubble-w settings extra]
    (let [raw-iterations
@@ -6314,7 +6317,7 @@
          (max 10 (- (long bubble-w) 4))
 
          {:keys [now-ms turn-start-ms cancelling? session-id session-turn-id detail-expansions
-                 viewport-rows pending-sends command-label queue-paused live-title]}
+                 viewport-rows pending-sends command-label queue-paused live-title runs]}
          extra
 
          now-ms
@@ -6336,6 +6339,19 @@
          ;; reading as an infinite hang.
          queue-held?
          (boolean (and queue-paused (empty? iterations) (not cancelling?)))
+
+         ;; Run receipts anchor onto the LIVE iterations exactly as they will onto
+         ;; the settled trace: `place-run-rows` rides the captured iteration/form
+         ;; anchor, and what cannot be placed trails the trace. The placed `:runs`
+         ;; join `form-fingerprint`, so the body cache below busts on every patch.
+         run-layout
+         (place-run-rows iterations runs)
+
+         iterations
+         (:iterations run-layout)
+
+         unplaced-runs
+         (:unplaced run-layout)
 
          ;; The ONLY per-tick-volatile row: it embeds the animated spinner
          ;; glyph + elapsed clock, both a pure function of `now-ms`. Always
@@ -6395,7 +6411,12 @@
                                          :session-id session-id
                                          :session-turn-id session-turn-id
                                          :detail-expansions detail-expansions})
-            (mapv :text (vec (or pending-sends [])))]
+            (mapv :text (vec (or pending-sends [])))
+            ;; Anchored rows ride `form-fingerprint`; UNPLACED ones never touch an
+            ;; iteration, so the body key must name them directly or a settling run
+            ;; would keep painting its pre-settle receipt.
+            (mapv #(select-keys % [:view-id :status-text :status-tone :reason :is-reopened])
+                  unplaced-runs)]
            now-ms
            (fn []
              (let [trace-entries
@@ -6408,6 +6429,9 @@
                                           :session-turn-id session-turn-id
                                           :detail-expansions detail-expansions
                                           :live? true})
+
+                   trace-entries
+                   (into (vec trace-entries) (run-row-entries unplaced-runs content-w session-id))
 
                    queued-entries
                    (queued-progress-entries pending-sends content-w queue-paused)

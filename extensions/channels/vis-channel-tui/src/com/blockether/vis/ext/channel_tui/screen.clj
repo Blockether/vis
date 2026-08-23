@@ -639,6 +639,54 @@
         (vis/cancel-human-input! request-id)
         (vis/gateway-cancel-human-input! session-id request-id)))))
 
+(defn- error-card-row-geometry?
+  "True when a bubble is painted as the failed-turn CARD.
+
+   `render/draw-chat-bubble!` gives that card exactly the geometry of a user
+   bubble - one pad row under the role label (`top-pad`) and a text inset of
+   `h-pad` columns - so selection has to take the SAME decision. While it only
+   asked `(= :user role)`, every range on a provider/turn failure named the
+   blank pad row above the sentence and started two columns left of it: the
+   error text was the one thing in the transcript you could not drag over."
+  [message]
+  (and (not= :queued (:status message))
+       (not= :cancelled (:status message))
+       (render/error-message? message)))
+
+(defn- bubble-content-top
+  "Absolute screen row of a visible message's FIRST content line.
+
+   `render/draw-chat-bubble!` paints one role/timestamp row above the wrapped
+   content - plus one padding row for user messages - so EVERY geometry that
+   maps a projected line index onto a screen row has to skip the same chrome.
+   Selection ranges and the per-disclosure copy targets both derive their rows
+   from here: when only one of them carried the offset the two disagreed by a
+   row, and a click on the last row of an expanded disclosure missed its block
+   and fell through to the whole-bubble copy."
+  ^long [message ^long text-top ^long top]
+  (+ text-top top 1 (if (or (= :user (:role message)) (error-card-row-geometry? message)) 1 0)))
+
+(defn- live-front-anchor-row
+  "Screen row of the collapsed transcript receipt (the `:live-reopen` line) the
+   FRONT Activity pane was expanded from, or nil when that row is off screen. The
+   expanded surface floats directly under this row, so the pair reads as one
+   disclosure however far the transcript scrolls."
+  [layout panes text-top]
+  (when-let [front (last (remove lv/dormant? panes))]
+    (when (lv/activity? front)
+      (let [vid (str (lv/view-id front))
+            text-top (long text-top)]
+
+        (first (for [{:keys [top projected]} (:visible layout)
+                     :let [line-meta (:line-meta projected)
+                           content-top (bubble-content-top projected text-top (long top))]
+                     :when (sequential? line-meta)
+                     i (range (count line-meta))
+                     :let [m (nth line-meta i nil)]
+                     :when (and (map? m) (= :live-reopen (:kind m)) (= vid (str (:view-id m))))]
+
+                 (+ content-top (long i))))))))
+
 (defn- live-band-pane
   "The live view the pointer at terminal row `my` is over — the one the band is
    painting right now — or nil when the pointer is on the transcript.
@@ -655,7 +703,11 @@
                                (long (or (:rows ly) 0))
                                panes
                                content-top
-                               prompt-h)]
+                               prompt-h
+                               (live-front-anchor-row ly
+                                                      panes
+                                                      (+ (long content-top)
+                                                         (long render/MESSAGE_MARGIN_TOP))))]
 
         (when (and span (<= (long (first span)) (long my) (long (second span)))) (last panes))))))
 
@@ -1245,19 +1297,6 @@
     (some #(str/starts-with? line (str % selection-output-indent))
           selection-output-indent-markers)))
 
-(defn- error-card-row-geometry?
-  "True when a bubble is painted as the failed-turn CARD.
-
-   `render/draw-chat-bubble!` gives that card exactly the geometry of a user
-   bubble - one pad row under the role label (`top-pad`) and a text inset of
-   `h-pad` columns - so selection has to take the SAME decision. While it only
-   asked `(= :user role)`, every range on a provider/turn failure named the
-   blank pad row above the sentence and started two columns left of it: the
-   error text was the one thing in the transcript you could not drag over."
-  [message]
-  (and (not= :queued (:status message))
-       (not= :cancelled (:status message))
-       (render/error-message? message)))
 
 (defn- bubble-line-text-col
   [message bubble-left line]
@@ -1337,18 +1376,7 @@
                 {:out [] :prev nil :id -1}
                 ranges)))
 
-(defn- bubble-content-top
-  "Absolute screen row of a visible message's FIRST content line.
 
-   `render/draw-chat-bubble!` paints one role/timestamp row above the wrapped
-   content - plus one padding row for user messages - so EVERY geometry that
-   maps a projected line index onto a screen row has to skip the same chrome.
-   Selection ranges and the per-disclosure copy targets both derive their rows
-   from here: when only one of them carried the offset the two disagreed by a
-   row, and a click on the last row of an expanded disclosure missed its block
-   and fell through to the whole-bubble copy."
-  ^long [message ^long text-top ^long top]
-  (+ text-top top 1 (if (or (= :user (:role message)) (error-card-row-geometry? message)) 1 0)))
 
 (defn- bubble-selectable-ranges
   "Return absolute screen-cell ranges for visible transcript message content.
@@ -2704,7 +2732,14 @@
       ;; is on screen. Before `commit-frame!`, so the pane's own click regions —
       ;; its links and its `+ N more` lines — belong to this frame.
       (when-not (:human-input db)
-        (when-let [geom (lv/paint! g cols rows (:live-views db) messages-top input-box-h)]
+        (when-let [geom (lv/paint! g
+                                   cols
+                                   rows
+                                   (:live-views db)
+                                   messages-top
+                                   input-box-h
+                                   (System/currentTimeMillis)
+                                   (live-front-anchor-row layout (:live-views db) text-top))]
           (state/dispatch [:live-view-painted (:view-id geom) geom])))
       (cr/commit-frame!)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
