@@ -1086,7 +1086,8 @@
   (into []
         (map-indexed
           (fn [idx
-               {:keys [tool-call-id kind media-type filename size audience version transcription]}]
+               {:keys [tool-call-id kind media-type filename size audience version transcription
+                       view-id classification activity-anchor]}]
             (cond-> {:index idx
                      :iteration_id (str iteration-id)
                      :tool_call_id tool-call-id
@@ -1099,6 +1100,15 @@
                      :version (long (or version 1))
                      :audience (attachments/normalize-audience audience)
                      :size (long (or size 0))}
+              view-id
+              (assoc :view_id (str view-id))
+
+              classification
+              (assoc :classification (name classification))
+
+              activity-anchor
+              (assoc :activity_anchor (wire/->wire activity-anchor))
+
               ;; TRANSCRIPTION: a recording's own words, transcribed on the way
               ;; in. It rides the DESCRIPTOR rather than the bytes so a client
               ;; can offer "Transcription" under the player without fetching a

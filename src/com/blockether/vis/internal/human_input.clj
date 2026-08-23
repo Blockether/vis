@@ -1977,6 +1977,11 @@
                  :storage-uri (live-sink/record-uri (:session-id view) (:view-id result))
                  :size size
                  :line-count line-count}
+          (= :activity (:classification view))
+          (assoc :classification
+            :activity :activity-anchor
+            (get-in view [:activity :anchor]))
+
           (<= (long size) (long hi-spec/live-artifact-inline-bytes))
           (assoc :base64
             (.encodeToString (java.util.Base64/getEncoder)

@@ -603,6 +603,138 @@ describe("a command turn shows its answer, never a program", () => {
     expect(text(html)).toContain("Reloaded — configuration");
   });
 });
+
+// Regression, issue td-cc41a1: Activity was appended after the entire assistant
+// row, so a multi-form iteration could not show which Python form owned it.
+describe("Activity owns the slot between its Python form and RESULT", () => {
+  const client = {
+    attachmentUrl: async () => "blob:none",
+    retainAttachment: () => () => {},
+  } as unknown as GatewayClient;
+  const attachment: IterationAttachment = {
+    index: 0,
+    iteration_id: "iteration-1",
+    view_id: "activity-view",
+    classification: "activity",
+    activity_anchor: {
+      evaluation_id: "evaluation-1",
+      iteration: 0,
+      form_index: 1,
+    },
+    kind: "file",
+    media_type: "application/vnd.vis.live+ndjson",
+    filename: "activity.live.ndjson",
+  };
+  const firstAttachment: IterationAttachment = {
+    ...attachment,
+    index: 1,
+    view_id: "first-activity-view",
+    activity_anchor: { ...attachment.activity_anchor!, form_index: 0 },
+  };
+  const turn: TranscriptTurn = {
+    id: "activity-turn",
+    status: "completed",
+    iterations: [
+      {
+        id: "iteration-1",
+        forms: [
+          { source: "first_form()", result_summary: "first result" },
+          {
+            source: "second_form()",
+            result_render: "```\nsecond result\n```",
+          },
+        ],
+        attachments: [firstAttachment, attachment],
+      },
+    ],
+  };
+
+  it("puts a historical receipt under only its anchored form", () => {
+    const rendered = text(
+      renderToStaticMarkup(
+        <AssistantMessage turn={turn} client={client} sid="s1" />,
+      ),
+    );
+    expect(rendered.indexOf("first_form()")).toBeLessThan(
+      rendered.indexOf("Loading Activity…"),
+    );
+    expect(rendered.indexOf("Loading Activity…")).toBeLessThan(
+      rendered.indexOf("second_form()"),
+    );
+    expect(rendered.indexOf("second_form()")).toBeLessThan(
+      rendered.lastIndexOf("Loading Activity…"),
+    );
+    expect(rendered.lastIndexOf("Loading Activity…")).toBeLessThan(
+      rendered.indexOf("RESULT"),
+    );
+    expect(rendered.match(/Loading Activity/g)).toHaveLength(2);
+  });
+
+  it("replaces the filed receipt with the same live view without duplicating it", () => {
+    const rendered = text(
+      renderToStaticMarkup(
+        <AssistantMessage
+          turn={turn}
+          client={client}
+          sid="s1"
+          liveActivities={[
+            {
+              id: "activity-view",
+              title: "Activity",
+              classification: "activity",
+              seq: 0,
+              activity: {
+                schema_version: 1,
+                anchor: { iteration: 0, form_index: 1 },
+                state: "running",
+                counts: { running: 1, succeeded: 0, failed: 0, cancelled: 0 },
+                rows: [],
+                omitted: { rows: 0, by_classification: {} },
+              },
+              nodes: [
+                {
+                  id: "status",
+                  type: "status",
+                  text: "one operation",
+                  tone: "running",
+                },
+              ],
+            },
+          ]}
+        />,
+      ),
+    );
+    expect(rendered.match(/ACTIVITY · LIVE/g)).toHaveLength(1);
+    expect(rendered.match(/Loading Activity/g)).toHaveLength(1);
+  });
+
+  it("does not attach Activity to a print-only form", () => {
+    const printOnly: TranscriptTurn = {
+      ...turn,
+      iterations: [
+        {
+          ...turn.iterations![0],
+          forms: [{ result_render: "```\nprinted\n```" }],
+          attachments: [
+            {
+              ...attachment,
+              activity_anchor: {
+                ...attachment.activity_anchor!,
+                form_index: 0,
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const rendered = text(
+      renderToStaticMarkup(
+        <AssistantMessage turn={printOnly} client={client} sid="s1" />,
+      ),
+    );
+    expect(rendered).not.toContain("Activity");
+  });
+});
 // Every tile in this rail fetches its own bytes on first paint, so an iteration
 // that produced forty artifacts fired forty requests in one tick — on whatever
 // connection the phone had. A page at a time now, by count AND by weight.

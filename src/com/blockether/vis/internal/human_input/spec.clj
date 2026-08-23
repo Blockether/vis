@@ -355,7 +355,7 @@
    (`:storage-uri`, `:size`, `:line-count`, and `:base64` only under
    [[live-artifact-inline-bytes]])."
   #{:id :view-id :session-id :title :media-type :audience :ended-at :reason :view :storage-uri :size
-    :line-count :base64})
+    :line-count :base64 :classification :activity-anchor})
 (defn contract-vocabulary
   "This vocabulary as DATA, for `com.blockether.vis.contract.python-host` to render
    into `vis_contract/contract.json` — the document every surface that cannot
@@ -670,6 +670,12 @@
 (s/def ::is-cancellable boolean?)
 (s/def ::timeout-ms nat-int?)
 (s/def ::classification (set (vals live-classifications)))
+(s/def ::activity-anchor
+  (s/and map?
+         #(= #{:evaluation-id :iteration :form-index} (set (keys %)))
+         #(non-blank-string? (:evaluation-id %))
+         #(nat-int? (:iteration %))
+         #(nat-int? (:form-index %))))
 
 (s/def ::channel-ids
   ;; One id twice would open the same dialog twice and answer it once.
@@ -1104,7 +1110,9 @@
   (s/and #(closed? live-artifact-keys %)
          (s/keys :req-un [::id ::view-id ::session-id ::title ::media-type ::audience ::ended-at
                           ::reason ::view ::storage-uri ::size ::line-count]
-                 :opt-un [::base64])
+                 :opt-un [::base64 ::classification ::activity-anchor])
+         #(= (contains? % :classification) (contains? % :activity-anchor))
+         #(or (not (contains? % :classification)) (= :activity (:classification %)))
          #(live-reason? (:reason %))
          ;; Inlining is a SIZE decision, never a preference: past the floor the
          ;; bytes stay on disk, which is the whole point of addressing the record.

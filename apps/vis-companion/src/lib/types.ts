@@ -472,6 +472,15 @@ export interface IterationAttachment {
   size?: number;
   /** {@link GatewayAttachment.transcription} for a PRODUCED recording. */
   transcription?: string;
+  /** Stable live-view identity used to replace the live Activity in place. */
+  view_id?: string;
+  classification?: "activity";
+  /** Zero-based Python form coordinates owned by the host Activity projection. */
+  activity_anchor?: {
+    evaluation_id: string;
+    iteration: number;
+    form_index: number;
+  };
 }
 
 /**

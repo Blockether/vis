@@ -5014,6 +5014,14 @@ export function SessionScreen({
     void loadTranscript();
   }, [loadTranscript]);
   const liveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
+  const liveActivities = useMemo(
+    () => liveViews.filter((view) => view.classification === "activity"),
+    [liveViews],
+  );
+  const ordinaryLiveViews = useMemo(
+    () => liveViews.filter((view) => view.classification !== "activity"),
+    [liveViews],
+  );
   const watching = liveViews.at(-1)?.title ?? null;
 
   const liveRow = useMemo(() => {
@@ -5064,10 +5072,13 @@ export function SessionScreen({
           startedAt={liveTurn.startedAt}
           client={client}
           sid={sid}
+          liveActivities={liveActivities}
           livePanel={
-            <div className="mt-5">
-              <LiveView views={liveViews} client={client} sid={sid} />
-            </div>
+            ordinaryLiveViews.length > 0 ? (
+              <div className="mt-5">
+                <LiveView views={ordinaryLiveViews} client={client} sid={sid} />
+              </div>
+            ) : undefined
           }
         />
       </div>
@@ -5083,6 +5094,8 @@ export function SessionScreen({
     session?.workspace?.repo_root,
     watching,
     liveViews,
+    liveActivities,
+    ordinaryLiveViews,
   ]);
   // Rows are about to land ABOVE the viewport. Stopping the follow is all this
   // has to do: the anchor observer holds the reader's line for every mutation.

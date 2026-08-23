@@ -844,6 +844,24 @@
    hold. The transcript is read newest-page-first, so a long session listed only
    the artifacts the reader had already scrolled back to. This index answers the
    WHOLE session in one metadata read."
+  (it "carries an Activity record's stable identity and form anchor"
+      (let [anchor
+            {:evaluation-id "eval-1" :iteration 2 :form-index 1}
+
+            rows
+            (@#'state/attachment-descriptors
+             "iteration-2"
+             [{:view-id "activity-view"
+               :classification :activity
+               :activity-anchor anchor
+               :kind "file"
+               :media-type "application/vnd.vis.live+ndjson"
+               :filename "activity.live.ndjson"}])]
+
+        (expect (= [{"evaluation_id" "eval-1" "iteration" 2 "form_index" 1}]
+                   (mapv :activity_anchor rows)))
+        (expect (= ["activity-view"] (mapv :view_id rows)))
+        (expect (= ["activity"] (mapv :classification rows)))))
   (it
     "indexes every produced artifact with the turn that made it"
     (let [sid

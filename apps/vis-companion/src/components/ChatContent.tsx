@@ -14,6 +14,8 @@ import Prism from "prismjs";
 import { DataTable } from "./DataTable";
 import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
 import { LiveRunRow } from "./LiveArtifact";
+import { LiveViewPanel } from "./LiveView";
+import type { LiveView as LiveViewModel } from "../lib/live-view";
 import { AlertIcon, ArrowOutIcon, ChevronIcon, PauseIcon, PlayIcon } from "./icons";
 import {
   attachmentBytes,
@@ -1400,9 +1402,11 @@ const CardGrid = memo(function CardGrid({
 const FormTrace = memo(function FormTrace({
   form,
   live = false,
+  activity,
 }: {
   form: TranscriptForm;
   live?: boolean;
+  activity?: ReactNode;
 }) {
   if (hiddenForm(form)) return null;
   const code = formCode(form);
@@ -1431,6 +1435,7 @@ const FormTrace = memo(function FormTrace({
             language={formCodeLanguage(form)}
             bare
           />
+          {activity}
           <CardGrid cards={cards} bare />
         </div>
       ) : (
@@ -1442,6 +1447,7 @@ const FormTrace = memo(function FormTrace({
               language={formCodeLanguage(form)}
             />
           )}
+          {activity}
           <CardGrid cards={cards} />
         </>
       )}
@@ -1947,7 +1953,10 @@ export const AttachmentRail = memo(function AttachmentRail({
   // log. It is an artifact this app can open, so it gets an artifact's row.
   const runs = collapseAttachmentVersions(
     attachments.filter(
-      (entry) => attachmentIsLive(entry) && entry.iteration_id,
+      (entry) =>
+        attachmentIsLive(entry) &&
+        entry.classification !== "activity" &&
+        entry.iteration_id,
     ),
   ).map((thread) => thread[0]);
   const files = recordedFiles(
@@ -2188,8 +2197,40 @@ type TraceSegmentData = {
   closed: boolean;
 };
 type Chunk =
-  | { kind: "code"; key: string; form: TranscriptForm }
+  | {
+      kind: "code";
+      key: string;
+      form: TranscriptForm;
+      iteration: number;
+      formIndex: number;
+      attachment?: IterationAttachment;
+    }
   | { kind: "cards"; key: string; cards: TranscriptForm[] };
+
+function activityAnchor(
+  value: unknown,
+): { iteration: number; formIndex: number } | null {
+  if (!value || typeof value !== "object") return null;
+  const anchor = value as Record<string, unknown>;
+  const iteration = anchor.iteration;
+  const formIndex = anchor.form_index;
+  return typeof iteration === "number" && typeof formIndex === "number"
+    ? { iteration, formIndex }
+    : null;
+}
+
+function activityAt(
+  views: LiveViewModel[],
+  iteration: number,
+  formIndex: number,
+): LiveViewModel | undefined {
+  return views.find((view) => {
+    const anchor = activityAnchor(view.activity?.anchor);
+    return anchor?.iteration === iteration && anchor.formIndex === formIndex;
+  });
+}
+
+const NO_LIVE_ACTIVITIES: LiveViewModel[] = [];
 
 // Consecutive TOOL-ONLY iterations are one run of work, not N bubbles: the model
 // kept calling tools without saying anything in between. Mirrors the TUI
@@ -2251,6 +2292,7 @@ type TraceSegmentProps = {
   live: boolean;
   client?: GatewayClient;
   sid?: string;
+  liveActivities: LiveViewModel[];
 };
 
 /**
@@ -2271,7 +2313,12 @@ function sameTraceSegment(
   a: TraceSegmentProps,
   b: TraceSegmentProps,
 ): boolean {
-  if (a.live !== b.live || a.client !== b.client || a.sid !== b.sid)
+  if (
+    a.live !== b.live ||
+    a.client !== b.client ||
+    a.sid !== b.sid ||
+    a.liveActivities !== b.liveActivities
+  )
     return false;
   const before = a.segment;
   const after = b.segment;
@@ -2292,6 +2339,7 @@ const TraceSegment = memo(function TraceSegment({
   live,
   client,
   sid,
+  liveActivities,
 }: TraceSegmentProps) {
   // Inside a segment, adjacent code-less forms pool into ONE grid; a python
   // block keeps its own frame under its source and starts a new pool after it.
@@ -2302,7 +2350,19 @@ const TraceSegment = memo(function TraceSegment({
         if (hiddenForm(form)) return;
         const key = `${entry.index}-${formIndex}-${form.scope ?? "form"}`;
         if (showFormCode(form, formCode(form))) {
-          built.push({ kind: "code", key, form });
+          built.push({
+            kind: "code",
+            key,
+            form,
+            iteration: entry.index,
+            formIndex,
+            attachment: entry.attachments.find(
+              (candidate) =>
+                candidate.classification === "activity" &&
+                candidate.activity_anchor?.iteration === entry.index &&
+                candidate.activity_anchor.form_index === formIndex,
+            ),
+          });
           return;
         }
         const cards = toolCards(form);
@@ -2337,13 +2397,35 @@ const TraceSegment = memo(function TraceSegment({
           falls BETWEEN calls. */}
       {chunks.length > 0 && (
         <div className="grid min-w-0 gap-2.5">
-          {chunks.map((chunk) =>
-            chunk.kind === "code" ? (
-              <FormTrace key={chunk.key} form={chunk.form} live={live} />
-            ) : (
+          {chunks.map((chunk) => {
+            if (chunk.kind === "code") {
+              const liveActivity = activityAt(
+                liveActivities,
+                chunk.iteration,
+                chunk.formIndex,
+              );
+              const activity = liveActivity ? (
+                <LiveViewPanel view={liveActivity} />
+              ) : client && sid && chunk.attachment ? (
+                <LiveRunRow
+                  client={client}
+                  sid={sid}
+                  attachment={chunk.attachment}
+                />
+              ) : undefined;
+              return (
+                <FormTrace
+                  key={chunk.key}
+                  form={chunk.form}
+                  live={live}
+                  activity={activity}
+                />
+              );
+            }
+            return (
               <CardGrid key={chunk.key} cards={chunk.cards} live={live} />
-            ),
-          )}
+            );
+          })}
         </div>
       )}
       {client && sid && (
@@ -2360,6 +2442,7 @@ export const IterationTrace = memo(function IterationTrace({
   whole = false,
   client,
   sid,
+  liveActivities = NO_LIVE_ACTIVITIES,
 }: {
   iterations: TranscriptIteration[];
   /** Prose the ANSWER band already paints — see `answeredProse`. */
@@ -2382,6 +2465,8 @@ export const IterationTrace = memo(function IterationTrace({
   whole?: boolean;
   client?: GatewayClient;
   sid?: string;
+  /** Host Activity views, placed by their zero-based Python form anchor. */
+  liveActivities?: LiveViewModel[];
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
@@ -2482,6 +2567,7 @@ export const IterationTrace = memo(function IterationTrace({
           live={live}
           client={client}
           sid={sid}
+          liveActivities={liveActivities}
         />
       ))}
     </div>
@@ -3119,6 +3205,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   sid,
   livePanel,
+  liveActivities,
 }: {
   turn: TranscriptTurn;
   streaming?: boolean;
@@ -3139,6 +3226,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   sid?: string;
   /** Live work belongs after its tool/prose trace and before the phase ticker. */
   livePanel?: ReactNode;
+  /** Host Activity belongs to its Python form, not to the detached live rail. */
+  liveActivities?: LiveViewModel[];
 }) {
   const blocks = turn.content ?? [];
   const fallback = blocks.length ? "" : fallbackAnswer(turn);
@@ -3184,6 +3273,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           whole={whole}
           client={client}
           sid={sid}
+          liveActivities={liveActivities}
         />
         {/* Message prose sits on the SAME canonical step as the trace it grows out of:
             tool results, thinking bands and code cards are all `text-ui` (11px), so an
