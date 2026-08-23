@@ -76,6 +76,7 @@ import { AttachImageContext } from "../lib/attach-image";
 import type { GatewayClient } from "../lib/gateway";
 import { holdKeyboardAcrossSheet, isEnterSendPlatform } from "../lib/keyboard";
 import {
+  GatewayError,
   mergeQueueBacklog,
   queuedTurnFromWire,
   type QueueDelta,
@@ -2765,12 +2766,13 @@ export function SessionScreen({
   // Turn captured audio into composer text. Kept apart from the mic button
   // because the button is no longer the only thing that ends a recording.
   const transcribeVoice = useCallback(
-    async (wav: Blob) => {
-      // Durable BEFORE the request, never only after it fails: iOS tears the
+    async (wav: Blob, options: { isOutboxRetry?: boolean } = {}) => {
+      // Durable BEFORE a new request, never only after it fails: iOS tears the
       // webview down mid-flight (reclaim, crash, reload) and audio that lives in
-      // this closure alone dies with it. Only a transcript empties the outbox.
+      // this closure alone dies with it. A retry uses the row already there;
+      // writing it again would renew its seven-day lifetime on every wake.
       pendingVoiceRef.current = wav;
-      void savePendingVoice(voiceMailboxId, wav);
+      if (!options.isOutboxRetry) await savePendingVoice(voiceMailboxId, wav);
       try {
         const engine = await chosenAsrEngine(capabilities);
         const transcript = await client.transcribeVoice(sid, wav, {
@@ -2798,14 +2800,27 @@ export function SessionScreen({
           setComposerNotice("No speech recognised — nothing was captured.");
         }
       } catch (cause) {
-        // Offline, asleep, or a gateway that never answered. The words are NOT
-        // lost: they sit in the outbox and drain on the next wake — and `online`
-        // is one of the signals that fires a wake (lib/wake.ts).
         const message = (cause as Error).message;
         const unreachable =
           message.startsWith("network error") ||
           message.includes("did not answer") ||
-          message.includes("stopped sending");
+          message.includes("stopped sending") ||
+          message.includes("stopped reporting") ||
+          message.includes("ended before the transcript");
+        const status = cause instanceof GatewayError ? cause.status : 0;
+        const retryableStatus =
+          status === 408 ||
+          status === 425 ||
+          status === 429 ||
+          (status >= 500 && status < 600);
+        const retryable = unreachable || retryableStatus;
+        if (!retryable) {
+          // A non-retryable failure cannot be fixed by waking and submitting the
+          // same WAV again, so it must leave both copies of the outbox instead
+          // of waking this session into an endless loop.
+          pendingVoiceRef.current = null;
+          await clearPendingVoice(voiceMailboxId);
+        }
         setComposerNotice(
           unreachable
             ? "Saved what you said — it transcribes as soon as the gateway is reachable."
@@ -2925,7 +2940,7 @@ export function SessionScreen({
       pendingVoiceRef.current ?? (await readPendingVoice(voiceMailboxId));
     if (!wav || voicePhaseRef.current !== "idle") return;
     setVoicePhase("transcribing");
-    await transcribeVoice(wav);
+    await transcribeVoice(wav, { isOutboxRetry: true });
   }, [transcribeVoice, voiceMailboxId]);
   useEffect(() => onWake(() => void retryPendingVoice()), [retryPendingVoice]);
   // Cold start / session switch: adopt whatever this session still owes.
