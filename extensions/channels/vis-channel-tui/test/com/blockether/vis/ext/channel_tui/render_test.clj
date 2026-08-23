@@ -1094,7 +1094,7 @@
             body
             (strip-ansi (str/join "\n" (:lines payload)))]
 
-        (expect (str/includes? body "Activity"))
+        (expect (str/includes? body "ACTIVITY"))
         (expect (str/includes? body "finished 1/2 · running"))))
   (it "paints an unanchored Activity receipt after the live trace, never dropping it"
       ;; Regression, td-821868: same gap, receipt without a form anchor.
@@ -1120,7 +1120,7 @@
             body
             (strip-ansi (str/join "\n" (:lines payload)))]
 
-        (expect (str/includes? body "Activity"))
+        (expect (str/includes? body "ACTIVITY"))
         (expect (str/includes? body "finished 0/2 · running"))
         (expect (str/includes? body "Vis is calling the provider"))))
   (it
@@ -4822,12 +4822,12 @@
             expanded
             (render-row true)]
 
-        (expect (str/includes? collapsed "▸ Activity · finished 1/2 · running"))
-        (expect (str/includes? expanded "▾ Activity · finished 1/2 · running"))
-        (expect (= 1 (count (re-seq #"Activity" expanded)))
+        (expect (str/includes? collapsed "▸ ACTIVITY · finished 1/2 · running"))
+        (expect (str/includes? expanded "▾ ACTIVITY · finished 1/2 · running"))
+        (expect (= 1 (count (re-seq #"ACTIVITY" expanded)))
                 "the expanded hierarchy does not repeat its identity")
         (expect (< (.indexOf ^String collapsed "grep({...})")
-                   (.indexOf ^String collapsed "Activity")
+                   (.indexOf ^String collapsed "ACTIVITY")
                    (.indexOf ^String collapsed "Done.")))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
@@ -4898,3 +4898,94 @@
                                                              {:session-id "s1"})]
         (expect (not (str/includes? (strip-ansi (:text payload)) "RUN")))
         (expect (not-any? #(= :live-reopen (:kind %)) (:line-meta payload))))))
+
+;; Regression, issues td-1ccd13 and td-c0bd16: shell invocations collapsed to identical
+;; operation counts, while the mixed-case Activity heading sat one column inside PYTHON/RESULT.
+(defdescribe
+  activity-shell-command-grid-test
+  (it
+    "paints one ellipsized command per row under an aligned ACTIVITY heading"
+    (render/invalidate-cache!)
+    (let [long-command
+          (str "clojure -M:test " (str/join " " (repeat 12 "very-long-target")))
+
+          trace
+          [{:forms [{:code "a = 1
+b = 2
+c = 3
+d = 4
+e = 5
+f = 6
+g = 7
+h = 8"
+                     :result-render (str/join " " (repeat 200 "result-value"))
+                     :result-kind :value
+                     :duration-ms 1
+                     :silent? false
+                     :success? true}]}]
+
+          run
+          {:view-id "activity-shells"
+           :is-activity true
+           :is-reopened true
+           :status-text "finished 2/2 · succeeded"
+           :status-tone :ok
+           :activity-view
+           {:nodes [{:id "operations"
+                     :type :steps
+                     :steps [{:id "shell-1" :label "shell · npm test" :tone :ok}
+                             {:id "shell-2" :label (str "shell · " long-command) :tone :ok}]}]}
+           :anchor {:iteration-index 0 :form-index 0}}
+
+          rendered
+          (render/format-answer-with-thinking-data* "Done."
+                                                    trace
+                                                    52
+                                                    {:show-thinking true :show-iterations true}
+                                                    nil
+                                                    false
+                                                    {:session-id "s1" :runs [run]})
+
+          message
+          {:role :assistant
+           :text ""
+           :prewrapped-lines (:lines rendered)
+           :line-meta (:line-meta rendered)}
+
+          frame
+          (first (:frames (cap/capture! {:cols 62
+                                         :rows 100
+                                         :paint!
+                                         (fn [{:keys [screen]}]
+                                           (let [^com.googlecode.lanterna.screen.TerminalScreen s
+                                                 screen]
+                                             (render/draw-chat-bubble! (.newTextGraphics s)
+                                                                       message
+                                                                       1 1
+                                                                       56 {:viewport-h 100})
+                                             (.refresh s)))})))
+
+          lines
+          (mapv #(str/trimr (apply str (map :ch %))) frame)
+
+          row-with
+          (fn [needle]
+            (first (keep-indexed #(when (str/includes? %2 needle) [%1 %2]) lines)))
+
+          [_ activity-line]
+          (row-with "ACTIVITY")
+
+          [first-row _]
+          (row-with "shell · npm test")
+
+          [second-row second-line]
+          (row-with "shell · clojure -M:test")]
+
+      (expect (not (str/includes? activity-line "Activity")))
+      (expect (= (.indexOf ^String activity-line "ACTIVITY")
+                 (.indexOf ^String (second (row-with "PYTHON")) "PYTHON")
+                 (.indexOf ^String (second (row-with "RESULT")) "RESULT")))
+      (expect (< (long first-row) (long second-row))
+              "commands keep invocation order on separate rows")
+      (expect (= 1 (count (filter #(str/includes? % "shell · npm test") lines))))
+      (expect (str/ends-with? second-line "…") "the terminal-width preview ends in an ellipsis"))))

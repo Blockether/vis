@@ -20,6 +20,7 @@ import {
 } from "../lib/media-frame";
 import { speechOutput } from "../lib/speech";
 import type { IterationAttachment, TranscriptTurn } from "../lib/types";
+import type { LiveView as LiveViewModel } from "../lib/live-view";
 
 /** Visible text of a rendered chunk: tags out, entities back. */
 const text = (html: string) =>
@@ -618,7 +619,7 @@ describe("Activity owns the slot between its Python form and RESULT", () => {
     classification: "activity",
     activity_anchor: {
       evaluation_id: "evaluation-1",
-      iteration: 0,
+      iteration: 41,
       form_index: 1,
     },
     kind: "file",
@@ -631,12 +632,35 @@ describe("Activity owns the slot between its Python form and RESULT", () => {
     view_id: "first-activity-view",
     activity_anchor: { ...attachment.activity_anchor!, form_index: 0 },
   };
+  const runningActivity: LiveViewModel = {
+    id: "activity-view",
+    title: "Activity",
+    classification: "activity",
+    seq: 0,
+    activity: {
+      schema_version: 1,
+      anchor: { iteration: 41, form_index: 1 },
+      state: "running",
+      counts: { running: 1, succeeded: 0, failed: 0, cancelled: 0 },
+      rows: [],
+      omitted: { rows: 0, by_classification: {} },
+    },
+    nodes: [
+      {
+        id: "status",
+        type: "status",
+        text: "one operation",
+        tone: "running",
+      },
+    ],
+  };
   const turn: TranscriptTurn = {
     id: "activity-turn",
     status: "completed",
     iterations: [
       {
         id: "iteration-1",
+        position: 41,
         forms: [
           { source: "first_form()", result_summary: "first result" },
           {
@@ -670,6 +694,8 @@ describe("Activity owns the slot between its Python form and RESULT", () => {
     expect(rendered.match(/Loading Activity/g)).toHaveLength(2);
   });
 
+  // Regression, issue td-65cdf6: a production 1-based iteration anchor was
+  // compared with the iteration's array index, so the running panel vanished.
   it("replaces the filed receipt with the same live view without duplicating it", () => {
     const rendered = text(
       renderToStaticMarkup(
@@ -677,30 +703,7 @@ describe("Activity owns the slot between its Python form and RESULT", () => {
           turn={turn}
           client={client}
           sid="s1"
-          liveActivities={[
-            {
-              id: "activity-view",
-              title: "Activity",
-              classification: "activity",
-              seq: 0,
-              activity: {
-                schema_version: 1,
-                anchor: { iteration: 0, form_index: 1 },
-                state: "running",
-                counts: { running: 1, succeeded: 0, failed: 0, cancelled: 0 },
-                rows: [],
-                omitted: { rows: 0, by_classification: {} },
-              },
-              nodes: [
-                {
-                  id: "status",
-                  type: "status",
-                  text: "one operation",
-                  tone: "running",
-                },
-              ],
-            },
-          ]}
+          liveActivities={[runningActivity]}
         />,
       ),
     );
