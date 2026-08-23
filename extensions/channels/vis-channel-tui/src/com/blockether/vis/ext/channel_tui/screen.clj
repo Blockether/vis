@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.screen
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.attachment-intake :as attachment-intake]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
@@ -2090,6 +2091,57 @@
             (finally (reset! dialog-closed-at (System/currentTimeMillis))
                      (state/dispatch [:set-dialog-open false])))
        (finally (.unlock draw-lock))))
+
+(defn- attachment-capabilities!
+  []
+  (or (:attachment-capabilities @state/app-db)
+      (when-let [capabilities (attachment-intake/fetch-gateway-capabilities!)]
+        (state/dispatch [:set-attachment-capabilities capabilities])
+        capabilities)))
+
+(defn- apply-attachment-intake!
+  [{:keys [handled? rejected] :as result}]
+  (when handled?
+    (state/dispatch [:apply-attachment-intake result])
+    (when (seq rejected)
+      (vis/notify! (str/join "; " rejected) :level :warn :ttl-ms status-error-ttl-ms))
+    true))
+
+(defn- insert-pasted-text!
+  [text]
+  (when-not (empty? text)
+    (if (input/use-placeholder? text)
+      (do (state/dispatch [:add-paste text])
+          (let [{:keys [paste-counter pastes] :as db}
+                @state/app-db
+
+                entry
+                (get pastes paste-counter)]
+
+            (state/dispatch [:update-input
+                             (input/paste-text (:input db)
+                                               (input/format-paste-placeholder entry))])))
+      (let [db @state/app-db]
+        (state/dispatch [:update-input (input/paste-text (:input db) text)])))))
+
+(defn- pick-attachments!
+  [screen]
+  (if-let [capabilities (attachment-capabilities!)]
+    (let [workspace-root (try (str (workspace/cwd)) (catch Throwable _ nil))
+          files (attachment-intake/workspace-picker-files capabilities workspace-root)]
+
+      (if (seq files)
+        (when-let [selected (with-dialog-lock
+                              #(dlg/multi-select-dialog! screen "Attach Files" files))]
+          (apply-attachment-intake! (attachment-intake/picker-selection capabilities
+                                                                        (:attachments @state/app-db)
+                                                                        selected)))
+        (vis/notify! "No gateway-supported files were found in this workspace."
+                     :level :warn
+                     :ttl-ms status-error-ttl-ms)))
+    (vis/notify! "Attachment capabilities are unavailable from the gateway."
+                 :level :warn
+                 :ttl-ms status-error-ttl-ms)))
 
 (defn- band-top-row
   "First screen row a session band for `spec` will paint on, at the anchor the
@@ -4274,6 +4326,19 @@
                  {:seen #{} :out []})
          :out)))
 
+(defn- release-workspace-sessions!
+  "Detach every TUI view through the gateway lifecycle path. Busy turns stay
+   daemon-owned; `chat/dispose!` releases the process client lease without
+   cancelling them."
+  []
+  (run! chat/dispose! (workspace-sessions)))
+
+(defn- quit-tui!
+  "Stop only this UI. Gateway-owned active and queued turns keep running."
+  []
+  (state/dispatch [:shutdown])
+  nil)
+
 (defn- terminal-interrupt-action
   "Action for terminal-level interrupts (SIGINT from Ctrl+C, SIGTSTP from
    Ctrl+Z) that never reach Lanterna as KeyStrokes on some terminals.
@@ -4289,7 +4354,7 @@
     (state/dispatch [:reset-input])
 
     :quit
-    (state/dispatch [:shutdown])))
+    (quit-tui!)))
 
 (defn- register-terminal-signal-handler!
   [signal-name f]
@@ -6156,61 +6221,26 @@
                    (let [^StringBuilder sb @paste-buffer]
                      (when sb
                        (let [pasted (.toString sb)
-                             ;; An EMPTY bracketed paste with an image on the
-                             ;; clipboard = the user hit ⌘V on a screenshot /
-                             ;; copied image. The terminal sends no text, so
-                             ;; read the pixels ourselves into a temp PNG and
-                             ;; drive the temp path through the SAME image-paste
-                             ;; flow as a dropped image file below.
-                             text (if (.isEmpty pasted)
-                                    (or (some-> (input/read-clipboard-image!)
-                                                :path)
-                                        "")
-                                    pasted)]
+                             current (:attachments @state/app-db)
+                             workspace-root (try (str (workspace/cwd)) (catch Throwable _ nil))
+                             result (cond (.isEmpty pasted) (if-let [image
+                                                                     (input/read-clipboard-image!)]
+                                                              (attachment-intake/clipboard-image
+                                                                (attachment-capabilities!)
+                                                                current
+                                                                image)
+                                                              {:handled? false :source :clipboard})
+                                          (attachment-intake/dropped-files pasted workspace-root)
+                                          (attachment-intake/file-drop (attachment-capabilities!)
+                                                                       current
+                                                                       pasted
+                                                                       workspace-root)
+                                          :else {:handled? false :source :drop})]
 
                          (vreset! paste-buffer nil)
-                         (when-not (.isEmpty ^String text)
-                           (if-let [image (timg/probe-paste-image text
-                                                                  {:workspace-root
-                                                                   (try (str (workspace/cwd))
-                                                                        (catch Throwable _ nil))})]
-                             ;; Dropped image file: the terminal pasted its
-                             ;; PATH. Always chip it (never inline the raw
-                             ;; path) with an `[Image #N: ...]` placeholder
-                             ;; carrying the sniffed file metadata; the send
-                             ;; path expands it back to the path text so the
-                             ;; engine attaches the pixels.
-                             (do (state/dispatch [:add-paste text image])
-                                 (let [{:keys [paste-counter pastes]} @state/app-db
-                                       entry (get pastes paste-counter)
-                                       token (input/format-paste-placeholder entry)
-                                       db' @state/app-db]
-
-                                   (state/dispatch [:update-input
-                                                    (input/paste-text (:input db') token)])))
-                             (if (input/use-placeholder? text)
-                               ;; Stash the payload, insert a
-                               ;; one-line `[Pasted #N: ...]` placeholder.
-                               ;; The send path expands every active
-                               ;; placeholder back into its content via
-                               ;; `expand-paste-placeholders`. Reading
-                               ;; the new id back out of the atom right
-                               ;; after the dispatch is safe: every db
-                               ;; event handler runs on the dispatching
-                               ;; thread, so the swap is already visible.
-                               (do (state/dispatch [:add-paste text])
-                                   (let [{:keys [paste-counter pastes]} @state/app-db
-                                         entry (get pastes paste-counter)
-                                         token (input/format-paste-placeholder entry)
-                                         db' @state/app-db]
-
-                                     (state/dispatch [:update-input
-                                                      (input/paste-text (:input db') token)])))
-                               ;; Short single-line paste: inline,
-                               ;; matches the natural feel of
-                               ;; `git rev-parse HEAD`-style copies.
-                               (state/dispatch [:update-input
-                                                (input/paste-text (:input db) text)]))))))
+                         (if (:handled? result)
+                           (apply-attachment-intake! result)
+                           (insert-pasted-text! pasted))))
                      (recur))
                    ;; Mouse events: scrollbar grab/drag + wheel scroll.
                    ;; Bypass `input/handle-key` entirely - those events
@@ -7290,10 +7320,7 @@
                                   (state/dispatch [:toggle-voice-conversation])
 
                                   :pick-file
-                                  ;; `@` opens the INLINE file picker now (same as the
-                                  ;; web); the modal is gone. This palette entry just
-                                  ;; seeds an `@` at the caret to start it.
-                                  (state/dispatch [:update-input (input/paste-text state "@")])
+                                  (pick-attachments! screen)
 
                                   ;; No :quit branch - the palette has no Quit
                                   ;; entry; Ctrl+C is the only quit path.
@@ -7312,42 +7339,7 @@
                              (recur))
 
                          :quit
-                         ;; Ctrl+C with an empty draft normally exits the
-                         ;; TUI. While a turn is in flight that exit path
-                         ;; orphans the worker future — and worse, gives
-                         ;; the user no way to abort a stuck iteration
-                         ;; (e.g. an LLM HTTP response that never starts
-                         ;; streaming). Intercept: cancel the in-flight
-                         ;; turn instead of quitting. A second Ctrl+C
-                         ;; with no turn running falls through to nil and
-                         ;; the TUI exits as before.
-                         (let [db @state/app-db]
-                           (cond
-                             ;; First Ctrl+C on a live turn cancels it (the user's only
-                             ;; escape hatch from a stuck iteration) instead of orphaning
-                             ;; the worker. But once a cancel is ALREADY pending
-                             ;; (`:cancelling?`, e.g. after an Esc), `:loading?` stays true
-                             ;; until the daemon's terminal event lands — so re-firing
-                             ;; cancel-turn here just re-arms and recurs, and the TUI never
-                             ;; quits ("I hit Ctrl+C and it won't die"). A Ctrl+C while a
-                             ;; cancel is in flight means "get me out": quit now and let
-                             ;; teardown fire the cancel token.
-                             (and (:loading? db) (not (:cancelling? db)))
-                             (do (state/dispatch [:cancel-turn]) (recur))
-                             (state/any-background-loading? db)
-                             (let [n (count (state/background-loading-tokens db))
-                                   ok? (with-dialog-lock #(dlg/confirm-dialog!
-                                                            screen
-                                                            "Abort running tasks?"
-                                                            [(str n
-                                                                  " background task"
-                                                                  (when (> n 1) "s")
-                                                                  " still running in other tab"
-                                                                  (when (> n 1) "s")
-                                                                  ".") "Abort them and quit?"]))]
-
-                               (if ok? (do (state/dispatch [:cancel-all-turns]) nil) (recur)))
-                             :else nil))
+                         (quit-tui!)
 
                          :clear-input
                          ;; Priority order while a turn is loading:
@@ -7599,7 +7591,7 @@
                              (recur))
 
                          :pick-file
-                         (do (state/dispatch [:update-input (input/paste-text state "@")]) (recur))
+                         (do (pick-attachments! screen) (recur))
 
                          :send
                          ;; If the slash overlay is visible, Enter was
@@ -7796,8 +7788,7 @@
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
              (doseq [[_ cleanup] @session-live-listeners]
                (try (cleanup) (catch Throwable _ nil)))
-             (doseq [session (workspace-sessions)]
-               (chat/dispose! session))
+             (release-workspace-sessions!)
              (when-let [cleanup @ssh-passphrase-cleanup]
                (try (cleanup) (catch Throwable _ nil)))
              (.stopScreen screen))))))))

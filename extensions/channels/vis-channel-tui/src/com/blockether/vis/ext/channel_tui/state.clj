@@ -1374,6 +1374,10 @@
        ;; message reaches the agent. Cleared on send.
        :pastes {}
        :paste-counter 0
+       :attachments []
+       :attachment-feedback []
+       ;; Global because every tab talks to the same gateway contract.
+       :attachment-capabilities nil
        :loading? false
        :cancel-token nil
        :cancelling? false
@@ -2655,6 +2659,16 @@
                   (cond-> (assoc db :input new-input)
                     (not (str/starts-with? (str/triml text) "/"))
                     (assoc :slash-command-hidden? false)))))
+
+(reg-event-db :set-attachment-capabilities
+              (fn [db [_ capabilities]]
+                (assoc db :attachment-capabilities capabilities)))
+
+(reg-event-db :apply-attachment-intake
+              (fn [db [_ result]]
+                (assoc db
+                  :attachments (vec (:attachments result))
+                  :attachment-feedback (vec (:rejected result)))))
 
 (reg-event-db :hide-slash-command-suggestions
               (fn [db _]
@@ -5210,33 +5224,13 @@
          :fx [[:probe-turn-liveness tab-id (get-in tab [:session :id]) painted
                (:live-turn-client-id tab)]]}))))
 
-(defn background-loading-tokens
-  "Cancel tokens of every BACKGROUND tab (in `:tab-locals`, excluding the active
-   tab held at the db root) whose turn is in flight. Ctrl+C quit consults these so
-   a quit while other tabs are still working can warn + cancel them instead of
-   orphaning their worker futures (orphans keep the JVM alive ~60s → looks frozen)."
-  [db]
-  (let [active (current-tab-id db)]
-    (->> (:tab-locals db)
-         (keep (fn [[tab-id snap]]
-                 (when (and (not= tab-id active) (:loading? snap)) (:cancel-token snap))))
-         vec)))
-
 (defn any-background-loading?
   "True when a non-active tab has a turn in flight."
   [db]
-  (boolean (seq (background-loading-tokens db))))
-
-(reg-event-fx :cancel-all-turns
-              ;; Cancel EVERY in-flight turn — the active tab (root :cancel-token) plus every
-              ;; background tab in :tab-locals. Used by the Ctrl+C quit-confirm path so
-              ;; quitting actually tears down all worker futures instead of leaving orphans
-              ;; behind.
-              (fn [db _]
-                (doseq [tok (background-loading-tokens db)]
-                  (try (vis/cancel! tok) (catch Throwable _ nil)))
-                (when (:loading? db) (try (vis/cancel! (:cancel-token db)) (catch Throwable _ nil)))
-                {:db (assoc db :cancelling? true)}))
+  (let [active (current-tab-id db)]
+    (boolean (some (fn [[tab-id snap]]
+                     (and (not= tab-id active) (:loading? snap)))
+                   (:tab-locals db)))))
 
 (reg-event-db :set-progress-iterations
               (fn [db [_ a b]]
