@@ -46,7 +46,7 @@
         ;; foundation asks before a repair is written back. edamame answers the other
         ;; question, and only about a repair's OUTPUT: whether it reads as Clojure,
         ;; which balanced delimiters do not promise.
-        com.blockether/parinferish {:mvn/version "0.1.1"}
+        com.blockether/parinferish {:mvn/version "0.1.2"}
         borkdude/edamame {:mvn/version "1.6.42"}}
  :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
                   :extra-paths ["test"]

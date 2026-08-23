@@ -745,6 +745,27 @@
 
         (expect (false? (:ok? verdict)))
         (expect (str/includes? (:why verdict) "line 3 opens a string that is never closed"))))
+  ;; Regression, Vis session 6342aada: a rewritten docstring line gained a premature
+  ;; quote, and the boundary refused the whole edit instead of removing that one character.
+  (it "removes one proven premature quote through the published Clojure balancer"
+      (let [original
+            "(def retry-budget\n  \"Old policy line.\n   Measured evidence.\"\n  180000)\n"
+
+            source
+            "(def retry-budget\n  \"Rewritten policy line.\"\n   Measured evidence.\"\n  180000)\n"
+
+            verdict
+            (balance/rebalance {:balancer (clj-balancer)
+                                :parses-clean? #(empty? (parse/error-nodes "clojure" %))
+                                :source source
+                                :original original
+                                :spans [[2 2]]})]
+
+        (expect (true? (:ok? verdict)))
+        (expect
+          (= "(def retry-budget\n  \"Rewritten policy line.\n   Measured evidence.\"\n  180000)\n"
+             (:content verdict)))
+        (expect (= ["line 2 removed `\"` → `\"Rewritten policy line.`"] (:notes verdict)))))
   ;; Regression: `(defn ok [] (inc 1))` typed with an opening paren lost carries a surplus
   ;; closer, and parinfer's answer to that is the file with the closer DELETED — which
   ;; parses, reads as loose symbols, and is character-for-character the same repair as the
