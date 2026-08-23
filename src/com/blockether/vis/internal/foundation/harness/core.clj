@@ -49,7 +49,7 @@
 (defn- owner-root
   "The project that OWNS a skill, when that project is NOT the session's own
    root. A repository-root session discovers the skills of every nested project
-   (`apps/vis-companion/.agents/skills/impeccable`), and such a SKILL.md was
+   (`apps/<app>/.agents/skills/<name>`), and such a SKILL.md was
    written for ITS tree — so every surface that hands the skill over says whose
    it is. Same-root skills carry no owner and read exactly as before."
   [s]
