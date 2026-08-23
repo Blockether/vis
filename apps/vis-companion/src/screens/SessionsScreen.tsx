@@ -432,16 +432,10 @@ export function SessionsScreen({
   // returning to this tab repaints the previous frame instantly; the effects
   // below revalidate each machine independently and reconcile on top.
   const [machines, setMachines] = useState<FleetMachine[]>(() => hydrateMachines(conns, []));
-  // THE SCOPE IS `All` OR EXACTLY ONE MACHINE, and `SCOPE_ALL` is `All`.
-  // Every machine owns a hue, a rail and a section of its own — and scoped to one
-  // gateway only ONE of those hues can ever be on screen, which is a fleet the reader
-  // cannot see. So the strip reads `All`, then the machines, and `All` stacks a named
-  // section per machine, each under its own rail: the separate views are the point of
-  // the separate colours. Scoping stays exactly as narrow as it was — one machine, its
-  // counts, its verbs — for the reader who wants one computer and nothing else.
-  // A FLEET OF ONE RESOLVES TO ITS MACHINE and is offered no `All`: "every machine"
-  // and "this machine" would be the same list under two names.
-  // The pick is only a PREFERENCE: naming a machine that is gone — or one that has
+  // The scope is either the whole fleet or exactly one machine. The fleet has no
+  // synthetic tab: the machine tabs are the groups, and pressing the selected machine
+  // returns to the fleet. A fleet of one resolves directly to its machine.
+  // The pick is only a preference: naming a machine that is gone — or one that has
   // stopped answering under the reader's thumb — falls back to the fleet rather than
   // to an empty screen (see `resolveScope`).
   const [scopePick, setScopePick] = useState<string | null>(SCOPE_ALL);
@@ -1435,17 +1429,9 @@ export function SessionsScreen({
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
-  // `All`: the list is the whole fleet, so every section has to NAME the machine it
-  // belongs to. Scoped, the strip above has already named it and the band is noise.
+  // In the fleet view every section names the machine it belongs to. Scoped, the
+  // selected machine tab has already named it and the band is noise.
   const isFleetView = scope === SCOPE_ALL;
-  // What the `All` tile has to report: something happened on a machine that is not
-  // the one you were reading. The exact count belongs to the rows that own it.
-  // A machine that is not answering is not in `All` at all, so its stale badge is not
-  // news the `All` tile can hand back.
-  const fleetUnread = machines.some(
-    (machine) =>
-      !machine.error && (tallies.get(machineKey(machine.conn))?.unread ?? 0) > 0,
-  );
 
   // One hue per paired machine, assigned from the machine's own key, so a rail
   // keeps its colour across reloads and reorderings and two machines side by side
@@ -2061,15 +2047,13 @@ export function SessionsScreen({
           The chips used to sit inside the machine card's own header, so the control
           that picks a machine looked like part of that machine's own answer. They are
           a segmented switch on the page's paper now: one track, the chosen machine a
-          raised tile inside it. There is no "All": a scope is one machine, always.
+          raised tile inside it. The fleet is the unscoped view, not another machine-shaped
+          `All` group; pressing the selected machine returns to it.
 
-          THE SWITCH IS ALWAYS THERE, EVEN FOR A FLEET OF ONE. It used to disappear
-          below two machines, on the reasoning that a choice of one is not a choice —
-          but the tile is not only a choice, it is the LABEL of everything under it:
-          which computer these projects and sessions are on, in the machine's own hue,
-          in the same place whatever the fleet size. Hiding it made a solo user's list
-          belong to nobody and made pairing a second machine rearrange the screen. One
-          machine is one tab, already pressed, and the second one lands beside it.
+          THE SWITCH IS ALWAYS THERE, EVEN FOR A FLEET OF ONE. The tile is not only a
+          choice, it is the label of everything under it: which computer these projects
+          and sessions are on, in the machine's own hue, in the same place whatever the
+          fleet size. One machine is one tab, already pressed, and the second lands beside it.
 
           THIS ROW HOLDS THE SWITCH AND THE MACHINE'S ONE VERB, AND NOTHING ELSE.
           A second band used to stand inside the card under it: the machine's name
@@ -2102,19 +2086,8 @@ export function SessionsScreen({
               own compact width and scrolls a fleet that outgrows the row. */}
           <div role="group" aria-label="Machines" className="flex min-w-0 flex-1">
             <MachineSwitcher>
-              {/* `All` LEADS THE STRIP, above a fleet only: it is where the machines
-                  are actually distinguishable — one section, one hue and one rail per
-                  computer — and a fleet of one would only be offering the same list
-                  under a second name. */}
-              {machines.length > 1 && (
-                <MachineTab
-                  isOn={isFleetView}
-                  hasUnread={fleetUnread}
-                  onClick={() => selectScope(SCOPE_ALL)}
-                >
-                  All
-                </MachineTab>
-              )}
+               {/* The machine tabs are the groups. The fleet itself is not a synthetic
+                   `All` group; pressing the selected machine returns to the fleet. */}
               {switcherMachines.map((machine) => {
                 const key = machineKey(machine.conn);
                 const tally = tallies.get(key);
@@ -2143,7 +2116,9 @@ export function SessionsScreen({
                     isNoteError={retry === 'failed'}
                     label={isDown ? `Reconnect to ${name}` : undefined}
                     title={isDown ? `${name} is not answering — ${machine.error}` : undefined}
-                    onClick={() => (isDown ? void retryMachine(machine.conn) : selectScope(key))}
+                    onClick={() =>
+                      isDown ? void retryMachine(machine.conn) : selectScope(scope === key ? SCOPE_ALL : key)
+                    }
                   >
                     <MachineMark color={machineColor(machineColors, key)} isHollow={isDown} />
                     {name}
