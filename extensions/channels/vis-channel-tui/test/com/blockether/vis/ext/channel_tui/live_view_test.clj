@@ -1129,6 +1129,73 @@
        (assoc :title "Activity"
               :classification :activity))))
 
+(defn- settled-activity
+  "A reopened Activity carrying the terminal projection the host seals into its receipt."
+  [outcome]
+  (let [{:keys [reason status tone counts final-tone final-detail]}
+        (case outcome
+          :succeeded
+          {:reason :completed
+           :status "succeeded · 6 settled · 0 running"
+           :tone :ok
+           :counts {"running" "0" "succeeded" "6" "failed" "0" "cancelled" "0"}
+           :final-tone :ok
+           :final-detail "18 ms"}
+
+          :failed
+          {:reason :failed
+           :status "failed · 6 settled · 0 running"
+           :tone :error
+           :counts {"running" "0" "succeeded" "5" "failed" "1" "cancelled" "0"}
+           :final-tone :error
+           :final-detail "Command failed"}
+
+          :cancelled
+          {:reason :interrupted
+           :status "cancelled · 6 settled · 0 running"
+           :tone :warn
+           :counts {"running" "0" "succeeded" "5" "failed" "0" "cancelled" "1"}
+           :final-tone :warn
+           :final-detail "Cancelled"})
+
+        pane
+        (lv/opened (activity-view (str "activity-" (name outcome))))
+
+        nodes
+        (mapv (fn [node]
+                (case (:type node)
+                  :status
+                  (assoc node
+                    :text status
+                    :tone tone)
+
+                  :stat
+                  (update node
+                          :stats
+                          (fn [stats]
+                            (mapv (fn [stat]
+                                    (assoc stat :value-text (get counts (:id stat))))
+                                  stats)))
+
+                  :steps
+                  (update node
+                          :steps
+                          (fn [steps]
+                            (mapv (fn [idx step]
+                                    (if (= idx (dec (count steps)))
+                                      (assoc step
+                                        :tone final-tone
+                                        :detail final-detail)
+                                      (assoc step :tone :ok)))
+                                  (range)
+                                  steps)))
+
+                  node))
+              (get-in pane [:view :nodes]))]
+
+    (-> (ended pane {:reason reason :view {:nodes nodes}})
+        lv/reopened)))
+
 (deftest activity-transcript-receipt-test
   (testing "Activity starts as one transcript receipt and never becomes an independent stop target"
     (let [p
@@ -1190,7 +1257,13 @@
         (lv/reopened (lv/opened (activity-view)))
 
         settled
-        (lv/reopened (ended (lv/opened (activity-view))))]
+        (settled-activity :succeeded)
+
+        failed
+        (settled-activity :failed)
+
+        cancelled
+        (settled-activity :cancelled)]
 
     (testing "running and settled Activity use the same bounded transcript geometry"
       (doseq [terminal-rows [24 40]]
@@ -1213,7 +1286,16 @@
             (subvec (vec running-lines) from (inc to))]
 
         (is (str/starts-with? (str/triml (nth running-lines from)) "▎ ▾ ACTIVITY · LIVE"))
-        (is (str/starts-with? (str/triml (nth settled-lines from)) "▎ ▾ ACTIVITY · COMPLETED"))
+        (is (str/starts-with? (str/triml (nth settled-lines from))
+                              "▎ ▾ ACTIVITY · SETTLED · succeeded · 6 settled · 0 running"))
+        (is (str/includes? (painted-text [failed] 96 24)
+                           "ACTIVITY · SETTLED · failed · 6 settled · 0 running")
+            "failure remains failure after the receipt settles")
+        (is (str/includes? (painted-text [cancelled] 96 24)
+                           "ACTIVITY · SETTLED · cancelled · 6 settled · 0 running")
+            "cancellation is never mislabeled completed")
+        (is (not (str/includes? (painted-text [settled] 96 24) "Running 1"))
+            "the settled proof carries the terminal counts rather than the opening snapshot")
         (is (every? #(str/starts-with? (str/triml %) "▎") painted)
             "every owned row has the one semantic edge")
         (is (not (str/includes? (str/join "\n" painted) "close Activity"))
@@ -1283,6 +1365,7 @@
 
         (doseq [[name cols terminal-rows pane]
                 [["vis-activity-running" 96 24 running] ["vis-activity-settled" 96 24 settled]
+                 ["vis-activity-failed" 96 24 failed] ["vis-activity-cancelled" 96 24 cancelled]
                  ["vis-activity-narrow" 58 20 running] ["vis-activity-scrolling" 96 24 scrolling]
                  ["vis-activity-focus" 96 24 focus]]]
           (let [png (cap/shot! {:cols cols

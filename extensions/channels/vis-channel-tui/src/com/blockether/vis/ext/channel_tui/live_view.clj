@@ -1867,7 +1867,7 @@
               shown (subvec (vec rows-plan) (min start total) (min total (+ start visible)))
               view-id (view-id pane)
               {:keys [text tone]} (status-summary pane)
-              state (if (settled? pane) "COMPLETED" "LIVE")
+              state (if (settled? pane) "SETTLED" "LIVE")
               ended-at (long (or (get-in pane [:settled :ended-at]) now-ms))
               created-at (long (or (get-in pane [:view :created-at]) ended-at))
               headline (str "▾ ACTIVITY · "
