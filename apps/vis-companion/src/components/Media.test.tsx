@@ -192,9 +192,9 @@ describe("MediaRecording", () => {
     expect(html).not.toContain("<svg");
   });
 
-  // Speech is not code. Opened, the words read as a QUOTATION of the audio right
-  // above them — curly quotes, italic, justified to the column the bubble owns.
-  it("quotes the opened transcript in italic, justified", async () => {
+  // Speech is not code. Opened, the words read as an italic QUOTATION of the audio
+  // above them without distorting the spacing between words.
+  it("quotes the opened transcript in naturally spaced italic", async () => {
     render(
       <MediaRecording name="memo.m4a" transcription="buy milk and call back">
         <audio controls />
@@ -204,7 +204,7 @@ describe("MediaRecording", () => {
     const words = screen.getByText(/buy milk and call back/);
     expect(words.textContent).toBe("“buy milk and call back”");
     expect(words.className).toContain("italic");
-    expect(words.className).toContain("text-justify");
+    expect(words.className).toContain("text-left");
   });
 
   it("ignores a transcript that is only whitespace", () => {

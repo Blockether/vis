@@ -667,8 +667,8 @@ describe('what a run says about its own layout', () => {
     const beside = [...list.children].find((row) => row.textContent?.includes('Hosts')) as HTMLElement;
     expect(beside.textContent).toContain('Why');
     expect(beside.innerHTML).toContain('sm:grid-flow-col');
-    // …and the sentence beside a table is set as prose, by the app's ONE rule.
-    expect(beside.innerHTML).toContain('text-justify');
+    // …and the sentence beside a table uses the app's naturally spaced prose rule.
+    expect(beside.innerHTML).toContain('text-left');
     const alone = [...list.children].find((row) => row.textContent?.includes('Elsewhere')) as HTMLElement;
     expect(alone.innerHTML).not.toContain('grid-flow-col');
   });

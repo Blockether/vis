@@ -1814,30 +1814,23 @@ describe("a project's pages are cut by the gateway that counts them", () => {
   });
 });
 
-// Regression, user report ("the components on the WEB like the answers"): running
-// prose was justified in three different spellings — the chat's own local
-// `runningText` with hyphenation, and Settings' paragraphs justified with NO
-// hyphenation at all, which is what turns a narrow column into rivers. There is now
-// one rule, `PROSE`, and one ragged fallback for a run that cannot be broken.
-describe("running prose has exactly one rule", () => {
+// Regression, user report: full justification made short lines around inline code
+// look broken on a narrow phone, with large and inconsistent spaces between words.
+describe("running prose has one naturally spaced rule", () => {
   const RULE = "hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty";
 
-  it("declares it once in ui.tsx, justified, with hyphenation attached", () => {
-    expect(uiSource).toContain(
-      `export const PROSE =\n  '${RULE} text-justify';`,
-    );
-    expect(uiSource).toContain(
-      `export const PROSE_RAGGED =\n  '${RULE} text-left';`,
-    );
+  it("declares the shared rule once in ui.tsx with a ragged edge", () => {
+    expect(uiSource).toContain(`'${RULE} text-left'`);
+    expect(uiSource).not.toContain("PROSE_RAGGED");
   });
 
-  it("is what the answers and the user bubble wear", () => {
+  it("is what answers and the user bubble wear", () => {
     expect(chatSource).toContain("const runningText = PROSE;");
-    expect(chatSource).toContain("isJustifiable ? PROSE : PROSE_RAGGED");
+    expect(chatSource).toContain("text-you-message-foreground ${PROSE}");
   });
 
-  it("leaves no hand-spelled justification anywhere else", () => {
-    for (const source of [chatSource, settingsSource, sessionsListSource]) {
+  it("leaves no full justification in running screens", () => {
+    for (const source of [uiSource, chatSource, settingsSource, sessionsListSource]) {
       expect(source).not.toContain("text-justify");
     }
   });

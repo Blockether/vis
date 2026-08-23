@@ -2380,23 +2380,14 @@ export const LIST_EDGE = 'pl-3 sm:pl-4';
 /**
  * RUNNING PROSE, and the app has exactly ONE rule for it.
  *
- * Justification is a WIDTH trade: word-spacing is the only slack a justified line
- * has, so it is only safe when the breaker is given enough stops — hence
- * `hyphens-auto` with a 6/3/3 limit and `text-pretty` ride WITH `text-justify`
- * and are never spelled apart from it. Settings used to justify without
- * hyphenation in three places while the chat justified with it, which is the same
- * paragraph set two different ways on one screen. This mirrors the TUI's single
- * justifier (`markdown-layout/justify-line-runs` → lanterna `justifyLine`).
- *
- * A caller that owns an UNBREAKABLE atom it cannot scope `break-all` to (one raw
- * text run: the user bubble) takes `PROSE_RAGGED` instead — same typography, flush
- * left — rather than dropping the whole rule or re-spelling half of it.
+ * Transcript columns are narrow on phones, and inline code, links, and mixed-language
+ * text create uneven line-breaking opportunities. Full justification turns that
+ * unevenness into conspicuous gaps between ordinary words. Running prose therefore
+ * keeps a natural ragged edge everywhere; hyphenation and balanced wrapping remain
+ * available to prevent avoidable overflow.
  */
-export const PROSE_RAGGED =
-  'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-left';
-
 export const PROSE =
-  'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify';
+  'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-left';
 
 /**
  * THE INNER EDGE OF A PRESSABLE ROW, and the other half of `LIST_EDGE`.

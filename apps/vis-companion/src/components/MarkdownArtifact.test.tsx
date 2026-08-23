@@ -611,14 +611,14 @@ describe("a remark already written", () => {
     opened.done();
   });
 
-  it("is set as quoted prose — italic, justified — and keeps its own bin", () => {
+  it("is set as naturally spaced quoted prose and keeps its own bin", () => {
     const opened = mountAnnotator(TEXT);
     remark(opened.host, "Stale.");
 
     const body = [...opened.comments()!.querySelectorAll("span")].find(
       (span) => span.textContent === "Stale.",
     )!;
-    expect(body.className).toContain("text-justify");
+    expect(body.className).toContain("text-left");
     expect(body.className).toContain("italic");
 
     // Pressing the card edits; the one mark on it still removes.
