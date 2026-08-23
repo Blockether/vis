@@ -58,7 +58,7 @@
   com.blockether/parinferish {:mvn/version "0.1.1"}
   com.blockether/rift {:mvn/version "0.0.10-11"}
   com.blockether/ruff {:mvn/version "0.3.5"}
-  com.blockether/svar {:mvn/version "0.7.133"}
+  com.blockether/svar {:mvn/version "0.7.134"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
