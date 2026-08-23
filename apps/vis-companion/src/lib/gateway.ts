@@ -146,6 +146,16 @@ interface RawSessionMatch {
 export const ROUTER_TTL_MS = 5 * 60 * 1000;
 
 /**
+ * How long a machine's settings payloads stay warm after a sweep.
+ *
+ * Toggles, MCP servers, capabilities and the device list are read for EVERY
+ * paired machine on launch, on wake and whenever the paired list changes. They
+ * change about once a week, so without a stamp the sweep would re-ask four
+ * questions per machine every time the app came back to the front.
+ */
+const PANEL_TTL_MS = 5 * 60 * 1000;
+
+/**
  * Hard deadline for ONE gateway request, body included.
  *
  * A suspended iOS/Android webview does not FAIL its in-flight HTTP. The OS
@@ -291,6 +301,9 @@ const routerCache = new Map<string, { at: number; rows: RouterProvider[] }>();
 
 /** In-flight router reads per base URL, so concurrent opens cost one request. */
 const routerInflight = new Map<string, Promise<RouterProvider[]>>();
+
+/** When each gateway's settings panels were last warmed, per base URL. */
+const panelWarmed = new Map<string, number>();
 
 /**
  * Last-known payload per gateway+resource, kept for the tab's lifetime so a
@@ -914,14 +927,34 @@ export class GatewayClient {
     )
       .then((response) => {
         writeSnapshot(key, response);
+        writeSnapshot(this.snapshotKey("devices-unsupported"), false);
         deviceReads.set(key, Date.now());
         return response;
+      })
+      .catch((error: unknown) => {
+        // A gateway too old to carry the route answers 404/501, and will answer
+        // it again tomorrow. Remembering the refusal is what keeps the panel
+        // ABSENT on the next open instead of painting itself and then deleting
+        // itself, shoving everything below it up the screen.
+        if (
+          error instanceof GatewayError &&
+          (error.status === 404 || error.status === 501)
+        )
+          writeSnapshot(this.snapshotKey("devices-unsupported"), true);
+        throw error;
       })
       .finally(() => {
         deviceFlights.delete(key);
       });
     deviceFlights.set(key, reading);
     return reading;
+  }
+
+  /** Whether THIS gateway has already said it carries no `/v1/devices`. */
+  isDevicesUnsupported(): boolean {
+    return (
+      readSnapshot<boolean>(this.snapshotKey("devices-unsupported")) === true
+    );
   }
 
   /**
@@ -1499,8 +1532,22 @@ export class GatewayClient {
   }
 
   // ── Gateway-owned MCP servers ───────────────────────────────────
+
+  /**
+   * Last server list seen for THIS gateway — paint it, then revalidate.
+   *
+   * The panel opened on `null` every single time, so every visit to Settings
+   * flashed an empty MCP band and moved the panels under it when the rows
+   * landed. A row carries no secret — `McpServer` is the sanitized spec, env
+   * and headers stay on the machine — so the answer from the last visit is the
+   * honest first frame.
+   */
+  cachedMcpServers(): McpServer[] | null {
+    return readSnapshot<McpServer[]>(this.snapshotKey("mcp-servers"));
+  }
+
   async mcpServers(signal?: AbortSignal): Promise<McpServer[]> {
-    return (
+    const servers =
       (
         await this.request<McpServersResponse>(
           "GET",
@@ -1508,46 +1555,77 @@ export class GatewayClient {
           undefined,
           signal,
         )
-      ).servers ?? []
-    );
+      ).servers ?? [];
+    writeSnapshot(this.snapshotKey("mcp-servers"), servers);
+    return servers;
+  }
+
+  /**
+   * Keep the seed in step with a row this device just changed, so reopening the
+   * panel paints what the press did instead of the state before it.
+   */
+  private rememberMcpServer(server: McpServer): McpServer {
+    const held = this.cachedMcpServers();
+    if (held)
+      writeSnapshot(
+        this.snapshotKey("mcp-servers"),
+        held.some((row) => row.name === server.name)
+          ? held.map((row) => (row.name === server.name ? server : row))
+          : [...held, server],
+      );
+    return server;
   }
 
   async saveMcpServer(
     name: string,
     server: McpServerInput,
   ): Promise<McpServer> {
-    return this.request<McpServer>("POST", "/v1/mcp/servers", { name, server });
+    return this.rememberMcpServer(
+      await this.request<McpServer>("POST", "/v1/mcp/servers", { name, server }),
+    );
   }
 
   async setMcpServerEnabled(
     name: string,
     enabled: boolean,
   ): Promise<McpServer> {
-    return this.request<McpServer>(
-      "POST",
-      `/v1/mcp/servers/${encodeURIComponent(name)}/actions/enable`,
-      { enabled },
+    return this.rememberMcpServer(
+      await this.request<McpServer>(
+        "POST",
+        `/v1/mcp/servers/${encodeURIComponent(name)}/actions/enable`,
+        { enabled },
+      ),
     );
   }
 
   async deleteMcpServer(name: string): Promise<void> {
     await this.request("DELETE", `/v1/mcp/servers/${encodeURIComponent(name)}`);
+    const held = this.cachedMcpServers();
+    if (held)
+      writeSnapshot(
+        this.snapshotKey("mcp-servers"),
+        held.filter((row) => row.name !== name),
+      );
   }
 
   // Kill/start are RUNTIME ops, not config edits: they work for hand-written
   // servers too, because stopping a runaway child process is not rewriting
   // somebody's `vis.yml`. A kill holds until `startMcpServer`.
   async killMcpServer(name: string): Promise<McpServer> {
-    return this.request<McpServer>(
-      "POST",
-      `/v1/mcp/servers/${encodeURIComponent(name)}/actions/kill`,
+    return this.rememberMcpServer(
+      await this.request<McpServer>(
+        "POST",
+        `/v1/mcp/servers/${encodeURIComponent(name)}/actions/kill`,
+      ),
     );
   }
 
   async startMcpServer(name: string): Promise<McpServer> {
-    return this.request<McpServer>(
-      "POST",
-      `/v1/mcp/servers/${encodeURIComponent(name)}/actions/start`,
+    return this.rememberMcpServer(
+      await this.request<McpServer>(
+        "POST",
+        `/v1/mcp/servers/${encodeURIComponent(name)}/actions/start`,
+      ),
     );
   }
 
@@ -1619,9 +1697,18 @@ export class GatewayClient {
   // served stale-while-revalidating: opening the picker paints instantly and
   // any refresh lands underneath. Every mutation below drops the entry.
 
-  /** Cached rows at ANY age — paint these first, then revalidate. */
+  /**
+   * Cached rows at ANY age — paint these first, then revalidate.
+   *
+   * The memory map is the hot layer; the snapshot under it is all a COLD start
+   * has. Without it every relaunch opened Providers on `Checking provider
+   * sign-in…` for a payload that only moves when somebody signs in or out.
+   */
   cachedRouter(): RouterProvider[] | null {
-    return routerCache.get(this.base)?.rows ?? null;
+    return (
+      routerCache.get(this.base)?.rows ??
+      readSnapshot<RouterProvider[]>(this.snapshotKey("router"))
+    );
   }
 
   /** True when the cached rows are younger than the TTL. */
@@ -1634,6 +1721,10 @@ export class GatewayClient {
   invalidateRouter(): void {
     routerCache.delete(this.base);
     routerInflight.delete(this.base);
+    // The seed goes with it: a provider just signed out of must never paint as
+    // signed in on the next open, which is exactly what a kept snapshot would
+    // do until the re-probe landed.
+    snapshots.delete(this.snapshotKey("router"));
   }
 
   /**
@@ -1643,6 +1734,26 @@ export class GatewayClient {
   prefetchRouter(): void {
     if (this.isRouterFresh()) return;
     void this.router().catch(() => undefined);
+  }
+
+  /**
+   * Warm every settings panel of this machine, fire-and-forget.
+   *
+   * Settings is opened on ONE machine at a time but the fleet is swept, because
+   * the flicker is a cold panel, not a slow one: whichever machine the reader
+   * opens has already answered. Each read is TTL-stamped (`PANEL_TTL_MS`) and
+   * `devices` has its own freshness window, so a wake costs nothing when the
+   * fleet was swept a minute ago.
+   */
+  prefetchPanels(): void {
+    if (Date.now() - (panelWarmed.get(this.base) ?? 0) < PANEL_TTL_MS) return;
+    panelWarmed.set(this.base, Date.now());
+    const quietly = (work: Promise<unknown>) => void work.catch(() => undefined);
+    quietly(this.settings());
+    quietly(this.capabilities());
+    quietly(this.mcpServers());
+    quietly(this.devices());
+    this.prefetchRouter();
   }
 
   async router(
@@ -1667,6 +1778,7 @@ export class GatewayClient {
         .then((response) => {
           const rows = response.providers;
           routerCache.set(key, { at: Date.now(), rows });
+          writeSnapshot(this.snapshotKey("router"), rows);
           return rows;
         })
         .finally(() => {

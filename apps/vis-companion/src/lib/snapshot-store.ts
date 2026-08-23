@@ -62,6 +62,18 @@ const DURABLE_KINDS = new Set([
   // The notifications panel's device list: reopened constantly, changed rarely,
   // and its absence is the `Checking…` flash the panel is not allowed to have.
   'devices',
+  // A machine too old to carry `/v1/devices` says so once; remembering the
+  // refusal is what stops the panel painting itself and then deleting itself.
+  'devices-unsupported',
+  // The rest of what the settings dialog opens on. Each one is small, changes
+  // about once a week, and its absence is a panel that paints empty and fills
+  // itself a round trip later — reported as the settings screen flickering.
+  // `router` is also the expensive one to re-ask: a live auth + limits probe
+  // per provider on the daemon.
+  'settings',
+  'capabilities',
+  'mcp-servers',
+  'router',
 ]);
 
 // A transcript page is 24 turns and a single turn can be hundreds of kilobytes

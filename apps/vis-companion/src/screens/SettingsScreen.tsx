@@ -405,7 +405,12 @@ function GatewayPanels({
 }
 
 function McpServersPanel({ client }: { client: GatewayClient }) {
-  const [servers, setServers] = useState<McpServer[] | null>(null);
+  // The rows this machine gave last time are the first frame; `load` below
+  // revalidates them underneath. Opening on `null` flashed an empty band and
+  // then moved every panel under it down (see `cachedMcpServers`).
+  const [servers, setServers] = useState<McpServer[] | null>(() =>
+    client.cachedMcpServers(),
+  );
   const [showForm, setShowForm] = useState(false);
   const [transport, setTransport] = useState<"stdio" | "streamable_http">(
     "stdio",
@@ -2435,7 +2440,11 @@ export function NativeNotificationsPanel({
   // An OLDER gateway simply has no /v1/devices route. That is not an error the
   // user can act on — it is a missing capability upstream — so the whole panel
   // (and every button in it) disappears instead of offering calls that 404.
-  const [unsupported, setUnsupported] = useState(false);
+  // The refusal is remembered per machine, because a panel that paints itself
+  // and then deletes itself takes everything below it up the screen with it.
+  const [unsupported, setUnsupported] = useState(() =>
+    client.isDevicesUnsupported(),
+  );
   // This device's own answer, remembered per gateway: a machine you disconnected
   // from stays silent across relaunches, and a machine you connected to stays
   // registered even while another gateway is the one you have open.
@@ -2457,6 +2466,10 @@ export function NativeNotificationsPanel({
         setPerm(permission);
         setNotify(wanted);
         setErr(null);
+        // A machine that was upgraded since the last visit answers now: take
+        // the remembered refusal back off rather than staying hidden until the
+        // app is relaunched.
+        setUnsupported(false);
       } catch (e) {
         if (signal?.aborted) return;
         if (

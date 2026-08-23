@@ -75,6 +75,7 @@ const machine = () => {
   const unregistered: string[] = [];
   const client = {
     cachedDevices: () => null,
+    isDevicesUnsupported: () => false,
     devices: async () => ({
       devices: [
         { token_preview: maskToken(GRANT), platform: "ios", is_relayed: true },

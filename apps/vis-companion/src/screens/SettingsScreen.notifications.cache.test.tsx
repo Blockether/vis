@@ -76,9 +76,10 @@ const held = {
 };
 
 /** A machine that answers, but never within the frame under test. */
-const slowMachine = (cached: typeof held | null) =>
+const slowMachine = (cached: typeof held | null, hasDevices = true) =>
   ({
     cachedDevices: () => cached,
+    isDevicesUnsupported: () => !hasDevices,
     devices: () => new Promise(() => undefined),
     pushTarget: () => ({
       status: async () => signing,
@@ -107,10 +108,10 @@ const makeLocalStorage = () => {
   } as unknown as Storage;
 };
 
-const open = (cached: typeof held | null) =>
+const open = (cached: typeof held | null, hasDevices = true) =>
   render(
     <NativeNotificationsPanel
-      client={slowMachine(cached)}
+      client={slowMachine(cached, hasDevices)}
       gateway={{ url: MACHINE, label: "buildbox" }}
     />,
   );
@@ -142,6 +143,17 @@ describe("reopening the notifications panel", () => {
     open(null);
 
     expect(screen.getByText("Checking…")).toBeTruthy();
+  });
+
+  // Regression, same report: a machine too old to carry `/v1/devices` painted
+  // the whole panel and then deleted it, so MCP and everything under it jumped
+  // up the screen a moment after the dialog opened. The refusal is remembered
+  // per machine, so the next open never paints a panel it is about to remove.
+  it("stays away on a machine that already refused the device route", () => {
+    const view = open(null, false);
+
+    expect(view.container.firstChild).toBeNull();
+    expect(screen.queryByText("Notifications")).toBeNull();
   });
 
   it("remembers a machine this device is NOT connected to", async () => {

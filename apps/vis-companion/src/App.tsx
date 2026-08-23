@@ -586,19 +586,28 @@ export function App() {
     void openSharedSession();
   }, [shareNonce, routeApplied, openSharedSession]);
 
-  // Precache the provider/model fleet. `/v1/router` costs the daemon a live
-  // auth + limits probe per provider, so warming it at connect time (and once
-  // per TTL after) is what makes the model picker open instantly instead of
-  // spinning for seconds on first use.
+  // Precache what the settings panels and the model picker will ask for, for
+  // EVERY paired machine, not just the one that is open. Opening Settings used
+  // to paint Providers, MCP and Notifications empty and fill them a moment
+  // later — reported as the dialog flickering — because each panel asked its
+  // machine on mount. Swept here, the panel a reader opens has already been
+  // answered and only repaints rows that really moved. `/v1/router` is the
+  // expensive one (a live auth + limits probe per provider), so the whole sweep
+  // is TTL-guarded inside the client.
   useEffect(() => {
-    if (!client) return;
-    client.prefetchRouter();
-    const timer = window.setInterval(
-      () => client.prefetchRouter(),
-      ROUTER_TTL_MS,
-    );
-    return () => window.clearInterval(timer);
-  }, [client]);
+    if (conns.length === 0) return;
+    const warm = () => {
+      for (const conn of conns)
+        new GatewayClient({ url: conn.url, token: conn.token }).prefetchPanels();
+    };
+    warm();
+    const off = onWake(warm);
+    const timer = window.setInterval(warm, ROUTER_TTL_MS);
+    return () => {
+      off();
+      window.clearInterval(timer);
+    };
+  }, [conns]);
 
   // Version handshake, once per gateway. `/healthz` stays open even to a client
   // the gateway refuses to serve, so a protocol mismatch can explain itself
