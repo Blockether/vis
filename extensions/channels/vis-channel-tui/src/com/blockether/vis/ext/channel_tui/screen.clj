@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.screen
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.attachment-intake :as attachment-intake]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
@@ -2090,6 +2091,57 @@
             (finally (reset! dialog-closed-at (System/currentTimeMillis))
                      (state/dispatch [:set-dialog-open false])))
        (finally (.unlock draw-lock))))
+
+(defn- attachment-capabilities!
+  []
+  (or (:attachment-capabilities @state/app-db)
+      (when-let [capabilities (attachment-intake/fetch-gateway-capabilities!)]
+        (state/dispatch [:set-attachment-capabilities capabilities])
+        capabilities)))
+
+(defn- apply-attachment-intake!
+  [{:keys [handled? rejected] :as result}]
+  (when handled?
+    (state/dispatch [:apply-attachment-intake result])
+    (when (seq rejected)
+      (vis/notify! (str/join "; " rejected) :level :warn :ttl-ms status-error-ttl-ms))
+    true))
+
+(defn- insert-pasted-text!
+  [text]
+  (when-not (empty? text)
+    (if (input/use-placeholder? text)
+      (do (state/dispatch [:add-paste text])
+          (let [{:keys [paste-counter pastes] :as db}
+                @state/app-db
+
+                entry
+                (get pastes paste-counter)]
+
+            (state/dispatch [:update-input
+                             (input/paste-text (:input db)
+                                               (input/format-paste-placeholder entry))])))
+      (let [db @state/app-db]
+        (state/dispatch [:update-input (input/paste-text (:input db) text)])))))
+
+(defn- pick-attachments!
+  [screen]
+  (if-let [capabilities (attachment-capabilities!)]
+    (let [workspace-root (try (str (workspace/cwd)) (catch Throwable _ nil))
+          files (attachment-intake/workspace-picker-files capabilities workspace-root)]
+
+      (if (seq files)
+        (when-let [selected (with-dialog-lock
+                              #(dlg/multi-select-dialog! screen "Attach Files" files))]
+          (apply-attachment-intake! (attachment-intake/picker-selection capabilities
+                                                                        (:attachments @state/app-db)
+                                                                        selected)))
+        (vis/notify! "No gateway-supported files were found in this workspace."
+                     :level :warn
+                     :ttl-ms status-error-ttl-ms)))
+    (vis/notify! "Attachment capabilities are unavailable from the gateway."
+                 :level :warn
+                 :ttl-ms status-error-ttl-ms)))
 
 (defn- band-top-row
   "First screen row a session band for `spec` will paint on, at the anchor the
@@ -6156,61 +6208,26 @@
                    (let [^StringBuilder sb @paste-buffer]
                      (when sb
                        (let [pasted (.toString sb)
-                             ;; An EMPTY bracketed paste with an image on the
-                             ;; clipboard = the user hit ⌘V on a screenshot /
-                             ;; copied image. The terminal sends no text, so
-                             ;; read the pixels ourselves into a temp PNG and
-                             ;; drive the temp path through the SAME image-paste
-                             ;; flow as a dropped image file below.
-                             text (if (.isEmpty pasted)
-                                    (or (some-> (input/read-clipboard-image!)
-                                                :path)
-                                        "")
-                                    pasted)]
+                             current (:attachments @state/app-db)
+                             workspace-root (try (str (workspace/cwd)) (catch Throwable _ nil))
+                             result (cond (.isEmpty pasted) (if-let [image
+                                                                     (input/read-clipboard-image!)]
+                                                              (attachment-intake/clipboard-image
+                                                                (attachment-capabilities!)
+                                                                current
+                                                                image)
+                                                              {:handled? false :source :clipboard})
+                                          (attachment-intake/dropped-files pasted workspace-root)
+                                          (attachment-intake/file-drop (attachment-capabilities!)
+                                                                       current
+                                                                       pasted
+                                                                       workspace-root)
+                                          :else {:handled? false :source :drop})]
 
                          (vreset! paste-buffer nil)
-                         (when-not (.isEmpty ^String text)
-                           (if-let [image (timg/probe-paste-image text
-                                                                  {:workspace-root
-                                                                   (try (str (workspace/cwd))
-                                                                        (catch Throwable _ nil))})]
-                             ;; Dropped image file: the terminal pasted its
-                             ;; PATH. Always chip it (never inline the raw
-                             ;; path) with an `[Image #N: ...]` placeholder
-                             ;; carrying the sniffed file metadata; the send
-                             ;; path expands it back to the path text so the
-                             ;; engine attaches the pixels.
-                             (do (state/dispatch [:add-paste text image])
-                                 (let [{:keys [paste-counter pastes]} @state/app-db
-                                       entry (get pastes paste-counter)
-                                       token (input/format-paste-placeholder entry)
-                                       db' @state/app-db]
-
-                                   (state/dispatch [:update-input
-                                                    (input/paste-text (:input db') token)])))
-                             (if (input/use-placeholder? text)
-                               ;; Stash the payload, insert a
-                               ;; one-line `[Pasted #N: ...]` placeholder.
-                               ;; The send path expands every active
-                               ;; placeholder back into its content via
-                               ;; `expand-paste-placeholders`. Reading
-                               ;; the new id back out of the atom right
-                               ;; after the dispatch is safe: every db
-                               ;; event handler runs on the dispatching
-                               ;; thread, so the swap is already visible.
-                               (do (state/dispatch [:add-paste text])
-                                   (let [{:keys [paste-counter pastes]} @state/app-db
-                                         entry (get pastes paste-counter)
-                                         token (input/format-paste-placeholder entry)
-                                         db' @state/app-db]
-
-                                     (state/dispatch [:update-input
-                                                      (input/paste-text (:input db') token)])))
-                               ;; Short single-line paste: inline,
-                               ;; matches the natural feel of
-                               ;; `git rev-parse HEAD`-style copies.
-                               (state/dispatch [:update-input
-                                                (input/paste-text (:input db) text)]))))))
+                         (if (:handled? result)
+                           (apply-attachment-intake! result)
+                           (insert-pasted-text! pasted))))
                      (recur))
                    ;; Mouse events: scrollbar grab/drag + wheel scroll.
                    ;; Bypass `input/handle-key` entirely - those events
@@ -7290,10 +7307,7 @@
                                   (state/dispatch [:toggle-voice-conversation])
 
                                   :pick-file
-                                  ;; `@` opens the INLINE file picker now (same as the
-                                  ;; web); the modal is gone. This palette entry just
-                                  ;; seeds an `@` at the caret to start it.
-                                  (state/dispatch [:update-input (input/paste-text state "@")])
+                                  (pick-attachments! screen)
 
                                   ;; No :quit branch - the palette has no Quit
                                   ;; entry; Ctrl+C is the only quit path.
@@ -7599,7 +7613,7 @@
                              (recur))
 
                          :pick-file
-                         (do (state/dispatch [:update-input (input/paste-text state "@")]) (recur))
+                         (do (pick-attachments! screen) (recur))
 
                          :send
                          ;; If the slash overlay is visible, Enter was

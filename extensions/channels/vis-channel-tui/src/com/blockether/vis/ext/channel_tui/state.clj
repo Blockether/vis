@@ -1374,6 +1374,10 @@
        ;; message reaches the agent. Cleared on send.
        :pastes {}
        :paste-counter 0
+       :attachments []
+       :attachment-feedback []
+       ;; Global because every tab talks to the same gateway contract.
+       :attachment-capabilities nil
        :loading? false
        :cancel-token nil
        :cancelling? false
@@ -2655,6 +2659,16 @@
                   (cond-> (assoc db :input new-input)
                     (not (str/starts-with? (str/triml text) "/"))
                     (assoc :slash-command-hidden? false)))))
+
+(reg-event-db :set-attachment-capabilities
+              (fn [db [_ capabilities]]
+                (assoc db :attachment-capabilities capabilities)))
+
+(reg-event-db :apply-attachment-intake
+              (fn [db [_ result]]
+                (assoc db
+                  :attachments (vec (:attachments result))
+                  :attachment-feedback (vec (:rejected result)))))
 
 (reg-event-db :hide-slash-command-suggestions
               (fn [db _]
