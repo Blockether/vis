@@ -4326,6 +4326,19 @@
                  {:seen #{} :out []})
          :out)))
 
+(defn- release-workspace-sessions!
+  "Detach every TUI view through the gateway lifecycle path. Busy turns stay
+   daemon-owned; `chat/dispose!` releases the process client lease without
+   cancelling them."
+  []
+  (run! chat/dispose! (workspace-sessions)))
+
+(defn- quit-tui!
+  "Stop only this UI. Gateway-owned active and queued turns keep running."
+  []
+  (state/dispatch [:shutdown])
+  nil)
+
 (defn- terminal-interrupt-action
   "Action for terminal-level interrupts (SIGINT from Ctrl+C, SIGTSTP from
    Ctrl+Z) that never reach Lanterna as KeyStrokes on some terminals.
@@ -4341,7 +4354,7 @@
     (state/dispatch [:reset-input])
 
     :quit
-    (state/dispatch [:shutdown])))
+    (quit-tui!)))
 
 (defn- register-terminal-signal-handler!
   [signal-name f]
@@ -7326,42 +7339,7 @@
                              (recur))
 
                          :quit
-                         ;; Ctrl+C with an empty draft normally exits the
-                         ;; TUI. While a turn is in flight that exit path
-                         ;; orphans the worker future — and worse, gives
-                         ;; the user no way to abort a stuck iteration
-                         ;; (e.g. an LLM HTTP response that never starts
-                         ;; streaming). Intercept: cancel the in-flight
-                         ;; turn instead of quitting. A second Ctrl+C
-                         ;; with no turn running falls through to nil and
-                         ;; the TUI exits as before.
-                         (let [db @state/app-db]
-                           (cond
-                             ;; First Ctrl+C on a live turn cancels it (the user's only
-                             ;; escape hatch from a stuck iteration) instead of orphaning
-                             ;; the worker. But once a cancel is ALREADY pending
-                             ;; (`:cancelling?`, e.g. after an Esc), `:loading?` stays true
-                             ;; until the daemon's terminal event lands — so re-firing
-                             ;; cancel-turn here just re-arms and recurs, and the TUI never
-                             ;; quits ("I hit Ctrl+C and it won't die"). A Ctrl+C while a
-                             ;; cancel is in flight means "get me out": quit now and let
-                             ;; teardown fire the cancel token.
-                             (and (:loading? db) (not (:cancelling? db)))
-                             (do (state/dispatch [:cancel-turn]) (recur))
-                             (state/any-background-loading? db)
-                             (let [n (count (state/background-loading-tokens db))
-                                   ok? (with-dialog-lock #(dlg/confirm-dialog!
-                                                            screen
-                                                            "Abort running tasks?"
-                                                            [(str n
-                                                                  " background task"
-                                                                  (when (> n 1) "s")
-                                                                  " still running in other tab"
-                                                                  (when (> n 1) "s")
-                                                                  ".") "Abort them and quit?"]))]
-
-                               (if ok? (do (state/dispatch [:cancel-all-turns]) nil) (recur)))
-                             :else nil))
+                         (quit-tui!)
 
                          :clear-input
                          ;; Priority order while a turn is loading:
@@ -7810,8 +7788,7 @@
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
              (doseq [[_ cleanup] @session-live-listeners]
                (try (cleanup) (catch Throwable _ nil)))
-             (doseq [session (workspace-sessions)]
-               (chat/dispose! session))
+             (release-workspace-sessions!)
              (when-let [cleanup @ssh-passphrase-cleanup]
                (try (cleanup) (catch Throwable _ nil)))
              (.stopScreen screen))))))))

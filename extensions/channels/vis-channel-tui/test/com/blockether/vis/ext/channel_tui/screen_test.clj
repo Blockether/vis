@@ -33,6 +33,10 @@
 
 (def ^:private parse-args (deref #'screen/parse-args))
 
+(def ^:private quit-tui! (deref #'screen/quit-tui!))
+
+(def ^:private release-workspace-sessions! (deref #'screen/release-workspace-sessions!))
+
 
 (def ^:private live-progress-only-change? (deref #'screen/live-progress-only-change?))
 
@@ -703,6 +707,48 @@
                           (reset! state/app-db {:input (input/empty-input)})
                           (handle-terminal-interrupt!))
                         (expect (= [[:reset-input] [:shutdown]] @events))
+                        (finally (reset! state/app-db old-db))))))
+
+;; Regression, task td-bb06cc: quitting with gateway work in flight opened an
+;; abort dialog and sent cancellation requests for active and background turns.
+(defdescribe detach-only-quit-test
+             (it "shuts down only the local UI while active and queued work remains gateway-owned"
+                 (let [old-db
+                       @state/app-db
+
+                       events
+                       (atom [])]
+
+                   (try (reset! state/app-db {:input (input/empty-input)
+                                              :loading? true
+                                              :pending-sends [{:text "queued"}]
+                                              :tab-locals {:background {:loading? true}}})
+                        (with-redefs [state/dispatch #(swap! events conj %)]
+                          (expect (nil? (quit-tui!)))
+                          (expect (= [[:shutdown]] @events)))
+                        (finally (reset! state/app-db old-db)))))
+             (it "releases every unique TUI session view without a cancellation call"
+                 (let [old-db
+                       @state/app-db
+
+                       released
+                       (atom [])
+
+                       sid-a
+                       (java.util.UUID/randomUUID)
+
+                       sid-b
+                       (java.util.UUID/randomUUID)]
+
+                   (try (reset! state/app-db {:session {:id sid-a}
+                                              :loading? true
+                                              :tab-locals
+                                              {:same {:session {:id sid-a} :loading? true}
+                                               :other {:session {:id sid-b} :loading? true}}})
+                        (with-redefs [vis/gateway-release-session! #(swap! released conj %)]
+                          (release-workspace-sessions!))
+                        (expect (= #{sid-a sid-b} (set @released)))
+                        (expect (= 2 (count @released)))
                         (finally (reset! state/app-db old-db))))))
 
 (defdescribe
