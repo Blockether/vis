@@ -1379,16 +1379,7 @@
             (is (str/ends-with? png (str name ".png")))))))
     (testing "fold returns all expanded rows to the transcript receipt"
       (is (lv/dormant? (lv/reopened running)))
-      (is (nil? (lv/band-rows 96 24 [(lv/reopened running)] 1 3))))
-    (testing "the expanded surface floats directly under its collapsed receipt"
-      ;; Regression, td-2d89a0: the expanded Activity band was docked above the
-      ;; prompt, so it drifted away from the collapsed anchor row it belongs to
-      ;; as the transcript scrolled.
-      (let [[from to] (lv/band-rows 96 40 [running] 1 3 8)]
-        (is (= 9 (long from)) "the surface opens one row under the anchor")
-        (is (= 10 (inc (- (long to) (long from)))) "and keeps its ten-row bound"))
-      (is (= (lv/band-rows 96 40 [running] 1 3) (lv/band-rows 96 40 [running] 1 3 100))
-          "an anchor at or below the dock leaves the docked geometry alone"))))
+      (is (nil? (lv/band-rows 96 24 [(lv/reopened running)] 1 3))))))
 
 (deftest activity-transcript-state-test
   (testing "open, patch, and close replace one anchored Activity row"

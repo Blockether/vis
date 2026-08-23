@@ -7,19 +7,24 @@
    `--sessions-id`."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.capture :as cap]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
+            [com.blockether.vis.ext.channel-tui.live-view :as lv]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.ext.channel-tui.selection :as selection]
-            [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.terminals :as term]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
+            [com.blockether.vis.human-input :as hi]
+            [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.human-input :as engine]
+            [com.blockether.vis.internal.human-input.live :as live]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.screen TerminalScreen]
@@ -2102,3 +2107,145 @@
         (expect (nil? (slash-suggestions-for-db
                         nil
                         {:input recalled :slash-command-index 0 :slash-command-hidden? true}))))))
+
+;; Regression, td-2d89a0: the expanded Activity surface stayed docked above the
+;; composer while its collapsed transcript receipt moved during history scroll.
+(defdescribe
+  activity-transcript-anchor-scroll-paint-test
+  (it
+    "follows the receipt through transcript layout, anchor lookup, and full-frame paint"
+    (let [cols
+          96
+
+          rows
+          40
+
+          pane
+          (-> (hi/view {:title "Activity" :classification :activity}
+                       (hi/status "now" "Polling the run" {:label "Now" :tone :running})
+                       (hi/steps "operations"
+                                 [{:id "op-1" :label "Inspect source" :tone :running}]))
+              engine/normalize-live-view
+              live/materialize
+              (assoc :id "activity-scroll"
+                     :seq 0
+                     :created-at (System/currentTimeMillis)
+                     :classification :activity)
+              lv/opened
+              lv/reopened)
+
+          db
+          {:config nil
+           :session {:id "anchor-scroll-session"}
+           :title "Scroll proof"
+           :messages [{:id "anchor-context"
+                       :role :user
+                       :text (str/join " " (map #(str "context" %) (range 200)))}
+                      {:id "anchor-answer"
+                       :role :assistant
+                       :text (str/join " " (map #(str "answer" %) (range 120)))
+                       :traces [{:forms [{:code "grep({...})" :success? true}]}]
+                       :runs [{:view-id "activity-scroll"
+                               :title "Activity"
+                               :is-activity true
+                               :status-text "1 settled · 1 running"
+                               :status-tone :running
+                               :is-reopened true
+                               :anchor {:iteration-index 0 :form-index 0}}]}]
+           :scroll scroll/follow
+           :input (input/empty-input)
+           :settings {}
+           :pending-sends []
+           :detail-expansions {}
+           :live-views [pane]
+           :loading? false
+           :cancelling? false
+           :progress nil
+           :channel-status {}
+           :tabs []
+           :tab-locals {}
+           :slash-command-index 0
+           :render-version 0}
+
+          old-db
+          @state/app-db
+
+          before-grid
+          (atom nil)
+
+          after-grid
+          (atom nil)
+
+          paint-shot!
+          (fn [name grid]
+            (cap/shot! {:cols cols
+                        :rows rows
+                        :font-size 14
+                        :out name
+                        :paint!
+                        (fn [{:keys [terminal screen]}]
+                          (with-redefs [timg/images-protocol (constantly nil)]
+                            (let [layout
+                                  (#'screen/render-frame! screen cols rows @state/app-db 1000)]
+                              (reset! grid (term/grid terminal))
+                              (swap! state/app-db assoc :layout layout)
+                              layout)))}))
+
+          row-containing
+          (fn [grid needle]
+            (first (keep-indexed (fn [row line]
+                                   (when (str/includes? line needle) row))
+                                 grid)))]
+
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (try
+        (reset! state/app-db db)
+        (let [before-png
+              (paint-shot! "vis-activity-anchor-before-scroll" before-grid)
+
+              before-layout
+              (:layout @state/app-db)
+
+              _
+              (state/dispatch [:scroll-up 6 (:total-h before-layout) (:inner-h before-layout)])
+
+              _
+              (dotimes [_ 6]
+                (state/dispatch [:ease-scroll (:total-h before-layout) (:inner-h before-layout)]))
+
+              after-png
+              (paint-shot! "vis-activity-anchor-after-scroll" after-grid)
+
+              after-layout
+              (:layout @state/app-db)
+
+              before-receipt
+              (row-containing @before-grid "▾ ACTIVITY 1 settled · 1 running")
+
+              after-receipt
+              (row-containing @after-grid "▾ ACTIVITY 1 settled · 1 running")
+
+              before-surface
+              (row-containing @before-grid "ACTIVITY · LIVE")
+
+              after-surface
+              (row-containing @after-grid "ACTIVITY · LIVE")]
+
+          (expect (str/ends-with? before-png "vis-activity-anchor-before-scroll.png"))
+          (expect (str/ends-with? after-png "vis-activity-anchor-after-scroll.png"))
+          (expect (pos? (long (cap/ink before-png))))
+          (expect (pos? (long (cap/ink after-png))))
+          (expect (not= @before-grid @after-grid)
+                  "the two screenshots carry distinct scroll states")
+          (expect (= :at (get-in @state/app-db [:scroll :mode]))
+                  "the history gesture went through the real scroll event")
+          (expect (< (long (:eff-scroll after-layout)) (long (:eff-scroll before-layout))))
+          (expect (= (inc (long before-receipt)) (long before-surface))
+                  "the first full frame opens immediately under the transcript receipt")
+          (expect (= (inc (long after-receipt)) (long after-surface))
+                  "anchor lookup keeps the next full frame attached after scroll")
+          (expect (= (- (long after-receipt) (long before-receipt))
+                     (- (long after-surface) (long before-surface)))
+                  "receipt and expanded surface move by the same terminal rows"))
+        (finally (reset! state/app-db old-db))))))
