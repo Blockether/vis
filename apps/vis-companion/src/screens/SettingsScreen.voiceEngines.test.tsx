@@ -188,6 +188,32 @@ describe("the speech-engines band", () => {
     expect(screen.queryByRole("button", { name: /^Samantha/ })).toBeNull();
   });
 
+  it("reads and downloads an unselected engine from its own row", async () => {
+    const { client, asked } = machine();
+    vi.mocked(client.voiceModel).mockImplementation(
+      ({ start = false, engine }: { start?: boolean; engine?: string | null } = {}) => {
+        asked.push(`asr:${engine ?? "default"}:${start ? "start" : "read"}`);
+        if (engine === "whisper-local") {
+          return Promise.resolve(
+            start
+              ? { status: "downloading", engine, progress: 0 }
+              : { status: "absent", engine },
+          );
+        }
+        return Promise.resolve(ready(engine ?? "parakeet-local"));
+      },
+    );
+    render(<Harness client={client} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /ASR/ }));
+    await waitFor(() => expect(asked).toContain("asr:whisper-local:read"));
+    expect(choice(/Parakeet \(gateway\)/)?.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(await screen.findByRole("button", { name: "Download Whisper model" }));
+
+    await waitFor(() => expect(asked).toContain("asr:whisper-local:start"));
+    expect(choice(/Parakeet \(gateway\)/)?.getAttribute("aria-pressed")).toBe("true");
+  });
+
   it("reports a failed selected engine and retries only that engine", async () => {
     const { client, asked } = machine({
       status: "failed",
@@ -198,9 +224,9 @@ describe("the speech-engines band", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /ASR/ }));
     expect(
-      await screen.findByText("the archive did not match its checksum"),
-    ).toBeTruthy();
-    fireEvent.click(screen.getByText("Try again"));
+      (await screen.findAllByText("the archive did not match its checksum")).length,
+    ).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Retry Parakeet model" }));
 
     await waitFor(() =>
       expect(asked).toContain("asr:parakeet-local:start"),

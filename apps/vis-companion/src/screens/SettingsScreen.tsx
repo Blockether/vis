@@ -1274,6 +1274,8 @@ type EngineReading = {
   error: string | null;
 };
 
+type EngineReadings = Record<string, EngineReading>;
+
 type EngineChoice = { id: string; label?: string };
 
 function selectedEngine(
@@ -1287,12 +1289,15 @@ function selectedEngine(
 }
 
 /** A machine engine is local TO THE GATEWAY, which the Companion names explicitly. */
-function gatewayEngineLabel(engine: EngineChoice): string {
-  const source = (engine.label?.trim() || engine.id)
+function gatewayEngineName(engine: EngineChoice): string {
+  return (engine.label?.trim() || engine.id)
     .replace(/\s*\((?:local|gateway)\)\s*$/i, "")
     .replace(/[-_\s]+local$/i, "")
     .trim();
-  return `${source} (gateway)`;
+}
+
+function gatewayEngineLabel(engine: EngineChoice): string {
+  return `${gatewayEngineName(engine)} (gateway)`;
 }
 function engineWord(reading: EngineReading | null): string {
   if (reading === null) return "checking…";
@@ -1316,12 +1321,14 @@ function engineWord(reading: EngineReading | null): string {
   }
 }
 
-/** Only the exceptional detail below a selected engine; the choice row owns its status. */
+/** One engine's preparation action and exceptional detail, directly under its own row. */
 function EngineProblem({
+  engineName,
   reading,
   isBusy,
   onPrepare,
 }: {
+  engineName: string;
   reading: EngineReading | null;
   isBusy: boolean;
   onPrepare: () => void;
@@ -1334,6 +1341,7 @@ function EngineProblem({
   if (!reading?.absence && !reading?.error && state?.status !== "failed" && !canPrepare) {
     return null;
   }
+  const isDownload = state?.status === "absent";
   return (
     <div className="space-y-2 border-t border-dialog-edge px-3 py-3 sm:px-4">
       {reading?.absence && (
@@ -1348,12 +1356,13 @@ function EngineProblem({
       )}
       {reading?.error && <Banner kind="err">{reading.error}</Banner>}
       {canPrepare && (
-        <Button variant="primary" disabled={isBusy} onClick={onPrepare}>
-          {isBusy
-            ? "Asking…"
-            : state?.status === "absent"
-              ? "Download the model"
-              : "Try again"}
+        <Button
+          variant="primary"
+          disabled={isBusy}
+          aria-label={`${isDownload ? "Download" : "Retry"} ${engineName} model`}
+          onClick={onPrepare}
+        >
+          {isBusy ? "Asking…" : isDownload ? "Download model" : "Try again"}
         </Button>
       )}
     </div>
@@ -1380,16 +1389,16 @@ export function SpeechEnginesPanel({
     client.cachedCapabilities(),
   );
   const [open, setOpen] = useState<"asr" | "tts" | null>(null);
-  const [listening, setListening] = useState<EngineReading | null>(null);
-  const [speaking, setSpeaking] = useState<EngineReading | null>(null);
+  const [listening, setListening] = useState<EngineReadings>({});
+  const [speaking, setSpeaking] = useState<EngineReadings>({});
   const [voices, setVoices] = useState<DeviceVoice[] | null>(null);
-  const [busy, setBusy] = useState<"asr" | "tts" | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const voiceFeature = capabilities?.features?.voice;
   const speechFeature = capabilities?.features?.speech;
-  const asrEngines = voiceFeature?.engines ?? [];
-  const ttsEngines = speechFeature?.engines ?? [];
+  const asrEngines = useMemo(() => voiceFeature?.engines ?? [], [voiceFeature?.engines]);
+  const ttsEngines = useMemo(() => speechFeature?.engines ?? [], [speechFeature?.engines]);
   const asrEngine = selectedEngine(
     prefs.asrEngine,
     voiceFeature?.selected,
@@ -1399,11 +1408,6 @@ export function SpeechEnginesPanel({
     prefs.ttsEngine && ttsEngines.some((engine) => engine.id === prefs.ttsEngine)
       ? prefs.ttsEngine
       : null;
-  const machineTtsEngine = selectedEngine(
-    chosenTtsEngine,
-    speechFeature?.selected,
-    ttsEngines,
-  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1458,17 +1462,31 @@ export function SpeechEnginesPanel({
     [],
   );
 
+  const readDirection = useCallback(
+    async (
+      engines: EngineChoice[],
+      ask: (engine: string | null) => Promise<VoiceModelState>,
+    ): Promise<EngineReadings> => {
+      const ids: Array<string | null> = engines.length > 0 ? engines.map(({ id }) => id) : [null];
+      const answers = await Promise.all(
+        ids.map(async (engine) => [engine ?? "", await readOne(() => ask(engine))] as const),
+      );
+      return Object.fromEntries(answers);
+    },
+    [readOne],
+  );
+
   const loadModels = useCallback(
     async (signal?: AbortSignal) => {
       const [heard, spoken] = await Promise.all([
-        readOne(() => client.voiceModel({ signal, engine: asrEngine })),
-        readOne(() => client.speechModel({ signal, engine: machineTtsEngine })),
+        readDirection(asrEngines, (engine) => client.voiceModel({ signal, engine })),
+        readDirection(ttsEngines, (engine) => client.speechModel({ signal, engine })),
       ]);
       if (signal?.aborted) return;
       setListening(heard);
       setSpeaking(spoken);
     },
-    [asrEngine, client, machineTtsEngine, readOne],
+    [asrEngines, client, readDirection, ttsEngines],
   );
 
   useEffect(() => {
@@ -1477,9 +1495,9 @@ export function SpeechEnginesPanel({
     return () => controller.abort();
   }, [loadModels]);
 
-  const isMoving =
-    listening?.state?.status === "downloading" ||
-    speaking?.state?.status === "downloading";
+  const isMoving = [...Object.values(listening), ...Object.values(speaking)].some(
+    (reading) => reading.state?.status === "downloading",
+  );
   useEffect(() => {
     if (!isMoving) return;
     const timer = window.setInterval(() => void loadModels(), ENGINE_POLL_MS);
@@ -1508,24 +1526,31 @@ export function SpeechEnginesPanel({
     }
   }
 
-  async function prepare(direction: "asr" | "tts") {
-    setBusy(direction);
+  async function prepare(direction: "asr" | "tts", engine: string) {
+    const busyKey = `${direction}:${engine}`;
+    setBusy(busyKey);
     try {
       const state =
         direction === "asr"
-          ? await client.voiceModel({ start: true, engine: asrEngine })
-          : await client.speechModel({ start: true, engine: machineTtsEngine });
+          ? await client.voiceModel({ start: true, engine })
+          : await client.speechModel({ start: true, engine });
       const reading: EngineReading = { state, absence: null, error: null };
-      if (direction === "asr") setListening(reading);
-      else setSpeaking(reading);
+      if (direction === "asr") {
+        setListening((current) => ({ ...current, [engine]: reading }));
+      } else {
+        setSpeaking((current) => ({ ...current, [engine]: reading }));
+      }
     } catch (cause) {
       const failed: EngineReading = {
         state: null,
         absence: null,
         error: (cause as Error).message,
       };
-      if (direction === "asr") setListening(failed);
-      else setSpeaking(failed);
+      if (direction === "asr") {
+        setListening((current) => ({ ...current, [engine]: failed }));
+      } else {
+        setSpeaking((current) => ({ ...current, [engine]: failed }));
+      }
     } finally {
       setBusy(null);
     }
@@ -1565,26 +1590,39 @@ export function SpeechEnginesPanel({
             <div id="speech-asr-engines" className="border-t border-dialog-edge">
               {asrEngines.length > 0 ? (
                 <div className="grid grid-cols-1 gap-px bg-dialog-edge">
-                  {asrEngines.map((engine) => (
-                    <ChoiceCell
-                      key={engine.id}
-                      title={gatewayEngineLabel(engine)}
-                      sub={engine.id === asrEngine ? engineWord(listening) : "gateway"}
-                      isSelected={engine.id === asrEngine}
-                      onClick={() => void choose("asr", engine.id)}
-                    />
-                  ))}
+                  {asrEngines.map((engine) => {
+                    const reading = listening[engine.id] ?? null;
+                    return (
+                      <div key={engine.id} className="grid bg-input">
+                        <ChoiceCell
+                          title={gatewayEngineLabel(engine)}
+                          sub={engineWord(reading)}
+                          isSelected={engine.id === asrEngine}
+                          onClick={() => void choose("asr", engine.id)}
+                        />
+                        <EngineProblem
+                          engineName={gatewayEngineName(engine)}
+                          reading={reading}
+                          isBusy={busy === `asr:${engine.id}`}
+                          onPrepare={() => void prepare("asr", engine.id)}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
-                <p className="px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
-                  No ASR engine is registered on this machine.
-                </p>
+                <>
+                  <p className="px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
+                    No ASR engine is registered on this machine.
+                  </p>
+                  <EngineProblem
+                    engineName="ASR"
+                    reading={listening[""] ?? null}
+                    isBusy={false}
+                    onPrepare={() => undefined}
+                  />
+                </>
               )}
-              <EngineProblem
-                reading={listening}
-                isBusy={busy === "asr"}
-                onPrepare={() => void prepare("asr")}
-              />
             </div>
           )}
         </div>
@@ -1607,15 +1645,25 @@ export function SpeechEnginesPanel({
                     isSelected={chosenTtsEngine === null}
                     onClick={() => void choose("tts", null)}
                   />
-                  {ttsEngines.map((engine) => (
-                    <ChoiceCell
-                      key={engine.id}
-                      title={gatewayEngineLabel(engine)}
-                      sub={engine.id === chosenTtsEngine ? engineWord(speaking) : "gateway"}
-                      isSelected={engine.id === chosenTtsEngine}
-                      onClick={() => void choose("tts", engine.id)}
-                    />
-                  ))}
+                  {ttsEngines.map((engine) => {
+                    const reading = speaking[engine.id] ?? null;
+                    return (
+                      <div key={engine.id} className="grid bg-input">
+                        <ChoiceCell
+                          title={gatewayEngineLabel(engine)}
+                          sub={engineWord(reading)}
+                          isSelected={engine.id === chosenTtsEngine}
+                          onClick={() => void choose("tts", engine.id)}
+                        />
+                        <EngineProblem
+                          engineName={gatewayEngineName(engine)}
+                          reading={reading}
+                          isBusy={busy === `tts:${engine.id}`}
+                          onPrepare={() => void prepare("tts", engine.id)}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               </SettingsChoiceGroup>
 
@@ -1671,14 +1719,16 @@ export function SpeechEnginesPanel({
                       ))}
                     </div>
                   </SettingsChoiceGroup>
+                  {ttsEngines.length === 0 && (
+                    <EngineProblem
+                      engineName="TTS"
+                      reading={speaking[""] ?? null}
+                      isBusy={false}
+                      onPrepare={() => undefined}
+                    />
+                  )}
                 </>
-              ) : (
-                <EngineProblem
-                  reading={speaking}
-                  isBusy={busy === "tts"}
-                  onPrepare={() => void prepare("tts")}
-                />
-              )}
+              ) : null}
             </div>
           )}
         </div>
