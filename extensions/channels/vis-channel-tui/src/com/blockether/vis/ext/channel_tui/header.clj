@@ -418,6 +418,82 @@
 ;; The overflow nav arrow + inert center title are now `components/nav-arrow!`
 ;; and `components/title!`.
 
+(def ^:private ^:const min-tab-cell-width
+  "Smallest cell that keeps a title column beside the three-cell close button."
+  (+ (long components/close-button-width) 3))
+
+(defn- even-widths
+  "Split `total` cells across `n` entries, assigning remainder left-to-right."
+  [n total]
+  (let [n
+        (long n)
+
+        total
+        (max 0 (long total))]
+
+    (if (zero? n)
+      []
+      (let [base
+            (quot total n)
+
+            extra
+            (rem total n)]
+
+        (mapv #(long (+ base (if (< (long %) extra) 1 0))) (range n))))))
+
+(defn- tab-natural-width
+  "Columns one tab needs for its number, full label, padding, and close button."
+  [entry multi?]
+  (let [tab-no
+        (inc (long (:header/original-index entry)))
+
+        display
+        (str tab-no " | " (p/tab-display-label entry))]
+
+    (+ (long (p/display-width display))
+       (* 2 (long vh/tab-entry-padding))
+       (if multi? (long components/close-button-width) 0))))
+
+(defn- adaptive-tab-widths
+  "Allocate all `total` cells without making short labels starve long neighbours.
+
+   Narrow strips split evenly until every visible tab reaches the operable minimum.
+   From there, cells grow round-robin only toward each tab's natural content width;
+   once every label fits, any remaining room is shared evenly. The result depends on
+   labels and strip width only, never selection state."
+  [entries total multi?]
+  (let [entries
+        (vec entries)
+
+        n
+        (count entries)
+
+        total
+        (max 0 (long total))
+
+        minimum-total
+        (* (long n) (long min-tab-cell-width))]
+
+    (cond (zero? n) []
+          (< total minimum-total) (even-widths n total)
+          :else
+          (let [targets (mapv #(max (long min-tab-cell-width) (long (tab-natural-width % multi?)))
+                              entries)]
+            (loop [widths (vec (repeat n (long min-tab-cell-width)))
+                   remaining (- total minimum-total)]
+
+              (if (zero? remaining)
+                widths
+                (let [growable (keep-indexed (fn [idx width]
+                                               (when (< (long width) (long (nth targets idx))) idx))
+                                             widths)]
+                  (if (seq growable)
+                    (let [granted (take remaining growable)
+                          grant-n (count granted)]
+
+                      (recur (reduce #(update %1 %2 inc) widths granted) (- remaining grant-n)))
+                    (mapv + widths (even-widths n remaining))))))))))
+
 (defn- draw-center-workspaces!
   "Paint the visible workspace switcher window inside the center 60% slot.
 
@@ -486,18 +562,16 @@
                              *register-click-regions?*))
     (when (and (pos? n) (pos? entries-width))
       ;; Reserve a 1-col `│` divider between each adjacent pair of tabs, then
-      ;; share the rest of the width across the tabs.
+      ;; allocate the rest by each label's natural width. Short labels stop
+      ;; absorbing cells while a longer neighbour is still truncated.
       (let [divider-w
             (max 0 (dec n))
 
             tab-total
             (max 0 (- entries-width divider-w))
 
-            base
-            (quot tab-total n)
-
-            extra
-            (rem tab-total n)
+            cell-widths
+            (adaptive-tab-widths entries tab-total multi?)
 
             ;; Lay out each tab cell (the loop advances an extra col past
             ;; each tab for its trailing divider), then hand the drawing to
@@ -519,7 +593,7 @@
               (if (= idx n)
                 out
                 (let [cell-w
-                      (+ base (if (< idx extra) 1 0))
+                      (long (nth cell-widths idx))
 
                       entry
                       (nth entries idx)

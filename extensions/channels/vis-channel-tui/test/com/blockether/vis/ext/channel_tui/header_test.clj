@@ -5,7 +5,10 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.header :as vh]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [com.googlecode.lanterna TerminalSize]
+           [com.googlecode.lanterna.screen TerminalScreen]
+           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
 (def ^:private right-block-text (deref #'header/right-block-text))
 
@@ -42,6 +45,31 @@
        (setCharacter [col row ch]
          (swap! writes conj {:col col :row row :char ch :fg @fg :bg @bg :modifiers @active})
          this)))))
+
+(defn- paint-header-grid
+  "Paint one real Lanterna back-buffer and return its tab geometry and content row."
+  [cols db]
+  (Thread/interrupted)
+  (let [terminal
+        (DefaultVirtualTerminal. (TerminalSize. (int cols) 3))
+
+        screen
+        (TerminalScreen. terminal)]
+
+    (try (.startScreen screen)
+         (cr/reset!)
+         (cr/begin-frame!)
+         (header/draw-header! (.newTextGraphics screen) db 0 cols)
+         (cr/commit-frame!)
+         {:row (apply str
+                 (for [x (range cols)]
+                   (.getCharacterString (.getBackCharacter screen (int x) 1))))
+          :characters (mapv #(.getBackCharacter screen (int %) 1) (range cols))
+          :tabs (->> (cr/current)
+                     (filter #(and (= :workspace-entry (:kind %)) (integer? (:index %))))
+                     (sort-by :index)
+                     vec)}
+         (finally (.stopScreen screen)))))
 
 (defdescribe right-block-text-test
              (it "shows the short session id only"
@@ -260,6 +288,70 @@
             ;; with the shared accent while preserving its inverse foreground.
             (expect (= t/header-active-tab-fg (:fg (write-by-text " #123e4567 "))))
             (expect (= t/header-active-tab-accent (:bg (write-by-text " #123e4567 ")))))))))
+
+;; Regression, task td-b200ee: equal-width cells left large empty pads around a
+;; one-character title while truncating the longer neighbouring title.
+(defdescribe
+  adaptive-tab-width-grid-test
+  (it
+    "uses spare columns for the labels that need them at narrow and wide widths"
+    (let [tabs
+          [{:id :short :label "A"} {:id :long :label "A substantially longer workspace"}]
+
+          db
+          {:title "Chat"
+           :session {:id "123e4567-e89b-12d3-a456-426614174000"}
+           :active-tab-id :short
+           :tabs tabs}
+
+          narrow
+          (paint-header-grid 100 db)
+
+          wide
+          (paint-header-grid 220 db)
+
+          switched
+          (paint-header-grid 220 (assoc db :active-tab-id :long))
+
+          widths
+          #(mapv (comp :width :bounds) (:tabs %))]
+
+      ;; Real back-buffer rows keep both labels and both selectable cells at 100 cols.
+      (expect (str/includes? (:row narrow) "1 | A"))
+      (expect (= 2 (count (:tabs narrow))))
+      (expect (every? pos? (widths narrow)))
+      ;; The long title receives the otherwise wasted cells at both representative sizes.
+      (expect (> (second (widths narrow)) (first (widths narrow))))
+      (expect (> (second (widths wide)) (first (widths wide))))
+      (expect (str/includes? (:row wide) "A substantially longer workspace"))
+      ;; Selection changes paint only; geometry remains stable.
+      (expect (= (mapv :bounds (:tabs wide)) (mapv :bounds (:tabs switched))))))
+  (it "keeps adjacent cells separated by one painted grid column"
+      (let [{:keys [characters tabs]}
+            (paint-header-grid 100
+                               {:title "Chat"
+                                :session {:id "123e4567-e89b-12d3-a456-426614174000"}
+                                :active-tab-id :short
+                                :tabs [{:id :short :label "A"}
+                                       {:id :long :label "Long workspace"}]})
+
+            [first-tab second-tab]
+            tabs
+
+            first-col
+            (get-in first-tab [:bounds :col])
+
+            divider
+            (+ first-col (get-in first-tab [:bounds :width]))
+
+            second-col
+            (get-in second-tab [:bounds :col])]
+
+        (expect (= (inc divider) second-col))
+        ;; The divider is a terminal-paper column between two differently painted cells.
+        (expect (= t/header-active-tab-bg (.getBackgroundColor (nth characters first-col))))
+        (expect (= t/terminal-bg (.getBackgroundColor (nth characters divider))))
+        (expect (= t/dialog-bg (.getBackgroundColor (nth characters second-col)))))))
 
 (defdescribe
   draw-header-tab-entries-test
