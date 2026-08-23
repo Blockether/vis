@@ -14,6 +14,7 @@ import {
   LIVE_NOTE_CHARS,
   LIVE_VIEW_CLOSE_EVENT,
   liveViewFromWire,
+  type ActivityRow,
   type LiveNode,
   type LiveView,
 } from '../lib/live-view';
@@ -261,6 +262,146 @@ describe('a live view on the phone', () => {
     });
     expect(screen.getByText('Idle')).toBeTruthy();
     expect(screen.getByText('No operations yet')).toBeTruthy();
+  });
+
+  it('renders specialized rows, grouped children, evidence, and fallback in sequence order', () => {
+    const view = activityView();
+    const seed = view.activity!.rows[0];
+    const row = (
+      id: string,
+      sequence: number,
+      presenter: ActivityRow['presenter'],
+      signal: ActivityRow['signal'],
+      operation: string,
+    ): ActivityRow => ({
+      ...seed,
+      id,
+      sequence,
+      presenter,
+      signal,
+      operation,
+      summary: `${id} summary`,
+      evidence: [{ kind: 'arguments', text: `${id} evidence` }],
+    });
+    const shell = {
+      ...row('shell', 2, 'shell', 'observation', 'shell'),
+      children: [
+        row('wait', 2, 'shell', 'observation', 'shell.wait'),
+        row('output', 1, 'shell', 'observation', 'shell.output'),
+      ],
+    };
+    const patch = row('patch', 3, 'patch', 'mutation', 'apply_patch');
+    const generic = row('generic', 4, 'generic', 'generic', 'custom.inspect');
+    const tests = {
+      ...row('tests', 1, 'tests', 'verification', 'run_tests'),
+      result_summary: '24 passed',
+    };
+
+    paint({
+      view: {
+        ...view,
+        activity: { ...view.activity!, rows: [generic, patch, shell, tests] },
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+
+    const chronology = screen.getByRole('list', { name: 'Invocation chronology' });
+    const rendered = chronology.textContent ?? '';
+    expect(rendered.indexOf('TESTS')).toBeLessThan(rendered.indexOf('SHELL'));
+    expect(rendered.indexOf('SHELL')).toBeLessThan(rendered.indexOf('PATCH'));
+    expect(rendered.indexOf('PATCH')).toBeLessThan(rendered.indexOf('GENERIC'));
+    expect(rendered.indexOf('shell.output')).toBeLessThan(rendered.indexOf('shell.wait'));
+    expect(rendered).toContain('patch evidence');
+    expect(rendered).toContain('24 passed');
+    expect(rendered).toContain('custom.inspect · generic summary');
+    expect(chronology.parentElement?.className).toContain('max-h-80');
+    expect(chronology.parentElement?.className).toContain('overflow-y-auto');
+    expect(chronology.querySelector('[data-activity-row="patch"]')?.className).toContain(
+      'bg-warn-surface',
+    );
+  });
+
+  it('reports omissions and reopens the same bounded rail after collapse', () => {
+    const view = activityView();
+    paint({
+      view: {
+        ...view,
+        activity: {
+          ...view.activity!,
+          omitted: { rows: 1_093, by_classification: { observation: 1_000, generic: 93 } },
+        },
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    expect(screen.getByText(/1,093 omitted · 1,000 observation · 93 generic/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse Activity' }));
+    expect(screen.queryByRole('list', { name: 'Invocation chronology' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    expect(screen.getByText(/1,093 omitted · 1,000 observation · 93 generic/)).toBeTruthy();
+  });
+
+  it('names every specialized presenter with the approved compact vocabulary', () => {
+    const view = activityView();
+    const seed = view.activity!.rows[0];
+    const presenters = [
+      ['observation', 'grep', 'SEARCH'],
+      ['observation', 'cat', 'READ'],
+      ['lint', 'lint_code', 'LINT'],
+      ['repl', 'repl_eval', 'REPL'],
+      ['format', 'format_code', 'FORMAT'],
+      ['list', 'ls', 'LS'],
+    ] as const;
+    paint({
+      view: {
+        ...view,
+        activity: {
+          ...view.activity!,
+          rows: presenters.map(([presenter, operation], index) => ({
+            ...seed,
+            id: `presenter-${presenter}-${index}`,
+            sequence: index + 1,
+            presenter,
+            operation,
+          })),
+        },
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    const chronology = screen.getByRole('list', { name: 'Invocation chronology' });
+    for (const [, , label] of presenters) expect(chronology.textContent).toContain(label);
+  });
+
+  it('settles rows in place without reordering their keyed rail positions', () => {
+    const view = activityView();
+    const mounted = render(<LiveViewPanel view={view} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    const before = document.querySelector('[data-activity-row="call-2"]');
+
+    mounted.rerender(
+      <LiveViewPanel
+        view={{
+          ...view,
+          activity: {
+            ...view.activity!,
+            state: 'succeeded',
+            counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
+            rows: view.activity!.rows.map((entry) =>
+              entry.id === 'call-2'
+                ? { ...entry, state: 'succeeded', summary: 'suite completed' }
+                : entry,
+            ),
+          },
+        }}
+      />,
+    );
+
+    const after = document.querySelector('[data-activity-row="call-2"]');
+    expect(after).toBe(before);
+    expect(after?.textContent).toContain('suite completed');
+    const chronology = screen.getByRole('list', { name: 'Invocation chronology' });
+    expect((chronology.textContent ?? '').indexOf('grep')).toBeLessThan(
+      (chronology.textContent ?? '').indexOf('run_tests'),
+    );
   });
 });
 

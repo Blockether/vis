@@ -24,6 +24,7 @@ import {
   livePercent,
   orderedRows,
   type ActivityProjection,
+  type ActivityRow,
   type LiveLinkNode,
   type LiveLogNode,
   type LiveLogPage,
@@ -566,6 +567,177 @@ function activityElapsed(startedAt?: number, endedAt?: number): string | null {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+const ACTIVITY_PRESENTER = {
+  generic: { label: 'GENERIC', mark: '◇' },
+  shell: { label: 'SHELL', mark: '┌' },
+  tests: { label: 'TESTS', mark: '✓' },
+  patch: { label: 'PATCH', mark: '↗' },
+  observation: { label: 'OBSERVE', mark: '⌕' },
+  lint: { label: 'LINT', mark: '✓' },
+  repl: { label: 'REPL', mark: '✓' },
+  format: { label: 'FORMAT', mark: '✓' },
+  list: { label: 'LIST', mark: '✓' },
+} as const;
+
+function activityPresenter(row: ActivityRow) {
+  if (row.presenter === 'list' && row.operation.toLowerCase() === 'ls')
+    return { label: 'LS', mark: '✓' };
+  if (row.presenter !== 'observation') return ACTIVITY_PRESENTER[row.presenter];
+  const operation = row.operation.toLowerCase();
+  if (operation === 'grep' || operation.includes('search'))
+    return { label: 'SEARCH', mark: '⌕' };
+  if (operation === 'cat' || operation.includes('read'))
+    return { label: 'READ', mark: '⌞' };
+  return ACTIVITY_PRESENTER.observation;
+}
+
+function activityRowFace(row: ActivityRow) {
+  if (row.state === 'failed')
+    return {
+      ink: 'text-err-ink',
+      rail: 'border-err',
+      mark: '×',
+      surface: 'bg-err-surface',
+    };
+  if (row.state === 'running')
+    return {
+      ink: 'text-accent-ink',
+      rail: 'border-accent',
+      mark: '●',
+      surface: 'bg-result',
+    };
+  if (row.state === 'cancelled')
+    return {
+      ink: 'text-dialog-hint',
+      rail: 'border-dialog-hint',
+      mark: '■',
+      surface: 'bg-result',
+    };
+  if (row.signal === 'mutation')
+    return {
+      ink: 'text-warn',
+      rail: 'border-warn-strong',
+      mark: '↗',
+      surface: 'bg-warn-surface',
+    };
+  if (row.signal === 'verification')
+    return { ink: 'text-ok', rail: 'border-ok', mark: '✓', surface: 'bg-result' };
+  return {
+    ink: 'text-code-duration',
+    rail: 'border-dialog-hint',
+    mark: activityPresenter(row).mark,
+    surface: 'bg-result',
+  };
+}
+
+function ActivityRailRow({
+  row,
+  child = false,
+}: {
+  row: ActivityRow;
+  child?: boolean;
+}) {
+  const presenter = activityPresenter(row);
+  const face = activityRowFace(row);
+  const duration = activityElapsed(0, row.duration_ms);
+  const evidence = [
+    ...row.evidence,
+    ...(row.result_summary
+      ? [{ kind: 'result' as const, text: row.result_summary }]
+      : []),
+    ...(row.error_summary ? [{ kind: 'error' as const, text: row.error_summary }] : []),
+  ];
+  const emphasized =
+    row.state === 'failed' || row.signal === 'mutation' || row.signal === 'verification';
+
+  return (
+    <li
+      className={`min-w-0 border-t border-code-edge px-2.5 py-1.5 first:border-t-0 ${face.surface}`}
+      data-activity-row={row.id}
+    >
+      <div
+        className={`grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)_auto] items-baseline gap-x-2 font-mono text-meta ${child ? 'pl-2' : ''}`}
+      >
+        <span aria-hidden="true" className={face.ink}>
+          {child ? '└' : face.mark}
+        </span>
+        <span
+          className={`font-bold ${emphasized ? face.ink : 'text-code-duration'}`}
+        >
+          {presenter.label}
+        </span>
+        <span
+          className={`min-w-0 break-words ${emphasized ? 'font-medium text-code-result' : 'text-dialog-hint'}`}
+        >
+          {row.operation} · {row.summary || row.state}
+        </span>
+        {duration && (
+          <span className="tabular-nums text-code-duration">{duration}</span>
+        )}
+      </div>
+      {(evidence.length > 0 || row.is_truncated) && (
+        <div
+          className={`mt-1.5 grid gap-1 overflow-x-auto border-l-2 pl-3 font-mono text-meta ${face.rail}`}
+        >
+          {evidence.map((item, index) => (
+            <p
+              key={`${item.kind}-${index}`}
+              className={`whitespace-pre-wrap break-words ${item.kind === 'error' ? 'text-err-ink' : item.kind === 'result' ? face.ink : 'text-dialog-hint'}`}
+            >
+              {item.text}
+            </p>
+          ))}
+          {row.is_truncated && <p className="text-warn">… evidence truncated</p>}
+        </div>
+      )}
+      {(row.children?.length ?? 0) > 0 && (
+        <ol
+          className="mt-1.5 border-l border-code-edge"
+          aria-label={`${presenter.label} chronology`}
+        >
+          {[...row.children!]
+            .sort((left, right) => left.sequence - right.sequence)
+            .map((entry) => (
+              <ActivityRailRow key={entry.id} row={entry} child />
+            ))}
+        </ol>
+      )}
+    </li>
+  );
+}
+
+function ActivityRail({ activity }: { activity?: ActivityProjection }) {
+  const rows = [...(activity?.rows ?? [])].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
+  const omitted = activity?.omitted.rows ?? 0;
+  const omittedKinds = Object.entries(activity?.omitted.by_classification ?? {})
+    .filter(([, count]) => count > 0)
+    .map(([kind, count]) => `${ACTIVITY_NUMBER.format(count)} ${kind}`)
+    .join(' · ');
+
+  return (
+    <div className="max-h-80 overflow-y-auto overscroll-contain" data-activity-rail>
+      <ol aria-label="Invocation chronology">
+        {rows.map((row) => (
+          <ActivityRailRow key={row.id} row={row} />
+        ))}
+        {omitted > 0 && (
+          <li className="border-t border-code-edge bg-result px-2.5 py-1.5 font-mono text-meta text-dialog-hint">
+            … {ACTIVITY_NUMBER.format(omitted)} omitted
+            {omittedKinds && ` · ${omittedKinds}`}
+          </li>
+        )}
+        {rows.length === 0 && omitted === 0 && (
+          <li className="bg-result px-2.5 py-1.5 font-mono text-meta text-dialog-hint">
+            No retained invocations
+          </li>
+        )}
+      </ol>
+    </div>
+  );
+}
+
 function ActivityViewPanel({
   view,
   isSettled,
@@ -586,7 +758,6 @@ function ActivityViewPanel({
   const rail = bounded ? 'border-warn-strong' : face.rail;
   const ink = bounded ? 'text-warn' : face.ink;
   const mark = bounded ? '!' : face.mark;
-  const steps = view.nodes.find((node): node is LiveStepsNode => node.type === 'steps');
   const facts = activityFacts(activity);
   const duration = activityElapsed(view.created_at, endedAt ?? (isSettled ? undefined : now));
 
@@ -649,23 +820,7 @@ function ActivityViewPanel({
           </span>
         </Disclosure>
       </header>
-      {expanded && (
-        <ol className="divide-y divide-dialog-edge" aria-label="Invocation chronology">
-          {(steps?.steps ?? []).map((step, index) => (
-            <li key={step.id} className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)_auto] gap-2 px-3 py-2 font-mono text-chip">
-              <span className="text-right text-dialog-hint">{index + 1}</span>
-              <span className="min-w-0">
-                <span className={`block break-words ${TONE_INK[step.tone]}`}>{step.label}</span>
-                {step.detail && <span className="block break-words text-dialog-hint">{step.detail}</span>}
-              </span>
-              {step.value && <span className="text-dialog-hint">{step.value}</span>}
-            </li>
-          ))}
-          {(steps?.steps.length ?? 0) === 0 && (
-            <li className="px-3 py-2 font-mono text-chip text-dialog-hint">No retained invocations</li>
-          )}
-        </ol>
-      )}
+      {expanded && <ActivityRail activity={activity} />}
     </section>
   );
 }
