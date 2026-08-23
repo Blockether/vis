@@ -13,6 +13,7 @@ import type { GatewayClient } from '../lib/gateway';
 import {
   LIVE_NOTE_CHARS,
   LIVE_VIEW_CLOSE_EVENT,
+  LIVE_VIEW_PATCH_EVENT,
   liveViewFromWire,
   type ActivityRow,
   type LiveNode,
@@ -428,8 +429,11 @@ describe('a live view on the phone', () => {
 
     mounted.rerender(
       <LiveViewPanel
+        isSettled
+        endedAt={2_000}
         view={{
           ...view,
+          created_at: 1_000,
           activity: {
             ...view.activity!,
             state: 'succeeded',
@@ -446,6 +450,8 @@ describe('a live view on the phone', () => {
 
     const after = document.querySelector('[data-activity-row="call-2"]');
     expect(after).toBe(before);
+    expect(screen.getByRole('button', { name: 'Collapse Activity' })).toBeTruthy();
+    expect(screen.queryByRole('status')).toBeNull();
     expect(after?.textContent).toContain('suite completed');
     const chronology = screen.getByRole('list', { name: 'Invocation chronology' });
     expect((chronology.textContent ?? '').indexOf('grep')).toBeLessThan(
@@ -758,6 +764,173 @@ describe('what a run says about its own layout', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('keeps the terminal Activity picture settled while its record is filed', async () => {
+    let receive: ((event: SseEvent) => void) | null = null;
+    const running = activityView();
+    const client = { liveViews: () => Promise.resolve([running]) } as unknown as GatewayClient;
+    const subscriptions = {
+      subscribeConnection: () => () => undefined,
+      subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
+        receive = listener;
+        return () => undefined;
+      },
+    } as unknown as SessionSubscriptionHub;
+
+    function Probe() {
+      const views = useLiveViews(client, subscriptions, 'session-1');
+      const view = views[0];
+      return (
+        <span>
+          {view?.activity?.state}:{view?.activity?.counts.running}:
+          {view?.is_settled ? 'settled' : 'live'}
+        </span>
+      );
+    }
+
+    render(<Probe />);
+    await waitFor(() => expect(screen.getByText('running:1:live')).toBeTruthy());
+    act(() =>
+      receive?.({
+        type: LIVE_VIEW_CLOSE_EVENT,
+        view_id: running.id,
+        ts: 99,
+        result: {
+          view: {
+            title: running.title,
+            nodes: running.nodes,
+            activity: {
+              ...running.activity!,
+              state: 'succeeded',
+              counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
+              rows: running.activity!.rows.map((row) => ({ ...row, state: 'succeeded' })),
+            },
+          },
+        },
+      }),
+    );
+    expect(screen.getByText('succeeded:0:settled')).toBeTruthy();
+  });
+
+  it('repairs an Activity sequence gap from the materialized snapshot', async () => {
+    let receive: ((event: SseEvent) => void) | null = null;
+    const running = activityView();
+    const repaired = { ...running, seq: 4 };
+    const liveViews = vi
+      .fn<() => Promise<LiveView[]>>()
+      .mockResolvedValueOnce([running])
+      .mockResolvedValue([repaired]);
+    const client = { liveViews } as unknown as GatewayClient;
+    const subscriptions = {
+      subscribeConnection: () => () => undefined,
+      subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
+        receive = listener;
+        return () => undefined;
+      },
+    } as unknown as SessionSubscriptionHub;
+
+    function Probe() {
+      const views = useLiveViews(client, subscriptions, 'session-1');
+      return <span>{views[0]?.seq ?? 'none'}</span>;
+    }
+
+    render(<Probe />);
+    await waitFor(() => expect(screen.getByText('0')).toBeTruthy());
+    act(() =>
+      receive?.({
+        type: LIVE_VIEW_PATCH_EVENT,
+        view_id: running.id,
+        first_seq: 3,
+        patch: { view_id: running.id, seq: 4, ops: [] },
+      }),
+    );
+    await waitFor(() => expect(screen.getByText('4')).toBeTruthy());
+    expect(liveViews).toHaveBeenCalledTimes(2);
+  });
+
+  it('replaces an Activity with its reconnect snapshot', async () => {
+    let reconnect: ((connected: boolean) => void) | null = null;
+    const running = activityView();
+    const refreshed = { ...running, seq: 2 };
+    const liveViews = vi
+      .fn<() => Promise<LiveView[]>>()
+      .mockResolvedValueOnce([running])
+      .mockResolvedValue([refreshed]);
+    const client = { liveViews } as unknown as GatewayClient;
+    const subscriptions = {
+      subscribeConnection: (listener: (connected: boolean) => void) => {
+        reconnect = listener;
+        return () => undefined;
+      },
+      subscribeSession: () => () => undefined,
+    } as unknown as SessionSubscriptionHub;
+
+    function Probe() {
+      const views = useLiveViews(client, subscriptions, 'session-1');
+      return <span>{views[0]?.seq ?? 'none'}</span>;
+    }
+
+    render(<Probe />);
+    await waitFor(() => expect(screen.getByText('0')).toBeTruthy());
+    act(() => reconnect?.(true));
+    await waitFor(() => expect(screen.getByText('2')).toBeTruthy());
+    expect(liveViews).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not let an older reconnect snapshot overwrite an Activity close', async () => {
+    let reconnect: ((connected: boolean) => void) | null = null;
+    let receive: ((event: SseEvent) => void) | null = null;
+    let resolveReload: ((views: LiveView[]) => void) | null = null;
+    const running = activityView();
+    const liveViews = vi
+      .fn<() => Promise<LiveView[]>>()
+      .mockResolvedValueOnce([running])
+      .mockImplementationOnce(
+        () => new Promise<LiveView[]>((resolve) => (resolveReload = resolve)),
+      );
+    const client = { liveViews } as unknown as GatewayClient;
+    const subscriptions = {
+      subscribeConnection: (listener: (connected: boolean) => void) => {
+        reconnect = listener;
+        return () => undefined;
+      },
+      subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
+        receive = listener;
+        return () => undefined;
+      },
+    } as unknown as SessionSubscriptionHub;
+
+    function Probe() {
+      const views = useLiveViews(client, subscriptions, 'session-1');
+      const view = views[0];
+      return <span>{view?.is_settled ? view.activity?.state : 'live'}</span>;
+    }
+
+    render(<Probe />);
+    await waitFor(() => expect(screen.getByText('live')).toBeTruthy());
+    act(() => reconnect?.(true));
+    act(() =>
+      receive?.({
+        type: LIVE_VIEW_CLOSE_EVENT,
+        view_id: running.id,
+        result: {
+          view: {
+            title: running.title,
+            nodes: running.nodes,
+            activity: {
+              ...running.activity!,
+              state: 'succeeded',
+              counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
+              rows: running.activity!.rows.map((row) => ({ ...row, state: 'succeeded' })),
+            },
+          },
+        },
+      }),
+    );
+    expect(screen.getByText('succeeded')).toBeTruthy();
+    await act(async () => resolveReload?.([running]));
+    expect(screen.getByText('succeeded')).toBeTruthy();
   });
 });
 

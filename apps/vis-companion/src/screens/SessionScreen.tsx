@@ -5022,7 +5022,7 @@ export function SessionScreen({
     () => liveViews.filter((view) => view.classification !== "activity"),
     [liveViews],
   );
-  const watching = liveViews.at(-1)?.title ?? null;
+  const watching = liveViews.filter((view) => !view.is_settled).at(-1)?.title ?? null;
 
   const liveRow = useMemo(() => {
     if (!liveTurn) return null;

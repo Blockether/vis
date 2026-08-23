@@ -2405,7 +2405,11 @@ const TraceSegment = memo(function TraceSegment({
                 chunk.formIndex,
               );
               const activity = liveActivity ? (
-                <LiveViewPanel view={liveActivity} />
+                <LiveViewPanel
+                  view={liveActivity}
+                  isSettled={liveActivity.is_settled}
+                  endedAt={liveActivity.ended_at}
+                />
               ) : client && sid && chunk.attachment ? (
                 <LiveRunRow
                   client={client}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button,
   BandLabel,
@@ -55,10 +55,11 @@ import {
  * differs is only what each surface is good at: the terminal scrolls one band
  * with a keyboard, the phone scrolls the page it already sits in.
  *
- * A view LEAVES when it ends. The record keeps every line, the model is handed
- * the closing picture as data, and a finished panel on a phone is a screen
- * telling the operator about work that is over — so the rows go back to the
- * transcript the moment the close event lands, exactly as the band does.
+ * An ordinary view LEAVES when it ends. Activity first overlays the close
+ * event's terminal picture through the record-filing handoff, so the operator
+ * never sees stale running counts. The record keeps every line, the model is
+ * handed the closing picture as data, and the settled row returns to the
+ * transcript.
  */
 
 /** One ink per tone. `idle` is the screen's ordinary ink: nothing is wrong with it. */
@@ -1035,15 +1036,18 @@ export function useLiveViews(
   onRecordFiled?: () => void,
 ): LiveViewModel[] {
   const [views, setViews] = useState<LiveViewModel[]>([]);
+  const revision = useRef(0);
 
   useEffect(() => {
+    revision.current += 1;
     let cancelled = false;
     const controller = new AbortController();
     const reload = () => {
+      const requestedAt = revision.current;
       client
         .liveViews(sid, controller.signal)
         .then((open) => {
-          if (!cancelled) setViews(open);
+          if (!cancelled && requestedAt === revision.current) setViews(open);
         })
         .catch(() => undefined);
     };
@@ -1057,19 +1061,21 @@ export function useLiveViews(
       // A close on the gateway thread files into the running block's collector
       // immediately, but that collector reaches the persisted iteration only when
       // the block returns. The close frame can therefore beat one transcript read.
-      // Re-read across that short handoff instead of making the vanished live panel
-      // the only evidence that the record exists.
+      // Re-read across that short handoff so the settled picture gives way to
+      // the durable transcript record without a manual refresh.
       for (const delay of [250, 1_000, 3_000, 8_000]) {
         recordRefreshTimers.push(setTimeout(() => onRecordFiled?.(), delay));
       }
     };
     const stopEvents = subscriptions.subscribeSession(sid, (event) => {
       if (!isLiveViewEvent(event)) return;
+      revision.current += 1;
       setViews((current) => applyLiveViewEvent(current, event));
       if (event.type === LIVE_VIEW_CLOSE_EVENT) revealRecord();
     });
     return () => {
       cancelled = true;
+      revision.current += 1;
       controller.abort();
       stopConnection();
       stopEvents();
@@ -1086,10 +1092,11 @@ export function useLiveViews(
     if (!isStale) return;
     let cancelled = false;
     const controller = new AbortController();
+    const requestedAt = revision.current;
     client
       .liveViews(sid, controller.signal)
       .then((open) => {
-        if (!cancelled) setViews(open);
+        if (!cancelled && requestedAt === revision.current) setViews(open);
       })
       .catch(() => undefined);
     return () => {

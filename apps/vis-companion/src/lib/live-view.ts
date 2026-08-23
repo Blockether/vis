@@ -9,9 +9,11 @@
  *
  * A view is not a question. Nothing here blocks a run, nothing answers, and the
  * only thing the operator can do to one is INTERRUPT it — one POST, not a form.
- * That is why a view is a section on the session screen rather than a dialog,
- * and why it LEAVES the screen the moment it ends: the record keeps it, the
- * model is handed it as data, and the rows go back to the transcript.
+ * That is why a view is a section on the session screen rather than a dialog.
+ * Ordinary views leave when they end; Activity overlays its terminal picture
+ * through the short record-filing handoff so running work never flashes stale.
+ * The record keeps either kind, the model receives it as data, and settled rows
+ * return to the transcript.
  *
  * This module is the pure half: the closed vocabularies the engine declares,
  * wire parsing, and the reduction of those three events into what is on screen.
@@ -308,6 +310,10 @@ export interface LiveView {
   activity?: ActivityProjection;
   /** Local reconnect marker, never sent on the wire. */
   is_stale?: boolean;
+  /** Local close handoff marker: the terminal Activity picture is no longer live. */
+  is_settled?: boolean;
+  /** Gateway time of the close frame, used to freeze settled Activity duration. */
+  ended_at?: number;
 }
 
 /**
@@ -1056,24 +1062,43 @@ export function isLiveViewEvent(event: SseEvent): boolean {
 /**
  * Fold one session event into the views on screen.
  *
- * A repeated `open` REPLACES its view instead of stacking a second copy, a
- * close DROPS it (the run is over; its record and the model's copy survive
- * elsewhere), and the list identity is preserved when nothing changed so the
- * section does not remount under the operator's finger.
+ * A repeated `open` REPLACES its view instead of stacking a second copy. An
+ * ordinary close drops its view; an Activity close overlays the authoritative
+ * terminal picture and keeps it settled through the record-filing handoff. The
+ * list identity is preserved when nothing changed so the section does not
+ * remount under the operator's finger.
  */
 export function applyLiveViewEvent(views: LiveView[], event: SseEvent): LiveView[] {
   if (event.type === LIVE_VIEW_CLOSE_EVENT) {
     const viewId = text(event.view_id);
     if (viewId === '') return views;
+    const at = views.findIndex((view) => view.id === viewId);
+    if (at < 0) return views;
+    const current = views[at];
+    if (current.classification === 'activity') {
+      const result = record(event.result);
+      const terminal = recordedViewFromWire(result?.view, current);
+      if (terminal?.classification === 'activity') {
+        const merged = views.slice();
+        merged[at] = {
+          ...terminal,
+          is_settled: true,
+          ended_at: optionalNumber(event.ts),
+        };
+        return merged;
+      }
+    }
     const kept = views.filter((view) => view.id !== viewId);
     return kept.length === views.length ? views : kept;
   }
   if (event.type === LIVE_VIEW_OPEN_EVENT) {
     const view = liveViewFromWire(event.view);
     if (!view) return views;
-    const at = views.findIndex((open) => open.id === view.id);
-    if (at < 0) return [...views, view];
-    const merged = views.slice();
+    const current =
+      view.classification === 'activity' ? views.filter((open) => !open.is_settled) : views;
+    const at = current.findIndex((open) => open.id === view.id);
+    if (at < 0) return [...current, view];
+    const merged = current.slice();
     merged[at] = view;
     return merged;
   }
@@ -1096,12 +1121,12 @@ export function staleLiveViews(views: LiveView[]): LiveView[] {
 /**
  * The RECORD of one settled view, folded back into the picture it ended on.
  *
- * A view LEAVES the screen when it closes, and what outlives it is the NDJSON the
- * engine appended while it ran (`human-input.live-sink`): the declared view, one
- * line per ACCEPTED patch, and the verdict that sealed it. Folding those lines
- * here is the same reduction `applyLiveViewEvent` runs over the stream, run over a
- * file instead — which is what lets an artifact opened months later paint the run
- * without the gateway ever having held a frame of it.
+ * What durably outlives a closed view is the NDJSON the engine appended while it
+ * ran (`human-input.live-sink`): the declared view, one line per ACCEPTED patch,
+ * and the verdict that sealed it. Folding those lines here is the same reduction
+ * `applyLiveViewEvent` runs over the stream, run over a file instead — which is
+ * what lets an artifact opened months later paint the run without the gateway
+ * ever having held a frame of it.
  *
  * The trailer's own picture WINS when it carries one: that is the state the model
  * was handed on the close, so the app shows exactly it rather than its own replay.

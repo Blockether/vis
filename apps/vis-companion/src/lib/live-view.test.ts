@@ -66,14 +66,16 @@ function nodeOfType<K extends LiveNode['type']>(
 
 const ids = (view: LiveView) => view.nodes.map((node) => node.id);
 
-const activityProjection = (state: 'running' | 'succeeded' = 'running') => ({
+const activityProjection = (
+  state: 'running' | 'succeeded' | 'failed' | 'cancelled' = 'running',
+) => ({
   schema_version: 1,
   state,
   counts: {
     running: state === 'running' ? 1 : 0,
     succeeded: state === 'succeeded' ? 1 : 0,
-    failed: 0,
-    cancelled: 0,
+    failed: state === 'failed' ? 1 : 0,
+    cancelled: state === 'cancelled' ? 1 : 0,
   },
   rows: [
     {
@@ -346,6 +348,77 @@ describe('the three session events', () => {
     );
     expect(nodeOfType(moved[0], 'now', 'status').text).toBe('Scanning db-3');
     expect(moved).not.toBe(views);
+  });
+
+  it.each(['succeeded', 'failed', 'cancelled'] as const)(
+    'keeps the authoritative %s Activity close picture through record filing',
+    (state) => {
+      const raw = {
+        id: 'activity-1',
+        title: 'Activity',
+        classification: 'activity',
+        seq: 0,
+        activity: activityProjection(),
+        nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
+      };
+      const running = liveViewFromWire(raw)!;
+      const views = applyLiveViewEvent([running], {
+        type: LIVE_VIEW_CLOSE_EVENT,
+        view_id: running.id,
+        ts: 99,
+        result: {
+          view: {
+            title: 'Activity',
+            activity: activityProjection(state),
+            nodes: [{ id: 'status', type: 'status', text: state, tone: 'ok' }],
+          },
+        },
+      });
+
+      expect(views).toHaveLength(1);
+      expect(views[0]).toMatchObject({
+        id: running.id,
+        classification: 'activity',
+        is_settled: true,
+        ended_at: 99,
+        activity: { state, counts: { running: 0 } },
+        nodes: [{ text: state }],
+      });
+    },
+  );
+
+  it('drops an Activity close whose terminal picture is not paintable', () => {
+    const running = liveViewFromWire({
+      id: 'activity-1',
+      title: 'Activity',
+      classification: 'activity',
+      activity: activityProjection(),
+      nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
+    })!;
+    expect(
+      applyLiveViewEvent([running], {
+        type: LIVE_VIEW_CLOSE_EVENT,
+        view_id: running.id,
+        result: { view: { activity: { state: 'succeeded' } } },
+      }),
+    ).toEqual([]);
+  });
+
+  it('replaces the prior settled Activity when the next one opens', () => {
+    const raw = {
+      id: 'activity-2',
+      title: 'Activity',
+      classification: 'activity',
+      activity: activityProjection(),
+      nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
+    };
+    const next = applyLiveViewEvent(
+      [{ ...liveViewFromWire({ ...raw, id: 'activity-1' })!, is_settled: true }],
+      { type: LIVE_VIEW_OPEN_EVENT, view_id: raw.id, view: raw },
+    );
+    expect(next).toHaveLength(1);
+    expect(next[0]).toMatchObject({ id: 'activity-2' });
+    expect(next[0].is_settled).toBeUndefined();
   });
 });
 
