@@ -666,9 +666,10 @@
           ;; companion knows to offer the gallery's videos and how big one may be.
           ;; A RECORDING rides beside them: no wire carries it to a model, but the
           ;; app cannot offer a voice memo it was never told this gateway keeps.
-          (is (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp" "video/mp4"
-                  "video/quicktime" "audio/aac" "audio/aiff" "audio/amr" "audio/flac" "audio/mp4"
-                  "audio/mpeg" "audio/ogg" "audio/wav" "audio/x-caf"]
+          (is (= ["image/jpeg" "image/png" "image/gif" "image/webp" "image/bmp" "application/pdf"
+                  "application/xhtml+xml" "text/html" "video/mp4" "video/quicktime" "audio/aac"
+                  "audio/aiff" "audio/amr" "audio/flac" "audio/mp4" "audio/mpeg" "audio/ogg"
+                  "audio/wav" "audio/x-caf"]
                  (get-in body ["features" "attachments" "media_types"])))
           (is (= ["video/mp4" "video/quicktime"]
                  (get-in body ["features" "attachments" "video_media_types"])))

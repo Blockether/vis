@@ -3294,11 +3294,14 @@
        :features {:chat {:enabled true}
                   :attachments {:enabled true
                                 :transport "inline-base64"
-                                ;; Derived, never a second list: a media type the sniffer
-                                ;; learns is offered by the picker in the same commit.
+                                ;; Derived, never a second list: every document or media
+                                ;; type the intake keeps is offered by the picker in the same
+                                ;; commit. Documents are human-only; the model receives their
+                                ;; names rather than bytes.
                                 :media-types (into ["image/jpeg" "image/png" "image/gif"
                                                     "image/webp" "image/bmp"]
-                                                   (concat (sort attachments/video-media-types)
+                                                   (concat (sort attachments/human-only-media-types)
+                                                           (sort attachments/video-media-types)
                                                            (sort attachments/audio-media-types)))
                                 :video-media-types (vec (sort attachments/video-media-types))
                                 ;; A recording rides the same intake as a clip and is kept for

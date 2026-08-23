@@ -125,8 +125,8 @@ function skinOf(element: ReactElement, select: string): string[] {
 // already shipped, and each drifted: its own panel (the one surface in the app with no
 // way out but the scrim, whose `Use project` landed 30px below a 1440x900 window), its
 // own heading band, its own 44px row that never shrank under a mouse, its own badge,
-// its own borderless pencil, and `quiet` for the secondary verb where every other
-// dialog footer uses `secondary`.
+// own borderless pencil, and `quiet` for the secondary verb where every other
+// task heading uses `secondary`.
 describe("ManageProjectsSheet paints no box of its own", () => {
   it("is the app’s one anchored panel, not a dialog of its own", async () => {
     const { panel } = sheet();
@@ -211,52 +211,50 @@ describe("ManageProjectsSheet paints no box of its own", () => {
     );
   });
 
-  it("commits with the footer every other dialog in the app commits with", async () => {
+  it("commits with the canonical buttons in the task heading", async () => {
     sheet({ isAdding: true });
     const use = await screen.findByRole("button", { name: "Use project" });
     const make = screen.getByRole("button", { name: "New folder" });
 
     expect(paint(make)).toEqual(
       skinOf(
-          <Button variant="secondary" onClick={() => {}}>
-            reference
-          </Button>,
+        <Button variant="secondary" density="compact" onClick={() => {}}>
+          reference
+        </Button>,
         "button",
       ),
     );
     expect(paint(use)).toEqual(
-      skinOf(<Button onClick={() => {}}>reference</Button>, "button"),
+      skinOf(
+        <Button density="compact" onClick={() => {}}>reference</Button>,
+        "button",
+      ),
     );
 
-    // Both verbs at the TRAILING edge, primary last — thrown to opposite ends of a
-    // 384px panel they read as two unrelated screens.
-    const row = use.parentElement;
-    expect(make.parentElement).toBe(row);
-    expect(classesOf(row!)).toContain("justify-end");
-    expect(classesOf(row!)).not.toContain("justify-between");
-    const order = [...row!.children];
+    const actions = use.parentElement;
+    expect(make.parentElement).toBe(actions);
+    expect(use.closest("header")).not.toBeNull();
+    const order = [...actions!.children];
     expect(order.indexOf(use)).toBeGreaterThan(order.indexOf(make));
   });
 
-  it("does not caption the footer with the path the crumbs already say", async () => {
+  it("does not caption the heading actions with the path the crumbs already say", async () => {
     sheet({ isAdding: true });
     const use = await screen.findByRole("button", { name: "Use project" });
 
-    // The footer repeated the destination as a third spelling of it — the crumb bar
-    // above already names the folder, and the button says what will happen to it.
+    // The path bar already names the folder, and the button says what will happen to it.
     expect(use.parentElement?.textContent).toBe("New folderUse project");
   });
 
-  it("docks the commit footer instead of scrolling it away", async () => {
+  it("keeps the commit verbs in the heading instead of scrolling them away", async () => {
     sheet({ isAdding: true });
     const row = await screen.findByRole("menuitem", { name: /tools/ });
     const use = screen.getByRole("button", { name: "Use project" });
 
-    // The list is the only part of this sheet that scrolls; the two verbs stay put.
     const scroller = row.closest(".overflow-y-auto");
     expect(scroller).not.toBeNull();
     expect(scroller!.contains(use)).toBe(false);
-    expect(classesOf(use.closest(".shrink-0")!)).toContain("border-t");
+    expect(use.closest("header")).not.toBeNull();
   });
 
   it("keeps a crumb a real target rather than 14px of bare text", async () => {
@@ -336,7 +334,7 @@ describe("browsing opens one level above the current project", () => {
 // already a project"). Aiming at a folder this machine ALREADY runs sessions in left
 // both verbs live: "Use project" re-added an existing root and said nothing.
 describe("a folder that is already a project offers no verb", () => {
-  it("takes both footer buttons down and says why", async () => {
+  it("takes both heading buttons down and says why", async () => {
     sheet({ isAdding: true, knownRoots: new Set([CODE]) });
     // The aim is the folder being LISTED, so the verbs only answer once it lands.
     await screen.findByRole("menuitem", { name: /vis/ });
@@ -430,6 +428,20 @@ describe("the path band", () => {
 
     expect(naming).not.toBeNull();
     expect(heights(naming!)).toEqual(["h-11", "mouse:h-9"]);
+  });
+
+  // Regression, user report: the two project verbs were docked below the folder list,
+  // where a phone could hide them instead of keeping them with the task they commit.
+  it("keeps both project verbs in the task heading, never in a footer", async () => {
+    sheet({ isAdding: true });
+    await screen.findByRole("menuitem", { name: /tools/ });
+
+    const use = screen.getByRole("button", { name: "Use project" });
+    const folder = screen.getByRole("button", { name: "New folder" });
+    const heading = use.closest("header");
+    expect(heading).not.toBeNull();
+    expect(heading).toBe(folder.closest("header"));
+    expect(use.closest("footer")).toBeNull();
   });
 });
 

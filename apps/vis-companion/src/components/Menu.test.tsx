@@ -62,7 +62,8 @@ describe('Menu parts', () => {
       expect(html).toContain('bg-dialog-title');
       expect(html).toContain('<button');
       expect(html).toContain('aria-label="Back to actions for tower"');
-      expect(html).toContain('min-h-11');
+      expect(html).toContain('min-h-12');
+      expect(html).toContain('mouse:min-h-9');
     });
   });
 

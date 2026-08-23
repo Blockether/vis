@@ -32,9 +32,8 @@ import { homeifyPath } from '../lib/path';
 const CRUMB_TAIL = 3;
 
 /**
- * The sheet's own leading edge, shared by its crumb bar, its rows and its footer, so
- * a path, the folder it lists and the folder you are about to commit all start at the
- * same x. They used to start at four different ones.
+ * The sheet's own leading edge, shared by its path bar and its rows, so a path and
+ * the folder it lists start at the same x. They used to start at four different ones.
  */
 const SHEET_EDGE = 'px-3';
 
@@ -298,6 +297,26 @@ export function ManageProjectsSheet({
     </IconButton>
   );
 
+  const projectActions = (
+    <>
+      <Button
+        variant="secondary"
+        density="compact"
+        disabled={saving || !here || alreadyProject}
+        onClick={() => setFolder(folder === null ? '' : null)}
+      >
+        {folder === null ? 'New folder' : 'Cancel'}
+      </Button>
+      <Button
+        density="compact"
+        disabled={saving || !target || alreadyProject || (folder !== null && !folder.trim())}
+        onClick={() => void commit()}
+      >
+        {folder === null ? 'Use project' : 'Create project'}
+      </Button>
+    </>
+  );
+
   return (
     <AnchoredPanel
       size="browse"
@@ -368,6 +387,7 @@ export function ManageProjectsSheet({
           from the browser is closing the sheet and finding the folder mark again. */}
       {isAdding ? (
         <MenuHeading
+          action={projectActions}
           onClose={onCancel}
           closeLabel={`Close new project on ${label}`}
         >{`New project · ${label}`}</MenuHeading>
@@ -375,8 +395,11 @@ export function ManageProjectsSheet({
         <MenuBack
           label={`Back to projects on ${label}`}
           onBack={() => setAdding(false)}
+          action={projectActions}
         >{`New project · ${label}`}</MenuBack>
       )}
+
+      {alreadyProject && <MenuNote>It’s already a project</MenuNote>}
 
       {typed === null ? (
         <div
@@ -465,8 +488,7 @@ export function ManageProjectsSheet({
         </div>
       )}
 
-      {/* The last folder drops its rule so it cannot land on the footer's own — see
-          `Menu`, which makes the same promise for the same reason. */}
+      {/* The last folder drops its rule so it cannot double the panel's bottom edge. */}
       <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0 [&>div>*:last-child]:border-b-0">
         {error ? (
           <p className={`py-3 font-mono text-meta text-err ${SHEET_EDGE}`}>{error}</p>
@@ -513,36 +535,6 @@ export function ManageProjectsSheet({
         )}
       </div>
 
-      <div className={`shrink-0 border-t border-dialog-edge bg-panel-2 py-2 ${SHEET_EDGE}`}>
-        {/* Both buttons at the TRAILING edge, primary last, because that is where the
-            thumb already is and where every other footer in this app commits. Thrown
-            to opposite ends of a 384px panel they read as two unrelated screens. */}
-        <div className="flex items-center justify-end gap-2">
-          {/* The answer, not a dead button: a folder this machine ALREADY runs sessions in
-              cannot be added again, so both verbs go down and the reason takes the empty
-              leading half of the footer — the one place the eye lands after the tap that
-              did nothing. Regression: "Use project" used to accept an existing root and
-              silently re-add it. */}
-          {alreadyProject && (
-            <p className="mr-auto text-meta text-dialog-hint">It’s already a project</p>
-          )}
-          <Button
-            variant="secondary"
-            disabled={saving || !here || alreadyProject}
-            onClick={() => setFolder(folder === null ? '' : null)}
-          >
-            {folder === null ? 'New folder' : 'Cancel'}
-          </Button>
-          <Button
-            disabled={
-              saving || !target || alreadyProject || (folder !== null && !folder.trim())
-            }
-            onClick={() => void commit()}
-          >
-            {folder === null ? 'Use project' : 'Create project'}
-          </Button>
-        </div>
-      </div>
         </>
       )}
     </AnchoredPanel>

@@ -2744,7 +2744,11 @@ export function SessionsScreen({
           )}
           projects={managedProjects(manageProjects.machine)}
           onCancel={() => setManageProjects(null)}
-          onChoose={(_root: string) => setManageProjects(null)}
+          onChoose={(root: string) => {
+            const conn = manageProjects.machine.conn;
+            setManageProjects(null);
+            void createSession({ kind: 'trunk' }, conn, root);
+          }}
           onRemove={(entry) => {
             const conn = manageProjects.machine.conn;
             setManageProjects(null);

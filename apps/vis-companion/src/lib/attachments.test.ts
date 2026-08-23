@@ -87,6 +87,19 @@ describe('the FILES door', () => {
     expect(result.attachments).toEqual([]);
     expect(result.rejected).toEqual(['archive.zip: unsupported media format']);
   });
+
+  // Regression, user report: the Files door advertised only camera and recording media,
+  // so the native document browser would not admit an ordinary document.
+  it("admits a document the platform names only by its extension", async () => {
+    filePicker.pickFiles.mockResolvedValue({
+      files: [picked("report.pdf", "")],
+    });
+
+    const result = await pickDocumentAttachments({ mediaTypes: ["application/pdf"] });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments[0].media_type).toBe("application/pdf");
+  });
 });
 
 describe('what a recording is measured against', () => {

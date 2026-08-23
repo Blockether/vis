@@ -162,6 +162,51 @@ describe('where "New session" lives', () => {
     expect(await screen.findByRole("dialog")).toBeTruthy();
   });
 
+  // Regression, user report: choosing a root from Manage projects only closed the sheet;
+  // its callback had no create handler, so the chosen project never joined the machine.
+  it("creates the first session in a project chosen from Manage projects", async () => {
+    const opened: string[] = [];
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: "alpha",
+          sessions: [listSession({ id: "a1", title: "First" })],
+          routes: {
+            "/v1/fs": {
+              path: "/Users/dev",
+              parent: "/Users",
+              home: "/Users/dev",
+              is_truncated: false,
+              entries: [
+                {
+                  name: "next-project",
+                  path: "/Users/dev/next-project",
+                  entry_count: 2,
+                  is_repo: true,
+                  branch: "main",
+                },
+              ],
+            },
+          },
+        },
+      ],
+      onOpen: (_conn, sid) => opened.push(sid),
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+
+    await userEvent.click(screen.getByRole("button", { name: "Projects on alpha" }));
+    await userEvent.click(screen.getByRole("button", { name: "New project…" }));
+    await screen.findByRole("menuitem", { name: /next-project/ });
+    await userEvent.click(screen.getByRole("button", { name: "Use project" }));
+
+    await waitFor(() => expect(opened).toHaveLength(1));
+    const create = view.requests.find(
+      (request) => request.method === "POST" && request.path === "/v1/sessions",
+    );
+    expect(create?.body).toEqual({ channel: "web", root: "/Users/dev" });
+  });
+
   // Regression, user report (the machine band struck out on a screenshot, with the create
   // verb moved up to the row that holds the machine chips): a band inside the card named
   // the machine the chips had just named, printed "2 projects · 1080 sessions" that every

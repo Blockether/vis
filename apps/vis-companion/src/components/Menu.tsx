@@ -199,22 +199,28 @@ export function MenuHeading({
 export function MenuBack({
   label,
   onBack,
+  action,
   children,
 }: {
   label: string;
   onBack: () => void;
+  /** The step's commit verbs, kept in the band beside the way back. */
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <button
-      type="button"
-      className={`${BAND} ${LOUD} flex min-h-11 w-full items-center gap-2 text-left`}
-      aria-label={label}
-      onClick={onBack}
-    >
-      <ChevronIcon back className="size-3" aria-hidden />
-      {children}
-    </button>
+    <header className={`flex min-h-12 shrink-0 items-stretch mouse:min-h-9 ${LOUD}`}>
+      <button
+        type="button"
+        className={`${BAND} flex min-w-0 flex-1 items-center gap-2 text-left`}
+        aria-label={label}
+        onClick={onBack}
+      >
+        <ChevronIcon back className="size-3 shrink-0" aria-hidden />
+        <span className="truncate">{children}</span>
+      </button>
+      {action && <span className="flex shrink-0 items-center gap-2 px-2">{action}</span>}
+    </header>
   );
 }
 
