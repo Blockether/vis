@@ -129,8 +129,9 @@ describe('a live view on the phone', () => {
     const onInterrupt = vi.fn();
     paint({ view: activityView(), onInterrupt });
 
-    expect(screen.getByText('ACTIVITY · LIVE')).toBeTruthy();
-    expect(screen.getByText('Running 1 · Succeeded 1')).toBeTruthy();
+    expect(screen.getByText('ACTIVITY')).toBeTruthy();
+    expect(screen.getByText('Running')).toBeTruthy();
+    expect(screen.getByText(/2 operations · 1 running · 24 passed/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
     expect(screen.queryByRole('list', { name: 'Invocation chronology' })).toBeNull();
 
@@ -145,10 +146,121 @@ describe('a live view on the phone', () => {
     expect(onInterrupt).not.toHaveBeenCalled();
   });
 
-  it('labels the settled receipt without claiming it is still live', () => {
+  it('keeps the approved touch row and reduced-motion disclosure contract', () => {
+    paint({ view: activityView() });
+    const receipt = screen.getByLabelText('Activity');
+    const header = receipt.querySelector('header');
+    const disclosure = screen.getByRole('button', { name: 'Expand Activity' });
+    expect(header?.className).toContain('min-h-10');
+    expect(header?.className).toContain('mouse:min-h-8');
+    expect(disclosure.className).toContain('min-h-8');
+    expect(disclosure.className).toContain('motion-reduce:transition-none');
+    expect(disclosure.querySelector('svg')).not.toBeNull();
+  });
+
+  it('uses the same state-first receipt after settlement', () => {
     paint({ view: activityView(), isSettled: true });
     expect(screen.getByText('ACTIVITY')).toBeTruthy();
-    expect(screen.queryByText('ACTIVITY · LIVE')).toBeNull();
+    expect(screen.getByText('Running')).toBeTruthy();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('paints completed mutation and verification facts with a frozen duration', () => {
+    const view = activityView();
+    paint({
+      view: {
+        ...view,
+        created_at: 1_000,
+        activity: {
+          ...view.activity!,
+          state: 'succeeded',
+          counts: { running: 0, succeeded: 3, failed: 0, cancelled: 0 },
+          rows: [
+            ...view.activity!.rows,
+            {
+              ...view.activity!.rows[0],
+              id: 'patch-1',
+              signal: 'mutation',
+              presenter: 'patch',
+              operation: 'patch',
+            },
+          ],
+        },
+      },
+      isSettled: true,
+      endedAt: 15_200,
+    });
+
+    expect(screen.getByText('Completed')).toBeTruthy();
+    expect(screen.getByText(/3 operations · 1 change · 24 passed/)).toBeTruthy();
+    expect(screen.getByText('14.2s')).toBeTruthy();
+  });
+
+  it.each([
+    {
+      state: 'failed' as const,
+      counts: { running: 0, succeeded: 0, failed: 1, cancelled: 0 },
+      expected: 'Failed',
+      fact: '1 verification failed',
+      signal: 'verification' as const,
+    },
+    {
+      state: 'cancelled' as const,
+      counts: { running: 0, succeeded: 0, failed: 0, cancelled: 1 },
+      expected: 'Cancelled',
+      fact: '1 cancelled',
+      signal: 'generic' as const,
+    },
+  ])('shows a truthful $state receipt', ({ state, counts, expected, fact, signal }) => {
+    const view = activityView();
+    paint({
+      view: {
+        ...view,
+        activity: {
+          ...view.activity!,
+          state,
+          counts,
+          rows: [{ ...view.activity!.rows[0], state, signal }],
+        },
+      },
+    });
+    expect(screen.getByText(expected)).toBeTruthy();
+    expect(screen.getByText(new RegExp(fact))).toBeTruthy();
+  });
+
+  it('keeps boundedness prominent without replacing the lifecycle state', () => {
+    const view = activityView();
+    paint({
+      view: {
+        ...view,
+        activity: {
+          ...view.activity!,
+          state: 'succeeded',
+          counts: { running: 0, succeeded: 1_094, failed: 0, cancelled: 0 },
+          omitted: { rows: 1_093, by_classification: { observation: 1_093 } },
+        },
+      },
+    });
+    expect(screen.getByText('Completed')).toBeTruthy();
+    expect(screen.getByText('+1,093 omitted')).toBeTruthy();
+    expect(screen.getByLabelText('Activity').className).toContain('border-warn-strong');
+  });
+
+  it('has an explicit empty state', () => {
+    const view = activityView();
+    paint({
+      view: {
+        ...view,
+        activity: {
+          ...view.activity!,
+          state: 'idle',
+          counts: { running: 0, succeeded: 0, failed: 0, cancelled: 0 },
+          rows: [],
+        },
+      },
+    });
+    expect(screen.getByText('Idle')).toBeTruthy();
+    expect(screen.getByText('No operations yet')).toBeTruthy();
   });
 });
 

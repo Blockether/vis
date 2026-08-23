@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Button,
+  BandLabel,
+  BandTally,
   Disclosure,
   Input,
   LoadMore,
@@ -21,6 +23,7 @@ import {
   liveFraction,
   livePercent,
   orderedRows,
+  type ActivityProjection,
   type LiveLinkNode,
   type LiveLogNode,
   type LiveLogPage,
@@ -485,42 +488,167 @@ function NodeCell({
   );
 }
 
+const ACTIVITY_FACE = {
+  idle: {
+    rail: 'border-dialog-hint',
+    ink: 'text-dialog-hint',
+    mark: '◇',
+    label: 'Idle',
+  },
+  running: {
+    rail: 'border-accent',
+    ink: 'text-accent-ink',
+    mark: '●',
+    label: 'Running',
+  },
+  succeeded: {
+    rail: 'border-ok',
+    ink: 'text-ok',
+    mark: '✓',
+    label: 'Completed',
+  },
+  failed: {
+    rail: 'border-err',
+    ink: 'text-err-ink',
+    mark: '×',
+    label: 'Failed',
+  },
+  cancelled: {
+    rail: 'border-dialog-hint',
+    ink: 'text-dialog-hint',
+    mark: '■',
+    label: 'Cancelled',
+  },
+} as const;
+
+const ACTIVITY_NUMBER = new Intl.NumberFormat('en-US');
+
+function plural(count: number, one: string, many = `${one}s`) {
+  return `${ACTIVITY_NUMBER.format(count)} ${count === 1 ? one : many}`;
+}
+
+function activityFacts(activity?: ActivityProjection): string[] {
+  if (!activity) return [];
+  const total = Object.values(activity.counts).reduce((sum, count) => sum + count, 0);
+  if (total === 0) return [];
+
+  const mutations = activity.rows.filter((row) => row.signal === 'mutation').length;
+  const verifications = activity.rows.filter((row) => row.signal === 'verification');
+  const failedVerifications = verifications.filter((row) => row.state === 'failed').length;
+  const verificationResult = verifications.find((row) => row.result_summary)?.result_summary;
+  const facts = [plural(total, 'operation')];
+
+  if (failedVerifications > 0) {
+    facts.unshift(`${plural(failedVerifications, 'verification')} failed`);
+  } else if (activity.counts.failed > 0) {
+    facts.unshift(`${plural(activity.counts.failed, 'operation')} failed`);
+  } else if (activity.counts.running > 0) {
+    facts.push(`${ACTIVITY_NUMBER.format(activity.counts.running)} running`);
+  }
+  if (mutations > 0) facts.push(plural(mutations, 'change'));
+  if (verificationResult) facts.push(verificationResult);
+  else if (verifications.length > 0) facts.push(plural(verifications.length, 'verification'));
+  if (activity.counts.cancelled > 0)
+    facts.push(`${ACTIVITY_NUMBER.format(activity.counts.cancelled)} cancelled`);
+
+  return facts.slice(0, 3);
+}
+
+function activityElapsed(startedAt?: number, endedAt?: number): string | null {
+  if (startedAt === undefined || endedAt === undefined) return null;
+  const milliseconds = Math.max(0, endedAt - startedAt);
+  if (milliseconds < 1000) return `${Math.round(milliseconds)}ms`;
+  const seconds = milliseconds / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remaining = Math.floor(seconds % 60);
+  if (minutes < 60) return `${minutes}m ${remaining}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 function ActivityViewPanel({
   view,
   isSettled,
+  endedAt,
 }: {
   view: LiveViewModel;
   isSettled: boolean;
+  endedAt?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const status = view.nodes.find((node): node is LiveStatusNode => node.type === 'status');
+  const [now, setNow] = useState(() => Date.now());
+  const activity = view.activity;
+  const state = activity?.state ?? 'idle';
+  const bounded =
+    (activity?.omitted.rows ?? 0) > 0 ||
+    (activity?.rows.some((row) => row.is_truncated) ?? false);
+  const face = ACTIVITY_FACE[state];
+  const rail = bounded ? 'border-warn-strong' : face.rail;
+  const ink = bounded ? 'text-warn' : face.ink;
+  const mark = bounded ? '!' : face.mark;
   const steps = view.nodes.find((node): node is LiveStepsNode => node.type === 'steps');
-  const stats = view.nodes.find((node): node is LiveStatNode => node.type === 'stat');
-  const facts = stats?.stats.filter((stat) => stat.value_text !== '0') ?? [];
+  const facts = activityFacts(activity);
+  const duration = activityElapsed(view.created_at, endedAt ?? (isSettled ? undefined : now));
+
+  useEffect(() => {
+    if (isSettled || state !== 'running' || view.created_at === undefined) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [isSettled, state, view.created_at]);
 
   return (
-    <section className="overflow-hidden border border-dialog-edge bg-panel" aria-label="Activity">
-      <header className="border-b border-dialog-edge bg-panel-2 px-3 py-1.5">
+    <section
+      className={`min-w-0 overflow-hidden border border-dialog-edge border-l-2 ${rail} bg-result shadow-[2px_2px_0_var(--dialog-shadow)]`}
+      aria-label="Activity"
+      role={isSettled ? undefined : 'status'}
+      aria-live={isSettled ? undefined : 'polite'}
+    >
+      <header className="flex min-h-10 items-center gap-2 bg-result px-2.5 mouse:min-h-8">
+        {state === 'running' && !bounded ? (
+          <Spinner tone="accent" />
+        ) : (
+          <span aria-hidden="true" className={`font-mono text-ui font-bold ${ink}`}>
+            {mark}
+          </span>
+        )}
         <Disclosure
           isOpen={expanded}
+          tone="step"
+          className="min-w-0 flex-1"
           aria-label={expanded ? 'Collapse Activity' : 'Expand Activity'}
           onClick={() => setExpanded((open) => !open)}
         >
-          <span className="min-w-0 flex-1 text-left">
-            <span className="block font-mono text-body font-bold text-white">
-              {isSettled ? 'ACTIVITY' : 'ACTIVITY · LIVE'}
+          <span className="flex min-w-0 flex-1 items-baseline gap-2">
+            <BandLabel className="shrink-0">ACTIVITY</BandLabel>
+            <span
+              className={`shrink-0 font-mono text-chip font-bold normal-case tracking-normal ${ink}`}
+            >
+              {face.label}
             </span>
-            <span className={`block truncate font-mono text-chip ${status ? TONE_INK[status.tone] : 'text-dialog-hint'}`}>
-              {status?.text ?? 'running'}
+            <span className="min-w-0 flex-1 truncate font-normal tracking-normal text-code-result">
+              {facts.length > 0 ? facts.join(' · ') : 'No operations yet'}
+              {bounded && (
+                <>
+                  {' · '}
+                  <BandTally>
+                    {(activity?.omitted.rows ?? 0) > 0
+                      ? `+${ACTIVITY_NUMBER.format(activity?.omitted.rows ?? 0)} omitted`
+                      : 'truncated'}
+                  </BandTally>
+                </>
+              )}
             </span>
+            {duration && (
+              <span
+                aria-hidden="true"
+                className="shrink-0 font-mono text-chip font-normal tabular-nums tracking-normal text-code-duration"
+              >
+                {duration}
+              </span>
+            )}
           </span>
         </Disclosure>
       </header>
-      {!expanded && facts.length > 0 && (
-        <p className="px-3 py-2 font-mono text-chip text-dialog-hint">
-          {facts.map((fact) => `${fact.label} ${fact.value_text}`).join(' · ')}
-        </p>
-      )}
       {expanded && (
         <ol className="divide-y divide-dialog-edge" aria-label="Invocation chronology">
           {(steps?.steps ?? []).map((step, index) => (
@@ -554,6 +682,7 @@ export function LiveViewPanel({
   error,
   load,
   isSettled = false,
+  endedAt,
 }: {
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
@@ -569,6 +698,8 @@ export function LiveViewPanel({
    * itself to a screen reader as one that can.
    */
   isSettled?: boolean;
+  /** Record seal time; paired with `created_at` for a frozen settled duration. */
+  endedAt?: number;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
@@ -584,7 +715,7 @@ export function LiveViewPanel({
     send(typed.trim() === '' ? null : typed.trim());
   };
   if (view.classification === 'activity') {
-    return <ActivityViewPanel view={view} isSettled={isSettled} />;
+    return <ActivityViewPanel view={view} isSettled={isSettled} endedAt={endedAt} />;
   }
 
   return (

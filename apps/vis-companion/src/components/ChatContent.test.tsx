@@ -704,7 +704,8 @@ describe("Activity owns the slot between its Python form and RESULT", () => {
         />,
       ),
     );
-    expect(rendered.match(/ACTIVITY · LIVE/g)).toHaveLength(1);
+    expect(rendered.match(/ACTIVITY/g)).toHaveLength(1);
+    expect(rendered).toContain("Running");
     expect(rendered.match(/Loading Activity/g)).toHaveLength(1);
   });
 
