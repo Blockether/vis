@@ -92,9 +92,13 @@
                  (su/settled-thinking-text
                    "No sentencepiece dependency is needed for Pocket models. The real bl…")))
       (expect (= "first" (su/settled-thinking-text "first\n\nsecond…"))))
-  (it "keeps a summary that ends ON a closed sentence untouched"
+  (it "keeps a summary that ends ON a closed sentence or heading untouched"
       (expect (= "One. Two. Three!" (su/settled-thinking-text "One. Two. Three!…")))
-      (expect (= "Done?" (su/settled-thinking-text "Done?"))))
+      (expect (= "Done?" (su/settled-thinking-text "Done?")))
+      (expect (= "**Planning**" (su/settled-thinking-text "**Planning**")))
+      (expect (= "## Check the parser" (su/settled-thinking-text "## Check the parser"))))
+  (it "keeps a closed heading before partially streamed prose"
+      (expect (= "**Planning**" (su/settled-thinking-text "**Planning**\nI should…"))))
   (it "drops a summary the provider cut before its first sentence"
       (expect (nil? (su/settled-thinking-text "So the issue…")))
       (expect (nil? (su/settled-thinking-text "I found…")))

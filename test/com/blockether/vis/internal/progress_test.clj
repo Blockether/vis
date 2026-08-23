@@ -198,6 +198,11 @@
                    {}
                    {:phase :iteration-final :done? true :thinking "Checked the parser. I need…"})]
         (expect (= "Checked the parser." (:thinking entry)))))
+  (it "keeps a punctuation-free Markdown heading on the TUI entry"
+      (let [entry (#'progress/update-entry
+                   {}
+                   {:phase :iteration-final :done? true :thinking "**Planning**"})]
+        (expect (= "**Planning**" (:thinking entry)))))
   (it "drops a cut summary instead of settling the stub on the entry"
       (let [entry (#'progress/update-entry
                    {:thinking "I need"}

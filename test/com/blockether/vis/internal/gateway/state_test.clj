@@ -3946,28 +3946,33 @@
 ;; Regression: `iteration.completed` shipped the provider's CUT summary as the
 ;; iteration's thinking, so every surface painted a two-word stub — `So the
 ;; issue…` on an iteration where the model had spent 24.5s and 2056 tokens.
-(defdescribe cut-summary-thinking-test
-             (it "clips a settled summary at the last sentence it closed"
-                 (let [[type _ payload] (#'state/chunk->event
-                                         {:phase :iteration-final
-                                          :done? true
-                                          :iteration 1
-                                          :thinking "Checked the parser. I need…"})]
-                   (expect (= "iteration.completed" type))
-                   (expect (= "Checked the parser." (:thinking payload)))))
-             (it
-               "ships no thinking when the provider cut the summary mid-clause"
-               (let [[_ _ payload]
-                     (#'state/chunk->event
-                      {:phase :iteration-final :done? true :iteration 1 :thinking "So the issue…"})]
-                 (expect (nil? (:thinking payload)))))
-             (it "does the same on the iteration's error boundary"
-                 (let [[_ _ payload] (#'state/chunk->event
-                                      {:phase :iteration-error
-                                       :iteration 1
-                                       :thinking "I found…"
-                                       :error {:type :provider :message "boom"}})]
-                   (expect (nil? (:thinking payload))))))
+(defdescribe
+  cut-summary-thinking-test
+  (it "clips a settled summary at the last sentence it closed"
+      (let [[type _ payload] (#'state/chunk->event
+                              {:phase :iteration-final
+                               :done? true
+                               :iteration 1
+                               :thinking "Checked the parser. I need…"})]
+        (expect (= "iteration.completed" type))
+        (expect (= "Checked the parser." (:thinking payload)))))
+  (it "ships a punctuation-free Markdown heading as settled thinking"
+      (let [[_ _ payload]
+            (#'state/chunk->event
+             {:phase :iteration-final :done? true :iteration 1 :thinking "**Planning**"})]
+        (expect (= "**Planning**" (:thinking payload)))))
+  (it "ships no thinking when the provider cut the summary mid-clause"
+      (let [[_ _ payload]
+            (#'state/chunk->event
+             {:phase :iteration-final :done? true :iteration 1 :thinking "So the issue…"})]
+        (expect (nil? (:thinking payload)))))
+  (it "does the same on the iteration's error boundary"
+      (let [[_ _ payload] (#'state/chunk->event
+                           {:phase :iteration-error
+                            :iteration 1
+                            :thinking "I found…"
+                            :error {:type :provider :message "boom"}})]
+        (expect (nil? (:thinking payload))))))
 
 
 ;; Regression, user report (paraphrased: switching gateways flickered the project

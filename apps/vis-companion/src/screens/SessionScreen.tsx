@@ -594,7 +594,7 @@ function upsertLiveForm(
   return { ...iteration, forms };
 }
 
-function reduceLiveEvent(
+export function reduceLiveEvent(
   turn: LiveTurn | null,
   event: SseEvent,
 ): LiveTurn | null {
@@ -668,7 +668,12 @@ function reduceLiveEvent(
       : undefined;
     const next = updateLiveIteration(turn, position, (iteration) => ({
       ...iteration,
-      thinking: stringField(event, "thinking") || iteration.thinking,
+      // The shared progress boundary owns settlement. A present null means it
+      // deliberately rejected the raw live fragment; only an omitted key falls
+      // back for compatibility with an older terminal frame.
+      thinking: Object.prototype.hasOwnProperty.call(event, "thinking")
+        ? stringField(event, "thinking")
+        : iteration.thinking,
       assistant_prose:
         stringField(event, "assistant_prose") || iteration.assistant_prose,
       attachments: attached?.length ? attached : iteration.attachments,

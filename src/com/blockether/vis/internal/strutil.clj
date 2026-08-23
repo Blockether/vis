@@ -89,39 +89,54 @@
   "One CLOSED sentence or clause end in model text — `.`, `!`, `?` or `…` with
    any trailing quotes/brackets, at whitespace or end of string, or a newline.
 
-   Owned here because two rules need the same notion of \"the model finished a
-   thought\": the gateway flushes the live stream one sentence at a time
-   (`gateway.state/sentence-closed-in-suffix?`), and `settled-thinking-text`
-   clips a settled summary to the last one it closed."
+   Owned here because the gateway uses it to flush the live stream one sentence
+   at a time (`gateway.state/sentence-closed-in-suffix?`). Settled reasoning also
+   treats a syntactically closed Markdown heading as a complete thought."
   #"[.!?…][\"')\]]*(?:\s|$)|\n")
 
-(defn- last-closed-sentence-end
-  "Index just past the LAST closed sentence/line in `s`, or nil when it closed
-   none."
-  ^Long [^String s]
-  (let [m (re-matcher sentence-boundary-pattern s)]
+(def ^:private markdown-heading-pattern
+  "A whole ATX or strong-emphasis line: provider summaries use both as headings."
+  #"(?m)^(?:#{1,6}[ \t]+\S[^\n]*|\*\*\S(?:[^\n]*\S)?\*\*|__\S(?:[^\n]*\S)?__)$")
+
+(defn- last-match-end
+  "Index just past the last match of `pattern` in `s`, or nil."
+  ^Long [pattern ^String s]
+  (let [m (re-matcher pattern s)]
     (loop [end nil]
       (if (.find m) (recur (.end m)) end))))
+
+(defn- last-closed-thought-end
+  "Index after the last closed sentence, line, or Markdown heading in `s`."
+  ^Long [^String s]
+  (let [sentence-end
+        (last-match-end sentence-boundary-pattern s)
+
+        heading-end
+        (last-match-end markdown-heading-pattern s)]
+
+    (cond (and sentence-end heading-end) (max (long sentence-end) (long heading-end))
+          sentence-end sentence-end
+          :else heading-end)))
 
 (defn settled-thinking-text
   "Canonical thinking text for a SETTLED iteration — what a transcript, a
    timeline entry or a replayed row keeps — or nil when the provider showed
    nothing usable.
 
-   `normalize-thinking-text`, CLIPPED to the last sentence the model closed;
-   nil when it closed none. Anthropic writes the thinking summary with a SECOND
-   model that streams alongside the thinking block; when the block closes first
-   the summary stops wherever it stood — mid-word — and the wire terminates it
-   with the `…` marker. So the run AFTER the last closed sentence is never a
-   thought: it is exactly the text the summarizer was mid-way through when it
-   was cut. One turn of one session showed both shapes: `I should…`, dropped whole, and
-   `…no sentencepiece dependency needed for Pocket models. The real bl…`, which
-   read on screen as if Vis had truncated the model and now keeps only its
-   closed sentence.
+   `normalize-thinking-text`, CLIPPED to the last complete thought: a closed
+   sentence/line or a syntactically closed Markdown heading; nil when it closed
+   none. Anthropic writes the thinking summary with a SECOND model that streams
+   alongside the thinking block; when the block closes first the summary stops
+   wherever it stood — mid-word — and the wire terminates it with the `…` marker.
+   So prose AFTER the last complete boundary is exactly what the summarizer was
+   writing when it was cut. A closed heading, however, is a complete structural
+   unit and remains useful without terminal punctuation.
 
    LIVE ticks keep `normalize-thinking-text`: mid-stream every summary is still
-   a fragment, and the stream must paint as it arrives."
+   a fragment, and the stream must paint as it arrives. This decision belongs at
+   the shared progress boundary; presentation clients render its settled value
+   exactly rather than maintaining their own filtering vocabulary."
   [text]
   (when-let [s (normalize-thinking-text text)]
-    (when-let [end (last-closed-sentence-end s)]
+    (when-let [end (last-closed-thought-end s)]
       (not-empty (str/trimr (subs s 0 end))))))
