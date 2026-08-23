@@ -134,9 +134,10 @@
   [:session :workspace :workspace/root :title :messages :utilization :scroll :layout :input
    :input-history :input-history-index :input-history-draft :slash-command-index
    :slash-command-hidden? :submitted-input :pending-sends :retracted-sends :queue-paused :pastes
-   :paste-counter :loading? :cancel-token :cancelling? :cancelling-at-ms :cancel-awaiting-client-id
-   :gateway-turn-id :live-turn-client-id :progress :turn-start-ms :detail-expansions
-   :mouse-selection :session-model-pref :human-input :human-input-queue :live-views
+   :paste-counter :attachments :attachment-feedback :loading? :cancel-token :cancelling?
+   :cancelling-at-ms :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress
+   :turn-start-ms :detail-expansions :mouse-selection :session-model-pref :human-input
+   :human-input-queue :live-views
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
    ;; tab you left must not keep speaking through the tab you entered.
    :voice-conversation?])
@@ -163,6 +164,10 @@
    :queue-paused nil
    :pastes {}
    :paste-counter 0
+   ;; Staged files and their latest admission feedback are composer state, not
+   ;; transcript state. They travel with the draft when tabs switch.
+   :attachments []
+   :attachment-feedback []
    :loading? false
    :cancel-token nil
    :cancelling? false

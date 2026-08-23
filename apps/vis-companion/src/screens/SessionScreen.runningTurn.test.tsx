@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { screen } from "@testing-library/react";
 
 import { renderSessionScreen } from "./session-screen-harness";
+import activityFixture from "../lib/activity.fixture.json";
 
 // Reported from a phone: the message was sent and the session title updated, but
 // the answer rail stayed a bare "Vis" — no phase, no clock, no trace — for the
@@ -175,5 +176,58 @@ describe("a running turn the session read cannot confirm", () => {
     const panel = title.closest('section') as HTMLElement;
     const phase = phases[0];
     expect(panel.compareDocumentPosition(phase) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  });
+
+  // Regression, issue td-65cdf6: when the optimistic row disappeared before its
+  // filed transcript replacement arrived, the same Activity painted at its Python
+  // anchor and again as a detached live panel below the turn.
+  it("does not detach an Activity already represented by a filed anchor", async () => {
+    const activity = {
+      ...activityFixture,
+      id: "activity-view",
+      activity: {
+        ...activityFixture.activity,
+        anchor: { evaluation_id: "evaluation-1", iteration: 41, form_index: 0 },
+      },
+    };
+    const filedRow = {
+      id: "activity-turn",
+      user_request: "inspect the run",
+      status: "completed",
+      created_at: Date.now(),
+      iterations: [
+        {
+          id: "iteration-41",
+          position: 41,
+          forms: [{ source: "inspect_run()", result_summary: "done" }],
+          attachments: [
+            {
+              index: 0,
+              iteration_id: "iteration-41",
+              view_id: "activity-view",
+              classification: "activity",
+              activity_anchor: {
+                evaluation_id: "evaluation-1",
+                iteration: 41,
+                form_index: 0,
+              },
+              kind: "file",
+              media_type: "application/vnd.vis.live+ndjson",
+              filename: "activity.live.ndjson",
+            },
+          ],
+        },
+      ],
+    };
+
+    renderSessionScreen({
+      client: {
+        transcript: () => Promise.resolve([filedRow]),
+        liveViews: () => Promise.resolve([activity]),
+      },
+    });
+
+    expect(await screen.findByText("Loading Activity…")).toBeInTheDocument();
+    expect(screen.queryByText("ACTIVITY")).toBeNull();
   });
 });

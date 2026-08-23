@@ -5023,6 +5023,27 @@ export function SessionScreen({
     [liveViews],
   );
   const watching = liveViews.filter((view) => !view.is_settled).at(-1)?.title ?? null;
+  // A filed Activity keeps the same view ID as its live picture. During the narrow
+  // resync gap with no optimistic row, the transcript receipt is already visible;
+  // only genuinely detached views belong in the end-of-transcript fallback.
+  const detachedLiveViews = useMemo(() => {
+    const filedActivityIds = new Set<string>();
+    for (const turn of visibleTurns) {
+      for (const iteration of turn.iterations ?? []) {
+        for (const attachment of iteration.attachments ?? []) {
+          if (
+            attachment.classification === "activity" &&
+            attachment.activity_anchor &&
+            attachment.view_id
+          )
+            filedActivityIds.add(attachment.view_id);
+        }
+      }
+    }
+    return liveViews.filter(
+      (view) => view.classification !== "activity" || !filedActivityIds.has(view.id),
+    );
+  }, [liveViews, visibleTurns]);
 
   const liveRow = useMemo(() => {
     if (!liveTurn) return null;
@@ -5409,9 +5430,9 @@ export function SessionScreen({
                 {/* A view can outlive the optimistic running row during resync. In that
                   narrow gap it still paints at the transcript end; otherwise the row owns
                   it so the phase line follows, rather than precedes, the live panel. */}
-                {!liveRow && (
+                {!liveRow && detachedLiveViews.length > 0 && (
                   <div className="mt-5">
-                    <LiveView views={liveViews} client={client} sid={sid} />
+                    <LiveView views={detachedLiveViews} client={client} sid={sid} />
                   </div>
                 )}
               </>

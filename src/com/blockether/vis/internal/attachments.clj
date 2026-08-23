@@ -304,14 +304,50 @@
   "True when `media-type` is one of [[audio-media-types]]."
   [media-type]
   (contains? audio-media-types (str/lower-case (str/trim (str media-type)))))
+
+(def document-media-types
+  "The one vocabulary for documents stored for the human and named to the model."
+  {:pdf "application/pdf" :html "text/html" :xhtml "application/xhtml+xml"})
+
+(def human-only-media-types
+  "Media types a model must NEVER be handed as an image block, no matter what
+   audience the caller asked for: a PDF and an HTML page are DOCUMENTS, made of
+   pages and markup rather than pixels, and the only honest thing to do with one
+   is put it in front of the human and TELL the model the file is on disk.
+
+   Sending them would be a lie twice over — the bytes are not an image, and a
+   multimodal request replays every block forever, so one report would be
+   re-billed on every later turn of the session. `attach` of a `.pdf` or an
+   `.html` is therefore clamped to the user audience at [[attachment-audience]],
+   the one funnel every route already reads."
+  (set (vals document-media-types)))
+
+(defn detect-document-mime
+  "Sniff a PDF, HTML or XHTML document from its bytes, never its extension."
+  [^bytes b]
+  (if (ascii-at? b 0 "%PDF-")
+    (:pdf document-media-types)
+    (let [head
+          (str/lower-case (String. b 0 (int (min (alength b) 4096)) StandardCharsets/UTF_8))
+
+          start
+          (str/triml (str/replace head "﻿" ""))]
+
+      (cond (and (re-find #"(?s)^(?:<\?xml[^>]*>\s*)?<html(?:\s|>)" start)
+                 (str/includes? start "http://www.w3.org/1999/xhtml"))
+            (:xhtml document-media-types)
+            (re-find #"(?s)^(?:<!doctype\s+html[^>]*>\s*)?<html(?:\s|>)" start)
+            (:html document-media-types)
+            :else nil))))
+
 (defn detect-media-mime
   "The sniffed type of anything vis can attach: [[detect-image-mime]] first,
-   then [[detect-audio-mime]], then [[detect-video-mime]]. Stills win the tie
-   deliberately -- HEIF/AVIF photos share the MP4 container header; a recording
-   is asked about before a clip for the same reason, since an `.m4a` shares it
-   too."
+   then [[detect-audio-mime]], [[detect-video-mime]] and [[detect-document-mime]].
+   Stills win the tie deliberately -- HEIF/AVIF photos share the MP4 container
+   header; a recording is asked about before a clip for the same reason, since an
+   `.m4a` shares it too."
   [^bytes b]
-  (or (detect-image-mime b) (detect-audio-mime b) (detect-video-mime b)))
+  (or (detect-image-mime b) (detect-audio-mime b) (detect-video-mime b) (detect-document-mime b)))
 
 (def provider-image-media-types
   "The ONLY image media types a vision wire accepts VERBATIM. Anthropic names
@@ -334,8 +370,9 @@
   (str media-type " is not a provider-supported image format (JPEG, PNG, GIF, WebP)"))
 
 
-(defn- sniff-file-mime
-  "Read the file head and sniff its MIME type. nil on any read failure."
+(defn sniff-file-mime
+  "Read a file head and return its sniffed attachment media type. nil on any
+   read failure or unsupported bytes; a caller never needs to trust an extension."
   [^File f]
   (try (with-open [raf (RandomAccessFile. f "r")]
          (let [n (int (min (.length raf) (long sniff-bytes)))
@@ -742,18 +779,6 @@
    One word, three routes; there is no fourth and no second copy of this table."
   #{"both" "user" "model"})
 
-(def human-only-media-types
-  "Media types a model must NEVER be handed as an image block, no matter what
-   audience the caller asked for: a PDF and an HTML page are DOCUMENTS, made of
-   pages and markup rather than pixels, and the only honest thing to do with one
-   is put it in front of the human and TELL the model the file is on disk.
-
-   Sending them would be a lie twice over — the bytes are not an image, and a
-   multimodal request replays every block forever, so one report would be
-   re-billed on every later turn of the session. `attach` of a `.pdf` or an
-   `.html` is therefore clamped to `audience=\"user\"` at [[attachment-audience]],
-   the one funnel every route already reads."
-  #{"application/pdf" "text/html" "application/xhtml+xml"})
 
 (defn human-only-media-type?
   "True when `media-type` names a document from [[human-only-media-types]].
