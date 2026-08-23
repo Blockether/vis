@@ -2201,7 +2201,7 @@ type Chunk =
       kind: "code";
       key: string;
       form: TranscriptForm;
-      iteration: number;
+      iterationPosition?: number;
       formIndex: number;
       attachment?: IterationAttachment;
     }
@@ -2221,12 +2221,16 @@ function activityAnchor(
 
 function activityAt(
   views: LiveViewModel[],
-  iteration: number,
+  iterationPosition: number | undefined,
   formIndex: number,
 ): LiveViewModel | undefined {
   return views.find((view) => {
     const anchor = activityAnchor(view.activity?.anchor);
-    return anchor?.iteration === iteration && anchor.formIndex === formIndex;
+    return (
+      anchor !== null &&
+      anchor.iteration === iterationPosition &&
+      anchor.formIndex === formIndex
+    );
   });
 }
 
@@ -2354,13 +2358,14 @@ const TraceSegment = memo(function TraceSegment({
             kind: "code",
             key,
             form,
-            iteration: entry.index,
+            iterationPosition: entry.iteration.position,
             formIndex,
             attachment: entry.attachments.find(
               (candidate) =>
                 candidate.classification === "activity" &&
-                candidate.activity_anchor?.iteration === entry.index &&
-                candidate.activity_anchor.form_index === formIndex,
+                candidate.activity_anchor?.iteration ===
+                  entry.iteration.position &&
+                candidate.activity_anchor?.form_index === formIndex,
             ),
           });
           return;
@@ -2401,7 +2406,7 @@ const TraceSegment = memo(function TraceSegment({
             if (chunk.kind === "code") {
               const liveActivity = activityAt(
                 liveActivities,
-                chunk.iteration,
+                chunk.iterationPosition,
                 chunk.formIndex,
               );
               const activity = liveActivity ? (
@@ -2469,7 +2474,7 @@ export const IterationTrace = memo(function IterationTrace({
   whole?: boolean;
   client?: GatewayClient;
   sid?: string;
-  /** Host Activity views, placed by their zero-based Python form anchor. */
+  /** Host Activity views, placed by 1-based iteration and 0-based form anchors. */
   liveActivities?: LiveViewModel[];
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
