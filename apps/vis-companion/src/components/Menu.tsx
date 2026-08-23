@@ -153,14 +153,23 @@ export function Menu({
  */
 export function MenuHeading({
   tone = 'loud',
-  action,
+  cells,
   onClose,
   closeLabel,
   children,
 }: {
   tone?: 'loud' | 'quiet';
-  /** The heading's one primary verb, before its way out. */
-  action?: ReactNode;
+  /**
+   * The band's own CELLS, welded before its way out: `BandButton`, the same box the
+   * ✕ is and as tall as the band.
+   *
+   * Never a `Button`. Paper stacked on the dark title band is a control from another
+   * surface parked on this one, and `variant="secondary"` carries `text-white`, which
+   * in this app is the PAGE's ink (`--fg`, #262626) — dark on dark, so the sheet's
+   * second verb was the one control in it a reader could not see. A band that also
+   * shouts an accent slab beside a 2px accent rule then charges the same colour twice.
+   */
+  cells?: ReactNode;
   children: ReactNode;
 } & (
   | {
@@ -186,7 +195,7 @@ export function MenuHeading({
     // a band of one height.
     <header className={`flex min-h-12 shrink-0 items-stretch mouse:min-h-9 ${skin}`}>
       <p className={`${BAND} min-w-0 flex-1 self-center truncate`}>{children}</p>
-      {action && <span className="flex shrink-0 items-center px-2">{action}</span>}
+      {cells}
       <CloseButton isBand label={closeLabel} onClick={onClose} />
     </header>
   );
@@ -199,13 +208,13 @@ export function MenuHeading({
 export function MenuBack({
   label,
   onBack,
-  action,
+  cells,
   children,
 }: {
   label: string;
   onBack: () => void;
-  /** The step's commit verbs, kept in the band beside the way back. */
-  action?: ReactNode;
+  /** The step's commit cells, welded beside the way back — see `MenuHeading`. */
+  cells?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -219,7 +228,7 @@ export function MenuBack({
         <ChevronIcon back className="size-3 shrink-0" aria-hidden />
         <span className="truncate">{children}</span>
       </button>
-      {action && <span className="flex shrink-0 items-center gap-2 px-2">{action}</span>}
+      {cells}
     </header>
   );
 }

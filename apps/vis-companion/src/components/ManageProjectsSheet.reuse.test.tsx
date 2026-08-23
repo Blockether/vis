@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AnchoredPanel, MenuItem } from "./Menu";
-import { Button, IconButton } from "./ui";
+import { BandButton, IconButton } from "./ui";
 import {
   ManageProjectsSheet,
   startingDir,
@@ -213,39 +213,54 @@ describe("ManageProjectsSheet paints no box of its own", () => {
     );
   });
 
-  it("commits with the canonical buttons in the task heading", async () => {
+  // Regression, user report (paraphrased: the sheet's colours look wrong): the two
+  // verbs were `Button`s, sheets of paper standing on the dark title band, and
+  // `secondary` carries `text-white` — which in this app is the PAGE's ink (#262626)
+  // — so "New folder" was dark on dark beside an amber slab 40px under the panel's
+  // own amber rule: one control unreadable, one charging the accent twice.
+  it("commits with the band's own cells, not with paper parked on the band", async () => {
     sheet({ isAdding: true });
-    const use = await screen.findByRole("button", { name: "Use project" });
+    await screen.findByRole("menuitem", { name: /vis/ });
+    const use = screen.getByRole("button", { name: "Use project" });
     const make = screen.getByRole("button", { name: "New folder" });
 
     expect(paint(make)).toEqual(
-      skinOf(
-        <Button variant="secondary" density="compact" onClick={() => {}}>
-          reference
-        </Button>,
-        "button",
-      ),
+      skinOf(<BandButton onClick={() => {}}>reference</BandButton>, "button"),
     );
     expect(paint(use)).toEqual(
       skinOf(
-        <Button density="compact" onClick={() => {}}>reference</Button>,
+        <BandButton isPrimary onClick={() => {}}>
+          reference
+        </BandButton>,
         "button",
       ),
     );
+    // The accent burns on the cell that has something to COMMIT and nowhere else,
+    // and neither cell brings the page's ink or a box onto the band.
+    expect(classesOf(use).has("bg-accent")).toBe(true);
+    expect(classesOf(make).has("bg-accent")).toBe(false);
+    expect(classesOf(make).has("text-white")).toBe(false);
+    expect(classesOf(make).has("border-edge-strong")).toBe(false);
 
-    const actions = use.parentElement;
-    expect(make.parentElement).toBe(actions);
-    expect(use.closest("header")).not.toBeNull();
-    const order = [...actions!.children];
-    expect(order.indexOf(use)).toBeGreaterThan(order.indexOf(make));
+    // The band ends in one run of cells: the two verbs, then the app's one way out.
+    const band = use.closest("header")!;
+    expect(make.parentElement).toBe(band);
+    expect(use.parentElement).toBe(band);
+    const cells = [...band.children];
+    expect(cells.indexOf(use)).toBeGreaterThan(cells.indexOf(make));
+    expect(cells.at(-1)).toBe(
+      screen.getByRole("button", { name: /^Close new project/ }),
+    );
   });
 
   it("does not caption the heading actions with the path the crumbs already say", async () => {
     sheet({ isAdding: true });
     const use = await screen.findByRole("button", { name: "Use project" });
 
-    // The path bar already names the folder, and the button says what will happen to it.
-    expect(use.parentElement?.textContent).toBe("New folderUse project");
+    // The path bar already names the folder, and the cell says what will happen to it.
+    expect(use.closest("header")?.textContent).toBe(
+      "New projectNew folderUse project",
+    );
   });
 
   it("keeps the commit verbs in the heading instead of scrolling them away", async () => {

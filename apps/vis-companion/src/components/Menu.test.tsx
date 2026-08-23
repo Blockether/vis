@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { MenuBack, MenuHeading, MenuItem, MenuNote, MENU_WIDTH } from './Menu';
+import { BandButton } from './ui';
 
 // Regression, user report ("when I open the ⋯ the view is not coherent between the
 // one ⋯ on the machine and another ⋯ on the project level"): the machine menu was a
@@ -49,6 +50,28 @@ describe('Menu parts', () => {
     it('truncates instead of wrapping a long machine name onto two lines', () => {
       expect(renderToStaticMarkup(<MenuHeading>a</MenuHeading>)).toContain('truncate');
     });
+
+    // Regression, user report (paraphrased: the sheet's colours look wrong): this slot
+    // held PAPER — `Button`s parked on the dark title band inside a padded span — and
+    // `secondary` carries `text-white`, the PAGE's ink, so the second verb was dark on
+    // dark. The band's trailing end is a run of CELLS, the way out already being one.
+    it('welds its verbs into the band as cells, never as paper on it', () => {
+      const html = renderToStaticMarkup(
+        <MenuHeading
+          cells={<BandButton isPrimary>Use project</BandButton>}
+          onClose={() => {}}
+          closeLabel="Close new project"
+        >
+          New project
+        </MenuHeading>,
+      );
+
+      // The band's own box: full height, welded by the band's hairline, band ink.
+      expect(html).toContain('self-stretch');
+      expect(html).toContain('border-l');
+      // And nothing pads it off the band the way a wrapper around a button did.
+      expect(html).not.toContain('items-center px-2');
+    });
   });
 
   describe('MenuBack', () => {
@@ -64,6 +87,21 @@ describe('Menu parts', () => {
       expect(html).toContain('aria-label="Back to actions for tower"');
       expect(html).toContain('min-h-12');
       expect(html).toContain('mouse:min-h-9');
+    });
+
+    it('carries the step’s commit cells beside the way back', () => {
+      const html = renderToStaticMarkup(
+        <MenuBack
+          label="Back to projects"
+          onBack={() => {}}
+          cells={<BandButton isPrimary>Create project</BandButton>}
+        >
+          New project
+        </MenuBack>,
+      );
+
+      expect(html).toContain('self-stretch');
+      expect(html).not.toContain('items-center gap-2 px-2');
     });
   });
 
