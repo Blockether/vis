@@ -36,12 +36,9 @@ const named = (pattern: RegExp) =>
     return pattern.test(name);
   });
 
-// Regression, user report (paraphrased: "all the machine rails have the same colour, I
-// only ever see one"): a machine's hue, rail and section were per machine, but the scope
-// was always exactly ONE machine — so a fleet of six painted a single colour and the only
-// place several rails could coexist was unreachable. `All` is that view: one named
-// section per machine, each under its own rail.
-describe("the All view is a fleet of separate machines", () => {
+// The fleet view keeps every machine visually separate without inventing another
+// machine-shaped group for the fleet itself.
+describe("the fleet view is a set of separate machine groups", () => {
   it("stacks one section per machine, each under its own rail", async () => {
     const view = renderSessionsScreen({ machines: fleet() });
     restore = view.restore;
@@ -68,20 +65,20 @@ describe("the All view is a fleet of separate machines", () => {
     expect(hue(band.querySelector("[class*='bg-machine-']"), "bg")).toBe(railHue("beta"));
   });
 
-  // The band the fleet view needs is the one the SCOPED view was reported for: with the
-  // strip directly above naming the machine, a band repeating it is a second header one
-  // hairline from the project's. It exists where the name is not otherwise on screen.
-  it("names a machine on its section only while the fleet is on screen", async () => {
+  it("names sections in the fleet and returns there when the selected machine is pressed", async () => {
     const view = renderSessionsScreen({ machines: fleet() });
     restore = view.restore;
     await screen.findByText("First");
     expect(within(section("alpha")).getByText("alpha")).toBeTruthy();
 
-    await userEvent.click(
-      within(screen.getByLabelText("Machines")).getByRole("button", { name: /^alpha/ }),
-    );
+    const alpha = within(screen.getByLabelText("Machines")).getByRole("button", { name: /^alpha/ });
+    await userEvent.click(alpha);
     await waitFor(() => expect(screen.queryByText("Second")).toBeNull());
     expect(within(section("alpha")).queryByText("alpha")).toBeNull();
+
+    await userEvent.click(alpha);
+    expect(await screen.findByText("Second")).toBeTruthy();
+    expect(within(section("alpha")).getByText("alpha")).toBeTruthy();
   });
 
   // A control that had to ask which of two computers it meant would be the chooser the
@@ -161,7 +158,6 @@ describe("the All view is a fleet of separate machines", () => {
       .getAllByRole("button")
       .map((button) => button.getAttribute("aria-label") ?? button.textContent);
     expect(labels).toEqual([
-      "All",
       "alpha",
       "beta",
       "Reconnect to sleeping-one",
