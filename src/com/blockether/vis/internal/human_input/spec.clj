@@ -185,6 +185,11 @@
 
 (def live-sort-dirs "Which way a `{:by …}` order runs. CLOSED." {"asc" :asc "desc" :desc})
 
+(def live-classifications
+  "Who owns the view's SPECIALIZATION. CLOSED: `activity` is the host's own
+   projection and extensions cannot declare it (enforced at declare time)."
+  {"activity" :activity})
+
 (def live-reasons
   "Why a view ended. CLOSED, and the only vocabulary an extension branches on."
   {"completed" :completed
@@ -659,7 +664,7 @@
 (s/def ::cancel-label non-blank-string?)
 (s/def ::is-cancellable boolean?)
 (s/def ::timeout-ms nat-int?)
-(s/def ::classification #{:activity})
+(s/def ::classification (set (vals live-classifications)))
 
 (s/def ::channel-ids
   ;; One id twice would open the same dialog twice and answer it once.
