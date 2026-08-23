@@ -1458,12 +1458,131 @@
              :view-id (view-id pane)
              :enabled? true}))))))
 
+(def ^:private activity-detail-rows
+  "Expanded Activity is a transcript disclosure, not a live dashboard. Its ten-row
+   reservation is stable while patches land, bounded on tall terminals, and yields to
+   the composer on short ones."
+  10)
+
+(defn activity-focused
+  "Move the terminal-local Activity operation focus to `item-id`. This never publishes a
+   shared Live View focus patch: Activity focus only controls its own evidence disclosure."
+  [pane item-id]
+  (assoc pane :activity-focused item-id))
+
+(defn activity-evidence-toggled
+  "Focus one Activity operation and toggle its bounded evidence row."
+  [pane item-id]
+  (-> pane
+      (activity-focused item-id)
+      (update :activity-evidence
+              (fn [ids]
+                (let [ids (set ids)]
+                  (if (contains? ids item-id) (disj ids item-id) (conj ids item-id)))))))
+
+(defn- activity-fallback-text
+  [node]
+  (let [label (flat-text (:label node))]
+    (case (:type node)
+      :progress
+      (str/join " · "
+                (remove str/blank?
+                  [label
+                   (when-let [value (:value node)]
+                     (str (long (Math/round (* 100.0 (double value)))) "%"))]))
+
+      :log
+      (str/join " · "
+                (remove str/blank?
+                  [label (str (long (or (:total-lines node) (count (:lines node)))) " lines")]))
+
+      :table
+      (str/join " · " (remove str/blank? [label (str (count (:rows node)) " rows")]))
+
+      :link
+      (str/join " · " (remove str/blank? [label (str (count (:links node)) " links")]))
+
+      (str/join " · " (remove str/blank? [label (name (:type node))])))))
+
+(defn- activity-plan
+  "PURE: the compact Activity presenter plan. It consumes the reducer's status/count/step
+   projection directly and deliberately never calls generic [[plan]] or [[node-rows]].
+   Unknown node kinds become one bounded fallback summary instead of generic body chrome."
+  [pane _text-w]
+  (let [nodes
+        (get-in pane [:view :nodes])
+
+        steps
+        (mapcat :steps (filter #(= :steps (:type %)) nodes))
+
+        focused
+        (or (:activity-focused pane) (:id (first steps)))
+
+        evidence
+        (set (:activity-evidence pane))]
+
+    (vec
+      (mapcat
+        (fn [node]
+          (case (:type node)
+            :status
+            [{:kind :activity-status
+              :node-id (:id node)
+              :tone (:tone node)
+              :text (flat-text (:text node))}]
+
+            :stat
+            [{:kind :activity-counts
+              :node-id (:id node)
+              :text (str/join "   "
+                              (map (fn [{:keys [label value-text]}]
+                                     (str (flat-text label) " " (flat-text value-text)))
+                                   (:stats node)))}]
+
+            :steps
+            (mapcat (fn [{:keys [id label detail tone]}]
+                      (let [row {:kind :activity-step
+                                 :node-id (:id node)
+                                 :item-id id
+                                 :tone tone
+                                 :text (flat-text label)
+                                 :detail (flat-text detail)
+                                 :is-focused (= focused id)}]
+                        (cond-> [row]
+                          (and (contains? evidence id) (seq (flat-text detail)))
+                          (conj {:kind :activity-evidence
+                                 :node-id (:id node)
+                                 :item-id id
+                                 :tone tone
+                                 :text (flat-text detail)}))))
+                    (:steps node))
+
+            [{:kind :activity-fallback
+              :node-id (:id node)
+              :tone (:tone node)
+              :text (activity-fallback-text node)}]))
+        nodes))))
+
+(defn- activity-shape
+  "PURE: bounded transcript-native Activity geometry and rows. This intentionally does
+   not call [[band-shape]]: Activity owns neither its four-fifths reservation nor any
+   generic collapsed, stop, rail, or hint-bar furniture."
+  [pane region]
+  (let [available
+        (max 0 (- (long (:hint-row region)) (long (:min-row region))))
+
+        n
+        (min (long activity-detail-rows) available)
+
+        text-w
+        (max 8 (- (long (:inner-w region)) 3))]
+
+    {:pane pane :rows-plan (activity-plan pane text-w) :n n}))
+
 (defn- band-title
-  "Dedicated Activity chrome, otherwise the generic Live View title."
+  "The generic Live View title. Activity never reaches this shell."
   [pane now-ms]
-  (if (activity? pane)
-    (str "ACTIVITY · " (if (settled? pane) "COMPLETED" "LIVE"))
-    (title-line pane now-ms)))
+  (title-line pane now-ms))
 
 (defn- band-shape
   "PURE: what the band is made of on `region` — the live panes oldest first, the
@@ -1544,41 +1663,25 @@
      :n n}))
 
 (defn band-rows
-  "The rows the band covers on a `cols`×`rows` terminal, as `[from to]`
-   inclusive — what the wheel needs to know to tell 'over the pane' from 'over
-   the transcript'.
-
-   The height is [[band-shape]]'s, the very one [[paint!]] draws with, so the
-   wheel claims exactly the rows the human sees."
+  "The rows an expanded surface covers, inclusive. Activity uses its dedicated fixed
+   transcript-detail bound; ordinary Live Views retain [[band-shape]] geometry."
   [cols rows panes content-top prompt-h]
-  (when (some (complement dormant?) panes)
-    (let [region
-          (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
+  (when-let [front (last (remove dormant? panes))]
+    (let [region (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))]
+      (if (activity? front)
+        (let [n (:n (activity-shape front region))
+              to (dec (long (:hint-row region)))]
 
-          {:keys [sep-row foot-row]}
-          (tr/band-geometry region (:n (band-shape panes region)) false)]
+          (when (pos? (long n)) [(- (inc to) (long n)) to]))
+        (let [{:keys [sep-row foot-row]}
+              (tr/band-geometry region (:n (band-shape panes region)) false)]
+          [(long sep-row) (long foot-row)])))))
 
-      [(long sep-row) (long foot-row)])))
-
-(defn paint!
-  "Draw the live-view band for `panes` — oldest first, the newest in front —
-   INSIDE the session's own frame, and return the geometry the front pane was
-   painted with: `{:view-id :offset :anchor :total :visible :widths}`.
-
-   The caller hands that back through [[painted]], which is what makes the next
-   wheel tick, the next anchor and the column widths agree with what is on
-   screen. Nothing is dispatched from here: the render thread paints, the state
-   thread decides.
-
-   The SAME band the human-input form paints in (`transient/band-region`) — a
-   closed box on the terminal's own paper, anchored above the prompt and growing
-   upward over the transcript, never past `content-top`. A busy view takes four
-   fifths of the rows between the transcript and prompt, leaving the launching
-   conversation visible without reducing the live surface to a preview.
-
-   Returns nil when there is nothing to paint."
+(defn- paint-generic!
+  "Draw the ordinary Live View band. Activity is dispatched by [[paint!]] before this
+   generic four-fifths-height shell, so its geometry can never drift back here."
   ([g cols rows panes content-top prompt-h]
-   (paint! g cols rows panes content-top prompt-h (System/currentTimeMillis)))
+   (paint-generic! g cols rows panes content-top prompt-h (System/currentTimeMillis)))
   ([g cols rows panes content-top prompt-h now-ms]
    (when (some (complement dormant?) panes)
      (let [;; A settled view is not band furniture: it has already given its rows
@@ -1682,3 +1785,130 @@
               :total total
               :visible body-visible
               :widths (:widths (meta rows-plan))})))))))
+
+(defn- paint-activity-entry!
+  "Paint one Activity presenter row without borrowing generic Live View body chrome."
+  [g left row width view-id entry]
+  (let [col
+        (+ (long left) 2)
+
+        width
+        (max 1 (- (long width) 2))
+
+        put
+        (fn [fg styles text]
+          (p/set-colors! g fg t/terminal-bg)
+          (p/styled g styles (p/put-str! g col row (p/ellipsize (str text) width))))]
+
+    (case (:kind entry)
+      :activity-status
+      (put (tone-fg (:tone entry))
+           [p/BOLD]
+           (str (or (tone-glyph (:tone entry)) "·") " " (:text entry)))
+
+      :activity-counts
+      (put t/dialog-hint [] (:text entry))
+
+      :activity-step
+      (let [focused?
+            (:is-focused entry)
+
+            marker
+            (if focused? "› " "  ")
+
+            glyph
+            (str (or (tone-glyph (:tone entry)) "·") " ")]
+
+        (put (if focused? t/header-active-tab-accent (tone-fg (:tone entry)))
+             (if focused? [p/BOLD] [])
+             (str marker glyph (:text entry)))
+        (cr/register! {:bounds {:row row :col col :width 2}
+                       :kind :activity-focus
+                       :view-id view-id
+                       :item-id (:item-id entry)
+                       :enabled? true})
+        (when (seq (:detail entry))
+          (cr/register! {:bounds {:row row :col (+ col 2) :width (max 1 (- width 2))}
+                         :kind :activity-evidence
+                         :view-id view-id
+                         :item-id (:item-id entry)
+                         :enabled? true})))
+
+      :activity-evidence
+      (put t/dialog-hint [p/ITALIC] (str "    ↳ " (:text entry)))
+
+      :activity-fallback
+      (put t/dialog-hint [] (str "  · " (:text entry)))
+
+      nil)))
+
+(defn- paint-activity!
+  "Paint one expanded Activity as a bounded transcript disclosure. The semantic rail
+   and concise headline are the only chrome; there are no dialog rails, title rule,
+   stop footer, generic hint bar, or reserved blank dashboard. Body entries retain the
+   existing evidence and focus click contracts."
+  [g cols rows pane content-top prompt-h now-ms]
+  (let [{:keys [left inner-w hint-row] :as region}
+        (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
+
+        {:keys [rows-plan n]}
+        (activity-shape pane region)]
+
+    (when (pos? (long n))
+      (binding [t/dialog-bg t/terminal-bg]
+        (let [left (long left)
+              inner-w (long inner-w)
+              top (- (long hint-row) (long n))
+              bottom (dec (long hint-row))
+              body-top (inc top)
+              visible (max 0 (dec (long n)))
+              total (count rows-plan)
+              start (offset pane rows-plan visible)
+              shown (subvec (vec rows-plan) (min start total) (min total (+ start visible)))
+              view-id (view-id pane)
+              {:keys [text tone]} (status-summary pane)
+              state (if (settled? pane) "COMPLETED" "LIVE")
+              ended-at (long (or (get-in pane [:settled :ended-at]) now-ms))
+              created-at (long (or (get-in pane [:view :created-at]) ended-at))
+              headline (str "▾ ACTIVITY · "
+                            state
+                            (when-not (str/blank? text) (str " · " text))
+                            " · "
+                            (elapsed-text (- ended-at created-at))
+                            (when (> total visible)
+                              (str " · " (inc start) "–" (min total (+ start visible)) "/" total)))]
+
+          (tr/clear-rows! g region top bottom)
+          (p/set-colors! g (tone-fg tone t/header-active-tab-accent) t/terminal-bg)
+          (doseq [row (range top (inc bottom))]
+            (p/set-char! g left row \▎))
+          (p/set-colors! g t/dialog-fg t/terminal-bg)
+          (p/styled g
+                    [p/BOLD]
+                    (p/put-str! g (+ left 2) top (p/ellipsize headline (max 1 (- inner-w 3)))))
+          (cr/register! {:bounds {:row top :col left :width (+ inner-w 1)}
+                         :kind :live-reopen
+                         :view-id view-id
+                         :enabled? true})
+          (doseq [[idx entry] (map-indexed vector shown)]
+            (paint-activity-entry! g left (+ body-top (long idx)) inner-w view-id entry))
+          (doseq [idx (range (count shown) visible)]
+            (paint-activity-entry! g left (+ body-top (long idx)) inner-w view-id nil))
+          (p/clear-styles! g)
+          {:view-id view-id
+           :offset start
+           :anchor (anchor-at rows-plan start)
+           :total total
+           :visible visible
+           :widths (:widths (meta rows-plan))})))))
+
+(defn paint!
+  "Paint the newest expanded surface. Host Activity always takes the dedicated bounded
+   transcript painter; ordinary Live Views keep their established generic painter."
+  ([g cols rows panes content-top prompt-h]
+   (paint! g cols rows panes content-top prompt-h (System/currentTimeMillis)))
+  ([g cols rows panes content-top prompt-h now-ms]
+   (when-let [front (last (remove dormant? panes))]
+     (if (activity? front)
+       (paint-activity! g cols rows front content-top prompt-h now-ms)
+       (paint-generic! g cols rows panes content-top prompt-h now-ms)))))
