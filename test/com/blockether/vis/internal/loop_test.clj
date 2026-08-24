@@ -731,6 +731,21 @@
           ;; The replayed attempt streams its text from zero, so an append-only
           ;; consumer must be told to drop what it drew - and see the whole tail again.
           (expect (= ["thinking hard" "thinking hard"] deltas))))
+    (it "rewinds reasoning when the router retries a semantic stall"
+        (let [chunks (chunks-of (fn [on-chunk]
+                                  (on-chunk {:reasoning "partial thought" :done? false})
+                                  (on-chunk {:event/type :llm.routing/provider-retry
+                                             :reason :stream-timeout
+                                             :attempt 1
+                                             :content ""
+                                             :done? false})
+                                  (on-chunk {:reasoning "replacement thought" :done? false})))
+              resets (filterv #(= :provider-retry-reset (:phase %)) chunks)
+              deltas (filterv seq (mapv :delta (filterv #(= :reasoning (:phase %)) chunks)))]
+
+          (expect (= 1 (count resets)))
+          (expect (= :llm.routing/provider-retry (get-in (first resets) [:event :event/type])))
+          (expect (= ["partial thought" "replacement thought"] deltas))))
     (it "still reports a routing event as a provider fallback"
         (let [chunks (chunks-of (fn [on-chunk]
                                   (on-chunk {:event/type :llm.routing/provider-fallback
@@ -2922,10 +2937,9 @@
         (expect (= ::router router))
         (expect (= rt/ASK_CODE_TTFT_TIMEOUT_MS (:ttft-timeout-ms opts)))
         (expect (= rt/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts)))
-        ;; Semantic silence can be legitimate encrypted reasoning while SSE
-        ;; keepalives prove the transport is healthy, so it is opt-in.
-        (expect (nil? rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
-        (expect (not (contains? opts :semantic-timeout-ms)))))
+        ;; A live transport without model progress is bounded independently.
+        (expect (= 240000 rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
+        (expect (= rt/ASK_CODE_SEMANTIC_TIMEOUT_MS (:semantic-timeout-ms opts)))))
   (it "preserves explicit ask-code TTFT and idle timeout overrides"
       (expect (= 77 (:ttft-timeout-ms (:opts (captured-ask-code-opts {:ttft-timeout-ms 77})))))
       (expect (contains? (:opts (captured-ask-code-opts {:ttft-timeout-ms nil})) :ttft-timeout-ms))

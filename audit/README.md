@@ -1,6 +1,6 @@
 # Vis — Security & Dependency Audit
 
-> Generated 2026-08-23.
+> Generated 2026-08-24.
 
 Vis is a coding agent that writes Python into a sandboxed GraalPy runtime,
 keeps durable state outside the model context window, and inspects and changes
@@ -192,10 +192,10 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
 | `com.blockether/fff` | `0.12.4` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/imaging` | `0.1.10` | MIT | 23 KB | Blockether (in-house) |
-| `com.blockether/parinferish` | `0.1.1` | MIT | 33 KB | Blockether (in-house) |
+| `com.blockether/parinferish` | `0.1.2` | MIT | 34 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.135` | Apache-2.0 | 537 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.136` | Apache-2.0 | 537 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |

@@ -4747,9 +4747,19 @@
                             namespace
                             (= "llm.session"))
                     nil
-                    (:event/type chunk) (on-chunk {:phase :provider-fallback
-                                                   :iteration iteration-position
-                                                   :event chunk})
+                    (= :llm.routing/provider-retry (:event/type chunk))
+                    (do (reset-stream-state!)
+                        (on-chunk {:phase :provider-retry-reset
+                                   :iteration iteration-position
+                                   :attempt (:attempt chunk)
+                                   :delay-ms (:delay-ms chunk)
+                                   :error {:type :llm.routing/provider-retry
+                                           :message (:error chunk)}
+                                   :event chunk}))
+                    (:event/type chunk) (do (reset-stream-state!)
+                                            (on-chunk {:phase :provider-fallback
+                                                       :iteration iteration-position
+                                                       :event chunk}))
                     :else (do (when (or (some? reasoning) done?)
                                 (let [;; The provider's trailing `…` is the summary-elision
                                       ;; MARKER, not text the model wrote; strip it at the

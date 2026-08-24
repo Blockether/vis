@@ -98,15 +98,14 @@
 (def ASK_CODE_SEMANTIC_TIMEOUT_MS
   "Default model/progress timeout for Vis `svar/ask-code!` streams (ms).
 
-   Disabled by default. A provider can keep its transport healthy with SSE
-   keepalives while legitimately emitting no model-visible event during a long
-   encrypted-reasoning phase. Treating that silence as failure loses healthy
-   turns, as the transport's 300s idle watchdog already catches truly silent
-   or wedged connections.
+   240 seconds without text, reasoning, tool-input progress or a terminal event
+   means the model is stalled even if SSE keepalives still prove transport
+   liveness. This exceeds Anthropic's documented ~185-second worst observed
+   extended-thinking silence while bounding a live-but-unproductive stream.
 
-   Callers that require a bounded model-progress gap can opt in with
-   `:semantic-timeout-ms`; explicit nil also disables it per call."
-  nil)
+   Explicit nil disables it per call. OpenAI Responses sessions intentionally
+   ignore this setting and retain their transport-specific idle policy."
+  240000)
 
 (defn with-default-ask-code-idle-timeout
   [opts]
