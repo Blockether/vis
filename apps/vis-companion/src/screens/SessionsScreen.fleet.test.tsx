@@ -40,16 +40,18 @@ const named = (pattern: RegExp) =>
 describe("the machine scope always has one active machine", () => {
   // Regression, user report: the screen started unscoped and pressing the active machine
   // again returned to a hidden fleet view.
-  it("starts on the first machine and cannot turn it off", async () => {
+  it("selects the first machine on the initial paint and cannot turn it off", async () => {
     const view = renderSessionsScreen({ machines: fleet() });
     restore = view.restore;
-    await screen.findByText("First");
 
+    // Selection is part of the first render, not a later loading-state transition.
     const strip = within(screen.getByLabelText("Machines"));
     const alpha = strip.getByRole("button", { name: /^alpha/ });
     const beta = strip.getByRole("button", { name: /^beta/ });
     expect(alpha.getAttribute("aria-pressed")).toBe("true");
     expect(beta.getAttribute("aria-pressed")).toBe("false");
+
+    await screen.findByText("First");
     expect(screen.queryByText("Second")).toBeNull();
 
     await userEvent.click(alpha);

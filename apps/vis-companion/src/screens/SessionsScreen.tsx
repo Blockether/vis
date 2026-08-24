@@ -102,7 +102,6 @@ import {
   fleetError,
   isFleetLoaded,
   machineCounts,
-  machineTally,
   machineKey,
   machineLabel,
   newSessionTarget,
@@ -112,7 +111,6 @@ import {
   type Tally,
   reconcileMachines,
   resolveScope,
-  SCOPE_ALL,
   sameOverview,
   scopedMachines,
   SEARCH_UNPLACED,
@@ -432,10 +430,12 @@ export function SessionsScreen({
   // returning to this tab repaints the previous frame instantly; the effects
   // below revalidate each machine independently and reconcile on top.
   const [machines, setMachines] = useState<FleetMachine[]>(() => hydrateMachines(conns, []));
-  // Exactly one paired machine is always active. A missing, removed, or unreachable
-  // preference resolves to the first machine that can answer, so the list never has an
-  // unscoped fleet state and pressing the selected tab cannot turn it off.
-  const [scopePick, setScopePick] = useState<string | null>(SCOPE_ALL);
+  // Exactly one paired machine is always active. Seed the state with the first machine
+  // itself — not an unselected sentinel — and resolve removals or failures to the next
+  // machine that can answer. Pressing the selected tab cannot turn it off.
+  const [scopePick, setScopePick] = useState<string | null>(() =>
+    conns[0] ? machineKey(conns[0]) : null,
+  );
   const scope = resolveScope(machines, scopePick);
   // THE FIELD IS IMMEDIATE; THE SEARCH IS A GESTURE THAT ENDS. `query` is what the
   // reader is typing, `searchNeedle` is what typing RESTED on — and every answer, every
@@ -1426,9 +1426,6 @@ export function SessionsScreen({
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
-  // A resolved scope always names one machine, so its tab already names the list and a
-  // repeated machine band would be noise.
-  const isFleetView = scope === SCOPE_ALL;
 
   // One hue per paired machine, assigned from the machine's own key, so a rail
   // keeps its colour across reloads and reorderings and two machines side by side
@@ -2331,17 +2328,6 @@ export function SessionsScreen({
             {sections.map(({ machine, groups, admitted }, sectionIndex) => {
               const key = machineKey(machine.conn);
               const color = machineColor(machineColors, key);
-              const address = hostOf(machine.conn.url);
-              // What this section is SHOWING. Unfiltered that is the GATEWAY's own
-              // total (`/v1/projects/overview`), not a tally of the rows this
-              // device has paged in — the list is a window, so counting it read
-              // low and moved as pages landed. A search or filter narrows the list
-              // on this device, and then the honest number is what is on screen.
-              const band = searching
-                ? machineTally(null, groups)
-                : machineTally(machine.overview, groups);
-              const shown = band.count;
-              const shownLive = band.live;
               return (
                 <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
                   {/* Every machine keeps its own named panel and landmark, even when it is
@@ -2356,40 +2342,8 @@ export function SessionsScreen({
                       first project of the second machine can never read as the fifth
                       project of the first one. */}
                   {sectionIndex > 0 && <SectionGap />}
-                  {/* IN THE FLEET VIEW A SECTION NAMES ITS MACHINE, and only there.
-                      Scoped, the strip directly above the card has just said the name
-                      and a band repeating it is the second one this list was reported
-                      for; with every machine on screen at once, a rail with no name at
-                      the top of it is a colour the reader cannot resolve. It is the
-                      same BAND as the project headers below it — the rule under it is
-                      the machine's own hue, so where one computer ends is a colour
-                      change carrying a name. */}
-                  {isFleetView && (
-                    <SectionHeader rule={color.rail}>
-                      <HeaderTitle
-                        mark={<MachineMark color={color} size="banner" />}
-                        name={machineLabel(machine.conn)}
-                        qualifier={address === machineLabel(machine.conn) ? undefined : address}
-                        qualifierTitle={machine.conn.url}
-                      />
-                      <HeaderActions>
-                        {/* Every machine in this list is answering — `All` is the
-                            machines that answered (see `scopedMachines`) — so a band
-                            always has a count to carry. */}
-                        <HeaderMeta>
-                          <HeaderTally count={shown} unit="session" />
-                          <LiveCount count={shownLive} />
-                        </HeaderMeta>
-                        {/* The machine's own control, on the machine's own band — the
-                            row above the card cannot carry it here, because in this view
-                            it speaks for no single machine. */}
-                        <MachineProjectsButton
-                          machine={machineLabel(machine.conn)}
-                          onPress={(anchor) => openManageProjects(machine, anchor)}
-                        />
-                      </HeaderActions>
-                    </SectionHeader>
-                  )}
+                  {/* The active tab directly above the card already names this machine, so
+                      the list has no second selected/unselected presentation to maintain. */}
                   {groups.length === 0
                     ? (
                         <div className="flex flex-wrap items-center gap-3 px-3 py-3 sm:px-4">
