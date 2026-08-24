@@ -383,8 +383,27 @@
     (:is-imported voice)
     (assoc :is-imported true)))
 
+(defn public-sample
+  "What a play button may promise for this voice, in the wire vocabulary: a
+   sample it can play NOW, one that a press would first make out of very little,
+   or - when neither - nothing at all, because the honest answer to \"can I hear
+   this voice\" is sometimes \"install it first\"."
+  [sample]
+  (cond (:audio-path sample) {:is-sample-ready true}
+        (:is-preparable sample) {:is-sample-preparable true}
+        :else nil))
+
+(defn voice-sample
+  "Where this engine's sample of `voice-id` is, WITHOUT making one: `{:audio-path
+   …}`, `{:is-preparable true}`, or nil - including for an engine that declares no
+   sample seam, because a voice nobody can play back is not an error."
+  [engine voice-id]
+  (when-let [f (:voice-sample engine)]
+    (try (f voice-id) (catch Throwable _ nil))))
+
 (defn voices
-  "The voices `engine` can speak in, with per-voice readiness when it declares that seam."
+  "The voices `engine` can speak in, with per-voice readiness when it declares that
+   seam, and per-voice sample facts when it declares that one."
   [engine]
   (if-let [catalogue (:voices engine)]
     (mapv (fn [entry]
@@ -393,7 +412,10 @@
               (assoc :model
                 (public-readiness (try ((:voice-model-state engine) (:id entry))
                                        (catch Throwable t
-                                         {:state :failed :error (error-message t)}))))))
+                                         {:state :failed :error (error-message t)}))))
+
+              (:voice-sample engine)
+              (merge (public-sample (voice-sample engine (:id entry))))))
           (catalogue))
     []))
 (defn import-voice!
@@ -420,6 +442,21 @@
     (throw (ex-info (str (or (:label engine) (name (:id engine)))
                          " does not keep voices of its own")
                     {:type :vis/voice-import-unsupported :engine (name (:id engine))}))))
+
+(defn voice-sample!
+  "The sample WAV for `voice-id` - `{:audio-path :media-type}` - or nil when this
+   voice has none to give.
+
+   It MAKES one when the engine said that was cheap, so a press of play is
+   answered by audio rather than by a second request: what an engine calls
+   preparable is by contract small (a sample pack next to the weights) or local
+   (speaking one sentence with a model already installed), never the voice
+   download itself. A press of play is not consent to 115 MB."
+  [engine voice-id]
+  (let [found (voice-sample engine voice-id)]
+    (cond (:audio-path found) found
+          (and (:is-preparable found) (:prepare-voice-sample engine))
+          ((:prepare-voice-sample engine) voice-id))))
 
 (defn engines-info
   "One direction's engine catalogue as capabilities data: what exists and what is

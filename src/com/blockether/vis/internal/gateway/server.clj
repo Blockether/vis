@@ -3618,6 +3618,40 @@
                         (json-response 200 {:is-forgotten true})
                         (json-response 404 {:error "no imported voice with that id"}))
                       (catch Throwable t (voice-import-failure t))))))
+
+(defn- speech-voice-sample-handler
+  "GET /v1/speech/voices/:voice-id/sample - what this voice SOUNDS like, as audio.
+
+   Machine-level like the rest of the catalogue: a voice is chosen for the machine,
+   so hearing one is nobody's session business - and a preview must never have to
+   invent a session id to reach POST /v1/sessions/:sid/speech.
+
+   It PREPARES a sample when preparing one is cheap ([[voice/voice-sample!]] owns
+   that contract) and 404s when there is none to be had - exactly the voices whose
+   catalogue entry carried neither `is_sample_ready` nor `is_sample_preparable`.
+   `no-store` like the job audio next door: an imported voice re-imported under the
+   same name is a DIFFERENT recording, and a week-old cached sample would be lying."
+  [request]
+  (with-engine
+    :synthesize
+    request
+    (fn [engine]
+      (try (let [sample
+                 (voice/voice-sample! engine (get-in request [:path-params :voice-id]))
+
+                 ^java.io.File f
+                 (some-> (:audio-path sample)
+                         io/file)]
+
+             (if-not (and f (.isFile f))
+               (json-response 404 {:error "no sample for that voice"})
+               {:status 200
+                :headers {"Content-Type" (or (:media-type sample) "audio/wav")
+                          "Content-Length" (str (.length f))
+                          "Cache-Control" "no-store"}
+                :body f}))
+           (catch Throwable t
+             (json-response 502 {:error (or (ex-message t) "could not prepare a sample")}))))))
 (def ^:private JOB_QUEUE_CAP
   "Per-connection queue of job states. A transcription or a synthesis reports a handful
    of percentages per second at most, so anything the writer cannot keep up with is a
@@ -4012,6 +4046,7 @@
         ["/providers/:provider-id/logout" {:post provider-logout-handler}]
         ["/speech/voices" {:get speech-voices-handler :post speech-voices-handler}]
         ["/speech/voices/:voice-id" {:delete speech-voice-handler}]
+        ["/speech/voices/:voice-id/sample" {:get speech-voice-sample-handler}]
         ;; Whether a model is on disk is a fact about the MACHINE, not about a
         ;; conversation, so a settings screen with nothing open can read it and
         ;; start the download.

@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# Speak ONE sentence in every voice Vis may publish audio for, so a reader can
+# hear a Piper voice BEFORE downloading the model that speaks it. The result is
+# `voice-samples.tar.bz2`, one small asset in the voice assets release, carried
+# by the `voice-samples` manifest entry and installed like any other model.
+#
+# WHY THIS EXISTS
+#   * Choosing from a list of names is choosing blind, and the only thing that
+#     can answer "what does Kristin sound like" is the model you have not
+#     downloaded yet. So the answer travels apart from it: four WAVs, well under
+#     a megabyte together, against 67-115 MB for one Piper voice.
+#   * Only Piper needs this. A pocket voice IS a reference clip and the bundle
+#     already carries it (bin/make-voice-clips); an IMPORTED voice is a recording
+#     that is already on the machine that imported it. Piper's voice is a MODEL,
+#     and a model that is not installed has nothing to play.
+#
+# WHAT IS IN THE PACK, AND WHY THAT IS ALL (licence, not preference)
+#   Bryce Beattie's Kristin, Cori and John, and the LJSpeech voice, are trained
+#   on public-domain recordings and released into the public domain: audio they
+#   speak carries no licence forward, so a sample made here is ours to publish.
+#   RyanSpeech is CC BY-NC-SA 4.0 - NonCommercial binds the DISTRIBUTOR and this
+#   output would ship inside a release asset - so Ryan is deliberately absent,
+#   and its sample is synthesised on the machine that chose to install it.
+#
+# ONE SENTENCE, THE SAME ONE, IN EVERY VOICE. A sample is a COMPARISON, and a
+# comparison where each voice reads different words compares the words. (The
+# reference clips of bin/make-voice-clips differ on purpose: those are not
+# compared, they are cloned.)
+#
+# Usage:
+#   bin/make-voice-samples                     # dist/voice-samples
+#   bin/make-voice-samples --out /tmp/samples
+#   bin/make-voice-samples --only kristin
+#
+# Then put it beside the models it previews, and paste the printed sha256 and
+# byte count into the `voice-samples` entry of the model manifest:
+#   gh release upload voice-assets-pack dist/voice-samples/voice-samples.tar.bz2
+#
+# Requires: uv, ffmpeg, tar, curl. No Hugging Face token, no gated weights.
+
+set -euo pipefail
+
+SHERPA_VERSION="1.13.5" # only for generating; never shipped
+PYTHON_VERSION="3.12"
+SAMPLE_RATE=22050 # what every Piper voice in the manifest is trained at
+PACK_NAME="voice-samples"
+UPSTREAM="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models"
+
+# The sentence is plain on purpose: no proper nouns, no unusual words, one
+# comma-length pause, so what carries is the voice and not the reading.
+SAMPLE_TEXT="This is how I sound, reading at an ordinary pace, with the pauses left where they fall."
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+out_dir="${repo_root}/dist/voice-samples"
+work_dir=""
+only=""
+keep_work=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out) out_dir="$2"; shift 2 ;;
+    --work) work_dir="$2"; shift 2 ;;
+    --only) only="$2"; shift 2 ;;
+    --keep-work) keep_work=1; shift ;;
+    -h|--help) sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+
+for tool in uv ffmpeg tar curl; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
+done
+
+if [[ -z "$work_dir" ]]; then
+  work_dir="$(mktemp -d "${TMPDIR:-/tmp}/vis-voice-samples.XXXXXX")"
+fi
+mkdir -p "$work_dir" "$out_dir"
+cleanup() {
+  if [[ "$keep_work" -eq 0 && -d "$work_dir" ]]; then rm -rf "$work_dir"; fi
+}
+trap cleanup EXIT
+
+digest_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  else
+    shasum -a 256 "$1" | cut -d' ' -f1
+  fi
+}
+
+# voice-id|bundle|model|sha256 - the bundle, the model file and the digest are
+# the manifest's own, so a sample is spoken by exactly the archive a user would
+# install. The digest is verified: a sample is only public domain because of
+# WHICH model spoke it.
+voice_rows() {
+  cat <<'ROWS'
+kristin|vits-piper-en_US-kristin-medium|en_US-kristin-medium.onnx|c2206f572df2956c50b1ae3367eebce3853c663e890cba8048cd62b1e4dbe6c7
+cori|vits-piper-en_GB-cori-high|en_GB-cori-high.onnx|42922f07738fcde2e49eed4e959635692f73b933de35a6b7c1010162ff566292
+john|vits-piper-en_US-john-medium|en_US-john-medium.onnx|d90362cfa48e429d3096f644785184446145b6e38216f2eaf4c0601b8aad5a36
+ljspeech|vits-piper-en_US-ljspeech-high|en_US-ljspeech-high.onnx|00c6408d2409050312193b0d40ae07fde28af7d3d45a56efcc55440db516b935
+ROWS
+}
+
+pack_dir="${work_dir}/${PACK_NAME}"
+mkdir -p "$pack_dir"
+
+echo "==> work  ${work_dir}"
+echo "==> out   ${out_dir}"
+echo "==> voice models: public domain, via ${UPSTREAM}"
+
+echo "==> creating the environment (python ${PYTHON_VERSION})"
+uv venv --quiet --python "$PYTHON_VERSION" "${work_dir}/venv"
+# shellcheck disable=SC1091
+source "${work_dir}/venv/bin/activate"
+# numpy is not a sherpa-onnx dependency; the levelling below needs it.
+uv pip install --quiet "sherpa-onnx==${SHERPA_VERSION}" numpy
+
+made=0
+while IFS='|' read -r id bundle model sha; do
+  [[ -z "$id" ]] && continue
+  [[ -n "$only" && "$only" != "$id" ]] && continue
+
+  archive="${work_dir}/${bundle}.tar.bz2"
+  if [[ ! -f "$archive" ]]; then
+    echo "==> fetching ${bundle}"
+    curl -fsSL "${UPSTREAM}/${bundle}.tar.bz2" -o "$archive"
+  fi
+  actual="$(digest_of "$archive")"
+  if [[ "$actual" != "$sha" ]]; then
+    echo "${bundle}: expected sha256 ${sha}, got ${actual}" >&2
+    exit 1
+  fi
+  tar -xjf "$archive" -C "$work_dir"
+
+  raw="${work_dir}/${id}-raw.wav"
+  echo "==> speaking ${id}"
+  python - "${work_dir}/${bundle}" "$model" "$raw" "$SAMPLE_TEXT" <<'PY'
+import sys
+import wave
+
+import numpy as np
+import sherpa_onnx as so
+
+bundle, model, out, text = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+tts = so.OfflineTts(
+    so.OfflineTtsConfig(
+        model=so.OfflineTtsModelConfig(
+            vits=so.OfflineTtsVitsModelConfig(model=f"{bundle}/{model}",
+                                              tokens=f"{bundle}/tokens.txt",
+                                              data_dir=f"{bundle}/espeak-ng-data"),
+            num_threads=4)))
+audio = tts.generate(text, sid=0, speed=1.0)
+samples = np.asarray(audio.samples, dtype=np.float32)
+peak = float(np.abs(samples).max())
+if peak < 0.05:
+    raise SystemExit(f"{model} produced silence")
+# -3 dBFS, the same levelling the reference clips get: samples are played one
+# after another while somebody decides between them, so no voice may arrive
+# louder than the one before it.
+samples = samples / peak * 0.7
+with wave.open(out, "wb") as w:
+    w.setnchannels(1)
+    w.setsampwidth(2)
+    w.setframerate(audio.sample_rate)
+    w.writeframes((samples * 32767).astype(np.int16).tobytes())
+print(f"    {len(samples) / audio.sample_rate:.2f}s at {audio.sample_rate} Hz")
+PY
+
+  sample="${pack_dir}/${id}.wav"
+  ffmpeg -v error -y -i "$raw" -ac 1 -ar "$SAMPLE_RATE" -c:a pcm_s16le "$sample"
+  echo "    ${sample} ($(wc -c < "$sample" | tr -d ' ') bytes)"
+  made=$((made + 1))
+done < <(voice_rows)
+
+if [[ "$made" -eq 0 ]]; then
+  echo "no samples made (--only ${only} matched nothing)" >&2
+  exit 1
+fi
+
+# One top-level directory, because the installer strips exactly one on the way
+# in (see files/extract-tar-bz2!), and the manifest's `:requires` are read at
+# the root of what is left.
+pack="${out_dir}/${PACK_NAME}.tar.bz2"
+tar -cjf "$pack" -C "$work_dir" "$PACK_NAME"
+cp -R "${pack_dir}/." "${out_dir}/"
+
+cat <<EOF
+
+==> ${made} sample(s), packed into ${pack}
+    bytes   $(wc -c < "$pack" | tr -d ' ')
+    sha256  $(digest_of "$pack")
+
+Upload it beside the models it previews, then move those two numbers into the
+\`voice-samples\` entry of extensions/common/vis-foundation-voice/resources/vis-models/manifest.edn:
+
+    gh release upload voice-assets-pack ${pack}
+EOF

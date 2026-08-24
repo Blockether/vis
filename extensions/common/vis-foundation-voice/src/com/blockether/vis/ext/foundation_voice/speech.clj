@@ -26,18 +26,25 @@
    and so is the default engine: it speaks a baked speaker with no clip to choose,
    which is the least a caller that named no voice has to know."
   []
-  (voice/register-engine! :synthesize
-                          {:id piper-engine-id
-                           :label "Piper (local)"
-                           :synthesize #(sherpa/call-native (fn []
-                                                              (tts/synthesize! :piper %)))
-                           :voices tts/piper-voices
-                           :model-state #(tts/model-state :piper)
-                           :start-download #(tts/start-download! :piper)
-                           :voice-model-state #(tts/model-state :piper %)
-                           :start-voice-download
-                           (fn [{:keys [voice-id is-license-accepted]}]
-                             (tts/start-download! :piper voice-id is-license-accepted))})
+  (voice/register-engine!
+    :synthesize
+    {:id piper-engine-id
+     :label "Piper (local)"
+     :synthesize #(sherpa/call-native (fn []
+                                        (tts/synthesize! :piper %)))
+     :voices tts/piper-voices
+     :model-state #(tts/model-state :piper)
+     :start-download #(tts/start-download! :piper)
+     :voice-model-state #(tts/model-state :piper %)
+     :start-voice-download (fn [{:keys [voice-id is-license-accepted]}]
+                             (tts/start-download! :piper voice-id is-license-accepted))
+     ;; What a list of names cannot say. The lookup never fetches;
+     ;; preparing is a 0.7 MB pack of samples, or one sentence spoken
+     ;; by a model that is already installed - never the voice itself.
+     :voice-sample tts/piper-sample
+     :prepare-voice-sample (fn [voice-id]
+                             (sherpa/call-native (fn []
+                                                   (tts/prepare-piper-sample! voice-id))))})
   (voice/register-engine! :synthesize
                           {:id pocket-engine-id
                            :label "Pocket TTS (local)"
@@ -49,4 +56,8 @@
                            :import-voice voices/import!
                            :forget-voice voices/forget!
                            :model-state #(tts/model-state :pocket-tts)
-                           :start-download #(tts/start-download! :pocket-tts)}))
+                           :start-download #(tts/start-download! :pocket-tts)
+                           ;; A pocket voice IS a reference clip, so it already has its
+                           ;; own sample and there is nothing to prepare - not even for a
+                           ;; voice somebody imported, whose clip is the recording itself.
+                           :voice-sample tts/pocket-sample}))

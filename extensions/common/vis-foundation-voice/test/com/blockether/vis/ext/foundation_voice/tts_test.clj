@@ -276,3 +276,104 @@
                (expect (= {"temperature" "0.7" "chunk_size" "15"} (into {} (.getExtra gen))))
                (expect (= "what the clip says" (.getReferenceText gen))))
              (finally (.delete clip))))))
+
+(defn- temp-models-root
+  ^java.io.File []
+  (doto (io/file (System/getProperty "java.io.tmpdir") (str "vis-voice-samples-" (System/nanoTime)))
+    (.mkdirs)))
+
+(defn- write-wav! [^java.io.File f] (io/make-parents f) (spit f "RIFF....WAVEfmt ") f)
+
+(defdescribe sample-test
+             (it "carries a sample for every voice Vis may redistribute, and for no other"
+                 ;; A sample is a recording a PIPER MODEL made, so shipping one redistributes
+                 ;; that model's output. Ryan's CC BY-NC-SA binds the distributor, so his
+                 ;; sample is spoken on the machine that installed him or not at all.
+                 (expect (= ["kristin.wav" "cori.wav" "john.wav" "ljspeech.wav"]
+                            (:requires (tts/samples-asset))))
+                 ;; and it is not an engine's asset: nothing may mistake it for a voice model
+                 (expect (nil? (:engine (tts/samples-asset))))
+                 (expect (not-any? #(= "voice-samples" (:id %)) (tts/piper-assets)))
+                 ;; one sentence for every voice - a comparison where each voice reads
+                 ;; different words compares the words
+                 (expect (string? tts/sample-text))
+                 (expect (str/ends-with? tts/sample-text ".")))
+             (it "offers a preview only when it costs nothing, and never a voice download"
+                 (let [root (temp-models-root)]
+                   (with-redefs [assets/models-root (constantly (str root))]
+                     ;; nothing on disk: the pack would answer for the four it carries
+                     (expect (= {:is-preparable true} (tts/piper-sample "kristin")))
+                     ;; ...and NOT for the one it does not, whose model is not installed:
+                     ;; pressing play is not consent to 116 MB
+                     (expect (nil? (tts/piper-sample "ryan")))
+                     ;; his own model already here: speaking one sentence is local and cheap
+                     (with-redefs [assets/installed? (constantly true)]
+                       (expect (= {:is-preparable true} (tts/piper-sample "ryan")))))))
+             (it "answers with the file once one is on disk, packed or spoken here"
+                 (let [root (temp-models-root)]
+                   (with-redefs [assets/models-root (constantly (str root))]
+                     (let [packed (write-wav! (io/file root "voice-samples" "cori.wav"))
+                           spoken (write-wav! (io/file root "voice-samples-spoken" "ryan.wav"))]
+
+                       (expect (= {:audio-path (str packed) :media-type "audio/wav"}
+                                  (tts/piper-sample "cori")))
+                       (expect (= {:audio-path (str spoken) :media-type "audio/wav"}
+                                  (tts/piper-sample "ryan")))))))
+             (it "prepares a packed sample by installing the pack, once"
+                 (let [root
+                       (temp-models-root)
+
+                       installed
+                       (atom [])]
+
+                   (with-redefs [assets/models-root
+                                 (constantly (str root))
+
+                                 assets/install!
+                                 (fn [entry & _]
+                                   (swap! installed conj (:id entry))
+                                   (doseq [name (:requires entry)]
+                                     (write-wav! (io/file (assets/install-dir entry) name)))
+                                   (assets/install-dir entry))]
+
+                     (let [made (tts/prepare-piper-sample! "john")]
+                       (expect (str/ends-with? (:audio-path made) "john.wav"))
+                       (expect (= "audio/wav" (:media-type made)))
+                       (expect (= ["voice-samples"] @installed))
+                       ;; the second press is already answered
+                       (expect (= made (tts/prepare-piper-sample! "john")))
+                       (expect (= ["voice-samples"] @installed))))))
+             (it "refuses to make a sample that would need the voice downloaded first"
+                 (let [root
+                       (temp-models-root)
+
+                       installed
+                       (atom [])]
+
+                   (with-redefs [assets/models-root
+                                 (constantly (str root))
+
+                                 assets/installed?
+                                 (constantly false)
+
+                                 assets/install!
+                                 (fn [entry & _]
+                                   (swap! installed conj (:id entry))
+                                   nil)]
+
+                     (expect (= :voice-tts/sample-unavailable
+                                (:type (ex-data-of #(tts/prepare-piper-sample! "ryan")))))
+                     (expect (= [] @installed)))))
+             (it
+               "hands a pocket voice its own reference clip, and nothing when the bundle is absent"
+               ;; A pocket voice IS a clip: there is no sample to generate and none to fetch,
+               ;; because 96 MB of bundle is not a preview.
+               (let [root (temp-models-root)]
+                 (with-redefs [assets/models-root (constantly (str root))
+                               voices/imported (constantly [])]
+
+                   (expect (nil? (tts/pocket-sample "kristin")))
+                   (let [clip (write-wav! (io/file (assets/install-dir (tts/pocket-asset))
+                                                   (:clip (first (:voices (tts/pocket-asset))))))]
+                     (expect (= {:audio-path (str clip) :media-type "audio/wav"}
+                                (tts/pocket-sample "kristin"))))))))

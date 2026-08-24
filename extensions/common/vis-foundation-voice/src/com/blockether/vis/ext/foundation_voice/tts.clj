@@ -498,3 +498,114 @@
                      (pocket-generation-config (str clip) (:clip-text voice))
                      spoken
                      report))))))
+
+;; Samples - the one thing a list of names cannot say
+
+;; A Piper voice is a MODEL, so "what does Kristin sound like" is normally
+;; answered by the 67-115 MB you have not downloaded yet. The samples pack is
+;; 0.7 MB and travels apart from the weights, so a voice can be chosen by ear
+;; first. Ryan is not in it and never will be - CC BY-NC-SA binds the
+;; DISTRIBUTOR, so his sample is spoken on the machine that installed him.
+
+(def ^:const samples-asset-id "voice-samples")
+
+(def ^:const sample-text
+  "The sentence every voice reads. A sample is a COMPARISON, and a comparison
+   where each voice reads different words compares the words: one sentence,
+   ordinary punctuation, long enough to hear a pace and a breath. (The pocket
+   reference clips differ on purpose - those are cloned, not compared.)"
+  "This is how I sound, reading at an ordinary pace, with the pauses left where they fall.")
+
+(defn samples-asset [] (assets/entry samples-asset-id))
+
+(defn- sample-file-name ^String [voice-id] (str (name voice-id) ".wav"))
+
+(defn- is-packed-voice
+  "Whether the shipped pack carries a sample for this voice at all."
+  [voice-id]
+  (boolean (some #{(sample-file-name voice-id)} (:requires (samples-asset)))))
+
+(defn- packed-sample
+  ^File [voice-id]
+  (io/file (assets/install-dir (samples-asset)) (sample-file-name voice-id)))
+
+(defn- spoken-sample
+  "Where a sample this machine SPOKE lives: beside the pack, never inside it -
+   [[assets/install!]] owns that directory and verifies it against `:requires`."
+  ^File [voice-id]
+  (io/file (assets/models-root) "voice-samples-spoken" (sample-file-name voice-id)))
+
+(defn- sample-on-disk
+  [voice-id]
+  (let [^File f (first (filter #(.isFile ^File %)
+                               [(packed-sample voice-id) (spoken-sample voice-id)]))]
+    (when f {:audio-path (str f) :media-type "audio/wav"})))
+
+(defn piper-sample
+  "Where the sample of a Piper voice is - or what it would take to have one, and
+   never a byte the user did not ask for:
+
+     {:audio-path …}        one is already on disk
+     {:is-preparable true}  [[prepare-piper-sample!]] can make one out of the
+                            0.7 MB pack, or out of a model already installed
+     nil                    the only way to hear this voice is to install it,
+                            and a play press is not consent to 115 MB
+
+   Throws for a voice no Piper entry names."
+  [voice-id]
+  (let [asset
+        (piper-asset-for voice-id)
+
+        id
+        (name (:id (:voice asset)))]
+
+    (or (sample-on-disk id)
+        (when (or (is-packed-voice id) (assets/installed? asset)) {:is-preparable true}))))
+
+(defn prepare-piper-sample!
+  "Make the sample [[piper-sample]] said was preparable and return it. Installs
+   the pack (0.7 MB, four voices at once) or speaks the sentence with a model
+   that is already here and KEEPS the result, so the second press is instant and
+   shared by every surface on this machine. Never downloads a voice model."
+  [voice-id]
+  (let [asset
+        (piper-asset-for voice-id)
+
+        id
+        (name (:id (:voice asset)))]
+
+    (or (sample-on-disk id)
+        (when (is-packed-voice id) (assets/install! (samples-asset)) (sample-on-disk id))
+        (when (assets/installed? asset)
+          (let [^File out
+                (spoken-sample id)
+
+                generated
+                (synthesize! :piper {:text sample-text :voice-id id})
+
+                ^File made
+                (io/file (str (:audio-path generated)))]
+
+            (io/make-parents out)
+            ;; Rename, so a second press racing the first sees the whole file or
+            ;; no file - never the head of a WAV another thread is still writing.
+            (when-not (.renameTo made out) (io/copy made out) (.delete made))
+            (sample-on-disk id)))
+        (throw (ex-info (str "No sample for " id " without installing the voice first.")
+                        {:type :voice-tts/sample-unavailable :family :piper :voice-id id})))))
+
+(defn pocket-sample
+  "A pocket voice IS a reference clip, so its sample is that clip: already on
+   disk for a voice somebody imported, part of the bundle for a shipped one.
+   Nothing to prepare and nothing to fetch - when the bundle is absent there is
+   no sample, because 96 MB is not a preview."
+  [voice-id]
+  (let [voice
+        (named-voice (pocket-voice-catalogue) voice-id)
+
+        ^File clip
+        (some-> (:clip voice)
+                str
+                io/file)]
+
+    (when (and clip (.isFile clip)) {:audio-path (str clip) :media-type "audio/wav"})))

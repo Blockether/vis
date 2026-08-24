@@ -2991,7 +2991,13 @@
       (is (= @(rv 'speech-voices-handler)
              (get-in (match-by-path router "/v1/speech/voices") [:data :post :handler])))
       (is (= @(rv 'speech-voice-handler)
-             (get-in (match-by-path router "/v1/speech/voices/mine") [:data :delete :handler]))))
+             (get-in (match-by-path router "/v1/speech/voices/mine") [:data :delete :handler])))
+      (is (= @(rv 'speech-voice-sample-handler)
+             (get-in (match-by-path router "/v1/speech/voices/mine/sample") [:data :get :handler])))
+      ;; hearing a voice is not a session's business either: a preview must never have
+      ;; to invent a session id to reach POST /v1/sessions/:sid/speech
+      (is (nil? (match-by-path router
+                               (str "/v1/sessions/" (random-uuid) "/speech/voices/mine/sample")))))
     (testing "and which model each direction uses is a fact about the machine too"
       ;; A gateway with no session open still has to answer "is the model here yet" - the
       ;; settings screen asks before any conversation exists.

@@ -80,8 +80,12 @@
       "\n"
       (remove nil?
         [(str "## `" (:id entry) "`") ""
-         (str "Engine `" (:engine entry)
-              "` - " (:license entry)
+         ;; Not every entry is an engine's model: the samples pack is what the
+         ;; catalogue SOUNDS like, and calling it an engine would credit it wrong.
+         (str (if-let [engine (:engine entry)]
+                (str "Engine `" engine "`")
+                "Voice samples")
+              " - " (:license entry)
               " - "
               (if (:is-commercial-ok entry) "commercial use permitted" "NOT for commercial use")
               " - " (if (:is-redistributed entry)

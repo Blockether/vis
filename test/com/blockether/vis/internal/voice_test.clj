@@ -723,6 +723,66 @@
       (is (= "pocket-tts does not keep voices of its own"
              (refusal #(voice/forget-voice! plain "mine")))))))
 
+;; A voice is a NAME until you hear it
+
+(defn- sampled-engine
+  "A speaking engine that can play a voice back: one voice already sampled, one
+   that could be cheaply, one that could not be at all."
+  [prepared]
+  (assoc (speaker-engine :sampler)
+    :voices (constantly [{:id :kristin :label "Kristin"} {:id :cori :label "Cori"}
+                         {:id :ryan :label "Ryan"}])
+    :voice-sample (fn [id]
+                    (case (keyword id)
+                      :kristin
+                      {:audio-path "/tmp/kristin.wav" :media-type "audio/wav"}
+
+                      :cori
+                      {:is-preparable true}
+
+                      nil))
+    :prepare-voice-sample (fn [id]
+                            (swap! prepared conj id)
+                            {:audio-path (str "/tmp/" (name id) ".wav") :media-type "audio/wav"})))
+
+(deftest a-voice-can-be-heard-before-it-is-chosen
+  ;; A list of names cannot say what a voice sounds like, and the surfaces must not
+  ;; guess: a play button that turns into a 116 MB download is a trap, so the
+  ;; catalogue says per voice whether it can be played now, played after something
+  ;; small, or not at all.
+  (let [prepared
+        (atom [])
+
+        engine
+        (sampled-engine prepared)]
+
+    (testing "the catalogue says what a play button may promise, per voice"
+      (is (= [{:id "kristin" :label "Kristin" :is-sample-ready true}
+              {:id "cori" :label "Cori" :is-sample-preparable true} {:id "ryan" :label "Ryan"}]
+             (voice/voices engine))))
+    (testing "a sample that exists is handed over without preparing anything"
+      (is (= {:audio-path "/tmp/kristin.wav" :media-type "audio/wav"}
+             (voice/voice-sample! engine "kristin")))
+      (is (= [] @prepared)))
+    (testing "a preparable one is made on the spot"
+      (is (= {:audio-path "/tmp/cori.wav" :media-type "audio/wav"}
+             (voice/voice-sample! engine "cori")))
+      (is (= ["cori"] @prepared)))
+    (testing "a voice with no sample answers nothing, and prepares nothing"
+      (is (nil? (voice/voice-sample! engine "ryan")))
+      (is (= ["cori"] @prepared))))
+  (testing "an engine that declares no sample seam offers no play button at all"
+    (let [plain (assoc (speaker-engine :fixed) :voices (constantly [{:id :one :label "One"}]))]
+      (is (= [{:id "one" :label "One"}] (voice/voices plain)))
+      (is (nil? (voice/voice-sample! plain "one")))))
+  (testing "a sample lookup that throws is a voice without a sample, not a broken catalogue"
+    (let [angry (assoc (speaker-engine :angry)
+                  :voices (constantly [{:id :one :label "One"}])
+                  :voice-sample (fn [_]
+                                  (throw (ex-info "the model store is gone" {}))))]
+      (is (= [{:id "one" :label "One"}] (voice/voices angry)))
+      (is (nil? (voice/voice-sample! angry "one"))))))
+
 
 ;; Regression, user report: after one failure every surface answered "no engine is registered"
 ;; until Vis was restarted. ONE latch guarded the whole builtin load loop and was set BEFORE
