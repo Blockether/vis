@@ -1497,7 +1497,7 @@ describe("settings is ONE dialog with two columns", () => {
 
   it("keeps speech engines and voices unboxed under the machine", () => {
     const voices = settings.slice(
-      settings.indexOf('title="Voices"'),
+      settings.indexOf("export function VoicesPanel"),
       settings.indexOf("One persisted speech preference write"),
     );
     expect(voices).not.toContain("description=");
@@ -2876,7 +2876,16 @@ describe("a setting is picked and switched by one control each", () => {
       <ChoiceCell title="Gruvbox" sub="dark" isSelected={false} />,
     );
     expect(classes(off)).toContain("bg-input");
-    expect(off).toContain("\u25cb");
+    expect(off).toContain("○");
+    const unavailable = renderToStaticMarkup(
+      <ChoiceCell
+        title="John"
+        sub="not downloaded yet"
+        isSelected={false}
+        showSelectionMark={false}
+      />,
+    );
+    expect(unavailable).not.toContain("○");
     // The grid draws the hairlines; a cell that framed itself would double them.
     expect(classes(off)).not.toContain("border");
   });

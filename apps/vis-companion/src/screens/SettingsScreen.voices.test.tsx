@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { VoicesPanel } from "./SettingsScreen";
@@ -21,7 +21,9 @@ afterEach(() => {
 });
 
 describe("licence-gated gateway voices", () => {
-  it("shows the terms and downloads only after explicit acceptance", async () => {
+  // Regression, user report: an unavailable voice showed a choice mark beside its
+  // download action, making one row look like two competing controls.
+  it("replaces the unavailable choice mark with its download action", async () => {
     const catalogue: SpeechVoices = {
       engine: { id: "piper-local", label: "Piper (local)" },
       voices: [
@@ -48,7 +50,12 @@ describe("licence-gated gateway voices", () => {
     const onChange = vi.fn().mockResolvedValue(prefs);
 
     render(<VoicesPanel client={client} prefs={prefs} onChange={onChange} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Download" }));
+    const voiceChoice = await screen.findByRole("button", { name: /Ryan/ });
+    const voiceRow = voiceChoice.parentElement;
+    expect(voiceRow).toBeTruthy();
+    expect(voiceChoice.textContent).not.toContain("○");
+    const download = within(voiceRow as HTMLElement).getByRole("button", { name: "Download" });
+    fireEvent.click(download);
 
     expect(screen.getByText("Non-commercial use only, with attribution.")).toBeTruthy();
     expect(screen.getByText(/CC-BY-NC-SA-4.0/)).toBeTruthy();

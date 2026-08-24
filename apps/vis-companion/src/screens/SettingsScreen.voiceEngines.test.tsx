@@ -67,6 +67,19 @@ function machine(
       }),
       voiceModel: vi.fn(reply("asr", listen)),
       speechModel: vi.fn(reply("tts", speak)),
+      speechVoices: vi.fn(({ engine }: { engine?: string | null } = {}) =>
+        Promise.resolve({
+          engine: { id: engine ?? "piper-local", label: "Piper (local)" },
+          voices: [
+            {
+              id: "amy",
+              label: "Amy",
+              language: "en-US",
+              model: { status: "ready", engine: engine ?? "piper-local" },
+            },
+          ],
+        }),
+      ),
     } as unknown as GatewayClient,
   };
 }
@@ -157,10 +170,10 @@ describe("the speech-engines band", () => {
     const pocket = within(engines).getByRole("button", { name: /Pocket TTS \(gateway\)/ });
     expect(device.getAttribute("aria-pressed")).toBe("true");
     expect(within(engines).getByRole("button", { name: /Piper \(gateway\)/ })).toBeTruthy();
-    expect(within(engines).queryByRole("button", { name: /Samantha/ })).toBeNull();
+    const deviceEngine = device.closest('[data-speech-engine="device"]') as HTMLElement;
     expect(screen.queryByRole("button", { name: /Piper \(local\)/ })).toBeNull();
 
-    const deviceVoices = screen.getByRole("group", { name: "This device voices" });
+    const deviceVoices = within(deviceEngine).getByRole("group", { name: "Voices" });
     expect(within(deviceVoices).getByRole("button", { name: /Samantha/ })).toBeTruthy();
     expect(within(deviceVoices).getByRole("button", { name: /Ava/ })).toBeTruthy();
     expect(within(deviceVoices).getByRole("button", { name: /Tom/ })).toBeTruthy();
@@ -188,6 +201,24 @@ describe("the speech-engines band", () => {
     expect(screen.queryByRole("button", { name: /^Samantha/ })).toBeNull();
   });
 
+  // Regression, user report: gateway voices were detached into a separate panel below
+  // every speech engine instead of belonging to the selected engine.
+  it("keeps gateway voices directly under the selected TTS engine", async () => {
+    const { client } = machine();
+    render(<Harness client={client} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /TTS/ }));
+    const piper = await screen.findByRole("button", { name: /Piper \(gateway\)/ });
+    fireEvent.click(piper);
+
+    const engine = piper.closest('[data-speech-engine="piper-local"]');
+    expect(engine).toBeTruthy();
+    const voiceGroup = await within(engine as HTMLElement).findByRole("group", {
+      name: "Voices",
+    });
+    expect(voiceGroup.className.split(/\s+/)).toContain("pl-3");
+    expect(await within(voiceGroup).findByRole("button", { name: /Amy/ })).toBeTruthy();
+  });
   it("reads and downloads an unselected engine from its own row", async () => {
     const { client, asked } = machine();
     vi.mocked(client.voiceModel).mockImplementation(

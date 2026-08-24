@@ -1226,6 +1226,7 @@ export function ChoiceCell({
   title,
   sub,
   isSelected,
+  showSelectionMark = true,
   className = '',
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -1233,6 +1234,8 @@ export function ChoiceCell({
   /** The quiet word under the name: a theme's mode, a page size's temper. */
   sub: string;
   isSelected: boolean;
+  /** Hide the choice glyph when an adjacent action occupies its trailing place. */
+  showSelectionMark?: boolean;
 }) {
   return (
     <button
@@ -1249,24 +1252,35 @@ export function ChoiceCell({
           {sub}
         </span>
       </span>
-      <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">
-        {isSelected ? '●' : '○'}
-      </span>
+      {showSelectionMark && (
+        <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">
+          {isSelected ? '●' : '○'}
+        </span>
+      )}
     </button>
   );
 }
 
-/** A NAMED CLUSTER OF SETTINGS CHOICES, distinct from its neighbouring clusters. */
+/**
+ * A NAMED CLUSTER OF SETTINGS CHOICES, distinct from its neighbouring clusters.
+ * A nested cluster indents itself so its choices visibly belong to the selected parent.
+ */
 export function SettingsChoiceGroup({
   label,
+  isNested = false,
   children,
 }: {
   label: string;
+  isNested?: boolean;
   children: ReactNode;
 }) {
   const headingId = useId();
   return (
-    <section role="group" aria-labelledby={headingId} className="min-w-0">
+    <section
+      role="group"
+      aria-labelledby={headingId}
+      className={`min-w-0 ${isNested ? 'pl-3' : ''}`}
+    >
       <header className="flex min-h-7 items-center border-y border-dialog-edge bg-panel-2 px-3 py-1">
         <h4
           id={headingId}

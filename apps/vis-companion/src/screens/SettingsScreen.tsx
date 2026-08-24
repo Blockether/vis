@@ -254,13 +254,6 @@ function GatewayPanels({
         />
       )}
 
-      {!unreachable && !unauthorized && (
-        <VoicesPanel
-          client={client}
-          prefs={speechPrefs}
-          onChange={onSpeechChange}
-        />
-      )}
 
       {unreachable ? (
         <SettingsPanel title="Settings">
@@ -968,16 +961,14 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
 }
 
 /**
- * THE MACHINE'S VOICES, and the one way to add another.
+ * THE SELECTED ENGINE'S VOICES, immediately under the engine that owns them.
  *
  * A cloning engine speaks by imitating a reference recording, so a voice IS a clip and
  * "create a voice" is an upload and nothing else. The clip is stored on the machine that
- * imported it and every session there speaks with the same catalogue, so this band stands
- * beside that machine's other inventories rather than inside whichever session was open.
+ * imported it and every session there speaks with the same catalogue.
  *
  * A machine with no speaking engine renders NOTHING. Speech is an extension and most
- * installs do not carry it; a band explaining a feature that is not there is noise on
- * every one of them.
+ * installs do not carry it; a group explaining a feature that is not there is noise.
  */
 export function VoicesPanel({
   client,
@@ -1137,7 +1128,7 @@ export function VoicesPanel({
   const canImport = catalogue?.engine?.is_voice_import === true;
 
   return (
-    <SettingsPanel title="Voices">
+    <SettingsChoiceGroup label="Voices" isNested>
       {/* A VOICE IS A ROW, NOT A CARD. Reported over this screen: every voice sat in
           its own hairline box inside a padded box inside the panel, three frames
           deep, and the band spent two lines saying where a DIFFERENT band lives.
@@ -1209,6 +1200,7 @@ export function VoicesPanel({
                     .filter(Boolean)
                     .join(" · ")}
                   isSelected={prefs?.gatewayVoice === voice.id}
+                  showSelectionMark={!model || model.status === "ready"}
                   disabled={!!model && model.status !== "ready"}
                   onClick={() => void chooseVoice(voice.id)}
                 />
@@ -1351,7 +1343,7 @@ export function VoicesPanel({
           )}
         </>
       )}
-    </SettingsPanel>
+    </SettingsChoiceGroup>
   );
 }
 
@@ -1740,20 +1732,91 @@ export function SpeechEnginesPanel({
             <div id="speech-tts-engines" className="border-t border-dialog-edge">
               <SettingsChoiceGroup label="TTS engines">
                 <div className="grid grid-cols-1 gap-px bg-dialog-edge">
-                  <ChoiceCell
-                    title="This device"
-                    sub={chosenDeviceVoice?.label ?? "system TTS"}
-                    isSelected={chosenTtsEngine === null}
-                    onClick={() => void choose("tts", null)}
-                  />
+                  <div data-speech-engine="device" className="grid bg-input">
+                    <ChoiceCell
+                      title="This device"
+                      sub={chosenDeviceVoice?.label ?? "system TTS"}
+                      isSelected={chosenTtsEngine === null}
+                      onClick={() => void choose("tts", null)}
+                    />
+                    {chosenTtsEngine === null && (
+                      <>
+                        {voices === null && (
+                          <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
+                            Asking this device what it can speak in…
+                          </p>
+                        )}
+                        {voices !== null && deviceList.length === 0 && (
+                          <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
+                            This device has no system TTS engine installed.
+                          </p>
+                        )}
+                        {deviceList.length > 0 && (
+                          <SettingsChoiceGroup label="Voices" isNested>
+                            <div className="grid grid-cols-1 gap-px bg-dialog-edge">
+                              <ChoiceCell
+                                title="System default"
+                                sub="the voice this device prefers"
+                                isSelected={prefs.deviceVoice === null}
+                                onClick={() =>
+                                  void chooseDeviceSetting(() => setSpeechDeviceVoice(null))
+                                }
+                              />
+                              {deviceList.map((voice) => (
+                                <ChoiceCell
+                                  key={voice.id}
+                                  title={voice.label}
+                                  sub={[voice.language, voice.isDefault ? "device default" : null]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                  isSelected={prefs.deviceVoice === voice.id}
+                                  onClick={() =>
+                                    void chooseDeviceSetting(() => setSpeechDeviceVoice(voice.id))
+                                  }
+                                />
+                              ))}
+                            </div>
+                          </SettingsChoiceGroup>
+                        )}
+                        <SettingsChoiceGroup label="Speech rate">
+                          <div className="grid grid-cols-3 gap-px bg-dialog-edge">
+                            {SPEECH_RATES.map((rate) => (
+                              <ChoiceCell
+                                key={rate}
+                                title={`${rate}×`}
+                                sub={SPEECH_RATE_WORDS[String(rate)] ?? "speed"}
+                                isSelected={prefs.rate === rate}
+                                onClick={() =>
+                                  void chooseDeviceSetting(() => setSpeechRate(rate))
+                                }
+                              />
+                            ))}
+                          </div>
+                        </SettingsChoiceGroup>
+                        {ttsEngines.length === 0 && (
+                          <EngineProblem
+                            engineName="TTS"
+                            reading={speaking[""] ?? null}
+                            isBusy={false}
+                            onPrepare={() => undefined}
+                          />
+                        )}
+                      </>
+                    )}
+                  </div>
                   {ttsEngines.map((engine) => {
                     const reading = speaking[engine.id] ?? null;
+                    const isSelected = engine.id === chosenTtsEngine;
                     return (
-                      <div key={engine.id} className="grid bg-input">
+                      <div
+                        key={engine.id}
+                        data-speech-engine={engine.id}
+                        className="grid bg-input"
+                      >
                         <ChoiceCell
                           title={gatewayEngineLabel(engine)}
                           sub={engineWord(reading)}
-                          isSelected={engine.id === chosenTtsEngine}
+                          isSelected={isSelected}
                           onClick={() => void choose("tts", engine.id)}
                         />
                         <EngineProblem
@@ -1762,74 +1825,14 @@ export function SpeechEnginesPanel({
                           isBusy={busy === `tts:${engine.id}`}
                           onPrepare={() => void prepare("tts", engine.id)}
                         />
+                        {isSelected && (
+                          <VoicesPanel client={client} prefs={prefs} onChange={onChange} />
+                        )}
                       </div>
                     );
                   })}
                 </div>
               </SettingsChoiceGroup>
-
-              {chosenTtsEngine === null ? (
-                <>
-                  {voices === null && (
-                    <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
-                      Asking this device what it can speak in…
-                    </p>
-                  )}
-                  {voices !== null && deviceList.length === 0 && (
-                    <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
-                      This device has no system TTS engine installed.
-                    </p>
-                  )}
-                  {deviceList.length > 0 && (
-                    <SettingsChoiceGroup label="This device voices">
-                      <div className="grid grid-cols-1 gap-px bg-dialog-edge">
-                        <ChoiceCell
-                          title="System default"
-                          sub="the voice this device prefers"
-                          isSelected={prefs.deviceVoice === null}
-                          onClick={() =>
-                            void chooseDeviceSetting(() => setSpeechDeviceVoice(null))
-                          }
-                        />
-                        {deviceList.map((voice) => (
-                          <ChoiceCell
-                            key={voice.id}
-                            title={voice.label}
-                            sub={[voice.language, voice.isDefault ? "device default" : null]
-                              .filter(Boolean)
-                              .join(" · ")}
-                            isSelected={prefs.deviceVoice === voice.id}
-                            onClick={() =>
-                              void chooseDeviceSetting(() => setSpeechDeviceVoice(voice.id))
-                            }
-                          />
-                        ))}
-                      </div>
-                    </SettingsChoiceGroup>
-                  )}
-                  <SettingsChoiceGroup label="Speech rate">
-                    <div className="grid grid-cols-3 gap-px bg-dialog-edge">
-                      {SPEECH_RATES.map((rate) => (
-                        <ChoiceCell
-                          key={rate}
-                          title={`${rate}×`}
-                          sub={SPEECH_RATE_WORDS[String(rate)] ?? "speed"}
-                          isSelected={prefs.rate === rate}
-                          onClick={() => void chooseDeviceSetting(() => setSpeechRate(rate))}
-                        />
-                      ))}
-                    </div>
-                  </SettingsChoiceGroup>
-                  {ttsEngines.length === 0 && (
-                    <EngineProblem
-                      engineName="TTS"
-                      reading={speaking[""] ?? null}
-                      isBusy={false}
-                      onPrepare={() => undefined}
-                    />
-                  )}
-                </>
-              ) : null}
             </div>
           )}
         </div>
