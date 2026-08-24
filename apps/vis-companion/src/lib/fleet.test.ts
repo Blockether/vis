@@ -291,21 +291,20 @@ describe('scope', () => {
 describe('resolveScope', () => {
   const fleet = [machine(studio, [session('a')]), machine(tower, [session('b')])];
 
-  it('answers with the machine the reader named', () => {
+  // Regression, user report: the list could start with no machine selected and pressing
+  // the selected machine again turned it off.
+  it('always resolves to exactly one active machine', () => {
     expect(resolveScope(fleet, machineKey(tower))).toBe(machineKey(tower));
-    expect(resolveScope(fleet, SCOPE_ALL)).toBe(SCOPE_ALL);
-    expect(resolveScope(fleet, 'http://gone.local:7890')).toBe(SCOPE_ALL);
+    expect(resolveScope(fleet, SCOPE_ALL)).toBe(machineKey(studio));
+    expect(resolveScope(fleet, 'http://gone.local:7890')).toBe(machineKey(studio));
   });
 
-  // Regression, user report ("offline stuff should just not be accessible"): a machine
-  // that died under the reading thumb kept the scope, so the list it was showing was
-  // replaced by that machine's failure page.
-  it('falls back to All when the machine being read stops answering', () => {
+  it('moves to the first answering machine when the active machine stops answering', () => {
     const died = [fleet[0], machine(tower, [session('b')], 'offline')];
-    expect(resolveScope(died, machineKey(tower))).toBe(SCOPE_ALL);
+    expect(resolveScope(died, machineKey(tower))).toBe(machineKey(studio));
   });
 
-  it('a fleet of one resolves to its machine, answering or not', () => {
+  it('keeps the first machine active when the whole fleet is dark', () => {
     expect(resolveScope([machine(studio, null, 'offline')], SCOPE_ALL)).toBe(machineKey(studio));
   });
 });

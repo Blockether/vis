@@ -144,20 +144,18 @@ export function scopedMachines(machines: FleetMachine[], scope: string | null): 
 }
 
 /**
- * WHICH MACHINE THE LIST IS SHOWING, from the machine the reader last named.
+ * WHICH SINGLE MACHINE THE LIST IS SHOWING.
  *
- * The pick is a PREFERENCE, not the answer: naming a machine that is gone, or one
- * that has stopped answering, falls back to `All` rather than parking the reader on
- * an empty screen they did not ask for. A machine that is down is not a place to be —
- * its rows are stale, its verbs refuse, and the retry lives on its tile.
- *
- * A FLEET OF ONE ALWAYS RESOLVES TO ITS MACHINE, up or down: there is no `All` above
- * a single machine, and that machine's failure is then the whole screen.
+ * The reader's healthy picked machine wins. Otherwise the first machine that can answer
+ * becomes active; if the whole fleet is dark, the first paired machine remains the scope
+ * so the existing offline gate can explain the failure. `null` is only the initial sentinel
+ * before machines hydrate, never a fleet-view answer.
  */
 export function resolveScope(machines: FleetMachine[], pick: string | null): string | null {
-  if (machines.length === 1) return machineKey(machines[0].conn);
-  const one = machines.find((machine) => machineKey(machine.conn) === pick);
-  return one && !one.error ? pick : SCOPE_ALL;
+  const picked = machines.find((machine) => machineKey(machine.conn) === pick);
+  if (picked && !picked.error) return machineKey(picked.conn);
+  const fallback = machines.find((machine) => !machine.error) ?? machines[0];
+  return fallback ? machineKey(fallback.conn) : SCOPE_ALL;
 }
 
 /** Every session in scope, machine order preserved. */

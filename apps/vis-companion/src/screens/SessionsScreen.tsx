@@ -432,12 +432,9 @@ export function SessionsScreen({
   // returning to this tab repaints the previous frame instantly; the effects
   // below revalidate each machine independently and reconcile on top.
   const [machines, setMachines] = useState<FleetMachine[]>(() => hydrateMachines(conns, []));
-  // The scope is either the whole fleet or exactly one machine. The fleet has no
-  // synthetic tab: the machine tabs are the groups, and pressing the selected machine
-  // returns to the fleet. A fleet of one resolves directly to its machine.
-  // The pick is only a preference: naming a machine that is gone — or one that has
-  // stopped answering under the reader's thumb — falls back to the fleet rather than
-  // to an empty screen (see `resolveScope`).
+  // Exactly one paired machine is always active. A missing, removed, or unreachable
+  // preference resolves to the first machine that can answer, so the list never has an
+  // unscoped fleet state and pressing the selected tab cannot turn it off.
   const [scopePick, setScopePick] = useState<string | null>(SCOPE_ALL);
   const scope = resolveScope(machines, scopePick);
   // THE FIELD IS IMMEDIATE; THE SEARCH IS A GESTURE THAT ENDS. `query` is what the
@@ -1429,8 +1426,8 @@ export function SessionsScreen({
   const scopeMachine = scope
     ? (machines.find((machine) => machineKey(machine.conn) === scope) ?? null)
     : null;
-  // In the fleet view every section names the machine it belongs to. Scoped, the
-  // selected machine tab has already named it and the band is noise.
+  // A resolved scope always names one machine, so its tab already names the list and a
+  // repeated machine band would be noise.
   const isFleetView = scope === SCOPE_ALL;
 
   // One hue per paired machine, assigned from the machine's own key, so a rail
@@ -2047,8 +2044,8 @@ export function SessionsScreen({
           The chips used to sit inside the machine card's own header, so the control
           that picks a machine looked like part of that machine's own answer. They are
           a segmented switch on the page's paper now: one track, the chosen machine a
-          raised tile inside it. The fleet is the unscoped view, not another machine-shaped
-          `All` group; pressing the selected machine returns to it.
+          raised tile inside it. Exactly one machine is always chosen; selecting another
+          moves the scope, while pressing the chosen machine leaves it active.
 
           THE SWITCH IS ALWAYS THERE, EVEN FOR A FLEET OF ONE. The tile is not only a
           choice, it is the label of everything under it: which computer these projects
@@ -2086,8 +2083,7 @@ export function SessionsScreen({
               own compact width and scrolls a fleet that outgrows the row. */}
           <div role="group" aria-label="Machines" className="flex min-w-0 flex-1">
             <MachineSwitcher>
-               {/* The machine tabs are the groups. The fleet itself is not a synthetic
-                   `All` group; pressing the selected machine returns to the fleet. */}
+                {/* The machine tabs are the groups, and exactly one is always active. */}
               {switcherMachines.map((machine) => {
                 const key = machineKey(machine.conn);
                 const tally = tallies.get(key);
@@ -2116,9 +2112,7 @@ export function SessionsScreen({
                     isNoteError={retry === 'failed'}
                     label={isDown ? `Reconnect to ${name}` : undefined}
                     title={isDown ? `${name} is not answering — ${machine.error}` : undefined}
-                    onClick={() =>
-                      isDown ? void retryMachine(machine.conn) : selectScope(scope === key ? SCOPE_ALL : key)
-                    }
+                    onClick={() => (isDown ? void retryMachine(machine.conn) : selectScope(key))}
                   >
                     <MachineMark color={machineColor(machineColors, key)} isHollow={isDown} />
                     {name}

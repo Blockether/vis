@@ -297,9 +297,9 @@ describe("machine, project and session are three different shapes", () => {
     const strip = within(screen.getByLabelText("Machines"));
 
     await userEvent.click(await strip.findByRole("button", { name: /^Reconnect to beta/ }));
-    // Pressing it retried beta; it never became the scope, and `All` stayed on.
+    // Pressing it retries beta but never displaces the active answering machine.
     await waitFor(() =>
-      expect(strip.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true"),
+      expect(strip.getByRole("button", { name: /^alpha/ }).getAttribute("aria-pressed")).toBe("true"),
     );
     expect(screen.getByText("First")).toBeTruthy();
   });
@@ -327,42 +327,22 @@ describe("the machine strip", () => {
     expect(tabs[0]!.getAttribute("aria-pressed")).toBe("true");
   });
 
-  // Regression, user report (paraphrased: every machine should have its own hue and its
-  // own rail, but the screen only ever showed one of them): the scope was always exactly
-  // one machine, so a fleet of six painted one colour and the fleet view was unreachable.
-  it("leads with All above a fleet, and starts there", async () => {
+  // Regression, user report: the first machine must be selected by default and a selected
+  // tab must not be possible to turn off.
+  it("starts with the first machine and moves directly between machines", async () => {
     const view = renderSessionsScreen({ machines: fleet });
     restore = view.restore;
     await screen.findByText("First");
 
     const strip = within(screen.getByLabelText("Machines"));
-    expect(strip.getAllByRole("button").map((tab) => tab.textContent)).toEqual([
-      "All",
-      "alpha",
-      "beta",
-    ]);
-    // No pairing verb: this row answers "which machine", All included, and nothing else.
-    expect(strip.queryByRole("button", { name: /Add machine/i })).toBeNull();
-    expect(strip.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe(
-      "true",
-    );
-    // Both machines are on screen at once, which is the whole point of All.
-    expect(screen.getByText("Second")).toBeTruthy();
-  });
-
-  it("scopes to one machine, and All takes the fleet back", async () => {
-    const view = renderSessionsScreen({ machines: fleet });
-    restore = view.restore;
-    await screen.findByText("First");
-    const strip = within(screen.getByLabelText("Machines"));
+    const tabs = strip.getAllByRole("button");
+    expect(tabs.map((tab) => tab.textContent)).toEqual(["alpha", "beta"]);
+    expect(tabs[0]!.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByText("Second")).toBeNull();
 
     await userEvent.click(strip.getByRole("button", { name: /^beta/ }));
     expect(await screen.findByText("Second")).toBeTruthy();
     expect(screen.queryByText("First")).toBeNull();
     expect(screen.getByRole("button", { name: "New session on beta" })).toBeTruthy();
-
-    await userEvent.click(strip.getByRole("button", { name: "All" }));
-    expect(await screen.findByText("First")).toBeTruthy();
-    expect(screen.getByText("Second")).toBeTruthy();
   });
 });
