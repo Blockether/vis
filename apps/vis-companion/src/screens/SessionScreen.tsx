@@ -5024,11 +5024,38 @@ export function SessionScreen({
     };
   }, [client, sid, liveTurnId, liveTurnAttachments]);
 
+  // One Activity ID has one transcript owner. A filed receipt wins before the
+  // optimistic row is considered, because iteration/form coordinates restart in
+  // each turn and would otherwise reuse a settled panel in the next live trace.
+  const filedActivityOwners = useMemo(() => {
+    const byTurn = new Map<TranscriptTurn, LiveViewModel[]>();
+    const claimedIds = new Set<string>();
+    for (const turn of visibleTurns) {
+      const owned = filedActivitiesForTurn(turn, liveActivities).filter(
+        (activity) => !claimedIds.has(activity.id),
+      );
+      if (!owned.length) continue;
+      byTurn.set(turn, owned);
+      for (const activity of owned) claimedIds.add(activity.id);
+    }
+    return { byTurn, claimedIds };
+  }, [visibleTurns, liveActivities]);
+  const liveTurnActivities = useMemo(
+    () =>
+      liveTurn
+        ? liveActivities.filter(
+            (activity) =>
+              !filedActivityOwners.claimedIds.has(activity.id) &&
+              activityFitsIterations(activity, liveTurn.iterations),
+          )
+        : [],
+    [liveTurn, liveActivities, filedActivityOwners],
+  );
   const turnRows = useMemo(
     () =>
       visibleTurns.map((turn, index) => {
         const request = turn.user_request ?? turn.request ?? "";
-        const activities = filedActivitiesForTurn(turn, liveActivities);
+        const activities = filedActivityOwners.byTurn.get(turn) ?? [];
         // A turn skips its own paint, in `AssistantMessage`
         // (`useMeasuredPaintSkip`), never from this wrapper: the size a skip
         // stands in for has to be the one that turn MEASURED, and a wrapper
@@ -5066,19 +5093,17 @@ export function SessionScreen({
       handedOverRowId,
       client,
       sid,
-      liveActivities,
+      filedActivityOwners,
     ],
   );
-  const anchoredActivityIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const turn of visibleTurns)
-      for (const activity of filedActivitiesForTurn(turn, liveActivities))
-        ids.add(activity.id);
-    if (liveTurn)
-      for (const activity of liveActivities)
-        if (activityFitsIterations(activity, liveTurn.iterations)) ids.add(activity.id);
-    return ids;
-  }, [visibleTurns, liveTurn, liveActivities]);
+  const anchoredActivityIds = useMemo(
+    () =>
+      new Set([
+        ...filedActivityOwners.claimedIds,
+        ...liveTurnActivities.map((activity) => activity.id),
+      ]),
+    [filedActivityOwners, liveTurnActivities],
+  );
   // Only a panel with no row-owned Python slot belongs below the transcript.
   const detachedLiveViews = useMemo(
     () =>
@@ -5137,7 +5162,7 @@ export function SessionScreen({
           startedAt={liveTurn.startedAt}
           client={client}
           sid={sid}
-          liveActivities={liveActivities}
+          liveActivities={liveTurnActivities}
           livePanel={
             ordinaryLiveViews.length > 0 ? (
               <div className="mt-5">
@@ -5159,7 +5184,7 @@ export function SessionScreen({
     session?.workspace?.repo_root,
     watching,
     liveViews,
-    liveActivities,
+    liveTurnActivities,
     ordinaryLiveViews,
   ]);
   // Rows are about to land ABOVE the viewport. Stopping the follow is all this

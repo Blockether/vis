@@ -178,13 +178,11 @@ describe("a running turn the session read cannot confirm", () => {
     expect(panel.compareDocumentPosition(phase) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
-  // Regression, issue td-65cdf6: while the optimistic row overlapped its persisted
-  // receipt, iOS painted Activity in both rows and placed the anchored copy between
-  // PYTHON and RESULT. Android exposed only the detached copy from its older bundle.
-  it("keeps one live Activity after its filed Python result during handoff", async () => {
+  function activityScenario(settled = false) {
     const activity = {
       ...activityFixture,
       id: "live-activity-view",
+      is_settled: settled,
       activity: {
         ...activityFixture.activity,
         anchor: { evaluation_id: "evaluation-1", iteration: 41, form_index: 0 },
@@ -219,6 +217,14 @@ describe("a running turn the session read cannot confirm", () => {
         },
       ],
     };
+    return { activity, filedRow };
+  }
+
+  // Regression, issue td-65cdf6: while the optimistic row overlapped its persisted
+  // receipt, iOS painted Activity in both rows and placed the anchored copy between
+  // PYTHON and RESULT. Android exposed only the detached copy from its older bundle.
+  it("keeps one live Activity after its filed Python result during handoff", async () => {
+    const { activity, filedRow } = activityScenario();
 
     renderSessionScreen({
       client: {
@@ -248,6 +254,45 @@ describe("a running turn the session read cannot confirm", () => {
     ).not.toBe(0);
     expect(
       result.compareDocumentPosition(panelLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+  });
+
+  // Regression, issue td-65cdf6: a settled Activity already owned by its filed
+  // receipt was also reused in the next optimistic row when anchor coordinates reset.
+  it("does not reuse a filed Activity in the next optimistic row", async () => {
+    const { activity, filedRow } = activityScenario(true);
+    filedRow.status = "completed";
+    const nextRow = {
+      id: "next-turn",
+      request: "continue",
+      answer: "",
+      status: "running" as const,
+      startedAt: Date.now(),
+      iterations: filedRow.iterations.map((iteration) => ({
+        ...iteration,
+        id: "next-iteration-41",
+        forms: [{ source: "next_step()", result_summary: "next done" }],
+        attachments: [],
+      })),
+    };
+
+    renderSessionScreen({
+      client: {
+        cachedLiveTurn: () => ({ turn: nextRow, seq: 43 }),
+        transcript: () => Promise.resolve([filedRow]),
+        liveViews: () => Promise.resolve([activity]),
+      },
+    });
+
+    const filedPython = await screen.findByText("inspect_run()");
+    const nextPython = await screen.findByText("next_step()");
+    const panel = screen.getAllByText("ACTIVITY")[0]!;
+    expect(screen.getAllByText("ACTIVITY")).toHaveLength(1);
+    expect(
+      filedPython.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      panel.compareDocumentPosition(nextPython) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
   });
   it("keeps a genuinely unanchored Activity in the detached fallback", async () => {
