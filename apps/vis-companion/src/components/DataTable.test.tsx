@@ -286,23 +286,17 @@ describe('DataTable', () => {
     expect(paged.indexOf('aria-label="Next page"')).toBeLessThan(paged.indexOf('role="grid"'));
   });
 
-  // Reported from the artifact reader: wide CSVs used a desktop grid on touch screens,
-  // leaving long fields off-screen and no practical way to inspect one record or value.
-  it('gives touch screens a record reader with every column as an individual value', async () => {
-    const user = userEvent.setup();
-    render(<DataTable body={fence} compact fill />);
+  // An opened artifact used to replace the spreadsheet with one vertical record on
+  // touch screens. The transcript and artifact reader must expose the same real grid.
+  it('keeps opened artifacts as the same table on touch screens', () => {
+    const opened = renderToStaticMarkup(<DataTable body={fence} compact fill />);
 
-    const reader = screen.getByRole('region', { name: 'Record view of fleet.csv' });
-    expect(reader).toHaveClass('mouse:hidden');
-    expect(screen.getByText('Record 1 of 3')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Inspect note, row 1' })).toHaveTextContent('first');
-
-    await user.click(screen.getByRole('button', { name: 'Inspect note, row 1' }));
-    expect(screen.getByRole('button', { name: 'Copy value' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Next record' }));
-    expect(screen.getByText('Record 2 of 3')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Inspect note, row 2' })).toHaveTextContent('second');
-    expect(screen.queryByRole('button', { name: 'Copy value' })).not.toBeInTheDocument();
+    expect(opened).toContain('role="grid"');
+    expect(opened).not.toContain('Record view of');
+    expect(opened).not.toContain('Record 1 of');
+    expect(opened).not.toContain('mouse:hidden');
+    expect(opened).toContain('min-w-full');
+    expect(opened).toContain('overflow-auto');
   });
 
   // Reported from the same artifact: WebKit enlarged different table columns by different
@@ -313,7 +307,8 @@ describe('DataTable', () => {
     expect(opened).toContain('[-webkit-text-size-adjust:none]');
     expect(opened).toContain('[text-size-adjust:none]');
     expect(opened).not.toContain('text-code-syntax-number');
-    expect(opened).toContain('h-full min-h-0 min-w-0 flex-1 overflow-auto');
+    expect(opened).toContain('h-full');
+    expect(opened).toContain('touch-pan-x touch-pan-y overflow-auto');
   });
 
   it('closes a selected value when that cell is pressed again', async () => {

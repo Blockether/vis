@@ -1,7 +1,7 @@
 import { memo, useCallback, useId, useMemo, useRef, useState } from 'react';
 import { useFitRows, type ListGeometry } from '../lib/fit-rows';
 import { SortIcon } from './icons';
-import { Button, ListRow } from './ui';
+import { Button } from './ui';
 
 // A CSV/TSV artifact is DATA, not a picture. `attach` emits it as a
 // ````vis-table` fence and BOTH surfaces paint it as a real grid: the TUI through
@@ -265,7 +265,7 @@ export const DataTable = memo(function DataTable({
   compact: boolean;
   /** Keep the spacing but drop the frame: an enclosing card already draws one. */
   frameless?: boolean;
-  /** Fill an opened artifact and give touch devices the record reader. */
+  /** Fill the opened artifact's available body; presentation stays one spreadsheet. */
   fill?: boolean;
 }) {
   const artifact = useMemo(() => parseTableBlock(body), [body]);
@@ -290,7 +290,6 @@ export const DataTable = memo(function DataTable({
   const [sort, setSort] = useState<Sort>(null);
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [cell, setCell] = useState<Cell>(null);
-  const [record, setRecord] = useState(0);
   const [copied, setCopied] = useState(false);
   const [pageSize, setPageSize] = useState<number | 'fit'>(PAGE_SIZES[1]);
   const [page, setPage] = useState(0);
@@ -300,8 +299,6 @@ export const DataTable = memo(function DataTable({
     () => (sort ? sortRows(rows, sort.index, sort.dir) : rows),
     [rows, sort],
   );
-  const recordAt = Math.min(Math.max(0, record), Math.max(0, ordered.length - 1));
-  const recordRow = ordered[recordAt] ?? null;
 
   const step = pageSize === 'fit' ? sheet.rows : pageSize;
   const pages = pageCount(ordered.length, step);
@@ -339,10 +336,6 @@ export const DataTable = memo(function DataTable({
 
   const goPage = (value: number) => setPage(clampPage(value, ordered.length, step));
 
-  const goRecord = (value: number) => {
-    setRecord(Math.min(Math.max(0, value), Math.max(0, ordered.length - 1)));
-    setCell(null);
-  };
 
   const toggleCell = (row: number, col: number) =>
     setCell((currentCell) =>
@@ -442,74 +435,9 @@ export const DataTable = memo(function DataTable({
         </div>
       )}
 
-      {fill && (
-        <section
-          role="region"
-          aria-label={`Record view of ${label}`}
-          className="flex min-h-0 flex-1 flex-col mouse:hidden"
-        >
-          <div className="flex shrink-0 items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
-            <Button
-              variant="secondary"
-              density="compact"
-              onClick={() => goRecord(recordAt - 1)}
-              disabled={recordAt === 0}
-              aria-label="Previous record"
-            >
-              Prev
-            </Button>
-            <span className="min-w-0 flex-1 text-center text-ui tabular-nums" aria-live="polite">
-              {`Record ${recordRow ? recordAt + 1 : 0} of ${ordered.length}`}
-            </span>
-            <Button
-              variant="secondary"
-              density="compact"
-              onClick={() => goRecord(recordAt + 1)}
-              disabled={!recordRow || recordAt >= ordered.length - 1}
-              aria-label="Next record"
-            >
-              Next
-            </Button>
-          </div>
-          {recordRow ? (
-            <div
-              role="list"
-              aria-label={`Values in record ${recordAt + 1}`}
-              className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain pb-[max(0.75rem,env(safe-area-inset-bottom))]"
-            >
-              {header.map((column, index) => {
-                const columnLabel = column || `Column ${index + 1}`;
-                const value = recordRow.cells[index] ?? '';
-                const here = cell?.row === recordRow.key && cell.col === index;
-                return (
-                  <div role="listitem" key={index}>
-                    <ListRow
-                      isSelected={here}
-                      onClick={() => toggleCell(recordRow.key, index)}
-                      aria-label={`Inspect ${columnLabel}, row ${recordAt + 1}`}
-                      className="items-start"
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block font-bold text-dialog-hint">{columnLabel}</span>
-                        <span className="mt-0.5 block break-words whitespace-pre-wrap text-code-foreground">
-                          {value === '' ? 'NULL' : value}
-                        </span>
-                      </span>
-                    </ListRow>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="p-3 text-center text-dialog-hint">No rows</p>
-          )}
-        </section>
-      )}
 
       {paged && (
-        <div
-          className={`${fill ? 'hidden mouse:flex' : 'flex'} flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1`}
-        >
+        <div className="flex flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
           <label className="flex shrink-0 items-center gap-1 text-ui text-code-foreground">
             Rows
             <select
@@ -556,10 +484,10 @@ export const DataTable = memo(function DataTable({
         </div>
       )}
 
-      <div className={`relative min-h-0 flex-1 ${fill ? 'hidden mouse:flex' : 'flex'}`}>
+      <div className="relative flex min-h-0 flex-1">
         <div
           ref={sheetRef}
-          className={`${fill ? 'h-full' : 'max-h-[60vh]'} min-h-0 min-w-0 flex-1 overflow-auto overscroll-x-contain`}
+          className={`${fill ? 'h-full' : 'max-h-[60vh]'} min-h-0 min-w-0 flex-1 touch-pan-x touch-pan-y overflow-auto overscroll-contain`}
         >
           <table
             role="grid"
@@ -569,7 +497,7 @@ export const DataTable = memo(function DataTable({
             aria-rowcount={ordered.length + 1}
             aria-colcount={header.length + 1}
             aria-activedescendant={cell === null ? undefined : cellId(cell.row, cell.col)}
-            className="w-auto border-collapse font-mono text-meta text-code-foreground focus-visible:outline-2 focus-visible:outline-accent"
+            className="w-max min-w-full border-collapse font-mono text-meta text-code-foreground focus-visible:outline-2 focus-visible:outline-accent"
           >
             <thead>
               <tr>
