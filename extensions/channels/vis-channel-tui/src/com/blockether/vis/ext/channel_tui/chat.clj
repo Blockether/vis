@@ -498,20 +498,35 @@
                    [(str (get att "filename")) transcript]))))
        vec))
 
+(defn- attachment-file-chips
+  "Visible history labels for USER files with neither a visual nor transcript fence.
+
+   Explicit submission carries no source path in the request text, so documents and
+   unread recordings need this durable descriptor-derived fallback."
+  [attachments]
+  (->> attachments
+       (keep-indexed
+         (fn [i att]
+           (let [media
+                 (str (get att "media_type"))
+
+                 transcript
+                 (str/trim (str (get att "transcription")))]
+
+             (when (and (= "user" (str (get att "source")))
+                        (not (str/starts-with? media "image/"))
+                        (not (timg/video-mime? media))
+                        (not (and (str/starts-with? media "audio/") (seq transcript))))
+               (str "\n[Attachment #" (inc (long i)) ": " (get att "filename") "]\n")))))
+       (str/join "")))
+
 (defn- user-request-with-images
-  "Re-render a persisted turn's user images from DB-owned bytes: strip any stale
-   `vis-image` fences from `user-request` and append one durable fence per
-   persisted USER image attachment (`attachments` are canonical wire maps). The
-   bytes live in the DB, so the picture survives a TUI restart even after the
-   original clipboard/temp file is purged.
+  "Re-render a persisted turn's user attachments from DB-owned descriptors.
 
-   A RECORDING has no picture to re-render, so it earns the other durable fence:
-   one `vis-transcript` per memo the gateway could read, carrying what it says.
-
-   Whatever prose survives goes through `attach/text->inline-chips`, so a turn
-   persisted with a BARE temp path (submitted before the collapsed display copy
-   rode along, or typed by hand) reads as `clipboard-….png` instead of a raw
-   `/var/folders/…` line. DISPLAY only — nothing re-sends this text."
+   Stills and clips become durable `vis-image` fences, recordings with recognized
+   speech become `vis-transcript` fences, and every remaining document or recording
+   keeps a visible filename chip. Whatever prose survives goes through
+   `attach/text->inline-chips`; this is display-only and never re-sends a path."
   [user-request attachments]
   (let [descs
         (->> attachments
@@ -520,15 +535,19 @@
              vec)
 
         transcripts
-        (attachment-transcripts attachments)]
+        (attachment-transcripts attachments)
 
-    (if (and (empty? descs) (empty? transcripts))
+        file-chips
+        (attachment-file-chips attachments)]
+
+    (if (and (empty? descs) (empty? transcripts) (str/blank? file-chips))
       (chip-image-paths user-request)
       (str (str/trimr (chip-image-paths (strip-image-fences user-request)))
            (str/join ""
                      (map-indexed (fn [i d]
                                     (attachment-image-fence (inc (long i)) d))
                                   descs))
+           file-chips
            (str/join ""
                      (map-indexed
                        (fn [i [filename transcript]]

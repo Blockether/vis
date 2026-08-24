@@ -5,6 +5,7 @@
             [com.blockether.imaging :as imaging]
             [clojure.string :as str]
             [com.blockether.vis.internal.attachments :as attachments]
+            [com.blockether.vis.internal.attachment-fixtures :as fixtures]
             [com.blockether.vis.internal.image-convert :as image-convert]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [java.awt.image BufferedImage]
@@ -13,11 +14,9 @@
            [java.util Base64]
            [javax.imageio ImageIO]))
 
-;; 1x1 red PNG (67 bytes) - a real, complete still PNG.
-(def ^:private tiny-png-b64
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+(def ^:private tiny-png-b64 fixtures/tiny-png-b64)
 
-(def ^:private tiny-png-bytes (.decode (Base64/getDecoder) ^String tiny-png-b64))
+(def ^:private tiny-png-bytes fixtures/tiny-png-bytes)
 
 (def ^:private jpeg-header
   ;; FF D8 FF E0 + padding - enough for the sniffer (header-only, not a
@@ -72,40 +71,9 @@
       (expect (nil? (attachments/detect-image-mime (.getBytes "hello, this is not an image"
                                                               "UTF-8"))))))
 
-;; A REAL 1.9KB H.264 clip: 32x32, 4 frames of ffmpeg's `testsrc`. Small enough to
-;; inline, COMPLETE enough that the send gate genuinely decodes it — the only way
-;; to prove a dropped clip reaches a provider as something it can read.
-(def ^:private tiny-mp4-b64
-  (str
-    "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAANTbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAA+gAAQAA"
-    "AQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-    "AAAAAgAAAn50cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAA+gAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAA"
-    "AAAAAAABAAAAAAAAAAAAAAAAAABAAAAAACAAAAAgAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAPoAAAgAAABAAAAAAH2"
-    "bWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAQABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRl"
-    "b0hhbmRsZXIAAAABoW1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAA"
-    "AQAAAWFzdGJsAAAAwXN0c2QAAAAAAAAAAQAAALFhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAACAAIABIAAAASAAAAAAA"
-    "AAABFUxhdmM2Mi4xMS4xMDAgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAAN2F2Y0MBZAAK/+EAGWdkAAqscgRJbARAAAADAEAA"
-    "AAMCA8SJYRgBAAdo6EODksiw/fj4AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAB7oAAAAAAAAABhzdHRzAAAAAAAA"
-    "AAEAAAAEAAAQAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAGGN0dHMAAAAAAAAAAQAAAAQAACAAAAAAHHN0c2MAAAAAAAAAAQAA"
-    "AAEAAAAEAAAAAQAAACRzdHN6AAAAAAAAAAAAAAAEAAADhgAAABYAAAAjAAAAHgAAABRzdGNvAAAAAAAAAAEAAAODAAAAYXVk"
-    "dGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEA"
-    "AAABAAAAAExhdmY2Mi4zLjEwMAAAAAhmcmVlAAAD5W1kYXQAAAKvBgX//6vcRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUg"
-    "MTY1IHIzMjIyIGIzNTYwNWEgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDI1IC0gaHR0cDov"
-    "L3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MTYgZGVibG9jaz0xOjA6MCBhbmFs"
-    "eXNlPTB4MzoweDEzMyBtZT11bWggc3VibWU9MTAgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5n"
-    "ZT0yNCBjaHJvbWFfbWU9MSB0cmVsbGlzPTIgOHg4ZGN0PTEgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNo"
-    "cm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xIGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRl"
-    "Y2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9OCBiX3B5"
-    "cmFtaWQ9MiBiX2FkYXB0PTIgYl9iaWFzPTAgZGlyZWN0PTMgd2VpZ2h0Yj0xIG9wZW5fZ29wPTAgd2VpZ2h0cD0yIGtleWlu"
-    "dD0yNTAga2V5aW50X21pbj00IHNjZW5lY3V0PTQwIGludHJhX3JlZnJlc2g9MCByY19sb29rYWhlYWQ9NjAgcmM9Y3JmIG1i"
-    "dHJlZT0xIGNyZj00MC4wIHFjb21wPTAuNjAgcXBtaW49MCBxcG1heD02OSBxcHN0ZXA9NCBpcF9yYXRpbz0xLjQwIGFxPTE6"
-    "MS4wMACAAAAAz2WIgQAT/9deUC9MeTt/7mp9t6JHJ/NEMIsmXpSKtImNE9Z2k8Bh1YF4LDe2AcJRIpF76PgMhIypP2n4pLzR"
-    "SWzuzY1aSq9n+3vsZjua8ZGnpYa1ilU/N4CjjOcCrEKBaQig6OenxX+iGLN1NSwBwMWWNyCAFAhXGsreHzA9XmO5nk9+WaZY"
-    "HvUsM0RW8dc0jTR1/EiPwiVyF49i5S/79mUtU/uSIi/JWSjMHnT8le6s1GWu3yPtzHU212iyLLMOfZGvVticr2m+ev67cOAX"
-    "/QAAABJBmggtiT+5KrQPjLgV4BznC+gAAAAfQZoQS/AgZMphEf/EyHfU3RUjGtqTSpzXByovGje/sQAAABpBmhhpPAgeTKYE"
-    "Z8wDJmZ6GE35UTOhw3axgA=="))
+(def ^:private tiny-mp4-b64 fixtures/tiny-mp4-b64)
 
-(def ^:private tiny-mp4-bytes (.decode (Base64/getDecoder) ^String tiny-mp4-b64))
+(def ^:private tiny-mp4-bytes fixtures/tiny-mp4-bytes)
 
 (defn- ftyp-head
   "The leading bytes of an ISO-BMFF file with major brand `brand` — all the
