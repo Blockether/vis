@@ -203,6 +203,118 @@ describe('GatewayClient session list', () => {
   });
 });
 
+// The transcript cache is a per-machine working set: recently opened sessions
+// remain instant, while one busy gateway cannot evict another gateway's history.
+describe('GatewayClient rolling transcript cache', () => {
+  const transcriptResponse = (sid: string) =>
+    new Response(
+      JSON.stringify({
+        turns: [{ id: `turn-${sid}`, status: 'completed' }],
+        total: 1,
+        offset: 0,
+        has_more: false,
+      }),
+    );
+
+  it('keeps the ten most recently used transcripts on each machine', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string) => {
+        const match = new URL(String(input)).pathname.match(
+          /\/v1\/sessions\/([^/]+)\/transcript/,
+        );
+        return Promise.resolve(transcriptResponse(decodeURIComponent(match?.[1] ?? 'missing')));
+      }),
+    );
+    const { GatewayClient, persistGatewayCaches } = await import('./gateway');
+    const first = new GatewayClient(conn);
+    const second = new GatewayClient({ url: 'http://second.example.com:7890' });
+
+    for (let index = 1; index <= 10; index += 1) {
+      await first.transcript(`session-${index}`);
+    }
+    await second.transcript('other-session');
+    expect(first.cachedTranscript('session-1')).not.toBeNull();
+
+    await first.transcript('session-11');
+
+    expect(first.cachedTranscript('session-2')).toBeNull();
+    expect(first.cachedTranscript('session-1')).not.toBeNull();
+    expect(first.cachedTranscript('session-11')).not.toBeNull();
+    expect(second.cachedTranscript('other-session')).not.toBeNull();
+
+    persistGatewayCaches();
+    vi.resetModules();
+    const cold = await import('./gateway');
+    const coldFirst = new cold.GatewayClient(conn);
+    const coldSecond = new cold.GatewayClient({ url: 'http://second.example.com:7890' });
+    expect(coldFirst.cachedTranscript('session-2')).toBeNull();
+    expect(coldFirst.cachedTranscript('session-1')).not.toBeNull();
+    expect(coldFirst.cachedTranscript('session-11')).not.toBeNull();
+    expect(coldSecond.cachedTranscript('other-session')).not.toBeNull();
+  });
+
+  it('prefetches active transcripts behind the session-list response', async () => {
+    const rows = [
+      {
+        id: 'active-session',
+        title: 'Active',
+        live: true,
+        turn_count: 1,
+        modified_at: '2026-08-15T12:00:00Z',
+      },
+      {
+        id: 'idle-session',
+        title: 'Idle',
+        live: false,
+        turn_count: 1,
+        modified_at: '2026-08-15T11:00:00Z',
+      },
+    ];
+    let releaseTranscript!: (response: Response) => void;
+    const pendingTranscript = new Promise<Response>((resolve) => {
+      releaseTranscript = resolve;
+    });
+    const fetched = vi.fn((input: string) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/transcript')) return pendingTranscript;
+      return Promise.resolve(
+        new Response(JSON.stringify({ sessions: rows, total: rows.length, has_more: false })),
+      );
+    });
+    vi.stubGlobal('fetch', fetched);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    await expect(client.listSessions()).resolves.toHaveLength(2);
+    expect(client.cachedTranscript('active-session')).toBeNull();
+    expect(
+      fetched.mock.calls.some(([url]) => String(url).includes('/active-session/transcript')),
+    ).toBe(true);
+    expect(
+      fetched.mock.calls.some(([url]) => String(url).includes('/idle-session/transcript')),
+    ).toBe(false);
+
+    releaseTranscript(
+      new Response(
+        JSON.stringify({
+          turns: [{ id: 'turn-active-session', status: 'running' }],
+          total: 1,
+          offset: 0,
+          has_more: false,
+        }),
+      ),
+    );
+    await vi.waitFor(() => expect(client.cachedTranscript('active-session')).not.toBeNull());
+    await client.listSessions();
+    await Promise.resolve();
+
+    expect(
+      fetched.mock.calls.filter(([url]) => String(url).includes('/active-session/transcript')),
+    ).toHaveLength(1);
+  });
+});
+
 // Regression: slash discovery used a gateway-global route, so the palette was resolved
 // against the daemon's launch directory instead of the open session's nested project.
 describe('GatewayClient session slash palette', () => {

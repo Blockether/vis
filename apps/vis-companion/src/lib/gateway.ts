@@ -349,6 +349,12 @@ const deviceReads = new Map<string, number>();
 
 /** A device-list read already in the air, so overlapping callers share it. */
 const deviceFlights = new Map<string, Promise<DevicesState>>();
+/** Background transcript reads already in flight, shared by every client instance. */
+const transcriptPrefetches = new Map<string, Promise<void>>();
+
+/** Last active-list row a background read completed for, so polls stay cheap. */
+const transcriptPrefetchStamps = new Map<string, string>();
+
 /**
  * Freshness stamp of the transcript snapshot we hold, per gateway+session. A
  * long session's transcript is TENS OF MEGABYTES; refetching it on a timer, or
@@ -410,9 +416,67 @@ function transcriptStamp(row: Session | null | undefined): string {
   return `${row.turn_count ?? ""}\u0000${row.modified_at ?? ""}`;
 }
 
-/** Bound the cache so hopping through many sessions cannot pin every transcript. */
-const SNAPSHOT_LIMIT = 32;
+function transcriptPrefetchStamp(row: Session): string {
+  return [
+    transcriptStamp(row),
+    row.live ?? "",
+    row.status ?? "",
+    row.current_turn_id ?? "",
+  ].join("\u0000");
+}
 
+/** Ten recently used transcript windows per machine, independent of panel caches. */
+export const SESSION_CACHE_LIMIT = 10;
+
+/**
+ * Only resource kinds whose cardinality follows session count need an explicit
+ * bound. Machine-wide facts are one row per gateway and must never be evicted by
+ * a burst of model or transcript writes.
+ */
+const SNAPSHOT_KIND_LIMITS = new Map<string, number>([
+  ["session", SESSION_CACHE_LIMIT],
+  ["transcript", SESSION_CACHE_LIMIT],
+  ["queued", SESSION_CACHE_LIMIT],
+  ["live", SESSION_CACHE_LIMIT],
+  // The head list seeds model pins for up to one complete session-list window.
+  ["model", 100],
+]);
+
+function snapshotParts(key: string): { base: string; kind: string } {
+  const first = key.indexOf("\u0000");
+  if (first < 0) return { base: "", kind: key };
+  const second = key.indexOf("\u0000", first + 1);
+  return {
+    base: key.slice(0, first),
+    kind: key.slice(first + 1, second < 0 ? key.length : second),
+  };
+}
+
+function dropSnapshot(key: string): void {
+  snapshots.delete(key);
+  if (snapshotParts(key).kind !== "transcript") return;
+  transcriptStamps.delete(key);
+  transcriptWindows.delete(key);
+  transcriptPrefetchStamps.delete(key);
+}
+
+/** Enforce one kind's LRU budget without letting another kind consume it. */
+function trimSnapshotKind(key: string): void {
+  const target = snapshotParts(key);
+  const limit = SNAPSHOT_KIND_LIMITS.get(target.kind);
+  if (limit === undefined) return;
+  const matching = Array.from(snapshots.keys()).filter((candidate) => {
+    const parts = snapshotParts(candidate);
+    return parts.base === target.base && parts.kind === target.kind;
+  });
+  for (const oldest of matching.slice(0, Math.max(0, matching.length - limit))) {
+    dropSnapshot(oldest);
+  }
+}
+
+function normalizeSnapshotLimits(): void {
+  for (const key of Array.from(snapshots.keys())) trimSnapshotKind(key);
+}
 /**
  * The snapshot caches as ONE durable unit (see `snapshot-store.ts`).
  *
@@ -429,6 +493,7 @@ const snapshotStores: SnapshotStores = {
   windows: transcriptWindows,
 };
 hydrateSnapshots(snapshotStores);
+normalizeSnapshotLimits();
 installSnapshotFlushOnHide(snapshotStores);
 
 /** Persist the caches NOW — used when the app is being torn down. */
@@ -448,10 +513,7 @@ function readSnapshot<T>(key: string): T | null {
 function writeSnapshot(key: string, value: unknown): void {
   snapshots.delete(key);
   snapshots.set(key, value);
-  for (const oldest of snapshots.keys()) {
-    if (snapshots.size <= SNAPSHOT_LIMIT) break;
-    snapshots.delete(oldest);
-  }
+  trimSnapshotKind(key);
   scheduleSnapshotFlush(snapshotStores);
 }
 
@@ -1174,6 +1236,25 @@ export class GatewayClient {
       undefined,
       signal,
     );
+  }
+
+  /**
+   * The sound of ONE voice, so a catalogue can be heard and not only read.
+   *
+   * `audioFetch` rather than `request`, for the same reason [[speakText]] uses it: a WAV
+   * is not text. A 404 here is not a broken client — it is a voice with nothing to play
+   * yet, and what to do about that belongs to the screen.
+   */
+  async speechVoiceSample(
+    id: string,
+    { signal, engine }: { signal?: AbortSignal; engine?: string | null } = {},
+  ): Promise<Blob> {
+    const answer = await this.audioFetch(
+      "GET",
+      withEngine(`/v1/speech/voices/${encodeURIComponent(id)}/sample`, engine),
+      { signal },
+    );
+    return await answer.blob();
   }
 
   /**
@@ -2234,11 +2315,48 @@ export class GatewayClient {
     return readSnapshot<Session>(this.snapshotKey("session", sid));
   }
 
-  /** Last transcript seen for ONE session. */
+  /** Last transcript seen for ONE session. Reading it renews its LRU position. */
   cachedTranscript(sid: string): TranscriptTurn[] | null {
     return readSnapshot<TranscriptTurn[]>(this.snapshotKey("transcript", sid));
   }
 
+  /**
+   * Pull every active session visible in a list response into the rolling cache.
+   * The list itself never waits: failures are forgotten and retried by the next
+   * poll, while concurrent polls and an opening screen share the same flight.
+   */
+  private prefetchActiveTranscripts(rows: readonly Session[]): void {
+    const selected = new Set<string>();
+    for (const row of rows) {
+      if (selected.size >= SESSION_CACHE_LIMIT) break;
+      if (!row.id || !(row.live ?? row.status === "running") || selected.has(row.id))
+        continue;
+      selected.add(row.id);
+
+      const held = this.cachedSession(row.id);
+      const merged = reconcileRow(held, row);
+      if (merged !== held) writeSnapshot(this.snapshotKey("session", row.id), merged);
+
+      const key = this.snapshotKey("transcript", row.id);
+      if (transcriptPrefetches.has(key)) continue;
+      const stamp = transcriptPrefetchStamp(merged);
+      // A running placeholder is provisional to an OPEN screen, which must read
+      // its newest trace. It is not permission for the five-second list poll to
+      // download the same transcript page forever.
+      if (this.cachedTranscript(row.id) !== null && transcriptPrefetchStamps.get(key) === stamp)
+        continue;
+      const task = this.transcriptIfMoved(row.id, merged).then(
+        () => {
+          transcriptPrefetchStamps.set(key, stamp);
+        },
+        () => undefined,
+      );
+      transcriptPrefetches.set(key, task);
+      void task.then(() => {
+        if (transcriptPrefetches.get(key) === task) transcriptPrefetches.delete(key);
+      });
+    }
+  }
   /** Last queued backlog seen for ONE session. */
   cachedQueuedTurns(sid: string): QueuedTurn[] | null {
     return readSnapshot<QueuedTurn[]>(this.snapshotKey("queued", sid));
@@ -2380,8 +2498,9 @@ export class GatewayClient {
 
   /** Drop every snapshot of one session — it is gone or is being replaced. */
   forgetSession(sid: string): void {
+    const transcriptKey = this.snapshotKey("transcript", sid);
     snapshots.delete(this.snapshotKey("session", sid));
-    snapshots.delete(this.snapshotKey("transcript", sid));
+    dropSnapshot(transcriptKey);
     snapshots.delete(this.snapshotKey("queued", sid));
     snapshots.delete(this.snapshotKey("live", sid));
     snapshots.delete(this.snapshotKey("model", sid));
@@ -2391,8 +2510,6 @@ export class GatewayClient {
     for (const key of Array.from(this.attachmentFetches.keys())) {
       if (key.startsWith(`${sid}\u0000`)) this.attachmentFetches.delete(key);
     }
-    transcriptStamps.delete(this.snapshotKey("transcript", sid));
-    transcriptWindows.delete(this.snapshotKey("transcript", sid));
     scheduleSnapshotFlush(snapshotStores);
   }
 
@@ -2535,6 +2652,9 @@ export class GatewayClient {
     // complete there, whatever depth this device is holding.
     this.parked = head.awaiting;
     this.overview = head.overview;
+    // Active work must already be warm when its row is opened. This starts the
+    // reads but deliberately does not put them on the list request's critical path.
+    this.prefetchActiveTranscripts(head.rows.concat(head.awaiting));
 
     // AN UNCHANGED WINDOW IS THE SAME ARRAY, NOT AN EQUAL ONE.
     //
@@ -3127,6 +3247,11 @@ export class GatewayClient {
     signal?: AbortSignal,
   ): Promise<TranscriptTurn[] | null> {
     const key = this.snapshotKey("transcript", sid);
+    const warming = transcriptPrefetches.get(key);
+    if (warming) {
+      await warming;
+      if (signal?.aborted) return null;
+    }
     const stamp = transcriptStamp(row);
     const cached = this.cachedTranscript(sid);
     // A cached transcript holding a 'running' row is PROVISIONAL: that row is a
@@ -3149,7 +3274,7 @@ export class GatewayClient {
       row.turn_count > this.transcriptWindow(sid).total;
     if (
       stamp &&
-      cached?.length &&
+      cached !== null &&
       !provisional &&
       !short &&
       transcriptStamps.get(key) === stamp
