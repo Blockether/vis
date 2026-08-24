@@ -209,18 +209,23 @@
                  (refuses language-surface/repl-stop "clojure" "extensions/foo")))
       (expect (= :language-surface/bad-args
                  (refuses language-surface/connect-repl "clojure" "extensions/foo")))))
-  ;; Regression, issue #repl-cwd: a call that spelled the directory `project` —
-  ;; `repl_start({"language": "clojure", "project": repo})` — reported success while
-  ;; starting the REPL at the WORKSPACE ROOT, because the key rode through unread.
+  ;; Regression, session report a114a0ab-8083-45dc-924f-0e005b20f965: a call that
+  ;; spelled its directory `root` was ignored, so tools ran at the workspace root.
   (it
-    "reads `project` as `cwd` on every verb, and refuses two DIFFERENT directories"
+    "reads `root` and `project` as `cwd` on every verb, and refuses disagreements"
     (let [seen
+          (atom nil)
+
+          seen-root
           (atom nil)
 
           env
           (fake-env [{:language "clojure"
                       :start-repl-fn (fn [_ op opts]
                                        {:success? true :result {:op op :opts opts}})
+                      :format-fn (fn [call-env arg]
+                                   (reset! seen [arg (:workspace/root call-env)])
+                                   {:success? true :result {"changed" false}})
                       :test-fn (fn [_ arg]
                                  (reset! seen arg)
                                  {:success? true :result {"pass" 0}})
@@ -228,23 +233,26 @@
                                       (reset! seen arg)
                                       {:success? true :result {:value "3"}})}])]
 
+      (language-surface/format-code env {"root" "repositories/plc3"})
+      (reset! seen-root (second @seen))
+      (expect (str/ends-with? @seen-root "repositories/plc3"))
+      (expect (= {"cwd" "repositories/plc3"} (first @seen)))
       (expect (= {:op "start" :opts {"language" "clojure" "cwd" "repositories/plc3"}}
                  (:result (language-surface/repl-start env
                                                        {"language" "clojure"
-                                                        "project" "repositories/plc3"}))))
+                                                        "root" "repositories/plc3"}))))
       (expect (= {:op "status" :opts {"cwd" "ext"} "resources" []}
                  (:result (language-surface/repl-status env "clojure" {"project" "ext"}))))
-      (expect (= {:op "stop" :opts {"cwd" "ext"}}
-                 (:result (language-surface/repl-stop env "clojure" {"project" "ext"}))))
-      (language-surface/repl-eval env "clojure" {"code" "(+ 1 2)" "project" "ext"})
+      (language-surface/repl-eval env "clojure" {"code" "(+ 1 2)" "root" "ext"})
       (expect (= {"code" "(+ 1 2)" "cwd" "ext"} @seen))
-      (language-surface/run-tests env {"project" "ext"})
+      (language-surface/run-tests env {"root" "ext"})
       (expect (= {"cwd" "ext"} @seen))
-      ;; The same directory twice is ONE selection; two different ones are refused.
+      ;; Repeating one directory under aliases is valid; differing ones are ambiguous.
       (expect (= {:op "start" :opts {"cwd" "ext"}}
-                 (:result (language-surface/repl-start env {"cwd" "ext" "project" "ext"}))))
+                 (:result
+                   (language-surface/repl-start env {"root" "ext" "cwd" "ext" "project" "ext"}))))
       (expect (= :language-surface/bad-args
-                 (try (language-surface/repl-start env {"cwd" "ext" "project" "other"})
+                 (try (language-surface/repl-start env {"root" "ext" "project" "other"})
                       nil
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
   (it

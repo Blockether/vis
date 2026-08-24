@@ -1775,15 +1775,16 @@
             c
             (py-ctx {:session-id sid})]
 
-        (try (expect (= [true true true true]
+        (try (expect (= [true true true true true]
                         (py c
-                            (str "status_res = __vis_settle__(shell('printf abcdefghij',"
-                                 " {'id':'text'}))\n"
-                                 "status_res.wait(30)\n" "page = status_res.logs(-120)\n"
-                                 "tail = page[-4000:]\n"
-                                 "[tail == page['out'], ('STATUS:' + page[-4:]) == 'STATUS:ghij',"
-                                 " ('STATUS:' + page) == 'STATUS:abcdefghij',"
-                                 " (page + ':END') == 'abcdefghij:END']"))))
+                            (str
+                              "status_res = __vis_settle__(shell('printf abcdefghij',"
+                              " {'id':'text'}))\n" "status_res.wait(30)\n"
+                              "page = status_res.logs(-120)\n" "tail = page[-4000:]\n"
+                              "lines = status_res.logs.splitlines()\n"
+                              "[tail == page['out'], ('STATUS:' + page[-4:]) == 'STATUS:ghij',"
+                              " ('STATUS:' + page) == 'STATUS:abcdefghij',"
+                              " (page + ':END') == 'abcdefghij:END', lines == ['abcdefghij']]"))))
              (finally (resources/stop-all! sid)))))
   ;; Session report e3f70641-623f-433a-81fc-ce532239c89c: `.stderr` raised AttributeError even though the PTY's
   ;; merged output from either process channel already lived in `out`.

@@ -134,39 +134,49 @@
         (map? arg) arg
         :else {:arg arg}))
 
-;; `project` is the SAME selection as `cwd` — the directory a call acts in. A
-;; caller who wrote `{"project": repo}` was answered by a REPL started at the
-;; WORKSPACE ROOT, because the key rode through unread, so the alias resolves
-;; HERE, once, for every verb on this surface. Two DIFFERENT directories in one
-;; call are refused rather than silently reduced to one.
-(defn- project->cwd
-  "The call's options with `project` read as `cwd`. Non-maps pass through."
+;; `root` and `project` are aliases of `cwd` — the directory a call acts in. Resolve
+;; them HERE, once, for every verb. Multiple spellings may repeat one directory, but
+;; different directories are refused rather than silently reduced to one.
+(defn- directory->cwd
+  "The call's `root`/`project` directory aliases normalized to `cwd`."
   [m]
   (if-not (map? m)
     m
-    (let [project
-          (some-> (get m "project")
-                  str
-                  str/trim
-                  not-empty)
+    (let [named
+          (into {}
+                (keep (fn [k]
+                        (when-let [v (some-> (get m k)
+                                             str
+                                             str/trim
+                                             not-empty)]
+                          [k v])))
+                ["cwd" "root" "project"])
 
-          cwd
-          (some-> (get m "cwd")
-                  str
-                  str/trim
-                  not-empty)]
+          dirs
+          (set (vals named))]
 
-      (cond (nil? project) (dissoc m "project")
-            (and cwd (not= cwd project))
-            (throw (ex-info (str "A call names ONE directory: `cwd` "
-                                 (pr-str cwd)
-                                 " and `project` "
-                                 (pr-str project)
-                                 " disagree.")
-                            {:type :language-surface/bad-args :cwd cwd :project project}))
-            :else (-> m
-                      (assoc "cwd" project)
-                      (dissoc "project"))))))
+      (when (> (count dirs) 1)
+        (throw (ex-info (str "A call names ONE directory; `cwd`, `root`, and `project` disagree: "
+                             (pr-str named))
+                        {:type :language-surface/bad-args :directories named})))
+      (cond-> (dissoc m "root" "project")
+        (seq dirs)
+        (assoc "cwd" (first dirs))))))
+
+(defn- env-at-cwd
+  "For format/lint, make their workspace-relative discovery begin at selected `cwd`."
+  [env opts]
+  (if-let [cwd (some-> (get opts "cwd")
+                       str
+                       str/trim
+                       not-empty)]
+    (let [^java.io.File base (java.io.File. ^String (str (or (:workspace/root env) ".")))
+          ^java.io.File selected (java.io.File. ^String cwd)]
+
+      (assoc env
+        :workspace/root (str
+                          (if (.isAbsolute selected) selected (java.io.File. base ^String cwd)))))
+    env))
 
 (defn- opts-language [opts] (get opts "language"))
 
@@ -272,7 +282,7 @@
     {:opts {} :payload {}}
 
     1
-    (let [arg (project->cwd (first args))]
+    (let [arg (directory->cwd (first args))]
       {:opts (coerce-opts arg) :payload arg})
 
     2
@@ -280,7 +290,7 @@
           args
 
           payload
-          (project->cwd raw)]
+          (directory->cwd raw)]
 
       (if (language-like? language)
         {:opts (assoc (coerce-opts payload) "language" language) :payload payload}
@@ -306,13 +316,15 @@
          (parse-language-call args)
 
          handler
-         (choose-handler env capability opts)]
+         (choose-handler env capability opts)
+
+         call-env
+         (if (#{:format-fn :lint-fn} capability) (env-at-cwd env opts) env)]
 
      ;; A live environment may predate a process-jail namespace reload. Refresh the
-     ;; session binding immediately before a handler that may spawn a child: Clojure
-     ;; run_tests shells the project's own test command whenever no REPL is up.
+     ;; session binding immediately before a handler that may spawn a child.
      (when (#{:test-fn :repl-eval-fn} capability) (vis/prepare-session-jail! env))
-     (post handler ((:handler handler) env payload)))))
+     (post handler ((:handler handler) call-env payload)))))
 
 ;; An `op` STRING is GONE from this surface: every lifecycle step is its own
 ;; verb — `repl_start`, `repl_status`, `repl_stop`, `repl_connect` — so the call
@@ -369,7 +381,7 @@
     (when (next more)
       (throw (ex-info "A REPL lifecycle call takes at most (language?, {options})."
                       {:type :language-surface/bad-args :got args})))
-    (let [opts (project->cwd (or opts {}))]
+    (let [opts (directory->cwd (or opts {}))]
       [(or lead-id
            (let [oid (opts-id opts)]
              (when (id? oid) oid))) language opts])))
@@ -602,7 +614,7 @@
      (str
        "Format through the active pack — `format_code({\"paths\": [\"src\"]})`, or "
        "`format_code(\"python\", {\"code\": src})`. `language` leads the call and is optional: it is "
-       "inferred from the paths and the workspace, and needed only when several packs match. `paths` "
+       "inferred from paths and workspace. `cwd`, `root`, and `project` select the project directory. `paths` "
        "(ALWAYS a list) formats files and directories in place, recursively, and answers per-file "
        "changes; `code` formats one snippet and answers `changed` + char delta, NEVER the text. Omit "
        "both to format the pack's default source paths. python also takes ruff's own "
@@ -610,6 +622,8 @@
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
      :params [{:name "language" :note "inferred; name it when ambiguous"}
+              {:name "cwd" :note "or `root`/`project`; default workspace ROOT"}
+              {:name "root" :note "alias of `cwd` project directory"}
               {:name "paths" :note "ALWAYS a list"}
               {:name "code" :note "one snippet instead of `paths`"}
               {:name "line_length" :note "python — overrides ruff config"}
@@ -632,12 +646,14 @@
      (str
        "Lint through the active pack, editing nothing — `lint_code({\"paths\": [\"src\"]})`, or "
        "`lint_code(\"python\", {\"code\": src})`. `language` leads the call and is optional: it is "
-       "inferred from the paths and the workspace, and needed only when several packs match. `paths` "
+       "inferred from paths and workspace. `cwd`, `root`, and `project` select the project directory. `paths` "
        "(ALWAYS a list) lints disk, `code` lints one snippet, and omitting both lints the pack's "
        "defaults across the workspace. Answers findings plus severity counts. python also "
        "takes ruff's own knobs for this call: `select`/`ignore` choose rules, `line_length` "
        "overrides the discovered config, `config` pins one file.")
      :params [{:name "language" :note "inferred; name it when ambiguous"}
+              {:name "cwd" :note "or `root`/`project`; default workspace ROOT"}
+              {:name "root" :note "alias of `cwd` project directory"}
               {:name "paths" :note "ALWAYS a list"}
               {:name "code" :note "one snippet instead of `paths`"}
               {:name "select" :note "python — ruff rules to keep"}
@@ -669,8 +685,8 @@
        "(inferred from the paths and the workspace). Prefer the smallest target: `paths` is the "
        "shared selector and each entry is a file, a directory, or `<path>::<test-name>` for a "
        "single test; clojure also takes `ns` — a namespace name, or `ns/var` for one test. "
-       "`include`/`exclude` (clojure) narrow by metadata tag; `cwd` — or `project`, the "
-       "SAME key — chooses the project and defaults to the WORKSPACE ROOT, which is where a "
+       "`include`/`exclude` (clojure) narrow by metadata tag; `cwd`, `root`, and `project` are the "
+       "SAME directory and default to the WORKSPACE ROOT, which is where a "
        "relative `paths` entry resolves; `runner` (python) selects `project` — the "
        "interpreter's own pytest "
        "— over the hermetic sandbox. `aliases` (clojure) ADDS deps.edn aliases to the clean-JVM "
@@ -682,7 +698,8 @@
               {:name "ns" :note "clojure — namespace, or `ns/var`"}
               {:name "include" :note "clojure — keep these metadata tags"}
               {:name "exclude" :note "clojure — drop these metadata tags"}
-              {:name "cwd" :note "or `project`; default workspace ROOT"}
+              {:name "cwd" :note "or `root`/`project`; default workspace ROOT"}
+              {:name "root" :note "alias of `cwd` project directory"}
               {:name "build" :note "clojure — shadow-cljs build id"}
               {:name "aliases" :note "clojure — EXTRA deps.edn aliases"}
               {:name "runner" :note "python — \"project\" for its pytest"}]

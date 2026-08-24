@@ -976,6 +976,11 @@ class __VisShellLogs__:
     def __call__(self, offset=None, lines=None, limit=None, **aliases):
         return self.__vis_shell__.__vis_logs__(offset, lines, limit, **aliases)
 
+    def splitlines(self, keepends=False):
+        # Reading `sh.logs.splitlines()` means the current complete log, matching
+        # the string operation models naturally try while retaining `logs(...)` paging.
+        return self()["out"].splitlines(keepends)
+
     def __getitem__(self, __vis_key__):
         return self.__vis_shell__.__vis_logs__()[__vis_key__]
 
