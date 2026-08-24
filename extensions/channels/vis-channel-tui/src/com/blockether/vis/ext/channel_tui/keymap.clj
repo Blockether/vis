@@ -95,7 +95,11 @@
    {:action :cycle-verbosity :key \l :label "length" :group "Model" :show-when :never}
    {:action :search-open :key \f :label "search" :group "Buffer" :show-when :never}
    {:action :pick-file :key \a :label "attach file" :group "Tools"}
-   {:action :toggle-voice-recording :key \v :label "voice" :group "Tools"}
+   {:action :focus-attachments
+    :key \i
+    :label "inspect attachments"
+    :group "Tools"
+    :show-when :never} {:action :toggle-voice-recording :key \v :label "voice" :group "Tools"}
    ;; `b` = the conversation MODE, next to `v` = one recording. Arming is not a
    ;; setting: it says SPEAK THE ANSWERS OF THIS CONVERSATION, and only this one.
    ;; Palette-only because the Tools pane is FULL: a fifth verb there re-packs the

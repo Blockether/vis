@@ -2296,3 +2296,18 @@
                      (- (long after-surface) (long before-surface)))
                   "receipt and expanded surface move by the same terminal rows"))
         (finally (reset! state/app-db old-db))))))
+
+(defdescribe composer-attachment-geometry-test
+             (it "reserves every attachment row above the prompt on every render path"
+                 (let [geometry (#'screen/composer-geometry
+                                 {:input (input/empty-input) :attachments [{:id "a"} {:id "b"}]}
+                                 80
+                                 30)]
+                   (expect (= {:text-rows 1
+                               :input-box-h 3
+                               :composer-h 5
+                               :input-top 25
+                               :rail-top 23
+                               :rail-h 2
+                               :echo-row 22}
+                              geometry)))))

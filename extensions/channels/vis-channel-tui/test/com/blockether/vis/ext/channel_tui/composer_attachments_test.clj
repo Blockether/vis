@@ -124,11 +124,32 @@
       (expect (= [{:id "sha256:b"}]
                  (composer-attachments/remove-attachment [{:id "sha256:a"} {:id "sha256:b"}]
                                                          "sha256:a"))))
-  (it "keeps staged files and feedback with their composer tab"
+  (it "keeps staged files, focus, and feedback with their composer tab"
       (let [snapshot (#'state/tab-snapshot
-                      {:attachments [{:id "sha256:a"}] :attachment-feedback ["too large"]})]
+                      {:attachments [{:id "sha256:a"}]
+                       :attachment-feedback ["too large"]
+                       :attachment-focus? true
+                       :attachment-index 0})]
         (expect (= [{:id "sha256:a"}] (:attachments snapshot)))
-        (expect (= ["too large"] (:attachment-feedback snapshot)))))
+        (expect (= ["too large"] (:attachment-feedback snapshot)))
+        (expect (true? (:attachment-focus? snapshot)))
+        (expect (= 0 (:attachment-index snapshot)))))
+  (it "focuses, cycles, and removes one rail item without touching its peers"
+      (reset! state/app-db {:attachments [{:id "a"} {:id "b"} {:id "c"}]
+                            :attachment-focus? false
+                            :attachment-index 0
+                            :render-version 0})
+      (state/dispatch [:focus-attachments])
+      (state/dispatch [:move-attachment-focus -1])
+      (expect (true? (:attachment-focus? @state/app-db)))
+      (expect (= 2 (:attachment-index @state/app-db)))
+      (state/dispatch [:remove-attachment "c"])
+      (expect (= ["a" "b"] (mapv :id (:attachments @state/app-db))))
+      (expect (= 1 (:attachment-index @state/app-db)))
+      (state/dispatch [:remove-attachment "b"])
+      (state/dispatch [:remove-attachment "a"])
+      (expect (false? (:attachment-focus? @state/app-db)))
+      (expect (= 0 (:attachment-index @state/app-db))))
   (it "does not copy the gateway media vocabulary or numeric limits"
       (let [source (slurp (io/resource
                             "com/blockether/vis/ext/channel_tui/composer_attachments.clj"))]

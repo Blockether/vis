@@ -48,7 +48,7 @@
                  ;; C-x t → fork the session AT a chosen turn; C-x z → vim-style jump labels.
                  (expect (= :fork-at-turn (keymap/prefix-action-for \t)))
                  (expect (= :toggle-detail-labels (keymap/prefix-action-for \z)))
-                 (expect (nil? (keymap/prefix-action-for \i)))
+                 (expect (= :focus-attachments (keymap/prefix-action-for \i)))
                  (expect (= \x keymap/prefix-key)))
              (it "no emacs editing key is a direct app verb (action-for returns nil)"
                  ;; The C-x prefix's second-keys (m/r/v/d/s) live behind C-x — a different

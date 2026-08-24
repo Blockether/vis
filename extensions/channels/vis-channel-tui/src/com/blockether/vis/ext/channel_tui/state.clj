@@ -7,6 +7,7 @@
             [com.blockether.vis.internal.header :as vh]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
+            [com.blockether.vis.ext.channel-tui.composer-attachments :as composer-attachments]
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.live-view :as lv]
@@ -134,10 +135,10 @@
   [:session :workspace :workspace/root :title :messages :utilization :scroll :layout :input
    :input-history :input-history-index :input-history-draft :slash-command-index
    :slash-command-hidden? :submitted-input :pending-sends :retracted-sends :queue-paused :pastes
-   :paste-counter :attachments :attachment-feedback :loading? :cancel-token :cancelling?
-   :cancelling-at-ms :cancel-awaiting-client-id :gateway-turn-id :live-turn-client-id :progress
-   :turn-start-ms :detail-expansions :mouse-selection :session-model-pref :human-input
-   :human-input-queue :live-views
+   :paste-counter :attachments :attachment-feedback :attachment-focus? :attachment-index :loading?
+   :cancel-token :cancelling? :cancelling-at-ms :cancel-awaiting-client-id :gateway-turn-id
+   :live-turn-client-id :progress :turn-start-ms :detail-expansions :mouse-selection
+   :session-model-pref :human-input :human-input-queue :live-views
    ;; Arming a voice conversation belongs to ONE conversation, so it is per-tab: the
    ;; tab you left must not keep speaking through the tab you entered.
    :voice-conversation?])
@@ -168,6 +169,8 @@
    ;; transcript state. They travel with the draft when tabs switch.
    :attachments []
    :attachment-feedback []
+   :attachment-focus? false
+   :attachment-index 0
    :loading? false
    :cancel-token nil
    :cancelling? false
@@ -1376,6 +1379,8 @@
        :paste-counter 0
        :attachments []
        :attachment-feedback []
+       :attachment-focus? false
+       :attachment-index 0
        ;; Global because every tab talks to the same gateway contract.
        :attachment-capabilities nil
        :loading? false
@@ -2666,9 +2671,50 @@
 
 (reg-event-db :apply-attachment-intake
               (fn [db [_ result]]
-                (assoc db
-                  :attachments (vec (:attachments result))
-                  :attachment-feedback (vec (:rejected result)))))
+                (let [attachments
+                      (vec (:attachments result))
+
+                      last-index
+                      (max 0 (dec (count attachments)))]
+
+                  (assoc db
+                    :attachments attachments
+                    :attachment-feedback (vec (:rejected result))
+                    :attachment-index (min (long (or (:attachment-index db) 0)) last-index)
+                    :attachment-focus? (boolean (and (:attachment-focus? db) (seq attachments)))))))
+
+(reg-event-db :focus-attachments
+              (fn [db _]
+                (cond-> db
+                  (seq (:attachments db))
+                  (assoc :attachment-focus?
+                    true :attachment-index
+                    (min (long (or (:attachment-index db) 0)) (dec (count (:attachments db))))))))
+
+(reg-event-db :blur-attachments
+              (fn [db _]
+                (assoc db :attachment-focus? false)))
+
+(reg-event-db
+  :move-attachment-focus
+  (fn [db [_ delta]]
+    (let [n (count (:attachments db))]
+      (if (pos? n)
+        (assoc db :attachment-index (mod (+ (long (or (:attachment-index db) 0)) (long delta)) n))
+        db))))
+
+(reg-event-db :remove-attachment
+              (fn [db [_ attachment-id]]
+                (let [attachments
+                      (composer-attachments/remove-attachment (:attachments db) attachment-id)
+
+                      last-index
+                      (max 0 (dec (count attachments)))]
+
+                  (assoc db
+                    :attachments attachments
+                    :attachment-index (min (long (or (:attachment-index db) 0)) last-index)
+                    :attachment-focus? (boolean (and (:attachment-focus? db) (seq attachments)))))))
 
 (reg-event-db :hide-slash-command-suggestions
               (fn [db _]

@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.attachment-intake :as attachment-intake]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
+            [com.blockether.vis.ext.channel-tui.composer-attachment-rail :as attachment-rail]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
             [com.blockether.vis.ext.channel-tui.components :as components]
@@ -2302,6 +2303,13 @@
                             (catch Throwable _ nil))))
   ([^TerminalScreen _screen ref] (open-click-target! ref)))
 
+(defn- inspect-attachment!
+  "Open a staged item in the OS viewer without requiring it to be under cwd."
+  [attachment]
+  (when-let [path (:path attachment)]
+    (vis/worker-future "vis-tui-inspect-attachment"
+                       #(try (opener/open-local! path) (catch Throwable _ nil)))))
+
 (defn- open-table-viewer!
   "Click an inline `vis-table` grid → the whole CSV as a live spreadsheet: page
    through it, move the row/column cursor, sort by a column. The
@@ -2352,6 +2360,35 @@
 
     (min (long input-max-lines) (max (long input-min-lines) n))))
 
+(defn- composer-geometry
+  "One geometry contract for the prompt, attachment rail, and echo boundary."
+  [db cols rows]
+  (let [text-rows
+        (input-text-rows (:input db) cols)
+
+        input-box-h
+        (+ text-rows 2 (* 2 (long render/input-pad-y)))
+
+        input-top
+        (- (long rows) input-box-h 2)
+
+        rail-h
+        (attachment-rail/rail-height (:attachments db))
+
+        rail-top
+        (- input-top rail-h)
+
+        echo-row
+        (dec rail-top)]
+
+    {:text-rows text-rows
+     :input-box-h input-box-h
+     :composer-h (+ input-box-h rail-h)
+     :input-top input-top
+     :rail-top rail-top
+     :rail-h rail-h
+     :echo-row echo-row}))
+
 (defn- overlay-locked?
   "True when an F1 help / F2 context modal card or a human-input dialog
    owns the whole screen. While locked, the cheap render fast-paths are
@@ -2376,10 +2413,18 @@
    keyboard and the cursor while it is open — `human-input/paint!` places it —
    which is why the cursor is hidden here."
   [^TerminalScreen screen g db
-   {:keys [input input-top text-rows cols now-ms echo-row footer-row slash-suggestions
+   {:keys [input input-top rail-top text-rows cols now-ms echo-row footer-row slash-suggestions
            slash-command-index]}]
   (let [human-input?
         (some? (:human-input db))
+
+        _
+        (attachment-rail/draw! g
+                               (:attachments db)
+                               rail-top
+                               cols
+                               {:focused? (:attachment-focus? db)
+                                :focused-index (:attachment-index db)})
 
         [cx cy]
         (render/draw-input-box! g input input-top text-rows cols nil)]
@@ -2462,26 +2507,14 @@
         g
         (.newTextGraphics screen)
 
-        text-rows
-        (input-text-rows input cols)
+        {:keys [^long text-rows ^long composer-h ^long input-top ^long rail-top ^long echo-row]}
+        (composer-geometry db cols rows)
 
-        input-box-h
-        (+ text-rows 2 (* 2 (long render/input-pad-y)))
-
-        ;; Reserve bottom rows for footer proper (model/status + provider
-        ;; limits). The Emacs echo area is a single flat row directly
-        ;; above the editor, which now draws its own top border.
         header-top
         0
 
         footer-row
         (- rows 2)
-
-        input-top
-        (- rows input-box-h 2)
-
-        echo-row
-        (- input-top 1)
 
         ;; Keep one empty terminal row between the header band (`Vis`/workspace
         ;; strip) and the first transcript bubble. `draw-messages-area!` then
@@ -2665,6 +2698,7 @@
                                db
                                {:input input
                                 :input-top input-top
+                                :rail-top rail-top
                                 :text-rows text-rows
                                 :cols cols
                                 :now-ms now-ms
@@ -2774,7 +2808,7 @@
       ;; past the first message row, so the operator still sees WHAT they are
       ;; answering. It paints last and owns the text cursor while it is open.
       (when-let [human-form (:human-input db)]
-        (if-let [pos (hi/paint! g cols rows human-form messages-top input-box-h)]
+        (if-let [pos (hi/paint! g cols rows human-form messages-top composer-h)]
           (.setCursorPosition screen ^TerminalPosition pos)
           (.setCursorPosition screen nil)))
       ;; A live view paints in the SAME band and YIELDS it to a form: an
@@ -2789,7 +2823,7 @@
                                    rows
                                    (:live-views db)
                                    messages-top
-                                   input-box-h
+                                   composer-h
                                    (System/currentTimeMillis)
                                    (live-front-anchor-row layout (:live-views db) text-top))]
           (state/dispatch [:live-view-painted (:view-id geom) geom])))
@@ -2843,7 +2877,7 @@
        ;; The prompt box's LIVE height: an in-session band (a transient, the C-x
        ;; hydra, a human-input form) is anchored directly above it, so it has to
        ;; know how tall the editor grew.
-       :input-h input-box-h
+       :input-h composer-h
        :rows rows
        :total-h total-h
        :inner-h inner-h
@@ -3177,17 +3211,8 @@
         rows
         (long rows)
 
-        text-rows
-        (input-text-rows input cols)
-
-        input-box-h
-        (+ text-rows 2 (* 2 (long render/input-pad-y)))
-
-        input-top
-        (- rows input-box-h 2)
-
-        echo-row
-        (- input-top 1)
+        {:keys [^long text-rows ^long input-top ^long rail-top ^long echo-row]}
+        (composer-geometry db cols rows)
 
         ;; Geometry MUST match `render-frame!` exactly. The full path
         ;; reserves one empty terminal row between the header band and
@@ -3442,6 +3467,12 @@
           ;; AFTER the commit (as before) left those regions in an uncommitted
           ;; staging buffer that the next `begin-frame!` dropped — so the footer
           ;; buttons were never clickable on the live/partial render path.
+          (attachment-rail/draw! g
+                                 (:attachments db)
+                                 rail-top
+                                 cols
+                                 {:focused? (:attachment-focus? db)
+                                  :focused-index (:attachment-index db)})
           (footer/draw-echo-area! g db echo-row cols now-ms)
           (footer/draw-footer! g db footer-row cols now-ms)
           (cr/commit-frame!))))
@@ -3539,7 +3570,7 @@
    Lanterna delta emits nothing for them. That skips the bulk of a full scroll
    frame (static chrome rebuild) while staying pixel-identical to
    `render-frame!` for this state; force it off with `force-full-frame?`."
-  [^TerminalScreen screen cols rows {:keys [messages input progress settings] :as db} now-ms
+  [^TerminalScreen screen cols rows {:keys [messages progress settings] :as db} now-ms
    previous-layout]
   (let [cols
         (long cols)
@@ -3556,17 +3587,8 @@
         ;; Geometry MUST match render-frame! / render-live-bubble-frame!
         ;; EXACTLY — a one-row slip shifts the viewport + scrollbar and reads
         ;; as a jump on the fast↔full flip (see render-live-bubble-frame!).
-        text-rows
-        (input-text-rows input cols)
-
-        input-box-h
-        (+ text-rows 2 (* 2 (long render/input-pad-y)))
-
-        input-top
-        (- rows input-box-h 2)
-
-        echo-row
-        (- input-top 1)
+        {:keys [^long echo-row]}
+        (composer-geometry db cols rows)
 
         messages-top
         (inc (long (header/header-rows db)))
@@ -3699,17 +3721,8 @@
         g
         (.newTextGraphics screen)
 
-        text-rows
-        (input-text-rows input cols)
-
-        input-box-h
-        (+ text-rows 2 (* 2 (long render/input-pad-y)))
-
-        input-top
-        (- rows input-box-h 2)
-
-        echo-row
-        (- input-top 1)
+        {:keys [^long text-rows ^long input-top ^long rail-top ^long echo-row]}
+        (composer-geometry db cols rows)
 
         footer-row
         (- rows 2)
@@ -3722,6 +3735,7 @@
                          db
                          {:input input
                           :input-top input-top
+                          :rail-top rail-top
                           :text-rows text-rows
                           :cols cols
                           :now-ms now-ms
@@ -6712,6 +6726,12 @@
                                  :table
                                  (open-table-viewer! screen hit)
 
+                                 :attachment-remove
+                                 (state/dispatch [:remove-attachment (:attachment-id hit)])
+
+                                 :attachment-inspect
+                                 (inspect-attachment! (:attachment hit))
+
                                  :copy-id
                                  (copy-session-id! (:text hit))
 
@@ -6849,6 +6869,12 @@
                                  ;; TUI-specific flash state; the
                                  ;; cross-channel notifications system
                                  ;; carries the feedback.
+                                 :attachment-remove
+                                 (state/dispatch [:remove-attachment (:attachment-id hit)])
+
+                                 :attachment-inspect
+                                 (inspect-attachment! (:attachment hit))
+
                                  :copy-id
                                  (copy-session-id! (:text hit))
 
@@ -7100,6 +7126,27 @@
                                      (vreset! pending-input-key
                                               (into [key] @pending-input-key)))))))
                      (recur))
+                   ;; C-x i moves keyboard focus onto the rail without modifying the draft.
+                   ;; Arrow keys inspect adjacent metadata rows, Enter opens the selected
+                   ;; file, Delete/Backspace removes only that item, and Esc returns focus.
+                   (and (instance? KeyStroke key) (:attachment-focus? db))
+                   (let [ks ^KeyStroke key
+                         ktype (.getKeyType ks)
+                         attachments (:attachments db)
+                         idx (min (long (or (:attachment-index db) 0))
+                                  (max 0 (dec (count attachments))))]
+
+                     (cond (#{KeyType/ArrowLeft KeyType/ArrowUp} ktype)
+                           (state/dispatch [:move-attachment-focus -1])
+                           (#{KeyType/ArrowRight KeyType/ArrowDown KeyType/Tab} ktype)
+                           (state/dispatch [:move-attachment-focus 1])
+                           (#{KeyType/Delete KeyType/Backspace} ktype)
+                           (when-let [attachment (nth attachments idx nil)]
+                             (state/dispatch [:remove-attachment (:id attachment)]))
+                           (= KeyType/Enter ktype) (when-let [attachment (nth attachments idx nil)]
+                                                     (inspect-attachment! attachment))
+                           (= KeyType/Escape ktype) (state/dispatch [:blur-attachments]))
+                     (recur))
                    ;; Vim-style jump labels own the keyboard while active: a
                    ;; letter toggles the fold under its badge, Esc / C-g / any
                    ;; other key cancels. Sits above the fall-through so the
@@ -7267,6 +7314,9 @@
 
                                   :cycle-verbosity
                                   (state/dispatch [:cycle-verbosity])
+
+                                  :focus-attachments
+                                  (state/dispatch [:focus-attachments])
 
                                   :search-open
                                   (state/dispatch [:search-open])
