@@ -31,7 +31,6 @@
   com.blockether.vis.ext.foundation-voice.core/register!
   com.blockether.vis.ext.language-clojure.core/register!
   com.blockether.vis.ext.language-python.core/register!
-  com.blockether.vis.ext.language-typescript-bun.core/register!
   com.blockether.vis.ext.persistance-sqlite.registrar/register!
   com.blockether.vis.ext.provider-alibaba/register!
   com.blockether.vis.ext.provider-anthropic/register!
