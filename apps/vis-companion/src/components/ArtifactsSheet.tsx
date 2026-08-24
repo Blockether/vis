@@ -388,9 +388,10 @@ function Thumb({
   hasHistory: boolean;
 }) {
   const box = "h-24 sm:h-28 shrink-0 border-b border-dialog-edge";
+  const table = isTableMedia(artifact.mediaType, artifact.name);
   const previewable =
     artifact.kind === "doc" &&
-    isTextMedia(artifact.mediaType, artifact.name) &&
+    (table || isTextMedia(artifact.mediaType, artifact.name)) &&
     typeof artifact.size === "number" &&
     artifact.size <= PREVIEW_LIMIT;
   const { url, failed } = useArtifactUrl(
@@ -452,6 +453,36 @@ function Thumb({
   }
 
   if (artifact.kind === "doc") {
+    if (table && head) {
+      const rows = parseCsv(head).slice(0, 5);
+      const columns = Math.min(4, Math.max(0, ...rows.map((row) => row.length)));
+      if (rows.length && columns) {
+        return (
+          <span
+            aria-hidden="true"
+            className={`block overflow-hidden bg-panel-2 px-1.5 py-1.5 font-mono text-chip text-dialog-hint [mask-image:linear-gradient(to_bottom,black_85%,transparent)] ${box}`}
+          >
+            {rows.map((row, rowAt) => (
+              <span
+                key={rowAt}
+                className={`flex min-w-0 border-dialog-edge ${
+                  rowAt === 0 ? "border-b font-bold text-white" : "border-b/50"
+                }`}
+              >
+                {Array.from({ length: columns }, (_, columnAt) => (
+                  <span
+                    key={columnAt}
+                    className="min-w-0 flex-1 truncate border-r border-dialog-edge px-1 py-0.5 last:border-r-0"
+                  >
+                    {row[columnAt] ?? ""}
+                  </span>
+                ))}
+              </span>
+            ))}
+          </span>
+        );
+      }
+    }
     // The note itself, clipped by the box rather than summarised: a page continues
     // past the bottom of a thumbnail exactly as it does in the reader. It DISSOLVES
     // there rather than being guillotined — a row of letters sliced through the middle

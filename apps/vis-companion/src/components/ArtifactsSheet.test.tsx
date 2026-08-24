@@ -225,6 +225,23 @@ describe("the artifacts sheet", () => {
     expect(html).toContain("absolute inset-0");
   });
 
+  // Regression, user request: CSV tiles showed a generic page even though the artifact
+  // already had enough readable bytes to show its own columns and first records.
+  it("previews a CSV artifact in its tile", async () => {
+    readableTable();
+    const view = render(
+      <ArtifactsSheet client={client} sid="s1" artifacts={[table]} onClose={() => {}} />,
+    );
+
+    await waitFor(() => expect(view.baseElement.textContent).toContain("Natalia"));
+    expect(view.baseElement.textContent).toContain("name");
+    expect(view.baseElement.textContent).toContain("email");
+    expect(view.baseElement.textContent).toContain("natalia@example.com");
+    expect(screen.queryByRole("grid", { name: "jobs.csv" })).not.toBeInTheDocument();
+    view.unmount();
+    vi.unstubAllGlobals();
+  });
+
   // Regression, user report: clicking a CSV artifact left the gallery in place because
   // recorded files were deliberately dead even though CSV already has a table viewer.
   it("opens a CSV artifact in the table viewer", async () => {
