@@ -458,6 +458,8 @@ export interface GatewayAttachment {
  */
 export interface IterationAttachment {
   index: number;
+  /** Stable row id used by `attachment://<id>` links in assistant prose. */
+  attachment_id?: string;
   iteration_id?: string;
   tool_call_id?: string;
   kind?: string;

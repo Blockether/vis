@@ -254,6 +254,52 @@ describe("Markdown thinking breaks", () => {
   });
 });
 
+// User report: a Markdown attachment preview looked like a link but tapping it
+// invoked the unsupported `attachment:` browser scheme and opened nothing.
+describe("Markdown attachment links", () => {
+  it("hands a safe attachment link to the artifact opener", () => {
+    const opened = vi.fn();
+    const view = render(
+      <AssistantMessage
+        turn={{
+          id: "t1",
+          status: "completed",
+          content: [
+            {
+              id: "answer",
+              type: "prose",
+              markdown:
+                "[Open preview](attachment://8e3a587d-232c-497d-a290-7d16cfcf0e02) and [open docs](https://example.com/docs).",
+            },
+          ],
+        }}
+        onOpenAttachment={opened}
+      />,
+    );
+
+    const preview = view.getByRole("link", { name: "Open preview" });
+    expect(preview.getAttribute("target")).toBeNull();
+    fireEvent.click(preview);
+    expect(opened).toHaveBeenCalledOnce();
+    expect(opened).toHaveBeenCalledWith("8e3a587d-232c-497d-a290-7d16cfcf0e02");
+
+    const external = view.getByRole("link", { name: "open docs" });
+    expect(external.getAttribute("target")).toBe("_blank");
+  });
+
+  it("does not turn an unsafe attachment target into an internal action", () => {
+    const opened = vi.fn();
+    const view = render(
+      <Markdown onOpenAttachment={opened}>
+        {"[Not an artifact](attachment://../../settings)"}
+      </Markdown>,
+    );
+
+    expect(view.queryByRole("link", { name: "Not an artifact" })).toBeNull();
+    expect(opened).not.toHaveBeenCalled();
+  });
+});
+
 describe("Markdown tool card body", () => {
   it("keeps blank lines and indentation inside a COMMAND block", () => {
     const html = renderToStaticMarkup(

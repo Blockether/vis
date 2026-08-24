@@ -14,6 +14,7 @@ import {
   collapseArtifactVersions,
   collapseAttachmentVersions,
   collectArtifacts,
+  findArtifactByAttachmentId,
   artifactsFromIndex,
   mergeArtifacts,
   withSavedAttachment,
@@ -199,6 +200,7 @@ const turns: TranscriptTurn[] = [
         attachments: [
           {
             index: 0,
+            attachment_id: "att-revenue",
             iteration_id: "i1",
             filename: "revenue.png",
             media_type: "image/png",
@@ -243,6 +245,32 @@ describe("collecting what a session produced", () => {
       "revenue.png",
     ]);
     expect(list.map((entry) => entry.kind)).toEqual(["doc", "doc", "image"]);
+    expect(list.find((entry) => entry.name === "revenue.png")?.attachmentId).toBe(
+      "att-revenue",
+    );
+  });
+
+  it("finds the exact cut named by an attachment link", () => {
+    const current = collectArtifacts(turns).find(
+      (entry) => entry.name === "revenue.png",
+    )!;
+    const old = {
+      ...current,
+      key: "i0:0",
+      attachmentId: "att-old",
+      version: 1,
+    };
+    const latest = {
+      ...current,
+      key: "i1:0",
+      attachmentId: "att-new",
+      version: 2,
+    };
+    const collapsed = collapseArtifactVersions([latest, old]);
+
+    expect(findArtifactByAttachmentId(collapsed, "att-old")?.key).toBe("i0:0");
+    expect(findArtifactByAttachmentId(collapsed, "att-new")?.key).toBe("i1:0");
+    expect(findArtifactByAttachmentId(collapsed, "att-missing")).toBeNull();
   });
 
   it("counts the turn from the start of the session, not of the window", () => {

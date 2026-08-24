@@ -1073,10 +1073,12 @@
    the position in that list — the EXACT list (and order) that
    `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx` serves — so a
    persist-skipped artifact is absent from both and index N always names the SAME
-   artifact live, in history, and at the byte endpoint. THE one descriptor shape:
-   the live `iteration.completed` frame and the persisted transcript ship it
-   verbatim, so a remote client (iOS/Android/web) renders a produced image with
-   one code path instead of two.
+   artifact live, in history, and at the byte endpoint. `:attachment_id` is the
+   stable row identity an assistant's `attachment://…` prose link names; unlike the
+   positional byte route, it lets a client resolve that link back to this descriptor.
+   THE one descriptor shape: the live `iteration.completed` frame and the persisted
+   transcript ship it verbatim, so a remote client (iOS/Android/web) renders a
+   produced image with one code path instead of two.
 
    `rows` is ALREADY the human's own list ([[user-iteration-attachments]]): a
    model-only artifact is dropped there, by the very call the byte endpoint
@@ -1086,7 +1088,7 @@
   (into []
         (map-indexed
           (fn [idx
-               {:keys [tool-call-id kind media-type filename size audience version transcription
+               {:keys [id tool-call-id kind media-type filename size audience version transcription
                        view-id classification activity-anchor]}]
             (cond-> {:index idx
                      :iteration_id (str iteration-id)
@@ -1100,6 +1102,9 @@
                      :version (long (or version 1))
                      :audience (attachments/normalize-audience audience)
                      :size (long (or size 0))}
+              id
+              (assoc :attachment_id (str id))
+
               view-id
               (assoc :view_id (str view-id))
 

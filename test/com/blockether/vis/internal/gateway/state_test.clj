@@ -473,10 +473,13 @@
       (let [[_ _ payload] (#'state/chunk->event
                            {:phase :iteration-final :iteration 2 :done true :attachment-count 3})]
         (expect (not (contains? payload :attachments)))))
+  ;; User report: an assistant's attachment link had no stable id in the descriptor,
+  ;; so tapping its preview link could not identify the artifact to open.
   (it "projects lean snake-case descriptors and NEVER leaks base64"
       (with-redefs [state/iteration-attachments
                     (fn [_iid]
-                      [{:tool-call-id "call_A"
+                      [{:id "00000000-0000-0000-0000-0000000000f1"
+                        :tool-call-id "call_A"
                         :kind "image"
                         :media-type "image/png"
                         :filename "fig.png"
@@ -492,6 +495,8 @@
 
           (expect (= 2 (count atts)))
           (expect (= [0 1] (mapv :index atts)))
+          (expect (= "00000000-0000-0000-0000-0000000000f1" (:attachment_id (first atts))))
+          (expect (not (contains? (second atts) :attachment_id)))
           (expect (= "image/png" (:media_type (first atts))))
           (expect (= "call_A" (:tool_call_id (first atts))))
           (expect (= 1234 (:size (first atts))))

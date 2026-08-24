@@ -25,7 +25,7 @@
  * shrinks a hit box, so an iPad keeps 44px targets at desktop width.
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ARTIFACT_FILTERS,
   docKindLabel,
@@ -1081,15 +1081,21 @@ export function ArtifactsSheet({
   client,
   sid,
   artifacts,
+  initialArtifact = null,
   onClose,
 }: {
   client: GatewayClient;
   sid: string;
   artifacts: SessionArtifact[];
+  /** Artifact requested by an inline answer link; the grid remains underneath it. */
+  initialArtifact?: SessionArtifact | null;
   onClose: () => void;
 }) {
   const [filter, setFilter] = useState("All");
-  const [opened, setOpened] = useState<SessionArtifact | null>(null);
+  const [opened, setOpened] = useState<SessionArtifact | null>(initialArtifact);
+  const openedRequest = useRef(
+    initialArtifact?.attachmentId ?? initialArtifact?.key ?? null,
+  );
   // The version list is its own surface, opened from the tile's dot and layered
   // UNDER the detail: opening a cut from it must return here, not to the grid.
   const [versionsOf, setVersionsOf] = useState<SessionArtifact | null>(null);
@@ -1101,6 +1107,13 @@ export function ArtifactsSheet({
     ARTIFACT_FILTERS.find((entry) => entry.label === filter)?.kinds ?? [];
   const shown = artifacts.filter((entry) => kinds.includes(entry.kind));
   const page = pageBySize(shown, (entry) => entry.size, pages, SHEET_PAGE);
+
+  useEffect(() => {
+    const request = initialArtifact?.attachmentId ?? initialArtifact?.key ?? null;
+    if (!initialArtifact || request === openedRequest.current) return;
+    openedRequest.current = request;
+    setOpened(initialArtifact);
+  }, [initialArtifact]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

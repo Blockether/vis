@@ -670,6 +670,19 @@ describe("an artifact with a history", () => {
 // its own scrolling — a clip, a note, a text file, a document — is handed the
 // overlay's whole body (`fill`); only a list of rows keeps the padded scroller.
 describe("an opened artifact", () => {
+  it("opens an artifact requested by answer prose without a tile click", () => {
+    render(
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[picture]}
+        initialArtifact={picture}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "revenue.png" })).toBeTruthy();
+  });
   const openNote = async () => {
     const view = render(
       <ArtifactsSheet

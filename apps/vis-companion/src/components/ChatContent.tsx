@@ -53,7 +53,7 @@ import "prismjs/components/prism-typescript";
 import "prismjs/components/prism-jsx";
 import "prismjs/components/prism-tsx";
 import "prismjs/components/prism-yaml";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { parseUserMessage } from "../lib/paste";
@@ -533,11 +533,28 @@ const SyntaxCodeBlock = memo(function SyntaxCodeBlock({
   );
 });
 
+type OpenAttachment = (attachmentId: string) => void;
+
+const ATTACHMENT_HREF =
+  /^attachment:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const MARKDOWN_LINK =
+  "font-medium text-link underline underline-offset-3 break-all hover:text-link-hover";
+
+function attachmentIdFromHref(href: string): string | null {
+  return ATTACHMENT_HREF.exec(href)?.[1] ?? null;
+}
+
+/** Keep only a canonical attachment id beyond react-markdown's safe URL schemes. */
+function markdownUrlTransform(url: string): string {
+  return attachmentIdFromHref(url) ? url : defaultUrlTransform(url);
+}
+
 export const Markdown = memo(function Markdown({
   children,
   compact = false,
   hardBreaks = false,
   nested = false,
+  onOpenAttachment,
 }: {
   children: string;
   compact?: boolean;
@@ -545,6 +562,7 @@ export const Markdown = memo(function Markdown({
   /** Rendered INSIDE an already-framed container (a tool result card): code and
       diff blocks drop their own border so the card shows ONE frame, not two. */
   nested?: boolean;
+  onOpenAttachment?: OpenAttachment;
 }) {
   // Transcript prose keeps natural word spacing on narrow screens. Inline code and
   // links remain breakable so a long atom cannot force the whole column to overflow.
@@ -563,21 +581,45 @@ export const Markdown = memo(function Markdown({
   return (
     <div className="min-w-0 break-words [&>:first-child]:mt-0 [&>:last-child]:mb-0">
       <ReactMarkdown
+        urlTransform={markdownUrlTransform}
         // A newline the model authored is a HARD break in reasoning: the engine's
         // `reasoning->ast` emits `[:br]` for it and the TUI paints it as its own row.
         // CommonMark would otherwise flow those lines into one paragraph.
         remarkPlugins={hardBreaks ? [remarkGfm, remarkBreaks] : [remarkGfm]}
         components={{
-          a: ({ children: label, ...props }) => (
-            <a
-              {...props}
-              className="font-medium text-link underline underline-offset-3 break-all hover:text-link-hover"
-              target="_blank"
-              rel="noreferrer"
-            >
-              {label}
-            </a>
-          ),
+          a: ({ children: label, href, title }) => {
+            const attachmentId = attachmentIdFromHref(href ?? "");
+            if (attachmentId) {
+              if (!onOpenAttachment) {
+                return <span className={MARKDOWN_LINK}>{label}</span>;
+              }
+              return (
+                <a
+                  href={href}
+                  title={title}
+                  className={MARKDOWN_LINK}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    onOpenAttachment(attachmentId);
+                  }}
+                >
+                  {label}
+                </a>
+              );
+            }
+            if (!href) return <span>{label}</span>;
+            return (
+              <a
+                href={href}
+                title={title}
+                className={MARKDOWN_LINK}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {label}
+              </a>
+            );
+          },
           blockquote: ({ children: quote }) => (
             <blockquote
               className={`${compact ? "my-2 pl-3" : "my-3 pl-4"} border-l-2 border-answer-edge text-dialog-hint`}
@@ -2748,17 +2790,23 @@ export function SpeechBlock({ text }: { text: string }) {
 
 export const ContentBlockView = memo(function ContentBlockView({
   block,
+  onOpenAttachment,
 }: {
   block: ContentBlock;
+  onOpenAttachment?: OpenAttachment;
 }) {
   switch (block.type) {
     case "prose":
-      return block.markdown ? <Markdown>{block.markdown}</Markdown> : null;
+      return block.markdown ? (
+        <Markdown onOpenAttachment={onOpenAttachment}>{block.markdown}</Markdown>
+      ) : null;
     case "speech":
       return block.text ? <SpeechBlock text={block.text} /> : null;
     case "code":
       return (
-        <Markdown>{fenced(block.text ?? "", block.language ?? "")}</Markdown>
+        <Markdown onOpenAttachment={onOpenAttachment}>
+          {fenced(block.text ?? "", block.language ?? "")}
+        </Markdown>
       );
     case "reasoning":
       return block.text ? <ThinkingBand>{block.text}</ThinkingBand> : null;
@@ -3214,6 +3262,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   sid,
   livePanel,
   liveActivities,
+  onOpenAttachment,
 }: {
   turn: TranscriptTurn;
   streaming?: boolean;
@@ -3238,6 +3287,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   livePanel?: ReactNode;
   /** Host Activity belongs to its Python form, not to the detached live rail. */
   liveActivities?: LiveViewModel[];
+  /** Opens the artifact named by a safe `attachment://<uuid>` answer link. */
+  onOpenAttachment?: OpenAttachment;
 }) {
   const blocks = turn.content ?? [];
   const fallback = blocks.length ? "" : fallbackAnswer(turn);
@@ -3293,9 +3344,15 @@ export const AssistantMessage = memo(function AssistantMessage({
           className={`bg-answer text-ui ${cancelled ? "italic text-cancelled-foreground" : "text-answer-foreground"}`}
         >
           {blocks.map((block) => (
-            <ContentBlockView key={block.id} block={block} />
+            <ContentBlockView
+              key={block.id}
+              block={block}
+              onOpenAttachment={onOpenAttachment}
+            />
           ))}
-          {fallback && <Markdown>{fallback}</Markdown>}
+          {fallback && (
+            <Markdown onOpenAttachment={onOpenAttachment}>{fallback}</Markdown>
+          )}
           {!streaming &&
             !blocks.length &&
             !fallback &&

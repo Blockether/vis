@@ -20,6 +20,7 @@ import {
   artifactsFromIndex,
   collapseArtifactVersions,
   collectArtifacts,
+  findArtifactByAttachmentId,
   mergeArtifacts,
 } from "../lib/artifacts";
 import type { SessionArtifact } from "../lib/artifacts";
@@ -1327,6 +1328,9 @@ export function SessionScreen({
     () => client.transcriptWindow(sid).offset,
   );
   const [artifactsOpen, setArtifactsOpen] = useState(false);
+  const [linkedAttachmentId, setLinkedAttachmentId] = useState<string | null>(
+    null,
+  );
   // The session's WHOLE artifact index, asked of the gateway in one byte-free
   // request. Without it the sheet listed only what the reader had already
   // scrolled back to: the transcript is fetched newest-page-first, so a long
@@ -1358,6 +1362,21 @@ export function SessionScreen({
       ),
     [turns, earlierRemaining, indexedArtifacts],
   );
+  const linkedArtifact = useMemo(
+    () =>
+      linkedAttachmentId
+        ? findArtifactByAttachmentId(artifacts, linkedAttachmentId)
+        : null,
+    [artifacts, linkedAttachmentId],
+  );
+  const openLinkedArtifact = useCallback((attachmentId: string) => {
+    setLinkedAttachmentId(attachmentId);
+    setArtifactsOpen(true);
+  }, []);
+  const closeArtifacts = useCallback(() => {
+    setArtifactsOpen(false);
+    setLinkedAttachmentId(null);
+  }, []);
   // A revision the human saves from inside this screen — a commented note, an
   // inked figure, a stamped PDF page — is appended to an ITERATION THAT ALREADY
   // EXISTS, so the session row never moves and the transcript revalidation
@@ -5082,6 +5101,7 @@ export function SessionScreen({
               client={client}
               sid={sid}
               liveActivities={activities}
+              onOpenAttachment={openLinkedArtifact}
             />
           </div>
         );
@@ -5094,6 +5114,7 @@ export function SessionScreen({
       client,
       sid,
       filedActivityOwners,
+      openLinkedArtifact,
     ],
   );
   const anchoredActivityIds = useMemo(
@@ -5166,6 +5187,7 @@ export function SessionScreen({
           client={client}
           sid={sid}
           liveActivities={liveTurnActivities}
+          onOpenAttachment={openLinkedArtifact}
           livePanel={
             ordinaryLiveViews.length > 0 ? (
               <div className="mt-5">
@@ -5189,6 +5211,7 @@ export function SessionScreen({
     liveViews,
     liveTurnActivities,
     ordinaryLiveViews,
+    openLinkedArtifact,
   ]);
   // Rows are about to land ABOVE the viewport. Stopping the follow is all this
   // has to do: the anchor observer holds the reader's line for every mutation.
@@ -5383,7 +5406,10 @@ export function SessionScreen({
             <ArtifactsChip
               count={artifacts.length}
               open={artifactsOpen}
-              onToggle={() => setArtifactsOpen((was) => !was)}
+              onToggle={() => {
+                setLinkedAttachmentId(null);
+                setArtifactsOpen((was) => !was);
+              }}
             />
           </div>
         </header>
@@ -5417,7 +5443,8 @@ export function SessionScreen({
               client={client}
               sid={sid}
               artifacts={artifacts}
-              onClose={() => setArtifactsOpen(false)}
+              initialArtifact={linkedArtifact}
+              onClose={closeArtifacts}
             />
           )}
           {/* The scroller is deliberately NOT a live region. role="log" implies

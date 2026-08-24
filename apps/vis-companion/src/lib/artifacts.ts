@@ -228,6 +228,8 @@ export function artifactMedia(attachment: Partial<IterationAttachment>): string 
 export interface SessionArtifact {
   /** Stable across re-renders: the iteration owns the index. */
   key: string;
+  /** Stable wire id named by an assistant's `attachment://…` link. */
+  attachmentId?: string;
   kind: ArtifactKind;
   name: string;
   media: string;
@@ -269,6 +271,7 @@ function toArtifact(
   const index = attachment.index ?? 0;
   return {
     key: `${where.iterationId}:${index}`,
+    attachmentId: attachment.attachment_id,
     kind: artifactKind(attachment),
     name: attachment.filename || "attachment",
     media: artifactMedia(attachment),
@@ -366,6 +369,20 @@ export function collapseArtifactVersions(
     const versions = [...thread].sort((a, b) => b.version - a.version);
     return { ...versions[0], versions };
   });
+}
+
+/** Resolve a prose attachment link, including a non-latest cut in a version thread. */
+export function findArtifactByAttachmentId(
+  list: SessionArtifact[],
+  attachmentId: string,
+): SessionArtifact | null {
+  for (const artifact of list) {
+    if (artifact.attachmentId === attachmentId) return artifact;
+    for (const version of artifact.versions ?? []) {
+      if (version.attachmentId === attachmentId) return version;
+    }
+  }
+  return null;
 }
 
 /**
