@@ -4897,6 +4897,9 @@
                          [r p])))
                (try (lp/projects {}) (catch Throwable _ nil)))
 
+         empty-counts
+         {:session-count 0 :live-count 0 :awaiting-count 0 :last-activity-ms 0}
+
          groups
          (reduce (fn [acc row]
                    (let [sid
@@ -4906,10 +4909,7 @@
                          (or (when db (session-project-root db sid)) "")
 
                          g
-                         (get
-                           acc
-                           root
-                           {:session-count 0 :live-count 0 :awaiting-count 0 :last-activity-ms 0})]
+                         (get acc root empty-counts)]
 
                      (assoc acc
                        root {:session-count (inc (long (:session-count g)))
@@ -4921,7 +4921,10 @@
                                                inc)
                              :last-activity-ms (max (long (:last-activity-ms g))
                                                     (long (:recency-ms row)))})))
-                 {}
+                 (into {}
+                       (map (fn [root]
+                              [root empty-counts]))
+                       (keys named))
                  ranked)
 
          projects

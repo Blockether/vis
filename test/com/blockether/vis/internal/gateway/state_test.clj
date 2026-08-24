@@ -4131,6 +4131,28 @@
                        (select-keys overview
                                     [:project_count :session_count :live_count
                                      :awaiting_count]))))))))
+  ;; Regression, user report: `Use project` persisted an empty project, but the
+  ;; overview omitted it until a session existed, so the companion could not show it.
+  (it "keeps a persisted project visible before its first session"
+      (with-redefs-fn {#'lp/db-info (constantly ::db)
+                       #'lp/projects
+                       (fn [_]
+                         [{:id "p-empty" :name "Empty" :workspace-root "/repo/empty"}])
+                       #'persistance/db-session-turn-stats (constantly {})
+                       #'lp/by-channel (constantly [])
+                       #'bus/live-turns (constantly {})
+                       #'bus/waiting-requests (constantly {})}
+        (fn []
+          (let [overview (state/projects-overview)]
+            (expect (= 1 (:project_count overview)))
+            (expect (= [{"root" "/repo/empty"
+                         "project_id" "p-empty"
+                         "name" "Empty"
+                         "session_count" 0
+                         "live_count" 0
+                         "awaiting_count" 0
+                         "last_activity_ms" 0}]
+                       (:projects overview)))))))
   (it "answers empty totals, never an exception, when nothing is persisted"
       (with-redefs-fn {#'lp/db-info (constantly nil)
                        #'lp/by-channel (constantly [])
