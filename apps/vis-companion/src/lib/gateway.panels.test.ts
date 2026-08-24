@@ -159,3 +159,74 @@ describe('warming a machine\'s settings panels', () => {
     expect(asked).toHaveLength(5);
   });
 });
+
+// Regression, user report: opening every session re-read the same machine's
+// capabilities just to decide whether its composer should show a microphone.
+describe('capabilities shared by one machine', () => {
+  it('answers every session client from one fresh read', async () => {
+    const payload = { version: 1, features: { voice: { enabled: true } } };
+    const answer = vi.fn(() => Promise.resolve(json(payload)));
+    vi.stubGlobal('fetch', answer);
+    const mod = await import('./gateway');
+
+    const firstSession = new mod.GatewayClient(conn);
+    const secondSession = new mod.GatewayClient(conn);
+    await expect(
+      Promise.all([firstSession.capabilities(), secondSession.capabilities()]),
+    ).resolves.toEqual([payload, payload]);
+    expect(answer).toHaveBeenCalledTimes(1);
+
+    await expect(
+      new mod.GatewayClient(conn).capabilities(),
+    ).resolves.toEqual(payload);
+    expect(answer).toHaveBeenCalledTimes(1);
+
+    // Reachability checks explicitly bypass freshness, without multiplying when
+    // two of them overlap.
+    await Promise.all([
+      new mod.GatewayClient(conn).capabilities(undefined, { force: true }),
+      new mod.GatewayClient(conn).capabilities(undefined, { force: true }),
+    ]);
+    expect(answer).toHaveBeenCalledTimes(2);
+
+    await new mod.GatewayClient({
+      url: 'http://other.example.com:7890',
+    }).capabilities();
+    expect(answer).toHaveBeenCalledTimes(3);
+  });
+
+  it('replaces an address probe aborted on wake', async () => {
+    const payload = { version: 1, features: { voice: { enabled: true } } };
+    const pending: Array<(response: Response) => void> = [];
+    const answer = vi.fn(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((resolve, reject) => {
+          pending.push(resolve);
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new Error('aborted request')),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal('fetch', answer);
+    const mod = await import('./gateway');
+    const client = new mod.GatewayClient(conn);
+
+    const oldNetwork = new AbortController();
+    const firstOutcome = client
+      .capabilities(oldNetwork.signal, { force: true })
+      .catch((error: unknown) => error);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+
+    oldNetwork.abort();
+    const currentNetwork = new AbortController();
+    const second = client.capabilities(currentNetwork.signal, { force: true });
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1]!(json(payload));
+
+    await expect(second).resolves.toEqual(payload);
+    expect(await firstOutcome).toBeInstanceOf(mod.GatewayError);
+    expect(answer).toHaveBeenCalledTimes(2);
+  });
+});

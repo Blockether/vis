@@ -661,7 +661,11 @@ export function App() {
       let activeResponded = false;
       try {
         advertised =
-          (await new GatewayClient(creds).capabilities(signal)).addresses ?? [];
+          (
+            await new GatewayClient(creds).capabilities(signal, {
+              force: true,
+            })
+          ).addresses ?? [];
         activeResponded = true;
       } catch {
         // An address can disappear while the device remains online (for example,

@@ -2700,10 +2700,9 @@ export function SessionScreen({
     },
     [],
   );
-  // Revalidated on every RECONNECT, not just on mount: a probe that lost the race
-  // with a gateway that was down/asleep used to pin `voiceSupported` false for the
-  // whole life of the screen — the mic button silently vanished from the composer
-  // and only a full app restart brought it back.
+  // Capabilities belong to the MACHINE, not this session. The client shares one
+  // fresh answer (and one in-flight read) across every composer; reconnecting only
+  // gives this mounted screen a chance to consume a refresh from the fleet cache.
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
@@ -2745,7 +2744,7 @@ export function SessionScreen({
       active = false;
       controller.abort();
     };
-  }, [chosenAsrEngine, client, sid, connected]);
+  }, [chosenAsrEngine, client, connected]);
 
   // WHICH machine speaks, for as long as this session is the one on screen.
   //

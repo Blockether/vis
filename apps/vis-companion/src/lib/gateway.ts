@@ -304,12 +304,22 @@ const routerInflight = new Map<string, Promise<RouterProvider[]>>();
 /** When each gateway's settings panels were last warmed, per base URL. */
 const panelWarmed = new Map<string, number>();
 
+/** When each gateway last answered its stable feature negotiation payload. */
+const capabilityReads = new Map<string, number>();
+
+/** One shared capabilities read per gateway, regardless of how many screens mount. */
+type CapabilityFlight = {
+  controller: AbortController;
+  promise: Promise<GatewayCapabilities>;
+};
+const capabilityFlights = new Map<string, CapabilityFlight>();
+
 /**
  * Last-known payload per gateway+resource, kept for the tab's lifetime so a
  * screen that REMOUNTS — switching tabs, backing out of a session, reopening
- * one — paints its previous frame immediately and revalidates underneath
- * instead of flashing an empty skeleton. Nothing here is ever served as truth:
- * every reader still fires the real request and reconciles the answer on top.
+ * one — paints its previous frame instead of flashing an empty skeleton.
+ * Volatile resources revalidate against their own validator; stable machine
+ * facts such as capabilities and devices have an explicit freshness window.
  */
 const snapshots = new Map<string, unknown>();
 
@@ -860,24 +870,80 @@ export class GatewayClient {
   }
 
   /**
-   * Last capabilities payload seen for THIS gateway — paint it, then revalidate.
-   * Capabilities are a per-gateway fact (attachment limits, media types, whether
-   * voice exists at all), so the answer from five seconds ago is still the right
-   * first frame for a screen the user just re-entered.
+   * Last capabilities payload seen for THIS gateway — the first frame for every
+   * session and settings panel. The payload is also durable across an app kill.
    */
   cachedCapabilities(): GatewayCapabilities | null {
     return readSnapshot<GatewayCapabilities>(this.snapshotKey("capabilities"));
   }
 
-  async capabilities(signal?: AbortSignal): Promise<GatewayCapabilities> {
-    const response = await this.request<GatewayCapabilities>(
-      "GET",
-      "/v1/capabilities",
-      undefined,
-      signal,
-    );
-    writeSnapshot(this.snapshotKey("capabilities"), response);
-    return response;
+  /**
+   * Stable feature negotiation for one gateway, shared by every client instance.
+   *
+   * A fresh answer is reused for the settings-panel cadence instead of asking the
+   * same machine whenever a session mounts. Concurrent readers join one request.
+   * `force` belongs to address recovery: it must prove the endpoint still answers
+   * rather than mistaking a cached payload for network reachability.
+   */
+  async capabilities(
+    signal?: AbortSignal,
+    opts?: { force?: boolean },
+  ): Promise<GatewayCapabilities> {
+    const key = this.snapshotKey("capabilities");
+    const held = readSnapshot<GatewayCapabilities>(key);
+    if (
+      !opts?.force &&
+      held &&
+      Date.now() - (capabilityReads.get(key) ?? 0) < PANEL_TTL_MS
+    )
+      return held;
+
+    let flight = capabilityFlights.get(key);
+    if (flight?.controller.signal.aborted) {
+      capabilityFlights.delete(key);
+      flight = undefined;
+    }
+    if (!flight) {
+      const controller = new AbortController();
+      const promise = this.request<GatewayCapabilities>(
+        "GET",
+        "/v1/capabilities",
+        undefined,
+        controller.signal,
+      ).then((response) => {
+        const answer = reconcileRow(
+          readSnapshot<GatewayCapabilities>(key),
+          response,
+        );
+        writeSnapshot(key, answer);
+        capabilityReads.set(key, Date.now());
+        return answer;
+      });
+      const created = { controller, promise };
+      capabilityFlights.set(key, created);
+      const forget = () => {
+        if (capabilityFlights.get(key) === created) capabilityFlights.delete(key);
+      };
+      void promise.then(forget, forget);
+      flight = created;
+    }
+
+    if (opts?.force && signal) {
+      // Address recovery DOES own its probe: a wake aborts the socket frozen on
+      // the old network and the next force call replaces the aborted flight.
+      const cancel = () => flight.controller.abort();
+      if (signal.aborted) cancel();
+      else {
+        signal.addEventListener("abort", cancel, { once: true });
+        const detach = () => signal.removeEventListener("abort", cancel);
+        void flight.promise.then(detach, detach);
+      }
+    } else {
+      // A session does not own this machine-wide read. Unmounting one composer
+      // must not cancel the answer another screen or the launch sweep awaits.
+      void signal;
+    }
+    return flight.promise;
   }
 
   // ── Projects overview ───────────────────────────────────────────

@@ -19,11 +19,10 @@
 //     come back from disk as a ghost;
 //   • live SSE frames — the in-flight turn is replayed by the gateway from its
 //     `turn.started`, which is exactly the "only the newest stuff" a cold client
-//     is missing;
-//   • the full settings sheet and capabilities — cheap to refetch and
-//     version-sensitive. The by-id toggles and model picks below ARE persisted:
-//     they are two short strings each and they name what the composer footer
-//     paints on its first frame.
+//     is missing.
+// Small machine-wide facts — settings, capabilities, engines and model picks —
+// do survive. They seed the first frame and their owning TTL decides when one
+// shared refresh is due.
 
 /** How much of a session's history one snapshot holds (mirrors gateway.ts). */
 export interface HeldWindow {
