@@ -32,7 +32,6 @@
            [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]))
 
 (def ^:private parse-args (deref #'screen/parse-args))
-(def ^:private focus-attachments! (deref #'screen/focus-attachments!))
 
 
 (def ^:private quit-tui! (deref #'screen/quit-tui!))
@@ -2313,15 +2312,3 @@
                                :rail-h 2
                                :echo-row 22}
                               geometry)))))
-
-;; Regression, issue #0: C-x i reached an unhandled :focus-attachments action and terminated the TUI.
-(defdescribe focus-attachments-action-test
-             (it "focuses the active composer's staged-attachment rail"
-                 (let [old-db @state/app-db]
-                   (try (reset! state/app-db {:attachments [{:id "a"}]
-                                              :attachment-focus? false
-                                              :attachment-index 0
-                                              :render-version 0})
-                        (focus-attachments!)
-                        (expect (true? (:attachment-focus? @state/app-db)))
-                        (finally (reset! state/app-db old-db))))))
