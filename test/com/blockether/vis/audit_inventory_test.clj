@@ -108,7 +108,7 @@
   ;; keeps the committed date while the rest of the document is byte-identical.
   (it "the generator resolves its date against the committed doc, not the clock"
       (let [src (slurp (io/file "scripts" "gen-audit.bb"))]
-        (expect (str/includes? src "> Generated \" today \"."))
+        (expect (re-find #"> Generated \"\s*today\s*\"\." src))
         (expect (re-find #"today\s+date-placeholder\]" src))
         (expect (str/includes? src "(defn- stamp-date"))
         ;; the ONLY clock read left feeds stamp-date's "content changed" branch
