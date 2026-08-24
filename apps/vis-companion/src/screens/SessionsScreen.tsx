@@ -2346,7 +2346,7 @@ export function SessionsScreen({
                       the list has no second selected/unselected presentation to maintain. */}
                   {groups.length === 0
                     ? (
-                        <div className="flex flex-wrap items-center gap-3 px-3 py-3 sm:px-4">
+                        <div className="px-3 py-3 sm:px-4">
                           <p className="font-mono text-meta text-dialog-hint">
                             {machine.sessions === null
                               ? 'Reading sessions...'
@@ -2358,21 +2358,6 @@ export function SessionsScreen({
                                     : 'Searching this machine...'
                                 : 'No sessions on this machine yet.'}
                           </p>
-                          {/* A MARK CANNOT TEACH ITSELF ON AN EMPTY MACHINE: the band
-                              above carries the folder, and with no project row under it
-                              there is nothing on screen that says what the folder opens.
-                              A machine that is up and genuinely empty therefore gets the
-                              word — the same control, the same sheet, spelled out once,
-                              where it is the only thing to press. A search that matched
-                              nothing is not that seam: the projects are there, the query
-                              simply missed them. */}
-                          {!searching && machine.sessions !== null && (
-                            <MachineProjectsButton
-                              machine={machineLabel(machine.conn)}
-                              face="word"
-                              onPress={(anchor) => openManageProjects(machine, anchor)}
-                            />
-                          )}
                         </div>
                       )
                     : groups.map((group, groupIndex) => (

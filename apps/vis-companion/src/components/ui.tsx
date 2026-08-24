@@ -3279,43 +3279,21 @@ export function NewSessionButton({
  * the NOUN it opens: the app's one mark for a place on disk, the same folder a
  * project row carries, with the fork inside it left to mean a copy of that place.
  *
- * It stands in two places — above the card while the list is scoped to one machine,
- * and on each machine's band in the All view — and it NAMES its machine, because in
- * the fleet view several of them are on screen at once.
- *
- * `face="word"` is for the one seam where the mark cannot teach itself: a machine
- * with nothing under its band has no project row on screen to say what the folder
- * means, so its empty body carries the word instead of a glyph with no example.
+ * It stands above the card while the list is scoped to one machine and names its machine
+ * for assistive technology.
  *
  * `pressEffect="none"`: the sheet it opens is anchored on this button's measured box,
  * and a transform moves the box that was measured.
  */
 export function MachineProjectsButton({
   machine,
-  face = 'mark',
   onPress,
 }: {
   machine: string;
-  face?: 'mark' | 'word';
   onPress: (anchor: HTMLElement) => void;
 }) {
   const label = `Projects on ${machine}`;
   const title = `Projects on ${machine} — choose one, add one, remove one`;
-  if (face === 'word')
-    return (
-      <Button
-        type="button"
-        variant="primary"
-        density="compact"
-        pressEffect="none"
-        className="shrink-0 whitespace-nowrap"
-        aria-label={label}
-        title={title}
-        onClick={(event) => onPress(event.currentTarget)}
-      >
-        Projects
-      </Button>
-    );
   return (
     <IconButton
       variant="primary"

@@ -2087,20 +2087,8 @@ describe("MachineProjectsButton", () => {
     expect(html).toContain("shrink-0");
   });
 
-  // An empty machine has no project row under its band to say what a folder means.
-  it("spells itself out where the mark has no example beside it", () => {
-    const word = renderToStaticMarkup(
-      <MachineProjectsButton machine="tower" face="word" onPress={() => {}} />,
-    );
-    expect(word).toContain(">Projects<");
-    expect(word).not.toContain("<svg");
-    expect(word).toContain('aria-label="Projects on tower"');
-  });
-
-  it("is used by every place the machine is named, and hand-rolled in none", () => {
-    // The row above the card when scoped, each machine's band in the All view, and
-    // the empty body that has nothing else to press.
-    expect(sessionsListSource.match(/<MachineProjectsButton/g)?.length).toBe(3);
+  it("is rendered once, above the session card", () => {
+    expect(sessionsListSource.match(/<MachineProjectsButton/g)?.length).toBe(1);
     expect(sessionsListSource).not.toContain(">New project</Button>");
     // The word it used to carry named a create the sheet does not start.
     expect(sessionsListSource).not.toContain("NewProjectButton");

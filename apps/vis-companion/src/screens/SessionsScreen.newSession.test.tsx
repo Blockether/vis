@@ -254,6 +254,16 @@ describe("machine, project and session are three different shapes", () => {
     expect(screen.getByText("First")).toBeTruthy();
   });
 
+  // Regression, user report (the empty list repeated the Projects control already shown
+  // above the card): an empty machine keeps one project entry point, not two views.
+  it("does not repeat the projects button inside an empty machine", async () => {
+    const view = renderSessionsScreen({ machines: [{ label: "alpha", sessions: [] }] });
+    restore = view.restore;
+
+    await screen.findByText("No sessions yet");
+    expect(screen.getAllByRole("button", { name: "Projects on alpha" })).toHaveLength(1);
+  });
+
   // Regression, user report ("the individual session is bigger then project"): a session
   // row stood 48px against a 36px project band — the child taller than the thing that
   // contains it. The leaf is the SHORTEST of the three levels, and a pointer tightens it.
