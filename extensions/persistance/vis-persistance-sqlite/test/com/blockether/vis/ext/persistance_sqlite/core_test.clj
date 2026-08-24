@@ -161,7 +161,13 @@
                :filename "fig.png"
                :size (alength png)}
               {:tool-call-id "call_A" :media-type "image/png" :base64 b64 :filename "fig.png"}
-              {:tool-call-id nil :media-type "image/png" :base64 b64}]})
+              {:tool-call-id nil
+               :media-type "application/vnd.vis.live+ndjson"
+               :base64 b64
+               :filename "activity.live.ndjson"
+               :view-id "activity-view"
+               :classification :activity
+               :activity-anchor {:evaluation-id "evaluation-1" :iteration 41 :form-index 0}}]})
 
           got
           (vis/db-list-iteration-attachments s iid)]
@@ -171,7 +177,7 @@
       (expect (= [[nil 0] ["call_A" 0] ["call_A" 1]] (mapv (juxt :tool-call-id :position) got)))
       ;; Base64 payload round-trips byte-for-byte.
       (expect (every? #(= b64 (:base64 %)) got))
-      (expect (= "image/png" (:media-type (first got))))
+      (expect (= "application/vnd.vis.live+ndjson" (:media-type (first got))))
       (expect (= 8 (:size (first got))))
       ;; The METADATA listers answer the SAME rows in the SAME order without a
       ;; byte of payload. Everything that only NUMBERS or DESCRIBES artifacts
@@ -197,7 +203,22 @@
         ;; reader can tell `:inline` from `:external` without fetching either.
         (expect (every? :has-bytes meta-rows))
         ;; The ONE artifact a caller actually serves is read by its own id.
-        (expect (= b64 (:base64 (vis/db-read-attachment s (:id (first meta-rows)))))))
+        (expect (= b64 (:base64 (vis/db-read-attachment s (:id (first meta-rows))))))
+        ;; Regression, issue td-65cdf6: SQLite discarded the stable Activity
+        ;; identity, so Companion painted the filed receipt and settled live view.
+        (let [activity
+              (first (filter #(= "activity.live.ndjson" (:filename %)) got))
+
+              activity-meta
+              (first (filter #(= "activity.live.ndjson" (:filename %)) meta-rows))
+
+              identity
+              (juxt :view-id :classification :activity-anchor)]
+
+          (expect (= ["activity-view" :activity
+                      {:evaluation-id "evaluation-1" :iteration 41 :form-index 0}]
+                     (identity activity)
+                     (identity activity-meta)))))
       ;; Batch variant groups by iteration id.
       (let [batch (vis/db-list-iterations-attachments s [iid])]
         (expect (= 1 (count batch)))
@@ -766,6 +787,9 @@
                     (expect (contains? cols "audience"))
                     (expect (contains? cols "kind"))
                     (expect (contains? cols "tool_call_id"))
+                    (expect (contains? cols "view_id"))
+                    (expect (contains? cols "classification"))
+                    (expect (contains? cols "activity_anchor"))
                     ;; NOT NULL without a DEFAULT is not addable in SQLite: left alone
                     ;; rather than failing the open.
                     (expect (not (contains? cols "media_type"))))
@@ -3432,41 +3456,49 @@
         (expect (= "# Note\n\n> a comment\n"
                    (String. (.decode (java.util.Base64/getDecoder) ^String (:base64 revision))
                             "UTF-8"))))))
+  ;; Regression, issue td-65cdf6: the late-settled Activity receipt lost its
+  ;; identity at this write boundary, so Companion painted its live owner twice.
   ;; A live view a human STOPS after the block ended files the FIRST artifact its
   ;; iteration ever gets. The owning turn used to be read off a SIBLING row, so an
   ;; iteration with no other artifact dropped it — and the run the human watched
   ;; was listed nowhere.
-  (it "appends the first artifact an iteration ever gets"
-      (let [s
-            (h/store)
+  (it
+    "appends the first artifact an iteration ever gets"
+    (let [s
+          (h/store)
 
-            cid
-            (h/store-session! s {:channel :cli})
+          cid
+          (h/store-session! s {:channel :cli})
 
-            tid
-            (vis/db-store-session-turn! s {:parent-session-id cid :user-request "watch CI"})
+          tid
+          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "watch CI"})
 
+          iid
+          (h/store-iteration! s {:session-turn-id tid :status :done :code "gh_watch_run(...)"})
+
+          stored
+          (persistance/db-append-iteration-attachment!
+            s
             iid
-            (h/store-iteration! s {:session-turn-id tid :status :done :code "gh_watch_run(...)"})
+            {:media-type "application/vnd.vis.live+ndjson"
+             :storage-uri "vis-live://s1/view-1"
+             :size 4096
+             :filename "release.live.ndjson"
+             :view-id "view-1"
+             :classification :activity
+             :activity-anchor {:evaluation-id "eval-1" :iteration 41 :form-index 0}
+             :kind "file"
+             :audience "user"})
 
-            stored
-            (persistance/db-append-iteration-attachment! s
-                                                         iid
-                                                         {:media-type
-                                                          "application/vnd.vis.live+ndjson"
-                                                          :storage-uri "vis-live://s1/view-1"
-                                                          :size 4096
-                                                          :filename "release.live.ndjson"
-                                                          :kind "file"
-                                                          :audience "user"})
+          rows
+          (vis/db-list-iteration-attachments s iid)]
 
-            rows
-            (vis/db-list-iteration-attachments s iid)]
-
-        (expect (some? stored))
-        (expect (= 1 (:version stored)))
-        (expect (= ["release.live.ndjson"] (mapv :filename rows)))
-        (expect (= "vis-live://s1/view-1" (:storage-uri (first rows)))))))
+      (expect (some? stored))
+      (expect (= 1 (:version stored)))
+      (expect (= ["release.live.ndjson"] (mapv :filename rows)))
+      (expect (= ["view-1" :activity {:evaluation-id "eval-1" :iteration 41 :form-index 0}]
+                 ((juxt :view-id :classification :activity-anchor) (first rows))))
+      (expect (= "vis-live://s1/view-1" (:storage-uri (first rows)))))))
 
 ;; Regression (session 4b6897d4): nothing bounded a STORED artifact -- neither a
 ;; tool's `attach()` nor the companion revision path had a cap at all -- so one

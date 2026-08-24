@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.screen
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.artifact-inspector :as artifact-inspector]
             [com.blockether.vis.ext.channel-tui.attachment-intake :as attachment-intake]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.composer-attachment-rail :as attachment-rail]
@@ -2309,6 +2310,52 @@
   (when-let [path (:path attachment)]
     (vis/worker-future "vis-tui-inspect-attachment"
                        #(try (opener/open-local! path) (catch Throwable _ nil)))))
+
+(defn- open-produced-artifact!
+  [session-id row]
+  (vis/worker-future
+    "vis-tui-open-produced-artifact"
+    #(try
+       (if-let [file (artifact-inspector/materialize-artifact! session-id row)]
+         (let [{:keys [status error]} (opener/open-local! file)]
+           (when-not (= :ok status)
+             (vis/notify! (or error "Artifact could not be opened")
+                          :level :warn
+                          :ttl-ms status-error-ttl-ms)))
+         (vis/notify! "Artifact bytes are unavailable." :level :warn :ttl-ms status-error-ttl-ms))
+       (catch Throwable _
+         (vis/notify! "Artifact could not be opened." :level :warn :ttl-ms status-error-ttl-ms)))))
+
+(defn- open-attachment-inspector!
+  "Open the unified staged-file and whole-session artifact surface. Removing a
+   staged row redraws the same modal; produced rows always resolve durable bytes."
+  [^TerminalScreen screen]
+  (let [session-id
+        (get-in @state/app-db [:session :id])
+
+        {:keys [artifacts error]}
+        (artifact-inspector/fetch-session-artifacts! session-id)]
+
+    (loop []
+
+      (when-let [{:keys [action row]}
+                 (with-dialog-lock
+                   #(artifact-inspector/show! screen (:attachments @state/app-db) artifacts error))]
+        (case action
+          :remove
+          (do (state/dispatch [:remove-attachment (get-in row [:attachment :id])]) (recur))
+
+          :open
+          (case (:source row)
+            :staged
+            (inspect-attachment! (:attachment row))
+
+            :produced
+            (open-produced-artifact! session-id row)
+
+            nil)
+
+          nil)))))
 
 (defn- open-table-viewer!
   "Click an inline `vis-table` grid → the whole CSV as a live spreadsheet: page
@@ -5120,10 +5167,6 @@
          {:providers (vec providers)})
        (catch Throwable _ nil)))
 
-(defn- focus-attachments!
-  "Focus the staged-attachment rail in the active composer."
-  []
-  (state/dispatch [:focus-attachments]))
 
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
@@ -7536,7 +7579,7 @@
                          (do (state/dispatch [:toggle-help]) (recur))
 
                          :focus-attachments
-                         (do (focus-attachments!) (recur))
+                         (do (open-attachment-inspector! screen) (recur))
 
                          :toggle-tasks
                          (do (state/dispatch [:toggle-tasks]) (recur))

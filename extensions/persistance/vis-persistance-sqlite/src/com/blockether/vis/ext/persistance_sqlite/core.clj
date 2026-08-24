@@ -2698,6 +2698,27 @@
       (when (<= (alength data) (long attachments/max-stored-attachment-bytes))
         {:bytes data :storage_uri nil :size_bytes (long (or (:size att) (alength data)))}))))
 
+(defn- attachment-live-view-cols
+  "Stable identity carried only by a filed live-view attachment."
+  [att]
+  (cond-> {}
+    (:view-id att)
+    (assoc :view_id (str (:view-id att)))
+
+    (:classification att)
+    (assoc :classification (name (:classification att)))
+
+    (:activity-anchor att)
+    (assoc :activity_anchor (->json (:activity-anchor att)))))
+
+(defn- stored-activity-anchor
+  "Decode the closed Activity coordinates from one attachment row."
+  [row]
+  (when-let [anchor (<-json (:activity_anchor row))]
+    {:evaluation-id (get anchor "evaluation-id")
+     :iteration (get anchor "iteration")
+     :form-index (get anchor "form-index")}))
+
 (defn- turn-session-soul-id
   "The SESSION soul a turn belongs to, resolved `session_turn_soul -> session_state
    -> session_soul_id`. Versioning is a SESSION-wide question - a re-attached name
@@ -2866,28 +2887,41 @@
    is a `user` image (no enum column to drift). `:id` is the bare row uuid;
    read-back knocks the single table directly by it, no prefix, no dispatch."
   [row]
-  (let [^bytes bs (:bytes row)]
-    {:id (:id row)
-     :source (if (:session_turn_iteration_id row) :tool :user)
-     :tool-call-id (:tool_call_id row)
-     :position (:position row)
-     :kind (:kind row)
-     :media-type (:media_type row)
-     :filename (:filename row)
-     ;; VERSION: same `:filename` inside a session = ONE artifact, iterated. 1 is
-     ;; the first cut and the floor for anonymous rows, so a caller never has to
-     ;; branch on nil to compare two versions of the same name.
-     :version (long (or (:version row) 1))
-     ;; AUDIENCE: who the artifact was attached FOR. "user" is stored + rendered
-     ;; but never a wire image block; "model" is sent and never shown. Normalized
-     ;; on read so the send-time gate never sees a legacy or NULL value.
-     :audience (attachments/normalize-audience (:audience row))
-     ;; TRANSCRIPTION: what a recording SAYS. Present only for audio, and only when
-     ;; something could read it; every other row carries nil rather than "".
-     :transcription (not-empty (str (:transcription row)))
-     :storage-uri (:storage_uri row)
-     :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
-     :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}))
+  (let [^bytes bs
+        (:bytes row)
+
+        anchor
+        (stored-activity-anchor row)]
+
+    (cond-> {:id (:id row)
+             :source (if (:session_turn_iteration_id row) :tool :user)
+             :tool-call-id (:tool_call_id row)
+             :position (:position row)
+             :kind (:kind row)
+             :media-type (:media_type row)
+             :filename (:filename row)
+             ;; VERSION: same `:filename` inside a session = ONE artifact, iterated. 1 is
+             ;; the first cut and the floor for anonymous rows, so a caller never has to
+             ;; branch on nil to compare two versions of the same name.
+             :version (long (or (:version row) 1))
+             ;; AUDIENCE: who the artifact was attached FOR. "user" is stored + rendered
+             ;; but never a wire image block; "model" is sent and never shown. Normalized
+             ;; on read so the send-time gate never sees a legacy or NULL value.
+             :audience (attachments/normalize-audience (:audience row))
+             ;; TRANSCRIPTION: what a recording SAYS. Present only for audio, and only when
+             ;; something could read it; every other row carries nil rather than "".
+             :transcription (not-empty (str (:transcription row)))
+             :storage-uri (:storage_uri row)
+             :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
+             :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}
+      (:view_id row)
+      (assoc :view-id (:view_id row))
+
+      (:classification row)
+      (assoc :classification (keyword (:classification row)))
+
+      anchor
+      (assoc :activity-anchor anchor))))
 
 
 (defn db-list-turn-attachments
@@ -2986,8 +3020,8 @@
    payload: `SELECT *` over a 20-figure iteration reads megabytes off disk and
    then base64-ENCODES every one of them into a String the caller throws away."
   [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :position :kind :media_type
-   :filename :version :audience :storage_uri :size_bytes :transcription
-   [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
+   :filename :view_id :classification :activity_anchor :version :audience :storage_uri :size_bytes
+   :transcription [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
 
 (defn- row->attachment-meta
   "[[row->attachment]] for a bytes-free row: the same envelope minus `:base64`,
@@ -3106,8 +3140,9 @@
   (into [[:a.id :id] [:a.session_turn_soul_id :session_turn_soul_id]
          [:a.session_turn_iteration_id :session_turn_iteration_id] [:a.tool_call_id :tool_call_id]
          [:a.position :position] [:a.kind :kind] [:a.media_type :media_type] [:a.filename :filename]
-         [:a.version :version] [:a.audience :audience] [:a.storage_uri :storage_uri]
-         [:a.transcription :transcription] [:a.size_bytes :size_bytes]
+         [:a.view_id :view_id] [:a.classification :classification]
+         [:a.activity_anchor :activity_anchor] [:a.version :version] [:a.audience :audience]
+         [:a.storage_uri :storage_uri] [:a.transcription :transcription] [:a.size_bytes :size_bytes]
          [[:case [:= :a.bytes nil] 0 :else 1] :has_bytes]]
         [[:ts.position :turn_position] [:ts.session_state_id :turn_state_id]]))
 
@@ -3442,6 +3477,7 @@
                                       :audience (attachments/normalize-audience (:audience att))
                                       :transcription (not-empty (str (:transcription att)))
                                       :created_at now}
+                                     (attachment-live-view-cols att)
                                      payload)]}))))))
 
 (defn db-append-iteration-attachment!
@@ -3516,6 +3552,7 @@
                                           :audience (attachments/normalize-audience
                                                       (or (:audience att) "user"))
                                           :created_at (now-ms)}
+                                         (attachment-live-view-cols att)
                                          payload)]})
               {:id id :version version :position position})))))))
 

@@ -3,15 +3,21 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.artifact-inspector :as artifact-inspector]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.composer-attachments :as composer-attachments]
             [com.blockether.vis.ext.channel-tui.terminal-image :as terminal-image]
             [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
             [com.blockether.vis.internal.attachment-fixtures :as fixtures]
             [com.blockether.vis.internal.attachments :as attachments]
+            [com.blockether.vis.internal.env-python :as env-python]
+            [com.blockether.vis.internal.gateway.client :as gateway-client]
+            [com.blockether.vis.internal.gateway.server :as gateway-server]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.loop :as lp]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [com.googlecode.lanterna.input KeyStroke KeyType]
+           [java.io InputStream]))
 
 (h/use-mem-store!)
 
@@ -189,3 +195,84 @@
       (expect (str/includes? (first over-count) "limit of 1 attachments"))
       (expect (str/includes? (first over-size) "larger than"))
       (expect (str/includes? (first wrong-type) "does not accept")))))
+
+;; Regression, td-064ac6: a model-produced document disappeared from C-x i once
+;; its transcript card was outside the loaded page or the session was resumed.
+(defdescribe
+  tui-produced-artifact-lifecycle-test
+  (it
+    "discovers and opens attach() output independently of transcript paging"
+    (let [dir
+          (temp-dir)
+
+          out
+          (with-open [pctx (:python-context (env-python/create-python-context {}
+                                                                              (fn []
+                                                                                [(.getAbsolutePath
+                                                                                   dir)])))]
+            (env-python/run-python-block
+              pctx
+              "attach(b'<html><body>Decision</body></html>', 'decision.html')
+"))
+
+          attachment
+          (assoc (first (:attachments out)) :tool-call-id "call_attach")
+
+          db
+          (h/store)
+
+          session-id
+          (h/store-session! db {:channel :tui :title "Decision session"})
+
+          origin-turn
+          (vis/db-store-session-turn!
+            db
+            {:parent-session-id session-id :user-request "capture the decision" :status :success})
+
+          iteration-id
+          (h/store-iteration! db
+                              {:session-turn-id origin-turn
+                               :status :done
+                               :code "attach(...)"
+                               :attachments [attachment]})
+
+          _
+          (doseq [n (range 3)]
+            (vis/db-store-session-turn! db
+                                        {:parent-session-id session-id
+                                         :user-request (str "later turn " n)
+                                         :status :success}))]
+
+      (expect (nil? (:error out)))
+      (with-redefs [lp/db-info (constantly db)]
+        (let [page (gateway-state/transcript-page session-id {:limit 1})
+              artifacts (gateway-state/session-artifacts session-id)
+              resumed-artifacts (gateway-state/session-artifacts session-id)
+              rows (artifact-inspector/inspector-rows [] artifacts)
+              component (artifact-inspector/inspector-modal-component [] artifacts nil)
+              geom ((:measure component) (:init component) 96 24)
+              enter-result ((:on-key component) (:init component) (KeyStroke. KeyType/Enter) geom)
+              selected (get-in enter-result [:com.blockether.vis.ext.channel-tui.dialogs/done :row])
+              response ((var-get #'gateway-server/attachment-bytes-handler)
+                         {:path-params {:sid (str session-id)
+                                        :iid (str iteration-id)
+                                        :idx (str (:index selected))}})
+              bytes (.readAllBytes ^InputStream (:body response))]
+
+          (expect (= 1 (count (:turns page))))
+          (expect (not= (str origin-turn) (get (first (:turns page)) "turn_id")))
+          (expect (= ["decision.html"] (mapv :filename artifacts)))
+          (expect (= artifacts resumed-artifacts))
+          (expect (= :produced (:source (first rows))))
+          (expect (= "decision.html" (:filename selected)))
+          (expect (= 200 (:status response)))
+          (expect (= "<html><body>Decision</body></html>" (String. bytes "UTF-8")))
+          (with-redefs [gateway-client/iteration-attachment-bytes
+                        (fn [sid iid idx]
+                          (expect (= [(str session-id) (str iteration-id) 0]
+                                     [(str sid) (str iid) idx]))
+                          bytes)]
+            (let [file (artifact-inspector/materialize-artifact! session-id selected)]
+              (try (expect (= "decision.html" (.getName file)))
+                   (expect (= "<html><body>Decision</body></html>" (slurp file)))
+                   (finally (.delete file) (.delete (.getParentFile file)))))))))))

@@ -669,6 +669,11 @@ CREATE TABLE session_attachment (
   kind                      TEXT NOT NULL DEFAULT 'image',
   media_type                TEXT NOT NULL,
   filename                  TEXT,
+  -- A settled live view keeps the identity and transcript coordinates of the
+  -- surface it replaces. NULL for ordinary attachments.
+  view_id                   TEXT,
+  classification            TEXT CHECK (classification IS NULL OR classification = 'activity'),
+  activity_anchor           TEXT,
 
   -- VERSION: artifacts with the SAME `filename` inside one session are ONE
   -- artifact iterated over time, not N loose files. The writer allocates
