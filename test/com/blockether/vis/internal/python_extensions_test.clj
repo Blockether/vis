@@ -2351,6 +2351,44 @@ vis.extension(name='sidecar', description='sidecar', alias='sd',
             (finally (reset! live-load nil)
                      (pyx/reload-python-extensions! {:dirs []})
                      (ps/db-dispose-connection! store))))))
+  ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: the slash
+  ;; request and first agent environment could construct GraalPy concurrently.
+  (it
+    "serializes concurrent first-load requests"
+    (let [fingerprint
+          @#'pyx/last-fingerprint
+
+          previous
+          @fingerprint
+
+          calls
+          (atom 0)
+
+          worker-count
+          8
+
+          ready
+          (java.util.concurrent.CountDownLatch. worker-count)
+
+          start
+          (java.util.concurrent.CountDownLatch. 1)]
+
+      (try (reset! fingerprint nil)
+           (with-redefs [pyx/load-python-extensions! (fn [_]
+                                                       (swap! calls inc)
+                                                       (Thread/sleep 100)
+                                                       (reset! fingerprint [::loaded])
+                                                       {:loaded 1 :failed 0 :changed? true})]
+             (let [workers (mapv (fn [_]
+                                   (future (.countDown ready)
+                                           (.await start)
+                                           (pyx/ensure-python-extensions-loaded! {:dirs []})))
+                                 (range worker-count))]
+               (expect (.await ready 5 java.util.concurrent.TimeUnit/SECONDS))
+               (.countDown start)
+               (expect (every? map? (mapv #(deref % 5000 ::timeout) workers)))
+               (expect (= 1 @calls))))
+           (finally (reset! fingerprint previous)))))
   (it "a torn-down context never heals into edited bytes"
       ;; The heal path re-executes the extension with no human act in the chain,
       ;; so it may only re-run the bytes this process loaded.

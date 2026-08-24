@@ -13,6 +13,7 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.toggles :as toggles]
@@ -1210,6 +1211,9 @@
   (let [seen
         (atom nil)
 
+        loads
+        (atom 0)
+
         sid
         (java.util.UUID/randomUUID)
 
@@ -1220,6 +1224,11 @@
                   (fn [actual-sid]
                     (is (= sid actual-sid))
                     {"root" root})
+
+                  python-extensions/ensure-python-extensions-loaded!
+                  (fn []
+                    (swap! loads inc)
+                    {:loaded 0 :failed 0 :changed? false})
 
                   slash/slash-palette
                   (fn [channel extra]
@@ -1233,10 +1242,42 @@
             (wire/parse-json (:body response))]
 
         (is (= 200 (:status response)))
+        (is (= 1 @loads))
         (is (= :web (first @seen)))
         (is (some #(= "/help" (:name %)) (second @seen)))
         (is (= (.getCanonicalPath (io/file root)) (nth @seen 2)))
         (is (some #(= "/rename" (get % "name")) (get body "commands")))))))
+;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: gateway startup
+;; loaded Python before listening, while the TUI separately loaded the same files.
+(deftest slashes-handler-loads-python-on-demand-for-the-tui
+  (let [sid
+        (java.util.UUID/randomUUID)
+
+        calls
+        (atom [])]
+
+    (with-redefs [state/session-workspace-info
+                  (constantly {"root" "/tmp/vis-tui-project"})
+
+                  python-extensions/ensure-python-extensions-loaded!
+                  (fn []
+                    (swap! calls conj :python)
+                    {:loaded 1 :failed 0 :changed? true})
+
+                  slash/slash-palette
+                  (fn [channel extra]
+                    (swap! calls conj [:palette channel extra])
+                    [{:name "/python-echo" :doc "Echo"}])]
+
+      (let [response
+            ((rv 'slashes-handler) {:path-params {:sid (str sid)} :query-params {"channel" "tui"}})
+
+            body
+            (wire/parse-json (:body response))]
+
+        (is (= 200 (:status response)))
+        (is (= [:python [:palette :tui nil]] @calls))
+        (is (= "/python-echo" (get-in body ["commands" 0 "name"])))))))
 
 (deftest slashes-handler-refuses-an-unknown-session
   (let [sid (java.util.UUID/randomUUID)]

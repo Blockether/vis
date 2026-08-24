@@ -80,13 +80,14 @@
 ;; synchronously initialized GraalPy before dispatch, then its gateway did it again.
 (defdescribe
   dispatch-extension-initialization-test
-  (it "defers Python initialization only for the rewritten TUI command"
-      (let [calls (atom [])]
-        (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
-                      python-extensions/load-python-extensions! #(swap! calls conj :python)]
+  (it "defers Python initialization for clients and the gateway daemon"
+      (doseq [args [["channels" "tui" "--continue"] ["gateway" "start"]]]
+        (let [calls (atom [])]
+          (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
+                        python-extensions/load-python-extensions! #(swap! calls conj :python)]
 
-          (#'main/initialize-for-dispatch! false ["channels" "tui" "--continue"])
-          (expect (= [:clojure] @calls)))))
+            (#'main/initialize-for-dispatch! false args)
+            (expect (= [:clojure] @calls) (pr-str args))))))
   (it "keeps Python initialization eager for one-shot commands"
       (let [calls (atom [])]
         (with-redefs [manifest/initialize! #(swap! calls conj :clojure)

@@ -4340,7 +4340,10 @@
   (python-extensions/load-python-extensions!)
   nil)
 
-(defn- tui-dispatch? [args] (= ["channels" "tui"] (vec (take 2 args))))
+(defn- deferred-python-dispatch?
+  "True for long-lived processes that load Python only at the gateway execution boundary."
+  [args]
+  (contains? #{["channels" "tui"] ["gateway" "start"]} (vec (take 2 args))))
 
 ;; Root command
 ;;
@@ -4716,11 +4719,12 @@
     (f)))
 
 (defn- initialize-for-dispatch!
-  "Initialize the closed manifest before dispatch. The TUI starts Python
-   extension loading after its first painted frame; every other command stays eager."
+  "Initialize the closed manifest before dispatch. Long-lived TUI and gateway
+   processes leave Python to the gateway's on-demand execution boundary; one-shot
+   commands stay eager so their local extension surfaces are complete."
   [measure? args]
   (timed-startup! measure? "initialize-manifest" #(initialize-clojure-extensions!))
-  (when-not (tui-dispatch? args)
+  (when-not (deferred-python-dispatch? args)
     (timed-startup! measure? "load-python-extensions" #(python-extensions/load-python-extensions!)))
   nil)
 

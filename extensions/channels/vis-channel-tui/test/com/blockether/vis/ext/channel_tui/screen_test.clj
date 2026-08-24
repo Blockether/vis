@@ -70,8 +70,8 @@
 
 (def ^:private registry-slash-commands-cache (deref #'screen/registry-slash-commands-cache))
 
-(def ^:private start-deferred-python-extension-load!
-  (deref #'screen/start-deferred-python-extension-load!))
+(def ^:private start-deferred-gateway-slash-load!
+  (deref #'screen/start-deferred-gateway-slash-load!))
 
 (def ^:private slash-spec->menu-command (deref #'screen/slash-spec->menu-command))
 
@@ -542,21 +542,12 @@
         ;; suppressed. The child `workspace.apply` and the leaf `voice` stay.
         (let [ids (mapv :id (registry-slash-commands))]
           (expect (= #{:workspace.apply :voice} (set ids))))))
-  ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: eagerly loading
-  ;; Python extensions blocked TUI startup, while no listener refreshed deferred slashes.
+  ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: the TUI
+  ;; constructed a second GraalPy runtime just to discover Python slash commands.
   (it
-    "schedules Python loading and refreshes slash commands through its listener"
+    "fetches the gateway slash catalog without loading Python in the TUI"
     (let [previous
           @registry-slash-commands-cache
-
-          added-id
-          (atom nil)
-
-          removed-id
-          (atom nil)
-
-          listener
-          (atom nil)
 
           worker
           (atom nil)
@@ -564,45 +555,46 @@
           loads
           (atom 0)
 
+          gateway-calls
+          (atom [])
+
           events
           (atom [])]
 
       (try (reset! registry-slash-commands-cache [:stale])
-           (with-redefs [vis/add-python-extension-change-listener!
-                         (fn [id f]
-                           (reset! added-id id)
-                           (reset! listener f)
-                           id)
-
-                         vis/remove-python-extension-change-listener!
-                         (fn [id]
-                           (reset! removed-id id))
-
-                         vis/worker-future
-                         (fn [name task opts]
-                           (reset! worker [name task opts])
+           (with-redefs [vis/worker-future
+                         (fn [name task]
+                           (reset! worker [name task])
                            ::scheduled)
+
+                         vis/gateway-session-slashes
+                         (fn [session-id channel]
+                           (swap! gateway-calls conj [session-id channel])
+                           [{"name" "/voice" "doc" "Voice toggle"}
+                            {"name" "/python-echo" "doc" "Echo"}])
 
                          vis/load-python-extensions!
                          #(swap! loads inc)
 
                          vis/registered-slashes
-                         (constantly [{:slash/name "python-echo" :slash/doc "Echo"}])
+                         (constantly [{:slash/name "voice"
+                                       :slash/doc "Voice toggle"
+                                       :slash/ui {:kind :navigator}}])
 
                          state/dispatch
                          #(swap! events conj %)]
 
-             (let [dispose! (start-deferred-python-extension-load!)]
-               (expect (= 0 @loads))
-               (expect (= "tui-python-extension-load" (first @worker)))
-               (expect (= {:platform? true} (nth @worker 2)))
-               ((second @worker))
-               (expect (= 1 @loads))
-               (@listener {:extensions [] :removed []})
-               (expect (= [:python-echo] (mapv :id @registry-slash-commands-cache)))
-               (expect (= [[:bump-render-version]] @events))
-               (dispose!)
-               (expect (identical? @added-id @removed-id))))
+             (expect (= ::scheduled (start-deferred-gateway-slash-load! "session-1")))
+             (expect (= 0 @loads))
+             (expect (= "tui-gateway-slash-load" (first @worker)))
+             ((second @worker))
+             (expect (= 0 @loads))
+             (expect (= [["session-1" :tui]] @gateway-calls))
+             (expect (= [:voice :python-echo] (mapv :id @registry-slash-commands-cache)))
+             (expect (= :navigator
+                        (get-in (first @registry-slash-commands-cache)
+                                [:slash/spec :slash/ui :kind])))
+             (expect (= [[:bump-render-version]] @events)))
            (finally (reset! registry-slash-commands-cache previous)))))
   (it "menu-commands keeps slash registry for typed slash suggestions"
       (with-redefs [vis/registered-slashes (constantly [{:slash/name "voice"

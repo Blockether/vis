@@ -1829,6 +1829,8 @@
                                       :removed (vec (sort (remove new-names old-names)))}))
          {:loaded (count @loaded) :failed (count @failures) :changed? true})))))
 
+(defonce ^:private ensure-load-lock (Object.))
+
 (defn ensure-python-extensions-loaded!
   "Load the Python extension dirs only when this process has not loaded them
    yet, and NEVER pick an edit up.
@@ -1844,16 +1846,19 @@
    Same return shape as `load-python-extensions!`."
   ([] (ensure-python-extensions-loaded! nil))
   ([opts]
-   (if (nil? @last-fingerprint)
-     (load-python-extensions! opts)
-     {:loaded (count @loaded) :failed (count @failures) :changed? false})))
+   ;; The slash catalog and the first environment can arrive on separate gateway
+   ;; request threads. Only one of them may construct GraalPy contexts.
+   (locking ensure-load-lock
+     (if (nil? @last-fingerprint)
+       (load-python-extensions! opts)
+       {:loaded (count @loaded) :failed (count @failures) :changed? false}))))
 
 (defn reload-python-extensions!
   "Force a full reload of every Python extension (even when no file
    changed). Same return shape as `load-python-extensions!`. Live
    sessions pick the new tool bindings up at the next turn boundary."
   ([] (reload-python-extensions! nil))
-  ([opts] (reset! last-fingerprint nil) (load-python-extensions! opts)))
+  ([opts] (locking ensure-load-lock (reset! last-fingerprint nil) (load-python-extensions! opts))))
 
 ;; The loader's own host extension: `/reload` + doctor surface
 

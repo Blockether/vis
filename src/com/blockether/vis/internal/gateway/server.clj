@@ -36,6 +36,7 @@
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
             [com.blockether.vis.internal.resources :as resources]
+            [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.voice :as voice]
@@ -1085,15 +1086,33 @@
    {:name "/clear" :doc "Start a fresh session without deleting this transcript."}])
 
 (defn- slashes-handler
-  "GET /v1/sessions/:sid/slashes — resolve dynamic slash/template discovery in
-   the active session workspace, then add commands implemented by Companion."
+  "GET /v1/sessions/:sid/slashes[?channel=web|tui] — load Python extensions in
+   the gateway on first demand, then resolve slash/template discovery in the active
+   session workspace. The omitted channel defaults to Companion's web catalog."
   [request]
   (if-let [sid (path-sid request)]
     (if-let [info (state/session-workspace-info sid)]
-      (let [root (or (get info "root") (:root info))]
-        (extension/with-context {:env {:session-id sid :workspace/root root}}
-                                (json-response {:commands
-                                                (slash/slash-palette :web web-native-slashes)})))
+      (let [root (or (get info "root") (:root info))
+            requested (get-in request [:query-params "channel"])
+            channel (case requested
+                      nil
+                      :web
+
+                      "web"
+                      :web
+
+                      "tui"
+                      :tui
+
+                      nil)]
+
+        (if channel
+          (extension/with-context
+            {:env {:session-id sid :workspace/root root}}
+            (python-extensions/ensure-python-extensions-loaded!)
+            (json-response
+              {:commands (slash/slash-palette channel (when (= :web channel) web-native-slashes))}))
+          (error-response 400 :invalid-request "channel must be web or tui")))
       (session-404 (get-in request [:path-params :sid])))
     (session-404 (get-in request [:path-params :sid]))))
 

@@ -96,6 +96,7 @@
              [gateway-daemon-status gateway-client/status]
              [gateway-daemon-stop! gateway-client/stop-daemon!]
              [gateway-create-session! gateway-client/create-session!]
+             [gateway-session-slashes gateway-client/session-slashes]
              [gateway-soul gateway-client/soul]
              [gateway-list-sessions gateway-client/list-sessions]
              [gateway-search-session-ids gateway-client/search-session-ids]

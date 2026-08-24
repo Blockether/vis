@@ -945,78 +945,110 @@
          (try (boolean (available? {:channel/id :tui})) (catch Throwable _ false))
          true)))
 
+(defn- local-registry-slash-commands
+  "The manifest-only slash catalog available without starting GraalPy in this process."
+  []
+  (try (let [specs
+             (filter slash-available-in-tui? (vis/registered-slashes))
+
+             parent-paths
+             (into #{}
+                   (keep (fn [s]
+                           (let [p (vec (:slash/parent s))]
+                             (when (seq p) p))))
+                   specs)
+
+             leaf?
+             (fn [s]
+               (let [path (conj (vec (:slash/parent s)) (:slash/name s))]
+                 (not (contains? parent-paths path))))]
+
+         (mapv slash-spec->menu-command (filter leaf? specs)))
+       (catch Throwable _ [])))
+
 (def ^:private registry-slash-commands-cache
-  "Memo cell for the harvested registry slash commands. The engine slash
-   registry is stable within a session, so harvest ONCE and reuse — the first
-   `/` no longer pays a cold harvest + class-load + compile mid-frame (which
-   dropped a frame and flickered the popup on first open). Only NON-empty
-   results are cached so a transient registry hiccup (caught → []) can't
-   poison the cell; the next call simply retries."
+  "Memo cell for the slash catalog displayed by this TUI. It starts with the local
+   manifest-only catalog, then the first-frame worker replaces it with the gateway's
+   complete Clojure + Python + prompt-template catalog."
   (atom nil))
 
-;; "Session-stable" has ONE exception: a `/reload` of Python extensions can
-;; add/remove slash commands mid-session. Drop the memo when that happens so
-;; the next `/` re-harvests and the new commands show up without a restart.
-
 (defn- registry-slash-commands
-  "All slashes harvested from the engine registry for typed `/`
-   suggestions / exact slash submission in the TUI. Both top-level
-   and nested commands are included. Hidden specs and non-TUI channel
-   specs stay out; this prevents non-TUI menu commands (`/help`,
-   `/models`, ...) from leaking into TUI slash UX. Memoized via
-   `registry-slash-commands-cache` (registry is session-stable) so the
-   first `/` is already warm."
+  "The latest non-empty slash catalog. Reading it never performs I/O or starts Python."
   []
   (or @registry-slash-commands-cache
-      (let [v (try (let [specs (filter slash-available-in-tui? (vis/registered-slashes))
-                         ;; A spec is a "group root" when some other visible spec
-                         ;; names its path as `:slash/parent`. Its own `:slash/run-fn`
-                         ;; only prints the subcommand list the palette already shows
-                         ;; inline, so suppress the redundant root entry. The engine
-                         ;; `slash/dispatch` still resolves a typed `/workspace`
-                         ;; (handled as a raw message submission), so the root stays
-                         ;; reachable — it just isn't a palette suggestion.
-                         parent-paths (into #{}
-                                            (keep (fn [s]
-                                                    (let [p (vec (:slash/parent s))]
-                                                      (when (seq p) p))))
-                                            specs)
-                         leaf? (fn [s]
-                                 (let [path (conj (vec (:slash/parent s)) (:slash/name s))]
-                                   (not (contains? parent-paths path))))]
-
-                     (mapv slash-spec->menu-command (filter leaf? specs)))
-                   (catch Throwable _t []))]
+      (let [v (local-registry-slash-commands)]
         (when (seq v) (reset! registry-slash-commands-cache v))
         v)))
 
-(defn- refresh-registry-slash-commands!
-  "Re-harvest slash commands after a Python extension set change."
-  [_change]
-  (reset! registry-slash-commands-cache nil)
-  ;; This runs on the extension loader worker, never the render/input thread, so the
-  ;; next `/` already sees a warm cache after the listener wakes the screen.
-  (registry-slash-commands)
-  (state/dispatch [:bump-render-version])
-  nil)
+(defn- gateway-slash-row->menu-command
+  "Adapt one strings-keyed gateway catalog row without importing executable handlers."
+  [row]
+  (let [raw-name
+        (some-> (or (get row "name") (:name row))
+                str
+                str/trim)
 
-(defn- start-deferred-python-extension-load!
-  "Subscribe slash-cache invalidation, then load Python extensions on a platform
-   worker. Called only after the render thread has painted its first usable frame.
-   Returns a listener disposal thunk."
-  []
-  (let [listener-id (Object.)]
-    (vis/add-python-extension-change-listener! listener-id refresh-registry-slash-commands!)
-    (vis/worker-future "tui-python-extension-load"
-                       (fn []
-                         (try (vis/load-python-extensions!)
-                              (catch Throwable t
-                                (tel/log! {:level :warn
-                                           :id ::deferred-python-extension-load-failed
-                                           :data {:error (ex-message t)}}
-                                          "Deferred Python extension loading failed."))))
-                       {:platform? true})
-    #(vis/remove-python-extension-change-listener! listener-id)))
+        command-name
+        (some-> raw-name
+                (str/replace #"^/+" "")
+                str/trim)
+
+        path
+        (when-not (str/blank? command-name) (str/split command-name #"\s+"))
+
+        path-s
+        (some->> path
+                 (str/join " "))
+
+        slash-text
+        (when path-s (str "/" path-s))
+
+        doc
+        (some-> (or (get row "doc") (:doc row))
+                str)]
+
+    (when (seq path)
+      {:id (keyword (str/join "." path))
+       :label (if (str/blank? doc) path-s doc)
+       :doc doc
+       :slash/name path-s
+       :slash/path (vec path)
+       :slash/text slash-text
+       :slash/usage slash-text})))
+
+(defn- refresh-gateway-slash-commands!
+  "Fetch the complete catalog from the gateway. Local rows win by path so their TUI-only
+   UI intents remain executable; gateway-only Python rows stay inert presentation data."
+  [session-id]
+  (let [local
+        (local-registry-slash-commands)
+
+        local-by-text
+        (into {} (map (juxt :slash/text identity)) local)
+
+        remote
+        (keep gateway-slash-row->menu-command (vis/gateway-session-slashes session-id :tui))
+
+        commands
+        (mapv #(get local-by-text (:slash/text %) %) remote)]
+
+    (when (seq commands)
+      (reset! registry-slash-commands-cache commands)
+      (state/dispatch [:bump-render-version]))
+    commands))
+
+(defn- start-deferred-gateway-slash-load!
+  "Ask the already-listening gateway for its catalog after the first usable frame.
+   The gateway initializes Python once; this TUI process never constructs GraalPy."
+  [session-id]
+  (vis/worker-future "tui-gateway-slash-load"
+                     (fn []
+                       (try (when session-id (refresh-gateway-slash-commands! session-id))
+                            (catch Throwable t
+                              (tel/log! {:level :warn
+                                         :id ::gateway-slash-command-load-failed
+                                         :data {:error (ex-message t)}}
+                                        "Gateway slash-command loading failed."))))))
 
 (defn- template-slash-commands
   "Prompt templates as typed-`/` palette entries: `.vis/prompts/*.md`,
@@ -5232,8 +5264,8 @@
            ;; Toggle listeners are process-global. Keep the disposal thunk so a
            ;; closed TUI cannot keep invalidating the next TUI's transcript.
            toggle-listener-dispose (volatile! nil)
-           ;; Python extension loading starts from the first-frame callback below.
-           python-extension-listener-dispose (volatile! nil)]
+           ;; Gateway slash loading starts from the first-frame callback below.
+           gateway-slash-load (volatile! nil)]
 
        (.startScreen screen)
        (vreset! toggle-listener-dispose
@@ -5427,8 +5459,9 @@
            ;; init dispatch above bumps it).
            (vreset! render-thread
                     (start-render-thread! screen
-                                          #(vreset! python-extension-listener-dispose
-                                                    (start-deferred-python-extension-load!))))
+                                          #(vreset! gateway-slash-load
+                                                    (start-deferred-gateway-slash-load!
+                                                      (:session-id @state/app-db)))))
            ;; Prewarm the slash-command machinery OFF the hot path so the
            ;; FIRST `/` keystroke doesn't pay cold JIT + registry harvest
            ;; (registry-slash-commands → menu-commands → slash/suggestions →
@@ -7785,8 +7818,8 @@
              (virtual/stop-rewarm!)
              (when-let [t @render-thread]
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
-             (when-let [dispose! @python-extension-listener-dispose]
-               (try (dispose!) (catch Throwable _ nil)))
+             (when-let [task @gateway-slash-load]
+               (try (future-cancel task) (catch Throwable _ nil)))
              (when-let [t @provider-limits-thread]
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
              (when-let [t @workspace-refresh-thread]

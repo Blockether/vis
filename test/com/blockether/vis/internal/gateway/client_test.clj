@@ -75,6 +75,25 @@
         (is (= ["POST" "/v1/projects/actions/ensure" {:root "/workspace" :name "Vis"}]
                @request))))))
 
+;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: the TUI
+;; had no gateway-owned catalog and initialized a second GraalPy runtime locally.
+(deftest session-slashes-uses-the-gateway-catalog-with-a-cold-load-timeout
+  (let [calls (atom [])]
+    (with-redefs-fn {(rv 'ensure-gateway!) (constantly fake-entry)
+                     (rv 'ensure-client!) (fn [entry]
+                                            (swap! calls conj [:client entry])
+                                            "client-id")
+                     (rv 'send-json-with-entry!)
+                     (fn [entry method path body opts]
+                       (swap! calls conj [:request entry method path body opts])
+                       {"commands" [{"name" "/python-echo" "doc" "Echo"}]})}
+      (fn []
+        (is (= [{"name" "/python-echo" "doc" "Echo"}] (client/session-slashes "session-1" :tui)))
+        (is (= [[:client fake-entry]
+                [:request fake-entry "GET" "/v1/sessions/session-1/slashes?channel=tui" nil
+                 {:timeout-ms 120000}]]
+               @calls))))))
+
 (deftest ensure-client-registers-once-from-canonical-string-keyed-response
   (let [client-id-atom
         @(rv 'client-id)

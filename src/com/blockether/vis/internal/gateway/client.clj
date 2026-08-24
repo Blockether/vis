@@ -29,6 +29,10 @@
 
 (def ^:private health-probe-timeout-ms 1500)
 
+;; A cold GraalPy initialization exceeded 40 seconds on the reported WSL host. The
+;; catalog request runs off the UI thread, but its transport must survive that first load.
+(def ^:private slash-catalog-timeout-ms 120000)
+
 (def ^:private occupied-port-registry-wait-ms 3000)
 
 (defonce ^:private http-client
@@ -259,10 +263,11 @@
     entry))
 
 (defn- send-json-with-entry!
-  ([entry method path] (send-json-with-entry! entry method path nil))
-  ([entry method path body]
+  ([entry method path] (send-json-with-entry! entry method path nil nil))
+  ([entry method path body] (send-json-with-entry! entry method path body nil))
+  ([entry method path body opts]
    (let [response
-         (gw-send! entry method path {:body body})
+         (gw-send! entry method path (assoc (or opts {}) :body body))
 
          status
          (long (:status response))
@@ -1059,6 +1064,21 @@
   (send-json! "POST" "/v1/settings" {:id id :action "cycle"}))
 
 (defn create-session! [opts] (send-json! "POST" "/v1/sessions" opts))
+
+(defn session-slashes
+  "GET the gateway-owned slash catalog for `sid` and `channel`. The first call may
+   initialize Python extensions in the gateway, so it uses the cold-load timeout."
+  ([sid] (session-slashes sid :web))
+  ([sid channel]
+   (let [entry
+         (ensure-gateway!)
+
+         path
+         (str "/v1/sessions/" (enc sid) "/slashes?channel=" (enc (name channel)))]
+
+     (ensure-client! entry)
+     (vec (get (send-json-with-entry! entry "GET" path nil {:timeout-ms slash-catalog-timeout-ms})
+               "commands")))))
 
 (defn soul
   [sid]
