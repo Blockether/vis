@@ -2206,6 +2206,17 @@ function activityAnchor(
     : null;
 }
 
+export function activityFitsIterations(
+  view: LiveViewModel,
+  iterations: readonly TranscriptIteration[],
+): boolean {
+  const anchor = activityAnchor(view.activity?.anchor);
+  if (!anchor) return false;
+  const iteration = iterations.find((candidate) => candidate.position === anchor.iteration);
+  const form = iteration?.forms?.[anchor.formIndex];
+  return form !== undefined && showFormCode(form, formCode(form));
+}
+
 function activityAt(
   views: LiveViewModel[],
   iterationPosition: number | undefined,

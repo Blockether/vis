@@ -10,6 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
+  activityFitsIterations,
   AssistantMessage,
   transcriptEnterClass,
   UserMessage,
@@ -50,6 +51,7 @@ import {
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
 import { LiveView, useLiveViews } from "../components/LiveView";
+import type { LiveView as LiveViewModel } from "../lib/live-view";
 import { speechOutput } from "../lib/speech";
 import { markSessionId } from "../lib/session-id";
 import { settledTranscriptCoversLiveTurn } from "../lib/live-turn-handover";
@@ -327,6 +329,26 @@ function isSettledRow(turn: TranscriptTurn): boolean {
 
 function rowId(turn: TranscriptTurn): string {
   return String(turn.id ?? turn.turn_id ?? "");
+}
+
+function filedActivitiesForTurn(
+  turn: TranscriptTurn,
+  activities: readonly LiveViewModel[],
+): LiveViewModel[] {
+  const filedIds = new Set(
+    (turn.iterations ?? []).flatMap((iteration) =>
+      (iteration.attachments ?? []).flatMap((attachment) =>
+        attachment.classification === "activity" && attachment.view_id
+          ? [attachment.view_id]
+          : [],
+      ),
+    ),
+  );
+  return activities.filter(
+    (activity) =>
+      filedIds.has(activity.id) &&
+      activityFitsIterations(activity, turn.iterations ?? []),
+  );
 }
 
 /**
@@ -4949,43 +4971,21 @@ export function SessionScreen({
   // only when it is the LAST visible row and no live bubble is painting.
   // Kept as a boolean (not `liveTurn`) so streaming frames don't re-run the memo.
   const hasLiveBubble = liveTurn != null;
-  const turnRows = useMemo(
-    () =>
-      visibleTurns.map((turn, index) => {
-        const request = turn.user_request ?? turn.request ?? "";
-        // A turn skips its own paint, in `AssistantMessage`
-        // (`useMeasuredPaintSkip`), never from this wrapper: the size a skip
-        // stands in for has to be the one that turn MEASURED, and a wrapper
-        // knows nothing about it. The 480px intrinsic-size guess that used to
-        // live here is what rendered white placeholder bands and shifted the
-        // scroll position when you flew up into a turn on iOS.
-        return (
-          <div
-            className={index === 0 ? "" : "mt-10"}
-            key={turn.id ?? turn.turn_id}
-          >
-            {(request || (turn.attachments?.length ?? 0) > 0) && (
-              <UserMessage attachments={turn.attachments}>
-                {request}
-              </UserMessage>
-            )}
-            <AssistantMessage
-              turn={turn}
-              settled={
-                turnsSettled || hasLiveBubble || index < visibleTurns.length - 1
-              }
-              // The row that just replaced the live bubble inherits a trace the
-              // reader is looking at: it mounts whole instead of ramping the
-              // transcript back down to a screenful and up again.
-              whole={handedOverRowId !== "" && rowId(turn) === handedOverRowId}
-              client={client}
-              sid={sid}
-            />
-          </div>
-        );
-      }),
-    [visibleTurns, turnsSettled, hasLiveBubble, handedOverRowId, client, sid],
+  // Activity is transcript-native, like in the TUI. Resolve its live picture before
+  // building either row owner so optimistic and persisted handoff paints one slot.
+  const revealFiledLiveRecord = useCallback(() => {
+    void loadTranscript();
+  }, [loadTranscript]);
+  const liveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
+  const liveActivities = useMemo(
+    () => liveViews.filter((view) => view.classification === "activity"),
+    [liveViews],
   );
+  const ordinaryLiveViews = useMemo(
+    () => liveViews.filter((view) => view.classification !== "activity"),
+    [liveViews],
+  );
+  const watching = liveViews.filter((view) => !view.is_settled).at(-1)?.title ?? null;
   // The sender's own copy of the pictures dies with the process. Ask the gateway
   // for the bytes of a live turn that has none in hand — a restarted app, or a
   // second device, has no other source until the turn lands and is refetched.
@@ -5012,43 +5012,70 @@ export function SessionScreen({
     };
   }, [client, sid, liveTurnId, liveTurnAttachments]);
 
-  // A view a run is SHOWING belongs inside the running assistant row: after the
-  // tool trace it explains, before the phase ticker that names it. Detached views
-  // still have a fallback at the transcript end when no live row exists.
-  const revealFiledLiveRecord = useCallback(() => {
-    void loadTranscript();
-  }, [loadTranscript]);
-  const liveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
-  const liveActivities = useMemo(
-    () => liveViews.filter((view) => view.classification === "activity"),
-    [liveViews],
+  const turnRows = useMemo(
+    () =>
+      visibleTurns.map((turn, index) => {
+        const request = turn.user_request ?? turn.request ?? "";
+        const activities = filedActivitiesForTurn(turn, liveActivities);
+        // A turn skips its own paint, in `AssistantMessage`
+        // (`useMeasuredPaintSkip`), never from this wrapper: the size a skip
+        // stands in for has to be the one that turn MEASURED, and a wrapper
+        // knows nothing about it. The 480px intrinsic-size guess that used to
+        // live here is what rendered white placeholder bands and shifted the
+        // scroll position when you flew up into a turn on iOS.
+        return (
+          <div
+            className={index === 0 ? "" : "mt-10"}
+            key={turn.id ?? turn.turn_id}
+          >
+            {(request || (turn.attachments?.length ?? 0) > 0) && (
+              <UserMessage attachments={turn.attachments}>{request}</UserMessage>
+            )}
+            <AssistantMessage
+              turn={turn}
+              settled={
+                turnsSettled || hasLiveBubble || index < visibleTurns.length - 1
+              }
+              // The row that just replaced the live bubble inherits a trace the
+              // reader is looking at: it mounts whole instead of ramping the
+              // transcript back down to a screenful and up again.
+              whole={handedOverRowId !== "" && rowId(turn) === handedOverRowId}
+              client={client}
+              sid={sid}
+              liveActivities={activities}
+            />
+          </div>
+        );
+      }),
+    [
+      visibleTurns,
+      turnsSettled,
+      hasLiveBubble,
+      handedOverRowId,
+      client,
+      sid,
+      liveActivities,
+    ],
   );
-  const ordinaryLiveViews = useMemo(
-    () => liveViews.filter((view) => view.classification !== "activity"),
-    [liveViews],
+  const anchoredActivityIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const turn of visibleTurns)
+      for (const activity of filedActivitiesForTurn(turn, liveActivities))
+        ids.add(activity.id);
+    if (liveTurn)
+      for (const activity of liveActivities)
+        if (activityFitsIterations(activity, liveTurn.iterations)) ids.add(activity.id);
+    return ids;
+  }, [visibleTurns, liveTurn, liveActivities]);
+  // Only a panel with no row-owned Python slot belongs below the transcript.
+  const detachedLiveViews = useMemo(
+    () =>
+      liveViews.filter(
+        (view) =>
+          view.classification !== "activity" || !anchoredActivityIds.has(view.id),
+      ),
+    [liveViews, anchoredActivityIds],
   );
-  const watching = liveViews.filter((view) => !view.is_settled).at(-1)?.title ?? null;
-  // A filed Activity keeps the same view ID as its live picture. During the narrow
-  // resync gap with no optimistic row, the transcript receipt is already visible;
-  // only genuinely detached views belong in the end-of-transcript fallback.
-  const detachedLiveViews = useMemo(() => {
-    const filedActivityIds = new Set<string>();
-    for (const turn of visibleTurns) {
-      for (const iteration of turn.iterations ?? []) {
-        for (const attachment of iteration.attachments ?? []) {
-          if (
-            attachment.classification === "activity" &&
-            attachment.activity_anchor &&
-            attachment.view_id
-          )
-            filedActivityIds.add(attachment.view_id);
-        }
-      }
-    }
-    return liveViews.filter(
-      (view) => view.classification !== "activity" || !filedActivityIds.has(view.id),
-    );
-  }, [liveViews, visibleTurns]);
 
   const liveRow = useMemo(() => {
     if (!liveTurn) return null;

@@ -178,10 +178,9 @@ describe("a running turn the session read cannot confirm", () => {
     expect(panel.compareDocumentPosition(phase) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
-  // Regression, issue td-65cdf6: when the optimistic row disappeared before its
-  // filed transcript replacement arrived, the same Activity painted at its Python
-  // anchor and again as a detached live panel below the turn.
-  it("does not detach an Activity already represented by a filed anchor", async () => {
+  // Regression, issue td-65cdf6: a production-position Activity could paint both
+  // at its Python anchor and again in the detached band during row handoff.
+  it("keeps one live Activity in its filed Python slot during handoff", async () => {
     const activity = {
       ...activityFixture,
       id: "activity-view",
@@ -227,7 +226,35 @@ describe("a running turn the session read cannot confirm", () => {
       },
     });
 
-    expect(await screen.findByText("Loading Activity…")).toBeInTheDocument();
-    expect(screen.queryByText("ACTIVITY")).toBeNull();
+    const panelLabel = await screen.findByText("ACTIVITY");
+    const python = screen.getByText("inspect_run()");
+    const result = screen.getByText("done");
+    expect(screen.getAllByText("ACTIVITY")).toHaveLength(1);
+    expect(screen.queryByText("Loading Activity…")).toBeNull();
+    expect(
+      python.compareDocumentPosition(panelLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+    expect(
+      panelLabel.compareDocumentPosition(result) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+  });
+  it("keeps a genuinely unanchored Activity in the detached fallback", async () => {
+    const activity = {
+      ...activityFixture,
+      id: "unanchored-activity",
+      activity: {
+        ...activityFixture.activity,
+        anchor: { evaluation_id: "evaluation-2", iteration: 99, form_index: 0 },
+      },
+    };
+
+    renderSessionScreen({
+      client: {
+        transcript: () => Promise.resolve([]),
+        liveViews: () => Promise.resolve([activity]),
+      },
+    });
+
+    expect(await screen.findByText("ACTIVITY")).toBeInTheDocument();
   });
 });
