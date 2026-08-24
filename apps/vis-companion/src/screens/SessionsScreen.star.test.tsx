@@ -290,4 +290,41 @@ describe("starring a session", () => {
     // Nothing in this tap may hand that track an animation the platform can drop.
     expect(asked.some((options) => options?.behavior === "smooth")).toBe(false);
   });
+
+  // Regression, user report: the favorite mark followed the title's variable width and
+  // sat after the status dot. It must own a fixed slot before that dot in every row.
+  it("reserves the favorite slot before the status icon without moving idle", async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [
+            listSession({ id: "starred", title: "Starred session", favorite_rank: 1 }),
+            listSession({ id: "plain", title: "Plain session", favorite_rank: null }),
+          ],
+        },
+      ],
+    });
+    restore = view.restore;
+    await screen.findByText("Starred session");
+
+    const row = (id: string) =>
+      document.querySelector(`[data-session-id="${id}"]`) as HTMLElement;
+    const status = (id: string) =>
+      row(id).querySelector("[data-session-status]") as HTMLElement;
+    const starredStatus = status("starred");
+    const plainStatus = status("plain");
+
+    expect(starredStatus).toBeTruthy();
+    expect(plainStatus).toBeTruthy();
+    expect(starredStatus.children[0]?.hasAttribute("data-session-favorite-slot")).toBe(true);
+    expect(starredStatus.children[1]?.hasAttribute("data-session-status-dot")).toBe(true);
+    expect(starredStatus.children[2]?.textContent).toBe("IDLE");
+    expect(plainStatus.children[0]?.hasAttribute("data-session-favorite-slot")).toBe(true);
+    expect(plainStatus.children[1]?.hasAttribute("data-session-status-dot")).toBe(true);
+    expect(plainStatus.children[2]?.textContent).toBe("IDLE");
+    expect((starredStatus.children[0] as HTMLElement).className).toBe(
+      (plainStatus.children[0] as HTMLElement).className,
+    );
+    expect(screen.getByText("Starred session").parentElement?.querySelector("svg")).toBeNull();
+  });
 });

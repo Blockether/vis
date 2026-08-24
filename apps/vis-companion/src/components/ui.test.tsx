@@ -79,6 +79,7 @@ import {
   SearchField,
   SectionGap,
   SectionHeader,
+  SettingsChoiceDisclosure,
   SettingsChoiceGroup,
   Slider,
   Spinner,
@@ -2857,6 +2858,41 @@ describe("a setting is picked and switched by one control each", () => {
     expect(owner).not.toContain("ml-auto");
   });
 
+  it("splits engine selection from its independently collapsed settings", () => {
+    const closed = renderToStaticMarkup(
+      <SettingsChoiceDisclosure
+        title="Piper (gateway)"
+        sub="ready"
+        isSelected
+        isOpen={false}
+        controls="piper-settings"
+        onSelect={() => {}}
+        onToggle={() => {}}
+      />,
+    );
+    expect(closed.match(/<button/g)).toHaveLength(2);
+    expect(closed).toContain('aria-pressed="true"');
+    expect(closed).toContain('aria-label="Settings for Piper (gateway)"');
+    expect(closed).toContain('aria-expanded="false"');
+    expect(closed).toContain('aria-controls="piper-settings"');
+    expect(closed.match(/bg-accent/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(closed).toContain("border-l");
+
+    const open = renderToStaticMarkup(
+      <SettingsChoiceDisclosure
+        title="Piper (gateway)"
+        sub="ready"
+        isSelected={false}
+        isOpen
+        controls="piper-settings"
+        onSelect={() => {}}
+        onToggle={() => {}}
+      />,
+    );
+    expect(open).toContain('aria-expanded="true"');
+    expect(open).toContain("rotate-90");
+  });
+
   it("opens a settings direction with one full-row chevron control", () => {
     const closed = renderToStaticMarkup(
       <SettingsDisclosure label="ASR" value="Parakeet (local)" isOpen={false} />,
@@ -3777,7 +3813,8 @@ describe("the machine's voices", () => {
 
   it("sends the recording itself, its engine, and the words it says", () => {
     expect(panel).toContain("client.importSpeechVoice(");
-    expect(panel).toContain("{ engine: prefs.ttsEngine }");
+    expect(panel).toContain("engine = prefs.ttsEngine");
+    expect(panel).toContain("{ engine }");
     // The transcript is what the model is TOLD, which is what makes a clone track the
     // voice instead of guessing the words.
     expect(panel).toContain("text: says.trim() || undefined");

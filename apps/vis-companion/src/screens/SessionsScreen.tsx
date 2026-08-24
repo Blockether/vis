@@ -3028,12 +3028,12 @@ const SessionRow = memo(function SessionRow({
             FIXED tracks. That is the difference between a list and a phone list
             stretched to 1400px, where a title sat at x=56 and its own status badge at
             x=1325 with nothing between them to carry the eye across.
-            Each fixed track is its own content's width: the status one holds the
-            LONGEST label it can show, and `INPUT NEEDED` measures 83px against
-            `LIVE`'s 34px, so it is 6rem/96px. The id track pays for those 16px —
-            8 hex characters measure 48px inside 4.5rem/72px — instead of the
-            title, which keeps 788px at 1440, 156px at 768 and 28px at 640. */}
-        <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_6rem_6rem] sm:gap-y-0">
+            Each fixed track is its own content's width: the status one holds its fixed
+            favorite slot BEFORE the dot plus the longest label. `INPUT NEEDED` measures
+            83px, so the whole cluster owns 7.25rem and neither a title nor a missing star
+            can move it. The id track pays for its 8 hex characters inside 4.5rem instead
+            of charging that width to the title. */}
+        <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_7.25rem_6rem] sm:gap-y-0">
           {/* The NAME, and nothing but the name. The badges used to ride inside this
               cell, so every row started its flags at a different x — the longer the
               title, the further right its `NEW` — and a long title pushed them off
@@ -3050,13 +3050,6 @@ const SessionRow = memo(function SessionRow({
             >
               {title}
             </span>
-            {/* The favorite mark stays immediately beside the title. */}
-            {isStarred && (
-              <span className="shrink-0">
-                <StarIcon filled className="size-3" />
-                <span className="sr-only">Favorite</span>
-              </span>
-            )}
           </span>
           {/* Unread and unsent-message flags share one aligned column. */}
           <span className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 font-mono text-chip sm:col-start-auto sm:row-start-auto">
@@ -3088,12 +3081,26 @@ const SessionRow = memo(function SessionRow({
             </span>
           </span>
           <span
+            data-session-status
             className={`col-start-3 row-start-1 inline-flex shrink-0 items-center gap-1 justify-self-end font-mono text-chip font-bold tracking-[0.08em] sm:col-start-auto sm:row-start-auto sm:justify-self-start ${statusTone(session)}`}
           >
             <span
+              data-session-favorite-slot
+              className="inline-flex size-3 shrink-0 items-center justify-center"
+            >
+              {isStarred && (
+                <>
+                  <StarIcon filled className="size-3" />
+                  <span className="sr-only">Favorite</span>
+                </>
+              )}
+            </span>
+            <span
+              data-session-status-dot
+              aria-hidden="true"
               className={`size-1.5 shrink-0 ${statusDot(session)} ${live ? 'animate-pulse motion-reduce:animate-none' : ''}`}
             />
-            {status}
+            <span>{status}</span>
           </span>
           <span
             className="col-start-2 col-end-4 row-start-2 justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums sm:col-start-auto sm:col-end-auto sm:row-start-auto sm:justify-self-start"
@@ -3350,7 +3357,7 @@ function NavigatorSkeleton() {
                   key={row}
                   className={`flex min-h-12 w-full items-center py-1.5 [&+&]:border-t [&+&]:border-dialog-edge mouse:min-h-8 mouse:py-1 ${LIST_EDGE}`}
                 >
-                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_6rem_6rem] sm:gap-y-0">
+                  <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_5.5rem_4.5rem_4.5rem_7.25rem_6rem] sm:gap-y-0">
                     <span className="col-start-1 row-start-1 sm:col-start-auto sm:row-start-auto">
                       <SkeletonBar type="text-meta" width={width} baz="h-2.5" tone="bg-muted/30" />
                     </span>
@@ -3358,7 +3365,7 @@ function NavigatorSkeleton() {
                       <SkeletonBar type="text-chip" width="w-14" baz="h-1.5" tone="bg-muted/20" />
                       <SkeletonBar type="text-chip" width="w-10" baz="h-1.5" tone="bg-muted/20" />
                     </span>
-                    {/* The flag column a real row keeps for `NEW` / `dirty` / a star.
+                    {/* The flag column a real row keeps for `NEW` / `dirty`.
                         Nothing is loading in it, but the track has to exist or the
                         columns shift the moment the rows arrive. */}
                     <span className="col-start-2 row-start-1 sm:col-start-auto sm:row-start-auto" />

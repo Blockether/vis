@@ -1282,6 +1282,52 @@ export function ChoiceCell({
 }
 
 /**
+ * ONE ENGINE ROW WITH TWO INDEPENDENT ACTIONS: choose it, or inspect its settings.
+ *
+ * Selection and disclosure used to be one accidental action: choosing an engine exposed
+ * its children, while an unselected engine had no way to show its own catalogue. The row
+ * is one visual surface split by one hairline, but it remains two keyboard targets. Both
+ * halves keep the selected fill so the chevron never looks detached from its owner.
+ */
+export function SettingsChoiceDisclosure({
+  title,
+  sub,
+  isSelected,
+  isOpen,
+  controls,
+  onSelect,
+  onToggle,
+}: {
+  title: string;
+  sub: string;
+  isSelected: boolean;
+  isOpen: boolean;
+  controls: string;
+  onSelect: () => void;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_2.5rem]">
+      <ChoiceCell title={title} sub={sub} isSelected={isSelected} onClick={onSelect} />
+      <button
+        type="button"
+        aria-label={`Settings for ${title}`}
+        aria-expanded={isOpen}
+        aria-controls={controls}
+        onClick={onToggle}
+        className={`grid min-h-10 w-10 place-items-center border-l transition-[background-color,color] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent active:bg-accent-2 motion-reduce:transition-none mouse:min-h-9 ${
+          isSelected
+            ? 'border-accent-foreground/30 bg-accent text-accent-foreground'
+            : 'border-dialog-edge bg-input text-dialog-hint hover:bg-hover hover:text-white'
+        }`}
+      >
+        <ChevronIcon open={isOpen} className="size-3 shrink-0" />
+      </button>
+    </div>
+  );
+}
+
+/**
  * A NAMED CLUSTER OF SETTINGS CHOICES, distinct from its neighbouring clusters.
  *
  * Depth is DRAWN, never spent as empty space. A nested cluster used to indent its whole

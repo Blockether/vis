@@ -94,6 +94,7 @@ import {
   Modal,
   NotifyConnectionRow,
   PROSE,
+  SettingsChoiceDisclosure,
   SettingsChoiceGroup,
   SettingsDisclosure,
   Switch,
@@ -961,7 +962,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
 }
 
 /**
- * THE SELECTED ENGINE'S VOICES, immediately under the engine that owns them.
+ * ONE ENGINE'S VOICES, immediately under the engine that owns them.
  *
  * A cloning engine speaks by imitating a reference recording, so a voice IS a clip and
  * "create a voice" is an upload and nothing else. The clip is stored on the machine that
@@ -973,10 +974,12 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
 export function VoicesPanel({
   client,
   prefs,
+  engine = prefs.ttsEngine,
   onChange,
 }: {
   client: GatewayClient;
   prefs: SpeechPrefs;
+  engine?: string | null;
   onChange: SaveSpeechPrefs;
 }) {
   const [catalogue, setCatalogue] = useState<SpeechVoices | null>(null);
@@ -1001,7 +1004,7 @@ export function VoicesPanel({
       try {
         const answer = await client.speechVoices({
           signal,
-          engine: prefs.ttsEngine,
+          engine,
         });
         if (signal?.aborted) return;
         setCatalogue(answer);
@@ -1021,7 +1024,7 @@ export function VoicesPanel({
         setErr((e as Error).message);
       }
     },
-    [client, prefs.ttsEngine],
+    [client, engine],
   );
 
   useEffect(() => {
@@ -1052,7 +1055,7 @@ export function VoicesPanel({
     setErr(null);
     try {
       const audio = await client.speechVoiceSample(voice.id, {
-        engine: prefs.ttsEngine,
+        engine,
       });
       await speechOutput.playSample(audio);
     } catch (e) {
@@ -1087,7 +1090,7 @@ export function VoicesPanel({
           lang: language.trim() || undefined,
           text: says.trim() || undefined,
         },
-        { engine: prefs.ttsEngine },
+        { engine },
       );
       setNote(`${voice.label ?? voice.id} can speak on this machine now.`);
       chooseClip(null);
@@ -1105,7 +1108,7 @@ export function VoicesPanel({
   async function forget(voice: SpeechVoice) {
     setPending(voice.id);
     try {
-      await client.forgetSpeechVoice(voice.id, { engine: prefs.ttsEngine });
+      await client.forgetSpeechVoice(voice.id, { engine });
       setConfirming(null);
       setNote(null);
       await load();
@@ -1122,7 +1125,7 @@ export function VoicesPanel({
     try {
       const state = await client.speechModel({
         start: true,
-        engine: prefs.ttsEngine,
+        engine,
         voice: voice.id,
         isLicenseAccepted,
       });
@@ -1533,6 +1536,9 @@ export function SpeechEnginesPanel({
   const [speaking, setSpeaking] = useState<EngineReadings>({});
   const [voices, setVoices] = useState<DeviceVoice[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [openTtsSettings, setOpenTtsSettings] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [err, setErr] = useState<string | null>(null);
 
   const voiceFeature = capabilities?.features?.voice;
@@ -1666,6 +1672,15 @@ export function SpeechEnginesPanel({
     }
   }
 
+  function toggleTtsSettings(engine: string) {
+    setOpenTtsSettings((current) => {
+      const next = new Set(current);
+      if (next.has(engine)) next.delete(engine);
+      else next.add(engine);
+      return next;
+    });
+  }
+
   async function prepare(direction: "asr" | "tts", engine: string) {
     const busyKey = `${direction}:${engine}`;
     setBusy(busyKey);
@@ -1781,15 +1796,17 @@ export function SpeechEnginesPanel({
               <SettingsChoiceGroup label="TTS engines">
                 <div className="grid grid-cols-1 gap-px bg-dialog-edge">
                   <div data-speech-engine="device" className="grid bg-input">
-                    <ChoiceCell
+                    <SettingsChoiceDisclosure
                       title="This device"
                       sub={chosenDeviceVoice?.label ?? "system TTS"}
                       isSelected={chosenTtsEngine === null}
-                      isLeaf={chosenTtsEngine !== null}
-                      onClick={() => void choose("tts", null)}
+                      isOpen={openTtsSettings.has("device")}
+                      controls="speech-tts-settings-device"
+                      onSelect={() => void choose("tts", null)}
+                      onToggle={() => toggleTtsSettings("device")}
                     />
-                    {chosenTtsEngine === null && (
-                      <>
+                    {openTtsSettings.has("device") && (
+                      <div id="speech-tts-settings-device" className="grid">
                         {voices === null && (
                           <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
                             Asking this device what it can speak in…
@@ -1852,33 +1869,44 @@ export function SpeechEnginesPanel({
                             onPrepare={() => undefined}
                           />
                         )}
-                      </>
+                      </div>
                     )}
                   </div>
                   {ttsEngines.map((engine) => {
                     const reading = speaking[engine.id] ?? null;
                     const isSelected = engine.id === chosenTtsEngine;
+                    const isSettingsOpen = openTtsSettings.has(engine.id);
+                    const settingsId = `speech-tts-settings-${engine.id}`;
                     return (
                       <div
                         key={engine.id}
                         data-speech-engine={engine.id}
                         className="grid bg-input"
                       >
-                        <ChoiceCell
+                        <SettingsChoiceDisclosure
                           title={gatewayEngineLabel(engine)}
                           sub={engineWord(reading)}
                           isSelected={isSelected}
-                          isLeaf={!isSelected}
-                          onClick={() => void choose("tts", engine.id)}
+                          isOpen={isSettingsOpen}
+                          controls={settingsId}
+                          onSelect={() => void choose("tts", engine.id)}
+                          onToggle={() => toggleTtsSettings(engine.id)}
                         />
-                        <EngineProblem
-                          engineName={gatewayEngineName(engine)}
-                          reading={reading}
-                          isBusy={busy === `tts:${engine.id}`}
-                          onPrepare={() => void prepare("tts", engine.id)}
-                        />
-                        {isSelected && (
-                          <VoicesPanel client={client} prefs={prefs} onChange={onChange} />
+                        {isSettingsOpen && (
+                          <div id={settingsId} className="grid">
+                            <EngineProblem
+                              engineName={gatewayEngineName(engine)}
+                              reading={reading}
+                              isBusy={busy === `tts:${engine.id}`}
+                              onPrepare={() => void prepare("tts", engine.id)}
+                            />
+                            <VoicesPanel
+                              client={client}
+                              prefs={prefs}
+                              engine={engine.id}
+                              onChange={onChange}
+                            />
+                          </div>
                         )}
                       </div>
                     );
