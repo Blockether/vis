@@ -62,14 +62,20 @@ describe('assignMachineColors', () => {
     );
   });
 
-  // The colour is the machine's identity, and the first machine of the fleet
-  // anchors it: gateways paired later spread around it, never the other way.
-  it('keeps the first machine on the hue it hashed to', () => {
+  // A canonical anchor makes assignment independent of pairing and API order.
+  it('keeps the canonical first machine on the hue it hashed to', () => {
     const alone = assignMachineColors(['aa11']).get('aa11');
     const leading = assignMachineColors(['aa11', 'zz99', 'bb22']).get('aa11');
 
     expect(alone).toBe(MACHINE_COLORS[preferredColorIndex('aa11')]);
     expect(leading).toBe(alone);
+  });
+
+  it('assigns the same colours regardless of pairing order', () => {
+    const forward = assignMachineColors(['zz99', 'aa11', 'bb22']);
+    const reordered = assignMachineColors(['bb22', 'zz99', 'aa11']);
+
+    for (const key of forward.keys()) expect(reordered.get(key)).toBe(forward.get(key));
   });
 
   // Two gateways whose URLs hashed to neighbouring slots — coral #d95445 and

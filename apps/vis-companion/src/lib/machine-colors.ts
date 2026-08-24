@@ -102,16 +102,15 @@ function fleetSlots(anchor: number, fleetSize: number): number[] {
 
 /**
  * Give every machine in one fleet a colour you can TELL APART, not merely a
- * different one. The FIRST machine keeps the hue it hashed to and anchors the
- * fleet; every other machine takes the free spread slot nearest its own hue, so
- * the assignment is deterministic, independent of how the list is ordered after
- * the anchor, and as close to each machine's preference as spacing allows. A
- * fleet wider than the palette falls back to the hue each machine prefers, which
- * is the only case where a hue repeats.
+ * different one. Machine keys are sorted first, making both the anchor and every
+ * assignment independent of pairing or API order. The canonical first key keeps
+ * the hue it hashed to; every other machine takes the free spread slot nearest
+ * its own hue. A fleet wider than the palette falls back to each machine's
+ * preferred hue, which is the only case where a hue repeats.
  */
 export function assignMachineColors(keys: readonly string[]): Map<string, MachineColor> {
   const colors = new Map<string, MachineColor>();
-  const fleet = [...new Set(keys)];
+  const fleet = [...new Set(keys)].sort();
   if (fleet.length === 0) return colors;
   const free = new Set(fleetSlots(preferredColorIndex(fleet[0]), fleet.length));
   for (const key of fleet) {
