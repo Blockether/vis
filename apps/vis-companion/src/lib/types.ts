@@ -646,6 +646,15 @@ export interface SpeechVoice {
   notice?: string;
   source_url?: string;
   model?: VoiceModelState;
+  /**
+   * What a play button may promise for THIS voice. `is_sample_ready` plays at once;
+   * `is_sample_preparable` plays after the machine makes one out of very little (a
+   * small pack of samples, or one sentence spoken by a model it already has). Neither
+   * means there is nothing to hear until the voice itself is installed — so no play
+   * button, rather than one that turns into a 116 MB download.
+   */
+  is_sample_ready?: boolean;
+  is_sample_preparable?: boolean;
 }
 
 /** One synthesis engine as the gateway advertises it. */

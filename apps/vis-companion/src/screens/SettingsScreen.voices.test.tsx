@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { VoicesPanel } from "./SettingsScreen";
+import { speechOutput } from "../lib/speech";
 import type { GatewayClient } from "../lib/gateway";
 import type { SpeechPrefs, SpeechVoices } from "../lib/types";
 
@@ -70,5 +71,92 @@ describe("licence-gated gateway voices", () => {
         isLicenseAccepted: true,
       }),
     );
+  });
+});
+
+describe("hearing a voice before choosing it", () => {
+  const catalogue: SpeechVoices = {
+    engine: { id: "piper-local", label: "Piper (local)" },
+    voices: [
+      {
+        id: "kristin",
+        label: "Kristin (en-US, medium)",
+        language: "en-US",
+        is_sample_ready: true,
+        model: { status: "absent", engine: "piper-local" },
+      },
+      {
+        id: "cori",
+        label: "Cori (en-GB, high)",
+        language: "en-GB",
+        is_sample_preparable: true,
+        model: { status: "ready", engine: "piper-local" },
+      },
+      {
+        id: "mystery",
+        label: "Mystery (en-US)",
+        language: "en-US",
+        model: { status: "ready", engine: "piper-local" },
+      },
+    ],
+  };
+
+  function mount(sample: Blob) {
+    const client = {
+      speechVoices: vi.fn().mockResolvedValue(catalogue),
+      speechVoiceSample: vi.fn().mockResolvedValue(sample),
+      speechModel: vi.fn(),
+    } as unknown as GatewayClient;
+    const onChange = vi.fn().mockResolvedValue(prefs);
+    const played = vi
+      .spyOn(speechOutput, "playSample")
+      .mockResolvedValue(undefined);
+    render(<VoicesPanel client={client} prefs={prefs} onChange={onChange} />);
+    return { client, onChange, played };
+  }
+
+  // A Piper voice is a 60-100 MB download, so a catalogue that can only be READ makes
+  // every choice blind: the sample has to play while the model is still absent.
+  it("plays a voice whose model is not downloaded", async () => {
+    const sample = new Blob(["wav"], { type: "audio/wav" });
+    const { client, played } = mount(sample);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Play a sample of Kristin (en-US, medium)",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(client.speechVoiceSample).toHaveBeenCalledWith("kristin", {
+        engine: "piper-local",
+      }),
+    );
+    await waitFor(() => expect(played).toHaveBeenCalledWith(sample));
+    expect(client.speechModel).not.toHaveBeenCalled();
+  });
+
+  it("offers no sample where there is nothing to play", async () => {
+    mount(new Blob(["wav"], { type: "audio/wav" }));
+
+    await screen.findByRole("button", { name: /^Kristin/ });
+    expect(
+      screen.queryByRole("button", { name: /Play a sample of Mystery/ }),
+    ).toBeNull();
+  });
+
+  // Choosing is silent otherwise: the preference is saved and nothing tells the ear
+  // what it just bought.
+  it("plays the voice it has just chosen", async () => {
+    const sample = new Blob(["wav"], { type: "audio/wav" });
+    const { client, onChange, played } = mount(sample);
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Cori/ }));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    await waitFor(() => expect(played).toHaveBeenCalledWith(sample));
+    expect(client.speechVoiceSample).toHaveBeenCalledWith("cori", {
+      engine: "piper-local",
+    });
   });
 });

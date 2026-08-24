@@ -993,7 +993,9 @@ export function VoicesPanel({
   // Which of THIS machine's voices this device asks for. Stored by id: a machine
   // that no longer has it speaks in its selected engine's default instead.
   const fileRef = useRef<HTMLInputElement>(null);
-
+  // Which voice this device is auditioning right now. One at a time on purpose: the
+  // player has one output, so a second press replaces the sound instead of layering it.
+  const [playing, setPlaying] = useState<string | null>(null);
   const load = useCallback(
     async (signal?: AbortSignal) => {
       try {
@@ -1038,6 +1040,27 @@ export function VoicesPanel({
     await onChange(() => setSpeechGatewayVoice(id));
   }
 
+  /**
+   * The audition: bytes for ONE voice, played on this device.
+   *
+   * Nothing is stored by listening and no preference is spent, so a catalogue can be
+   * heard before it is chosen — which is the whole point, since choosing a voice that
+   * has to be downloaded first costs 60-100 MB.
+   */
+  async function playSample(voice: SpeechVoice) {
+    setPlaying(voice.id);
+    setErr(null);
+    try {
+      const audio = await client.speechVoiceSample(voice.id, {
+        engine: prefs.ttsEngine,
+      });
+      await speechOutput.playSample(audio);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setPlaying(null);
+    }
+  }
   function chooseClip(file: File | null) {
     setClip(file);
     setNote(null);
@@ -1181,11 +1204,16 @@ export function VoicesPanel({
                   : model?.status === "ready"
                     ? "ready"
                     : null;
+          // Ready means the sample is already on the machine; preparable means it is one
+          // cheap step away (a 0.7 MB pack, or a line synthesized by a model already
+          // installed) - never the voice model itself, which is what this button avoids.
+          const canHear = !!(voice.is_sample_ready || voice.is_sample_preparable);
+          const hasTrailing = canHear || !!voice.is_imported || canPrepare;
           return (
             <div key={voice.id}>
               <div
                 className={
-                  voice.is_imported || canPrepare
+                  hasTrailing
                     ? "grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 pr-3"
                     : "min-w-0"
                 }
@@ -1202,29 +1230,46 @@ export function VoicesPanel({
                   isSelected={prefs?.gatewayVoice === voice.id}
                   showSelectionMark={!model || model.status === "ready"}
                   disabled={!!model && model.status !== "ready"}
-                  onClick={() => void chooseVoice(voice.id)}
+                  onClick={() => {
+                    void chooseVoice(voice.id);
+                    if (canHear) void playSample(voice);
+                  }}
                 />
-                {voice.is_imported && confirming !== voice.id && (
-                  <Button variant="secondary" onClick={() => setConfirming(voice.id)}>
-                    Forget
-                  </Button>
-                )}
-                {canPrepare && confirmingInstall !== voice.id && (
-                  <Button
-                    variant="secondary"
-                    disabled={pending === `install:${voice.id}`}
-                    onClick={() =>
-                      voice.is_opt_in
-                        ? setConfirmingInstall(voice.id)
-                        : void prepareVoice(voice, false)
-                    }
-                  >
-                    {pending === `install:${voice.id}`
-                      ? "Starting…"
-                      : model?.status === "failed"
-                        ? "Try again"
-                        : "Download"}
-                  </Button>
+                {hasTrailing && (
+                  <div className="flex shrink-0 items-center gap-2">
+                    {canHear && (
+                      <Button
+                        variant="secondary"
+                        aria-label={`Play a sample of ${voice.label ?? voice.id}`}
+                        disabled={playing === voice.id}
+                        onClick={() => void playSample(voice)}
+                      >
+                        {playing === voice.id ? "Playing…" : "Play"}
+                      </Button>
+                    )}
+                    {voice.is_imported && confirming !== voice.id && (
+                      <Button variant="secondary" onClick={() => setConfirming(voice.id)}>
+                        Forget
+                      </Button>
+                    )}
+                    {canPrepare && confirmingInstall !== voice.id && (
+                      <Button
+                        variant="secondary"
+                        disabled={pending === `install:${voice.id}`}
+                        onClick={() =>
+                          voice.is_opt_in
+                            ? setConfirmingInstall(voice.id)
+                            : void prepareVoice(voice, false)
+                        }
+                      >
+                        {pending === `install:${voice.id}`
+                          ? "Starting…"
+                          : model?.status === "failed"
+                            ? "Try again"
+                            : "Download"}
+                      </Button>
+                    )}
+                  </div>
                 )}
               </div>
               {model?.status === "failed" && model.error && (

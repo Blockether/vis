@@ -167,6 +167,16 @@ class SpeechOutput {
     await this.device.speak(text, prefs.deviceVoice, prefs.rate);
   }
 
+  /**
+   * Play bytes the caller already holds: settings is auditioning a voice, not speaking a
+   * reply, so no preference is read and the device never stands in — one press plays the
+   * one voice that was pressed, and whatever was playing stops first.
+   */
+  async playSample(audio: Blob, listener?: SpeechListener): Promise<void> {
+    this.stop();
+    await this.play(audio, listener);
+  }
+
   stop(): void {
     const playing = this.playing;
     this.playing = null;
