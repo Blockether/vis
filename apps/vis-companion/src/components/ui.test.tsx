@@ -79,6 +79,7 @@ import {
   SearchField,
   SectionGap,
   SectionHeader,
+  SettingsChoiceGroup,
   Slider,
   Spinner,
   UnreadBadge,
@@ -3829,5 +3830,36 @@ describe("the meter", () => {
     expect(bar(-1).match(/bg-accent/g)).toBeNull();
     expect(bar(0.5)).toContain('aria-label="Swept"');
     expect(bar(0.5)).not.toContain("style=");
+  });
+});
+
+// Regression, user report ("there is some white down one side, and at the bottom there is
+// not"): a nested cluster indented its whole body, so its rows stood a step in from the left
+// edge while still reaching the right one — a pale gutter down one side that nothing closed —
+// and the two clusters of one engine, Voices and Speech rate, stood on different left edges.
+describe("SettingsChoiceGroup", () => {
+  const group = (isNested: boolean) =>
+    renderToStaticMarkup(
+      <SettingsChoiceGroup label="Voices" isNested={isNested}>
+        <div>rows</div>
+      </SettingsChoiceGroup>,
+    );
+
+  it("never indents its body, at any depth", () => {
+    expect(group(false)).toContain('class="min-w-0"');
+    expect(group(true)).toContain('class="min-w-0"');
+    expect(group(false)).not.toContain("pl-3");
+    expect(group(true)).not.toContain("pl-3");
+    expect(uiSource).not.toContain("isNested ? 'pl-3'");
+  });
+
+  it("says how deep it is with its label, one notch under the choice that owns it", () => {
+    expect(group(true)).toContain("ml-3");
+    expect(group(false)).not.toContain("ml-3");
+  });
+
+  it("keeps the clusters of one engine on one edge", () => {
+    expect(settingsSource).toContain('<SettingsChoiceGroup label="Voices" isNested>');
+    expect(settingsSource).toContain('<SettingsChoiceGroup label="Speech rate" isNested>');
   });
 });

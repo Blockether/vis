@@ -1823,7 +1823,7 @@ export function SpeechEnginesPanel({
                             </div>
                           </SettingsChoiceGroup>
                         )}
-                        <SettingsChoiceGroup label="Speech rate">
+                        <SettingsChoiceGroup label="Speech rate" isNested>
                           <div className="grid grid-cols-3 gap-px bg-dialog-edge">
                             {SPEECH_RATES.map((rate) => (
                               <ChoiceCell

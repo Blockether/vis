@@ -1262,7 +1262,13 @@ export function ChoiceCell({
 
 /**
  * A NAMED CLUSTER OF SETTINGS CHOICES, distinct from its neighbouring clusters.
- * A nested cluster indents itself so its choices visibly belong to the selected parent.
+ *
+ * Depth is in the HEADING, never in the geometry. A nested cluster used to indent its
+ * whole body, so its rows started a step in from the left while still reaching the right
+ * edge: a pale gutter down one side that nothing closed at the bottom, and two clusters of
+ * the same parent (Voices, Speech rate) standing on two different left edges. Rows stay
+ * full-bleed — the hairlines belong to the parent grid — and a nested cluster says what it
+ * is by stepping its LABEL one notch in under the choice that owns it.
  */
 export function SettingsChoiceGroup({
   label,
@@ -1278,12 +1284,12 @@ export function SettingsChoiceGroup({
     <section
       role="group"
       aria-labelledby={headingId}
-      className={`min-w-0 ${isNested ? 'pl-3' : ''}`}
+      className="min-w-0"
     >
       <header className="flex min-h-7 items-center border-y border-dialog-edge bg-panel-2 px-3 py-1">
         <h4
           id={headingId}
-          className="border-l-2 border-accent pl-2 font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint"
+          className={`border-l-2 border-accent pl-2 font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint ${isNested ? 'ml-3' : ''}`}
         >
           {label}
         </h4>

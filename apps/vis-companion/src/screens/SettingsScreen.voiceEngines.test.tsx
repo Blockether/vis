@@ -216,7 +216,12 @@ describe("the speech-engines band", () => {
     const voiceGroup = await within(engine as HTMLElement).findByRole("group", {
       name: "Voices",
     });
-    expect(voiceGroup.className.split(/\s+/)).toContain("pl-3");
+    // It belongs to the engine by POSITION: no indent leaves its rows short of the left
+    // edge the engine's own row reaches, and only the heading steps in.
+    expect(voiceGroup.className.split(/\s+/)).not.toContain("pl-3");
+    expect(
+      within(voiceGroup).getByRole("heading", { name: "Voices" }).className,
+    ).toContain("ml-3");
     expect(await within(voiceGroup).findByRole("button", { name: /Amy/ })).toBeTruthy();
   });
   it("reads and downloads an unselected engine from its own row", async () => {
