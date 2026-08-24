@@ -3940,6 +3940,44 @@
                       ;; … and with it the rescue applies to EVERY call
                       (expect (has? (rg-files path) "repositories/corp/secret.txt"))
                       (expect (not (has? (rg-files path) "secret_dep.txt")))))))
+    ;; Regression, issue #23: an explicit re-include reopened unconditional cache trees.
+    (it
+      "never reopens cache directories through include_gitignored_paths"
+      (let [dir
+            "search-overlay-cache-pruning"
+
+            _
+            (write-temp! (str dir "/.gitignore") ".cpcache/\nsrc/.cache/\n.ruff_cache/\n")
+
+            _
+            (write-temp! (str dir "/secret-visible.txt") "NEEDLE_TOKEN here\n")
+
+            _
+            (write-temp! (str dir "/.cpcache/secret-root.txt") "NEEDLE_TOKEN here\n")
+
+            _
+            (write-temp! (str dir "/src/.cache/secret-nested.txt") "NEEDLE_TOKEN here\n")
+
+            _
+            (write-temp! (str dir "/.ruff_cache/secret-ruff.txt") "NEEDLE_TOKEN here\n")
+
+            path
+            (temp-dir-path dir)]
+
+        (overlay! {:include-gitignored-paths [".cpcache/**" "src/.cache/**" ".ruff_cache/**"]}
+                  (fn []
+                    (let [rg
+                          (rg-files path)
+
+                          found
+                          (find-paths path)]
+
+                      (expect (has? rg "secret-visible.txt"))
+                      (expect (has? found "secret-visible.txt"))
+                      (doseq [cache-path [".cpcache/secret-root.txt" "src/.cache/secret-nested.txt"
+                                          ".ruff_cache/secret-ruff.txt"]]
+                        (expect (not (has? rg cache-path)))
+                        (expect (not (has? found cache-path)))))))))
     (it "an explicit :always-exclude REPLACES the defaults"
         (let [path (fixture! "search-overlay-replace")]
           (overlay! {:include-gitignored-paths ["repositories/"] :always-exclude ["*.md"]}

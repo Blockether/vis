@@ -41,7 +41,7 @@
   babashka/fs {:mvn/version "0.5.34"}
   babashka/process {:mvn/version "0.6.25"}
   com.blockether/anomaly {:mvn/version "1.0.1"}
-  com.blockether/fff {:mvn/version "0.12.4"}
+  com.blockether/fff {:mvn/version "0.12.6"}
   ;; Imaging WITHOUT `java.desktop`: decode/encode, transforms, vector drawing, text,
   ;; SVG rasterisation and plotting, in-process over a first-party Rust cdylib (image
   ;; + resvg/tiny-skia) through the JDK Foreign Function & Memory API. This replaced

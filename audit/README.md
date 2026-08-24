@@ -190,7 +190,7 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `babashka/process` | `0.6.25` | EPL-1.0 | 23 KB | 3rd-party |
 | `clj-kondo/clj-kondo` | `2026.07.24` | EPL-1.0 | 731 KB | 3rd-party |
 | `com.blockether/anomaly` | `1.0.1` | EPL-1.0 | 4 KB | Blockether (in-house) |
-| `com.blockether/fff` | `0.12.4` | MIT | 11 KB | Blockether (in-house) |
+| `com.blockether/fff` | `0.12.6` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/imaging` | `0.1.10` | MIT | 23 KB | Blockether (in-house) |
 | `com.blockether/parinferish` | `0.1.2` | MIT | 34 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
