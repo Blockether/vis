@@ -217,12 +217,15 @@ describe("the speech-engines band", () => {
       name: "Voices",
     });
     // It belongs to the engine by POSITION: no indent leaves its rows short of the left
-    // edge the engine's own row reaches, and only the heading steps in.
-    expect(voiceGroup.className.split(/\s+/)).not.toContain("pl-3");
-    expect(
-      within(voiceGroup).getByRole("heading", { name: "Voices" }).className,
-    ).toContain("ml-3");
-    expect(await within(voiceGroup).findByRole("button", { name: /Amy/ })).toBeTruthy();
+    // edge the engine's own row reaches, and a rail down its left says where the cluster
+    // begins AND where it stops.
+    const groupClasses = voiceGroup.className.split(/\s+/);
+    expect(groupClasses).not.toContain("pl-3");
+    expect(groupClasses).toContain("border-accent/40");
+    // The engine that owns the list outweighs it: two lines against a voice's one.
+    expect(piper.className.split(/\s+/)).toContain("min-h-10");
+    const amy = await within(voiceGroup).findByRole("button", { name: /Amy/ });
+    expect(amy.className.split(/\s+/)).toContain("min-h-9");
   });
   it("reads and downloads an unselected engine from its own row", async () => {
     const { client, asked } = machine();

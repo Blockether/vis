@@ -1220,19 +1220,31 @@ export function TextButton({
  * as it is on every other segmented thing in the app (`Chip`, `MachineTab`,
  * `OptionRow`), and the glyph is `dialogs/choice-mark`'s own `●`/`○` — one of
  * these is the answer, never several.
+ *
+ * A LEAF SPENDS ONE LINE. Reported over the open TTS panel: ten full-bleed bars of
+ * the same height, each carrying the same two lines of capitals, read as a shutter
+ * rather than a list — and the choice that OWNED the voices under it weighed exactly
+ * as much as its own children. A cell with nothing nested beneath it takes `isLeaf`:
+ * the name leads, its quiet meta trails on the same line, and the row gives back a
+ * line of height. The two-line stack is what a cell keeps when it owns the cluster
+ * that follows, and when it is one column of a segmented grid (Theme's modes, speech
+ * rate), where there is no width for a trailing meta.
  */
 export function ChoiceCell({
   title,
   sub,
   isSelected,
+  isLeaf = false,
   showSelectionMark = true,
   className = '',
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   title: string;
-  /** The quiet word under the name: a theme's mode, a page size's temper. */
+  /** The quiet word beside or under the name: a theme's mode, a voice's language. */
   sub: string;
   isSelected: boolean;
+  /** Nothing nests under this choice: one line, with `sub` trailing instead of stacked. */
+  isLeaf?: boolean;
   /** Hide the choice glyph when an adjacent action occupies its trailing place. */
   showSelectionMark?: boolean;
 }) {
@@ -1240,17 +1252,26 @@ export function ChoiceCell({
     <button
       type="button"
       aria-pressed={isSelected}
-      className={`flex min-h-10 min-w-0 items-center justify-between gap-3 px-3 py-1.5 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none mouse:min-h-9 ${
+      className={`flex min-w-0 items-center gap-3 px-3 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none ${
+        isLeaf ? 'min-h-9 mouse:min-h-8' : 'min-h-10 justify-between py-1.5 mouse:min-h-9'
+      } ${
         isSelected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'
       } ${className}`}
       {...props}
     >
-      <span className="min-w-0">
-        <span className="block truncate font-mono text-ui font-bold">{title}</span>
-        <span className="block truncate font-mono text-chip uppercase tracking-wider opacity-65">
-          {sub}
+      {isLeaf ? (
+        <>
+          <span className="min-w-0 truncate font-mono text-ui font-bold">{title}</span>
+          <span className="ml-auto min-w-0 truncate font-mono text-chip opacity-55">{sub}</span>
+        </>
+      ) : (
+        <span className="min-w-0">
+          <span className="block truncate font-mono text-ui font-bold">{title}</span>
+          <span className="block truncate font-mono text-chip uppercase tracking-wider opacity-65">
+            {sub}
+          </span>
         </span>
-      </span>
+      )}
       {showSelectionMark && (
         <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">
           {isSelected ? '●' : '○'}
@@ -1263,12 +1284,17 @@ export function ChoiceCell({
 /**
  * A NAMED CLUSTER OF SETTINGS CHOICES, distinct from its neighbouring clusters.
  *
- * Depth is in the HEADING, never in the geometry. A nested cluster used to indent its
- * whole body, so its rows started a step in from the left while still reaching the right
- * edge: a pale gutter down one side that nothing closed at the bottom, and two clusters of
- * the same parent (Voices, Speech rate) standing on two different left edges. Rows stay
- * full-bleed — the hairlines belong to the parent grid — and a nested cluster says what it
- * is by stepping its LABEL one notch in under the choice that owns it.
+ * Depth is DRAWN, never spent as empty space. A nested cluster used to indent its whole
+ * body, so its rows stood a step in from the left while still reaching the right edge: a
+ * pale gutter down one side that nothing closed at the bottom. Stepping the LABEL instead
+ * left the same question unanswered — where does the cluster end? Rows stay full-bleed,
+ * because the hairlines belong to the parent grid, and a nested cluster is held by a RAIL
+ * down its left: an accent line that begins at the heading and stops under the last row,
+ * so the block closes at the bottom without a second left edge.
+ *
+ * The heading is not a band. Its own paper between two rules made a third horizontal line
+ * for every cluster — ten of them down one open panel, all of equal weight — so it sits
+ * flush on the panel's paper with air above it, and the amber notch alone marks it.
  */
 export function SettingsChoiceGroup({
   label,
@@ -1284,12 +1310,12 @@ export function SettingsChoiceGroup({
     <section
       role="group"
       aria-labelledby={headingId}
-      className="min-w-0"
+      className={isNested ? 'min-w-0 border-l-2 border-accent/40' : 'min-w-0'}
     >
-      <header className="flex min-h-7 items-center border-y border-dialog-edge bg-panel-2 px-3 py-1">
+      <header className="flex min-h-6 items-center bg-panel px-3 pb-1.5 pt-3">
         <h4
           id={headingId}
-          className={`border-l-2 border-accent pl-2 font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint ${isNested ? 'ml-3' : ''}`}
+          className="border-l-2 border-accent pl-2 font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint"
         >
           {label}
         </h4>

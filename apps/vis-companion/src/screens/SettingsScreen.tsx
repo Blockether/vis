@@ -1182,6 +1182,7 @@ export function VoicesPanel({
         {voices.length > 0 && (
           <ChoiceCell
             className="w-full"
+            isLeaf
             title="Engine default"
             sub="whatever this machine picks"
             isSelected={prefs?.gatewayVoice == null}
@@ -1220,6 +1221,7 @@ export function VoicesPanel({
               >
                 <ChoiceCell
                   className="w-full min-w-0"
+                  isLeaf
                   title={voice.label ?? voice.id}
                   sub={[
                     voice.language,
@@ -1736,6 +1738,7 @@ export function SpeechEnginesPanel({
                           title={gatewayEngineLabel(engine)}
                           sub={engineWord(reading)}
                           isSelected={engine.id === asrEngine}
+                          isLeaf
                           onClick={() => void choose("asr", engine.id)}
                         />
                         <EngineProblem
@@ -1782,6 +1785,7 @@ export function SpeechEnginesPanel({
                       title="This device"
                       sub={chosenDeviceVoice?.label ?? "system TTS"}
                       isSelected={chosenTtsEngine === null}
+                      isLeaf={chosenTtsEngine !== null}
                       onClick={() => void choose("tts", null)}
                     />
                     {chosenTtsEngine === null && (
@@ -1803,6 +1807,7 @@ export function SpeechEnginesPanel({
                                 title="System default"
                                 sub="the voice this device prefers"
                                 isSelected={prefs.deviceVoice === null}
+                                isLeaf
                                 onClick={() =>
                                   void chooseDeviceSetting(() => setSpeechDeviceVoice(null))
                                 }
@@ -1815,6 +1820,7 @@ export function SpeechEnginesPanel({
                                     .filter(Boolean)
                                     .join(" · ")}
                                   isSelected={prefs.deviceVoice === voice.id}
+                                  isLeaf
                                   onClick={() =>
                                     void chooseDeviceSetting(() => setSpeechDeviceVoice(voice.id))
                                   }
@@ -1862,6 +1868,7 @@ export function SpeechEnginesPanel({
                           title={gatewayEngineLabel(engine)}
                           sub={engineWord(reading)}
                           isSelected={isSelected}
+                          isLeaf={!isSelected}
                           onClick={() => void choose("tts", engine.id)}
                         />
                         <EngineProblem
@@ -2218,6 +2225,7 @@ export function SettingsDialog({
                     title={choice.label}
                     sub={choice.mode}
                     isSelected={pref === choice.id}
+                    isLeaf
                     disabled={pending?.startsWith("theme:") ?? false}
                     onClick={() => void chooseTheme(choice)}
                   />

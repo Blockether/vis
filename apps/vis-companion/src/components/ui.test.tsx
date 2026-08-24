@@ -2836,6 +2836,27 @@ describe("a setting is picked and switched by one control each", () => {
     expect(classes(off)).not.toContain("border");
   });
 
+  // Regression, user report over the open TTS panel ("that full-width stack of things still
+  // does not look good"): every choice spent two lines of the same height, so ten identical
+  // bars read as a shutter, and the engine that owned the voices under it weighed no more
+  // than the voices themselves.
+  it("spends one line on a leaf and keeps two for the choice that owns a list", () => {
+    const leaf = renderToStaticMarkup(
+      <ChoiceCell title="Albert" sub="en-US · device default" isSelected={false} isLeaf />,
+    );
+    expect(classes(leaf)).toContain("min-h-9");
+    // The meta trails the name quietly instead of standing on a second line of capitals.
+    expect(leaf).toContain("ml-auto");
+    expect(leaf).not.toContain("uppercase tracking-wider");
+
+    const owner = renderToStaticMarkup(
+      <ChoiceCell title="This device" sub="system TTS" isSelected />,
+    );
+    expect(classes(owner)).toContain("min-h-10");
+    expect(owner).toContain("uppercase tracking-wider");
+    expect(owner).not.toContain("ml-auto");
+  });
+
   it("opens a settings direction with one full-row chevron control", () => {
     const closed = renderToStaticMarkup(
       <SettingsDisclosure label="ASR" value="Parakeet (local)" isOpen={false} />,
@@ -3837,6 +3858,8 @@ describe("the meter", () => {
 // not"): a nested cluster indented its whole body, so its rows stood a step in from the left
 // edge while still reaching the right one — a pale gutter down one side that nothing closed —
 // and the two clusters of one engine, Voices and Speech rate, stood on different left edges.
+// Reported again over the same panel: stepping the label alone still said where a cluster
+// began and never where it ended, and every heading was a banded rule of its own.
 describe("SettingsChoiceGroup", () => {
   const group = (isNested: boolean) =>
     renderToStaticMarkup(
@@ -3847,15 +3870,22 @@ describe("SettingsChoiceGroup", () => {
 
   it("never indents its body, at any depth", () => {
     expect(group(false)).toContain('class="min-w-0"');
-    expect(group(true)).toContain('class="min-w-0"');
     expect(group(false)).not.toContain("pl-3");
     expect(group(true)).not.toContain("pl-3");
     expect(uiSource).not.toContain("isNested ? 'pl-3'");
   });
 
-  it("says how deep it is with its label, one notch under the choice that owns it", () => {
-    expect(group(true)).toContain("ml-3");
-    expect(group(false)).not.toContain("ml-3");
+  it("holds a nested cluster in a rail that begins and ends", () => {
+    expect(group(true)).toContain("border-l-2 border-accent/40");
+    expect(group(false)).not.toContain("border-accent/40");
+    expect(group(true)).not.toContain("ml-3");
+  });
+
+  it("stands its heading on the panel's own paper, never on a band", () => {
+    const heading = /<header[^>]*class="([^"]*)"/.exec(group(false))?.[1] ?? "";
+    expect(heading).toContain("bg-panel");
+    expect(heading).not.toContain("bg-panel-2");
+    expect(heading).not.toContain("border-y");
   });
 
   it("keeps the clusters of one engine on one edge", () => {
