@@ -5120,6 +5120,11 @@
          {:providers (vec providers)})
        (catch Throwable _ nil)))
 
+(defn- focus-attachments!
+  "Focus the staged-attachment rail in the active composer."
+  []
+  (state/dispatch [:focus-attachments]))
+
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
@@ -7529,6 +7534,9 @@
 
                          :toggle-help
                          (do (state/dispatch [:toggle-help]) (recur))
+
+                         :focus-attachments
+                         (do (focus-attachments!) (recur))
 
                          :toggle-tasks
                          (do (state/dispatch [:toggle-tasks]) (recur))
