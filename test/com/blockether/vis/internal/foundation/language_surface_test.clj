@@ -34,6 +34,25 @@
 
         (expect (= {"code" "(+ 1 2)"} @seen))
         (expect (= {:op :fake-format :text "(+ 1 2)"} (:result r)))))
+  (it
+    "accepts singular path and plural paths across file-oriented tools"
+    (let [seen
+          (atom [])
+
+          capture
+          (fn [_ arg]
+            (swap! seen conj arg)
+            {:success? true :result {"pass" 1 "fail" 0}})
+
+          env
+          (fake-env [{:language "clojure" :format-fn capture :lint-fn capture :test-fn capture}])]
+
+      (language-surface/format-code env {"path" "src/a.clj"})
+      (language-surface/lint-code env {"paths" ["src/a.clj" "src/b.clj"]})
+      (language-surface/run-tests env {"path" "test/a_test.clj" "paths" ["test/b_test.clj"]})
+      (expect (= [{"paths" ["src/a.clj"]} {"paths" ["src/a.clj" "src/b.clj"]}
+                  {"paths" ["test/a_test.clj" "test/b_test.clj"]}]
+                 @seen))))
   (it "uses an explicit language to disambiguate handlers"
       (let [env
             (fake-env [{:language "clojure"

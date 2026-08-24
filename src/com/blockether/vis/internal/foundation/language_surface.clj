@@ -163,6 +163,33 @@
         (seq dirs)
         (assoc "cwd" (first dirs))))))
 
+(defn- path->paths
+  "The singular `path` selector normalized into the shared `paths` list."
+  [m]
+  (if-not (and (map? m) (contains? m "path"))
+    m
+    (let [path
+          (get m "path")
+
+          paths
+          (get m "paths")
+
+          paths
+          (cond (nil? paths) []
+                (sequential? paths) paths
+                :else [paths])]
+
+      (cond-> (dissoc m "path")
+        (some? path)
+        (assoc "paths" (vec (cons path paths)))))))
+
+(defn- normalize-call-map
+  "Normalize directory and selector aliases before any language pack sees a call."
+  [x]
+  (-> x
+      directory->cwd
+      path->paths))
+
 (defn- env-at-cwd
   "For format/lint, make their workspace-relative discovery begin at selected `cwd`."
   [env opts]
@@ -282,7 +309,7 @@
     {:opts {} :payload {}}
 
     1
-    (let [arg (directory->cwd (first args))]
+    (let [arg (normalize-call-map (first args))]
       {:opts (coerce-opts arg) :payload arg})
 
     2
@@ -290,7 +317,7 @@
           args
 
           payload
-          (directory->cwd raw)]
+          (normalize-call-map raw)]
 
       (if (language-like? language)
         {:opts (assoc (coerce-opts payload) "language" language) :payload payload}
@@ -496,11 +523,12 @@
              seq
              (str/join ", "))))
 
-;; Every spelling a call can select WITH: `paths` in every language, plus the
-;; namespace / var vocabulary the clojure pack resolves (`clojure -M:test`'s own
-;; `--namespace` / `--var`). A selection rendered as "full suite" would make a
-;; one-namespace run read like the whole workspace.
-(def ^:private selection-keys ["paths" "ns" "nses" "namespace" "namespaces" "var" "vars" "only"])
+;; Every spelling a call can select WITH: singular `path` or plural `paths` in every
+;; language, plus the namespace / var vocabulary the clojure pack resolves
+;; (`clojure -M:test`'s own `--namespace` / `--var`). A selection rendered as "full
+;; suite" would make a one-namespace run read like the whole workspace.
+(def ^:private selection-keys
+  ["path" "paths" "ns" "nses" "namespace" "namespaces" "var" "vars" "only"])
 
 (defn- test-target
   "WHAT a run_tests call selected, as one line: its selector entries — files,
@@ -612,19 +640,20 @@
        "batch: `files,formatters`. No source text.")
      :description
      (str
-       "Format through the active pack — `format_code({\"paths\": [\"src\"]})`, or "
-       "`format_code(\"python\", {\"code\": src})`. `language` leads the call and is optional: it is "
-       "inferred from paths and workspace. `cwd`, `root`, and `project` select the project directory. `paths` "
-       "(ALWAYS a list) formats files and directories in place, recursively, and answers per-file "
-       "changes; `code` formats one snippet and answers `changed` + char delta, NEVER the text. Omit "
-       "both to format the pack's default source paths. python also takes ruff's own "
+       "Format through the active pack — `format_code({\"path\": \"src/a.clj\"})`, or "
+       "`format_code(\"python\", {\"paths\": [\"src\"]})`. `language` leads the call and is optional: it is "
+       "inferred from paths and workspace. `cwd`, `root`, and `project` select the project directory. `path` "
+       "formats one file or directory; `paths` formats a list recursively, in place, and answers per-file "
+       "changes. `code` formats one snippet and answers `changed` + char delta, NEVER the text. Omit "
+       "all selectors to format the pack's default source paths. python also takes ruff's own "
        "knobs: `line_length` overrides the discovered config, `config` pins one file.")
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
      :params [{:name "language" :note "inferred; name it when ambiguous"}
               {:name "cwd" :note "or `root`/`project`; default workspace ROOT"}
               {:name "root" :note "alias of `cwd` project directory"}
-              {:name "paths" :note "ALWAYS a list"}
+              {:name "path" :note "one file or directory"}
+              {:name "paths" :note "list of files or directories"}
               {:name "code" :note "one snippet instead of `paths`"}
               {:name "line_length" :note "python — overrides ruff config"}
               {:name "config" :note "python — pin one ruff config"}]
@@ -644,17 +673,18 @@
        "and optional `provider`.")
      :description
      (str
-       "Lint through the active pack, editing nothing — `lint_code({\"paths\": [\"src\"]})`, or "
-       "`lint_code(\"python\", {\"code\": src})`. `language` leads the call and is optional: it is "
-       "inferred from paths and workspace. `cwd`, `root`, and `project` select the project directory. `paths` "
-       "(ALWAYS a list) lints disk, `code` lints one snippet, and omitting both lints the pack's "
-       "defaults across the workspace. Answers findings plus severity counts. python also "
+       "Lint through the active pack, editing nothing — `lint_code({\"path\": \"src/a.clj\"})`, or "
+       "`lint_code(\"python\", {\"paths\": [\"src\"]})`. `language` leads the call and is optional: it is "
+       "inferred from paths and workspace. `cwd`, `root`, and `project` select the project directory. `path` "
+       "lints one disk target, `paths` lints a list, `code` lints one snippet, and omitting all selectors "
+       "lints the pack's defaults across the workspace. Answers findings plus severity counts. python also "
        "takes ruff's own knobs for this call: `select`/`ignore` choose rules, `line_length` "
        "overrides the discovered config, `config` pins one file.")
      :params [{:name "language" :note "inferred; name it when ambiguous"}
               {:name "cwd" :note "or `root`/`project`; default workspace ROOT"}
               {:name "root" :note "alias of `cwd` project directory"}
-              {:name "paths" :note "ALWAYS a list"}
+              {:name "path" :note "one file or directory"}
+              {:name "paths" :note "list of files or directories"}
               {:name "code" :note "one snippet instead of `paths`"}
               {:name "select" :note "python — ruff rules to keep"}
               {:name "ignore" :note "python — ruff rules to drop"}
@@ -680,10 +710,10 @@
        "`recovered` and a `hint`; `timed_out`, `error`, `exit` carry the rest.")
      :description
      (str
-       "Run the pack's tests — `run_tests({\"paths\": [\"test/foo_test.clj\"]})`, or "
+       "Run the pack's tests — `run_tests({\"path\": \"test/foo_test.clj\"})`, or "
        "`run_tests(\"python\", {\"paths\": [...]})`. `language` leads the call and is optional "
-       "(inferred from the paths and the workspace). Prefer the smallest target: `paths` is the "
-       "shared selector and each entry is a file, a directory, or `<path>::<test-name>` for a "
+       "(inferred from the paths and the workspace). Prefer the smallest target: `path` selects one and "
+       "`paths` selects a list; each target is a file, a directory, or `<path>::<test-name>` for a "
        "single test; clojure also takes `ns` — a namespace name, or `ns/var` for one test. "
        "`include`/`exclude` (clojure) narrow by metadata tag; `cwd`, `root`, and `project` are the "
        "SAME directory and default to the WORKSPACE ROOT, which is where a "
@@ -692,9 +722,10 @@
        "— over the hermetic sandbox. `aliases` (clojure) ADDS deps.edn aliases to the clean-JVM "
        "`clojure -M:test:<name>` when `:test` alone does not carry the classpath the tests need; "
        "a run that REUSED a REPL cannot apply them and says so. "
-       "NOTHING is required: omit `paths` to run everything.")
+       "NOTHING is required: omit `path` and `paths` to run everything.")
      :params [{:name "language" :note "inferred; name it when ambiguous"}
-              {:name "paths" :note "omit to run every test"}
+              {:name "path" :note "one test target"}
+              {:name "paths" :note "list; omit to run every test"}
               {:name "ns" :note "clojure — namespace, or `ns/var`"}
               {:name "include" :note "clojure — keep these metadata tags"}
               {:name "exclude" :note "clojure — drop these metadata tags"}
