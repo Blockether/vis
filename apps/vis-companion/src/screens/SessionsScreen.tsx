@@ -14,7 +14,7 @@ import {
   LIST_EDGE,
   LIST_EDGE_END,
   LIST_FRAME,
-  LiveCount,
+  ProjectStatusCounts,
   LoadMore,
   MachineMark,
   MachineRail,
@@ -1976,10 +1976,14 @@ export function SessionsScreen({
         // Home-shortening is paint only; feeding `~/vis` back as an API root is how an
         // older gateway produced the impossible `/…/vis/~/vis` directory.
         groups: searching
-          ? searchGroups(entry.rows)
-          : projectGroups(entry.machine.overview, entry.rows),
+          ? searchGroups(entry.rows, (session) => unreadTurnCount(session) > 0)
+          : projectGroups(
+              entry.machine.overview,
+              entry.rows,
+              (session) => unreadTurnCount(session) > 0,
+            ),
       })),
-    [heldRows, searching],
+    [heldRows, searching, readMarks],
   );
 
   // The projects the "remove sessions" step offers are the ones this machine HAS, as
@@ -3276,7 +3280,11 @@ const ProjectGroup = memo(function ProjectGroup({
               <span className="flex shrink-0 items-center gap-2">
                 <span aria-hidden>·</span>
                 <HeaderTally count={tally.count} unit="session" />
-                <LiveCount count={tally.live} />
+                <ProjectStatusCounts
+                  live={tally.live}
+                  awaiting={tally.awaiting}
+                  unread={tally.unread}
+                />
               </span>
             </span>
           }

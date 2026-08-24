@@ -764,8 +764,8 @@ describe('projectGroups', () => {
     const groups = projectGroups(overview, []);
     expect(groups.map((group) => group.root)).toEqual(['/repo/busy', '/repo/quiet']);
     expect(groups.map((group) => group.tally)).toEqual([
-      { count: 12, live: 2 },
-      { count: 400, live: 0 },
+      { count: 12, live: 2, awaiting: 0, unread: 0 },
+      { count: 400, live: 0, awaiting: 0, unread: 0 },
     ]);
     expect(groups.every((group) => group.sessions.length === 0)).toBe(true);
   });
@@ -791,7 +791,7 @@ describe('projectGroups', () => {
     const draft = session('d', { workspace: { root: '/drafts/x', is_draft: true } });
     const groups = projectGroups(overview, [draft]);
     expect(groups.map((group) => group.root)).toEqual(['/repo/a', '/drafts/x']);
-    expect(groups[1]?.tally).toEqual({ count: 1, live: 0 });
+    expect(groups[1]?.tally).toEqual({ count: 1, live: 0, awaiting: 0, unread: 0 });
   });
 });
 
@@ -887,13 +887,13 @@ describe('machineTally', () => {
 
   it('says what the GATEWAY holds, not what this device has paged in', () => {
     const groups = projectGroups(overview, window());
-    expect(groups[0]?.tally).toEqual({ count: 400, live: 3 });
+    expect(groups[0]?.tally).toEqual({ count: 400, live: 3, awaiting: 0, unread: 0 });
     expect(machineTally(overview, groups)).toEqual({ count: 412, live: 4 });
   });
 
   it('falls back to the rows on screen for a machine that has not answered one', () => {
     const groups = projectGroups(null, window());
-    expect(groups[0]?.tally).toEqual({ count: 2, live: 1 });
+    expect(groups[0]?.tally).toEqual({ count: 2, live: 1, awaiting: 0, unread: 0 });
     expect(machineTally(undefined, groups)).toEqual({ count: 2, live: 1 });
   });
 
@@ -902,6 +902,8 @@ describe('machineTally', () => {
     expect(groups.find((group) => group.root === '/repo/gone')?.tally).toEqual({
       count: 1,
       live: 0,
+      awaiting: 0,
+      unread: 0,
     });
   });
 });

@@ -52,6 +52,7 @@ import {
   KebabButton,
   ListRow,
   LiveCount,
+  ProjectStatusCounts,
   LoadMore,
   TableFocusButton,
   TableFocusRow,
@@ -835,6 +836,24 @@ describe("LiveCount", () => {
   });
 });
 
+// Regression, user report (paraphrased: project status values ran together and only
+// LIVE was summarized): live, human demand and finished unread work are separate states.
+describe("ProjectStatusCounts", () => {
+  it("separates all actionable states and does not double-count waiting as live", () => {
+    const html = renderToStaticMarkup(
+      <ProjectStatusCounts live={5} awaiting={2} unread={3} />,
+    );
+    expect(html).toContain("3 live");
+    expect(html).toContain("2 needs input");
+    expect(html).toContain("3 new");
+    expect(html.match(/·/g)).toHaveLength(3);
+  });
+
+  it("renders no separators when there is no status to report", () => {
+    expect(renderToStaticMarkup(<ProjectStatusCounts live={0} />)).toBe("");
+  });
+});
+
 // Regression, same report: the project header carried a FIXED 160px count column inside
 // its own toggle, so on a 390px iPhone the name it exists to show was truncated to
 // `~/v…` while "699 sessions" kept every pixel it asked for.
@@ -991,12 +1010,12 @@ describe("a project band carries its own count and its own pager", () => {
 
   it("counts the project under its name, never in that cluster", () => {
     expect(qualifier).toContain('<HeaderTally count={tally.count} unit="session" />');
-    expect(qualifier).toContain("<LiveCount count={tally.live} />");
+    expect(qualifier).toContain("<ProjectStatusCounts");
     // Measured at 320px: the count, the live pulse and the amber verb take the
     // cluster's width first and leave the project NAME 24px — which is the reason
     // the qualifier line exists at all.
     expect(cluster).not.toContain("HeaderTally");
-    expect(cluster).not.toContain("LiveCount");
+    expect(cluster).not.toContain("ProjectStatusCounts");
   });
 
   it("hangs no second box under the band, in the list or in its skeleton", () => {

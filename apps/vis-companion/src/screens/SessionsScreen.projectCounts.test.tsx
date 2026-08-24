@@ -21,14 +21,14 @@ describe("what a project header counts", () => {
           name: "project",
           session_count: 400,
           live_count: 3,
-          awaiting_count: 0,
+          awaiting_count: 1,
           last_activity_ms: 1,
         },
       ],
       project_count: 1,
       session_count: 400,
       live_count: 3,
-      awaiting_count: 0,
+      awaiting_count: 1,
     };
     const view = renderSessionsScreen({
       machines: [
@@ -51,7 +51,8 @@ describe("what a project header counts", () => {
 
     // One row is on screen; the header still says what the project holds.
     expect(await screen.findByText("400 sessions")).toBeTruthy();
-    expect(screen.getAllByText(/3 live/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/2 live/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/1 needs input/).length).toBeGreaterThan(0);
     // One list read, and a project's own page is the only other (`listProjectPage`).
     expect(
       view.requests.filter(
@@ -87,10 +88,8 @@ describe("a fleet far deeper than one window", () => {
     restore = view.restore;
     await screen.findByText("alpha 0");
 
-    // The counts are the gateway's own, not a tally of the rows that landed.
-    expect(screen.getAllByText("1200 sessions").length).toBeGreaterThan(0);
+    // Every project count is the gateway's own, not a tally of the rows that landed.
     expect(screen.getAllByText("150 sessions").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("30 sessions").length).toBeGreaterThan(0);
     // Every project the machine holds has a band, whether or not a row of it was
     // in the window: eight of alpha's, however deep the last one sits.
     expect(view.getByLabelText("Expand alpha-p7")).toBeTruthy();

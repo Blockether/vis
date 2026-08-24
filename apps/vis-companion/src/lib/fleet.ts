@@ -646,10 +646,14 @@ export function sameOverview(left: GatewayOverview, right: GatewayOverview): boo
   return stable(left) === stable(right);
 }
 
-/** What a header says a project holds: total sessions and how many are running. */
+/** What a header says a project holds and which actionable states are present. */
 export interface Tally {
   count: number;
   live: number;
+  /** Live sessions parked on human input. */
+  awaiting?: number;
+  /** Finished answers this device has not read yet. */
+  unread?: number;
 }
 
 /**
@@ -717,19 +721,28 @@ export interface ProjectGroupView {
 export function projectGroups(
   overview: GatewayOverview | null | undefined,
   rows: Session[],
+  isUnread: (session: Session) => boolean = () => false,
 ): ProjectGroupView[] {
   const held = groupByWorkDir(rows);
   const byRoot = new Map(held);
   const tallied = overview?.projects ?? [];
-  const groups = tallied
-    .map((project) => ({
-      root: project.root,
-      label: project.name.trim() ? homeifyPath(project.name.trim()) : rootLabel(project.root),
-      projectId: project.project_id ?? '',
-      tally: { count: project.session_count, live: project.live_count ?? 0 },
-      sessions: byRoot.get(project.root) ?? NO_SESSIONS,
-      when: project.last_activity_ms ?? 0,
-    }))
+  const groups: ProjectGroupView[] = tallied
+    .map((project) => {
+      const sessions = byRoot.get(project.root) ?? NO_SESSIONS;
+      return {
+        root: project.root,
+        label: project.name.trim() ? homeifyPath(project.name.trim()) : rootLabel(project.root),
+        projectId: project.project_id ?? '',
+        tally: {
+          count: project.session_count,
+          live: project.live_count ?? 0,
+          awaiting: project.awaiting_count ?? 0,
+          unread: sessions.filter(isUnread).length,
+        },
+        sessions,
+        when: project.last_activity_ms ?? 0,
+      };
+    })
     .sort((left, right) => {
       const live = Number(left.tally.live === 0) - Number(right.tally.live === 0);
       if (live !== 0) return live;
@@ -742,7 +755,7 @@ export function projectGroups(
   return groups.concat(
     held
       .filter(([root]) => !counted.has(root))
-      .map(([root, sessions]) => localGroup(root, sessions)),
+      .map(([root, sessions]) => localGroup(root, sessions, isUnread)),
   );
 }
 
@@ -750,17 +763,29 @@ export function projectGroups(
  * The same shape for a SEARCH — the one answer this device holds COMPLETE, since the
  * fanout narrows a list it was given. What is on screen is then the honest count.
  */
-export function searchGroups(rows: Session[]): ProjectGroupView[] {
-  return groupByWorkDir(rows).map(([root, sessions]) => localGroup(root, sessions));
+export function searchGroups(
+  rows: Session[],
+  isUnread: (session: Session) => boolean = () => false,
+): ProjectGroupView[] {
+  return groupByWorkDir(rows).map(([root, sessions]) => localGroup(root, sessions, isUnread));
 }
 
 /** A group nobody else counted: its own rows are the whole of it. */
-function localGroup(root: string, sessions: Session[]): ProjectGroupView {
+function localGroup(
+  root: string,
+  sessions: Session[],
+  isUnread: (session: Session) => boolean,
+): ProjectGroupView {
   return {
     root,
     label: projectLabel(sessions),
     projectId: agreedProjectId(sessions),
-    tally: { count: sessions.length, live: sessions.filter(sessionIsLive).length },
+    tally: {
+      count: sessions.length,
+      live: sessions.filter(sessionIsLive).length,
+      awaiting: sessions.filter(sessionNeedsInput).length,
+      unread: sessions.filter(isUnread).length,
+    },
     sessions,
   };
 }

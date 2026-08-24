@@ -1,5 +1,6 @@
 import {
   createContext,
+  Fragment,
   forwardRef,
   useContext,
   useEffect,
@@ -2968,6 +2969,45 @@ export function LiveCount({ count }: { count: number }) {
       {count} live
     </span>
   );
+}
+
+/**
+ * Actionable project states, separated from the total and from one another.
+ * Waiting-for-input is removed from LIVE because one session cannot claim two states.
+ */
+export function ProjectStatusCounts({
+  live,
+  awaiting = 0,
+  unread = 0,
+}: {
+  live: number;
+  awaiting?: number;
+  unread?: number;
+}) {
+  const running = Math.max(0, live - awaiting);
+  const statuses = [
+    running > 0
+      ? { label: `${running} live`, tone: 'text-ok', dot: 'animate-pulse bg-ok motion-reduce:animate-none' }
+      : null,
+    awaiting > 0
+      ? {
+          label: `${awaiting} needs input`,
+          tone: 'text-warn-strong',
+          dot: 'animate-pulse bg-warn-strong motion-reduce:animate-none',
+        }
+      : null,
+    unread > 0 ? { label: `${unread} new`, tone: 'text-accent', dot: 'bg-accent' } : null,
+  ].filter((status): status is NonNullable<typeof status> => status !== null);
+
+  return statuses.map((status) => (
+    <Fragment key={status.label}>
+      <span aria-hidden>·</span>
+      <span className={`inline-flex items-center gap-1 whitespace-nowrap font-bold ${status.tone}`}>
+        <span className={`size-1.5 ${status.dot}`} aria-hidden="true" />
+        {status.label}
+      </span>
+    </Fragment>
+  ));
 }
 
 /**
