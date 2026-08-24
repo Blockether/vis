@@ -145,15 +145,14 @@
 (defn model-form-envelope
   "Project one executed-form envelope onto the MODEL contract the
    trailer stores: `:scope :src :result :error` (+ engine forensic
-   fields), WITHOUT the channel sink slice, the host failure/metadata
-   chains, or `:tag`. The mutation/observation tag stays load-bearing
-   on LIVE op envelopes and on the persisted rows — but NOTHING reads
-   it from the trailer (the observation-prune that once did was
-   removed), and the model can see what a form does from `:src`. The
-   full envelopes stay on the progress chunks and the persisted
-   `session_turn_iteration.forms` rows — channels and the persisted
-   forms rows keep total fidelity; the trailer is what rides every
-   prompt.
+   fields), WITHOUT the channel sink slice, presentation-only
+   `:result-render`, host failure/metadata chains, or `:tag`. The
+   mutation/observation tag stays load-bearing on LIVE op envelopes and on the
+   persisted rows — but NOTHING reads it from the trailer (the observation-prune
+   that once did was removed), and the model can see what a form does from `:src`.
+   The full envelopes stay on progress chunks and persisted
+   `session_turn_iteration.forms` rows — channels and persisted forms keep total
+   fidelity; the trailer is what rides every prompt.
 
    Empty payloads are DROPPED, not rendered: `\"result\": None` /
    `[]` / `{}` and empty `:error` maps say nothing the form's absence
@@ -165,7 +164,7 @@
           (or (nil? v) (and (coll? v) (empty? v))))
 
         r*
-        (cond-> (dissoc r :channel :tag)
+        (cond-> (dissoc r :channel :tag :result-render)
           (:error r)
           (update :error model-error)
 

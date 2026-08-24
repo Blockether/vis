@@ -840,6 +840,16 @@
                    (expect (not (contains? envelope :result-render)))
                    (expect (nil? (form/result-display envelope))))))
 
+;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: a host-authored
+;; `result-render` survived the model-envelope projection even though it belongs
+;; exclusively to channels and is derived only after Python has returned.
+(defdescribe model-form-envelope-excludes-presentation-test
+             (it "keeps result-render out of the model contract"
+                 (expect (= {:scope "t1/i1" :src "print('python-only')" :stdout "python-only\n"}
+                            (eng/model-form-envelope {:scope "t1/i1"
+                                                      :src "print('python-only')"
+                                                      :stdout "python-only\n"
+                                                      :result-render "**presentation only**"})))))
 (defdescribe guest-interrupt-on-eval-timeout-test
              ;; REGRESSION: an eval timeout (and Esc cancel) only did `Future.cancel(true)`.
              ;; GraalPy does NOT observe `Thread.interrupt` inside guest code, so a model
@@ -967,6 +977,9 @@
   ;; so a tool that hung after its start event never timed out or settled.
   ;; Regression, issue td-1ec00e: settlement marked Activity closed before its
   ;; close succeeded, so one storage failure stranded a running receipt forever.
+  ;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: the presentation-only
+  ;; Activity receipt was appended to Python stdout and therefore shown twice and
+  ;; sent back to the model as though the block had printed it.
   (it
     "pairs a real guest tool call and settles its Activity receipt on timeout"
     (let [env {:activity/evaluation-id "00000000-0000-4000-8000-000000000007"
@@ -996,7 +1009,7 @@
                 (binding [rt/*eval-timeout-ms* 400]
                   ((deref #'lp/run-python-code)
                     pc
-                    "grep({'query': 'org.clojure', 'paths': ['deps.edn']})\nwhile True:\n    pass"
+                    "print('python-only')\ngrep({'query': 'org.clojure', 'paths': ['deps.edn']})\nwhile True:\n    pass"
                     :tool-event-fn
                     (fn [event]
                       (swap! events conj event))
@@ -1010,9 +1023,17 @@
                                                                                     @events))))
                (expect (= [2 ["activity.live.ndjson"]]
                           [@close-attempts (mapv :filename (:attachments result))]))
-               (expect (str/includes? (:stdout result) "**timeout**")) (expect (str/includes?
-                                                                                 (:stdout result)
-                                                                                 "[ok]"))
+               (expect (= "python-only\n" (:stdout result)))
+               ;; Python returns semantics only; the host derives this display after it exits.
+               (expect (not (contains? result :result-render))) (expect (str/includes?
+                                                                          (form/result-render
+                                                                            result)
+                                                                          "python-only"))
+               (expect (not (str/includes? (:stdout result) "# Activity"))) (expect (not
+                                                                                      (str/includes?
+                                                                                        (:stdout
+                                                                                          result)
+                                                                                        "grep")))
                (expect (not (str/includes? (:stdout result) "[running]")))
                (expect (empty? (hi/open-live-ids))))))))))
 
@@ -1141,6 +1162,8 @@
         (expect (= [{:scope "t2/i1/f1" :src "rg({...})"}] (:results (second out)))))))
   ;; Regression, reported from the app: interrupt filed the record after the
   ;; iteration had settled, but the next request's resumed context omitted it.
+  ;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: the same replay path
+  ;; treated host Activity as a semantic live view and sent its receipt to the model.
   (it
     "carries a late live-view record into the next model request"
     (with-redefs [persistance/db-list-session-turns
@@ -1162,6 +1185,11 @@
                     {"i1" [{:id "record-1"
                             :tool-call-id "call-1"
                             :filename "native.live.ndjson"
+                            :media-type "application/vnd.vis.live+ndjson"}
+                           {:id "activity-1"
+                            :tool-call-id "call-1"
+                            :filename "activity.live.ndjson"
+                            :classification "activity"
                             :media-type "application/vnd.vis.live+ndjson"}]})]
 
       (let [results
@@ -1169,12 +1197,14 @@
                                {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
                                "t2")))
 
-            record
-            (:live-record (last results))]
+            records
+            (keep :live-record results)]
 
-        (expect (str/includes? record "native.live.ndjson"))
-        (expect (str/includes? record "record-1"))
-        (expect (str/includes? record "read_attachment")))))
+        (expect (= 1 (count records)))
+        (expect (str/includes? (first records) "native.live.ndjson"))
+        (expect (str/includes? (first records) "record-1"))
+        (expect (str/includes? (first records) "read_attachment"))
+        (expect (not (str/includes? (str/join "\n" records) "activity.live.ndjson"))))))
   (it "keeps synthetic slash commands out of later provider context"
       (with-redefs [persistance/db-list-session-turns
                     (constantly [{:id "t1"
@@ -3216,13 +3246,23 @@
           (expect (str/includes? (get-in m [:content 0 :content]) "hello"))))
     ;; Regression, reported from the app: a live view interrupted after its tool
     ;; block returned filed a record, but the next model request was never told.
-    (it "puts a late live-view record back into the model's tool result"
+    ;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: host Activity used
+    ;; that same semantic replay rail and leaked a presentation receipt into context.
+    (it "puts only semantic live-view records back into the model's tool result"
         (let [m
-              (irm {:forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "c1" :stdout "watching"}]
+              (irm {:forms-vec [{:scope "t1/i1/f1"
+                                 :svar/tool-call-id "c1"
+                                 :stdout "watching"
+                                 :result-render "PRESENTATION-ONLY-SENTINEL"}]
                     :tool-calls [{:id "c1"}]
                     :attachments [{:id "record-1"
                                    :tool-call-id "c1"
                                    :filename "native.live.ndjson"
+                                   :media-type "application/vnd.vis.live+ndjson"}
+                                  {:id "activity-1"
+                                   :tool-call-id "c1"
+                                   :filename "activity.live.ndjson"
+                                   :classification :activity
                                    :media-type "application/vnd.vis.live+ndjson"}]})
 
               body
@@ -3230,7 +3270,9 @@
 
           (expect (str/includes? body "native.live.ndjson"))
           (expect (str/includes? body "record-1"))
-          (expect (str/includes? body "read_attachment"))))
+          (expect (str/includes? body "read_attachment"))
+          (expect (not (str/includes? body "activity.live.ndjson")))
+          (expect (not (str/includes? body "PRESENTATION-ONLY-SENTINEL")))))
     (it "no summaries ⇒ trailer-iters unchanged"
         (let [tis [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "x"}]}]]]
           (expect (= tis (apply-summaries tis [])))))))
@@ -6729,6 +6771,43 @@
         (expect (not (contains? d :iteration-id)))
         (expect (not (contains? d :tool-call-id))))))
 
+;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: the sandbox attachment
+;; reader listed host Activity beside user artifacts, exposing presentation state to
+;; Python even after it stopped being appended to stdout.
+(defdescribe
+  activity-attachment-is-presentation-only-test
+  (it
+    "keeps Activity out of Python's attachment API"
+    (let [env {:db-info ::db
+               :session-id "session-activity-attachments"
+               :workspace/root (System/getProperty "user.dir")
+               :workspace {:root (System/getProperty "user.dir")
+                           :repo-root (System/getProperty "user.dir")}}]
+      (tpc/with-own
+        [pc (extension/builtin-sandbox-bindings (constantly env))]
+        (with-redefs [persistance/db-list-session-attachments-meta
+                      (fn [_ _]
+                        [{:id "semantic-1"
+                          :source :tool
+                          :filename "semantic.json"
+                          :media-type "application/json"
+                          :turn-soul-id "turn-1"}
+                         {:id "activity-1"
+                          :source :tool
+                          :filename "activity.live.ndjson"
+                          :classification "activity"
+                          :media-type "application/vnd.vis.live+ndjson"
+                          :turn-soul-id "turn-1"}])]
+          (let
+            [result
+             (#'lp/run-python-code
+              pc
+              "print([a['filename'] for a in list_attachments()])\ntry:\n    get_attachment('activity-1')\nexcept LookupError:\n    print('activity-id-hidden')"
+              :env
+              env)]
+            (expect (str/includes? (:stdout result) "semantic.json"))
+            (expect (str/includes? (:stdout result) "activity-id-hidden"))
+            (expect (not (str/includes? (:stdout result) "activity.live.ndjson")))))))))
 (def ^:private cache-key (deref #'lp/cache-key))
 
 (def ^:private acquire-turn-lock! (deref #'lp/acquire-turn-lock!))

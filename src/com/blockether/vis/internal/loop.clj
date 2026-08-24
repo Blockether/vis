@@ -847,6 +847,14 @@
                   (catch java.util.concurrent.TimeoutException _ false)
                   (catch Throwable _ false)))))
 
+(defn- activity-attachment?
+  "True only for the host-owned Activity receipt. Its classification, not its
+   filename, is the durable presentation-only boundary used by model-facing paths."
+  [attachment]
+  (= "activity"
+     (some-> (or (:classification attachment) (get attachment "classification"))
+             name)))
+
 (defn attachment-descriptor
   "One `session_attachment` row as the compact DESCRIPTOR `list_attachments()` and
    `get_attachment(id)` hand the model: identity, provenance and shape, and never
@@ -881,15 +889,22 @@
       (:iteration-id a) :tool-call-id
       (:tool-call-id a))))
 
-(defn- envelope-with-settled-views
-  "Fold the live views a block ABANDONED onto its envelope.
+(defn- envelope-with-view-records
+  "Attach settled live-view records to an execution envelope without changing its
+   model-facing result. Host Activity uses this presentation-only path: its receipt
+   is available to channels, but its rendered snapshot is neither Python stdout nor
+   model context."
+  [envelope attachments]
+  (if (seq attachments) (update envelope :attachments (fnil into []) attachments) envelope))
 
-   The record of each one rides as an `:attachments` row — listed and stored
-   exactly as a close inside the block would have stored it — and the picture it
-   ended on is appended to what the block printed, because the run never reached
-   its own `close` and nothing else will ever say how the view ended. Without
-   both halves a wall or a cancel answers a bare error, and the twenty minutes a
-   human spent watching survive only as a file on disk that nothing points at."
+(defn- envelope-with-settled-views
+  "Fold the semantic live views a Python block ABANDONED onto its envelope.
+
+   These are user-authored `vis.live` views, whose close verdict is a documented
+   model result. Their records ride as `:attachments`, while the picture they ended
+   on is appended to stdout because the interrupted block never returned that result
+   itself. Host Activity is only an observer and MUST use
+   [[envelope-with-view-records]] instead."
   [envelope swept]
   (if-not swept
     envelope
@@ -897,10 +912,7 @@
                              (mapv (fn [verdict]
                                      (live/->markdown (:view verdict) {:result verdict}))
                                    (:verdicts swept)))]
-      (cond-> envelope
-        (seq (:attachments swept))
-        (update :attachments (fnil into []) (:attachments swept))
-
+      (cond-> (envelope-with-view-records envelope (:attachments swept))
         (not (str/blank? document))
         (update :stdout
                 (fn [printed]
@@ -983,31 +995,32 @@
               (:db-info env)
 
               sid
-              (:session-id env)]
+              (:session-id env)
+
+              model-attachments
+              (fn []
+                (remove activity-attachment? (persistance/db-list-session-attachments-meta d sid)))]
 
           (when (and d sid)
             {:list (fn []
-                     (try (mapv attachment-descriptor
-                                (persistance/db-list-session-attachments-meta d sid))
-                          (catch Throwable _ [])))
+                     (try (mapv attachment-descriptor (model-attachments)) (catch Throwable _ [])))
              :read (fn [id]
                      ;; Never turn a UUID into cross-session read authority: prove it
-                     ;; belongs to this active session before the indexed row lookup.
-                     (when (some #(= (str id) (str (:id %)))
-                                 (persistance/db-list-session-attachments-meta d sid))
+                     ;; belongs to this active session and is not presentation-only
+                     ;; before the indexed row lookup.
+                     (when (some #(= (str id) (str (:id %))) (model-attachments))
                        (attachment-storage/hydrate (persistance/db-read-attachment d id))))
-             :reinspect
-             (fn [id]
-               (when-let [a (when (some #(= (str id) (str (:id %)))
-                                        (persistance/db-list-session-attachments-meta d sid))
-                              (attachment-storage/hydrate (persistance/db-read-attachment d id)))]
-                 (when (and (str/starts-with? (str (:media-type a)) "image/")
-                            ;; An externally stored image whose backend is unavailable
-                            ;; has metadata but no bytes. Do not acknowledge it then emit
-                            ;; an invalid `data:image/...;base64,` block next request.
-                            (not (str/blank? (str (:base64 a)))))
-                   (mpl-capture/queue-reinspection! a)
-                   a)))}))
+             :reinspect (fn [id]
+                          (when-let [a (when (some #(= (str id) (str (:id %))) (model-attachments))
+                                         (attachment-storage/hydrate
+                                           (persistance/db-read-attachment d id)))]
+                            (when (and (str/starts-with? (str (:media-type a)) "image/")
+                                       ;; An externally stored image whose backend is unavailable
+                                       ;; has metadata but no bytes. Do not acknowledge it then emit
+                                       ;; an invalid `data:image/...;base64,` block next request.
+                                       (not (str/blank? (str (:base64 a)))))
+                              (mpl-capture/queue-reinspection! a)
+                              a)))}))
 
         record-tool-event
         (fn [event]
@@ -1168,9 +1181,9 @@
 
             (shutdown-activity!)
             (if result
-              (envelope-with-settled-views envelope
-                                           {:verdicts [result]
-                                            :attachments (mpl-capture/drain sink)})
+              ;; Activity is a presentation observer. File its receipt for channels,
+              ;; but never reinterpret its final picture as Python output.
+              (envelope-with-view-records envelope (mpl-capture/drain sink))
               envelope)))
 
         timeout-sentinel
@@ -2052,6 +2065,12 @@
 
 (def ^:private live-record-media-type "application/vnd.vis.live+ndjson")
 
+(defn- model-live-record?
+  "True for a semantic extension-owned live-view record. Host Activity uses the
+   same storage rail for presentation, but never becomes model context."
+  [attachment]
+  (and (= live-record-media-type (or (:media-type attachment) (:media_type attachment)))
+       (not (activity-attachment? attachment))))
 (defn- live-record-context-line
   "Tell a later model where one settled live-view record can be reopened."
   [att]
@@ -2120,11 +2139,10 @@
                                     (fn [iteration]
                                       (let [own (vec (:forms iteration))
                                             scope (:scope (first own))
-                                            records
-                                            (filter #(= live-record-media-type
-                                                        (or (:media-type %) (:media_type %)))
-                                                    (or (get atts-by-iter (:id iteration))
-                                                        (get atts-by-iter (str (:id iteration)))))]
+                                            records (filter model-live-record?
+                                                            (or (get atts-by-iter (:id iteration))
+                                                                (get atts-by-iter
+                                                                     (str (:id iteration)))))]
 
                                         (into own
                                               (map (fn [att]
@@ -3765,13 +3783,13 @@
                            str
                            str/trim))
 
-        ;; A live view may close on a gateway thread AFTER its block returned. Its
-        ;; record is then appended to the iteration, not to the already-frozen form
-        ;; output. Reintroduce that durable descriptor into later model context so
-        ;; the next request knows the interrupted picture exists and can open it.
+        ;; A semantic live view may close on a gateway thread AFTER its block returned.
+        ;; Its record is then appended to the iteration, not to the already-frozen form
+        ;; output. Reintroduce that durable descriptor into later model context so the
+        ;; next request knows the interrupted picture exists and can open it. Host
+        ;; Activity shares the presentation storage rail but is filtered here.
         live-records
-        (filter #(= live-record-media-type (or (:media-type %) (:media_type %)))
-                (:attachments iter-record))
+        (filter model-live-record? (:attachments iter-record))
 
         tool-calls
         (seq (:tool-calls iter-record))
