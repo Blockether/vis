@@ -176,6 +176,7 @@ describe('DataTable', () => {
 
   it('offers the sort affordance and the row count, and no filter box', () => {
     expect(html).toContain('aria-sort="none"');
+    expect(html).toContain('aria-label="Sort by name"');
     expect(text(html)).toContain('3 rows');
     expect(text(html)).toContain('[Table: fleet.csv 3 rows × 3 cols, 64 B]');
     expect(html).not.toContain('type="search"');
@@ -190,17 +191,16 @@ describe('DataTable', () => {
     expect(heads[3]).toContain('border-l');
   });
 
-  it('paints a head that reads as one: amber ground, a 2 px rule, sticky', () => {
+  it('uses the same neutral header treatment as the other document tables', () => {
     const heads = html.match(/<th\b[^>]*>/g) ?? [];
-    expect(heads[0]).toContain('bg-warn-surface');
-    expect(heads[0]).toContain('border-b-2');
+    expect(heads[0]).toContain('bg-code');
+    expect(heads[0]).toContain('border-b');
     expect(heads[0]).toContain('sticky');
-    // The 8/255 tint the first version called a header is gone.
-    expect(html).not.toContain('bg-panel-2 px-2 py-1.5');
+    expect(heads[0]).not.toContain('bg-warn-surface');
   });
 
-  it('sits on the sheet ground, not on another grey code block', () => {
-    expect(html).toContain('bg-input');
+  it('sits on the same neutral panel as other opened documents', () => {
+    expect(html).toContain('bg-panel');
   });
 
   it('gives every row a # gutter, and the gutter IS the selection control', () => {
@@ -215,12 +215,12 @@ describe('DataTable', () => {
     expect((html.match(/tabindex="0"/g) ?? []).length).toBe(1);
   });
 
-  it('right-aligns the numeric column only, and types it in the number hue', () => {
+  it('right-aligns numeric columns without changing their ink or typeface', () => {
     const heads = html.match(/<th\b[^>]*>/g) ?? [];
     expect(heads[1]).toContain('text-left');
     expect(heads[2]).toContain('text-right');
     expect(heads[3]).toContain('text-left');
-    expect(html).toContain('text-code-syntax-number');
+    expect(html).not.toContain('text-code-syntax-number');
   });
 
   it('shows a blank cell as NULL, not as an empty string', () => {
@@ -284,6 +284,36 @@ describe('DataTable', () => {
     ].join('\n');
     const paged = renderToStaticMarkup(<DataTable body={long} compact />);
     expect(paged.indexOf('aria-label="Next page"')).toBeLessThan(paged.indexOf('role="grid"'));
+  });
+
+  // Reported from the artifact reader: wide CSVs used a desktop grid on touch screens,
+  // leaving long fields off-screen and no practical way to inspect one record or value.
+  it('gives touch screens a record reader with every column as an individual value', async () => {
+    const user = userEvent.setup();
+    render(<DataTable body={fence} compact fill />);
+
+    const reader = screen.getByRole('region', { name: 'Record view of fleet.csv' });
+    expect(reader).toHaveClass('mouse:hidden');
+    expect(screen.getByText('Record 1 of 3')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Inspect note, row 1' })).toHaveTextContent('first');
+
+    await user.click(screen.getByRole('button', { name: 'Inspect note, row 1' }));
+    expect(screen.getByRole('button', { name: 'Copy value' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Next record' }));
+    expect(screen.getByText('Record 2 of 3')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Inspect note, row 2' })).toHaveTextContent('second');
+    expect(screen.queryByRole('button', { name: 'Copy value' })).not.toBeInTheDocument();
+  });
+
+  // Reported from the same artifact: WebKit enlarged different table columns by different
+  // amounts, while number cells and headers also introduced unrelated display colours.
+  it('locks one type treatment across an opened CSV table', () => {
+    const opened = renderToStaticMarkup(<DataTable body={fence} compact fill />);
+    expect(opened).toContain('font-mono');
+    expect(opened).toContain('[-webkit-text-size-adjust:none]');
+    expect(opened).toContain('[text-size-adjust:none]');
+    expect(opened).not.toContain('text-code-syntax-number');
+    expect(opened).toContain('h-full min-h-0 min-w-0 flex-1 overflow-auto');
   });
 
   it('closes a selected value when that cell is pressed again', async () => {

@@ -804,7 +804,7 @@ function TableDetail({
     return <p className="p-4 font-mono text-meta text-dialog-hint">Loading…</p>;
   if (!body)
     return <p className="p-4 font-mono text-meta text-dialog-hint">This table could not be read.</p>;
-  return <DataTable body={body} compact />;
+  return <DataTable body={body} compact fill />;
 }
 
 /**

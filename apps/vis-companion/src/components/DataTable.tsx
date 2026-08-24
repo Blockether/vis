@@ -1,7 +1,7 @@
 import { memo, useCallback, useId, useMemo, useRef, useState } from 'react';
 import { useFitRows, type ListGeometry } from '../lib/fit-rows';
 import { SortIcon } from './icons';
-import { Button } from './ui';
+import { Button, ListRow } from './ui';
 
 // A CSV/TSV artifact is DATA, not a picture. `attach` emits it as a
 // ````vis-table` fence and BOTH surfaces paint it as a real grid: the TUI through
@@ -220,16 +220,10 @@ const HEAD_H = 30;
 /** The scroller's cap, as a fraction of the viewport — what `Fit` fills. */
 const VIEW_FRACTION = 0.6;
 
-/**
- * The sheet's own palette, and it is deliberately NOT another grey code block.
- * Its ground is the input surface (paper / ink), its head is an amber band under
- * a 2 px rule — a header you can still find with the page scrolled — selection
- * is BLUE, the focused cell is AMBER, and numbers are typed in the code number
- * hue. Three roles, three colours, instead of the 8/255 tint that shipped first.
- */
-const SHEET = 'bg-input';
+/** A CSV is a document: one neutral paper, one typeface, and one ink. */
+const SHEET = 'bg-panel';
 const HEAD_CELL =
-  'sticky top-0 z-10 h-[30px] border-b-2 border-warn-strong bg-warn-surface p-0 align-middle';
+  'sticky top-0 z-10 h-[30px] border-b border-code-edge bg-code p-0 align-middle';
 const BODY_CELL = 'h-[26px] border-b border-code-edge p-0 align-middle';
 
 /** The `│` of the TUI grid: every column but the first carries its own rule. */
@@ -265,11 +259,14 @@ export const DataTable = memo(function DataTable({
   body,
   compact,
   frameless = false,
+  fill = false,
 }: {
   body: string;
   compact: boolean;
   /** Keep the spacing but drop the frame: an enclosing card already draws one. */
   frameless?: boolean;
+  /** Fill an opened artifact and give touch devices the record reader. */
+  fill?: boolean;
 }) {
   const artifact = useMemo(() => parseTableBlock(body), [body]);
   const grid = useMemo(() => parseCsv(artifact.csv), [artifact.csv]);
@@ -293,6 +290,7 @@ export const DataTable = memo(function DataTable({
   const [sort, setSort] = useState<Sort>(null);
   const [selected, setSelected] = useState<ReadonlySet<number>>(new Set());
   const [cell, setCell] = useState<Cell>(null);
+  const [record, setRecord] = useState(0);
   const [copied, setCopied] = useState(false);
   const [pageSize, setPageSize] = useState<number | 'fit'>(PAGE_SIZES[1]);
   const [page, setPage] = useState(0);
@@ -302,6 +300,8 @@ export const DataTable = memo(function DataTable({
     () => (sort ? sortRows(rows, sort.index, sort.dir) : rows),
     [rows, sort],
   );
+  const recordAt = Math.min(Math.max(0, record), Math.max(0, ordered.length - 1));
+  const recordRow = ordered[recordAt] ?? null;
 
   const step = pageSize === 'fit' ? sheet.rows : pageSize;
   const pages = pageCount(ordered.length, step);
@@ -338,6 +338,16 @@ export const DataTable = memo(function DataTable({
     );
 
   const goPage = (value: number) => setPage(clampPage(value, ordered.length, step));
+
+  const goRecord = (value: number) => {
+    setRecord(Math.min(Math.max(0, value), Math.max(0, ordered.length - 1)));
+    setCell(null);
+  };
+
+  const toggleCell = (row: number, col: number) =>
+    setCell((currentCell) =>
+      currentCell?.row === row && currentCell.col === col ? null : { row, col },
+    );
 
   /** Walk the focused cell; a step past the page edge pulls the page with it. */
   const moveCell = (rowStep: number, colStep: number) => {
@@ -400,13 +410,13 @@ export const DataTable = memo(function DataTable({
 
   return (
     <div
-      className={`${compact ? 'my-2' : 'my-3'} flex max-h-full w-fit max-w-full min-h-0 flex-col overflow-hidden ${SHEET} ${frameless ? '' : 'border border-code-edge'}`}
+      className={`${fill ? 'h-full w-full' : `${compact ? 'my-2' : 'my-3'} w-fit max-w-full`} flex max-h-full min-h-0 flex-col overflow-hidden font-mono text-meta text-code-foreground [-webkit-text-size-adjust:none] [text-size-adjust:none] ${SHEET} ${frameless ? '' : 'border border-code-edge'}`}
     >
       <div className="flex flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
         <span className="min-w-0 flex-1 truncate text-chip text-muted">
           {artifact.summary || label}
         </span>
-        <span className="shrink-0 text-chip text-warn" aria-live="polite">
+        <span className="shrink-0 text-chip text-dialog-hint" aria-live="polite">
           {selected.size > 0 ? `${selected.size} selected` : ''}
         </span>
         <Button variant="secondary" density="compact" onClick={copy}>
@@ -415,8 +425,8 @@ export const DataTable = memo(function DataTable({
       </div>
 
       {cell !== null && (
-        <div className="flex items-start gap-2 border-b-2 border-warn-strong bg-panel px-2 py-1.5">
-          <span className="shrink-0 pt-0.5 text-chip text-warn">
+        <div className="flex items-start gap-2 border-b border-code-edge bg-panel-2 px-2 py-1.5">
+          <span className="shrink-0 pt-0.5 text-chip text-dialog-hint">
             {`${header[cell.col] ?? ''} · row ${cell.row + 1}`}
           </span>
           <pre className="max-h-20 min-w-0 flex-1 overflow-auto text-meta break-all whitespace-pre-wrap text-code-foreground">
@@ -432,8 +442,74 @@ export const DataTable = memo(function DataTable({
         </div>
       )}
 
+      {fill && (
+        <section
+          role="region"
+          aria-label={`Record view of ${label}`}
+          className="flex min-h-0 flex-1 flex-col mouse:hidden"
+        >
+          <div className="flex shrink-0 items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
+            <Button
+              variant="secondary"
+              density="compact"
+              onClick={() => goRecord(recordAt - 1)}
+              disabled={recordAt === 0}
+              aria-label="Previous record"
+            >
+              Prev
+            </Button>
+            <span className="min-w-0 flex-1 text-center text-ui tabular-nums" aria-live="polite">
+              {`Record ${recordRow ? recordAt + 1 : 0} of ${ordered.length}`}
+            </span>
+            <Button
+              variant="secondary"
+              density="compact"
+              onClick={() => goRecord(recordAt + 1)}
+              disabled={!recordRow || recordAt >= ordered.length - 1}
+              aria-label="Next record"
+            >
+              Next
+            </Button>
+          </div>
+          {recordRow ? (
+            <div
+              role="list"
+              aria-label={`Values in record ${recordAt + 1}`}
+              className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+            >
+              {header.map((column, index) => {
+                const columnLabel = column || `Column ${index + 1}`;
+                const value = recordRow.cells[index] ?? '';
+                const here = cell?.row === recordRow.key && cell.col === index;
+                return (
+                  <div role="listitem" key={index}>
+                    <ListRow
+                      isSelected={here}
+                      onClick={() => toggleCell(recordRow.key, index)}
+                      aria-label={`Inspect ${columnLabel}, row ${recordAt + 1}`}
+                      className="items-start"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-bold text-dialog-hint">{columnLabel}</span>
+                        <span className="mt-0.5 block break-words whitespace-pre-wrap text-code-foreground">
+                          {value === '' ? 'NULL' : value}
+                        </span>
+                      </span>
+                    </ListRow>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="p-3 text-center text-dialog-hint">No rows</p>
+          )}
+        </section>
+      )}
+
       {paged && (
-        <div className="flex flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
+        <div
+          className={`${fill ? 'hidden mouse:flex' : 'flex'} flex-wrap items-center gap-2 border-b border-code-edge bg-panel px-2 py-1`}
+        >
           <label className="flex shrink-0 items-center gap-1 text-ui text-code-foreground">
             Rows
             <select
@@ -480,10 +556,10 @@ export const DataTable = memo(function DataTable({
         </div>
       )}
 
-      <div className="relative flex min-h-0 flex-1">
+      <div className={`relative min-h-0 flex-1 ${fill ? 'hidden mouse:flex' : 'flex'}`}>
         <div
           ref={sheetRef}
-          className="max-h-[60vh] min-h-0 min-w-0 flex-1 overflow-auto overscroll-x-contain"
+          className={`${fill ? 'h-full' : 'max-h-[60vh]'} min-h-0 min-w-0 flex-1 overflow-auto overscroll-x-contain`}
         >
           <table
             role="grid"
@@ -493,7 +569,7 @@ export const DataTable = memo(function DataTable({
             aria-rowcount={ordered.length + 1}
             aria-colcount={header.length + 1}
             aria-activedescendant={cell === null ? undefined : cellId(cell.row, cell.col)}
-            className="w-auto border-collapse text-meta text-code-foreground focus-visible:outline-2 focus-visible:outline-warn-strong"
+            className="w-auto border-collapse font-mono text-meta text-code-foreground focus-visible:outline-2 focus-visible:outline-accent"
           >
             <thead>
               <tr>
@@ -506,7 +582,7 @@ export const DataTable = memo(function DataTable({
                     tabIndex={-1}
                     onClick={toggleAll}
                     aria-label={selected.size > 0 ? 'Clear selection' : 'Select every row on this page'}
-                    className="h-full w-full px-2 text-right text-chip font-bold text-warn"
+                    className="h-full w-full px-2 text-right text-chip font-bold text-code-foreground"
                   >
                     #
                   </button>
@@ -527,7 +603,8 @@ export const DataTable = memo(function DataTable({
                     <button
                       type="button"
                       onClick={() => toggleSort(index)}
-                      className={`flex h-full w-full max-w-[34ch] items-center gap-1 px-2 text-chip font-bold tracking-wide text-warn uppercase ${
+                      aria-label={`Sort by ${cellLabel || `column ${index + 1}`}`}
+                      className={`flex h-full w-full max-w-[34ch] items-center gap-1 px-2 text-meta font-semibold text-code-foreground ${
                         aligns[index] ? 'justify-end' : 'justify-start'
                       }`}
                     >
@@ -549,14 +626,10 @@ export const DataTable = memo(function DataTable({
                     key={row.key}
                     aria-selected={picked}
                     aria-rowindex={range.first + offset + 1}
-                    className={
-                      picked
-                        ? 'bg-result-path text-result-path-foreground'
-                        : 'even:bg-panel-2 hover:bg-hover'
-                    }
+                    className={picked ? 'bg-panel-2' : 'hover:bg-hover'}
                   >
                     <td
-                      className={`${BODY_CELL} sticky left-0 z-10 border-r border-code-edge ${picked ? 'bg-result-path' : 'bg-panel-2'}`}
+                      className={`${BODY_CELL} sticky left-0 z-10 border-r border-code-edge ${picked ? 'bg-panel-2' : 'bg-panel'}`}
                     >
                       <button
                         type="button"
@@ -564,7 +637,7 @@ export const DataTable = memo(function DataTable({
                         aria-pressed={picked}
                         aria-label={`Select row ${range.first + offset}`}
                         onClick={() => toggleRow(row.key)}
-                        className={`h-full w-full px-2 text-right text-chip tabular-nums ${picked ? 'text-result-path-foreground' : 'text-muted'}`}
+                        className="h-full w-full px-2 text-right text-chip tabular-nums text-dialog-hint"
                       >
                         {picked ? '✓' : range.first + offset}
                       </button>
@@ -576,22 +649,14 @@ export const DataTable = memo(function DataTable({
                         <td
                           key={index}
                           id={cellId(row.key, index)}
-                          onClick={() =>
-                            setCell((currentCell) =>
-                              currentCell?.row === row.key && currentCell.col === index
-                                ? null
-                                : { row: row.key, col: index },
-                            )
-                          }
+                          onClick={() => toggleCell(row.key, index)}
                           className={`${BODY_CELL} ${index > 0 ? COLUMN_RULE : ''} ${
-                            here ? 'bg-warn-surface ring-2 ring-warn-strong ring-inset' : ''
+                            here ? 'bg-panel-2 ring-2 ring-accent ring-inset' : ''
                           }`}
                         >
                           <span
                             className={`block max-w-[34ch] truncate px-2 whitespace-nowrap ${
-                              aligns[index]
-                                ? `text-right tabular-nums ${picked ? '' : 'text-code-syntax-number'}`
-                                : 'text-left'
+                              aligns[index] ? 'text-right tabular-nums' : 'text-left'
                             }`}
                           >
                             {value === '' ? <span className="text-muted italic">NULL</span> : value}
@@ -618,7 +683,7 @@ export const DataTable = memo(function DataTable({
         {sheet.overflowX && (
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-y-0 right-0 w-6 border-r-2 border-warn-strong bg-gradient-to-l from-input to-transparent"
+            className="pointer-events-none absolute inset-y-0 right-0 w-6 border-r border-code-edge bg-gradient-to-l from-panel to-transparent"
           />
         )}
       </div>
