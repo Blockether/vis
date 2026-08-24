@@ -2,6 +2,211 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (4833) — 2026-08-24
+<!-- commit: 045d45b3d35d211d81c54eec36b86cdc2dc5a375 -->
+
+- Separate engine settings and favorite status
+
+## 0.1.41 (4829) — 2026-08-24
+<!-- commit: c88c11bc5cb0dca9aeff859556626caad9ddcd5d -->
+
+- Give the settings choices a hierarchy again
+- Give a nested settings cluster one left edge
+- Let a voice be auditioned before it is chosen
+- Prefetch active session transcripts
+
+## 0.1.41 (4819) — 2026-08-24
+<!-- commit: 604e93e80253c05239011648e87a027624cbd56d -->
+
+- Skip loading veil for cached sessions
+- Remove remaining human draft remnants
+- Cache machine capabilities
+- Remove human draft controls
+- Keep CSV artifacts as tables
+- Open artifact links from answers
+- Make CSV artifacts touch-friendly
+- Keep machine settings collapsed
+- Nest voices under their speech engine
+- Summarize actionable project states
+- Announce transcript synchronization
+- Preview tabular artifacts
+- Make use project add the folder
+- Open CSV artifacts as tables
+- Remove duplicate projects button
+- Always select the first machine
+- Keep Activity with its filed turn
+- Anchor Activity after Python results
+- Quiet Activity receipts
+- Keep one machine active
+
+## 0.1.41 (4807) — 2026-08-24
+<!-- commit: eafc9355ac21a68f8480b3a89d6270086124aa0a -->
+
+- Keep machine settings collapsed
+- Nest voices under their speech engine
+- Summarize actionable project states
+- Announce transcript synchronization
+- Preview tabular artifacts
+- Make use project add the folder
+- Open CSV artifacts as tables
+- Remove duplicate projects button
+- Always select the first machine
+- Keep Activity with its filed turn
+- Anchor Activity after Python results
+- Quiet Activity receipts
+- Keep one machine active
+- Keep live activities in anchored slots
+- Stabilize machine colors across reorderings
+- Align settled reasoning across clients
+- Remove synthetic all machine group
+- Keep transcript prose naturally spaced
+- Demote unreachable machines
+- Avoid duplicate filed activity
+
+## 0.1.41 (4804) — 2026-08-24
+<!-- commit: 741fdde771ff3ff90f9fe61d2bd3bef3d90c509c -->
+
+- Summarize actionable project states
+- Announce transcript synchronization
+- Preview tabular artifacts
+- Make use project add the folder
+- Open CSV artifacts as tables
+- Remove duplicate projects button
+- Always select the first machine
+- Keep Activity with its filed turn
+- Anchor Activity after Python results
+- Quiet Activity receipts
+- Keep one machine active
+- Keep live activities in anchored slots
+- Stabilize machine colors across reorderings
+- Align settled reasoning across clients
+- Remove synthetic all machine group
+- Keep transcript prose naturally spaced
+- Demote unreachable machines
+- Avoid duplicate filed activity
+- Repair CSV table interactions
+- Anchor live views by iteration position
+
+## 0.1.41 (4783) — 2026-08-24
+<!-- commit: f576692a03dbc67e2f1d89d3e7aba0a20ae27f2c -->
+
+- Stabilize machine colors across reorderings
+- Align settled reasoning across clients
+- Remove synthetic all machine group
+- Keep transcript prose naturally spaced
+- Demote unreachable machines
+- Avoid duplicate filed activity
+- Repair CSV table interactions
+- Anchor live views by iteration position
+- Move a project's pager into its own band
+- Delete the skill corpus, keep the contracts in AGENTS.md
+- Weld the projects sheet's verbs into its band
+- Use Activity status icons
+- Preserve terminal Activity handoff
+- Render structured Activity diffs
+- Build chronological Activity rail
+- Build compact Activity receipt
+- Anchor Activity to its form
+- Carry semantic Activity projections
+- Finish Activity presentation
+- Show bounded tool activity receipts
+
+## 0.1.41 (4777) — 2026-08-24
+<!-- commit: d82d3d0c8cf34c0077b1305dbeb7ba36dd05e31c -->
+
+- Remove synthetic all machine group
+- Keep transcript prose naturally spaced
+- Demote unreachable machines
+- Avoid duplicate filed activity
+- Repair CSV table interactions
+- Anchor live views by iteration position
+- Move a project's pager into its own band
+- Delete the skill corpus, keep the contracts in AGENTS.md
+- Weld the projects sheet's verbs into its band
+- Use Activity status icons
+- Preserve terminal Activity handoff
+- Render structured Activity diffs
+- Build chronological Activity rail
+- Build compact Activity receipt
+- Anchor Activity to its form
+- Carry semantic Activity projections
+- Finish Activity presentation
+- Show bounded tool activity receipts
+- Drop the machine address from the projects bands
+- Stop retrying rejected voice audio
+
+## 0.1.41 (4729) — 2026-08-23
+<!-- commit: 97e0ab26f8f54af36d10fbb2e1d39338046e03f5 -->
+
+- Manage every speech engine model
+- Restore project and document additions
+- Separate device voices from TTS engines
+- Stop draining the fleet into the session list
+- Let the gateway cut every project page
+- Send the gateway the words this device holds
+- Stop a rewritten log pane from pumping its own record
+- Cut a project's page to the device
+- Cap premium device voices at three
+- Label gateway engines and curate voices
+- Unify speech engine selection
+- Distinguish provider authentication states
+- Keep provider refreshes visually quiet
+- Move session usage out of composer
+- Keep delete confirmation at row height
+- Preserve transcript width during paint skips
+- Caption the transcript from outside its frame
+- Name the waveform plot in the one-icon-module rule
+- Give the transcript a waveform header
+- Restore provider disclosures
+
+## 0.1.41 (4727) — 2026-08-22
+<!-- commit: a4ea80786403562cc81e021c9521e5ed786ef716 -->
+
+- Separate device voices from TTS engines
+- Stop draining the fleet into the session list
+- Let the gateway cut every project page
+- Send the gateway the words this device holds
+- Stop a rewritten log pane from pumping its own record
+- Cut a project's page to the device
+- Cap premium device voices at three
+- Label gateway engines and curate voices
+- Unify speech engine selection
+- Distinguish provider authentication states
+- Keep provider refreshes visually quiet
+- Move session usage out of composer
+- Keep delete confirmation at row height
+- Preserve transcript width during paint skips
+- Caption the transcript from outside its frame
+- Name the waveform plot in the one-icon-module rule
+- Give the transcript a waveform header
+- Restore provider disclosures
+- Inline provider limits
+- Calm the spoken reply into one band
+
+## 0.1.41 (4724) — 2026-08-22
+<!-- commit: 276aa958000fa66eb650c25f686862319c2b0211 -->
+
+- Let the gateway cut every project page
+- Send the gateway the words this device holds
+- Stop a rewritten log pane from pumping its own record
+- Cut a project's page to the device
+- Cap premium device voices at three
+- Label gateway engines and curate voices
+- Unify speech engine selection
+- Distinguish provider authentication states
+- Keep provider refreshes visually quiet
+- Move session usage out of composer
+- Keep delete confirmation at row height
+- Preserve transcript width during paint skips
+- Caption the transcript from outside its frame
+- Name the waveform plot in the one-icon-module rule
+- Give the transcript a waveform header
+- Restore provider disclosures
+- Inline provider limits
+- Calm the spoken reply into one band
+- Disclose provider limits
+- Add seekable spoken reply rail
+
 ## 0.1.41 (4655) — 2026-08-21
 <!-- commit: f5747d0a913eb2327fe5f15d769100db7a8a01c2 -->
 
