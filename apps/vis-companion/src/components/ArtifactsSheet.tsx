@@ -31,6 +31,7 @@ import {
   docKindLabel,
   isMarkdownMedia,
   isPdfMedia,
+  isTableMedia,
   isTextMedia,
   pageBySize,
   SHEET_PAGE,
@@ -39,6 +40,7 @@ import {
 import { useAttachImage } from "../lib/attach-image";
 import { editedFilename } from "../lib/image-file";
 import type { GatewayClient } from "../lib/gateway";
+import { DataTable, parseCsv } from "./DataTable";
 import { DocFrame } from "./DocArtifact";
 import { ImageViewer } from "./ImageViewer";
 import { LiveArtifact } from "./LiveArtifact";
@@ -727,7 +729,55 @@ function DetailOverlay({
   );
 }
 
+/** Read raw CSV/TSV bytes into the same table block used in the transcript. */
+function TableDetail({
+  url,
+  artifact,
+}: {
+  url: string;
+  artifact: SessionArtifact;
+}) {
+  const [body, setBody] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(url)
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      })
+      .then((csv) => {
+        if (!alive) return;
+        const grid = parseCsv(csv);
+        const cols = grid.reduce((widest, row) => Math.max(widest, row.length), 0);
+        const rows = Math.max(0, grid.length - 1);
+        setBody(
+          [
+            `[Table: ${artifact.name} ${rows} rows × ${cols} cols, ${artifact.sizeLabel}]`,
+            artifact.name,
+            artifact.mediaType,
+            `${cols}x${rows}`,
+            artifact.sizeLabel,
+            csv,
+          ].join("\n"),
+        );
+      })
+      .catch(() => {
+        if (alive) setBody("");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [url, artifact]);
+
+  if (body === null)
+    return <p className="p-4 font-mono text-meta text-dialog-hint">Loading…</p>;
+  if (!body)
+    return <p className="p-4 font-mono text-meta text-dialog-hint">This table could not be read.</p>;
+  return <DataTable body={body} compact />;
+}
+
 /**
+ * One opened artifact. The bytes are fetched HERE rather than by the tile, so
  * One opened artifact. The bytes are fetched HERE rather than by the tile, so
  * closing the detail releases them again and a session full of PDFs never holds
  * more than the one being read.
@@ -831,6 +881,14 @@ function ArtifactDetail({
           </DetailOverlay>
         )}
       />
+    );
+  }
+
+  if (isTableMedia(artifact.mediaType, artifact.name)) {
+    return (
+      <DetailOverlay name={artifact.name} onClose={onClose} fill>
+        <TableDetail url={url} artifact={artifact} />
+      </DetailOverlay>
     );
   }
 

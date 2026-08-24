@@ -30,6 +30,8 @@ const FRAME_MEDIA = new Set([
   "application/xhtml+xml",
 ]);
 
+const TABLE_MEDIA = new Set(["text/csv", "text/tab-separated-values"]);
+
 // Markdown and plain text are documents the app READS ITSELF. An iframe would
 // paint a `.md` artifact as its own source — hashes, pipes and all — so these
 // media types are routed to `TextArtifact` instead of to a sandboxed frame.
@@ -67,6 +69,18 @@ export function isMarkdownMedia(
   return MARKDOWN_EXTENSIONS.has(extensionOf(filename));
 }
 
+/** Tabular text the app renders as a sortable data grid. */
+export function isTableMedia(
+  mime: string | undefined,
+  filename?: string,
+): boolean {
+  const media = baseMedia(mime);
+  if (TABLE_MEDIA.has(media)) return true;
+  if (media && media !== "application/octet-stream" && media !== "text/plain")
+    return false;
+  return new Set(["csv", "tsv"]).has(extensionOf(filename));
+}
+
 /** Text the app renders itself — markdown as prose, anything else verbatim. */
 export function isTextMedia(
   mime: string | undefined,
@@ -83,7 +97,11 @@ export function isDocMedia(
   mime: string | undefined,
   filename?: string,
 ): boolean {
-  return FRAME_MEDIA.has(baseMedia(mime)) || isTextMedia(mime, filename);
+  return (
+    FRAME_MEDIA.has(baseMedia(mime)) ||
+    isTableMedia(mime, filename) ||
+    isTextMedia(mime, filename)
+  );
 }
 
 export function isPdfMedia(mime: string | undefined): boolean {
@@ -96,6 +114,10 @@ export function docKindLabel(
   filename?: string,
 ): string {
   if (isPdfMedia(mime)) return "PDF";
+  if (isTableMedia(mime, filename))
+    return extensionOf(filename) === "tsv" || baseMedia(mime) === "text/tab-separated-values"
+      ? "TSV"
+      : "CSV";
   if (isMarkdownMedia(mime, filename)) return "MD";
   if (isTextMedia(mime, filename)) return "TXT";
   if (isDocMedia(mime, filename)) return "HTML";

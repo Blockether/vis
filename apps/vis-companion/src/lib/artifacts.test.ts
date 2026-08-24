@@ -31,13 +31,14 @@ import type { SessionArtifact } from "./artifacts";
 import type { IterationAttachment, TranscriptTurn } from "./types";
 
 describe("document media types", () => {
-  it("recognises the three types the engine keeps off the wire", () => {
+  it("recognises the types the app can open", () => {
     expect(isDocMedia("application/pdf")).toBe(true);
     expect(isDocMedia("text/html")).toBe(true);
     expect(isDocMedia("application/xhtml+xml")).toBe(true);
     expect(isDocMedia("TEXT/HTML; charset=utf-8")).toBe(true);
+    expect(isDocMedia("text/csv")).toBe(true);
+    expect(isDocMedia("text/tab-separated-values")).toBe(true);
     expect(isDocMedia("image/png")).toBe(false);
-    expect(isDocMedia("text/csv")).toBe(false);
     expect(isDocMedia(undefined)).toBe(false);
   });
 
@@ -146,13 +147,15 @@ describe("attachment classification", () => {
     expect(attachmentIsPlayable(run)).toBe(false);
   });
 
-  it("sorts every attachment into exactly one kind", () => {
+  // Regression, user report: CSV artifacts were dead tiles, so clicking one never opened
+  // the table already available in the transcript.
+  it("sorts every attachment into exactly one openable kind", () => {
     expect(artifactKind({ index: 0, media_type: "image/png" })).toBe("image");
     expect(artifactKind({ index: 0, media_type: "video/mp4" })).toBe("video");
     expect(artifactKind({ index: 0, media_type: "audio/mp4" })).toBe("audio");
     expect(artifactKind({ index: 0, media_type: "audio/mpeg" })).toBe("audio");
     expect(artifactKind({ index: 0, media_type: "text/html" })).toBe("doc");
-    expect(artifactKind({ index: 0, media_type: "text/csv" })).toBe("file");
+    expect(artifactKind({ index: 0, media_type: "text/csv" })).toBe("doc");
     expect(artifactKind({ index: 0 })).toBe("file");
   });
 
@@ -239,7 +242,7 @@ describe("collecting what a session produced", () => {
       "notes.csv",
       "revenue.png",
     ]);
-    expect(list.map((entry) => entry.kind)).toEqual(["doc", "file", "image"]);
+    expect(list.map((entry) => entry.kind)).toEqual(["doc", "doc", "image"]);
   });
 
   it("counts the turn from the start of the session, not of the window", () => {

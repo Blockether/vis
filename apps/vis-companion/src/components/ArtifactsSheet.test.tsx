@@ -97,6 +97,18 @@ const note = artifact({
   turn: 1,
   iterationId: "i4",
 });
+const table = artifact({
+  key: "i6:0",
+  kind: "doc",
+  name: "jobs.csv",
+  media: "CSV",
+  mediaType: "text/csv",
+  size: 28,
+  sizeLabel: "28B",
+  turn: 2,
+  iterationId: "i6",
+});
+
 const run = artifact({
   key: "i5:0",
   kind: "live",
@@ -134,6 +146,16 @@ const readable = () =>
         { headers: { "content-type": "text/markdown" } },
       );
     }),
+  );
+
+const readableTable = () =>
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      new Response("name;email\nNatalia;natalia@example.com\n", {
+        headers: { "content-type": "text/csv" },
+      }),
+    ),
   );
 
 /** Visible text of a rendered chunk: tags out, entities back. */
@@ -201,6 +223,24 @@ describe("the artifacts sheet", () => {
     expect(html).toContain('id="artifacts-surface"');
     expect(html).toContain('role="region"');
     expect(html).toContain("absolute inset-0");
+  });
+
+  // Regression, user report: clicking a CSV artifact left the gallery in place because
+  // recorded files were deliberately dead even though CSV already has a table viewer.
+  it("opens a CSV artifact in the table viewer", async () => {
+    readableTable();
+    const user = userEvent.setup();
+    const view = render(
+      <ArtifactsSheet client={client} sid="s1" artifacts={[table]} onClose={() => {}} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Open jobs\.csv/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("grid", { name: "jobs.csv" })).toBeInTheDocument(),
+    );
+    expect(view.baseElement.textContent).toContain("natalia@example.com");
+    view.unmount();
+    vi.unstubAllGlobals();
   });
 
   // Regression, user report ("the artifact button, instead of being the dark one with
