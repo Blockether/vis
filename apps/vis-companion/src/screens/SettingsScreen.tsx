@@ -1971,7 +1971,6 @@ function machineId(conn: GatewayConn): string {
  */
 export function SettingsDialog({
   gateways,
-  gateway,
   primaryUrl,
   onAddMachine,
   onMakePrimary,
@@ -1981,12 +1980,6 @@ export function SettingsDialog({
   onClose,
 }: {
   gateways: GatewayConn[];
-  /**
-   * The machine this dialog was OPENED on, and the only row that starts open: the cog
-   * lands on the machine the app is using, a session's `Manage providers` on its own
-   * machine. `null` only when none is paired.
-   */
-  gateway: GatewayConn | null;
   primaryUrl?: string | null;
   /** Pairing is setup, and setup happens HERE — never by leaving this dialog. */
   onAddMachine: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
@@ -2071,20 +2064,11 @@ export function SettingsDialog({
     return next;
   }
 
-  // WHICH MACHINES STAND OPEN, held by the identity that survives an address change.
-  // Several may: opening a machine is never a reason to close another one.
-  //
-  // The conn we were opened FROM can be a snapshot taken before that machine's id was
-  // backfilled, so it is resolved against the live fleet — by identity, then by address —
-  // before its identity is taken. Trusting the snapshot opened the dialog on an id no row
-  // carried, and the machine's own panels stayed shut.
-  const [openIds, setOpenIds] = useState<ReadonlySet<string>>(() => {
-    if (!gateway) return new Set<string>();
-    const paired =
-      gateways.find((conn) => machineId(conn) === machineId(gateway)) ??
-      gateways.find((conn) => conn.url === gateway.url);
-    return new Set([machineId(paired ?? gateway)]);
-  });
+  // Settings opens on the fleet, not inside one machine. The reader chooses which
+  // disclosures to open; opening one is never a reason to close another one.
+  const [openIds, setOpenIds] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
   const toggleMachine = useCallback((conn: GatewayConn) => {
     setOpenIds((open) => {
       const next = new Set(open);

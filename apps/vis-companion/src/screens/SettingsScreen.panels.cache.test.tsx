@@ -1,11 +1,7 @@
 // @vitest-environment jsdom
-// Regression, user report (paraphrased: "going to settings, when it opens the
-// primary machine, flickers the MCP servers, the providers and the
-// notifications"): each of those panels asked its machine on mount and painted
-// empty until the answer landed, so every open of the dialog flashed — and the
-// Notifications panel of a machine without `/v1/devices` painted itself and
-// then deleted itself, taking everything below it up the screen.
-import { render, screen, waitFor } from "@testing-library/react";
+// Machine panels are warmed before their disclosure opens. Once they have answered,
+// reopening that machine must paint the cached answer immediately instead of flickering.
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsDialog } from "./SettingsScreen";
@@ -66,23 +62,31 @@ const open = () =>
   render(
     <SettingsDialog
       gateways={[MACHINE]}
-      gateway={MACHINE}
       onAddMachine={async () => {}}
       onClose={() => {}}
     />,
   );
 
-describe("reopening the settings dialog on a machine that already answered", () => {
-  it("paints the MCP servers and the providers in the first frame", async () => {
+const openMachine = () => {
+  const row = screen
+    .getAllByRole("button")
+    .find((button) => button.hasAttribute("aria-expanded"));
+  if (!row) throw new Error("Machine disclosure not found");
+  fireEvent.click(row);
+};
+
+describe("opening settings for a machine that already answered", () => {
+  it("paints the MCP servers and providers in the first open frame", async () => {
     globalThis.fetch = machine() as unknown as typeof fetch;
     const first = open();
+    openMachine();
     await waitFor(() => expect(screen.getByText("files")).toBeTruthy());
     first.unmount();
 
-    // Same machine, now unreachable: whatever this open paints, it paints from
-    // what it already holds.
+    // Same machine, now unreachable: its disclosure paints what the cache holds.
     globalThis.fetch = silent() as unknown as typeof fetch;
     const second = open();
+    openMachine();
     expect(screen.getByText("files")).toBeTruthy();
     expect(screen.queryByText("Checking provider sign-in…")).toBeNull();
     second.unmount();

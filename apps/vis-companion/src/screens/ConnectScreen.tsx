@@ -7,7 +7,7 @@ interface Props {
   active: GatewayConn | null;
   primary: GatewayConn | null;
   onAdd: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
-  onSettings: (conn: GatewayConn) => void;
+  onSettings: () => void;
   /** Why the active gateway was dropped, when it stopped answering. */
   offlineError?: string | null;
   /** Retry the active gateway and go back to sessions if it answers. */
@@ -56,7 +56,7 @@ export function ConnectScreen({
               selectedUrl={active?.url}
               primaryUrl={primary?.url}
               health={health}
-              onPick={onSettings}
+              onPick={() => onSettings()}
               actionLabel="Settings"
             />
           </div>

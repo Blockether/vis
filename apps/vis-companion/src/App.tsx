@@ -195,17 +195,10 @@ export function App() {
     sid: string;
     fresh?: boolean;
   } | null>(null);
-  const [settingsTarget, setSettingsTarget] = useState<GatewayConn | null>(
-    null,
-  );
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // ONE settings dialog, opened from two places at two aims: the cog opens it on the
-  // machine the app is already using, a machine's `⋯` opens it on that machine. Both
-  // land in the same box, so neither is a different destination.
-  const openSettings = useCallback((conn: GatewayConn | null) => {
-    if (conn) setSettingsTarget(conn);
-    setSettingsOpen(true);
-  }, []);
+  // Settings opens at its two top-level choices. A machine remains collapsed until
+  // the reader presses that machine's own row.
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
   const [ready, setReady] = useState(false);
   // Set when the sessions screen finds the active gateway unreachable. While it
   // holds a message there is nothing to navigate, so the shell shows Machines
@@ -309,7 +302,6 @@ export function App() {
     const previous = shownScreen.current;
     shownScreen.current = screen;
     if (!isSessionEntered(previous, screen)) return;
-    setSettingsTarget(null);
     setSettingsOpen(false);
   }, [screen]);
 
@@ -479,8 +471,8 @@ export function App() {
   const backRef = useRef<() => void>(() => {});
   useEffect(() => {
     backRef.current = () => {
-      if (settingsTarget) {
-        setSettingsTarget(null);
+      if (settingsOpen) {
+        setSettingsOpen(false);
         return;
       }
       if (openTarget) {
@@ -1011,7 +1003,7 @@ export function App() {
             setSearching(false);
             setQuery("");
           }}
-          onAppSettings={() => openSettings(active ?? primary ?? conns[0] ?? null)}
+          onAppSettings={openSettings}
         />
       )}
 
@@ -1075,7 +1067,7 @@ export function App() {
             onOpenSession={(sid, fresh) =>
               void openGatewaySession(openTarget.conn, sid, fresh)
             }
-            onManageProviders={() => openSettings(openTarget.conn)}
+            onManageProviders={openSettings}
           />
         )}
       </main>
@@ -1083,7 +1075,6 @@ export function App() {
       {settingsOpen && (
         <SettingsDialog
           gateways={conns}
-          gateway={settingsTarget}
           primaryUrl={primary?.url}
           onAddMachine={addConnection}
           onMakePrimary={async (conn) => {
@@ -1097,21 +1088,16 @@ export function App() {
           onRename={async (conn, label) => {
             const updated = { ...conn, label };
             await upsertConnection(updated);
-            // The row the dialog opened on keeps its identity under the new name.
-            if (settingsTarget?.url === conn.url) setSettingsTarget(updated);
             await refresh();
           }}
           onRemove={async (conn) => {
             await removeConnection(conn.url);
-            if (settingsTarget?.url === conn.url) setSettingsTarget(null);
             await refresh();
           }}
           onSelectAddress={async (conn, url, pinned) => {
             // The verb acts on the ROW it came out of, never on another machine: the
-            // address line belongs to its own machine, and only the two pointers that
-            // actually named this gateway move with it.
+            // address line belongs to its own machine, and the active pointer moves with it.
             const wasActive = conn.url === active?.url;
-            const wasOpened = settingsTarget?.url === conn.url;
             if (url !== conn.url) {
               const named = Boolean(conn.label) && conn.label !== hostOf(conn.url);
               await switchConnectionUrl(
@@ -1122,7 +1108,6 @@ export function App() {
             }
             const saved = await upsertConnection({ url, pinned });
             const next = saved.find((c) => c.url === url) ?? { ...conn, url, pinned };
-            if (wasOpened) setSettingsTarget(next);
             if (wasActive) setActive(next);
             await refresh();
           }}
