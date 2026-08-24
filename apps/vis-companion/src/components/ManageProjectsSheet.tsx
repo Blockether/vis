@@ -333,11 +333,11 @@ export function ManageProjectsSheet({
       at={at}
       onDismiss={onCancel}
     >
-      {/* The same panel the draft picker wears, because this asks the same kind of
-          question: one loud band naming what the rows act on, the app's one way
-          out inside it, and rows that are `MenuItem`s. It used to be a full-height
-          `DialogFrame` — a different box, a different header and a different
-          entrance for a list one tap away from the menu that opened it.
+      {/* This uses the app's one anchored browsing panel: one loud band naming
+          what the rows act on, the app's one way out inside it, and rows that are
+          `MenuItem`s. It used to be a full-height `DialogFrame` — a different box,
+          a different header and a different entrance for a list one tap away from
+          the menu that opened it.
 
           The band does NOT name the machine. It read `Projects · 100.123.200.103:7890`
           for any machine whose pairing had no label — an address in the loudest strip of

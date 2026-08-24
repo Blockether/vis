@@ -513,13 +513,14 @@
       (expect (= 2 (tr/pane-count commit-transient-spec leader-band-region)))))
 
 (def ^:private list-spec
-  "A band that is ONE long list, the shape `C-x d`'s draft chooser has."
-  {:title "Drafts"
+  "A band that is ONE long list, such as a session chooser."
+  {:title "Sessions"
    :groups [{:title "Switch to"
              :items
-             (mapv (fn [i]
-                     {:key (str i) :type :action :id (keyword (str "d" i)) :label (str "draft " i)})
-                   (range 12))}]})
+             (mapv
+               (fn [i]
+                 {:key (str i) :type :action :id (keyword (str "s" i)) :label (str "session " i)})
+               (range 12))}]})
 
 ;; Regression, issue #C-x resolution-aware columns: the band took its column
 ;; count from how many categories the spec happened to have, so a one-group list
@@ -562,11 +563,10 @@
       (expect (= 5 (count (:groups leader-spec))))
       (expect (= 5 (tr/pane-count leader-spec leader-band-region)))))
 
-;; Regression, issue #C-x d columns: the verbs started in the SAME column as the
-;; heading above them and their descriptions sat one space off a one-letter key,
-;; so the band read as a ragged list instead of a grid; and every pane was as
-;; wide as the widest label in the WHOLE spec, which packed a wide band's columns
-;; into its left half and left the trailing third empty.
+;; A one-group grid once started its verbs in the SAME column as the heading
+;; above them and put descriptions one space off a one-letter key, so the band
+;; read as a ragged list. Every pane also followed the widest label in the WHOLE
+;; spec, packing a wide band's columns into its left half.
 (defdescribe
   transient-column-grid-test
   (it "verbs are INDENTED under their heading and the description clears the key"

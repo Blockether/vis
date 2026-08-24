@@ -1534,7 +1534,7 @@ export function SessionsScreen({
     // The words that made a row dirty die with it: a draft message kept under a
     // session id that no longer exists is unreachable forever. The star needs no
     // sweep of its own — it lived on the session the gateway just deleted.
-    const forgetDrafts = (ids: string[]) => {
+    const forgetDraftMessages = (ids: string[]) => {
       for (const sid of ids) clearDraftMessage(draftMessageKey(api.base, sid));
       if (ids.length > 0) void flushDraftMessages();
     };
@@ -1591,14 +1591,14 @@ export function SessionsScreen({
         );
       } else if (rowAction.mode === 'delete') {
         await api.deleteSession(rowAction.session.id);
-        forgetDrafts([rowAction.session.id]);
+        forgetDraftMessages([rowAction.session.id]);
         forgetRows([rowAction.session.id]);
       } else {
         // ONE REQUEST WHERE THE GATEWAY OWNS THE PROJECT: it deletes the members it
         // knows about, which is more than any list paints.
         if (rowAction.projectId) {
           const deleted = await api.deleteProject(rowAction.projectId);
-          forgetDrafts(deleted);
+          forgetDraftMessages(deleted);
           forgetRows(deleted);
         } else {
           // No project row to hand the group to, so the fan-out IS the delete — over
@@ -1619,7 +1619,7 @@ export function SessionsScreen({
             }
             setActionProgress({ done: gone.length + failed, total: ids.length });
           }
-          forgetDrafts(gone);
+          forgetDraftMessages(gone);
           // A partial fan-out is exactly known too: the ids that died leave, the ones
           // that refused keep their rows, and the note says how many refused.
           forgetRows(gone);

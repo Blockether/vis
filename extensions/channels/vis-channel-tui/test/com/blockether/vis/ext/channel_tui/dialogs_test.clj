@@ -479,39 +479,45 @@
           (expect (= 1 (scroll-start hs 2 0 4)))
           (expect (= 2 (scroll-start hs 2 2 4)))
           (expect (= 0 (scroll-start hs 0 0 99)))))
-    (it "keeps selection plain while sessions retain one row of breathing room"
-        (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
-              draw-session (var-get #'dlg/draw-navigator-session!)
-              draw-hit (var-get #'dlg/draw-navigator-hit-line!)
-              entry {:focused? false
-                     :status "idle"
-                     :title "First session"
-                     :session "abc1234"
-                     :draft "trunk"
-                     :modified "now"}
-              x 4
-              row 6
-              width 16]
+    (it
+      "keeps selection plain while sessions retain one row of breathing room"
+      (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)
+            draw-session (var-get #'dlg/draw-navigator-session!)
+            draw-hit (var-get #'dlg/draw-navigator-hit-line!)
+            entry {:focused? false
+                   :status "idle"
+                   :title "First session"
+                   :session "abc1234"
+                   :modified "now"}
+            x 4
+            row 6
+            width 32]
 
-          (try
-            (let [g (.newTextGraphics screen)]
-              (draw-session g x row width entry true)
-              (draw-hit g x (+ row 2) width "needle" {:label "U" :role :user :text "needle match"})
-              (draw-session g x (+ row 4) width entry false)
-              (let [selected-title-bg (.getBackgroundColor
-                                        (.getBackCharacter screen (int (+ x 2)) (int row)))
-                    selected-meta-bg (.getBackgroundColor
-                                       (.getBackCharacter screen (int (+ x 2)) (int (inc row))))
-                    selected-hit-bg (.getBackgroundColor
-                                      (.getBackCharacter screen (int (+ x 2)) (int (+ row 2))))
-                    inactive-bg (.getBackgroundColor
-                                  (.getBackCharacter screen (int (+ x 2)) (int (+ row 4))))
-                    spacer-glyph (.getCharacterString
-                                   (.getBackCharacter screen (int x) (int (+ row 3))))]
+        (try (let [g (.newTextGraphics screen)]
+               (draw-session g x row width entry true)
+               (draw-hit g x (+ row 2) width "needle" {:label "U" :role :user :text "needle match"})
+               (draw-session g x (+ row 4) width entry false)
+               (let [selected-title-bg (.getBackgroundColor
+                                         (.getBackCharacter screen (int (+ x 2)) (int row)))
+                     selected-meta-bg (.getBackgroundColor
+                                        (.getBackCharacter screen (int (+ x 2)) (int (inc row))))
+                     selected-hit-bg (.getBackgroundColor
+                                       (.getBackCharacter screen (int (+ x 2)) (int (+ row 2))))
+                     inactive-bg (.getBackgroundColor
+                                   (.getBackCharacter screen (int (+ x 2)) (int (+ row 4))))
+                     spacer-glyph (.getCharacterString
+                                    (.getBackCharacter screen (int x) (int (+ row 3))))
+                     metadata (apply str
+                                (for [column (range 80)]
+                                  (.getCharacterString
+                                    (.getBackCharacter screen (int column) (int (inc row))))))]
 
-                (expect (= selected-title-bg selected-meta-bg selected-hit-bg inactive-bg))
-                (expect (= " " spacer-glyph))))
-            (finally (.stopScreen screen)))))
+                 (expect (= selected-title-bg selected-meta-bg selected-hit-bg inactive-bg))
+                 (expect (= " " spacer-glyph))
+                 ;; A removed workspace-mode column must not survive as an empty separator.
+                 (expect (str/includes? metadata "abc1234  ·  now"))
+                 (expect (not (str/includes? metadata "·    ·")))))
+             (finally (.stopScreen screen)))))
     (it "highlight segments bold only the case-insensitive needle occurrences"
         (let [segs (var-get #'dlg/navigator-highlight-segments)]
           (expect (= [["a " false] ["Search" true] [" b" false]] (segs "a Search b" "search")))

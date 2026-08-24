@@ -132,8 +132,8 @@ describe("ManageProjectsSheet paints no box of its own", () => {
     const { panel } = sheet();
     await screen.findByRole("menuitem", { name: /vis/ });
 
-    // Byte for byte the draft picker's panel: the sheet adds no box, no height cap of
-    // its own (`max-h-[80vh]` at the call site stopped it 169px short of the glass)
+    // Byte for byte the canonical browsing panel: the sheet adds no box, no height cap
+    // of its own (`max-h-[80vh]` at the call site stopped it 169px short of the glass)
     // and no second way of arriving.
     expect(paint(panel())).toEqual(
       skinOf(

@@ -142,8 +142,8 @@ What a remote target changes:
   machine, so a remote client sends none and is never reaped as "dead".
 - Your local registry is never consulted and `--db` means nothing next to
   `--gateway`. The whole `sessions` family is the exception: `list`, `show`,
-  `fork`, `draft`, `delete` and `export` read THIS machine's database directly
-  instead of asking a gateway, so they keep reporting local sessions whatever
+  `fork`, `delete` and `export` read THIS machine's database directly instead
+  of asking a gateway, so they keep reporting local sessions whatever
   `--gateway` says. A remote gateway's sessions are browsed from its TUI.
 - An unreachable host, or a value that names no host, is an error — never a
   silent fall back to your own daemon, which would run the work on the wrong
@@ -355,8 +355,8 @@ a shared publisher endpoint. `VIS_WEB_PUSH_SUBJECT` may set the VAPID contact
 
 The browser's subscription is registered as `platform: "web"` on that gateway.
 The gateway owns the VAPID key, encryption, delivery and stale-subscription
-cleanup; no Cloudflare Worker or static relay URL is involved. Sessions, streaming,
-and drafts are unaffected either way.
+cleanup; no Cloudflare Worker or static relay URL is involved. Sessions and
+streaming are unaffected either way.
 
 
 ### Relayed push (a gateway with no Apple or Google key)

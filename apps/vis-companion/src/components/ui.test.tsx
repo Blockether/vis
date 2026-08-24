@@ -1726,6 +1726,8 @@ describe("where a new session starts", () => {
     expect(sessionsListSource).not.toContain("openDraftsAt");
     expect(sessionsListSource).not.toContain("onNewDraft");
     expect(gatewaySource).not.toContain("/workspace/drafts");
+    expect(boundarySource).not.toContain("sessions and drafts");
+    expect(boundarySource).toContain("unsent messages stay on this device");
   });
 
   it("picks every setting with the one ChoiceCell, spelled once", () => {

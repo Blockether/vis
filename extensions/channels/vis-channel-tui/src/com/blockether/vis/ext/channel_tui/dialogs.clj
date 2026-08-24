@@ -5156,7 +5156,7 @@
         (+ (long x) (max 2 (- (long width) status-w)))
 
         metadata
-        (str (:session entry) "  ·  " (:draft entry) "  ·  " (:modified entry))]
+        (str (:session entry) "  ·  " (:modified entry))]
 
     (p/draw-selection-marker! g x row selected? t/dialog-hint-key)
     (p/set-colors! g
