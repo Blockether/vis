@@ -100,4 +100,4 @@
      :ext/prompt-fn combined-prompt
      :ext/doctor-fn lazy-doctor-fn}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

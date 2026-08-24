@@ -37,4 +37,4 @@
      :ext/sandbox-shims
      [{:shim/name "numpy" :shim/imports ["numpy"] :shim/source "vis-shims/numpy.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

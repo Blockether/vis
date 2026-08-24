@@ -44,7 +44,7 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 66 unique, across 18 `deps.edn` modules (root + extensions).
+- **Direct dependency coordinates:** 65 unique, across 17 `deps.edn` modules (root + extensions).
 - **Declared jar footprint (direct coords):** ~145 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
@@ -244,14 +244,6 @@ _Terminal UI (Lanterna)._
 | `com.blockether/lanterna` | `3.1.5-vis.42` | LGPL-3.0 | 542 KB | Blockether (in-house) |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 
-### `vis-foundation-bridge` extension
-
-_Bridge verification tool surface._
-
-| Dependency | Version | License | Jar size | Ownership |
-|---|---|---|---|---|
-| `com.blockether/bridge` | `0.3.0` | Apache-2.0 | 46 KB | Blockether (in-house) |
-
 ### `vis-foundation-voice` extension
 
 _Local speech (upstream sherpa-onnx; ONNX Runtime rides inside its native jar)._
@@ -297,7 +289,7 @@ _Durable session store (SQLite + Flyway migrations)._
 | License | Count |
 |---|---|
 | EPL-1.0 | 21 |
-| Apache-2.0 | 15 |
+| Apache-2.0 | 14 |
 | MIT | 13 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |

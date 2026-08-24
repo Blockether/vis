@@ -48,4 +48,4 @@
                           :shim/bindings xlsxwriter-bridge-bindings
                           :shim/source "vis-shims/xlsxwriter.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

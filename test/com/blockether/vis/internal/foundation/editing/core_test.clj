@@ -25,7 +25,6 @@
             [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.env-python :as ep]
-            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
             [com.blockether.vis.internal.extension :as extension]
             [lazytest.core :refer [defdescribe describe expect it throws?]]))
 
@@ -2964,7 +2963,7 @@
           ;; coerce-find (actual search) normalizes file→dir
           (expect (= [expected-dir] (:paths (coerce-find [spec]))))
           ;; find-arg-paths (gate checking) keeps the file so
-          ;; .bridge/ephemeral/x.yaml is authorized as that file, not .bridge/ephemeral/
+          ;; config/private/settings.edn is authorized as that file, not config/private/
           (expect (= [expected-file] (find-paths [spec])))))
     (it "accepts context-lines and rejects a negative/non-integer one"
         (expect (= 2 (:context (coerce-find [{"query" "needle" "context" 2}]))))
@@ -4891,48 +4890,3 @@
 
                  (expect (string/includes? message "anchored TEXT"))
                  (expect (not (string/includes? message "returns a MAP"))))))
-
-
-;; =============================================================================
-;; The pages themselves — does the ask a model TYPES answer this extension?
-;; =============================================================================
-
-(def ^:private editing-handles
-  "The three handles this extension puts in front of the model."
-  #{"cat" "patch" "grep"})
-
-(defn- ranked-corpus
-  "What `apropos` ranks: every documented handle the session can reach, plus
-   every documentation page and skill. The underscore transports go, exactly as
-   the sandbox listing drops them."
-  []
-  (into (into []
-              (comp (remove #(string/starts-with? (str (key %)) "_"))
-                    (map (fn [[sym text]]
-                           {:name (str sym) :text (str text) :kind "tool"})))
-              (extension/sandbox-symbol-docs))
-        (doc-corpus/entries)))
-
-(defdescribe
-  natural-ask-test
-  "Every page here was written for a reader who already knew the tool, so the ask
-   a model actually types answered someone else: `find where a symbol is used
-   across the repo` put `grep` 36th, `what functions are defined in this file`
-   put `patch` 50th, `show me lines 10 to 40 of a file` put `cat` 15th.
-   Each page now OPENS with the question it answers, in the words of the ask."
-  (it "answers the editing tool whose job the ask is"
-      (let [corpus (ranked-corpus)]
-        (doseq [[ask want] [["find where a symbol is used across the repo" "grep"]
-                            ["who calls this function" "grep"]
-                            ["locate the file that defines this class" "grep"]
-                            ["search the codebase for a function name" "grep"]
-                            ["show me lines 10 to 40 of a file" "cat"]
-                            ["read a file with line numbers" "cat"]
-                            ["replace lines in a file" "patch"]
-                            ["edit a config file without rewriting it" "patch"]
-                            ["rewrite a docstring in place" "patch"]]]
-          (let [ranked (mapv :name (doc-corpus/search corpus ask {:limit 50}))]
-            ;; Of the six, the RIGHT one — a page must not answer its neighbour's ask.
-            (expect (= [ask want] [ask (first (filter editing-handles ranked))]))
-            ;; And never buried: the defect was a correct page sitting 15th to 50th.
-            (expect (= [ask true] [ask (contains? (set (take 3 ranked)) want)])))))))

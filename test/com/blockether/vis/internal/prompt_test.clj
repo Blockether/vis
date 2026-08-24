@@ -3,6 +3,7 @@
             [com.blockether.vis.internal.agents :as agents]
             [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.prompt :as prompt]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -76,9 +77,9 @@
       ;; named verbs: §2's non-blocking rule and §3's five filesystem names are what stop the
       ;; model guessing an `op` discriminator that no longer exists.
       ;; The ceiling has never moved UP for a rewrite: when eighteen tools became one,
-      ;; §1 lost `vis_docs` and the JSON-Schema clause, §2 lost the native-vs-Python routing
-      ;; fork, and what replaced them — "ONE call exists", the discovery contract and the
-      ;; folding truth — had to fit UNDER the existing budget. It does, at 4 729 chars.
+      ;; stale discovery and JSON-Schema prose left §1, §2 lost native-vs-Python routing,
+      ;; and what replaced them — "ONE call exists", the discovery contract and the folding
+      ;; truth — had to fit UNDER the existing budget. It does, at 4 729 chars.
       ;; The win of that change is not here; it is the provider `:tools` payload, which
       ;; went from eighteen JSON Schemas to one.
       ;; 4.75k → 4.8k exactly once more, for the fifty characters that make §6 executable:
@@ -175,12 +176,12 @@
       (expect (str/includes? text "`shell(...)` runs programs"))
       (expect (str/includes? text "No shell TOOL"))
       (expect (< (str/index-of text "`grep(...)` FIRST")
-                 (str/index-of text "`apropos(text)` ranks every SYMBOL")))
+                 (str/index-of text "`apropos(pattern)` filters SYMBOL names")))
       (doseq [heading ["## 1. Identity + Epistemic stance" "## 2. Execution surfaces"
                        "## 3. Inspect" "## 4. Edit + verify" "## 5. Act autonomously"
                        "## 6. Manage context" "## 7. Style and finish"]]
         (expect (str/includes? text heading)))
-      (doseq [required ["Host project default" "`apropos(text)` ranks every SYMBOL"
+      (doseq [required ["Host project default" "`apropos(pattern)` filters SYMBOL names"
                         "`doc(name)` returns" "runtime > source > docs > assumption"
                         "obey its stated preconditions" "the curated index"
                         "A skill is one of those documents" "`python_execution`" "ONE call exists"
@@ -244,25 +245,25 @@
       ;; `ntr` is gone: with `python_execution` the only call, nothing stores a
       ;; result the model could re-read by coordinate, so the prompt must never
       ;; promise one again.
-      (doseq [surplus
-              ["Keep managed REPLs across turns" "ntr[" "# saved:" "ntr.describe()"
-               ;; Regression, issue #ctx-resources: live shells/REPLs left ctx entirely,
-               ;; so no prompt may send the model to a `session["resources"]` that is gone.
-               "session[\"resources\"]"
-               ;; The vocabulary of eighteen doors: naming any of it again re-opens
-               ;; the routing question that having ONE call exists to close.
-               "native tool" "Native tool" "JSON Schema" "vis_docs" "advertised"
-               "Direct native tools" "Raise vis bugs/issues" "After 3 failures"
-               "Complete tasks autonomously" "canonical decision table" "anything complicated"
-               ;; schema-owned or removed contracts stay out of the core prompt
-               "stales anchors" "benchmark/profile" "Route vis issues upstream"
-               "Before every `fold_session`" "`await read_session" "≤120 words" "never offer a menu"
-               ;; The sleep/poll prohibition is OWNED by `python_execution`'s own
-               ;; description (pinned in loop_test). §1 already makes native
-               ;; descriptions authoritative, so a core copy is dead weight: the
-               ;; core keeps only the routing rule (background shells → `shell`
-               ;; op `wait`), never the tool-local prohibition.
-               "`time.sleep`" "`asyncio.sleep`" "poll in Python"]]
+      (doseq [surplus ["Keep managed REPLs across turns" "ntr[" "# saved:" "ntr.describe()"
+                       ;; Regression, issue #ctx-resources: live shells/REPLs left ctx entirely,
+                       ;; so no prompt may send the model to a `session["resources"]` that is gone.
+                       "session[\"resources\"]"
+                       ;; The vocabulary of eighteen doors: naming any of it again re-opens
+                       ;; the routing question that having ONE call exists to close.
+                       "native tool" "Native tool" "JSON Schema" "advertised" "Direct native tools"
+                       "Raise vis bugs/issues" "After 3 failures" "Complete tasks autonomously"
+                       "canonical decision table" "anything complicated"
+                       ;; schema-owned or removed contracts stay out of the core prompt
+                       "stales anchors" "benchmark/profile" "Route vis issues upstream"
+                       "Before every `fold_session`" "`await read_session" "≤120 words"
+                       "never offer a menu"
+                       ;; The sleep/poll prohibition is OWNED by `python_execution`'s own
+                       ;; description (pinned in loop_test). §1 already makes native
+                       ;; descriptions authoritative, so a core copy is dead weight: the
+                       ;; core keeps only the routing rule (background shells → `shell`
+                       ;; op `wait`), never the tool-local prohibition.
+                       "`time.sleep`" "`asyncio.sleep`" "poll in Python"]]
         (expect (not (str/includes? text surplus))))))
   (it
     "advertises exact model-facing Python capabilities, never internal shim ids"
@@ -328,7 +329,7 @@
       ;; The registry itself, not a fixture: the model gets exactly these names. The
       ;; prose that used to ride along — one hand-written bullet per shim — now lives
       ;; in each module's own Python `__doc__`, is harvested into
-      ;; `resources/vis-shims/capabilities.edn`, and is PULLED by `doc(name)`. A block
+      ;; the manifest-listed shim apropos resource, and is PULLED by `doc(name)`. A block
       ;; that grows back into prose is a context regression, not documentation.
       (let [text
             (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])
@@ -437,14 +438,14 @@
              ;; no longer act on, so the assembled prompt is checked for the old vocabulary
              ;; rather than only the core string.
              (it "names `python_execution`, and nothing from the eighteen-door vocabulary"
-                 (#'extension/load-builtin-extensions!)
+                 (manifest/initialize!)
                  (let [text (prompt/stable-prompt-text
                               (prompt/assemble-stable-prompt-messages
                                 {}
                                 {:active-extensions (vec (extension/registered-extensions))}))]
                    (expect (str/includes? text "python_execution"))
-                   (doseq [gone ["ntr[" "# saved:" "vis_docs" "native tool" "Native tool"
-                                 "native tools" "JSON Schema" "JSON schema" "advertised tool"]]
+                   (doseq [gone ["ntr[" "# saved:" "native tool" "Native tool" "native tools"
+                                 "JSON Schema" "JSON schema" "advertised tool"]]
                      (expect (not (str/includes? text gone)))))))
 
 (defdescribe extension-fragments-do-not-restate-doc-text-test
@@ -454,7 +455,7 @@
              ;; surface saved come straight back — and it makes a second contract that
              ;; drifts from the one that runs.
              (it "keeps every active fragment free of the text `doc(name)` already answers"
-                 (#'extension/load-builtin-extensions!)
+                 (manifest/initialize!)
                  (let [exts
                        (vec (extension/registered-extensions))
 

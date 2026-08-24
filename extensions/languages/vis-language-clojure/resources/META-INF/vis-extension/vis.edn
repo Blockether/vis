@@ -1,2 +1,0 @@
-{language-clojure
- {:nses [com.blockether.vis.ext.language-clojure.core]}}

@@ -90,14 +90,14 @@
                  (with-redefs [d/skills (constantly [{:name "demo" :description "Demo skill"}])]
                    (let [p ((deref #'core/skills-prompt) {})]
                      (expect (str/includes? p "doc(\"name\")"))
-                     (expect (str/includes? p "apropos(text)"))
+                     (expect (str/includes? p "apropos(pattern)"))
                      (expect (not (str/includes? p "skill(")))
                      (expect (not (str/includes? p "activates")))))))
 
 (defdescribe verb-shape-test
              ;; There is NO skill verb: a skill is retrieved with `doc(name)` and
-             ;; searched with `apropos(text)`, so nothing binds the name `skill` and
-             ;; nothing activates.
+             ;; filtered by name with `apropos(pattern)`, so nothing binds the name
+             ;; `skill` and nothing activates.
              (it "no skill verb is bound anywhere"
                  (expect (nil? (first (filter #(= 'skill (:ext.symbol/symbol %))
                                               (mapcat extension/ext-symbols

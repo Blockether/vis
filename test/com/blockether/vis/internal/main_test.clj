@@ -1,9 +1,9 @@
 (ns com.blockether.vis.internal.main-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
-            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.main :as main]
+            [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.toggles :as toggles]
@@ -79,26 +79,26 @@
 ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: the TUI client
 ;; synchronously initialized GraalPy before dispatch, then its gateway did it again.
 (defdescribe
-  dispatch-extension-discovery-test
-  (it "defers Python discovery only for the rewritten TUI command"
+  dispatch-extension-initialization-test
+  (it "defers Python initialization only for the rewritten TUI command"
       (let [calls (atom [])]
-        (with-redefs [extension/discover-extensions! #(swap! calls conj :clojure)
+        (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
                       python-extensions/load-python-extensions! #(swap! calls conj :python)]
 
-          (#'main/discover-for-dispatch! false ["channels" "tui" "--continue"])
+          (#'main/initialize-for-dispatch! false ["channels" "tui" "--continue"])
           (expect (= [:clojure] @calls)))))
-  (it "keeps Python discovery eager for one-shot commands"
+  (it "keeps Python initialization eager for one-shot commands"
       (let [calls (atom [])]
-        (with-redefs [extension/discover-extensions! #(swap! calls conj :clojure)
+        (with-redefs [manifest/initialize! #(swap! calls conj :clojure)
                       python-extensions/load-python-extensions! #(swap! calls conj :python)]
 
-          (#'main/discover-for-dispatch! false ["extension" "list"])
+          (#'main/initialize-for-dispatch! false ["extension" "list"])
           (expect (= [:clojure :python] @calls))))))
 (defdescribe
   fast-help-test
   (it "does not swallow unknown root commands that also ask for help"
       (expect (nil? (#'main/fast-help-dispatched? false ["missing" "--help"]))))
-  (it "still handles known built-in help without full extension discovery"
+  (it "still handles known built-in help without initializing the distribution"
       (let [out (java.io.StringWriter.)]
         (binding [*out* out]
           (expect (true? (#'main/fast-help-dispatched? false ["providers" "--help"]))))
@@ -107,7 +107,7 @@
       (let [out
             (java.io.StringWriter.)
 
-            discovered?
+            initialized?
             (atom false)
 
             fake-channel
@@ -116,15 +116,20 @@
              :channel/doc "Test channel for help."
              :channel/main-fn (fn [_args])}]
 
-        (try (with-redefs [main/discover-all! (fn []
-                                                (reset! discovered? true)
-                                                (registry/register-channel! fake-channel))]
+        (try (with-redefs [main/initialize-all! (fn []
+                                                  (reset! initialized? true)
+                                                  (registry/register-channel! fake-channel))]
                (binding [*out* out]
                  (expect (true? (#'main/fast-help-dispatched? false ["channels" "--help"]))))
-               (expect (true? @discovered?))
+               (expect (true? @initialized?))
                (expect (.contains (str out) "zzz-test"))
                (expect (.contains (str out) "Test channel for help.")))
              (finally (registry/deregister-channel! (:channel/id fake-channel))))))
+  (it "initializes the closed distribution before concrete channel help"
+      (let [initialized? (atom false)]
+        (with-redefs [main/initialize-all! #(reset! initialized? true)]
+          (#'main/initialize-fast-help-deps! ["channels" "tui" "--help"])
+          (expect (true? @initialized?)))))
   (it "strips launcher-owned flags when they leak into JVM args"
       (expect (= ["channels" "--help"] (#'main/strip-global-args ["channels" "--jfr" "--help"]))))
   (it "strips --stream-trace, which the wrapper consumes as a system property"

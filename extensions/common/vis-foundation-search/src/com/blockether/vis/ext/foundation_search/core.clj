@@ -1794,4 +1794,4 @@
      :ext/engine {:ext.engine/builtin? true :ext.engine/symbols search-symbols}
      :ext/kind "search"}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

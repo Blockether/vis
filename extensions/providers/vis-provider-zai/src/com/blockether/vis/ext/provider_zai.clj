@@ -597,11 +597,13 @@
      :provider/get-token-fn (make-get-token-fn plan-tag)
      :provider/limits-fn (make-limits-fn plan-tag)}))
 
-(vis/register-extension! (vis/extension {:ext/name "provider-zai"
-                                         :ext/description
-                                         "Z.ai coding-plan + pass static-API-key providers."
-                                         :ext/version "0.2.0"
-                                         :ext/author "Blockether"
-                                         :ext/owner "vis"
-                                         :ext/license "Apache-2.0"
-                                         :ext/providers (mapv provider-entry (keys PLANS))}))
+(defn register!
+  []
+  (vis/register-extension! (vis/extension {:ext/name "provider-zai"
+                                           :ext/description
+                                           "Z.ai coding-plan + pass static-API-key providers."
+                                           :ext/version "0.2.0"
+                                           :ext/author "Blockether"
+                                           :ext/owner "vis"
+                                           :ext/license "Apache-2.0"
+                                           :ext/providers (mapv provider-entry (keys PLANS))})))

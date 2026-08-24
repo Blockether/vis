@@ -141,7 +141,7 @@
       "glob": "META-INF/services/org.slf4j.spi.SLF4JServiceProvider"
     },
     {
-      "glob": "META-INF/vis-extension/vis.edn"
+      "glob": "META-INF/vis/.*"
     },
     {
       "glob": "VERSION"

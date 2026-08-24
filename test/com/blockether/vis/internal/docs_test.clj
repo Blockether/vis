@@ -62,11 +62,9 @@
 
 (defn- extending-md [] (:md (first (filter #(= "extending" (:slug %)) (:pages (docs/collect))))))
 
-;; A tool page is rendered from FOUR entry keys (`extension/symbol-signature`,
-;; `symbol-keys-line`, `symbol-doc-text`) and previewed as a FOUR-key row
-;; (`doc-corpus/gist`). `extending.md` is the only place an author is told either,
-;; so when one of those renderers changes, this test names the page that must
-;; change with it.
+ ;; A tool page is rendered from the entry contract and previewed as a three-field
+ ;; apropos row. `extending.md` is the author-facing contract for both renderings,
+ ;; so this test names the page that must change with either.
 (defdescribe
   extending-page-teaches-its-renderings-test
   (it "names every entry key `doc(name)` renders, and both structural lines"
@@ -75,9 +73,9 @@
         (doseq [needle [":description" ":params" ":result" ":call" "Keys:" "(REQUIRED)"
                         "Raw result:"]]
           (expect (str/includes? md needle) (str "extending.md never mentions " needle)))))
-  (it "shows an `apropos` item with all four of its fields"
+  (it "shows an `apropos` item with all three fields"
       (let [md (extending-md)]
-        (doseq [needle ["AproposItem(" "type=" "name=" "rank=" "body="]]
+        (doseq [needle ["AproposItem(" "type=" "name=" "body="]]
           (expect (str/includes? md needle)
                   (str "extending.md never shows " needle " in an apropos item")))))
   (it "names the shim keys that drive discovery and the page they answer with"

@@ -1,6 +1,6 @@
 ;; GitHub Copilot OAuth provider — device-flow authentication + token lifecycle.
 ;; Self-registers with `com.blockether.vis.core` at namespace load via the unified
-;; `META-INF/vis-extension/vis.edn`.
+;; Registered explicitly by the closed distribution manifest.
 {:paths ["src" "resources"]
  ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
  ;; :local/root dep's deps.edn, so resolving this extension alone needs vis' JitPack

@@ -81,4 +81,4 @@
        :shim/bindings ls-bridge-bindings
        :shim/source "vis-shims/ls.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

@@ -3752,11 +3752,9 @@ def __vis_user_defs__():
 
 
 class __vis_AproposItem__(
-    __vis_collections__.namedtuple("AproposItem", ["type", "name", "rank", "body"])
+    __vis_collections__.namedtuple("AproposItem", ["type", "name", "body"])
 ):
-    """One ranked hit: `type` (function/class/module/tool/doc/skill), the `name` you pass
-    to `doc(...)`, its 1-based `rank`, and `body` — the first 100 characters of its own
-    documentation. `doc(item)` reads the whole of it."""
+    """One regex match: its type, the exact name accepted by `doc`, and opening text."""
 
     __slots__ = ()
 

@@ -376,22 +376,24 @@
 
 ;; Provider registration
 
-(vis/register-extension!
-  (vis/extension
-    {:ext/name "provider-openrouter"
-     :ext/description "OpenRouter multi-provider gateway (static API key)."
-     :ext/version "0.1.0"
-     :ext/author "Blockether"
-     :ext/owner "vis"
-     :ext/license "Apache-2.0"
-     :ext/providers [{:provider/id PROVIDER_ID
-                      :provider/label LABEL
-                      :provider/preset {:base-url BASE_URL :default-models DEFAULT_MODELS}
-                      :provider/status-fn status-fn
-                      :provider/logout-fn logout-fn
-                      :provider/detect-fn detect-key
-                      :provider/auth-fn auth-fn
-                      :provider/auth-prompt-fn auth-instruction-lines
-                      :provider/get-token-fn get-token
-                      :provider/limits-fn limits-fn
-                      :provider/enrich-models-fn enrich-models}]}))
+(defn register!
+  []
+  (vis/register-extension!
+    (vis/extension
+      {:ext/name "provider-openrouter"
+       :ext/description "OpenRouter multi-provider gateway (static API key)."
+       :ext/version "0.1.0"
+       :ext/author "Blockether"
+       :ext/owner "vis"
+       :ext/license "Apache-2.0"
+       :ext/providers [{:provider/id PROVIDER_ID
+                        :provider/label LABEL
+                        :provider/preset {:base-url BASE_URL :default-models DEFAULT_MODELS}
+                        :provider/status-fn status-fn
+                        :provider/logout-fn logout-fn
+                        :provider/detect-fn detect-key
+                        :provider/auth-fn auth-fn
+                        :provider/auth-prompt-fn auth-instruction-lines
+                        :provider/get-token-fn get-token
+                        :provider/limits-fn limits-fn
+                        :provider/enrich-models-fn enrich-models}]})))

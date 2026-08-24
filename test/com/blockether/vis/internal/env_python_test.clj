@@ -398,71 +398,34 @@
           ;; `rg`/`find_files` were replaced by `grep` (name + content search in one tool)
           (expect (re-find #"grep=True" out))
           (expect (re-find #"patch=True" out))))
-    ;; `apropos` is FULL TEXT now: a query that appears in no NAME at all still
-    ;; answers, and every item carries a bounded body of the symbol's own prose.
-    (it "apropos searches the whole document, not just the name"
+    (it "filters symbol names with regular expressions, never document bodies"
+        (let [out (run (str "print('body='+str(len(apropos('REGULAR-EXPRESSION FILTER'))))\n"
+                            "print('exact='+apropos(r'^format_code$')[0].name)"))]
+          (expect (str/includes? out "body=0"))
+          (expect (str/includes? out "exact=format_code"))))
+    (it "rejects an invalid regular expression"
+        (let [result (ep/run-python-block ctx "apropos('[')")]
+          (expect (some? (:error result)))))
+    (it "preserves corpus order and never caps matches"
+        (let [out (run (str "all_names = [i.name for i in apropos('')]\n"
+                            "matched = [i.name for i in apropos('.*')]\n"
+                            "print('same='+str(matched == all_names))\n"
+                            "print('whole='+str(len(matched) > 25))"))]
+          (expect (str/includes? out "same=True"))
+          (expect (str/includes? out "whole=True"))))
+    (it "answers each hit with its type, name and opening body"
         (let [out (run (str
-                         "print('fulltext='+str('grep' in [i.name for i in apropos('is_regex')]))\n"
-                         "print('names='+apropos('format_code')[0].name)"))]
-          (expect (str/includes? out "fulltext=True"))
-          (expect (str/includes? out "names=format_code"))))
-    ;; Regression: `apropos` ANDed its terms, so a six-word ask that several
-    ;; documents partly covered answered nothing — the query shape a model
-    ;; naturally types dead-ended, and one-letter loop variables became
-    ;; documents whose NAME scored an exact hit.
-    (it "ranks a description instead of filtering on every term"
-        (let [out (run (str "hits = [i.name for i in "
-                            "apropos('patch from_anchor to_anchor replace edits schema')]\n"
-                            "print('any='+str(len(hits) > 0))\n"
-                            "print('patch='+str('patch' in hits))\n"
-                            "print('typo='+str('format_code' in "
-                            "[i.name for i in apropos('fromat_code')]))\n"
-                            "print('none='+str(len(apropos('zzqqxk plorbfnat'))))"))]
-          (expect (str/includes? out "any=True"))
-          (expect (str/includes? out "patch=True"))
-          (expect (str/includes? out "typo=True"))
-          (expect (str/includes? out "none=0"))))
-    ;; Regression: ORing the terms made a described ask match half the corpus,
-    ;; so a six-word question answered ~80 rows of mostly noise. A described
-    ;; ask is capped and ranked; the EMPTY query is a listing and stays whole.
-    (it "caps a described ask but never the empty listing"
-        (let [out (run (str "hits = apropos('how do I replace lines in a file')\n"
-                            "print('capped='+str(len(hits) <= 10))\n"
-                            "print('first='+hits[0].name)\n"
-                            "print('all='+str(len(apropos('')) > 25))"))]
-          (expect (str/includes? out "capped=True"))
-          (expect (str/includes? out "first=patch"))
-          (expect (str/includes? out "all=True"))))
-    ;; Cycle 3: a hit is an ITEM, not a mapping entry — a vector you iterate, each
-    ;; one carrying what a reader needs to decide: what kind of thing it is, the
-    ;; name `doc()` takes, where it placed, and 100 characters of its own prose.
-    ;; The model's own `def`s are NOT documents: they have no contract to answer with.
-    (it "answers each hit as an item with a type, a name, a rank and a bounded body"
-        (let [out
-              (run (str
-                     "def killers():\n"
-                     "    return 1\n" "hits = apropos('how do I replace lines in a file')\n"
-                     "item = [i for i in hits if i.name == 'patch'][0]\n"
-                     "print('fields='+','.join(item._fields))\n"
-                     "print('type='+item.type)\n"
-                     "print('bounded='+str(max(len(i.body) for i in hits) <= 100))\n"
-                     "print('ranked='+str([i.rank for i in hits] == list(range(1, len(hits)+1))))\n"
-                     "print('body='+str(len(item.body) > 0))\n"
-                     "print('searched='+str('killers' in [i.name for i in hits]))\n"
-                     "print('listed='+str('killers' in [i.name for i in apropos('')]))"))]
-          (expect (str/includes? out "fields=type,name,rank,body"))
+                         "def local_helper():\n"
+                         "    return 1\n" "item = apropos(r'^patch$')[0]\n"
+                         "print('fields='+','.join(item._fields))\n" "print('type='+item.type)\n"
+                         "print('body='+str(len(item.body) > 0))\n"
+                         "print('local='+str('local_helper' in [i.name for i in apropos('')]))"))]
+          (expect (str/includes? out "fields=type,name,body"))
           (expect (str/includes? out "type=tool"))
-          (expect (str/includes? out "bounded=True"))
-          (expect (str/includes? out "ranked=True"))
           (expect (str/includes? out "body=True"))
-          (expect (str/includes? out "searched=False"))
-          (expect (str/includes? out "listed=False"))))
-    ;; Cycle 3: a page that lends hundreds of names answered `pandas` for `read_csv`,
-    ;; and the reader still had to open it to find the member. The unit of the index
-    ;; is the SYMBOL now: the member is its own document under the address Python
-    ;; spells — and `pandas::read_csv` reads as that same dot.
-    (it "answers a shim member as its own symbol, under its dotted name"
-        (let [out (run (str "hits = apropos('read_csv')\n"
+          (expect (str/includes? out "local=False"))))
+    (it "answers a shim member as its own symbol under its dotted name"
+        (let [out (run (str "hits = apropos(r'^pandas\\.read_csv$')\n"
                             "print('first=' + hits[0].name)\n" "print('type=' + hits[0].type)\n"
                             "print('item=' + str(len(doc(hits[0])) > 0))\n"
                             "print('colon=' + str('read_csv' in doc('pandas::read_csv')))"))]
@@ -470,21 +433,16 @@
           (expect (str/includes? out "type=function"))
           (expect (str/includes? out "item=True"))
           (expect (str/includes? out "colon=True"))))
-    ;; Regression: the bare call already answered the whole listing, but in the
-    ;; SEARCH row's shape — `at: 0` and `hit: ''` repeated on every reachable
-    ;; name, two keys that say nothing without a query to be relative to.
-    (it "answers the bare call with the whole listing, in the listing's own shape"
+    (it "answers bare and empty calls with the same complete records"
         (let [out
               (run (str
                      "bare = apropos()\n"
-                     "empty = apropos('')\n" "names = [i.name for i in bare]\n"
-                     "print('same='+str(names == [i.name for i in empty]))\n"
+                     "empty = apropos('')\n"
+                     "print('same='+str([i.name for i in bare] == [i.name for i in empty]))\n"
                      "print('fields='+','.join(bare[0]._fields))\n"
-                     "print('ordered='+str(names == sorted(names)))\n"
                      "print('body='+str(len([i for i in bare if i.name == 'grep'][0].body) > 0))"))]
           (expect (str/includes? out "same=True"))
-          (expect (str/includes? out "fields=type,name,rank,body"))
-          (expect (str/includes? out "ordered=True"))
+          (expect (str/includes? out "fields=type,name,body"))
           (expect (str/includes? out "body=True"))))
     (it "never turns a bound loop variable into a document"
         (let [out (run (str "x = 3\nday_set = {'a'}\n" "a = [i.name for i in apropos('')]\n"
@@ -495,8 +453,8 @@
           (expect (str/includes? out "grep=True"))))
     (it "apropos and doc describe their own callable contracts"
         (let [out (run (str "print(doc('apropos'))\n" "print(doc('doc'))"))]
-          (expect (str/includes? out "apropos(query='')"))
-          (expect (str/includes? out "FULL-TEXT SEARCH over every SYMBOL"))
+          (expect (str/includes? out "apropos(pattern='')"))
+          (expect (str/includes? out "REGULAR-EXPRESSION FILTER over every SYMBOL name"))
           (expect (str/includes? out "doc(target) -> str"))
           (expect (str/includes? out "A skill is one of these documents and nothing more"))))
     (it "gather exposes its concurrency contract through apropos and doc"
@@ -1049,16 +1007,12 @@
           (expect (str/includes? out "`out` is the window this read returned"))
           (expect (str/includes? out "(`stage` \"stop\"): `status` \"stopped\", `exit`."))))))
 
-;; ONE corpus, two verbs. `apropos` SEARCHES every document the session can
-;; reach — function contracts, Vis' own documentation pages, whole `SKILL.md`
-;; bodies, MCP tool descriptions — and `doc` RETRIEVES one of them whole. There
-;; is no third verb: `vis_docs` is gone, and a page is reachable by the same
-;; `doc(name)` a function answers.
+;; ONE corpus, two verbs. `apropos` filters every reachable symbol NAME with a
+;; regular expression, and `doc` retrieves one of those documents whole.
 (defdescribe
   discovery-is-two-verbs-test
-  "The sandbox's whole discovery surface: `apropos(query)` ranks full text,
-   `doc(target)` returns one document, and bare `doc()` prints the curated index
-   rather than dumping the corpus."
+  "`apropos(pattern)` filters names, `doc(target)` returns one document, and bare
+   `doc()` prints the curated index rather than dumping the corpus."
   (let [bind
         (ext/builtin-sandbox-bindings (fn []
                                         nil))
@@ -1070,19 +1024,11 @@
         (fn [code]
           (str (:stdout (ep/run-python-block ctx code))))]
 
-    (it "the third verb is gone and nothing carries a group any more"
-        (let [out (run (str "print('vis_docs='+str('vis_docs' in globals()))\n"
-                            "print('groups='+str('__vis_groups__' in globals()))\n"
-                            "print('table='+str('__vis_apropos_table__' in globals()))"))]
-          (expect (str/includes? out "vis_docs=False"))
-          (expect (str/includes? out "groups=False"))
-          (expect (str/includes? out "table=False"))))
-    (it "a word that lives only in a page BODY finds that page"
-        ;; "Truffle" is in no tool name and in no gist — only inside the pages.
-        (let [out (run (str "hits = apropos('truffle')\n"
-                            "print('n='+str(len(hits)))\n"
-                            "print('graalpython='+str('graalpython' in [i.name for i in hits]))"))]
-          (expect (str/includes? out "graalpython=True"))))
+    (it "matches document names rather than page bodies"
+        (let [out (run (str "body = apropos('truffle')\n" "exact = apropos(r'^graalpython$')\n"
+                            "print('body='+str(len(body)))\n" "print('exact='+exact[0].name)"))]
+          (expect (str/includes? out "body=0"))
+          (expect (str/includes? out "exact=graalpython"))))
     (it "doc retrieves a documentation page by slug, forgiving case and `.md`"
         (let [out (run (str "a = doc('gateway')\n"
                             "b = doc('Gateway.MD')\n" "print('same='+str(a == b))\n"
@@ -1091,52 +1037,61 @@
           (expect (str/includes? out "same=True"))
           (expect (str/includes? out "head=# gateway"))
           (expect (str/includes? out "body=True"))))
-    ;; A skill is a document like any other: `doc` prints the whole SKILL.md and
+    ;; A skill is a document like any other: `doc` prints the complete source and
     ;; there is no verb to call, so the entry carries no call line at all.
-    (it "doc returns a skill WHOLE, with no verb to invoke and no session effect"
-        (let [out (run (str "d = doc('spel')\n" "print('call='+str('skill(' in d))\n"
-                            "print('long='+str(len(d) > 2000))\n"
-                            "print('bound='+str('skill' in globals()))"))]
-          (expect (str/includes? out "call=False"))
-          (expect (str/includes? out "long=True"))
-          (expect (str/includes? out "bound=False"))))
+    (it "doc returns a skill whole, with no verb to invoke and no session effect"
+        (try (doc-corpus/register-source!
+               ::whole-skill
+               (fn []
+                 [{:name "fixture-skill"
+                   :kind "skill"
+                   :text "Fixture skill
+
+Follow every fixture step without truncation."}]))
+             (let [out
+                   (run
+                     (str
+                       "d = doc('fixture-skill')\n" "print('call='+str('skill(' in d))\n"
+                       "print('whole='+str('Follow every fixture step without truncation.' in d))\n"
+                       "print('bound='+str('skill' in globals()))"))]
+               (expect (str/includes? out "call=False"))
+               (expect (str/includes? out "whole=True"))
+               (expect (str/includes? out "bound=False")))
+             (finally (doc-corpus/register-source! ::whole-skill (constantly [])))))
     (it "bare doc() is the curated index, not the corpus"
         (let [out (run (str "idx = doc()\n"
-                            "print('rows='+str(len(idx.splitlines())))\n"
                             "print('curated='+str(idx.count(' — ') < len(apropos(''))))\n"
                             "print('grep='+str('grep — ' in idx))\n"
-                            "print('points='+str('apropos(text)' in idx))"))]
+                            "print('points='+str('apropos(pattern)' in idx))"))]
           (expect (str/includes? out "curated=True"))
           (expect (str/includes? out "grep=True"))
           (expect (str/includes? out "points=True"))))
-    (it "a miss answers with the closest documents instead of a dead end"
+    (it "a miss points to exact retrieval and regular-expression discovery"
         (let [out (run "print(doc('gatewa'))")]
+          (expect (str/includes? out "gatewa"))
           (expect (str/includes? out "is not a handle"))
-          (expect (str/includes? out "gateway"))
-          (expect (str/includes? out "doc(name)"))))))
+          (expect (str/includes? out "apropos(pattern)"))))))
 
 ;; Regression: a documentation slug must never shadow a bound function — the
 ;; corpus is seeded with `setdefault`, so the callable contract wins its name.
-(defdescribe
-  a-page-never-shadows-a-function-test
-  (it "keeps the function's own contract when a document claims its name"
-      (try (doc-corpus/register-source! ::collision
-                                        (constantly :once)
-                                        (fn []
-                                          [{:name "ls" :text "PAGE THAT MUST LOSE"}]))
-           (tpc/with-own [ctx
-                          (ext/builtin-sandbox-bindings (fn []
-                                                          nil))]
-                         (let [out (str (:stdout (ep/run-python-block ctx "print(doc('ls'))")))]
-                           (expect (not (str/includes? out "PAGE THAT MUST LOSE")))
-                           (expect (str/includes? out "ls"))))
-           (finally (doc-corpus/register-source! ::collision (constantly :gone) (constantly []))))))
+(defdescribe a-page-never-shadows-a-function-test
+             (it "keeps the function's own contract when a document claims its name"
+                 (try (doc-corpus/register-source! ::collision
+                                                   (fn []
+                                                     [{:name "ls" :text "PAGE THAT MUST LOSE"}]))
+                      (tpc/with-own [ctx
+                                     (ext/builtin-sandbox-bindings (fn []
+                                                                     nil))]
+                                    (let [out (str (:stdout
+                                                     (ep/run-python-block ctx "print(doc('ls'))")))]
+                                      (expect (not (str/includes? out "PAGE THAT MUST LOSE")))
+                                      (expect (str/includes? out "ls"))))
+                      (finally (doc-corpus/register-source! ::collision (constantly []))))))
 
-;; Regression: a skill added to `.agents/skills` mid-session was invisible to the
-;; sandbox — `/reload` rebuilt the corpus, but `doc(<name>)` still answered "is not a
-;; handle" and `apropos` never ranked it, because every skill, page and MCP
-;; description was COPIED into the context when it was built and that context
-;; outlives every reload.
+(comment
+ ;; Dynamic skill and MCP sources are read at call time because the Python
+ ;; context outlives reloads of those sources.
+)
 (defdescribe
   the-document-corpus-is-read-live-test
   (it "answers a document that appeared after the context was built, and drops it when it goes"
@@ -1147,25 +1102,22 @@
         (let [read-it (fn []
                         (str (:stdout (ep/run-python-block ctx "print(doc('freight-planning'))"))))]
           (expect (str/includes? (read-it) "is not a handle"))
-          (try
-            (doc-corpus/register-source! ::late
-                                         (constantly :present)
-                                         (fn []
-                                           [{:name "freight-planning"
-                                             :kind "skill"
-                                             :text "Routes crates of tangerines by rail."}]))
-            (let [out (read-it)
-                  hits (str (:stdout
-                              (ep/run-python-block
-                                ctx
-                                (str
-                                  "print('found='+str('freight-planning' in "
-                                  "[i.name for i in apropos('routes crates of tangerines')]))"))))]
+          (try (doc-corpus/register-source! ::late
+                                            (fn []
+                                              [{:name "freight-planning"
+                                                :kind "skill"
+                                                :text "Routes crates of tangerines by rail."}]))
+               (let [out (read-it)
+                     hits (str (:stdout
+                                 (ep/run-python-block
+                                   ctx
+                                   (str "print('found='+str('freight-planning' in "
+                                        "[i.name for i in apropos(r'^freight-planning$')]))"))))]
 
-              (expect (str/includes? out "# freight-planning"))
-              (expect (str/includes? out "tangerines by rail"))
-              (expect (str/includes? hits "found=True")))
-            (finally (doc-corpus/register-source! ::late (constantly :gone) (constantly []))))
+                 (expect (str/includes? out "# freight-planning"))
+                 (expect (str/includes? out "tangerines by rail"))
+                 (expect (str/includes? hits "found=True")))
+               (finally (doc-corpus/register-source! ::late (constantly []))))
           (expect (str/includes? (read-it) "is not a handle"))))))
 
 (defdescribe
@@ -1633,9 +1585,9 @@
                       (expect (not (str/includes? listed "dumps")))
                       (expect (str/includes? source "def widen(a, b=2):"))
                       (expect (str/includes? missing "refused:")))))
-  ;; A helper the session wrote is a DOCUMENT for `defs()` and `doc(name)`: the docstring is what
-  ;; the listing previews and what the page prints. `apropos` ranks only what the ENGINE lends, so
-  ;; a handle the session minted (`kebab_to_snake`, `quiet`) never competes with a tool for a word.
+  ;; A helper the session wrote is a DOCUMENT for `defs()` and `doc(name)`: the
+  ;; docstring is what the listing previews and what the page prints. `apropos`
+  ;; deliberately omits session definitions; `defs()` is their catalogue.
   (it
     "reads a helper's docstring as its gist and its page, and keeps it out of apropos"
     (tpc/with-own

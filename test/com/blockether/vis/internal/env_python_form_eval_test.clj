@@ -167,7 +167,7 @@
         [r
          (ep/run-python-block
            (py-ctx)
-           "bool(set(['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'Counter', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins']) & set().union(*(set(apropos(m)) for m in ['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'Counter', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins'])))")]
+           "names = ['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'Counter', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins']; bool(set(names) & set().union(*({item.name for item in apropos(m)} for m in names)))")]
         (expect (nil? (:error r)))
         (expect (= false (:result r)))))))
 

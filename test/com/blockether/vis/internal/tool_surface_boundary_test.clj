@@ -19,12 +19,13 @@
    fails the test."
   (:require [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- extensions
-  "Every registered extension, with discovery forced (idempotent)."
+  "Every extension after the ordered distribution manifest is initialized."
   []
-  (extension/discover-extensions!)
+  (manifest/initialize!)
   (extension/registered-extensions))
 
 (defn- probe-env [] {:workspace/root (System/getProperty "user.dir")})

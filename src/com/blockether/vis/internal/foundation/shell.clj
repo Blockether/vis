@@ -3320,4 +3320,4 @@
      :ext/engine {:ext.engine/builtin? true :ext.engine/symbols shell-symbols}
      :ext/cli shell-cli}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

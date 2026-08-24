@@ -380,12 +380,14 @@
      :provider/get-token-fn (make-get-token-fn plan-tag)
      :provider/limits-fn (make-limits-fn plan-tag)}))
 
-(vis/register-extension!
-  (vis/extension {:ext/name "provider-alibaba"
-                  :ext/description
-                  "Alibaba Model Studio coding-plan + token-plan static-API-key providers."
-                  :ext/version "0.1.0"
-                  :ext/author "Blockether"
-                  :ext/owner "vis"
-                  :ext/license "Apache-2.0"
-                  :ext/providers (mapv provider-entry (keys PLANS))}))
+(defn register!
+  []
+  (vis/register-extension!
+    (vis/extension {:ext/name "provider-alibaba"
+                    :ext/description
+                    "Alibaba Model Studio coding-plan + token-plan static-API-key providers."
+                    :ext/version "0.1.0"
+                    :ext/author "Blockether"
+                    :ext/owner "vis"
+                    :ext/license "Apache-2.0"
+                    :ext/providers (mapv provider-entry (keys PLANS))})))

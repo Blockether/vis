@@ -8,12 +8,11 @@ skill markdown that Claude Code, pi, opencode, and the
 [agents standard](https://agentskills.io) already define.
 
 A skill is a **document**, not a verb. Every discovered `SKILL.md` joins the one
-retrieval corpus, so the model finds it with **`apropos(text)`** and reads it
-whole with **`doc(name)`** — the same two verbs that answer for a function
-contract or a Vis documentation page. There is nothing to activate and no
-session state to undo. You can also invoke one yourself with
-**`/skill:<name> [task]`**
-(see [Context files & prompts](context-and-prompts.md)).
+retrieval corpus, so the model filters skill names with **`apropos(pattern)`** and
+reads one whole with **`doc(name)`** — the same two verbs that answer for a
+function contract or a Vis documentation page. There is nothing to activate and
+no session state to undo. You can also invoke one yourself with
+**`/skill:<name> [task]`** (see [Context files & prompts](context-and-prompts.md)).
 
 ## What a skill is
 
@@ -57,11 +56,9 @@ Skills are **progressive**, so they cost almost nothing until used:
    clipped to ~180 chars). This is the only always-present cost.
 2. When a task matches, the model calls `doc("name")` and gets the **whole
    `SKILL.md`**: the frontmatter description as its first line, then the body
-   verbatim. `apropos(text)` searches those bodies, so a rule the description
-   never mentions is still findable. That description is also the entry's FIRST
-   line — a separately scored ranking field, and the opening of every `apropos`
-   row for the skill — so write it as the ask ("Use when the user reports an iOS
-   crash…"), never as a title.
+   verbatim. `apropos(pattern)` filters skill names, not body text. The description
+   is also the opening of every `apropos` row for the skill, so make it a concise
+   routing sentence ("Use when the user reports an iOS crash…"), never just a title.
 3. The model reads the skill's bundled files with its normal file tools and
    follows the instructions.
 

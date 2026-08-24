@@ -34,4 +34,4 @@
      :ext/sandbox-shims
      [{:shim/name "tabulate" :shim/imports ["tabulate"] :shim/source "vis-shims/tabulate.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

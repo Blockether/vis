@@ -338,8 +338,8 @@
 ;;
 ;; The Vis Agent application (`bin/vis-agent` = `clojure -M:vis`) compiles to a
 ;; private native runtime used behind the shipped Bash wrapper. Pipeline: AOT
-;; EVERY namespace (core + every extension — extensions are `require`d at runtime
-;; by manifest discovery, so they MUST be in the image) -> uberjar -> native-image.
+;; EVERY namespace (core + every extension; the closed manifest initializes their
+;; lightweight entrypoints at runtime, so every lazy handler must remain reachable) -> uberjar -> native-image.
 ;;
 ;; Embedded GraalPy + dynamic extension loading make this non-trivial; see the
 ;; `:native` alias (graal-build-time) and `native-image-args`. Cross-platform:
@@ -643,15 +643,10 @@
   (read-string (slurp "deps.edn")))
 
 (defn- all-source-roots
-  "Every production src/resources dir on the vis classpath: the repo root's own
-   `:paths` plus each `:local/root` extension. AOT covers all of these so every
-   extension ns the runtime manifest scan `require`s is already compiled into the
-   image — and every RESOURCE root is copied into the class dir with it.
-
-   The root's roots are read from deps.edn, never spelled out here: `:paths`
-   carries `packages/vis-agent/src` (the distributable `vis` Python module the
-   engine slurps as `vis/__init__.py`), and a hardcoded `[\"src\" \"resources\"]`
-   silently left it out of every image."
+  "Every production src/resources directory on the Vis classpath: the repo root's
+   own `:paths` plus each `:local/root` extension. AOT covers all of them and copies
+   every resource into the class directory. The roots come from deps.edn, never a
+   second hand-maintained list."
   []
   (let [deps
         (root-deps-edn)
@@ -669,38 +664,6 @@
 
     (filterv #(.exists (io/file %)) dirs)))
 
-(defn- merge-extension-manifests!
-  "Each extension ships its own `META-INF/vis-extension/vis.edn`. Across many
-   jars/dirs `manifest.clj` ENUMERATES them (getResources returns one per
-   classpath entry); but in a single uberjar/native image they all collide to
-   ONE path and only one survives → only one extension registers. Fix: merge
-   every extension's manifest map into ONE combined file in the class-dir.
-   `manifest.clj` already iterates a multi-id map, so a single merged resource
-   carries every extension id with no runtime change."
-  [class-dir]
-  (let [files
-        (->> (file-seq (io/file "extensions"))
-             (filter (fn [^java.io.File f]
-                       ;; normalize separators so a forward-slash substring check
-                       ;; can never silently merge zero manifests.
-                       (let [p (str/replace (str f) "\\" "/")]
-                         (and (= "vis.edn" (.getName f))
-                              (str/includes? p "META-INF/vis-extension"))))))
-
-        merged
-        (reduce (fn [m f]
-                  (merge m (read-string (slurp f))))
-                {}
-                files)
-
-        out
-        (io/file class-dir "META-INF" "vis-extension" "vis.edn")]
-
-    (io/make-parents out)
-    (spit out (pr-str merged))
-    (println "Merged" (count files)
-             "extension manifests ->" (count merged)
-             "ids:" (str/join " " (sort (map str (keys merged)))))))
 
 (defn- ns-name-of
   "The namespace symbol of a Clojure source string, or nil. Reads the first
@@ -713,6 +676,20 @@
              (when (and (seq? form) (= 'ns (first form))) (first (filter symbol? (rest form)))))))
        (catch Throwable _ nil)))
 
+(defn- source-namespaces
+  "Every first-party Clojure namespace under the production source roots. Native
+   image treats this closed source set as reachable, including code loaded by name."
+  []
+  (->> (all-source-roots)
+       (map io/file)
+       (filter #(.isDirectory ^java.io.File %))
+       (mapcat file-seq)
+       (filter #(and (.isFile ^java.io.File %)
+                     (re-matches #".*\.cljc?$" (.getName ^java.io.File %))))
+       (keep #(ns-name-of (slurp %)))
+       distinct
+       (sort-by str)
+       vec))
 
 (def ^:private warn-on-reflection-re #"\(set!\s+\*(?:warn-on-reflection|unchecked-math)\*")
 
@@ -757,92 +734,37 @@
          (sort-by str)
          vec)))
 
-;; Built-in extension entry namespaces vis `require`s at RUNTIME via
-;; extension/load-builtin-extensions! (they ship in the main jar, not via a
-;; classpath manifest). EVERY one of them, in the same order: a name missing here
-;; is missing from the image, and `load-builtin-extensions!` aborts the binary at
-;; startup with "Could not locate <ns>__init.class on classpath" -- there is no
-;; degraded mode. `native-reachability-test` reads this vector and fails when it
-;; drifts from extension/builtin-extension-nses.
-(def ^:private builtin-extension-nses
-  ["com.blockether.vis.internal.foundation.core"
-   "com.blockether.vis.internal.foundation.introspection"
-   "com.blockether.vis.internal.foundation.shell" "com.blockether.vis.internal.foundation.shim-yaml"
-   "com.blockether.vis.internal.foundation.shim-matplotlib"
-   "com.blockether.vis.internal.foundation.shim-requests"
-   "com.blockether.vis.internal.foundation.shim-pytest"
-   "com.blockether.vis.internal.foundation.shim-ruff"
-   "com.blockether.vis.internal.foundation.shim-pil"
-   "com.blockether.vis.internal.foundation.shim-numpy"
-   "com.blockether.vis.internal.foundation.shim-bs4"
-   "com.blockether.vis.internal.foundation.shim-pandas"
-   "com.blockether.vis.internal.foundation.shim-tabulate"
-   "com.blockether.vis.internal.foundation.shim-toml"
-   "com.blockether.vis.internal.foundation.shim-tzdata"
-   "com.blockether.vis.internal.foundation.shim-sqlite3"
-   "com.blockether.vis.internal.foundation.shim-nippy"
-   "com.blockether.vis.internal.foundation.shim-httpx"
-   "com.blockether.vis.internal.foundation.shim-urllib3"
-   "com.blockether.vis.internal.foundation.shim-paramiko"
-   "com.blockether.vis.internal.foundation.shim-xlsxwriter"
-   "com.blockether.vis.internal.foundation.shim-pptx"
-   "com.blockether.vis.internal.foundation.shim-attach"
-   "com.blockether.vis.internal.foundation.shim-ls"
-   "com.blockether.vis.internal.foundation.shim-fonttools"
-   "com.blockether.vis.internal.foundation.shim-anydoc"
-   "com.blockether.vis.internal.foundation.rewind" "com.blockether.vis.internal.foundation.mcp.core"
-   "com.blockether.vis.internal.foundation.harness.core"])
-
-(defn- manifest-entry-namespaces
-  "Every namespace an extension manifest declares, across the merged manifest
-   written by `merge-extension-manifests!` — BOTH keys, because both must be in
-   the image:
-
-     :nses        required at DISCOVERY (manifest/scan-extensions!);
-     :image-nses  loaded BY NAME on first use (`requiring-resolve`, a backend
-                  registrar's `:persistance/ns`) and never required at startup.
-
-   A native image cannot define classes at run time, so a namespace that is not
-   build-time initialized is absent from the binary: the TUI's `screen` and the
-   sqlite backend's `core` are reached only by name, and leaving them out shipped
-   a binary that aborted the moment a human opened the terminal UI or touched the
-   DB. `native-reachability-test` fails when a by-name namespace is undeclared."
+(defn- manifest-initialization-namespaces
+  "Namespace of every initializer in the one closed distribution manifest."
   [class-dir]
-  (let [f (io/file class-dir "META-INF" "vis-extension" "vis.edn")]
-    (if (.exists f)
-      (->> (read-string (slurp f))
-           vals
-           (mapcat (fn [entry]
-                     (concat (:nses entry) (:image-nses entry))))
-           (map str))
-      [])))
+  (let [path
+        (io/file class-dir "META-INF" "vis" "manifest.edn")
+
+        manifest
+        (edn/read-string (slurp path))]
+
+    (mapv (fn [initializer]
+            (or (namespace initializer)
+                (throw (ex-info "Manifest initializer must be a qualified symbol"
+                                {:initializer initializer :manifest (str path)}))))
+          (:initialization manifest))))
 
 (defn- write-preload-namespaces!
   [class-dir basis]
-  ;; The native Feature `require`s every ns in this list at BUILD time, and the
-  ;; list is deliberately NARROW: the (set! *warn-on-reflection* …) namespaces,
-  ;; which must be initialized through `require` so the set! has a binding, plus
-  ;; the EXTENSION entry namespaces vis `require`s at RUNTIME during discovery
-  ;; (extension/discover-extensions! -> load-builtin-extensions! +
-  ;; manifest/scan-extensions!) — a runtime `require` in a native image would
-  ;; have to DEFINE classes at runtime, which is forbidden ("Classes cannot be
-  ;; defined at runtime"), and build-time initializing them makes it a no-op.
-  ;;
-  ;; It must NOT be "every namespace under the source roots". Requiring the whole
-  ;; tree inside the builder JVM runs load-time side effects of code the image
-  ;; never reaches, and whatever those effects construct lands in the image heap:
-  ;; that is how a live jdk.internal.net.http.HttpClientFacade (babashka's
-  ;; implicit @default-client) got persisted and aborted the points-to analysis.
-  ;; An extension entry ns pulls its own transitive requires with it, so the
-  ;; reachable graph is covered without loading the unreachable one.
+  ;; The native Feature requires this closed set at build time. Initializers come
+  ;; from the one runtime manifest; all first-party source namespaces are included
+  ;; so a handler may remain lazy on the JVM without disappearing from the image.
   (let [warn
         (map str (preload-namespaces basis))
 
-        exts
-        (concat builtin-extension-nses (manifest-entry-namespaces class-dir))
+        source
+        (map str (source-namespaces))
+
+        initializers
+        (manifest-initialization-namespaces class-dir)
 
         nses
-        (->> (concat warn exts)
+        (->> (concat warn source initializers)
              distinct
              sort
              vec)
@@ -853,7 +775,7 @@
     (io/make-parents out)
     (spit out (pr-str nses))
     (println "Preload list:" (count nses)
-             "namespaces (warn-on-reflection + extension entry nses) ->" (str out))))
+             "namespaces (dependencies with reflection flags + first-party source) ->" (str out))))
 
 (defn- write-migration-indexes!
   "Flyway discovers migrations by LISTING its classpath location dir — which
@@ -876,10 +798,9 @@
         (println "Migration index:" (str (io/file dir "_index.edn")) "->" names)))))
 
 (defn- prepare-native-classes!
-  "AOT-compile every ns (core + every extension) into `native-class-dir` and copy
-   all resources, collapsing the per-extension manifests into ONE merged file.
-   Also writes the build-time-init preload list. Shared by `uber` and `native`.
-   Returns the `:native`-alias basis."
+  "AOT-compile every namespace (core and extensions) into `native-class-dir`,
+   copy all resources, and write the native preload list. Shared by `uber` and
+   `native`; returns the `:native`-alias basis."
   []
   (b/delete {:path native-class-dir})
   (let [basis
@@ -889,7 +810,7 @@
         (all-source-roots)]
 
     (println "AOT compiling every ns across" (count srcs) "source roots… (profile community)")
-    ;; copy resources (incl. META-INF/vis-extension + META-INF/native-image)
+    ;; copy source resources, including the one closed Vis manifest
     (b/copy-dir {:src-dirs srcs :target-dir native-class-dir})
     ;; sweep agent-session state (.omc/) that lands INSIDE source trees when
     ;; an agent runs with its cwd there — copy-dir happily copies it, and it
@@ -902,8 +823,6 @@
 
       (b/delete {:path (.getPath f)})
       (println "Swept agent-state dir from class-dir:" (.getPath f)))
-    ;; collapse the per-extension manifests into ONE so discovery finds them all
-    (merge-extension-manifests! native-class-dir)
     ;; list every namespace the native Feature must require before build-time init
     (write-preload-namespaces! native-class-dir basis)
     ;; index Flyway migrations so they're discoverable without dir listing
@@ -1263,7 +1182,7 @@
              ;; descriptors were registered (macOS), and lanterna's own catch-and-degrade
              ;; to forking /bin/stty where they were not.
              "--initialize-at-run-time=com.googlecode.lanterna.terminal.ansi.TTYDeviceControl"
-             "-H:IncludeResources=META-INF/vis-extension/.*" "-H:IncludeResources=.*\\.edn$"
+             "-H:IncludeResources=META-INF/vis/.*" "-H:IncludeResources=.*\\.edn$"
              ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`
              "-H:IncludeResources=vis/VERSION"
              ;; the build-written `vis/BUILD` (version, commit, track, timestamp)

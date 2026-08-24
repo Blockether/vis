@@ -1523,4 +1523,4 @@
      :ext/engine {:ext.engine/builtin? true :ext.engine/symbols all-symbols}
      :ext/prompt-fn introspection-prompt}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

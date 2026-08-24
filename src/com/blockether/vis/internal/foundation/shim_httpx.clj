@@ -31,4 +31,4 @@
      :ext/sandbox-shims
      [{:shim/name "httpx" :shim/imports ["httpx"] :shim/source "vis-shims/httpx.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

@@ -6,11 +6,11 @@
    loop persists as `:attachments`), with the media-type sniffed from magic bytes
    / extension / a utf-8 probe. No stdout fence, no parsing."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.foundation.shim-attach :as shim-attach]
-            [com.blockether.vis.internal.shim-capabilities :as shim-caps]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context Value]
            [java.nio.file Files]
@@ -361,16 +361,18 @@
 
 (defdescribe
   attach-discovery-test
-  (it "surfaces attach / list_attachments via apropos and doc"
-      (let [pctx (ctx-with-root (temp-root))]
-        ;; `apropos` is FULL TEXT and ranked: the five name hits come before every
-        ;; document that merely mentions attaching.
-        (expect (= ["attach" "get_attachment" "list_attachments" "read_attachment"
-                    "show_attachment"]
-                   (vec (ev pctx "sorted([i.name for i in apropos('attach')][:5])"))))
-        (expect (false? (ev pctx "'attachments' in [i.name for i in apropos('attach')]")))
-        (expect (true? (ev pctx "'callable' in doc('attach')")))
-        (expect (true? (ev pctx "'callable' in doc('show_attachment')")))))
+  (it
+    "surfaces attachment helpers through apropos and doc"
+    (let [pctx (ctx-with-root (temp-root))]
+      (expect
+        (=
+          ["attach" "get_attachment" "list_attachments" "read_attachment" "show_attachment"]
+          (vec
+            (ev
+              pctx
+              "sorted(i.name for i in apropos(r'^(attach|get_attachment|list_attachments|read_attachment|show_attachment)$'))"))))
+      (expect (true? (ev pctx "'callable' in doc('attach')")))
+      (expect (true? (ev pctx "'callable' in doc('show_attachment')")))))
   (it "discovers declared capabilities instead of the internal shim identity"
       (with-redefs [extension/sandbox-shims (constantly [{:shim/name "internal-id"
                                                           :shim/imports ["actual_module"]
@@ -803,7 +805,10 @@
    — the shim description that rides the prompt, and the sandbox `doc()` plus
    `__doc__` of both attach twins — carries the same rule in the same words."
   (it "tells the write side to keep one document under one name"
-      (let [descr (str (shim-caps/page "attach"))]
+      (let [descr (->> (doc-corpus/entries)
+                       (some #(when (= "attach" (:name %)) %))
+                       :text
+                       str)]
         (expect (re-find #"SAME DOCUMENT, SAME NAME" descr))
         (expect (re-find #"(?i)next VERSION" descr))
         (expect (re-find #"(?i)different document" descr)))
@@ -950,8 +955,8 @@
   "A prebound global's page is the whole contract its caller reads, so it wears
    the shape every documented Vis verb wears: the CALL LINE and the KEYS are
    STRUCTURE (`__vis_calls__` / `__vis_keys__`, printed above the document and
-   out of the text `apropos` scores), the keys line is where requiredness is
-   stated, and the result is stated exactly once. The five attachment globals
+   unrelated to the `apropos` name filter), the keys line is where requiredness
+   is stated, and the result is stated exactly once. The five attachment globals
    shipped prose that opened with a retyped signature and named no keys at all."
   (it
     "states call, keys and result for every attachment global, matched to the def"

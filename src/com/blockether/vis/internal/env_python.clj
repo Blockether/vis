@@ -29,7 +29,6 @@
             [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
             [com.blockether.vis.internal.sandbox-fs :as sandbox-fs]
             [com.blockether.vis.internal.sandbox-resources :as res]
-            [com.blockether.vis.internal.shim-capabilities :as shim-caps]
             [flatland.ordered.map :as omap]
             [taoensso.telemere :as tel])
   (:import [org.graalvm.polyglot Context Context$Builder Engine Value PolyglotAccess
@@ -943,7 +942,7 @@
   "Record `keys-line` — the options-dict vocabulary from
    `extension/symbol-keys-line` — for `sym` in the sandbox `__vis_keys__` dict, so
    `doc(sym)` states which keys the dict must carry. Structure, not prose: it is
-   printed above the document and never mixed into the text `apropos` ranks."
+   printed above the document and is unrelated to the `apropos` name filter."
   [python-context sym keys-line]
   (set-python-binding-meta! python-context sym "__vis_keys__" keys-line))
 (def ^:private protected-baseline-names
@@ -1077,12 +1076,6 @@
    of printing this."
   "sandbox shim capability")
 
-(def ^:private ^:const apropos-limit
-  "How many documents `apropos` answers for a described ask. Terms are ORed, so
-   a six-word question touches half the corpus; every measured ask answered
-   inside the first four rows, and each row now carries an excerpt rather than
-   a bare line, so the tail is paid for twice over."
-  10)
 
 (defn- seed-py-map!
   "Merge `m` into the sandbox dict `dict-name` with `setdefault` semantics — the
@@ -1102,32 +1095,8 @@
          (catch Throwable _ nil))))
 
 (defn- sandbox-corpus
-  "The whole corpus as `doc-corpus` entries: the sandbox's own globals merged with
-   the LIVE document corpus.
-
-   Read off the GLOBALS, so a per-turn extension activation is searchable the
-   moment it binds: `__vis_docs__` holds one document per handle (function
-   contracts seeded from the extension registry, plus every shim's page),
-   `__vis_calls__` holds the expression that uses the handles which are not
-   themselves Python names, `__vis_sigs__` the declared parameter list of every
-   callable, and `__vis_kinds__` labels the ones a source CLASSIFIED (shim).
-
-   Read LIVE from `doc-corpus/entries`: every skill, every documentation page and
-   every MCP tool. Those are never seeded, because this context outlives every
-   `/reload` — a copy taken when it was built answers a skill added, edited or
-   deleted mid-session with the corpus of an hour ago. The corpus memoizes on its
-   sources' stamps, so an unchanged one costs a stat pass. A global still WINS the
-   name: a callable's contract beats a documentation slug, which is exactly the
-   precedence the old `setdefault` seed encoded.
-
-   The two kinds nobody labels are derived here: a documented handle is a
-   `tool`, and the model's own `def` is `local` — `__vis_def_docs__` names every
-   one of them and answers its DOCSTRING, `__vis_def_calls__` its signature. A
-   helper that documents itself is a document like any other: it owns a
-   `doc(name)` page and a described ask can find it. One that documents nothing
-   stays an EMPTY document — listed, because a callable the model can type must
-   never be invisible, and never searched, because a bare handle (`where`,
-   `vars`) is a common English word that would win rows off real contracts."
+  "Merge live sandbox callables with the ordered document corpus. Live contracts
+   win name collisions; static and dynamic documents retain corpus order."
   [^Value g names-fn]
   (let [docs
         (value->str-map (.getMember g "__vis_docs__"))
@@ -1144,23 +1113,23 @@
         params
         (value->str-map (.getMember g "__vis_keys__"))
 
-        ;; The model's OWN `def`s, read live through the bootstrap: one docstring
-        ;; and one signature per helper, so a documented helper is a page like any
-        ;; tool's and an undocumented one keeps an empty document.
         def-docs
         (called-str-map g "__vis_def_docs__")
 
         def-calls
         (called-str-map g "__vis_def_calls__")
 
-        ;; The DOCUMENT half of the corpus, re-read on every call (see the
-        ;; docstring). A source that throws contributes nothing — discovery must
-        ;; never be the reason `doc`/`apropos` fails.
+        document-entries
+        (doc-corpus/entries)
+
         documents
-        (into {} (map (juxt :name identity)) (try (doc-corpus/entries) (catch Throwable _ nil)))]
+        (into {} (map (juxt :name identity)) document-entries)
+
+        ordered-names
+        (distinct (concat (names-fn) (sort (keys docs)) (map :name document-entries)))]
 
     (into []
-          (mapcat
+          (map
             (fn [nm]
               (let [document
                     (get documents nm)
@@ -1171,11 +1140,6 @@
                             (seq (str (:text document))) (str (:text document))
                             :else (str (get def-docs nm ""))))
 
-                    ;; The CALL LINE `doc(name)` prints under the handle: the explicit
-                    ;; expression when the handle is not a Python name of its own
-                    ;; (`mcp__call(...)`), otherwise the DECLARED signature —
-                    ;; `patch(path, edits)`. Prose can describe a tool; only the call
-                    ;; line says which parameters are required and in what order.
                     call
                     (or (not-empty (str (get calls nm)))
                         (not-empty (str (:call document)))
@@ -1183,26 +1147,19 @@
                           (str nm "(" sig ")"))
                         (not-empty (str (get def-calls nm))))]
 
-                (cons (cond-> {:name nm
-                               :text text
-                               ;; A REGISTERED document is what makes a handle a tool: a helper
-                               ;; that shadows one keeps the tool's page, and a documented `def`
-                               ;; stays `local` however much it says about itself.
-                               :kind (or (get kinds nm)
-                                         (:kind document)
-                                         (if (and (str/blank? (str (get docs nm))) (nil? document))
-                                           "local"
-                                           "tool"))}
-                        (seq (str call))
-                        (assoc :call call)
+                (cond-> {:name nm
+                         :text text
+                         :kind (or (get kinds nm)
+                                   (:kind document)
+                                   (if (and (str/blank? (str (get docs nm))) (nil? document))
+                                     "local"
+                                     "tool"))}
+                  (seq (str call))
+                  (assoc :call call)
 
-                        (seq (str (get params nm)))
-                        (assoc :params (str (get params nm))))
-                      ;; A shim's members are entries of their OWN. `pandas.read_csv` is the
-                      ;; name a reader types and the name Python addresses it by, so it is
-                      ;; the name the index carries — a module never answers for its members.
-                      (shim-caps/member-entries nm)))))
-          (distinct (concat (names-fn) (sort (keys docs)) (sort (keys documents)))))))
+                  (seq (str (get params nm)))
+                  (assoc :params (str (get params nm)))))))
+          ordered-names)))
 
 (defn- install-introspection!
   "Wire Python `apropos(pat)` and `doc(name)` over the live globals — the
@@ -1244,10 +1201,9 @@
                (catch Throwable _ nil)))
 
         ;; A global that is not CALLABLE is not a tool: the model's own loop
-        ;; variables (`x`, `qs`, `day_set`) are globals too, and each one used to
-        ;; become a document whose NAME scores an exact hit — one-letter noise
-        ;; hijacking every natural-language query. Data the prompt teaches keeps
-        ;; its page through `__vis_docs__`, which is merged in separately, so this
+        ;; variables (`x`, `qs`, `day_set`) are globals too, and would clutter
+        ;; the complete blank-pattern listing. Data the prompt teaches keeps its
+        ;; page through `__vis_docs__`, which is merged in separately, so this
         ;; filter drops only the undocumented, uncallable leftovers of a block.
         callable?
         (fn [^String n]
@@ -1271,44 +1227,17 @@
       (reify
         ProxyExecutable
           (execute [_ args]
-            (let [query
+            (let [pattern
                   (if (pos? (alength args)) (.asString ^Value (aget args 0)) "")
 
-                  ;; A described ask matches half the corpus once terms are ORed, and
-                  ;; rows past the first handful are noise the caller reads and pays
-                  ;; for. The EMPTY query is a LISTING, not a search: it stays whole.
-                  described?
-                  (seq (str/trim query))
-
-                  ;; Underscore-prefixed handles (`_shell_logs`, the deferred
-                  ;; transports) are PRIVATE: `doc(name)` still states their result
-                  ;; contract, but no listing advertises them.
-                  public
-                  (remove #(str/starts-with? (str (:name %)) "_"))
-
-                  ;; A LOCAL — a `def` this session wrote — is never ranked and never
-                  ;; listed here: `doc(name)`/`defs()` reach it by the name the author
-                  ;; already knows, while its handle (`vars`, `where`, `hits`) is a
-                  ;; common English word that would win rows off real contracts.
-                  ;; A document with no text cannot answer a described ask either.
                   corpus
-                  (cond->> (into [] (remove #(= "local" (str (:kind %)))) (sandbox-corpus g names))
-                    described?
-                    (into [] (remove #(str/blank? (str (:text %))))))
-
-                  ranked
-                  (doc-corpus/search corpus
-                                     query
-                                     (when described? {:limit (+ (long apropos-limit) 8)}))
+                  (into [] (remove #(= "local" (str (:kind %)))) (sandbox-corpus g names))
 
                   hits
-                  (into [] (if described? (comp public (take apropos-limit)) public) ranked)]
+                  (into []
+                        (remove #(str/starts-with? (str (:name %)) "_"))
+                        (doc-corpus/search corpus pattern))]
 
-              ;; Return a REAL native Python list of `AproposItem` in RANK order by
-              ;; zipping parallel arrays guest-side — nothing proxied crosses the
-              ;; boundary, so iterating, slicing and unpacking all behave natively.
-              ;; ONE shape for a search and for a listing alike: what it IS, the name
-              ;; `doc()` takes, where it ranked, and the opening of its own text.
               (.putMember g "__vis_apropos_names__" (->py (mapv :name hits)))
               (.putMember g "__vis_apropos_kinds__" (->py (mapv #(str (:kind % "tool")) hits)))
               (.putMember g
@@ -1316,10 +1245,9 @@
                           (->py (mapv #(doc-corpus/body-text (:text %)) hits)))
               (try (.eval ctx
                           "python"
-                          (str "[__vis_AproposItem__(_t, _n, _i + 1, _b) "
-                               "for _i, (_n, _t, _b) in enumerate("
-                               "zip(list(__vis_apropos_names__), "
-                               "list(__vis_apropos_kinds__), " "list(__vis_apropos_bodies__)))]"))
+                          (str "[__vis_AproposItem__(_t, _n, _b) "
+                               "for _n, _t, _b in zip(list(__vis_apropos_names__), "
+                               "list(__vis_apropos_kinds__), list(__vis_apropos_bodies__))]"))
                    (finally (.putMember g "__vis_apropos_names__" nil)
                             (.putMember g "__vis_apropos_kinds__" nil)
                             (.putMember g "__vis_apropos_bodies__" nil)))))))
@@ -1369,14 +1297,15 @@
                       ;; no page to print — so the page says what would make one.
                       (cond
                         (and (= "local" (str (:kind hit))) (str/blank? (str (:text hit))))
-                        (str page
-                             "This session defined it and it carries no docstring, so there is "
-                             "nothing to print. `defs(\""
-                             (:name hit)
-                             "\")` returns its source; a "
-                             "docstring's first line becomes its `defs()` gist and the whole of it "
-                             "becomes this page — which is also what lets `apropos` find it.")
-                        ;; A shim the generated index never saw — an extension declares its
+                        (str
+                          page
+                          "This session defined it and it carries no docstring, so there is "
+                          "nothing to print. `defs(\""
+                          (:name hit)
+                          "\")` returns its source; a "
+                          "docstring's first line becomes its `defs()` gist and the whole of it "
+                          "becomes this page. Session-local helpers are listed by `defs()`, not `apropos`.")
+                        ;; A shim the generated apropos resource never saw — an extension declares its
                         ;; own — carries its prose only on the live object, so the placeholder
                         ;; is a cue to import THIS one module, which is what the reader asked for.
                         (and (= "module" (str (:kind hit)))
@@ -1394,7 +1323,7 @@
     (set-python-binding-doc!
       ctx
       'apropos
-      "apropos(query='') -> [AproposItem(type, name, rank, body)]. FULL-TEXT SEARCH over every SYMBOL this session can reach — every Vis verb, every class, function and module a sandbox shim lends, every Vis documentation page, every skill. Ask in words: terms are ORed and ranked by BM25 relevance over name, first line and body, so a whole question answers the symbol that covers most of it and a word nothing carries costs nothing. A query that IS a name wins that name; a typo is spell-corrected and a prefix completed. The answer is a LIST in rank order — iterate it, slice it, pass a row straight back to `doc(item)`. `type` is what the symbol IS: function · class · module · tool · doc · skill. `name` is exactly what `doc()` reads, dotted the way Python addresses it (`pandas.read_csv`). `rank` is 1 for the best answer. `body` is the first 100 characters of the symbol's own text, never a window cut around the query — read the whole with `doc(item)`. Capped at 10, so read down, not around. Called with NO argument it LISTS instead of searching: every symbol, in name order, uncapped. A `def` this session wrote is never here — `defs()` lists those.")
+      "apropos(pattern='') -> [AproposItem(type, name, body)]. REGULAR-EXPRESSION FILTER over every SYMBOL name this session can reach. The pattern is applied with Clojure `re-find`, so `numpy\\..*` finds NumPy members and an invalid expression is an error. Results preserve corpus order and are never ranked or capped. With no argument it lists every public symbol. `type` is function · class · module · tool · doc · skill; `name` is exactly what `doc()` reads; `body` is the opening of the symbol's own text. Pass a row directly to `doc(item)` for the whole document. Session-local `def`s are listed by `defs()`, not here.")
     (set-python-binding-doc!
       ctx
       'doc
@@ -1406,7 +1335,7 @@
     (set-python-binding-doc!
       ctx
       'defs
-      "defs(name=None) -> str. The FUNCTIONS this session defined, as text: `defs()` lists each one's name, signature, block, length and the first line of its DOCSTRING; `defs(name)` returns that one's source, so a helper is refined by editing what it already says instead of being re-pasted from memory. WRITE that docstring: its first line is the gist this listing prints, the whole of it is the helper's own `doc(name)` page, and it is what lets `apropos` find a helper you already wrote — an undocumented one is listed and never searched. A `def` outlives the block and the turn, and is re-created in a fresh sandbox after a gateway restart — a restored one is marked `(restored)`. Imported functions and engine internals are never listed. When the same helper recurs across sessions it has outgrown the sandbox: propose a Python extension (`doc(\"extending\")`).")
+      "defs(name=None) -> str. The FUNCTIONS this session defined, as text: `defs()` lists each one's name, signature, block, length and the first line of its DOCSTRING; `defs(name)` returns that one's source, so a helper is refined by editing what it already says instead of being re-pasted from memory. WRITE that docstring: its first line is the gist this listing prints and the whole of it is the helper's own `doc(name)` page. Session-local definitions are deliberately absent from `apropos`; find them with `defs()`. A `def` outlives the block and the turn, and is re-created in a fresh sandbox after a gateway restart — a restored one is marked `(restored)`. Imported functions and engine internals are never listed. When the same helper recurs across sessions it has outgrown the sandbox: propose a Python extension (`doc(\"extending\")`).")
     (set-python-binding-doc!
       ctx
       'fold-session
@@ -1415,7 +1344,7 @@
     ;; wrappers, so the extension registry never sees them: this is the only place
     ;; their parameter list can come from, and without it `doc(name)` would be the
     ;; one page in the corpus that never shows how to call what it documents.
-    (doseq [[sym signature] {'apropos "query=''"
+    (doseq [[sym signature] {'apropos "pattern=''"
                              'doc "target=None"
                              'gather "*awaitables"
                              'defs "name=None"
@@ -2284,7 +2213,7 @@
             ;; The requiredness twin: `__vis_keys__` is the options-dict vocabulary
             ;; `doc(name)` prints under the call line — which keys the dict must
             ;; carry, and which it may omit. Structure, so it never enters the
-            ;; document text `apropos` ranks.
+            ;; `apropos` filters only names, so this metadata never affects a match.
             py-keys
             (by-py-name (extension/sandbox-symbol-keys))]
 
@@ -2318,16 +2247,10 @@
     ;; Eval'd BEFORE the snapshot so each shim's `__vis_*`/published-module
     ;; names are baseline (filtered out of the model-visible live-vars view).
     (install-sandbox-shims! ctx g)
-    ;; Advertise exact import names and direct globals to the sandbox's discovery
-    ;; surface. `:shim/name` is registry identity only and must never imply importability.
-    ;; `doc()` answers with the HARVESTED capability page — the module's own Python
-    ;; `__doc__` plus every public member it lends (`internal.shim-capabilities`,
-    ;; generated into `resources/vis-shims/capabilities.edn`) — and appends
-    ;; `:shim/docs` when the shim declares doctrine no single name owns. Prose about a
-    ;; name lives ON that name, in the shim's Python, so the page a model reads is the
-    ;; source a maintainer edits. A shim whose own Python already documents a global
-    ;; KEEPS that call contract — the argument list is what a caller types — and gains
-    ;; the page under it, because a page nothing reaches was cut, not moved.
+    ;; Advertise the exact import names and globals contributed by sandbox shims.
+    ;; Their Python docstrings were harvested into the flat apropos resource, so
+    ;; this context seeds those same records into `doc()` without importing modules.
+    ;; A dynamic shim absent from the static distribution may still supply `:shim/docs`.
     (try
       (let [shims
             (registered-sandbox-shims)
@@ -2339,23 +2262,23 @@
                  distinct
                  vec)
 
+            corpus-by-name
+            (into {} (map (juxt :name identity)) (doc-corpus/entries))
+
             docs
             (reduce (fn [m s]
                       (let [page (when-not (str/blank? (:shim/docs s)) (:shim/docs s))]
                         (reduce (fn [acc nm]
-                                  (let [caps (shim-caps/page nm)
-                                        solo (->> [caps page]
+                                  (let [harvested (:text (get corpus-by-name nm))
+                                        solo (->> [harvested page]
                                                   (remove str/blank?)
                                                   (str/join "\n\n"))]
 
                                     (assoc acc
-                                      nm
-                                      ;; A shim OUTSIDE the generated index — a user
-                                      ;; extension's own — has no harvested page.
-                                      (cond-> {"solo"
-                                               (if (str/blank? solo) unharvested-shim-page solo)}
-                                        page
-                                        (assoc "page" page)))))
+                                      nm (cond-> {"solo"
+                                                  (if (str/blank? solo) unharvested-shim-page solo)}
+                                           page
+                                           (assoc "page" page)))))
                                 m
                                 (concat (:shim/imports s) (:shim/globals s)))))
                     {}
@@ -2364,8 +2287,14 @@
             calls
             (into {}
                   (keep (fn [nm]
-                          (when-let [sig (shim-caps/call-line nm)]
+                          (when-let [sig (:call (get corpus-by-name nm))]
                             [nm sig])))
+                  names)
+
+            kinds
+            (into {}
+                  (map (fn [nm]
+                         [nm (or (:kind (get corpus-by-name nm)) "module")]))
                   names)]
 
         (when (seq names)
@@ -2386,16 +2315,7 @@
                       "del _vis_docs, _k, _v, _own, _page"))
           (.putMember g "__vis_docs_json__" nil))
         (seed-py-map! ctx g "__vis_calls__" calls)
-        (seed-py-map! ctx
-                      g
-                      "__vis_kinds__"
-                      (into {}
-                            (map (fn [n]
-                                   [n
-                                    (or (some-> (shim-caps/entry n)
-                                                :kind)
-                                        "module")]))
-                            names)))
+        (seed-py-map! ctx g "__vis_kinds__" kinds))
       (catch Throwable _ nil))
     ;; DOCUMENTS — every skill, every documentation page, every MCP tool — are NOT
     ;; seeded here: `sandbox-corpus` reads them LIVE off `doc-corpus/entries` on

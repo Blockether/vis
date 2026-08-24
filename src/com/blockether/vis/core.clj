@@ -59,7 +59,6 @@
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.titling :as titling]
             [com.blockether.vis.internal.main :as binary]
-            [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.render :as ir]
             [com.blockether.vis.internal.notifications :as notifications]
             [com.blockether.vis.internal.persistance :as persistance]
@@ -81,10 +80,9 @@
 
 ;; Gateway (HTTP/SSE server over the session/turn runtime)
 ;;
-;; `gateway-register-routes!` is the classpath auto-mount seam: an
-;; extension registers a route contribution at
-;; namespace load — and namespaces load via the META-INF/vis-extension
-;; manifest scan, so dropping the jar mounts the routes with zero wiring.
+ ;; `gateway-register-routes!` is the route-contribution seam. Initializers in
+ ;; the one closed distribution manifest register routes in their listed order;
+ ;; adding a jar alone never executes its code.
 ;; The gateway-session/turn helpers below are the host contract a route
 ;; contribution builds its handlers from.
 (import-vars [gateway-start! gateway/start!]
@@ -570,14 +568,6 @@
              [register-op-hook! extension/register-op-hook!]
              [unregister-op-hooks-for-owner! extension/unregister-op-hooks-for-owner!]
              [registered-extensions extension/registered-extensions]
-             [registered-extension-ids extension/registered-extension-ids]
-             [extension-namespaces extension/extension-namespaces]
-             [extension-id-of-ns extension/extension-id-of-ns]
-             [registered-extensions-summary extension/registered-extensions-summary]
-             [invoke-symbol-wrapper extension/invoke-symbol-wrapper]
-             [discover-extensions! extension/discover-extensions!]
-             [rediscover! manifest/rediscover!]
-             [extension-load-failures manifest/load-failures]
              [deregister-extension! extension/deregister-extension!]
              [extension-source-markers-of extension/extension-source-markers-of]
              [channel-contributions-for extension/channel-contributions-for])

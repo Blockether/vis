@@ -587,11 +587,11 @@ def __vis_install_attach__():
 
     # ONE page per callable, in the shape every documented Vis verb wears: the
     # CALL LINE and the KEYS are STRUCTURE - `doc(name)` prints them above the
-    # document, out of the text `apropos` scores - and the page itself is prose
-    # plus the raw-result contract. The call line is DERIVED from the live `def`
-    # rather than retyped, because a signature spelled twice drifts one edit
-    # later; the keys line is where requiredness is stated, because a Python
-    # default can be a spelling detail (`source=None` exists only so that
+    # document, independently of the `apropos` name filter - and the page itself
+    # is prose plus the raw-result contract. The call line is DERIVED from the
+    # live `def` rather than retyped, because a signature spelled twice drifts
+    # one edit later; the keys line is where requiredness is stated, because a
+    # Python default can be a spelling detail (`source=None` exists only so that
     # `path=` can reach it as a keyword).
     def __vis_call_line(fn):
         import inspect as _inspect

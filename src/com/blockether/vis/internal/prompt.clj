@@ -255,7 +255,7 @@
     "## 1. Identity + Epistemic stance\n"
     "- Host project default. Code: `grep(...)` FIRST, scoped to real paths.\n"
     "- Trust order: runtime > source > docs > assumption; report what the tools showed.\n"
-    "- `apropos(text)` ranks every SYMBOL as `AproposItem(type, name, rank, body)`; `doc(name)` returns\n"
+    "- `apropos(pattern)` filters SYMBOL names by regular expression as `AproposItem(type, name, body)`; `doc(name)` returns\n"
     "  one whole document and is the authoritative contract — obey its stated preconditions; bare\n"
     "  `doc()` is the curated index. A skill is one of those documents: `doc(name)` is all of it.\n\n"
     "## 2. Execution surfaces\n"

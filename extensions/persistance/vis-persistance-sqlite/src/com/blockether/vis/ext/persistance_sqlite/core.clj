@@ -4359,7 +4359,7 @@
     ;; :index-data in a query is a map of {field-key expected-value} pairs.
     ;; Each pair becomes a json_extract WHERE clause. This lets extensions
     ;; run structured queries over their index sidecar without custom tables.
-    ;; Example: (extension-list-aggregates env {:kind :bridge/edge :index-data {:source "core/run"}})
+    ;; Example: (extension-list-aggregates env {:kind :graph/edge :index-data {:source "core/run"}})
     (and (map? (:index-data opts)) (seq (:index-data opts)))
     (into (for [[k v] (:index-data opts)]
             [:= [:json_extract :index_data (str "$.\"" (name k) "\"")] (str v)]))))
@@ -4531,9 +4531,9 @@
 
 ;; Backend registration
 ;;
-;; The extension is registered by the lightweight
+;; The extension is registered by `register!` in the lightweight
 ;; `com.blockether.vis.ext.persistance-sqlite.registrar` namespace, which
-;; manifest discovery loads on every Vis startup. That registrar declares
+;; the distribution manifest invokes on every Vis startup. That registrar declares
 ;; `:persistance/ns` as THIS ns; the persistance facade calls
 ;; `requiring-resolve` on backend fns, so this heavyweight ns is loaded
 ;; on demand on the first real DB op (and not at all when the user runs

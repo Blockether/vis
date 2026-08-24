@@ -1,4 +1,0 @@
-;; OpenRouter static-API-key provider. Loading the ns registers the
-;; `:openrouter` provider entry.
-{openrouter
- {:nses [com.blockether.vis.ext.provider-openrouter]}}

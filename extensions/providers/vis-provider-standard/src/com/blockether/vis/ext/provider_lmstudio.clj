@@ -48,20 +48,22 @@
                    models))
            (catch Throwable _ models)))))
 
-(vis/register-extension!
-  (vis/extension {:ext/name "provider-lmstudio"
-                  :ext/description "LM Studio local OpenAI-compatible provider preset."
-                  :ext/version "0.1.0"
-                  :ext/author "Blockether"
-                  :ext/owner "vis"
-                  :ext/license "Apache-2.0"
-                  :ext/providers
-                  [{:provider/id :lmstudio
-                    :provider/label "LM Studio"
-                    :provider/preset
-                    {:base-url "http://localhost:1234/v1"
-                     ;; Sampler defaults prevent local thinking-model loops.
-                     :extra-body
-                     {:temperature 0.6 :top_p 0.95 :top_k 20 :min_p 0.0 :presence_penalty 1.5}}
-                    :provider/status-fn #'status
-                    :provider/enrich-models-fn #'enrich-models}]}))
+(defn register!
+  []
+  (vis/register-extension!
+    (vis/extension {:ext/name "provider-lmstudio"
+                    :ext/description "LM Studio local OpenAI-compatible provider preset."
+                    :ext/version "0.1.0"
+                    :ext/author "Blockether"
+                    :ext/owner "vis"
+                    :ext/license "Apache-2.0"
+                    :ext/providers
+                    [{:provider/id :lmstudio
+                      :provider/label "LM Studio"
+                      :provider/preset
+                      {:base-url "http://localhost:1234/v1"
+                       ;; Sampler defaults prevent local thinking-model loops.
+                       :extra-body
+                       {:temperature 0.6 :top_p 0.95 :top_k 20 :min_p 0.0 :presence_penalty 1.5}}
+                      :provider/status-fn #'status
+                      :provider/enrich-models-fn #'enrich-models}]})))

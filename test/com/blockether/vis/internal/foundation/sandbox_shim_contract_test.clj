@@ -1,19 +1,16 @@
 (ns com.blockether.vis.internal.foundation.sandbox-shim-contract-test
   "Repo-wide contract for the built-in Python sandbox shims.
 
-   Every shim is THREE things that must stay in step: a lazy `shim_*.clj`
-   registering one extension, an entry in `builtin-extension-nses` (or the
-   extension is never loaded and `import <mod>` dies in the sandbox), and a
-   `resources/vis-shims/<name>.py` reachable as a CLASSPATH RESOURCE — including
-   inside the native image, which only embeds what build.clj asks for.
-
-   Drift in any one of them is invisible until an agent's `import` fails at
-   runtime, so it is checked here rather than discovered in the field."
+   Every shim is three things that must stay in step: a lazy `shim_*.clj`
+   initializer named by the one distribution manifest, a registered extension,
+   and a `resources/vis-shims/<name>.py` classpath resource. Drift in any one is
+   invisible until an agent imports the module, so this test pins the boundary."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.shim-capabilities :as shim-caps]
+            [com.blockether.vis.internal.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.io File]
            [org.graalvm.polyglot Context]))
@@ -28,8 +25,11 @@
    sandbox context, so it deliberately has no `shim_*.clj`."
   #{"vis-shims/posix.py"})
 
-(def ^:private builtin-nses
-  (delay @(requiring-resolve 'com.blockether.vis.internal.extension/builtin-extension-nses)))
+(defn- shim-initializers
+  []
+  (->> (:initialization (manifest/read-manifest))
+       (filter #(str/starts-with? (namespace %) "com.blockether.vis.internal.foundation.shim-"))
+       vec))
 
 (defn- shim-ns-files
   []
@@ -46,26 +46,25 @@
                    (str/replace "_" "-")))))
 
 (defn- registered-shims
-  "Load every builtin extension ns, then read back the registered shims."
+  "Invoke the shim initializers named by the distribution manifest."
   []
-  (run! require @builtin-nses)
+  (doseq [initializer (shim-initializers)]
+    ((requiring-resolve initializer)))
   (extension/sandbox-shims))
 
 (defdescribe shim-registration-test
              (it "finds the shim namespaces on disk at all"
                  ;; Guards the guard: a wrong directory would make every check below vacuous.
                  (expect (< 10 (count (shim-ns-files)))))
-             (it "lists every shim_*.clj in builtin-extension-nses"
-                 ;; A shim ns that is not listed is dead code: nothing ever requires it, so
-                 ;; its extension never registers and `import <mod>` fails in the sandbox.
+             (it "lists every shim_*.clj in manifest initialization"
                  (let [listed
-                       (set @builtin-nses)
+                       (set (map (comp symbol namespace) (shim-initializers)))
 
                        unlisted
                        (remove listed (map shim-ns-sym (shim-ns-files)))]
 
                    (expect (empty? unlisted)
-                           (str "shim namespaces missing from builtin-extension-nses: "
+                           (str "shim namespaces missing from manifest initialization: "
                                 (pr-str unlisted)))))
              (it "registers exactly one shim per shim namespace"
                  (expect (= (count (shim-ns-files)) (count (registered-shims))))))
@@ -108,9 +107,8 @@
       ;; A shim reaches Python either as an importable module (`:shim/imports`) or as
       ;; prebound globals (`:shim/bindings`, how the `attach` shim publishes `attach`
       ;; and friends) — declaring NEITHER makes it unreachable. WHAT each name does is
-      ;; documented in the shim's own Python (`__doc__`), harvested into
-      ;; `resources/vis-shims/capabilities.edn`; `shim-capabilities-test` pins that, so
-      ;; no Clojure-side prose can drift from the module it describes.
+      ;; documented in the shim's own Python `__doc__`, harvested into the
+      ;; manifest's static `META-INF/vis/apropos/shims.edn` resource.
       (doseq [{:shim/keys [name imports bindings]} (registered-shims)]
         (expect (not (str/blank? name)))
         (expect (or (seq imports) (some? bindings))
@@ -127,8 +125,7 @@
                        (->> (.listFiles (io/file shim-resource-dir))
                             (map (fn [^File f]
                                    (.getName f)))
-                            ;; `capabilities.edn` sits beside the sources: it is the GENERATED
-                            ;; index of what the shims lend, not a shim, so nothing declares it.
+                            ;; Only Python source files are shim implementations.
                             (filter (fn [^String n]
                                       (.endsWith n ".py")))
                             (map (fn [^String n]
@@ -173,10 +170,10 @@
         (expect (some? shim) "no shim declares :shim/docs — the pull path is untested")
         (expect (str/includes? doc (subs (:shim/docs shim) 0 60))
                 (str name " doc() does not serve :shim/docs"))
-        (expect (some? (shim-caps/gist name))
-                (str name " was never harvested into capabilities.edn"))
-        (expect (str/includes? doc (shim-caps/gist name))
-                (str name " doc() does not serve the module's own Python __doc__")))))
+        (let [entry (some #(when (= name (:name %)) %) (doc-corpus/entries))]
+          (expect (some? entry) (str name " is absent from manifest apropos data"))
+          (expect (str/includes? doc (first (str/split-lines (:text entry))))
+                  (str name " doc() does not serve its Python __doc__"))))))
 
 (defdescribe
   shim-globals-name-their-call-test

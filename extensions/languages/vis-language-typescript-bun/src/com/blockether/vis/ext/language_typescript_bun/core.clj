@@ -387,4 +387,4 @@
                                facade-languages)
      :ext/kind "language"}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

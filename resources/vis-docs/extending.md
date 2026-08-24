@@ -230,13 +230,12 @@ vis.symbol(fn, name=None, tag="observation", is_hidden=False)
 - The sandbox name is `f"{alias}_{name}"`; `name` defaults to `fn.__name__`
   with a leading `"{alias}_"` stripped, so a module can use readable full
   names (`todo_add` under alias `todo`) without double-prefixing.
-- **The docstring is mandatory** — it is the whole contract. `apropos(text)`
-  searches it and `doc(name)` returns it verbatim, so it is the only place the
-  tool is described. Open it with the QUESTION the tool answers, in the words a
-  user would type: that first line is scored as its own field and is what an
-  `apropos` row previews. Never retype the signature there — the page renders one
-  from the real Python signature, so a hand-written copy prints twice, goes stale,
-  and displaces the sentence that should rank. See
+- **The docstring is mandatory** — it is the whole contract. `apropos(pattern)`
+  filters the symbol name with a regular expression, while `doc(name)` returns the
+  docstring verbatim. Choose a descriptive symbol name and put preconditions,
+  side effects and result semantics in the docstring. The `apropos` row previews
+  its opening. Never retype the signature there — the page renders one from the
+  real Python signature, so a hand-written copy prints twice and goes stale. See
   [Your page and your `apropos` row](#your-page-and-your-apropos-row).
 - Parameter names are read from the real signature and shown to the model — name
   them the way the model should type them.
@@ -1390,22 +1389,38 @@ every surface Vis has.
 
 ### How extensions load
 
-Discovery is classpath-wide and manifest-driven. Each extension jar ships **one resource**:
+A distribution ships exactly one closed resource:
 
 ```text
-resources/META-INF/vis-extension/vis.edn
+resources/META-INF/vis/manifest.edn
 ```
 
 ```clojure
-{weather {:nses [com.acme.ext.weather.core]}}
+{:version 1
+ :initialization
+ [com.blockether.vis.internal.foundation.core/register!
+  com.acme.ext.weather.core/register!]
+ :apropos
+ ["META-INF/vis/apropos/docs.edn"
+  "META-INF/vis/apropos/weather.edn"]}
 ```
 
-At startup Vis scans every `META-INF/vis-extension/vis.edn` on the classpath and `require`s each namespace listed under `:nses` exactly once. Your namespace's top-level `(vis/register-extension! …)` fires during that require — that's the whole registration protocol. A namespace that throws during load doesn't crash Vis; the failure is surfaced as a warning to both the user and the model.
+At startup Vis reads that one file, resolves each qualified symbol in
+`:initialization`, and calls it exactly once in vector order. There is no classpath
+scan: adding a jar does nothing until its `register!` symbol is named in the
+manifest. Keep `register!` cheap — it registers values and lazy handlers; it does
+not start services or load a heavy implementation.
+
+The same manifest is the native-image root. The build derives initializer
+namespaces from the symbols and includes the closed first-party source set, so no
+second native namespace list can drift from runtime initialization.
 
 Getting on the classpath:
 
-- **JVM / source runs** — add the extension to `deps.edn` like any Clojure dep (the first-party extensions use `:local/root` entries in Vis's own `deps.edn`).
-- **Native binary** — extensions compile into the image. Add the dep, rebuild with `vis-agent update --rebuild` (see [Runtime distributions](distributions.md)), and mind the [native-image rules](#native-image-rules) below.
+- **JVM / source runs** — add the extension to `deps.edn`, then add its `register!`
+  symbol and apropos resource to the distribution manifest.
+- **Native binary** — add it to the custom distribution and rebuild with
+  `vis-agent update --rebuild` (see [Runtime distributions](distributions.md)).
 
 ### Anatomy
 
@@ -1414,13 +1429,14 @@ my-extension/
 ├── deps.edn
 ├── src/com/acme/ext/weather/core.clj
 └── resources/
-    ├── META-INF/vis-extension/vis.edn                      ; discovery manifest
-    ├── META-INF/native-image/com.acme/weather/             ; only if you pull in
-    │   └── reachability-metadata.json                      ;   reflective libs
-    └── vis-docs/                                           ; optional doc pages
-        ├── vis-docs.edn
-        └── weather.md
+    ├── META-INF/vis/apropos/weather.edn                   ; static search/docs records
+    ├── META-INF/native-image/com.acme/weather/            ; only for reflective libs
+    │   └── reachability-metadata.json
+    └── vis-docs/weather.md                                ; optional full page
 ```
+
+The distribution owns `META-INF/vis/manifest.edn`; an extension never ships a
+second one.
 
 ```clojure
 ;; deps.edn
@@ -1529,10 +1545,10 @@ What follows from that:
 
 The call line and the `Keys:` line are STRUCTURE — `doc(name)` renders both from the entry, never from your text; [Your page and your `apropos` row](#your-page-and-your-apropos-row) shows what that renders to, and what a hand-written signature costs.
 
-A model finds a symbol with `apropos(text)` — full-text over every docstring,
-documentation page, skill body and MCP tool description — and reads its contract
-with `doc(name)`. The prompt therefore does not need to carry either one, which is
-the whole reason a fragment must not restate them.
+A model finds a symbol with `apropos(pattern)`, a regular-expression filter over
+symbol names, and reads its contract with `doc(name)`. The prompt therefore does
+not need to carry either one, which is the whole reason a fragment must not
+restate them.
 
 ### Your page and your `apropos` row
 
@@ -1550,71 +1566,56 @@ FIND WHERE something is — the codebase-wide search …      <- `:description` 
 Raw result: Text, not a map: line 1 summarizes …          <- `:result`
 ```
 
-A search never answers a body. It answers a VECTOR, ranked, one item per SYMBOL:
+A search never answers a whole body. It applies one regular expression to SYMBOL
+names and returns a vector in manifest/resource order:
 
 ```python
-apropos("how do I replace lines in a file")
-# [AproposItem(type='tool', name='patch', rank=1,
+apropos(r"^(patch|token-optimization)$")
+# [AproposItem(type='tool', name='patch',
 #              body='Apply EVERY anchored edit for one file in a single atomic write — prose, c…'),
-#  AproposItem(type='doc', name='token-optimization', rank=2, body='…')]
+#  AproposItem(type='doc', name='token-optimization', body='…')]
 ```
 
-A shim lends hundreds of names, and every one is its own item, under the address Python
-attaches it to:
+A shim lends hundreds of names, and every one is its own item under the dotted
+address Python attaches it to:
 
 ```python
-apropos("read_csv")
-# [AproposItem(type='function', name='pandas.read_csv', rank=1,
+apropos(r"^pandas\.read_csv$")
+# [AproposItem(type='function', name='pandas.read_csv',
 #              body='Read a CSV file into a DataFrame. Ignores dtype and parse_dates …')]
 ```
 
-`type` is what the symbol IS (`function` · `class` · `module` · `tool` · `doc` · `skill`),
-`name` is the handle to read next, `rank` is its 1-based position, and `body` is the first
-100 characters of the docstring — never the document, because `doc()` answers one whole.
-`doc()` takes the item itself, or its name in either spelling: `doc(item)`,
-`doc("pandas.read_csv")`, `doc("pandas::read_csv")`. A symbol is RANKED by its first
-docstring line and PREVIEWED by it, so write that line as the question it answers.
+`type` is what the symbol IS (`function` · `class` · `module` · `tool` · `doc` ·
+`skill`), `name` is the exact handle to read next, and `body` is the first 100
+characters of its text — never the whole document. `doc()` accepts either the item
+or its name: `doc(item)` and `doc("pandas.read_csv")` are equivalent. An empty
+pattern lists all public symbols. An invalid regular expression is an error.
+Search never tokenizes, scores, sorts, corrects spelling, or inspects document
+bodies.
 
-Six rules follow, each measured against Vis's own corpus:
+Six rules keep each record useful:
 
-1. **Open with the question the tool answers, in the asker's words.** The first
-   line is scored as its own field and is what the row previews. Vis's editing
-   pages were written mechanics-first, for a reader who already knew the tool;
-   rewriting only their opening lines moved `grep` from rank 36 to 1 for *"find
-   where a symbol is used across the repo"* — over 27 natural asks, top-1
-   17 → 22.
+1. **Choose a stable, searchable name.** Regex search sees only `name`, so use the
+   exact public handle and a dotted address for a module member.
 2. **Never write the call into the prose.** `doc(name)` prints it from `:call` or
-   the real arglists, and the `Keys:` line from `:params`. A hand-typed
-   `await my_tool(…)` inside the text prints twice, goes stale, and displaces the
-   sentence that should rank: when a call line was first prepended to `patch`'s
-   text, `patch` fell from rank 1 to 19 for its own defining ask.
-3. **Declare every option key in `:params`, once.** `:name` is the WIRE key
-   spelled exactly as the model types it; `:required?` only when the tool really
-   refuses without it (call it and see — `grep` marks none, because a query-less
-   `grep` lists files); `:note` is at most six words, the one thing the key's name
-   does not already say. Positional arguments belong to the call line, not here.
-4. **`:result` states the shape, never the workflow** — the exact keys Python will
-   index into, spelled the way the map spells them. A sandbox verb returns a raw
-   value with nothing in front of it, so this is the only place its result is ever
-   described, and a contract written in nouns teaches a probe instead: `run_tests`
-   answered *"execution metadata, counts/details, output, timeout, and REPL-recovery
-   diagnostics"* for thirty keys, so a caller had to print the map to find `is_pass`.
-   A contract that names fewer than two of its keys, and does not answer plain text,
-   fails `extension_test`.
-5. **Say a word once.** Query terms are ORed, stemmed (`define` / `defines` /
-   `defined` / `defining` are one term) and priced by rarity; a repeat saturates
-   instead of stacking, so keyword stuffing buys no rank and costs the human who
-   pulls the page.
-6. **Keep it a page.** Vis's 35 built-in tool pages run 301 B to 1.3 KB, median
-   676 B. Everything a caller needs WHILE calling belongs here rather than in the
-   prompt — and nothing else does.
+   the real arglists, and prints the `Keys:` line from `:params`. A hand-typed call
+   appears twice and can drift.
+3. **Declare every option key in `:params`, once.** `:name` is the WIRE key spelled
+   exactly as the model types it; `:required?` appears only when the tool refuses
+   without it; `:note` is at most six words.
+4. **`:result` states the shape, never the workflow.** Name the exact keys Python
+   receives. This is the caller's contract, not an invitation to probe the value.
+5. **Open with a useful one-line preview.** The first line becomes `body`; keep it
+   concrete and short enough to scan.
+6. **Keep it a page.** Everything needed while calling belongs here rather than in
+   the prompt, and unrelated background does not.
 
-A symbol with neither `:description` nor a docstring has **no page at all**. After
-registering, read both renderings the way the model meets them:
+A symbol with neither `:description` nor a docstring has no page. After adding it,
+read both renderings the way the model meets them:
 
 ```python
-apropos("the sentence a user would actually type")  # is your tool in the first rows?
-print(doc("weather_lookup"))                        # call line right, keys marked, result stated?
+apropos(r"^weather_lookup$")
+print(doc("weather_lookup"))
 ```
 
 ### Sandbox shims and autoloads
@@ -1633,16 +1634,13 @@ List one or more shim specs under `:ext/sandbox-shims`:
 
 ```clojure
 {:shim/name        "yaml"
- ;; DISCOVERY, and never inferred from the name: the exact top-level modules a
- ;; caller may `import`, and the exact names callable with no import at all.
- ;; Both are listed in the prompt and answer `doc(name)`/`apropos(text)`, so a
- ;; name missing here is a capability the model never learns it has.
+ ;; RUNTIME NAMES, never inferred from :shim/name: exact top-level modules a
+ ;; caller may import and exact names callable with no import. The build harvests
+ ;; their Python docstrings into a manifest-listed apropos resource.
  :shim/imports     ["yaml"]
  :shim/globals     []
- ;; PULLED by `doc("yaml")`: doctrine no single name owns — a query language, the
- ;; fixture vocabulary, a server-side API. Prose ABOUT A NAME belongs ON that name,
- ;; in the shim's own Python: the module's `__doc__` and every function's and class's
- ;; docstring, harvested into `resources/vis-shims/capabilities.edn`.
+ ;; Extra doctrine no single public name owns. Prose about a name belongs on that
+ ;; module, function, or class in the shim's Python source.
  :shim/docs        "PyYAML-compatible `yaml` ... every option, in full."
  ;; Host callables the shim's Python delegates to — a `{py-name -> fn}` map (or a
  ;; 0-arg fn returning one). Each is wired onto the sandbox globals as a Python
@@ -1660,14 +1658,13 @@ List one or more shim specs under `:ext/sandbox-shims`:
  :shim/source      "vis-shims/yaml.py"}
 ```
 
-`doc(name)` answers for every name a shim contributes with the module's own Python
-`__doc__` plus every public member it lends — harvested into
-`resources/vis-shims/capabilities.edn`, and `doc("pandas.read_csv")` reads one of
-those members. `:shim/docs`, when declared, is appended to it. So the page a model
-reads IS the docstring beside the code: a shim with `:shim/globals` must NAME the call
-in that docstring (`nippy_encode(obj) -> bytes`), not just the library it stands in
-for; one contract test fails a globals page that never spells `name(`, and another
-fails any contributed name the harvest finds undocumented.
+The distribution's build harvests every contributed module's Python `__doc__` and
+its public members into a flat apropos EDN resource. The root manifest names that
+resource explicitly, so `apropos(r"^pandas\.read_csv$")` and
+`doc("pandas.read_csv")` work without importing the module first. `:shim/docs`,
+when declared, is appended to its module document. A shim with `:shim/globals`
+must name each call in its Python docstring (`nippy_encode(obj) -> bytes`); contract
+tests reject undocumented names.
 
 Installed BEFORE the sandbox's baseline snapshot, so your `__vis_*` bridge names
 and published module are hidden from the model's live-vars view. Install is
@@ -1791,14 +1788,23 @@ stripped from the field before any surface sees it.
 
 ### Shipping doc pages
 
-Any extension can add pages to Vis's embedded docs — the same corpus the `/docs` site renders and the model searches with `apropos(text)` and reads with `doc(slug)`. Drop markdown under `resources/vis-docs/` with a manifest:
+A documentation page is a Markdown resource plus one record in an apropos EDN
+file named by the root manifest:
 
 ```clojure
-;; resources/vis-docs/vis-docs.edn
-{:pages [{:file "weather.md" :title "Weather" :section "Extensions" :order 50}]}
+;; resources/META-INF/vis/apropos/weather.edn
+[{:name "weather"
+  :kind "doc"
+  :resource "vis-docs/weather.md"
+  :title "Weather"
+  :section "Extensions"
+  :order 50
+  :blurb "Current conditions extension."}]
 ```
 
-Every `vis-docs/vis-docs.edn` on the classpath is discovered — no central registry to edit. Ask a running Vis about your extension and it reads the page you shipped.
+There is no resource scan. Append
+`"META-INF/vis/apropos/weather.edn"` to the distribution manifest's `:apropos`
+vector, and both the docs site and `doc("weather")` read the page.
 
 ### Complete minimal example
 
@@ -1835,16 +1841,15 @@ Every `vis-docs/vis-docs.edn` on the classpath is discovered — no central regi
     :ext/engine      {:ext.engine/alias 'weather
                       :ext.engine/symbols symbols}}))
 
-(vis/register-extension! vis-extension)
+(defn register!
+  []
+  (vis/register-extension! vis-extension))
 ```
 
-`resources/META-INF/vis-extension/vis.edn`:
-
-```clojure
-{weather {:nses [com.acme.ext.weather.core]}}
-```
-
-Add the dep, restart Vis, and the model can call `weather_lookup("Oslo")`.
+Add `com.acme.ext.weather.core/register!` to the custom distribution manifest's
+`:initialization` vector. Add any static page or symbol records through one of the
+resources in `:apropos`, rebuild the distribution, and the model can call
+`weather_lookup("Oslo")`.
 
 ### Native image rules
 

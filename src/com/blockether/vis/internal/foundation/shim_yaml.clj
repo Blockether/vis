@@ -57,4 +57,4 @@
                           :shim/bindings yaml-bridge-bindings
                           :shim/source "vis-shims/yaml.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

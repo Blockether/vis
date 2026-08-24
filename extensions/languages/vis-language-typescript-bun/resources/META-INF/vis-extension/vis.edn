@@ -1,2 +1,0 @@
-{language-typescript-bun
- {:nses [com.blockether.vis.ext.language-typescript-bun.core]}}

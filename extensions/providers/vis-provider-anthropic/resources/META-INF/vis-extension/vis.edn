@@ -1,3 +1,0 @@
-;; Anthropic providers: API key + Claude subscription OAuth.
-{anthropic
- {:nses [com.blockether.vis.ext.provider-anthropic]}}

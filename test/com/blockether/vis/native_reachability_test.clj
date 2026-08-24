@@ -30,7 +30,6 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.nativeimage :as nativeimage]
             [lazytest.core :refer [defdescribe expect it]]
             [yamlstar.core :as yamlstar]))
@@ -150,76 +149,57 @@
         (expect (nil? (re-find #"SKIPPED on Linux" out))))))
 
 
-(defn- build-clj-builtin-nses
-  "The `builtin-extension-nses` vector `build.clj` writes into the image's
-   build-time preload list, read from the source it actually ships."
+(def ^:private manifest-file (io/file "resources" "META-INF" "vis" "manifest.edn"))
+
+(defn- manifest-initialization-nses
+  "Namespaces derived from the ordered initializer symbols in the closed manifest."
   []
-  (let [src
-        (slurp (io/file "build.clj"))
+  (->> (:initialization (edn/read-string (slurp manifest-file)))
+       (map (comp symbol namespace))
+       set))
 
-        at
-        (str/index-of src "(def ^:private builtin-extension-nses")]
-
-    (set (edn/read-string (subs src (str/index-of src "[" at))))))
-
-;; Regression: `foundation.introspection` reached extension/builtin-extension-nses
-;; and never reached build.clj's copy of it, so the FRESHLY BUILT binary died on
-;; its first line — "Could not locate
-;; com/blockether/vis/internal/foundation/introspection__init.class on classpath"
-;; — before it could paint anything. A runtime `require` in a native image can
-;; only find a namespace the build-time preload list already initialized, and
-;; `load-builtin-extensions!` requires every name in that vector, so a name in one
-;; list and not the other is a binary that cannot start.
-(defdescribe builtin-extension-nses-reach-the-native-image-test
-             (it "keeps build.clj's preload copy identical to the list vis requires"
-                 (let [shipped
-                       (set (map str @#'extension/builtin-extension-nses))
-
-                       preloaded
-                       (build-clj-builtin-nses)]
-
-                   (expect (= shipped preloaded)
-                           (str "build.clj's builtin-extension-nses drifted. Missing from the "
-                                "image (the binary dies at startup): "
-                                (pr-str (sort (remove preloaded shipped)))
-                                " — listed there but not shipped: "
-                                (pr-str (sort (remove shipped preloaded))))))))
-
-
-(defn- extension-manifest-files
-  "Every shipped extension discovery manifest under `extensions/`."
+(defn- first-party-source-dirs
+  "Clojure source roots the build derives from root paths and local dependencies."
   []
-  (->> (file-seq (io/file "extensions"))
-       (filter (fn [^java.io.File f]
-                 (and (.isFile f) (str/ends-with? (str f) "META-INF/vis-extension/vis.edn"))))))
+  (let [deps
+        (edn/read-string (slurp (io/file "deps.edn")))
 
-(defn- declared-image-nses
-  "Every namespace an extension manifest declares — `:nses` (required at
-   discovery) plus `:image-nses` (build-time initialized only). Both end up in
-   the image's preload list; only the first is required at startup."
+        local-roots
+        (keep :local/root (vals (:deps deps)))]
+
+    (->> (concat (:paths deps) (map #(str % "/src") local-roots))
+         (map io/file)
+         (filter #(.isDirectory ^java.io.File %)))))
+
+(defn- source-ns
+  [file]
+  (try (with-open [reader (java.io.PushbackReader. (io/reader file))]
+         (binding [*read-eval* false]
+           (let [form (read {:read-cond :allow :eof nil} reader)]
+             (when (and (seq? form) (= 'ns (first form))) (first (filter symbol? (rest form)))))))
+       (catch Throwable _ nil)))
+
+(defn- first-party-source-nses
+  "Every namespace in the first-party source closure consumed by the native build."
   []
-  (set (for [f
-             (extension-manifest-files)
-
-             [_ entry]
-             (edn/read-string (slurp f))
-
-             ns
-             (concat (:nses entry) (:image-nses entry))]
-
-         (str ns))))
+  (->> (first-party-source-dirs)
+       (mapcat file-seq)
+       (filter (fn [^java.io.File file]
+                 (and (.isFile file) (re-matches #".*\.cljc?$" (.getName file)))))
+       (keep source-ns)
+       set))
 
 (defn- nses-loaded-by-name
-  "Extension namespaces vis resolves BY NAME at run time: every
-   `(requiring-resolve 'com.blockether.vis.ext.…/…)` in shipped extension source,
-   and every backend registrar's `:persistance/ns`."
+  "Extension namespaces Vis resolves by name at runtime."
   []
   (->> (file-seq (io/file "extensions"))
-       (filter (fn [^java.io.File f]
-                 (and (.isFile f) (str/ends-with? (str f) ".clj") (str/includes? (str f) "/src/"))))
+       (filter (fn [^java.io.File file]
+                 (and (.isFile file)
+                      (str/ends-with? (str file) ".clj")
+                      (str/includes? (str file) "/src/"))))
        (mapcat
-         (fn [f]
-           (let [src (slurp f)]
+         (fn [file]
+           (let [src (slurp file)]
              (concat
                (map second
                     (re-seq
@@ -229,35 +209,44 @@
                     (re-seq
                       #":persistance/ns\s+'(com\.blockether\.vis\.ext\.[A-Za-z0-9.*+!_?<>=-]+)"
                       src))))))
+       (map symbol)
        set))
 
-;; Regression: the FRESHLY BUILT v0.1.35+ binary aborted on `vis` (the TUI) with
-;; "Could not locate com/blockether/vis/ext/channel_tui/screen__init.class" and on
-;; any DB command with "Backend :sqlite … failed to load". Both namespaces are
-;; deliberately kept OUT of `:nses` — discovery must not pay for Lanterna or JDBC —
-;; and are reached with `requiring-resolve` on first use. A JVM loads them then;
-;; a native image CANNOT ("Classes cannot be defined at runtime"), so a namespace
-;; the image never build-time initialized is simply not there. Every JVM test
-;; stayed green while the binary could not start its own terminal UI.
-(defdescribe nses-loaded-by-name-reach-the-native-image-test
-             (it "declares every extension namespace vis resolves by name at run time"
-                 (let [declared
-                       (declared-image-nses)
+;; Regression: native binaries cannot define a namespace when a lazy handler is
+;; first selected. The build keeps JVM initialization cheap while treating the
+;; closed first-party source set and manifest initializer namespaces as reachable.
+(defdescribe closed-manifest-namespaces-reach-the-native-image-test
+             (it "derives native initializer roots from the one distribution manifest"
+                 (let [initializers
+                       (manifest-initialization-nses)
+
+                       sources
+                       (first-party-source-nses)
+
+                       build-src
+                       (slurp (io/file "build.clj"))]
+
+                   (expect (seq initializers))
+                   (expect (empty? (remove sources initializers))
+                           "every initializer namespace must be in first-party source")
+                   (expect (str/includes? build-src
+                                          "(manifest-initialization-namespaces class-dir)")
+                           "the native preload must derive initializer roots from manifest.edn")))
+             (it "preloads the first-party source closure for implementations resolved by name"
+                 (let [sources
+                       (first-party-source-nses)
 
                        missing
-                       (sort (remove declared (nses-loaded-by-name)))]
+                       (sort (remove sources (nses-loaded-by-name)))
+
+                       build-src
+                       (slurp (io/file "build.clj"))]
 
                    (expect (empty? missing)
-                           (str "these namespaces are loaded by NAME at run time but no extension "
-                                "manifest declares them, so the native image does not contain them "
-                                "(the binary dies on first use): "
-                                (pr-str missing)
-                                " — add each to its manifest's :image-nses"))))
-             (it "keeps build.clj reading BOTH manifest keys into the preload list"
-                 (let [src (slurp (io/file "build.clj"))]
-                   (expect (str/includes? src ":image-nses")
-                           "build.clj must fold :image-nses into the native-image preload list")
-                   (expect (str/includes? src ":nses")))))
+                           (str "runtime-resolved namespaces missing from first-party source: "
+                                (pr-str missing)))
+                   (expect (re-find #"source\s+\(map\s+str\s+\(source-namespaces\)\)" build-src)
+                           "the native preload must include the full first-party source closure"))))
 
 
 ;; Regression: the v0.1.33-v0.1.35 binaries — and the 2026-08-13 dry run — died in

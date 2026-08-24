@@ -25,7 +25,7 @@
 (def ^:private extra-extension->language
   "Clojure-family file extensions the pack's grammar table does NOT map, but that
    the `clojure` grammar parses cleanly — EDN is a subset of the Clojure reader,
-   so `deps.edn` / `vis.edn` / config data are parse-checked like any other
+   so `deps.edn` / `manifest.edn` / config data are parse-checked like any other
    Clojure source instead of slipping past the gate unparsed. Consulted ONLY when
    the pack's own `detectLanguageFromPath` returns nil, so it never overrides the
    pack. Drop an entry here once the pack ships it on the `clojure` grammar."

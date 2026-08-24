@@ -508,4 +508,4 @@
                                    :resource/max 32}}
        :shim/source "vis-shims/paramiko.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

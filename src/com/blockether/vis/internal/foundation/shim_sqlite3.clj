@@ -299,4 +299,4 @@
                                                     :resource/max 64}}
                           :shim/source "vis-shims/sqlite3.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

@@ -13,6 +13,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.test-python-context :as tpc]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
@@ -21,9 +22,9 @@
 
 
 (defn- registered-shims
-  "Every registered sandbox shim, with the built-in extension namespaces loaded."
+  "Every sandbox shim after the distribution manifest is initialized."
   []
-  (#'extension/load-builtin-extensions!)
+  (manifest/initialize!)
   (extension/sandbox-shims))
 
 (defmacro ^:private with-python-context

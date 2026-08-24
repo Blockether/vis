@@ -247,9 +247,8 @@ Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"
 
 (defn- environment-warnings
   []
-  ;; Keep extension load failures in `(:project ctx) :warnings`. This is not
-  ;; a public `v/` tool; it is emergency context for broken extension loads.
-  (vec (vis/extension-load-failures)))
+  ;; Surface project-local Python extension failures in project context.
+  (vec (vis/python-extension-load-failures)))
 
 (defn- main-agent-instructions-tool
   "The project's own guidance file — AGENTS.md or CLAUDE.md — whole, with where
@@ -272,7 +271,7 @@ Returns {\"is_found\": True, \"source\", \"path\", \"bytes\": N, \"content\", \"
 
 (defn environment-ctx
   "Foundation-owned structured ctx contribution. Runtime facts, project
-   guidance, and extension-load warnings live under `(:project ctx)`."
+   guidance, and Python extension warnings live under `(:project ctx)`."
   [_environment]
   (try (render/project-context (snapshot) (agents/instructions) (environment-warnings))
        (catch Throwable t

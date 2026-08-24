@@ -940,4 +940,4 @@
        :shim/bindings mpl-bridge-bindings
        :shim/source "vis-shims/matplotlib.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

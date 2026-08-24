@@ -3,6 +3,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.environment.agents :as agents]
+            [com.blockether.vis.internal.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -67,12 +68,10 @@
         (expect (not (str/includes? doc "ext repro")))
         (expect (not (str/includes? doc "file-link")))
         (expect (not (str/includes? doc "answer builders")))))
-  (it "registers as a BUILT-IN (no META-INF manifest)"
-      ;; foundation is now a CORE module, not a droppable classpath plug-in:
-      ;; `extension/discover-extensions!` loads it from its built-in list and its
-      ;; top-level `register-extension!` fires. It ships no
-      ;; `META-INF/vis-extension/vis.edn` manifest of its own.
-      (extension/discover-extensions!)
+  (it "is explicitly initialized by the distribution manifest"
+      (expect (some #{'com.blockether.vis.internal.foundation.core/register!}
+                    (:initialization (manifest/read-manifest))))
+      (foundation/register!)
       (expect (some #(= "foundation-core" (:ext/name %)) (extension/registered-extensions))))
   (it "exports a working doctor fn and no CLI commands"
       (expect (empty? (:ext/cli foundation/vis-extension)))

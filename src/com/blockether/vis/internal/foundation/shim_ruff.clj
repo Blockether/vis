@@ -119,4 +119,4 @@
        :shim/bindings ruff-bridge-bindings
        :shim/source "vis-shims/ruff.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

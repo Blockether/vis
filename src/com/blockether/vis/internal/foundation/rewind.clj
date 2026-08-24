@@ -1276,4 +1276,4 @@
                   :ext/channel-contributions {:gateway.slot/http-routes
                                               [{:id :rewind/http :fn routes-contribution}]}}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

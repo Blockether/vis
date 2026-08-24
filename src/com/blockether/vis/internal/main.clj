@@ -2911,7 +2911,6 @@
         (namespace->path ns-sym)]
 
     {"deps.edn" (str "{:paths [\"src\" \"resources\"]\n" " :deps {}}\n")
-     "resources/META-INF/vis-extension/vis.edn" (pr-str {(symbol name) {:nses [ns-sym]}})
      (str "src/" ns-path) (str "(ns "
                                ns-sym
                                "\n"
@@ -2929,8 +2928,8 @@
                                "     :ext/description \"User extension " name
                                "\"\n" "     :ext/version \"0.1.0\"\n"
                                "     :ext/author \"local\"\n" "     :ext/owner \"local\"\n"
-                               "     :ext/kind \"user\"}))\n\n"
-                               "(vis/register-extension! vis-extension)\n")}))
+                               "     :ext/kind \"user\"}))\n\n" "(defn register!\n"
+                               "  []\n" "  (vis/register-extension! vis-extension))\n")}))
 
 (defn- parse-scaffold-opts
   [parsed residual]
@@ -3008,7 +3007,7 @@
         (str
           "Created extension scaffold at " (.getPath target)
           "\n"
-          "It is auto-loaded when you run vis-agent from this project (or from ~/.vis/vis-extensions)."))))
+          "Add its register! symbol to META-INF/vis/manifest.edn in your custom distribution."))))
   (shutdown-agents))
 
 (defn- cli-extension-check!
@@ -4332,55 +4331,12 @@
     ;; one does.
     (try (setup-db-handler!) (catch Throwable _ nil))))
 
-;; Extension discovery
-;;
-;; ONE call. The unified loader lives in the extension facade.
+(defn- initialize-clojure-extensions! [] (manifest/initialize!) nil)
 
-(defn- print-extension-load-failures!
-  "Print every classpath extension namespace whose `(require)` blew
-   up during the most recent scan to stderr, along with the
-   user-actionable hint. Pre-fix the failure was a buried ERROR line in the
-   process log under `~/.vis/logs/` and the user had no surface clue that an
-   entire alias namespace was unbound - the LLM in the
-   sandbox would loop on `Unable to resolve symbol: cat` until
-   the user manually dug through the log file. Now the launcher
-   shouts the failure on every startup so the user can `git diff`
-   the broken extension and fix the typo.
-
-   No-op when every extension loaded cleanly."
+(defn initialize-all!
+  "Initialize the closed Clojure manifest, then project-local Python extensions."
   []
-  (let [failures (manifest/load-failures)]
-    (when (seq failures)
-      (binding [*out* *err*]
-        (println)
-        (println "⚠  vis-agent: " (count failures) "extension namespace(s) failed to load.")
-        (println "   The associated alias namespace will be UNBOUND in the sandbox.")
-        (println "   The agent will see `Unable to resolve symbol` for every call into it.")
-        (println)
-        (doseq [{:keys [extension-id extension-ns reason path]} failures]
-          (println (str "   • extension '" extension-id "' (" extension-ns ")"))
-          (println (str "     " reason))
-          (when path (println (str "     manifest: " path))))
-        (println)))))
-
-(defn- discover-clojure-extensions!
-  "Discover classpath extensions and surface namespace load failures."
-  []
-  (extension/discover-extensions!)
-  (print-extension-load-failures!)
-  nil)
-
-(defn discover-all!
-  "Run the unified Clojure and Python extension discovery scan. Idempotent through
-   Clojure's `require` cache and Python extension fingerprints. Returns nil.
-
-   Prints a stderr banner enumerating every extension namespace whose `(require)`
-   failed during discovery. The same warnings are also fed into the per-turn
-   `(:project ctx) :warnings` slice, so both the user (at the terminal) and the LLM
-   (reading `ctx`) see the failure immediately instead of bouncing off `Unable to
-   resolve symbol` for an entire session."
-  []
-  (discover-clojure-extensions!)
+  (initialize-clojure-extensions!)
   (python-extensions/load-python-extensions!)
   nil)
 
@@ -4479,16 +4435,15 @@
 
 (defn- root-help-request?
   "True when args ask only for the root help screen. This path can skip
-   extension discovery because the root tree lists built-in parent commands
-   only; extension-owned commands are mounted below `ext` after
-   discovery when that subtree is requested."
+   distribution initialization because the root tree lists built-in parent commands
+   only; extension-owned commands are mounted below `ext` after initialization."
   [args]
   (or (empty? args) (contains? #{["help"] ["--help"] ["-h"]} (vec args))))
 
 (defn- version-request?
   "True when args ask only for the version. Like help, this short-circuits
-   BEFORE extension discovery / agent boot — `vis-agent --version` must be instant and
-   must NOT create the GraalPy sandbox or contact a provider."
+   BEFORE distribution initialization / agent boot — `vis-agent --version` must be instant
+   and must NOT create the GraalPy sandbox or contact a provider."
   [args]
   (contains? #{["--version"] ["-V"] ["version"]} (vec args)))
 
@@ -4502,23 +4457,20 @@
               not-empty)
       "dev"))
 
-(def ^:private first-party-channel-bootstrap-nses {"tui" 'com.blockether.vis.ext.channel-tui.core})
 
 (defn- help-request?
   "True when args request help at any command depth. We can usually render
    help without initializing runtime resources; if a command is not registered
-   yet, the caller falls back to full extension discovery."
+   yet, the caller falls back to full distribution initialization."
   [args]
   (boolean (or (root-help-request? args) (some #{"--help" "-h"} args))))
 
 (defn- channel-help-request?
-  "True for `vis-agent channels <first-party-channel> --help`. These requests need
-   only the selected channel descriptor, not every extension namespace."
+  "True for `vis-agent channels <channel> --help`. Rendering a concrete channel
+   requires the closed distribution to register its descriptor first."
   [args]
   (let [[parent channel & more] (vec args)]
-    (and (= "channels" parent)
-         (contains? first-party-channel-bootstrap-nses channel)
-         (boolean (some #{"--help" "-h"} more)))))
+    (and (= "channels" parent) (some? channel) (boolean (some #{"--help" "-h"} more)))))
 
 (defn- channel-parent-help-request?
   "True for `vis-agent channels --help`. Rendering the parent has to load
@@ -4537,26 +4489,22 @@
     (and (= "channels" parent) help? (empty? before-help))))
 
 (defn- ext-help-request?
-  "True for any `vis-agent extension ...` help invocation. The `vis-agent extension` subtree is
-   populated by `:ext/cli` mounts that only land after
-   `extension/discover-extensions!` has run, so help rendering for this
-   subtree MUST trigger full extension discovery before the renderer
-   reads `(registered-under [\"extension\"])`."
+  "True for any `vis-agent extension ...` help invocation. The subtree is
+   populated by manifest initializers before command rendering."
   [args]
   (contains? #{"ext" "extension"} (first (vec args))))
 
-(defn- discover-fast-help-deps!
+(defn- initialize-fast-help-deps!
   [args]
-  (cond (channel-help-request? args) (when-let [ns-sym (get first-party-channel-bootstrap-nses
-                                                            (second (vec args)))]
-                                       (require ns-sym))
-        (channel-parent-help-request? args) (discover-all!)
-        (ext-help-request? args) (discover-all!)))
+  (when (or (channel-help-request? args)
+            (channel-parent-help-request? args)
+            (ext-help-request? args))
+    (initialize-all!)))
 
 (defn- fast-help-dispatched?
   [_measure? args]
   (when (help-request? args)
-    (discover-fast-help-deps! args)
+    (initialize-fast-help-deps! args)
     (let [root
           (root-command)
 
@@ -4767,11 +4715,11 @@
       (try (f) (finally (startup-measure-line! label (format-ms (elapsed-ms started))))))
     (f)))
 
-(defn- discover-for-dispatch!
-  "Discover what `args` needs before command dispatch. The TUI starts Python
+(defn- initialize-for-dispatch!
+  "Initialize the closed manifest before dispatch. The TUI starts Python
    extension loading after its first painted frame; every other command stays eager."
   [measure? args]
-  (timed-startup! measure? "discover-clojure-extensions" #(discover-clojure-extensions!))
+  (timed-startup! measure? "initialize-manifest" #(initialize-clojure-extensions!))
   (when-not (tui-dispatch? args)
     (timed-startup! measure? "load-python-extensions" #(python-extensions/load-python-extensions!)))
   nil)
@@ -4813,7 +4761,7 @@
                              (str "label=" (pr-str (:provider/label provider)))))))
 
 (defn -main
-  "Discover extensions, walk the command tree, dispatch.
+  "Initialize the closed distribution, walk the command tree, dispatch.
 
    Behavior:
      - No args                  -> top-level help
@@ -4867,7 +4815,7 @@
       (cond (version-request? args) (println (str "vis-agent " (vis-version)))
             (root-help-request? args) (println (commandline/render-tree (root-command)))
             (fast-help-dispatched? measure? args) nil
-            :else (do (discover-for-dispatch! measure? args)
+            :else (do (initialize-for-dispatch! measure? args)
                       (when measure? (summarize-startup-registries!))
                       (timed-startup! measure? "pre-redirect-stderr" #(pre-redirect-stderr! args))
                       (let [root
@@ -4905,7 +4853,7 @@
                                   (System/exit 2)
 
                                   ;; Success path: force a deterministic process exit.
-                                  ;; Python extension discovery can spin up GraalPy and extension
+                                  ;; Python extension loading can spin up GraalPy and extension
                                   ;; executors, some of which leave NON-daemon threads alive; a
                                   ;; bare `nil` return let `-main` finish while those threads
                                   ;; kept the JVM (and the native isolate) running, so a

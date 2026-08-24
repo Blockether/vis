@@ -3,7 +3,7 @@
 ;; ...). One static API key (`OPENROUTER_API_KEY`), one base URL, vendor-prefixed
 ;; model slugs (`anthropic/claude-sonnet-4.5`). Self-registers with
 ;; `com.blockether.vis.core` at namespace load via the unified
-;; `META-INF/vis-extension/vis.edn` manifest.
+;; Registered explicitly by the closed distribution manifest.
 {:paths ["src" "resources"]
  ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
  ;; :local/root dep's deps.edn, so resolving this extension alone needs vis' JitPack

@@ -1,17 +1,10 @@
 (ns com.blockether.vis.internal.docs
-  "Embedded documentation subsystem.
+  "Embedded documentation from the explicit records listed by
+   `META-INF/vis/manifest.edn`.
 
-   Any artifact on the classpath may ship docs by placing markdown under
-   `resources/vis-docs/` with a `resources/vis-docs/vis-docs.edn` manifest:
-
-     {:site  {:title \"Vis\" :tagline \"…\" :repo \"https://…\"}   ; optional, site-level
-      :pages [{:file \"index.md\" :title \"Introduction\" :section nil :order 0}
-              {:file \"x.md\"     :title \"X\"            :section \"Runtime\" :order 30}]}
-
-   Every `vis-docs/vis-docs.edn` on the classpath is discovered (the same
-   per-artifact auto-discovery native-image config uses), so an extension adds a
-   page by dropping a markdown file + a manifest entry — no central registry.
-
+   Each documentation record names one exact Markdown resource; no classpath
+   enumeration or alternate docs manifest exists. The same records feed the live
+   docs site and the sandbox `doc`/`apropos` surface.
    THE PAGE CONTRACT — one canonical shape for every page, enforced by
    `docs-test/docs-page-canon-test`:
 
@@ -48,13 +41,11 @@
    Markdown → HTML uses commonmark-java (already a dependency); the theme is an
    enterprise-grade docs layout (sticky header, sidebar, on-this-page rail) in
    the VIS palette (cobalt on white, Hanken Grotesk + JetBrains Mono)."
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.string :as str])
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [com.blockether.vis.internal.manifest :as manifest])
   (:import [java.io ByteArrayOutputStream]
-           [java.net URL]
            [java.nio.charset StandardCharsets]
-           [java.util Enumeration]
            [java.util.zip GZIPOutputStream]
            [org.commonmark.parser Parser]
            [org.commonmark.renderer.html HtmlRenderer]
@@ -63,7 +54,6 @@
 
 (set! *warn-on-reflection* true)
 
-(def ^:private manifest-resource "vis-docs/vis-docs.edn")
 
 ;; commonmark markdown -> HTML
 
@@ -131,74 +121,62 @@
 
     [html' @toc]))
 
-;; classpath discovery
+ ;; explicit documentation records
 
-(defn- classloader
-  ^ClassLoader []
-  (or (.getContextClassLoader (Thread/currentThread)) (clojure.lang.RT/baseLoader)))
+(defonce ^:private documentation-records
+  (delay (->> (manifest/read-apropos-resources)
+              (mapcat identity)
+              (filter #(= "doc" (:kind %)))
+              vec)))
 
-(defn- sibling-url
-  ^URL [^URL manifest-url ^String file]
-  (URL. (str/replace (.toString manifest-url) #"vis-docs\.edn$" file)))
-
-(defn- manifest-urls
-  "Every `vis-docs` manifest on the classpath, in classloader order."
-  []
-  (let [^Enumeration urls (.getResources (classloader) manifest-resource)]
-    (loop [acc []]
-      (if (.hasMoreElements urls) (recur (conj acc ^URL (.nextElement urls))) acc))))
+(defn- resource-url
+  [{:keys [name resource]}]
+  (or (io/resource resource)
+      (throw (ex-info "Missing documentation resource"
+                      {:type :docs/missing-resource :name name :resource resource}))))
 
 (defn- url-mark
-  "A cheap freshness mark for one resource: its address, timestamp and length.
-   A `file:` URL costs one stat; a `jar:`/`resource:` URL inside a built image
-   answers a constant, which is exactly right — those bytes cannot change."
-  [^URL u]
-  (try (let [c (.openConnection u)]
-         [(.toString u) (.getLastModified c) (.getContentLengthLong c)])
-       (catch Throwable _ [(.toString u) 0 -1])))
-
-(defn- page-marks
-  "Marks for a KNOWN page list. The fast path: no manifest is read, the pages
-   are stat'ed, never slurped."
-  [urls]
-  (mapv url-mark urls))
+  [^java.net.URL url]
+  (let [text (str url)]
+    (if (= "file" (.getProtocol url))
+      (try (let [^java.io.File file (io/file (.toURI url))]
+             [text (.lastModified file) (.length file)])
+           (catch Throwable _ [text 0 -1]))
+      [text 0 -1])))
 
 (defn- collect*
-  "Read and render every page, and answer the page URLs alongside so the next
-   freshness check is a stat pass. Expensive: a slurp and a markdown render per
-   page, which is why `collect` guards it with `url-mark`."
   []
-  (let [page-urls
-        (atom [])
+  (let [records
+        @documentation-records
 
         site
-        (atom {:title "Vis" :tagline "" :repo nil})
+        (reduce (fn [acc record]
+                  (merge acc (:site record)))
+                {:title "Vis" :tagline "" :repo nil}
+                records)
 
         pages
-        (vec
-          (mapcat (fn [^URL mu]
-                    (let [m (edn/read-string (slurp mu))]
-                      (when-let [s (:site m)]
-                        (swap! site merge s))
-                      (keep (fn [{:keys [file title section order blurb]}]
-                              (when-let [md (let [u (sibling-url mu file)]
-                                              (swap! page-urls conj u)
-                                              (try (slurp u) (catch Exception _ nil)))]
-                                (let [[html toc] (anchors+toc (md->html md))]
-                                  {:slug (str/replace file #"\.md$" "")
-                                   :title (or title (first-h1 md) file)
-                                   :section section
-                                   :blurb blurb
-                                   :order (or order 100)
-                                   :md md
-                                   :html html
-                                   :toc toc})))
-                            (:pages m))))
-                  (manifest-urls)))
+        (mapv (fn [{:keys [name title section order blurb] :as record}]
+                (let [url
+                      (resource-url record)
 
-        ;; Sections appear in the order of their lowest page `:order`, not
-        ;; alphabetically — so manifest `:order` controls sidebar section
-        ;; placement. Within a section, pages sort by `:order` then title.
+                      md
+                      (slurp url)
+
+                      [html toc]
+                      (anchors+toc (md->html md))]
+
+                  {:slug name
+                   :title (or title (first-h1 md) name)
+                   :section section
+                   :blurb blurb
+                   :order (or order 100)
+                   :md md
+                   :html html
+                   :toc toc
+                   :url url}))
+              records)
+
         sec-order
         (into {}
               (map (fn [[sec ps]]
@@ -210,55 +188,37 @@
           (juxt #(if (= "index" (:slug %)) 0 1) #(get sec-order (:section %) 100) :order :title)
           pages)]
 
-    {:result {:site @site :pages (vec ordered)} :page-urls @page-urls}))
+    {:site site :pages (mapv #(dissoc % :url) ordered) :urls (mapv :url pages)}))
 
-(defonce ^:private page-cache
-  ;; `{:marks … :generation n :result {…}}`. Rendering 16 pages costs ~8 ms and
-  ;; the docs site did it on EVERY request while the doc corpus did it on every
-  ;; rebuild; a stat pass costs ~0.2 ms and keeps the dev edit-refresh loop.
-  (atom nil))
+(defonce ^:private page-cache (atom nil))
 
 (defn- ensure-pages!
-  "The freshness gate. Two stages, cheapest first: the manifests are stat'ed,
-   and only if THEY changed is one re-read to learn the page list. An unchanged
-   tree costs one stat per manifest plus one per page."
   []
-  (let [manifests
-        (mapv url-mark (manifest-urls))
-
-        cached
+  (let [cached
         @page-cache
 
-        fresh?
-        (and cached
-             (= manifests (:manifests cached))
-             (= (page-marks (:page-urls cached)) (:pages cached)))]
+        urls
+        (mapv resource-url @documentation-records)
 
-    (if fresh?
+        marks
+        (mapv url-mark urls)]
+
+    (if (and cached (= marks (:marks cached)))
       cached
       (swap! page-cache (fn [prev]
-                          (let [{:keys [result page-urls]} (collect*)]
-                            {:manifests manifests
-                             :page-urls page-urls
-                             :pages (page-marks page-urls)
+                          (let [{:keys [site pages]} (collect*)]
+                            {:marks marks
                              :generation (inc (long (:generation prev 0)))
-                             :result result}))))))
+                             :result {:site site :pages pages}}))))))
 
 (defn collect
-  "Discover every vis-docs manifest on the classpath →
-   {:site {…} :pages [{:slug :title :section :blurb :order :md :html :toc} …]}, sorted
-   by (section, order, title); slug \"index\" is always first.
-
-   Memoized on a stat pass over the manifests and their pages, so an edit under
-   `resources/vis-docs` still shows on the next call and an unchanged tree
-   costs no re-render."
+  "Read the documentation records named by the closed manifest and render their
+   exact Markdown resources. Pages retain manifest order within their sections."
   []
   (:result (ensure-pages!)))
 
 (defn generation
-  "How many times the pages have actually been re-read. A CHEAP freshness
-   token: it changes exactly when `collect` would answer something new, which
-   is what lets the doc corpus memoize its own entries."
+  "How many times a documentation resource changed and was re-rendered."
   []
   (:generation (ensure-pages!)))
 

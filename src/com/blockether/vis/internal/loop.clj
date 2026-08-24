@@ -32,6 +32,7 @@
     [com.blockether.vis.internal.attachment-storage :as attachment-storage]
     [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
     [com.blockether.vis.internal.extension :as extension]
+    [com.blockether.vis.internal.manifest :as manifest]
     [com.blockether.vis.internal.python-extensions :as python-extensions]
     [com.blockether.vis.internal.render :as render]
     [com.blockether.vis.internal.persistance :as persistance]
@@ -4322,7 +4323,7 @@
    every other capability is already a bare Python name inside that sandbox, so a
    second JSON schema advertises a door the model can open anyway — and charges
    for it on every request. Discovery of the rest is pulled, not pushed:
-   `apropos(text)` searches and `doc(name)` retrieves, both from inside a block.
+   `apropos(pattern)` filters names and `doc(name)` retrieves, both from inside a block.
 
    The raw-result contract is folded into the description here, so the one tool
    cannot reach a provider without saying what it hands back. Nothing is
@@ -6686,10 +6687,11 @@
    operating budget keep a 10% provider-rejection reserve. Unknown and >=200K windows
    retain the historical 200K threshold."
   [context-limit]
-  (if-let [limit (token-limit context-limit)]
-    (if (< limit ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)
-      (max 1 (quot (* limit 9) 10))
-      ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)
+  (if-let [raw-limit (token-limit context-limit)]
+    (let [limit (long raw-limit)
+          default-budget (long ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS)]
+
+      (if (< limit default-budget) (max 1 (quot (* limit 9) 10)) default-budget))
     ctx-engine/DEFAULT_PROMPT_BUDGET_TOKENS))
 (defn router-for-model
   "Return a router variant whose provider/model ORDER reflects a model PREFERENCE,
@@ -10183,7 +10185,7 @@
   (when-not router (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   ;; Everything from here to the end runs with the sandbox GUARDED: the Context is
   ;; built ~130 lines before this function returns, and workspace resolution,
-  ;; extension discovery and the defs restore all still run after it. A throw in
+  ;; extension registration and the defs restore all still run after it. A throw in
   ;; that stretch used to ABANDON the sandbox — and an abandoned one is never
   ;; reclaimed, because its GraalPy action thread is a GC root that pins the
   ;; Context, its Engine and the whole Python heap. So the failure path leaked
@@ -10667,14 +10669,11 @@
                             :id ::restore-ctx-failed
                             :data {:error (ex-message t) :session-id session-id}
                             :msg "Failed to restore context state from DB - starting empty"}))))
-        ;; Auto-discover everything from `META-INF/vis-extension/vis.edn` on the
-        ;; classpath, then install extensions in dependency order. The
-        ;; same loader populates channel/command/provider/persistance
-        ;; registries as a side effect; we just care about the extension
-        ;; rows here.
-        (extension/discover-extensions!)
+        ;; Initialize the one closed distribution manifest before installing its
+        ;; registered extensions into this environment.
+        (manifest/initialize!)
         ;; Project-local Python extensions (`.vis/extensions/*.py`) load after
-        ;; classpath discovery so they land in the same registry walk below.
+        ;; manifest initialization so they land in the same registry walk below.
         ;; Load-once, never adopt: this runs on every env cache miss, every recycle
         ;; and every child env, and none of those is a human act. Only
         ;; this process's own start and `/reload` may pick an edit up.

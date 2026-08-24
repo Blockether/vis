@@ -5,7 +5,7 @@
 ;; and Hy3, Anthropic Messages /messages for MiniMax and Qwen. One static API key
 ;; (`OPENCODE_API_KEY`), one base URL, and the per-model `:api-style` override is the
 ;; only thing that selects the wire. Self-registers with `com.blockether.vis.core`
-;; at namespace load via the unified `META-INF/vis-extension/vis.edn` manifest.
+;; Registered explicitly by the closed distribution manifest.
 {:paths ["src" "resources"]
  ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
  ;; :local/root dep's deps.edn, so resolving this extension alone needs vis' JitPack

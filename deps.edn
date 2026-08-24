@@ -22,7 +22,6 @@
   com.blockether/vis-contract {:local/root "packages/vis-contract"}
 
   com.blockether/vis-channel-tui {:local/root "extensions/channels/vis-channel-tui"}
-  com.blockether/vis-foundation-bridge {:local/root "extensions/common/vis-foundation-bridge"}
   com.blockether/vis-foundation-search {:local/root "extensions/common/vis-foundation-search"}
   com.blockether/vis-foundation-voice {:local/root "extensions/common/vis-foundation-voice"}
   com.blockether/vis-language-clojure {:local/root "extensions/languages/vis-language-clojure"}
@@ -171,7 +170,6 @@
    :extra-paths ["test"
                  "dev"
                  "extensions/channels/vis-channel-tui/test"
-                 "extensions/common/vis-foundation-bridge/test"
                  "extensions/common/vis-foundation-search/test"
                  "extensions/common/vis-foundation-voice/test"
                  "extensions/languages/vis-language-clojure/test"
@@ -195,7 +193,6 @@
                "--hook" "com.blockether.vis.test-network-guard/no-network"
                "test"
                "extensions/channels/vis-channel-tui/test"
-               "extensions/common/vis-foundation-bridge/test"
                "extensions/common/vis-foundation-search/test"
                "extensions/common/vis-foundation-voice/test"
                "extensions/languages/vis-language-clojure/test"

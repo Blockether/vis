@@ -128,4 +128,4 @@
                           :shim/bindings tzdata-bridge-bindings
                           :shim/source "vis-shims/tzdata.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

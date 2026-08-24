@@ -714,7 +714,7 @@
 (defn- prose-surfaces
   "Every place vis DESCRIBES anydoc to somebody who will not read the source: the
    `:shim/docs` page `doc(\"anydoc\")` prints, the module docstring the sandbox hands
-   the model (harvested into `capabilities.edn`), and the docs page. All three are
+   the model (harvested into the manifest's apropos resource), and the docs page. All three are
    prose nobody runs."
   [^Context python-context]
   (let [shim (-> shim-anydoc/vis-extension

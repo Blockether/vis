@@ -51,4 +51,4 @@
                           :shim/imports ["brotli" "fontTools"]
                           :shim/source "vis-shims/fonttools.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

@@ -74,25 +74,29 @@
                       (expect (str/includes? msg "DISABLED"))
                       (expect (str/includes? msg "`shell` is not bound"))
                       (expect (str/includes? msg "Shell commands")))))
-  ;; Regression, discovery audit: with the toggle off `shell` left the discovery
-  ;; corpus entirely, so a shell-shaped query answered nothing — silence the model
-  ;; read as "nothing here can start a process at all".
-  (it "keeps `shell` in the corpus with the toggle state AND the door it leaves open"
+  ;; Regression, discovery audit: with the toggle off `shell` left the documented
+  ;; corpus entirely, so even an exact name pattern answered nothing — silence the
+  ;; model read as "nothing here can start a process at all".
+  (it "keeps `shell` documented with the toggle state AND the door it leaves open"
       (let [^Context ctx
             (:python-context (ep/create-python-context {}))
 
             hits
-            (fn [q]
-              (str/split (.asString
-                           (.eval ctx "python" ^String (str "','.join(apropos(" (pr-str q) "))")))
+            (fn [pattern]
+              (str/split (.asString (.eval ctx
+                                           "python"
+                                           ^String
+                                           (str "','.join(item.name for item in apropos("
+                                                (pr-str pattern)
+                                                "))")))
                          #","))
 
             doc-text
             (fn [q]
               (.asString (.eval ctx "python" ^String (str "doc(" (pr-str q) ")"))))]
 
-        (doseq [q ["shell" "she"]]
-          (expect (some #{"shell"} (hits q)) q))
+        (doseq [pattern ["^shell$" "^she"]]
+          (expect (some #{"shell"} (hits pattern)) pattern))
         (expect (str/includes? (doc-text "shell") (get ep/PROCESS_SURFACE "off")))
         (expect (str/includes? (doc-text "shell") (get ep/PROCESS_SURFACE "extension")))))
   (it "says nothing about the extension door while the shell tool is bound"

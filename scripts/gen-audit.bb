@@ -34,7 +34,6 @@
    "vis-language-python" "_Python language pack._"
    "vis-foundation-voice"
    "_Local speech (upstream sherpa-onnx; ONNX Runtime rides inside its native jar)._"
-   "vis-foundation-bridge" "_Bridge verification tool surface._"
    "vis-foundation-search" "_Web/code/paper search tool surface._"
    "vis-channel-tui" "_Terminal UI (Lanterna)._"})
 

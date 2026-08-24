@@ -8,9 +8,9 @@
 
    - SKILLS are DOCUMENTS, never a verb: the prompt lists every skill
      `name — description` (cheap — always present) and the WHOLE `SKILL.md` is
-     one document in the `doc`/`apropos` corpus, so `apropos(text)` finds it and
-     `doc(name)` prints it whole. Reading a skill has no session effect: there
-     is nothing to activate, nothing to re-read and no activation receipt.
+     one document in the `doc`/`apropos` corpus. `apropos(pattern)` filters skill
+     names and `doc(name)` prints one whole. Reading a skill has no session effect:
+     there is nothing to activate, nothing to re-read and no activation receipt.
 
    - The USER's `/skill:<name>` slash is that same document with a POINTER, never a
      copy: it expands to one sentence naming the skill (plus the owning project
@@ -160,8 +160,8 @@
         "\n"
         (cons
           (str
-            "Harness SKILLS available — `doc(\"name\")` prints one whole SKILL.md, `apropos(text)`"
-            " searches them all; reading one has no session effect"
+            "Harness SKILLS available — `doc(\"name\")` prints one whole SKILL.md, `apropos(pattern)`"
+            " filters their names; reading one has no session effect"
             " (a `[project]` tag names the nested project that OWNS a skill — work under that"
             " directory when you use it):")
           (for [s ss]
@@ -193,4 +193,4 @@
                           true)
      :ext/prompt-fn harness-prompt}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

@@ -834,8 +834,8 @@
 
     ;; Gate-check paths as given, not normalized to parent directories.
     ;; grep's actual search uses resolve-search-roots which handles file→dir
-    ;; normalization internally. The gate must see .bridge/profile.yaml, not
-    ;; .bridge/, so a rule on .bridge/ also blocks explicit file access.
+    ;; normalization internally. The gate must see config/private/settings.edn, not
+    ;; config/private/, so a rule on config/private/ also blocks explicit file access.
     ;; Missing paths are still resolved to their nearest existing ancestor.
     (mapv (fn [p]
             (let [^File f (safe-path p)]

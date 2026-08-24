@@ -75,4 +75,4 @@
             "custom selectors). No lxml/html5lib parsers: requesting one raises `FeatureNotFound`.")
        :shim/source "vis-shims/bs4.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

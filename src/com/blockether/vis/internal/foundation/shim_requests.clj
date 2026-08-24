@@ -34,4 +34,4 @@
      :ext/sandbox-shims
      [{:shim/name "requests" :shim/imports ["requests"] :shim/source "vis-shims/requests.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

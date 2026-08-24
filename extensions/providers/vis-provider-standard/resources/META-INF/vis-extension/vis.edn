@@ -1,9 +1,0 @@
-;; Standard provider presets. One manifest id -> one provider extension namespace.
-{openai
- {:nses [com.blockether.vis.ext.provider-openai]}
- ollama
- {:nses [com.blockether.vis.ext.provider-ollama]}
- lmstudio
- {:nses [com.blockether.vis.ext.provider-lmstudio]}
- mistral
- {:nses [com.blockether.vis.ext.provider-mistral]}}

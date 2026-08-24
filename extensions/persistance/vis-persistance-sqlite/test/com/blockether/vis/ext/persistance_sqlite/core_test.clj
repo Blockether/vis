@@ -12,15 +12,9 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             ;; Force-load the SQLite backend ns so the `private-core-fn` helper
-            ;; below can resolve its private vars at top-level def time. Without
-            ;; this require, `resolve` returns nil and `deref` throws NPE because
-            ;; the backend is normally loaded lazily by extension scanning.
+            ;; below can resolve its private vars at top-level def time. The backend
+            ;; is otherwise loaded lazily by persistence dispatch.
             [com.blockether.vis.ext.persistance-sqlite.core :as sqlite-core]
-            ;; Register the extension in the persistance facade. Production loads
-            ;; this via classpath manifest discovery; tests need it explicit
-            ;; because requiring `core` no longer self-registers (see
-            ;; `registrar.clj` for the lazy-load split rationale).
-            [com.blockether.vis.ext.persistance-sqlite.registrar]
             [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer
              [raw-count raw-query]]
             [com.blockether.vis.internal.attachments :as attachments]
@@ -489,53 +483,53 @@
       ;; Insert three rows with different index data
       (persistance/db-put-extension-aggregate!
         s
-        {:extension-id 'test.ext.bridge
+        {:extension-id 'test.ext.graph
          :aggregate-key "node:core/run"
-         :kind :bridge/node
+         :kind :graph/node
          :index-data {:path "src/core.clj" :kind "def" :language "clojure"}
          :content {:name "run"}})
       (persistance/db-put-extension-aggregate!
         s
-        {:extension-id 'test.ext.bridge
+        {:extension-id 'test.ext.graph
          :aggregate-key "node:core/start"
-         :kind :bridge/node
+         :kind :graph/node
          :index-data {:path "src/core.clj" :kind "def" :language "clojure"}
          :content {:name "start"}})
       (persistance/db-put-extension-aggregate!
         s
-        {:extension-id 'test.ext.bridge
+        {:extension-id 'test.ext.graph
          :aggregate-key "edge:core/run::calls::lc/iterate"
-         :kind :bridge/edge
+         :kind :graph/edge
          :index-data
          {:edge-kind "calls" :source "core/run" :target "lc/iterate" :path "src/core.clj"}
          :content {:source "core/run" :target "lc/iterate" :kind "calls"}})
       ;; Filter by kind + index-data file-path → both nodes in core.clj
       (let [by-file (vis/db-list-extension-aggregates s
-                                                      {:extension-id 'test.ext.bridge
-                                                       :kind :bridge/node
+                                                      {:extension-id 'test.ext.graph
+                                                       :kind :graph/node
                                                        :index-data {:path "src/core.clj"}})]
         (expect (= 2 (count by-file)))
         (expect (= #{"node:core/run" "node:core/start"} (set (map :key by-file)))))
       ;; Filter by index-data edge-kind → one edge
       (let [by-edge-kind (vis/db-list-extension-aggregates s
-                                                           {:extension-id 'test.ext.bridge
+                                                           {:extension-id 'test.ext.graph
                                                             :index-data {:edge-kind "calls"}})]
         (expect (= 1 (count by-edge-kind)))
         (expect (= "edge:core/run::calls::lc/iterate" (:key (first by-edge-kind)))))
       ;; Filter by index-data source → edge from core/run
       (let [by-source (vis/db-list-extension-aggregates s
-                                                        {:extension-id 'test.ext.bridge
+                                                        {:extension-id 'test.ext.graph
                                                          :index-data {:source "core/run"}})]
         (expect (= 1 (count by-source))))
       ;; Filter edges by file-path → re-indexing use case
       (let [by-edge-file (vis/db-list-extension-aggregates s
-                                                           {:extension-id 'test.ext.bridge
-                                                            :kind :bridge/edge
+                                                           {:extension-id 'test.ext.graph
+                                                            :kind :graph/edge
                                                             :index-data {:path "src/core.clj"}})]
         (expect (= 1 (count by-edge-file))))
       ;; No match → empty
       (let [none (vis/db-list-extension-aggregates s
-                                                   {:extension-id 'test.ext.bridge
+                                                   {:extension-id 'test.ext.graph
                                                     :index-data {:path "nonexistent.clj"}})]
         (expect (= 0 (count none)))))))
 

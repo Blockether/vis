@@ -4,24 +4,36 @@ Vis follows one rule: **do not pay tokens for data that can stay addressable.** 
 
 ## Discover before guessing
 
-The live runtime is the source of truth, and it answers exactly two questions. `apropos(text)` **searches** every SYMBOL the session can reach — each function's and class's whole docstring, every tool's contract, every Vis documentation page, every skill's whole `SKILL.md` — and `doc(target)` **retrieves** one of them whole:
+The runtime answers exactly two questions. `apropos(pattern)` applies a regular
+expression to every public SYMBOL name, and `doc(target)` retrieves one whole
+record:
 
 ```python
-apropos("skeleton")      # full text: the word need not be in any name
-apropos("wire contract") # ask in words: terms are ORed and ranked by relevance
-apropos()                # the listing: every reachable symbol, in name order
-doc("patch")             # one function's whole contract
-doc(apropos("read csv")[0])  # an item reads back: doc() takes it directly
-doc("gateway")           # a Vis documentation page, by slug
-doc("spel")              # a skill, whole — reading it is the whole of using it
-doc()                    # the curated index: the verbs a session starts from
+apropos(r"^patch$")             # exact public handle
+apropos(r"^numpy\..*")         # every NumPy member
+apropos(r"(read_csv|to_markdown)") # alternatives are ordinary regex
+apropos()                        # every public symbol, in corpus order
+doc("patch")                     # one function's whole contract
+doc(apropos(r"^pandas\.read_csv$")[0])  # an item is a doc target
+doc("gateway")                  # a documentation page by slug
+doc("spel")                     # a skill, whole
+doc()                            # curated starting verbs
 ```
 
-Rank is relevance, not a filter: BM25 over the handle, the first line and the body, with terms ORed and priced by how rare they are — so a whole question ranks the document that covers most of it, a query that IS a handle wins that handle, and a mistyped name is spell-corrected. `doc` states the raw-result shape for bare sandbox verbs too (`doc("resource_stop")`), which nothing else describes.
+Search is deliberately literal. It uses Clojure `re-find` over `name` only,
+preserves manifest/resource order, and never tokenizes, scores, sorts, corrects
+spelling, or reads document bodies. A blank pattern lists everything; an invalid
+regular expression is an error.
 
-Each hit is an `AproposItem`, never a document: `type` is what the symbol IS (`function` · `class` · `module` · `tool` · `doc` · `skill`), `name` is the handle to read next — a shim member carries its dotted address, `pandas.read_csv` — `rank` is its 1-based position, and `body` is the first 100 characters of its docstring. The result is a VECTOR, so you iterate it, slice it and pass an item straight back to `doc()`. The document itself is never in a search result. Bare `apropos()` LISTS instead of searching: every reachable symbol in name order, uncapped, with `rank` following that order. Helpers you define in the sandbox are reachable by `doc("name")` and listed by `defs()`, but they are never ranked.
+Each hit is `AproposItem(type, name, body)`: `type` says what the symbol is
+(`function` · `class` · `module` · `tool` · `doc` · `skill`), `name` is the exact
+handle `doc()` reads, and `body` is the first 100 characters of its text. The
+whole document remains behind `doc(name)`. Static records come only from the EDN
+resources listed under `:apropos` in `META-INF/vis/manifest.edn`; session skills
+and live MCP contracts are explicit runtime additions. Helpers you define are
+listed by `defs()`, not `apropos()`.
 
-Use them before inventing a name or a call shape. They read the live registry and the live document corpus, so an extension appears the moment it binds and a copied catalog cannot go stale.
+Use these verbs before inventing a name or call shape.
 
 ## Read the region before bytes
 
@@ -101,7 +113,7 @@ print(defs())            # 2 definitions in this sandbox
 print(defs("hits"))      # its source — edit THAT, never re-paste from memory
 ```
 
-A helper's **docstring is its document** — the only page you write while the session runs. Its first line is the gist `defs()` prints beside the name, and the whole of it is what `doc("hits")` answers. Sandbox helpers are never ranked by `apropos` — `defs()` is their catalogue — so the docstring is what the NEXT turn reads before it re-types the helper from memory.
+A helper's **docstring is its document** — the only page you write while the session runs. Its first line is the gist `defs()` prints beside the name, and the whole of it is what `doc("hits")` answers. Sandbox helpers are absent from `apropos`; `defs()` is their catalogue, and the docstring is what the NEXT turn reads before it re-types the helper from memory.
 
 What does **not** persist is anything written into `session`. That map is host-owned and rebuilt from the engine snapshot before every block, so `session["helpers"] = …` succeeds and is gone by the next one — a silent loss, not an error. Keep state in ordinary names — and give a helper its OWN name: a top-level `def cat(...)` or `class grep:` named after a bound tool is refused where it is written, because that definition could only ever shadow the tool inside its own block and would never be persisted or restored.
 

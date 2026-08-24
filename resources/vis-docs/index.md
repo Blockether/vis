@@ -54,12 +54,12 @@ a function inside it:
 That is where context utilization drops on advanced tasks: the raw tool output
 lives in Python vars, never in the window, and the model decides what surfaces.
 
-Contracts are PULLED, not pushed: `apropos(text)` is full-text search over every
-function docstring, documentation page, skill body and MCP tool description, and
-`doc(name)` returns the authoritative contract for one of them. From there,
-`grep` → `cat` → `patch` is the whole editing path: locate it, read the region
-you will change, then spend the anchor that read handed back. See [Token
-optimization](token-optimization.md) and [Extending Vis](extending.md#one-tool-and-it-is-python-execution).
+Contracts are PULLED, not pushed: `apropos(pattern)` applies a regular expression
+to every known symbol name, and `doc(name)` returns the authoritative contract
+for one of them. From there, `grep` → `cat` → `patch` is the whole editing path:
+locate it, read the region you will change, then spend the anchor that read handed
+back. See [Token optimization](token-optimization.md) and [Extending
+Vis](extending.md#one-tool-and-it-is-python-execution).
 
 ```text
       ONE TOOL PER RESULT                 PYTHON SANDBOX
@@ -202,4 +202,4 @@ Every page of this manual, in the order the sidebar lists them.
 
 - [Extending Vis](extending.md) — one guide to both flavors: drop-in [Python extensions](extending.md#python-extensions) (a `.py` in `.vis/extensions/`, no rebuild, `/reload`able, and Vis can write them for itself mid-session) and [Clojure extensions](extending.md#clojure-extensions) (tools, channels, providers, slash commands, doc pages, compiled into the binary).
 
-Vis can also answer these questions itself: ask a running `vis-agent` how to configure or extend it and it reads these same pages through `apropos(text)` and `doc(slug)` — they are documents in the same corpus as every function contract.
+Vis can also answer these questions itself: ask a running `vis-agent` how to configure or extend it and it filters these page names through `apropos(pattern)` and reads one with `doc(slug)` — they are documents in the same corpus as every function contract.

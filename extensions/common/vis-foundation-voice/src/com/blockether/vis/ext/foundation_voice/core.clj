@@ -481,4 +481,4 @@
                                                     (= :tui ch))
                            :slash/run-fn voice-toggle-recording!}]}))
 
-(vis/register-extension! voice-extension)
+(defn register! [] (vis/register-extension! voice-extension))

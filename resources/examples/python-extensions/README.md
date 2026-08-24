@@ -19,7 +19,7 @@ in a live session):
 
 The full authoring guide is the `extending` page of Vis's own docs
 (`vis-agent docs` site, or ask Vis: *"how do I write a Python extension?"* — it
-finds the page with `apropos(text)` and reads it whole with `doc("extending")`).
+finds the page with `apropos(r"^extending$")` and reads it whole with `doc("extending")`).
 
 Python extensions contribute tools, prompts, slash commands, op hooks,
 durable state, and LLM providers (`vis.provider(...)`). Channels,

@@ -197,7 +197,9 @@
                              (str/blank? (str transcription))
                              (pos? (long @budget)))
                   attachment
-                  (do (vswap! budget dec)
+                  (do (vswap! budget
+                              (fn [n]
+                                (dec (long n))))
                       (if-let [text (transcribe-attachment attachment)]
                         (assoc attachment :transcription text)
                         attachment))))

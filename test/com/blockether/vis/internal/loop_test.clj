@@ -4001,7 +4001,7 @@
 
 (defdescribe only-python-execution-is-advertised-test
              ;; ONE tool reaches the provider. Every other capability is already a bare Python
-             ;; name inside that sandbox — found with `apropos(text)`, read with `doc(name)`,
+             ;; name inside that sandbox — found with `apropos(pattern)`, read with `doc(name)`,
              ;; called from inside a block — so a second JSON schema advertises a door the
              ;; model can open anyway and charges for it on every single request.
              (it
@@ -7221,7 +7221,7 @@
 (defdescribe
   create-environment-failure-disposes-sandbox-test
   ;; A sandbox is built ~130 lines before `create-environment` returns, and
-  ;; workspace resolution, extension discovery and the defs restore all run after
+  ;; workspace resolution, extension registration and the defs restore all run after
   ;; it. A throw in that stretch used to abandon it — and an abandoned sandbox is
   ;; never reclaimed, because its GraalPy action thread is a GC root pinning the
   ;; Context, its Engine and the whole Python heap. So the FAILURE path leaked

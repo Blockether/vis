@@ -161,15 +161,11 @@
 
 (defn registered-backends "Map of registered backends keyed by id." [] @backends)
 
-;; Auto-discovery
+;; Initialization
 ;;
-;; There is no backend-specific scanner. The single source of truth
-;; is `manifest/scan-extensions!`, which scans every
-;; `META-INF/vis-extension/vis.edn` on the classpath and `require`s the
-;; namespaces listed inside. Any loaded extension with `:ext/persistance`
-;; entries lands in this registry as a side effect. The facade triggers a
-;; scan on the first `db-create-connection!` so callers reach the registered backend
-;; without wiring discovery themselves.
+;; Persistence registration is part of the one ordered distribution manifest.
+;; The facade initializes it before selecting a backend, so direct callers do not
+;; need to wire application startup themselves.
 
 (defn- pick-backend-id
   "Decide which backend handles this call. Honors an explicit
@@ -282,11 +278,9 @@
    facade tags the returned store map with the chosen backend so all
    subsequent facade calls dispatch correctly.
 
-   Triggers `manifest/scan-extensions!` on first call so a freshly
-   started JVM with no extensions yet required has a chance to load
-   any backend-providing namespaces from the classpath."
+   Initializes the distribution manifest before selecting a backend."
   [db-spec]
-  (manifest/scan-extensions!)
+  (manifest/initialize!)
   (let [normalized
         (normalize-spec db-spec)
 
@@ -643,7 +637,7 @@
 
 (defn- backend-error-translators
   []
-  (try (manifest/scan-extensions!) (catch Throwable _ nil))
+  (try (manifest/initialize!) (catch Throwable _ nil))
   (keep (fn [[_ {:keys [ns]}]]
           (some-> (ns-resolve ns 'db-error->user-message)
                   deref))

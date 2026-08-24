@@ -54,4 +54,4 @@
          "no-ops. Not supported: `assert_fingerprint`, `ciphers` (`NotImplementedError`).")
        :shim/source "vis-shims/urllib3.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

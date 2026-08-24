@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.doc-corpus-test
-  "The corpus behind `apropos`/`doc`: one record per document, a first line that
-   is a usable gist, and a search that ranks a name above a body."
+  "The corpus behind `apropos`/`doc`: one record per document, a usable first
+   line, and a regular-expression filter over names."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.doc-corpus :as dc]
@@ -41,19 +41,25 @@
   "A skill's text IS its `SKILL.md`: the frontmatter summary, then the whole body
    verbatim. There is no second, shorter description anywhere to drift from it."
   (it "carries the whole body and no call — a skill is prose"
-      (let [skills
-            (discovery/skills)
+      (let [skill
+            {:name "fixture-skill"
+             :description "Fixture summary."
+             :body "# Fixture
 
-            by-name
-            (into {} (map (juxt :name identity)) (dc/entries))]
+Whole skill body."}
 
-        (expect (seq skills))
-        (doseq [s skills]
-          (let [e (get by-name (:name s))]
-            (expect (some? e))
-            (expect (str/ends-with? (:text e) (str (:body s))))
-            ;; No `call`: there is no skill verb. `doc(name)` IS the whole use.
-            (expect (nil? (:call e))))))))
+            entries
+            (with-redefs [discovery/skills (constantly [skill])]
+              (#'dc/skill-entries))
+
+            entry
+            (first entries)]
+
+        (expect (= "fixture-skill" (:name entry)))
+        (expect (str/starts-with? (:text entry) "Fixture summary."))
+        (expect (str/ends-with? (:text entry) (:body skill)))
+        ;; No `call`: there is no skill verb. `doc(name)` IS the whole use.
+        (expect (nil? (:call entry))))))
 
 (defdescribe
   reading-a-skill-has-no-session-effect-test
@@ -66,68 +72,22 @@
 
 (defdescribe
   search-test
-  "BM25F: terms are ORed and priced by IDF, so a description ranks rather
-              than filters, and only a query nothing carries answers nothing."
-  (let
-    [es
-     [{:name "grep" :text "Search file CONTENT and names.\n\nRipgrep-backed."}
-      {:name "cat" :text "Read files.\n\nReturns anchors for patching."}
-      {:name "patch"
-       :text (str "Anchored edits: replace lines in a file.\n\n"
-                  "Uses the anchors cat returned. Every edit is "
-                  "{\"from_anchor\": a, \"to_anchor\": b, \"replace\": text}.")}
-      ;; A long prose document — the shape that used to win every
-      ;; natural-language query by containing all of its words.
-      {:name "prose-page"
-       :text (str "A long page of workflow narrative.\n\n"
-                  (str/join " " (repeat 200 "how do I open a file in the session and read it")))}
-      ;; Four documents priced every term alike — `replace` and `how` shared one
-      ;; IDF — so a natural-language ask could only be told apart by the field a
-      ;; term sat in. A corpus that uses the common words more than once prices
-      ;; them, which is what IDF is for.
-      {:name "shell"
-       :text
-       "Run a command.\n\nHow do I run a command in the session and read its log? A shell answers a handle."}
-      {:name "ls"
-       :text "Map a directory.\n\nHow do I open a directory and read what is in it, file by file?"}
-      {:name "read_session"
-       :text "Read a session.\n\nHow do I read another session, and what does it hold in it?"}]]
-    (it "ranks an exact handle first, whatever the bodies say"
-        ;; "cat" IS a name and is also a word inside `patch`'s body.
-        (expect (= "cat" (:name (first (dc/search es "cat")))))
-        (expect (= ["grep"] (mapv :name (dc/search es "grep"))))
-        ;; A handle typed in any casing/separator style is the same ask.
-        (expect (= "patch" (:name (first (dc/search es "Patch"))))))
-    (it "keeps a document that covers only part of the query"
-        ;; Regression: `every? pos?` used to discard the entry before
-        ;; scoring, so three matching terms out of six answered nothing.
-        (let [hits (mapv :name (dc/search es "patch from_anchor to_anchor replace edits schema"))]
-          (expect (seq hits))
-          (expect (= "patch" (first hits)))))
-    (it "does not let a long document win a natural-language query"
-        ;; Regression: without full body length normalization the long
-        ;; prose page outranked the short contract that actually answers.
-        (expect (= "patch" (:name (first (dc/search es "how do I replace lines in a file"))))))
-    (it "splits snake_case and camelCase into the same terms"
-        (expect (= "patch" (:name (first (dc/search es "from anchor to anchor")))))
-        (expect (= "patch" (:name (first (dc/search es "fromAnchor"))))))
-    (it "rescues a typo, and only a typo"
-        (expect (= "patch" (:name (first (dc/search es "pathc")))))
-        (expect (empty? (dc/search es "kubernetes helm rollout"))))
-    (it "answers a blank query with the whole corpus in name order"
-        (expect (= ["cat" "grep" "ls" "patch" "prose-page" "read_session" "shell"]
-                   (mapv :name (dc/search es "")))))))
-
-(defdescribe
-  every-document-answers-its-own-name-test
-  "The floor no ranking change may cross: asking for a handle by name must
-              return that document first, over the whole real corpus."
-  (it "returns itself first for every corpus name"
-      (let [es (dc/entries)]
-        (expect (seq es))
-        (doseq [e es]
-          (expect (= (:name e) (:name (first (dc/search es (:name e)))))
-                  (str (:name e) " does not answer its own name first"))))))
+  "`apropos` is a regular-expression filter over symbol names. It preserves the
+   corpus order and ignores document bodies."
+  (let [es [{:name "numpy" :text "Array module."}
+            {:name "numpy.linalg.solve" :text "Solve a matrix equation."}
+            {:name "pandas.read_csv" :text "Read comma-separated data."}
+            {:name "run_tests" :text "Runs project tests."}]]
+    (it "matches names with a caller-supplied regular expression"
+        (expect (= ["numpy" "numpy.linalg.solve"] (mapv :name (dc/search es #"numpy(?:\..*)?"))))
+        (expect (= ["numpy.linalg.solve" "pandas.read_csv"] (mapv :name (dc/search es #"\.")))))
+    (it "does not search document text" (expect (empty? (dc/search es #"matrix"))))
+    (it "preserves corpus order" (expect (= (mapv :name es) (mapv :name (dc/search es #".*")))))
+    (it "treats a blank pattern as a listing"
+        (expect (= (mapv :name es) (mapv :name (dc/search es "")))))
+    (it "refuses an invalid regular expression"
+        (expect (= java.util.regex.PatternSyntaxException
+                   (try (dc/search es "[") nil (catch Throwable t (class t))))))))
 
 (defdescribe index-text-test
              "`doc()` is CURATED: a hand-ordered short list that names where the rest is."
@@ -141,7 +101,7 @@
 
                    (expect (str/includes? out "grep — Search file content."))
                    (expect (not (str/includes? out "zzz")))
-                   (expect (str/includes? out "`apropos(text)`")))))
+                   (expect (str/includes? out "`apropos(pattern)`")))))
 
 (def ^:private refused-call-shapes
   "Call shapes the live handlers REFUSE, each one cross-validated against the
@@ -174,52 +134,31 @@
                                   refused-call-shapes)))))))
 
 (defdescribe
-  stamped-sources-test
-  "Every `apropos` and every `doc` rebuilt the whole corpus — re-reading every
-   documentation page and every SKILL.md — because a source could only be asked
-   for its ENTRIES. Now it is asked for a cheap stamp first."
-  (it "answers the identical corpus while no source has changed"
-      (expect (identical? (dc/entries) (dc/entries))))
-  (it "does not run a source whose stamp is unchanged"
-      (let [runs (atom 0)]
-        (try (dc/register-source! ::stamped
-                                  (constantly :v1)
-                                  (fn []
-                                    (swap! runs inc)
-                                    [{:name "stamped-doc" :text "A document behind a stamp."}]))
-             (dc/entries)
-             (dc/entries)
-             (dc/entries)
-             (expect (= 1 @runs))
-             (finally (dc/register-source! ::stamped (constantly :gone) (constantly []))))))
-  (it "re-runs a source the moment its stamp changes"
-      (let [stamp
-            (atom :v1)
+  live-sources-test
+  "Dynamic documents are plain functions. Reading them directly keeps the corpus
+   current without a search index, generation stamp or invalidation protocol."
+  (it "sees a source change on the next read"
+      (let [value
+            (atom "v1")
 
             runs
             (atom 0)]
 
-        (try (dc/register-source! ::restamped
-                                  (fn []
-                                    @stamp)
+        (try (dc/register-source! ::live
                                   (fn []
                                     (swap! runs inc)
-                                    [{:name (str "restamped-" (name @stamp))
-                                      :text "Behind a stamp."}]))
-             (dc/entries)
-             (expect (some (comp #{"restamped-v1"} :name) (dc/entries)))
-             (reset! stamp :v2)
-             (expect (some (comp #{"restamped-v2"} :name) (dc/entries)))
+                                    [{:name (str "live-" @value) :text "A live document."}]))
+             (expect (some (comp #{"live-v1"} :name) (dc/entries)))
+             (reset! value "v2")
+             (expect (some (comp #{"live-v2"} :name) (dc/entries)))
              (expect (= 2 @runs))
-             (finally (dc/register-source! ::restamped (constantly :gone) (constantly []))))))
-  (it "keeps a source that cannot be stamped out of the way of the others"
+             (finally (dc/register-source! ::live (constantly []))))))
+  (it "keeps a throwing source out of the way of the others"
       (try (dc/register-source! ::throwing
-                                (fn []
-                                  (throw (ex-info "no stamp" {})))
                                 (fn []
                                   (throw (ex-info "no entries" {}))))
            (expect (seq (dc/entries)))
-           (finally (dc/register-source! ::throwing (constantly :gone) (constantly []))))))
+           (finally (dc/register-source! ::throwing (constantly []))))))
 
 (defdescribe
   body-text-test

@@ -15,7 +15,7 @@
     (is (= "json5" (parse/guarded-language "config/settings.json5")))
     (is (= "wgsl" (parse/guarded-language "shaders/main.wgsl"))))
   (testing "Clojure-family extensions the pack omits fall back to the clojure grammar"
-    (is (= "clojure" (parse/detect-language "a/b/vis.edn"))))
+    (is (= "clojure" (parse/detect-language "a/b/manifest.edn"))))
   (testing "detection stays broad — prose grammars are recognized, then excluded by policy"
     (is (= "vimdoc" (parse/detect-language "a.txt")))
     (is (contains? parse/code-languages "clojure"))

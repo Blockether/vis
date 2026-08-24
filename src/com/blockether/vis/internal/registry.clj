@@ -43,10 +43,8 @@
    `::arg`) live here too - the spec IS the registry's contract.
 
    Parsing / help rendering / dispatch utilities live in
-   `com.blockether.vis.internal.commandline`. Classpath manifest
-   scanning lives in `com.blockether.vis.internal.manifest`; the
-   extension layer that wraps it (and re-exports `discover-extensions!`)
-   lives in `com.blockether.vis.internal.extension`."
+   `com.blockether.vis.internal.commandline`. The closed initialization manifest
+   lives in `com.blockether.vis.internal.manifest`."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [taoensso.telemere :as tel]))

@@ -1011,13 +1011,15 @@
                                :responses-path "/responses"
                                :default-models (svar/provider-default-models pid)}})]))
 
-(vis/register-extension!
-  (vis/extension
-    {:ext/name "provider-github-copilot"
-     :ext/description
-     "GitHub Copilot individual + business + enterprise OAuth/token-exchange providers."
-     :ext/version "0.4.1"
-     :ext/author "Blockether"
-     :ext/owner "vis"
-     :ext/license "Apache-2.0"
-     :ext/providers (into [] (mapcat provider-entries) [:individual :business :enterprise])}))
+(defn register!
+  []
+  (vis/register-extension!
+    (vis/extension
+      {:ext/name "provider-github-copilot"
+       :ext/description
+       "GitHub Copilot individual + business + enterprise OAuth/token-exchange providers."
+       :ext/version "0.4.1"
+       :ext/author "Blockether"
+       :ext/owner "vis"
+       :ext/license "Apache-2.0"
+       :ext/providers (into [] (mapcat provider-entries) [:individual :business :enterprise])})))

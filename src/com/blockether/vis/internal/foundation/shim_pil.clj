@@ -2400,4 +2400,4 @@
                                   :resource/max 256}}
        :shim/source "vis-shims/pil.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

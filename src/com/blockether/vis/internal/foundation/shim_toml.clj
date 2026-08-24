@@ -32,4 +32,4 @@
      :ext/sandbox-shims
      [{:shim/name "toml" :shim/imports ["toml"] :shim/source "vis-shims/toml.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

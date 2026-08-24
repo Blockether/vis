@@ -38,4 +38,4 @@
      :ext/sandbox-shims
      [{:shim/name "pandas" :shim/imports ["pandas"] :shim/source "vis-shims/pandas.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

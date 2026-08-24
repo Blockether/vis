@@ -70,4 +70,4 @@
             "Not supported: plugins, most CLI options, import-time assertion rewriting.")
        :shim/source "vis-shims/pytest.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

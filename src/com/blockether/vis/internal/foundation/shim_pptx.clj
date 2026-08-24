@@ -54,4 +54,4 @@
                           :shim/bindings pptx-bridge-bindings
                           :shim/source "vis-shims/pptx.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

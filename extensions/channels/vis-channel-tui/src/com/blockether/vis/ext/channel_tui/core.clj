@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.core
   "Lightweight TUI channel registration.
 
-   Keep this namespace tiny: manifest discovery loads it on every Vis startup.
+   Keep this namespace tiny: the distribution manifest initializes it on every Vis startup.
    The full Lanterna screen implementation is resolved only when the TUI
    channel actually runs.
 
@@ -199,4 +199,4 @@ miss path. Production `exit-not-found!` calls `System/exit`, so the
                                   :channel/messages-renderer-fn #'render-for-tui}]
                   :ext/channel-contributions builtin-hooks/channel-contributions}))
 
-(vis/register-extension! tui-extension)
+(defn register! [] (vis/register-extension! tui-extension))

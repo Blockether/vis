@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.extension
-  "Extension subsystem: spec, builders, hook execution, the global
-   registry, parse-error rescue, and manifest namespace catalog.
+  "Extension subsystem: spec, builders, hook execution, the global registry,
+   and parse-error rescue.
 
    An extension is the SINGLE entry point for everything a third-party
    bundle contributes to vis. Whatever surfaces it populates - Python
@@ -13,13 +13,10 @@
      - the system-prompt block rendered from `:ext.engine/symbols`
      - the per-iteration `:ext/hooks` checks
      - the parse-error rescue chain
-     - the manifest id/namespace catalog used for extension metadata
 
-   Channel and provider registries live in `internal.registry` (the
-   sub-registry that lights up when this module dispatches their
-   contributions). Backend dispatch lives in `internal.persistance`.
-   Classpath manifest scanning lives in `internal.manifest`. This
-   module is the only consumer of all four."
+   Channel and provider registries live in `internal.registry`; backend dispatch
+   lives in `internal.persistance`. The one ordered distribution manifest invokes
+   each extension's explicit registration function."
   (:refer-clojure :exclude [symbol])
   (:require [clojure.java.io :as io]
             [clojure.repl :as repl]
@@ -875,13 +872,12 @@
 ;;   :shim/docs        prose (OPTIONAL): a PULLED page for doctrine that belongs to
 ;;                     no single name — a query language, the fixture vocabulary, a
 ;;                     server-side API. PROSE ABOUT A NAME BELONGS ON THAT NAME:
-;;                     every module a shim installs owns its `__doc__` and every
-;;                     function and class it lends owns its docstring, in
-;;                     `resources/vis-shims/<file>.py`. `internal.shim-capabilities`
-;;                     reads the harvested `resources/vis-shims/capabilities.edn`
-;;                     and env-python seeds THAT as the `doc`/`apropos` answer, so the
-;;                     page a model reads is the source a maintainer edits — never a
-;;                     second copy in Clojure that drifts from the module it describes.
+ ;;                     every module a shim installs owns its `__doc__` and every
+ ;;                     function and class it lends owns its docstring in
+ ;;                     `resources/vis-shims/<file>.py`. The build harvests those
+ ;;                     records into the manifest-listed apropos resource, so the
+ ;;                     page a model reads is the source a maintainer edits — never
+ ;;                     a second copy in Clojure that drifts from the module.
 ;;                     Say what is NOT supported there: a shim is a REIMPLEMENTATION,
 ;;                     and the hole is what the upstream docs will not warn about.
 ;;   :shim/bindings    host callables the shim's Python delegates to — either a map
@@ -2343,6 +2339,7 @@
                    value
                    (binding [*tool-result-observer* #(vreset! envelope %)]
                      (invoke-symbol-wrapper* ext sym-entry args env))]
+
                (record-tool-event! (activity-event/terminal-event ctx
                                                                   invocation
                                                                   (assoc details
@@ -2912,18 +2909,6 @@
            (tel/log!
              {:level :warn :id ::source-markers-failed :data {:ext ns-sym :error (ex-message t)}})))
     ext))
-;; Manifest id -> namespaces registry. Defined here so `extension-info`
-;; can reverse-lookup an extension id from a namespace without a forward
-;; declare.
-(defonce ^:private extension-manifest-registry (atom {}))
-
-(defn extension-id-of-ns
-  "Reverse lookup: given a namespace symbol, return the extension id
-   that registered it under `:nses`, or `nil`."
-  [ns-sym]
-  (some (fn [[id {nses :nses}]]
-          (when (some #(= ns-sym %) nses) id))
-        @extension-manifest-registry))
 
 (def ^:private empty-source-markers {:source-paths [] :source-mtime-max -1 :source-hash-sha256 nil})
 
@@ -2963,10 +2948,7 @@
         (ext-alias-symbol ext)
 
         registry-id
-        (or (some (fn [ns-sym]
-                    (try (extension-id-of-ns ns-sym) (catch Throwable _ nil)))
-                  (ext-source-nses ext))
-            alias)
+        alias
 
         markers
         (source-markers-for-extension ext)
@@ -3193,29 +3175,6 @@
                       {:type :extension/no-registration
                        :namespace ns-sym
                        :registered (vec (keys @extension-registry))})))))
-;; Extension manifest catalog
-;;
-;; Filled by `discover-extensions!` from every
-;; `META-INF/vis-extension/vis.edn` on the classpath. Multiple jars
-;; that declare the same id are merged with `:nses` deduped while
-;; preserving first-occurrence order.
-(defn registered-extension-ids
-  "Sorted vector of every extension id known to the manifest registry."
-  []
-  (vec (sort (keys @extension-manifest-registry))))
-
-(defn extension-namespaces
-  "Vector of namespaces declared under `:nses` for an id. Empty when
-   the id is unknown."
-  [id]
-  (vec (get-in @extension-manifest-registry [id :nses] [])))
-
-(defn- merge-manifest-entry!
-  [id entry]
-  (swap! extension-manifest-registry update
-    id
-    (fn [existing]
-      {:nses (vec (distinct (concat (:nses existing) (:nses entry))))})))
 
 (def op-tags
   "Closed set of operation tags a tool can declare. The two values
@@ -3242,13 +3201,11 @@
   ;; handle. There is no public `register-op!` writer — registration
   ;; funnels through `register-extension!` from inline symbol metadata.
   ;;
-  ;; `defonce`, NOT `def`: registration is a side effect that `require`
-  ;; won't re-fire (it's idempotent on already-loaded extension nses), so
-  ;; a plain `def` would reset this to `{}` on every `:reload` and orphan
-  ;; every registered tag until the app reboots. Matches the other
+  ;; `defonce`, NOT `def`: the distribution manifest invokes each explicit
+  ;; `register!` initializer once. Reloading this namespace must not erase tags
+  ;; registered by initializers that are not invoked again. Matches the other
   ;; registration-populated registries in this ns (`extension-registry`,
-  ;; `extension-order`, `extension-source-markers`,
-  ;; `extension-manifest-registry`), all `defonce` for the same reason.
+  ;; `extension-order`, `extension-source-markers`).
   ;; (`defonce` takes no docstring — hence the `;;` comment.)
   (atom {}))
 
@@ -3302,91 +3259,6 @@
   [op]
   {:tag (op-tag op)})
 
-(defn registered-extensions-summary
-  "Pure data view of the manifest registry: returns `{<id> {:nses [...]}}`
-   for every loaded extension."
-  []
-  (into {}
-        (map (fn [[id entry]]
-               [id {:nses (:nses entry)}]))
-        @extension-manifest-registry))
-
-(def ^:private builtin-extension-nses
-  "Core modules that register through the extension API but ship IN the main
-   jar (NOT classpath plug-ins discovered via `META-INF/vis-extension/vis.edn`).
-   Loaded explicitly here so their top-level `(register-extension! …)` fires as
-   a built-in — internal is a first-class contributor of Python symbols /
-   render-fns / ctx hooks, same path third-party extensions use.
-
-     foundation — the `v/` kernel (ls/grep/cat/patch + workspace/env ctx). It is
-       mandatory (it owns the sandbox filesystem gate; the session
-       workspace block waits for its `:ext/ctx-fn`), so it lives in core, not as a
-       droppable extension.
-
-     shell — the `shell/` compatibility layer (the ONE `shell` tool and its
-       `shell` toggle). INTERNAL core, not a droppable plug-in, so the
-       toggle always registers and the feature is one settings flip away (the tools
-       stay gated OFF behind the `shell` toggle until the user enables it).
-
-     introspection — session self-inspection (`read_session` / `get_session` / `list_sessions`).
-       INTERNAL core so its `introspection` toggle always registers, but the
-       symbols and prompt stay OFF until the toggle is ON.
-
-     shim-yaml / shim-matplotlib / shim-requests — sandbox SHIMS. NOT gated by anything: each
-       registers unconditionally and its `:ext/sandbox-shims` autoloads into
-       every sandbox (`import yaml` / `import matplotlib.pyplot` / `import requests` just work). They
-       only sit in this list because it's how a built-in ns gets `require`d."
-  '[com.blockether.vis.internal.foundation.core com.blockether.vis.internal.foundation.introspection
-    com.blockether.vis.internal.foundation.shell com.blockether.vis.internal.foundation.shim-yaml
-    com.blockether.vis.internal.foundation.shim-matplotlib
-    com.blockether.vis.internal.foundation.shim-requests
-    com.blockether.vis.internal.foundation.shim-pytest
-    com.blockether.vis.internal.foundation.shim-ruff com.blockether.vis.internal.foundation.shim-pil
-    com.blockether.vis.internal.foundation.shim-numpy
-    com.blockether.vis.internal.foundation.shim-bs4
-    com.blockether.vis.internal.foundation.shim-pandas
-    com.blockether.vis.internal.foundation.shim-tabulate
-    com.blockether.vis.internal.foundation.shim-toml
-    com.blockether.vis.internal.foundation.shim-tzdata
-    com.blockether.vis.internal.foundation.shim-sqlite3
-    com.blockether.vis.internal.foundation.shim-nippy
-    com.blockether.vis.internal.foundation.shim-httpx
-    com.blockether.vis.internal.foundation.shim-urllib3
-    com.blockether.vis.internal.foundation.shim-paramiko
-    com.blockether.vis.internal.foundation.shim-xlsxwriter
-    com.blockether.vis.internal.foundation.shim-pptx
-    com.blockether.vis.internal.foundation.shim-attach
-    com.blockether.vis.internal.foundation.shim-ls
-    com.blockether.vis.internal.foundation.shim-fonttools
-    com.blockether.vis.internal.foundation.shim-anydoc com.blockether.vis.internal.foundation.rewind
-    com.blockether.vis.internal.foundation.mcp.core
-    com.blockether.vis.internal.foundation.harness.core])
-
-(defn- load-builtin-extensions!
-  "`require` each built-in extension ns so its top-level `register-extension!`
-   side-effect runs. Idempotent (require won't reload; register is idempotent)."
-  []
-  (doseq [ns-sym builtin-extension-nses]
-    (require ns-sym)))
-
-(defn discover-extensions!
-  "Public entry point for vis's extension wiring.
-
-   First loads the BUILT-IN extensions (`load-builtin-extensions!` — core
-   modules like the foundation `v/` kernel that register via the same API but
-   ship in the main jar). Then runs `manifest/scan-extensions!` (which scans
-   every `META-INF/vis-extension/vis.edn`, `require`s every namespace listed
-   under each manifest's `:nses` key, and returns the merged parsed manifests)
-   and merges those manifests into this namespace's manifest registry. Returns
-   the count of namespaces declared under `:nses` across the merged manifests.
-
-   Idempotent on every layer."
-  []
-  (load-builtin-extensions!)
-  (let [manifests (manifest/scan-extensions!)]
-    (doseq [[id entry] manifests]
-      (merge-manifest-entry! id entry))
-    (count (mapcat :nses (vals manifests)))))
 
 (defn- python-param-name
   "One declared parameter as a PYTHON identifier: kebab-case becomes snake_case
@@ -3499,10 +3371,9 @@
    declares no params.
 
    STRUCTURE, never prose: `env-python` ships it to the sandbox as `__vis_keys__`
-   and `doc-corpus/entry-text` prints it under the call line, so it is not part of
-   the document `apropos` ranks — the first line of a document is a scored field,
-   and a tool whose text opened with its own signature stopped matching the words
-   its prose is written in."
+   and `doc-corpus/entry-text` prints it under the call line. `apropos` filters
+   names only, so this structure cannot affect discovery; keeping it out of the
+   prose also avoids a second signature-shaped contract."
   [entry]
   (when-let [params (seq (:ext.symbol/params entry))]
     (str "Keys: "
@@ -3548,7 +3419,7 @@
    so aliased extensions (which bind per turn) seed their own through
    `env-python/set-python-binding-signature!`."
   []
-  (load-builtin-extensions!)
+  (manifest/initialize!)
   (into {}
         (for [ext
               (registered-extensions)
@@ -3573,7 +3444,7 @@
    sandbox as `__vis_keys__` by `env-python/build-agent-context`, and per turn by
    aliased extensions through `env-python/set-python-binding-keys!`."
   []
-  (load-builtin-extensions!)
+  (manifest/initialize!)
   (into {}
         (for [ext
               (registered-extensions)
@@ -3604,7 +3475,7 @@
    `<alias>_<name>` symbols LATER (per turn) and seed `__vis_docs__` themselves
    through `symbol-doc-text` — see `loop/sync-active-extension-symbols!`."
   []
-  (load-builtin-extensions!)
+  (manifest/initialize!)
   (into {}
         (for [ext
               (registered-extensions)
@@ -3634,7 +3505,7 @@
    installs it as a Python callable (ProxyExecutable). Per-tool docstrings are
    surfaced through the sandbox's own `doc`/`apropos` introspection."
   [env-thunk]
-  (load-builtin-extensions!)
+  (manifest/initialize!)
   (into {}
         (comp (filter ext-builtin?)
               (mapcat (fn [ext]
@@ -3650,7 +3521,7 @@
    module. Loads built-ins first (idempotent) so the registry is populated
    before we read it."
   []
-  (load-builtin-extensions!)
+  (manifest/initialize!)
   (into [] (mapcat ext-sandbox-shims) (registered-extensions)))
 
 (defn shim-src

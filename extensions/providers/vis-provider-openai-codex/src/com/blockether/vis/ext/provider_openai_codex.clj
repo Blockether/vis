@@ -603,26 +603,28 @@
 ;; `internal/toggles.clj` and its visibility follows svar's `:verbosity-style`
 ;; capability instead of this provider's id.
 
-(vis/register-extension!
-  (vis/extension
-    {:ext/name "provider-openai-codex"
-     :ext/description "OpenAI Codex / ChatGPT OAuth provider."
-     :ext/version "0.1.0"
-     :ext/author "Blockether"
-     :ext/owner "vis"
-     :ext/license "Apache-2.0"
-     :ext/providers [{:provider/id :openai-codex
-                      :provider/label "OpenAI Codex (ChatGPT OAuth)"
-                      :provider/preset {:default-models (distinct (concat
-                                                                    (svar/provider-default-models
-                                                                      :openai-codex)
-                                                                    ["gpt-5.6-terra"]))}
-                      :provider/status-fn #'status
-                      :provider/logout-fn #'logout!
-                      :provider/detect-fn #'detect-credentials
-                      :provider/auth-fn #'login!
-                      :provider/auth-start-fn #'auth-start
-                      :provider/auth-complete-fn #'auth-complete
-                      :provider/get-token-fn #'get-openai-codex-token!
-                      :provider/refresh-token-fn #'force-refresh-token!
-                      :provider/limits-fn #'limits}]}))
+(defn register!
+  []
+  (vis/register-extension!
+    (vis/extension
+      {:ext/name "provider-openai-codex"
+       :ext/description "OpenAI Codex / ChatGPT OAuth provider."
+       :ext/version "0.1.0"
+       :ext/author "Blockether"
+       :ext/owner "vis"
+       :ext/license "Apache-2.0"
+       :ext/providers [{:provider/id :openai-codex
+                        :provider/label "OpenAI Codex (ChatGPT OAuth)"
+                        :provider/preset {:default-models (distinct (concat
+                                                                      (svar/provider-default-models
+                                                                        :openai-codex)
+                                                                      ["gpt-5.6-terra"]))}
+                        :provider/status-fn #'status
+                        :provider/logout-fn #'logout!
+                        :provider/detect-fn #'detect-credentials
+                        :provider/auth-fn #'login!
+                        :provider/auth-start-fn #'auth-start
+                        :provider/auth-complete-fn #'auth-complete
+                        :provider/get-token-fn #'get-openai-codex-token!
+                        :provider/refresh-token-fn #'force-refresh-token!
+                        :provider/limits-fn #'limits}]})))

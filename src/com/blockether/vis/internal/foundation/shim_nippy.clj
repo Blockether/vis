@@ -133,4 +133,4 @@
        :shim/bindings nippy-bridge-bindings
        :shim/source "vis-shims/nippy.py"}]}))
 
-(vis/register-extension! vis-extension)
+(defn register! [] (vis/register-extension! vis-extension))

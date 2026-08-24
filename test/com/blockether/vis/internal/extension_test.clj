@@ -549,14 +549,11 @@
         (re-seq #"`([^`]+)`" (str result))))
 
 
-;; Regression, doc quality: a tool page used to be prose alone — 17 of the bound
-;; tools never showed a single call, and an options-dict tool stated its required
-;; keys nowhere `doc(name)` could reach, so the model learned them from refusals.
-;; Regression, ranking: the first fix PREPENDED both lines to the document TEXT,
-;; whose first line is one of the three scored BM25F fields — `patch` fell from
-;; first to fifteenth for "how do I replace lines in a file" because its opening
-;; line stopped being prose. The call line and the keys line are STRUCTURE:
-;; `doc-corpus/entry-text` prints them above the document, never inside it.
+ ;; Regression, doc quality: a tool page used to be prose alone — 17 of the bound
+ ;; tools never showed a single call, and an options-dict tool stated its required
+ ;; keys nowhere `doc(name)` could reach, so the model learned them from refusals.
+ ;; Call and key lines are structure rendered by `doc-corpus/entry-text`; the
+ ;; document body itself remains the author-written prose.
 (defdescribe
   symbol-doc-page-test
   (it "declares a signature for every tool, so its page can open with a call line"
