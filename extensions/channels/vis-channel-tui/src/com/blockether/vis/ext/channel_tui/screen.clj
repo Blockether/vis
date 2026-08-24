@@ -991,6 +991,34 @@
         (when (seq v) (reset! registry-slash-commands-cache v))
         v)))
 
+(defn- refresh-registry-slash-commands!
+  "Re-harvest slash commands after a Python extension set change."
+  [_change]
+  (reset! registry-slash-commands-cache nil)
+  ;; This runs on the extension loader worker, never the render/input thread, so the
+  ;; next `/` already sees a warm cache after the listener wakes the screen.
+  (registry-slash-commands)
+  (state/dispatch [:bump-render-version])
+  nil)
+
+(defn- start-deferred-python-extension-load!
+  "Subscribe slash-cache invalidation, then load Python extensions on a platform
+   worker. Called only after the render thread has painted its first usable frame.
+   Returns a listener disposal thunk."
+  []
+  (let [listener-id (Object.)]
+    (vis/add-python-extension-change-listener! listener-id refresh-registry-slash-commands!)
+    (vis/worker-future "tui-python-extension-load"
+                       (fn []
+                         (try (vis/load-python-extensions!)
+                              (catch Throwable t
+                                (tel/log! {:level :warn
+                                           :id ::deferred-python-extension-load-failed
+                                           :data {:error (ex-message t)}}
+                                          "Deferred Python extension loading failed."))))
+                       {:platform? true})
+    #(vis/remove-python-extension-change-listener! listener-id)))
+
 (defn- template-slash-commands
   "Prompt templates as typed-`/` palette entries: `.vis/prompts/*.md`,
    `~/.vis/prompts/*.md`, and provider-contributed dynamic templates
@@ -3968,7 +3996,7 @@
    advances the scroll ease, `frame-change-flags` + `choose-frame-path`
    pick the cheapest repaint path, `paint-frame!` runs it, and
    `park-wait-ms` says how long to sleep."
-  [^TerminalScreen screen]
+  [^TerminalScreen screen frame-rendered!]
   (loop [last-v
          -1
 
@@ -4157,6 +4185,7 @@
                      was-blocked?])
                   (finally (.unlock draw-lock))))]
 
+          (when rendered? (frame-rendered!))
           (when-not rendered?
             ;; Park until the next dispatch wakes us, or until the
             ;; spinner needs to tick.
@@ -4183,16 +4212,34 @@
                  (long new-ease-ms)))))))
 
 (defn- start-render-thread!
-  "Spawn the render thread. Daemon so the JVM can still exit even if a
-   bug ever traps it in the loop."
-  ^Thread [^TerminalScreen screen]
-  (let [t (Thread. ^Runnable
-                   (fn []
-                     (render-loop! screen))
-                   "vis-channel-tui-render")]
-    (.setDaemon t true)
-    (.start t)
-    t))
+  "Spawn the render thread. Daemon so the JVM can still exit even if a bug traps
+   it in the loop. The optional callback runs once, after the first successful paint."
+  ([screen]
+   (start-render-thread! screen
+                         (fn []
+                           nil)))
+  ([^TerminalScreen screen on-first-frame]
+   (let [first-frame?
+         (atom true)
+
+         notify-first-frame!
+         (fn []
+           (when (compare-and-set! first-frame? true false)
+             (try (on-first-frame)
+                  (catch Throwable t
+                    (tel/log!
+                      {:level :warn :id ::first-frame-callback-failed :data {:error (ex-message t)}}
+                      "TUI first-frame callback failed.")))))
+
+         t
+         (Thread. ^Runnable
+                  (fn []
+                    (render-loop! screen notify-first-frame!))
+                  "vis-channel-tui-render")]
+
+     (.setDaemon t true)
+     (.start t)
+     t)))
 
 (def ^:private provider-limits-refresh-ms 60000)
 
@@ -5233,7 +5280,9 @@
            terminal-signal-cleanup (volatile! nil)
            ;; Toggle listeners are process-global. Keep the disposal thunk so a
            ;; closed TUI cannot keep invalidating the next TUI's transcript.
-           toggle-listener-dispose (volatile! nil)]
+           toggle-listener-dispose (volatile! nil)
+           ;; Python extension loading starts from the first-frame callback below.
+           python-extension-listener-dispose (volatile! nil)]
 
        (.startScreen screen)
        (vreset! toggle-listener-dispose
@@ -5425,7 +5474,10 @@
            ;; Spawn the render thread BEFORE the input loop. It will paint
            ;; the first frame as soon as `:render-version` is non-zero (every
            ;; init dispatch above bumps it).
-           (vreset! render-thread (start-render-thread! screen))
+           (vreset! render-thread
+                    (start-render-thread! screen
+                                          #(vreset! python-extension-listener-dispose
+                                                    (start-deferred-python-extension-load!))))
            ;; Prewarm the slash-command machinery OFF the hot path so the
            ;; FIRST `/` keystroke doesn't pay cold JIT + registry harvest
            ;; (registry-slash-commands → menu-commands → slash/suggestions →
@@ -7883,6 +7935,8 @@
              (virtual/stop-rewarm!)
              (when-let [t @render-thread]
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
+             (when-let [dispose! @python-extension-listener-dispose]
+               (try (dispose!) (catch Throwable _ nil)))
              (when-let [t @provider-limits-thread]
                (try (.join ^Thread t 500) (catch Throwable _ nil)))
              (when-let [t @workspace-refresh-thread]

@@ -1,8 +1,10 @@
 (ns com.blockether.vis.internal.main-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.main :as main]
+            [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]
@@ -74,6 +76,24 @@
         (expect (.contains help "VIS_GATEWAY_TOKEN"))
         (expect (.contains help "vis-agent --gateway 10.0.0.5 --gateway-token TOKEN tui")))))
 
+;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: the TUI client
+;; synchronously initialized GraalPy before dispatch, then its gateway did it again.
+(defdescribe
+  dispatch-extension-discovery-test
+  (it "defers Python discovery only for the rewritten TUI command"
+      (let [calls (atom [])]
+        (with-redefs [extension/discover-extensions! #(swap! calls conj :clojure)
+                      python-extensions/load-python-extensions! #(swap! calls conj :python)]
+
+          (#'main/discover-for-dispatch! false ["channels" "tui" "--continue"])
+          (expect (= [:clojure] @calls)))))
+  (it "keeps Python discovery eager for one-shot commands"
+      (let [calls (atom [])]
+        (with-redefs [extension/discover-extensions! #(swap! calls conj :clojure)
+                      python-extensions/load-python-extensions! #(swap! calls conj :python)]
+
+          (#'main/discover-for-dispatch! false ["extension" "list"])
+          (expect (= [:clojure :python] @calls))))))
 (defdescribe
   fast-help-test
   (it "does not swallow unknown root commands that also ask for help"

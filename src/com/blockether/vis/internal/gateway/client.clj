@@ -20,7 +20,8 @@
             [com.blockether.vis.internal.gateway.wire :as wire])
   (:import (java.io BufferedReader InputStream InputStreamReader)
            (java.net URI URLEncoder)
-           (java.nio.charset StandardCharsets)))
+           (java.nio.charset StandardCharsets)
+           (java.util.concurrent.locks ReentrantLock)))
 
 (def ^:private DEFAULT_PORT 7890)
 
@@ -44,6 +45,21 @@
 
 (defonce ^:private cached-entry (atom nil))
 
+(defonce ^:private ensure-locks
+  ;; One slow-path lock per canonical DB. A process normally touches one DB;
+  ;; retaining the lock ensures no waiter can race a newly-created replacement.
+  (atom {}))
+
+(defn- ensure-lock-for
+  ^ReentrantLock [db]
+  (let [key (discovery/registry-key db)]
+    (get (swap! ensure-locks update key #(or % (ReentrantLock.))) key)))
+
+(defn- call-with-ensure-lock
+  [db f]
+  (let [^ReentrantLock lock (ensure-lock-for db)]
+    (.lock lock)
+    (try (f) (finally (.unlock lock)))))
 ;; Freshness debounce: `ensure-gateway!` verifies the daemon with a full HTTP
 ;; GET /healthz probe on EVERY call. The TUI footer/poll loop calls it dozens of
 ;; times a second, so that doubled every gateway request (probe + real call) and
@@ -913,6 +929,29 @@
                         (assoc verdict :bounced? true))
                     (assoc verdict :bounced? false))))))
 
+(defn- cached-entry-if-fresh
+  "Return the compatible cached daemon entry while its freshness proof holds."
+  []
+  (let [cached
+        @cached-entry
+
+        now
+        (System/nanoTime)
+
+        fresh-until
+        (long @entry-fresh-until-ns)
+
+        fresh?
+        (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
+          true
+          ;; Window elapsed (or no cached entry): pay for the real HTTP probe
+          ;; once, then re-open the debounce window.
+          (when (discovery/registry-fresh? cached probe-entry?)
+            (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
+            true))]
+
+    (when fresh? (assert-compatible! cached))))
+
 (defn ensure-gateway!
   "Return a fresh daemon registry entry for the current DB, auto-starting the
    detached gateway if needed. `:memory` is a programmer error for this client;
@@ -927,6 +966,10 @@
    whose pid is still alive is trusted directly, so the TUI's chatty poll loop
    stops paying for a doubled HTTP round-trip (and its JSON/reflection churn) on
    every gateway call.
+
+   The slow discover/start path is single-flight per canonical DB inside this
+   process. Callers re-check the cache after acquiring that lock, so concurrent
+   startup callbacks share one spawn/wait instead of each waiting for readiness.
 
    A daemon running a DIFFERENT build than this one is also replaced here when
    replacing it is free ([[bounce-stale-daemon!]]) - that is how the first vis
@@ -943,39 +986,33 @@
      (let [db (db-target)]
        (when (discovery/memory-db? db)
          (throw (ex-info "gateway daemon is disabled for :memory DB" {:type :gateway/no-daemon})))
-       (let [target-port (or port DEFAULT_PORT)
-             target-host (or host DEFAULT_HOST)
-             cached @cached-entry
-             now (System/nanoTime)
-             fresh-until (long @entry-fresh-until-ns)
-             fresh? (if (and (map? cached) (< now fresh-until) (discovery/pid-alive? (:pid cached)))
-                      true
-                      ;; Window elapsed (or no cached entry): pay for the real
-                      ;; HTTP probe once, then re-open the debounce window.
-                      (when (discovery/registry-fresh? cached probe-entry?)
-                        (reset! entry-fresh-until-ns (+ now (* (long entry-probe-ttl-ms) 1000000)))
-                        true))]
+       (or (cached-entry-if-fresh)
+           (call-with-ensure-lock
+             db
+             (fn []
+               ;; Another caller may have completed discovery while this one waited.
+               (or (cached-entry-if-fresh)
+                   (let [target-port (or port DEFAULT_PORT)
+                         target-host (or host DEFAULT_HOST)
+                         ;; First recover the exact failure mode where a live standard daemon
+                         ;; owns 7890 but its registry was removed. Never enter discovery's
+                         ;; spawn path while the requested port already has a listener.
+                         {:keys [entry] :as result}
+                         (discover-or-recover! db target-host target-port)]
 
-         (if fresh?
-           (assert-compatible! cached)
-           (let
-             ;; First recover the exact failure mode where a live standard daemon
-             ;; owns 7890 but its registry was removed. Never enter discovery's
-             ;; spawn path while the requested port already has a listener.
-             [{:keys [entry] :as result} (discover-or-recover! db target-host target-port)]
-             (if entry
-               (do (reset! cached-entry entry)
-                   (reset! entry-fresh-until-ns (+ (System/nanoTime)
-                                                   (* (long entry-probe-ttl-ms) 1000000)))
-                   ;; Staleness BEFORE compatibility: a daemon too old to speak this
-                   ;; build's wire protocol is exactly the one worth replacing, and
-                   ;; the mismatch screen is for the daemon somebody is still using.
-                   (if (:bounced? (bounce-stale-daemon! entry))
-                     ;; The old image released the port; start this build in its place.
-                     (ensure-gateway! opts)
-                     (assert-compatible! entry)))
-               (throw (ex-info "gateway daemon did not become ready"
-                               (assoc result :type :gateway/start-timeout)))))))))))
+                     (if entry
+                       (do (reset! cached-entry entry)
+                           (reset! entry-fresh-until-ns (+ (System/nanoTime)
+                                                           (* (long entry-probe-ttl-ms) 1000000)))
+                           ;; Staleness BEFORE compatibility: a daemon too old to speak this
+                           ;; build's wire protocol is exactly the one worth replacing, and
+                           ;; the mismatch screen is for the daemon somebody is still using.
+                           (if (:bounced? (bounce-stale-daemon! entry))
+                             ;; The old image released the port; start this build in its place.
+                             (ensure-gateway! opts)
+                             (assert-compatible! entry)))
+                       (throw (ex-info "gateway daemon did not become ready"
+                                       (assoc result :type :gateway/start-timeout)))))))))))))
 
 (defn- send-json!
   ([method path] (send-json! method path nil))

@@ -115,21 +115,37 @@
     (is (some #{"--require-token"}
               (disco/spawn-argv {:db "/x.db" :require-token? true :base ["v"]})))))
 
-(deftest unix-launch-cmd-renames-the-daemon
+;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: a managed
+;; gateway inherited terminal stop signals and froze with its WSL TUI parent.
+(deftest unix-launch-cmd-renames-and-protects-the-daemon
   (let [[shell flag script] (disco/unix-launch-cmd ["/opt/vis" "gateway" "start" "--port" "7890"]
-                                                   "/tmp/boot.log")]
+                                                   "/tmp/boot.log"
+                                                   {:bash "/bin/bash" :setsid nil})]
+    (is (= "/bin/bash" shell))
     (is (= "-c" flag))
     (is (str/includes? script "'/opt/vis'"))
     (is (str/includes? script "'/tmp/boot.log'"))
     (is (str/ends-with? script "2>&1 &") "stays backgrounded so the spawner never blocks")
-    (if (str/includes? shell "bash")
-      (testing "under bash the daemon execs itself into a readable `vis …` process line"
-        (is (str/includes? script "exec -a 'vis' '/opt/vis' 'gateway' 'start'"))
-        (is (str/includes? script "trap '' HUP")
-            "SIGHUP must stay ignored across the exec, the way nohup would"))
-      (testing "without bash we still detach, just without the rename"
-        (is (= "sh" shell))
-        (is (str/starts-with? script "nohup "))))))
+    (is (str/includes? script "trap '' HUP TSTP")
+        "the daemon must ignore terminal hangup and stop signals across exec")
+    (is (str/includes? script "exec -a 'vis' '/opt/vis' 'gateway' 'start'")))
+  (testing "plain sh still ignores job-control signals when neither helper exists"
+    (let [[shell _ script] (disco/unix-launch-cmd ["/opt/vis" "gateway" "start"]
+                                                  "/tmp/boot.log"
+                                                  {:bash nil :setsid nil})]
+      (is (= "sh" shell))
+      (is (str/includes? script "trap '' HUP TSTP")))))
+
+;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: Linux/WSL
+;; gateways stayed in the TUI's foreground process group instead of a new session.
+(deftest unix-launch-cmd-uses-setsid-on-linux
+  (let [[shell _ script] (disco/unix-launch-cmd ["/opt/vis" "gateway" "start"]
+                                                "/tmp/boot.log"
+                                                {:bash "/bin/bash" :setsid "/usr/bin/setsid"})]
+    (is (= "/bin/bash" shell))
+    (is (str/includes? script "'/usr/bin/setsid'"))
+    (is (str/includes? script "'/bin/bash' -c"))
+    (is (< (.indexOf script "'/usr/bin/setsid'") (.indexOf script "exec -a")))))
 
 (deftest discover-or-start!-memory-is-a-noop
   (is (= {:mode :none} (disco/discover-or-start! {:db :memory}))))

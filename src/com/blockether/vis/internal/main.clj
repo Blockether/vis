@@ -11,9 +11,9 @@
    Public entry point:
 
      (-main & args)   - invoked by the `:vis` alias / `bin/vis-agent`.
-                       Configures logging, runs the unified extension
-                       discovery scan, redirects stderr to this process's
-                       role/start-time/pid-stamped file under `~/.vis/logs/` for
+                       Configures logging, discovers Clojure extensions, loads Python
+                       extensions before one-shot dispatches, redirects stderr to this
+                       process's role/start-time/pid-stamped file under `~/.vis/logs/` for
                        any TTY-owning channel, then dispatches to the resolved
                        command's `:cmd/run-fn`.
 
@@ -4429,21 +4429,28 @@
           (when path (println (str "     manifest: " path))))
         (println)))))
 
-(defn discover-all!
-  "Run the unified extension discovery scan. Idempotent through
-   Clojure's `require` cache. Returns nil.
-
-   Prints a stderr banner enumerating every extension namespace
-   whose `(require)` failed during discovery. The same warnings are
-   also fed into the per-turn `(:project ctx) :warnings` slice, so
-   both the user (at the terminal) and the LLM (reading `ctx`) see the failure
-   immediately instead of bouncing off `Unable to resolve symbol`
-   for an entire session."
+(defn- discover-clojure-extensions!
+  "Discover classpath extensions and surface namespace load failures."
   []
   (extension/discover-extensions!)
-  (python-extensions/load-python-extensions!)
   (print-extension-load-failures!)
   nil)
+
+(defn discover-all!
+  "Run the unified Clojure and Python extension discovery scan. Idempotent through
+   Clojure's `require` cache and Python extension fingerprints. Returns nil.
+
+   Prints a stderr banner enumerating every extension namespace whose `(require)`
+   failed during discovery. The same warnings are also fed into the per-turn
+   `(:project ctx) :warnings` slice, so both the user (at the terminal) and the LLM
+   (reading `ctx`) see the failure immediately instead of bouncing off `Unable to
+   resolve symbol` for an entire session."
+  []
+  (discover-clojure-extensions!)
+  (python-extensions/load-python-extensions!)
+  nil)
+
+(defn- tui-dispatch? [args] (= ["channels" "tui"] (vec (take 2 args))))
 
 ;; Root command
 ;;
@@ -4826,6 +4833,15 @@
       (try (f) (finally (startup-measure-line! label (format-ms (elapsed-ms started))))))
     (f)))
 
+(defn- discover-for-dispatch!
+  "Discover what `args` needs before command dispatch. The TUI starts Python
+   extension loading after its first painted frame; every other command stays eager."
+  [measure? args]
+  (timed-startup! measure? "discover-clojure-extensions" #(discover-clojure-extensions!))
+  (when-not (tui-dispatch? args)
+    (timed-startup! measure? "load-python-extensions" #(python-extensions/load-python-extensions!)))
+  nil)
+
 (defn- summarize-startup-registries!
   []
   (let [extensions
@@ -4917,7 +4933,7 @@
       (cond (version-request? args) (println (str "vis-agent " (vis-version)))
             (root-help-request? args) (println (commandline/render-tree (root-command)))
             (fast-help-dispatched? measure? args) nil
-            :else (do (timed-startup! measure? "discover-all+extensions" #(discover-all!))
+            :else (do (discover-for-dispatch! measure? args)
                       (when measure? (summarize-startup-registries!))
                       (timed-startup! measure? "pre-redirect-stderr" #(pre-redirect-stderr! args))
                       (let [root
@@ -4955,7 +4971,7 @@
                                   (System/exit 2)
 
                                   ;; Success path: force a deterministic process exit.
-                                  ;; `discover-all!` spins up the GraalPy sandbox + extension
+                                  ;; Python extension discovery can spin up GraalPy and extension
                                   ;; executors, some of which leave NON-daemon threads alive; a
                                   ;; bare `nil` return let `-main` finish while those threads
                                   ;; kept the JVM (and the native isolate) running, so a

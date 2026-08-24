@@ -102,6 +102,57 @@
              (is (= 1 @calls))))
          (finally (reset! client-id-atom previous)))))
 
+
+;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: concurrent
+;; TUI startup callbacks each entered gateway discovery and repeated the full wait.
+(deftest concurrent-gateway-ensure-is-single-flight-per-database
+  (let [cached-atom
+        @(rv 'cached-entry)
+
+        fresh-until-atom
+        @(rv 'entry-fresh-until-ns)
+
+        previous-cached
+        @cached-atom
+
+        previous-fresh-until
+        @fresh-until-atom
+
+        calls
+        (atom 0)
+
+        start
+        (promise)
+
+        rendezvous
+        (java.util.concurrent.CyclicBarrier. 2)
+
+        discover
+        (fn [& _]
+          (swap! calls inc)
+          (try (.await rendezvous 250 java.util.concurrent.TimeUnit/MILLISECONDS)
+               (catch java.util.concurrent.TimeoutException _ nil)
+               (catch java.util.concurrent.BrokenBarrierException _ nil))
+          {:mode :spawned :entry fake-entry})]
+
+    (try (reset! cached-atom nil)
+         (reset! fresh-until-atom 0)
+         (with-redefs-fn {(rv 'remote-gateway) (constantly nil)
+                          (rv 'db-target) (constantly "/tmp/single-flight/vis.db")
+                          #'discovery/registry-fresh? (constantly false)
+                          #'discovery/pid-alive? (constantly true)
+                          (rv 'discover-or-recover!) discover
+                          (rv 'bounce-stale-daemon!) (constantly {:bounced? false})
+                          (rv 'assert-compatible!) identity}
+           (fn []
+             (let [workers (mapv (fn [_]
+                                   (future @start (client/ensure-gateway!)))
+                                 (range 2))]
+               (deliver start true)
+               (is (= [fake-entry fake-entry] (mapv #(deref % 2000 ::timeout) workers)))
+               (is (= 1 @calls) "one process performs discovery while peers reuse its result"))))
+         (finally (reset! cached-atom previous-cached)
+                  (reset! fresh-until-atom previous-fresh-until)))))
 (deftest authenticated-loopback-orphan-is-stopped-and-replaced
   (let [token-file
         (java.io.File/createTempFile "vis-gateway-token-" ".txt")

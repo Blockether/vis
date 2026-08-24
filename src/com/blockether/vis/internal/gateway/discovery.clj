@@ -380,29 +380,50 @@
    — the subcommand is the thing an operator scans for."
   "vis")
 
+(defn- first-executable
+  "First executable path in `candidates`, or nil."
+  [candidates]
+  (first (filter #(try (.canExecute (io/file ^String %)) (catch Throwable _ false)) candidates)))
+
 (defn- argv0-shell
   "Absolute path of a shell whose `exec` implements `-a NAME` (argv[0] override),
    or nil when there is none. Only bash-family shells do; Debian/Ubuntu `/bin/sh`
    is dash and does not, so we must NOT assume `sh` here."
   ^String []
-  (first (filter #(try (.canExecute (io/file ^String %)) (catch Throwable _ false))
-                 ["/bin/bash" "/usr/bin/bash" "/usr/local/bin/bash" "/opt/homebrew/bin/bash"])))
+  (first-executable ["/bin/bash" "/usr/bin/bash" "/usr/local/bin/bash" "/opt/homebrew/bin/bash"]))
+
+(defn- setsid-command
+  "Absolute `setsid` executable on Linux/WSL, or nil on systems without it."
+  ^String []
+  (first-executable ["/usr/bin/setsid" "/bin/setsid"]))
 
 (defn unix-launch-cmd
-  "Full `[shell \"-c\" script]` command that detaches `argv` with its stdio in
-   `log-path`. Preferred form runs under bash so the daemon can `exec -a` itself
-   into a readable `vis <subcommand> …` process line; `trap '' HUP` before the
-   exec survives execve, giving the same SIGHUP immunity `nohup` provides. Falls
-   back to plain `nohup` under `sh` when no bash exists (the process line then
-   keeps the absolute executable path, which is cosmetic, not functional)."
-  [argv log-path]
-  (let [tail (str " >" (sh-quote log-path) " 2>&1 &")]
-    (if-let [bash (argv0-shell)]
-      [bash "-c"
-       (str "{ trap '' HUP; exec -a " (sh-quote spawn-argv0)
-            " " (str/join " " (map sh-quote argv))
-            "; }" tail)]
-      ["sh" "-c" (str "nohup " (str/join " " (map sh-quote argv)) tail)])))
+  "Full command vector of a shell, its `-c` flag, and a script that backgrounds
+   `argv` with its stdio in `log-path`. On Linux/WSL, `setsid` gives the daemon a new session and process
+   group, so terminal job-control signals aimed at the TUI cannot stop it. HUP and
+   TSTP are also ignored across every exec as a defensive fallback. Bash preserves
+   the readable `vis <subcommand> …` argv0; plain `sh` keeps the executable path.
+
+   The three-arity form injects `{:bash path-or-nil :setsid path-or-nil}` for tests."
+  ([argv log-path] (unix-launch-cmd argv log-path {:bash (argv0-shell) :setsid (setsid-command)}))
+  ([argv log-path {:keys [bash setsid]}]
+   (let [quoted-argv
+         (str/join " " (map sh-quote argv))
+
+         readable-exec
+         (str "exec -a " (sh-quote spawn-argv0) " " quoted-argv)
+
+         detached-exec
+         (cond (and bash setsid)
+               (str "exec " (sh-quote setsid) " " (sh-quote bash) " -c " (sh-quote readable-exec))
+               bash readable-exec
+               setsid (str "exec " (sh-quote setsid) " " quoted-argv)
+               :else (str "exec " quoted-argv))
+
+         script
+         (str "{ trap '' HUP TSTP; " detached-exec "; } >" (sh-quote log-path) " 2>&1 &")]
+
+     [(or bash "sh") "-c" script])))
 
 (defn spawn-detached!
   "Fire-and-forget launch of a gateway daemon for `db`, fully DETACHED so closing
