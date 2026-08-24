@@ -22,6 +22,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.human-input.live :as live]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.header :as header]))
 
@@ -1193,18 +1194,61 @@
                 (when id [id (meta-turn-retries env id)])))
         turns))
 
+(def ^:private painted-block-keys
+  "What a transcript block carries ONLY so a surface can paint it. `:result-render`
+   is `form/with-display`'s markdown body of the very `:result`/`:stdout` the same
+   block already holds, and `:op`/`:result-summary` are the card descriptor the TUI
+   and the companion build from it: a picture of a fact, never a second fact."
+  [:op :result-summary :result-render])
+
+(defn- model-iteration
+  "One transcript iteration with the presentation-only rows taken out: the painted
+   card IR off every block, and the host's own Activity receipt off `:attachments`,
+   which disappears when that receipt was all it held - the shape the projection
+   already produces for an iteration that made no artifact."
+  [iteration]
+  (let [attachments (vec (remove live/activity-attachment? (:attachments iteration)))]
+    (cond-> (dissoc iteration :attachments)
+      (contains? iteration :blocks)
+      (update :blocks (partial mapv #(apply dissoc % painted-block-keys)))
+
+      (seq attachments)
+      (assoc :attachments attachments))))
+
+(defn- model-transcript
+  "`transcript/transcript` with everything that exists only to be PAINTED removed.
+
+   That projection is shared with the HUMAN exports (`transcript-md` /
+   `transcript-html`), where the rendered card and the Activity receipt belong, so
+   the cut is made HERE - on the one edge that reaches the model - and never inside
+   the shared builder.
+
+   Both leaks were measured on a real session: every block handed the model a
+   `:result-render` repeating the `:stdout` printed right next to it, and nearly
+   every attachment descriptor named an Activity receipt whose bytes the sandbox
+   reader REFUSES, which is worse than no id at all."
+  [transcript-data]
+  (cond-> transcript-data
+    (seq (:turns transcript-data))
+    (update :turns
+            (partial mapv
+                     (fn [turn]
+                       (cond-> turn
+                         (seq (:iterations turn))
+                         (update :iterations (partial mapv model-iteration))))))))
 (defn- foundation-inspect-data
   "Canonical session-state data surface. One read returns the
    navigation summary, live current turn, classified failures,
    diagnosis, fork/retry metadata, compact usage ledger, and the full
-   transcript payload. Default target is the current session; pass a
-   session id or unambiguous prefix to inspect another session."
+   transcript payload — MODEL-FACING, so [[model-transcript]] has already taken
+   the presentation-only rows out of it. Default target is the current session;
+   pass a session id or unambiguous prefix to inspect another session."
   [env session-id]
   (let [target-id
         (or session-id (:session-id env))
 
         transcript-data
-        (safe-call #(transcript/transcript (:db-info env) target-id) nil)
+        (safe-call #(model-transcript (transcript/transcript (:db-info env) target-id)) nil)
 
         resolved-id
         (or (get-in transcript-data [:session :id]) target-id)

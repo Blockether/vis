@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.introspection :as introspection]
+            [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
@@ -727,3 +728,65 @@
 
                             (expect (= [(str cid)] (mapv #(str (get % "id")) rows))))
                           (finally (vis/db-dispose-connection! s)))))))
+
+;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: `read_session` handed the
+;; model the presentation layer — every block repeated its own printed output back as
+;; `:result-render`, and each host Activity receipt arrived as an attachment id whose
+;; bytes the sandbox reader refuses.
+(defdescribe
+  read-session-excludes-presentation-test
+  "`read_session` is the MODEL's read of a session: painted card IR and the host's own
+   Activity receipt never cross it, while the human transcript keeps both."
+  (it
+    "drops block card IR and the Activity receipt, keeping the semantic live record"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [blob (byte-array (mapv unchecked-byte [1 2 3 4]))
+              b64 (.encodeToString (java.util.Base64/getEncoder) blob)
+              live-media "application/vnd.vis.live+ndjson"
+              cid (h/store-session! s {:channel :tui :title "presentation boundary"})
+              tid (vis/db-store-session-turn! s {:parent-session-id cid :user-request "grep it"})
+              _ (h/store-iteration! s
+                                    {:session-turn-id tid
+                                     :status :done
+                                     :idx 0
+                                     :code "await grep(...)"
+                                     :forms [{:scope "t1/i1"
+                                              :tag :observation
+                                              :src "await grep(...)"
+                                              :stdout "python-only\n"}]
+                                     :attachments [{:tool-call-id "call_A"
+                                                    :kind :live-record
+                                                    :media-type live-media
+                                                    :filename "activity.live.ndjson"
+                                                    :classification :activity
+                                                    :view-id "view-activity"
+                                                    :base64 b64
+                                                    :size (alength blob)}
+                                                   {:tool-call-id "call_A"
+                                                    :kind :live-record
+                                                    :media-type live-media
+                                                    :filename "ci-run.live.ndjson"
+                                                    :view-id "view-ci"
+                                                    :base64 b64
+                                                    :size (alength blob)}]})
+              data (:result (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid))
+              iterations (mapcat #(get % "iterations") (get-in data ["transcript" "turns"]))
+              blocks (vec (mapcat #(get % "blocks") iterations))
+              attachments (vec (mapcat #(get % "attachments") iterations))
+              human (transcript/transcript s cid)
+              human-iteration (first (mapcat :iterations (:turns human)))]
+
+          ;; The model reads the fact, never the picture painted of it.
+          (expect (= 1 (count blocks)))
+          (expect (= "python-only\n" (get (first blocks) "stdout")))
+          (expect (empty? (filter #(contains? % "result_render") blocks)))
+          (expect (empty? (filter #(contains? % "result_summary") blocks)))
+          (expect (empty? (filter #(contains? % "op") blocks)))
+          ;; Activity is presentation; a semantic live record is still model context.
+          (expect (= ["ci-run.live.ndjson"] (mapv #(get % "filename") attachments)))
+          ;; The shared projection - what a person reopens - keeps both.
+          (expect (some? (:result-render (first (:blocks human-iteration)))))
+          (expect (= #{"activity.live.ndjson" "ci-run.live.ndjson"}
+                     (set (map :filename (:attachments human-iteration))))))
+        (finally (vis/db-dispose-connection! s))))))

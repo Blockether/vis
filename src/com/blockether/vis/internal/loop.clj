@@ -847,14 +847,6 @@
                   (catch java.util.concurrent.TimeoutException _ false)
                   (catch Throwable _ false)))))
 
-(defn- activity-attachment?
-  "True only for the host-owned Activity receipt. Its classification, not its
-   filename, is the durable presentation-only boundary used by model-facing paths."
-  [attachment]
-  (= "activity"
-     (some-> (or (:classification attachment) (get attachment "classification"))
-             name)))
-
 (defn attachment-descriptor
   "One `session_attachment` row as the compact DESCRIPTOR `list_attachments()` and
    `get_attachment(id)` hand the model: identity, provenance and shape, and never
@@ -999,7 +991,8 @@
 
               model-attachments
               (fn []
-                (remove activity-attachment? (persistance/db-list-session-attachments-meta d sid)))]
+                (remove live/activity-attachment?
+                  (persistance/db-list-session-attachments-meta d sid)))]
 
           (when (and d sid)
             {:list (fn []
@@ -2070,7 +2063,7 @@
    same storage rail for presentation, but never becomes model context."
   [attachment]
   (and (= live-record-media-type (or (:media-type attachment) (:media_type attachment)))
-       (not (activity-attachment? attachment))))
+       (not (live/activity-attachment? attachment))))
 (defn- live-record-context-line
   "Tell a later model where one settled live-view record can be reopened."
   [att]

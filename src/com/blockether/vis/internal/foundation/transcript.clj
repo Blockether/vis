@@ -153,10 +153,16 @@
    a reader needs PLUS the bare row `:id` to fetch the bytes on demand via
    `db-read-attachment` (Clojure) / the sandbox `read_attachment(id)` shim.
    `:stored` records where the bytes live (`:inline` DB blob, `:external` storage
-   backend, or `:none`) without carrying them."
+   backend, or `:none`) without carrying them.
+
+   `:classification` rides along because it is what a MODEL-FACING projection
+   filters on (`human-input.live/activity-attachment?`): the host's own Activity
+   receipt is presentation, and a reader that cannot tell it apart hands the model
+   an id the sandbox attachment reader refuses."
   [att]
   (-> (select-keys att
-                   [:id :source :tool-call-id :position :kind :media-type :filename :version :size])
+                   [:id :source :tool-call-id :position :kind :media-type :filename :version :size
+                    :classification])
       (assoc :stored (cond (or (:has-bytes att) (:base64 att)) :inline
                            (:storage-uri att) :external
                            :else :none))))
