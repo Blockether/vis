@@ -1,10 +1,12 @@
 (ns com.blockether.vis.internal.foundation.shell-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.env-python :as ep]
-            [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.foundation.core :as foundation]
+            [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.process-jail :as process-jail]
             [com.blockether.vis.internal.resources :as resources]
@@ -1593,15 +1595,17 @@
         (expect (str/includes? text "LAST stage")))))
 
 (defdescribe shell-extension-shape-test
-             (it "is a registered builtin extension exposing the ONE bare `shell` symbol"
-                 (expect (= "foundation-shell" (:ext/name shell/vis-extension)))
-                 ;; No engine alias any more: `shell` is bound BARE in the flat sandbox
-                 ;; next to cat / grep, so there is no `shell.run(…)` namespace.
-                 (expect (true? (get-in shell/vis-extension [:ext/engine :ext.engine/builtin?])))
-                 (expect (nil? (get-in shell/vis-extension [:ext/engine :ext.engine/alias])))
-                 ;; No `status` transport either: every stage's answer already carries it.
+             (it "lives in foundation-core as one toggle-gated bare symbol group"
+                 (let [core-symbols (set (get-in foundation/vis-extension
+                                                 [:ext/engine :ext.engine/symbols]))]
+                   (expect (every? core-symbols shell/shell-symbols)))
                  (expect (= '[shell _shell-logs _shell-wait _shell-type _shell-stop]
-                            (mapv :ext.symbol/symbol shell/shell-symbols)))))
+                            (mapv :ext.symbol/symbol shell/shell-symbols)))
+                 (expect (every? :ext.symbol/active-fn shell/shell-symbols))
+                 (with-redefs [vis/toggle-enabled? (constantly false)]
+                   (expect (not-any? #(extension/symbol-active? % {}) shell/shell-symbols)))
+                 (with-redefs [vis/toggle-enabled? (constantly true)]
+                   (expect (every? #(extension/symbol-active? % {}) shell/shell-symbols)))))
 
 (defdescribe
   macos-jailed-pty-e2e-test

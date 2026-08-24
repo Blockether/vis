@@ -382,9 +382,7 @@
 
 ;; The index row: which logs does this session have?
 
-(def index-extension-id
-  "Owner of the sidecar rows. The shell extension owns its own index."
-  "foundation-shell")
+(def index-extension-id "Owner of the shell-log sidecar rows." "foundation-core")
 
 (def index-kind "`kind` of a shell-log sidecar row." :shell-log)
 

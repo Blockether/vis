@@ -1,8 +1,8 @@
 (ns com.blockether.vis.internal.foundation.shell
-  "`shell/` compatibility extension — a DROPPABLE classpath plug-in (drop the
-   jar, drop the feature). Bound only when the user-owned `shell` toggle is ON
-   (default ON; flip it OFF in Settings or in `vis.yml` via `toggles: {shell: false}`
-   to drop the tools). The OS process jail is the containment layer while active.
+  "Foundation-core's shell implementation. Bound only when the user-owned `shell`
+   toggle is ON (default ON; flip it OFF in Settings or in `vis.yml` via
+   `toggles: {shell: false}` to drop the tools). The OS process jail is the
+   containment layer while active.
 
    ONE model-facing entry point — the `shell` PYTHON verb, bound BARE in the flat
    sandbox next to `ls` / `grep`, and NO native tool: a process is started from
@@ -56,10 +56,9 @@
    the TOP level — there is no entry to unwrap and no second shape to learn.
 
 
-   The `shell` toggle is registered HERE, extension-owned under the vis
-   namespace. It closes the MODEL's door only: an installed extension keeps its
-   own trusted process boundary (`vis.shell`, `subprocess`), which the toggle
-   does not gate."
+   The `shell` toggle is registered HERE and owned by Vis core. It closes the
+   MODEL's door only: an installed extension keeps its own trusted process boundary
+   (`vis.shell`, `subprocess`), which the toggle does not gate."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
@@ -1607,7 +1606,7 @@
                             :label (one-line script 48)
                             :detail script
                             :pid (:pid p)
-                            :owner "foundation-shell"
+                            :owner "foundation-core"
                             :status :running}
                            {:stop-fn
                             (fn []
@@ -1743,7 +1742,7 @@
           :label (one-line script 48)
           :detail script
           :pid (:pid proc)
-          :owner "foundation-shell"
+          :owner "foundation-core"
           :status :running}
          {:stop-fn (fn []
                      (reset! stopped? true)
@@ -3241,16 +3240,19 @@
      :ticker-fn (shell-ticker "stop")
      :on-error-fn (shell-on-error :_shell-stop)}))
 
+(defn shell-enabled? [_env] (vis/toggle-enabled? "shell"))
+
 (def shell-symbols
   ;; NO native tool at all, and ONE object to drive what a Python call starts.
   ;; `shell` is an engine-bound sandbox verb; `_shell_logs` / `_shell_wait` /
   ;; `_shell_type` / `_shell_stop` are PRIVATE transport (underscore-prefixed so
   ;; `apropos` never lists them): the model calls the handle's own `sh.logs()` /
-  ;; `sh.wait()` / `sh.type(\"y\")` / `sh.stop()`, because operations on an object the
+  ;; `sh.wait()` / `sh.type("y")` / `sh.stop()`, because operations on an object the
   ;; caller already holds are control flow, not more schemas to disambiguate before
   ;; running a command. There is no status transport at all: every stage's answer
   ;; already carries the status block.
-  [shell-symbol shell-logs-symbol shell-wait-symbol shell-type-symbol shell-stop-symbol])
+  (mapv #(assoc % :ext.symbol/active-fn shell-enabled?)
+        [shell-symbol shell-logs-symbol shell-wait-symbol shell-type-symbol shell-stop-symbol]))
 
 (defn shell-attach-command
   "`vis-agent extension shell attach <id>` — the human-side passthrough: join a live
@@ -3301,23 +3303,3 @@
    :owner :vis
    :persist? true
    :group :sandbox})
-
-(def vis-extension
-  (vis/extension
-    {:ext/name "foundation-shell"
-     :ext/description
-     "No native shell tool: the `shell` PYTHON verb spawns ONE command under a pty and answers with a live handle (`sh.logs()` / `sh.wait()` / `sh.type(\"y\")` / `sh.stop()`) whose every answer carries the shell's status; `resource_stop` also stops PTYs. Default-on behind the `shell` toggle and OS process jail."
-     :ext/version "0.1.0"
-     :ext/author "Blockether"
-     :ext/owner "vis"
-     :ext/license "Apache-2.0"
-     :ext/kind "foundation"
-     ;; Gated by the user-owned `shell` toggle (default ON). The OS process jail is
-     ;; the containment layer while shell is active; flipping the toggle OFF unbinds
-     ;; the `shell` tool on the next env build / reload.
-     :ext/activation-fn (fn [_env]
-                          (vis/toggle-enabled? "shell"))
-     :ext/engine {:ext.engine/builtin? true :ext.engine/symbols shell-symbols}
-     :ext/cli shell-cli}))
-
-(defn register! [] (vis/register-extension! vis-extension))

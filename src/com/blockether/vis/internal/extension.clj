@@ -771,8 +771,6 @@
 ;; token spec and built-in palettes; extensions can add channel-agnostic
 ;; string-key settings here for channels to adapt.
 (s/def :ext/theme theme/extension-theme-map?)
-;; Optional dependency declaration. Vector of logical extension names.
-(s/def :ext/requires (s/coll-of non-blank-string? :kind vector?))
 ;; Semver version string, e.g. "1.0.0", "0.3.1-SNAPSHOT".
 (s/def :ext/version non-blank-string?)
 ;; Author name or org - the entity that *created* the extension
@@ -1041,8 +1039,8 @@
   (s/and (s/keys :req [:ext/name :ext/description]
                  :opt [:ext/source-nses :ext/kind :ext/activation-fn :ext/engine :ext/prompt-fn
                        :ext/ctx-fn :ext/hooks :ext/op-hooks :ext/network-filters :ext/env
-                       :ext/settings :ext/theme :ext/requires :ext/version :ext/author :ext/owner
-                       :ext/license :ext/cli :ext/channels :ext/providers :ext/persistance
+                       :ext/settings :ext/theme :ext/version :ext/author :ext/owner :ext/license
+                       :ext/cli :ext/channels :ext/providers :ext/persistance
                        :ext/attachment-storage :ext/channel-contributions :ext/slash-commands
                        :ext/doctor-fn :ext/sandbox-shims])
          ns-alias-required-when-symbols?
@@ -2493,9 +2491,6 @@
         (not (:ext/theme spec))
         (assoc :ext/theme {})
 
-        (not (:ext/requires spec))
-        (assoc :ext/requires [])
-
         (not (:ext/cli spec))
         (assoc :ext/cli [])
 
@@ -3104,61 +3099,14 @@
             slot
             (filter #(= slot (:slot %))))))))
 
-(defn- topo-sort-extensions
-  "Topologically sort extensions by :ext/requires.
-   Throws on missing dependencies or cycles."
-  [extensions]
-  (let [by-ns
-        (into {} (map (juxt :ext/name identity)) extensions)
-
-        visited
-        (volatile! #{})
-
-        path
-        (volatile! #{})
-
-        result
-        (volatile! [])]
-
-    (letfn
-      [(visit [ns-sym]
-         (when (contains? @path ns-sym)
-           (throw (ex-info (str "Circular extension dependency: " ns-sym " -> ... -> " ns-sym)
-                           {:type :extension/circular-dependency :extension ns-sym :path @path})))
-         (when-not (contains? @visited ns-sym)
-           (vswap! path conj ns-sym)
-           (let [ext (get by-ns ns-sym)]
-             (when-not ext
-               (throw (ex-info (str "Extension '" ns-sym "' required but not registered")
-                               {:type :extension/missing-dependency
-                                :extension ns-sym
-                                :available (vec (keys by-ns))})))
-             (doseq [dep (:ext/requires ext)]
-               (visit dep)))
-           (vswap! path disj ns-sym)
-           (vswap! visited conj ns-sym)
-           (vswap! result conj (get by-ns ns-sym))))]
-      (doseq [ns-sym (keys by-ns)]
-        (visit ns-sym)))
-    @result))
-
 (defn register-extensions!
-  "Install all globally registered extensions into an environment.
-
-   Topologically sorts by :ext/requires so dependencies are registered
-   before dependents. Throws on missing dependencies or cycles.
+  "Install all globally registered extensions into an environment in registry order.
 
    Called by `create-environment` automatically. Returns environment."
   [environment register-fn!]
-  (let [exts
-        (registered-extensions)
-
-        sorted
-        (when (seq exts) (topo-sort-extensions exts))]
-
-    (doseq [ext sorted]
-      (register-fn! environment ext))
-    environment))
+  (doseq [ext (registered-extensions)]
+    (register-fn! environment ext))
+  environment)
 
 (defn- registered-extensions-for-source-ns
   [ns-sym]

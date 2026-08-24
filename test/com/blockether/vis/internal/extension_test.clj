@@ -793,3 +793,27 @@
                    (expect (= :diff (:kind evidence)))
                    (expect (= "fixture.clj" (:text evidence)))
                    (expect (= [:hunk :deletion :addition] (mapv :kind (:lines evidence)))))))
+
+(defdescribe extension-registry-order-test
+             (it "installs extensions in the one explicit registry order"
+                 (let [exts
+                       (mapv (fn [i]
+                               {:ext/name (str "extension-" i)})
+                             (range 16))
+
+                       installed
+                       (atom [])
+
+                       environment
+                       ::environment]
+
+                   (with-redefs [extension/registered-extensions (constantly exts)]
+                     (expect (= environment
+                                (extension/register-extensions! environment
+                                                                (fn [_ ext]
+                                                                  (swap! installed conj ext))))))
+                   (expect (= exts @installed))))
+             (it "does not manufacture the removed dependency key"
+                 (let [ext (extension/extension {:ext/name "test.no-dependency-graph"
+                                                 :ext/description "No dependency graph."})]
+                   (expect (not (contains? ext :ext/requires))))))

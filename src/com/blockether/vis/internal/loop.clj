@@ -9045,10 +9045,9 @@
         t0
         (System/currentTimeMillis)
 
-        ;; Run the shell tool. `requiring-resolve` keeps foundation-shell a
-        ;; DROPPABLE plug-in (nil when the jar is absent) and avoids a compile-time
-        ;; cycle; the "shell" toggle gate is applied HERE (the symbol's own
-        ;; before-fn gate is bypassed by the direct var call).
+        ;; Run the core shell implementation without introducing a compile-time cycle.
+        ;; The `shell` toggle gate is applied HERE because a direct var call bypasses
+        ;; the symbol's activation predicate.
         on-chunk
         (or (:on-chunk loop-opts) (get-in loop-opts [:hooks :on-chunk]))
 
@@ -10037,10 +10036,6 @@
    distinct from the global-registry `register-extension!` defined earlier
    in this file).
 
-   Checks `:ext/requires` - if the extension declares dependencies, all
-   listed extension namespaces must already be registered. Throws on
-   missing dependencies.
-
    If an extension with the same `:ext/name` is already registered,
    it is replaced (not duplicated). Enables hot-swap via
    `reload-extension!` (removed for GraalVM native-image compatibility).
@@ -10050,19 +10045,6 @@
   (when-not (:extensions environment)
     (anomaly/incorrect! "Invalid vis environment - missing :extensions atom"
                         {:type :vis/invalid-env}))
-  (when-let [requires (seq (:ext/requires ext))]
-    (let [registered (into #{} (map :ext/name) @(:extensions environment))
-          missing (vec (remove registered requires))]
-
-      (when (seq missing)
-        (anomaly/incorrect! (str "Extension '" (:ext/name ext)
-                                 "' requires " missing
-                                 " but they are not registered. " "Register dependencies first.")
-                            {:type :extension/missing-dependencies
-                             :extension (:ext/name ext)
-                             :requires (vec requires)
-                             :missing missing
-                             :registered (vec registered)}))))
   (swap! (:extensions environment) (fn [exts]
                                      (let [ns-sym
                                            (:ext/name ext)

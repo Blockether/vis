@@ -8,7 +8,7 @@
             [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.prompt]
-            [com.blockether.vis.internal.foundation.core]
+            [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.resources :as resources]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -416,21 +416,22 @@
         (expect (some? spec))
         (expect (false? (boolean (:default spec))))
         (expect (false? (vis/toggle-enabled? "introspection")))))
-  (it "owns the session symbols behind an activation-fn bound to that toggle"
-      (let [ext
-            introspection/vis-extension
-
-            activation
-            (:ext/activation-fn ext)]
-
-        (expect (= "foundation-introspection" (:ext/name ext)))
-        (expect (= (set introspection/all-symbols) (set (:ext.engine/symbols (:ext/engine ext)))))
-        (expect (false? (boolean (activation {}))))
+  (it "keeps the session symbols in foundation-core behind per-symbol activation"
+      (let [core-symbols (set (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols]))]
+        (expect (every? core-symbols introspection/all-symbols))
+        (expect (every? :ext.symbol/active-fn introspection/all-symbols))
+        (with-redefs [vis/toggle-enabled? (constantly false)]
+          (expect (not-any? #(extension/symbol-active? % {}) introspection/all-symbols)))
         (with-redefs [vis/toggle-enabled? (constantly true)]
-          (expect (true? (boolean (activation {})))))))
-  (it "keeps gateway-event / read_session guidance out of core, in its own prompt"
+          (expect (every? #(extension/symbol-active? % {}) introspection/all-symbols)))))
+  (it "keeps gateway-event and read_session guidance out of the static core prompt"
       (let [text
-            ((:ext/prompt-fn introspection/vis-extension) {})
+            (with-redefs [vis/toggle-enabled? (constantly true)]
+              (introspection/prompt {}))
+
+            disabled
+            (with-redefs [vis/toggle-enabled? (constantly false)]
+              (introspection/prompt {}))
 
             core
             (var-get #'com.blockether.vis.internal.prompt/CORE_SYSTEM_PROMPT)]
@@ -438,13 +439,9 @@
         (expect (str/includes? text "~/.vis/gateway/events/<id>.ndjson"))
         (expect (str/includes? text "await read_session()"))
         (expect (str/includes? text "list_sessions(search="))
+        (expect (nil? disabled))
         (expect (not (str/includes? core "gateway/events")))
-        (expect (not (str/includes? core "read_session")))))
-  (it "is not bundled into foundation-core's symbol set"
-      (let [core-symbols (set (:ext.engine/symbols
-                                (:ext/engine
-                                  com.blockether.vis.internal.foundation.core/vis-extension)))]
-        (expect (empty? (filter core-symbols introspection/all-symbols))))))
+        (expect (not (str/includes? core "read_session"))))))
 
 (defdescribe introspection-env-injection-test
              (it "uses declarative env injection rather than a before middleware shim"

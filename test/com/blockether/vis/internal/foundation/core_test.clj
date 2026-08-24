@@ -3,6 +3,9 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.core :as foundation]
             [com.blockether.vis.internal.foundation.environment.agents :as agents]
+            [com.blockether.vis.internal.foundation.introspection :as introspection]
+            [com.blockether.vis.internal.foundation.rewind :as rewind]
+            [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.manifest :as manifest]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -12,11 +15,12 @@
       (expect (true? (get-in foundation/vis-extension [:ext/engine :ext.engine/builtin?])))
       (expect (nil? (get-in foundation/vis-extension [:ext/engine :ext.engine/alias])))
       (expect (nil? (get-in foundation/vis-extension [:ext/engine :ext.engine/ns])))
-      (expect (every? (set (map :ext.symbol/symbol
-                                (get-in foundation/vis-extension
-                                        [:ext/engine :ext.engine/symbols])))
-                      ['format_code 'lint_code 'run_tests 'repl_eval 'repl_start 'repl_status
-                       'repl_stop])))
+      (let [symbols (set (map :ext.symbol/symbol
+                              (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols])))]
+        (expect (every? symbols
+                        ['format_code 'lint_code 'run_tests 'repl_eval 'repl_start 'repl_status
+                         'repl_stop 'read-session 'get-session 'list-sessions 'shell '_shell-logs
+                         '_shell-wait '_shell-type '_shell-stop]))))
   ;; Removed: "merges markdown builders into the unified symbol surface".
   ;; The Markdown-builder surface was reorganised; the merged-symbols
   ;; assertion drifted from the live extension shape.
@@ -58,26 +62,34 @@
       ;; now lists the symbols that actually exist; do NOT let the old
       ;; DSL names creep back into the descriptor copy.
       (let [doc (:ext/description foundation/vis-extension)]
-        ;; Session introspection moved out to `foundation-introspection`
-        ;; (toggle-gated), so the kernel copy points AT that extension instead
-        ;; of advertising `read_session` itself.
-        (expect (str/includes? doc "foundation-introspection"))
+        (expect (str/includes? doc "toggle-gated shell and session introspection"))
+        (expect (str/includes? doc "rewind"))
         (expect (str/includes? doc "language facade"))
         (expect (str/includes? doc "file editing"))
         (expect (str/includes? doc "session workspace/VCS"))
         (expect (not (str/includes? doc "ext repro")))
         (expect (not (str/includes? doc "file-link")))
         (expect (not (str/includes? doc "answer builders")))))
-  (it "is explicitly initialized by the distribution manifest"
-      (expect (some #{'com.blockether.vis.internal.foundation.core/register!}
-                    (:initialization (manifest/read-manifest))))
+  (it "is the manifest's single initializer for core facilities"
+      (let [initialization (set (:initialization (manifest/read-manifest)))]
+        (expect (contains? initialization 'com.blockether.vis.internal.foundation.core/register!))
+        (doseq [removed ['com.blockether.vis.internal.foundation.introspection/register!
+                         'com.blockether.vis.internal.foundation.shell/register!
+                         'com.blockether.vis.internal.foundation.rewind/register!]]
+          (expect (not (contains? initialization removed)))))
       (foundation/register!)
       (expect (some #(= "foundation-core" (:ext/name %)) (extension/registered-extensions))))
-  (it "exports a working doctor fn and no CLI commands"
-      (expect (empty? (:ext/cli foundation/vis-extension)))
+  (it "owns rewind, shell CLI, and the toggle-gated symbol groups"
+      (expect (= rewind/op-hooks (:ext/op-hooks foundation/vis-extension)))
+      (expect (some #(= "rewind" (:slash/name %)) (:ext/slash-commands foundation/vis-extension)))
+      (expect (= ["shell"] (mapv :cmd/name (:ext/cli foundation/vis-extension))))
+      (expect (every? (set (get-in foundation/vis-extension [:ext/engine :ext.engine/symbols]))
+                      (concat introspection/all-symbols shell/shell-symbols)))
+      (let [routes (get-in foundation/vis-extension
+                           [:ext/channel-contributions :gateway.slot/http-routes])]
+        (expect (= [:rewind/http] (mapv :id routes)))
+        (expect (= rewind/routes-contribution (:fn (first routes)))))
       (let [checks ((:ext/doctor-fn foundation/vis-extension) {})]
-        ;; doctor-fn is wired via a build-time require (not requiring-resolve);
-        ;; it returns a seq of check maps, each carrying a :level.
         (expect (sequential? checks))
         (expect (every? :level checks)))))
 

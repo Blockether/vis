@@ -717,9 +717,7 @@
                  (let [rs (rw/routes-contribution)]
                    (expect (seq rs))
                    (expect (some #(str/includes? (pr-str %) "rewind") rs))))
-             (it "registers as a vis extension with op-hooks"
-                 (expect (map? rw/vis-extension))
-                 (expect (seq (:ext/op-hooks rw/vis-extension)))))
+             (it "exports op hooks for foundation-core" (expect (seq rw/op-hooks))))
 
 ;; Slash rendering — the SAME Markdown is painted by the TUI bubble and by the
 ;; companion's react-markdown, so the shape of the body is a contract, not

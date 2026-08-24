@@ -643,7 +643,11 @@
              sort)
 
         shell?
-        (boolean (some #(= "foundation-shell" (:ext/name %)) (or active-extensions [])))
+        (boolean (some (fn [ext]
+                         (some #(and (= 'shell (:ext.symbol/symbol %))
+                                     (extension/symbol-active? % nil))
+                               (extension/ext-symbols ext)))
+                       (or active-extensions [])))
 
         auto-imports
         (str/join "`, `" env-python/AUTO_IMPORTED_PYTHON_NAMES)]

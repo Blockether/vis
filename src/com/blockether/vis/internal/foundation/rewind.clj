@@ -1260,20 +1260,3 @@
    :rev (str (System/identityHashCode #'routes-contribution))
    :routes (fn [_token]
              ["/v1/rewind/:sid" {:get points-handler :post restore-handler}])})
-
-;; Registration
-
-(def vis-extension
-  (vis/extension {:ext/name "rewind"
-                  :ext/description
-                  (str
-                    "Durable file-state rewind: snapshots every tool mutation's pre-image into a "
-                    "content-addressed pool and pairs it with a per-turn git baseline, so a turn's "
-                    "file changes — including ones made by `shell` — can be put back.")
-                  :ext/kind "foundation"
-                  :ext/op-hooks op-hooks
-                  :ext/slash-commands slash-specs
-                  :ext/channel-contributions {:gateway.slot/http-routes
-                                              [{:id :rewind/http :fn routes-contribution}]}}))
-
-(defn register! [] (vis/register-extension! vis-extension))

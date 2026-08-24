@@ -1474,16 +1474,13 @@
        "`request_snippet`/`reply_snippet` windows.")}))
 
 
-(def all-symbols [read-session-symbol get-session-symbol list-sessions-symbol])
+;; Session introspection is part of foundation-core, but its callable symbols and
+;; prompt guidance remain behind the default-off `introspection` toggle.
+(defn introspection-enabled? [_env] (vis/toggle-enabled? "introspection"))
 
-;; ---------------------------------------------------------------------------
-;; The introspection extension. Self-inspection (`read_session` / `get_session` /
-;; `list_sessions`, plus the gateway event journals) is NOT core agent
-;; policy: most projects never want the agent reading its own transcripts, so
-;; the whole surface — symbols AND prompt guidance — hangs off the
-;; `introspection` toggle, which is OFF by default. Turn it on in `vis.yml`
-;; (`toggles: { introspection: true }`) or from the settings dialog.
-;; ---------------------------------------------------------------------------
+(def all-symbols
+  (mapv #(assoc % :ext.symbol/active-fn introspection-enabled?)
+        [read-session-symbol get-session-symbol list-sessions-symbol]))
 
 (vis/register-toggle! {:id "introspection"
                        :label "Session introspection"
@@ -1506,21 +1503,4 @@
     "- A session id copied from the TUI or the companion app arrives MARKED as `vis_session_id#<uuid>` — that marker means 'this is a Vis session'; pass it verbatim (or the bare id) to `read_session`/`get_session`.\n"
     "- Filter in `python_execution`; never dump whole structures.\n"))
 
-(defn- introspection-prompt [_env] INTROSPECTION_PROMPT)
-
-(def vis-extension
-  (vis/extension
-    {:ext/name "foundation-introspection"
-     :ext/description
-     "`read_session`: transcript + compact usage/tool/routing ledger; `get_session`: ONE session's descriptor; `list_sessions`: newest-first metadata index, ranked by `search`. Raw journal: `~/.vis/gateway/events/<id>.ndjson`. Requires the default-off `introspection` toggle."
-     :ext/version "0.1.0"
-     :ext/author "Blockether"
-     :ext/owner "vis"
-     :ext/license "Apache-2.0"
-     :ext/kind "foundation"
-     :ext/activation-fn (fn [_env]
-                          (vis/toggle-enabled? "introspection"))
-     :ext/engine {:ext.engine/builtin? true :ext.engine/symbols all-symbols}
-     :ext/prompt-fn introspection-prompt}))
-
-(defn register! [] (vis/register-extension! vis-extension))
+(defn prompt [_env] (when (vis/toggle-enabled? "introspection") INTROSPECTION_PROMPT))

@@ -32,7 +32,7 @@
 
                     prompt/active-extensions
                     (constantly [{:ext/name "foundation-core" :ext/engine {:ext.engine/alias 'v}}
-                                 {:ext/name "foundation-shell" :ext/engine {:ext.engine/alias 'sh}}
+                                 {:ext/name "sample-tools" :ext/engine {:ext.engine/alias 'sample}}
                                  {:ext/name "no-alias-ext"}])]
 
         (with-tmp-root* (fn [^java.io.File root]
@@ -48,7 +48,7 @@
                               (expect (not (contains? (get d "project") "agents_md")))
                               (expect (= "single" (get-in d ["project" "kind"])))
                               (expect (= 3 (get-in d ["extensions" "active_count"])))
-                              (expect (= #{"v" "sh"} (get-in d ["extensions" "aliases"])))))))))
+                              (expect (= #{"v" "sample"} (get-in d ["extensions" "aliases"])))))))))
   (it "detects polylith when bases/ + components/ are both present"
       (with-redefs [agents/instructions
                     (constantly {:found? false})

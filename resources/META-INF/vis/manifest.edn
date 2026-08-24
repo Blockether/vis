@@ -1,8 +1,6 @@
 {:version 1
  :initialization
  [com.blockether.vis.internal.foundation.core/register!
-  com.blockether.vis.internal.foundation.introspection/register!
-  com.blockether.vis.internal.foundation.shell/register!
   com.blockether.vis.internal.foundation.shim-yaml/register!
   com.blockether.vis.internal.foundation.shim-matplotlib/register!
   com.blockether.vis.internal.foundation.shim-requests/register!
@@ -26,7 +24,6 @@
   com.blockether.vis.internal.foundation.shim-ls/register!
   com.blockether.vis.internal.foundation.shim-fonttools/register!
   com.blockether.vis.internal.foundation.shim-anydoc/register!
-  com.blockether.vis.internal.foundation.rewind/register!
   com.blockether.vis.internal.foundation.mcp.core/register!
   com.blockether.vis.internal.foundation.harness.core/register!
   com.blockether.vis.ext.channel-tui.core/register!

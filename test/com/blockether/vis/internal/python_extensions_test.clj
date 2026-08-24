@@ -1762,42 +1762,23 @@ vis.extension(
    hydrated only at process start (gateway `install-toggle-persistence!`, TUI
    `screen/run-chat!`), so `shell: false` in the YAML kept the tool live until a
    restart while `/reload` reported success."
-  (it
-    "the shell toggle edited in vis.yml applies after /reload — #64"
-    (let [_
-          shell/vis-extension
+  (it "the shell toggle edited in vis.yml applies after /reload — #64"
+      (let [before (toggles/enabled? "shell")]
+        (toggles/set-value! "shell" true)
+        (expect (true? (toggles/enabled? "shell")))
+        (try (with-redefs [pyx/reload-python-extensions! (fn [& _]
+                                                           {:loaded 0 :failed 0})
+                           config/reload-config! (constantly {})
+                           config/current-config (constantly {})
+                           config/load-config-raw (constantly {"toggles" {"shell" false}})
+                           extension/run-reload-hooks! (constantly {})
+                           agents/reload! (constantly nil)
+                           prompt-templates/reload! (constantly [])]
 
-          before
-          (toggles/enabled? "shell")]
-
-      (toggles/set-value! "shell" true)
-      (expect (true? (toggles/enabled? "shell")))
-      (try (with-redefs [pyx/reload-python-extensions!
-                         (fn [& _]
-                           {:loaded 0 :failed 0})
-
-                         config/reload-config!
-                         (constantly {})
-
-                         config/current-config
-                         (constantly {})
-
-                         config/load-config-raw
-                         (constantly {"toggles" {"shell" false}})
-
-                         extension/run-reload-hooks!
-                         (constantly {})
-
-                         agents/reload!
-                         (constantly nil)
-
-                         prompt-templates/reload!
-                         (constantly [])]
-
-             (let [res ((var pyx/reload-slash) {:channel/id :tui :command/argv []})]
-               (expect (= :ok (:slash/status res)))))
-           (expect (false? (toggles/enabled? "shell")))
-           (finally (toggles/set-value! "shell" before))))))
+               (let [res ((var pyx/reload-slash) {:channel/id :tui :command/argv []})]
+                 (expect (= :ok (:slash/status res)))))
+             (expect (false? (toggles/enabled? "shell")))
+             (finally (toggles/set-value! "shell" before))))))
 
 ;; Human input — `vis.ask` blocks the extension until a channel answers
 

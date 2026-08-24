@@ -159,8 +159,8 @@
       ;; string is the PAYLOAD, not a language, so `run_tests("python")` would run the
       ;; workspace's primary pack instead of the python one.
       (expect (str/includes? text "run_tests({\"language\": \"python\"})"))
-      ;; Session introspection (gateway event journals, session_state) is toggle-
-      ;; gated and lives in the `foundation-introspection` extension prompt, NOT core.
+      ;; Session introspection is toggle-gated in foundation-core's dynamic fragment,
+      ;; never copied into the static engine prompt.
       (expect (not (str/includes? text "`~/.vis/gateway/events/<id>.ndjson`")))
       (expect (str/includes? text "scoped to real paths"))
       (expect (str/includes? text "locates unknown code"))
@@ -315,7 +315,8 @@
   (it "bans subprocess even with shell active, without duplicating the shell contract"
       ;; Invocation syntax belongs to the shell symbol docs; this supplemental
       ;; block only says that `subprocess` is not a second door to a process.
-      (let [text (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])]
+      (let [text (#'prompt/sandbox-shims-prompt-block
+                  [{:ext/engine {:ext.engine/symbols [{:ext.symbol/symbol 'shell}]}}])]
         (expect (str/includes? text (get env-python/PROCESS_SURFACE "ban")))
         (expect (str/includes? text "never spawn"))
         (expect (str/includes? text "`shell` verb"))
@@ -332,7 +333,8 @@
       ;; the manifest-listed shim apropos resource, and is PULLED by `doc(name)`. A block
       ;; that grows back into prose is a context regression, not documentation.
       (let [text
-            (#'prompt/sandbox-shims-prompt-block [{:ext/name "foundation-shell"}])
+            (#'prompt/sandbox-shims-prompt-block
+             [{:ext/engine {:ext.engine/symbols [{:ext.symbol/symbol 'shell}]}}])
 
             shims
             (extension/sandbox-shims)]

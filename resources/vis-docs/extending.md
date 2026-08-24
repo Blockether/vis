@@ -1495,7 +1495,6 @@ The remaining accepted keys are **declarative registrations**: the host applies 
 | `:ext/attachment-storage` | an attachment backend. |
 | `:ext/channel-contributions` | channel UI slots. |
 | `:ext/theme` | theme overrides. |
-| `:ext/requires` | extensions that must register first; load order is topologically sorted. |
 | `:ext/source-nses` | the namespaces the extension is built from. |
 
 The authoritative, complete list is the `::extension` spec in `com.blockether.vis.internal.extension`.

@@ -1,19 +1,24 @@
 (ns com.blockether.vis.internal.foundation.core
-  (:require [com.blockether.vis.core :as vis]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.doctor :as doctor]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
+            [com.blockether.vis.internal.foundation.introspection :as introspection]
             [com.blockether.vis.internal.foundation.language-surface :as language-surface]
+            [com.blockether.vis.internal.foundation.rewind :as rewind]
+            [com.blockether.vis.internal.foundation.session-slashes :as session-slashes]
+            [com.blockether.vis.internal.foundation.shell :as shell]
             [com.blockether.vis.internal.foundation.workspace-ctx :as workspace-ctx]
             [com.blockether.vis.internal.foundation.workspace-slashes :as workspace-slashes]
-            [com.blockether.vis.internal.foundation.session-slashes :as session-slashes]
             [com.blockether.vis.internal.workspace :as workspace]))
 
 (defn- combined-prompt
-  "Render only the dynamic language capability matrix. Native descriptions own
-   tool routing; CORE owns cross-tool policy."
+  "Render the dynamic language matrix and toggle-gated core guidance."
   [env]
-  (or (language-surface/prompt env) ""))
+  (->> [(language-surface/prompt env) (introspection/prompt env)]
+       (remove str/blank?)
+       (str/join "\n\n")))
 
 ;; Every foundation symbol carries its `:tag :observation | :mutation`
 ;; INLINE on the (vis/symbol ...) opts map; register-extension! walks
@@ -80,7 +85,7 @@
   (vis/extension
     {:ext/name "foundation-core"
      :ext/description
-     "Foundation kernel: language facade; file editing; session workspace/VCS and project-shape helpers; `main_agent_instructions`. Session introspection lives in `foundation-introspection` behind its toggle; Vis' own documentation pages are corpus entries the engine verbs `apropos`/`doc` search and retrieve. Bare Python functions return plain Markdown."
+     "Foundation kernel: language facade; file editing; session workspace/VCS and project-shape helpers; toggle-gated shell and session introspection; rewind; `main_agent_instructions`. Vis' own documentation pages are corpus entries the engine verbs `apropos`/`doc` search and retrieve. Bare Python functions return plain Markdown."
      :ext/version "0.7.0"
      :ext/author "Blockether"
      :ext/owner "vis"
@@ -93,9 +98,16 @@
      :ext/engine {:ext.engine/builtin? true
                   :ext.engine/symbols (vec (concat language-surface/symbols
                                                    (editing/available-editing-symbols)
-                                                   environment/environment-symbols))}
+                                                   environment/environment-symbols
+                                                   introspection/all-symbols
+                                                   shell/shell-symbols))}
      :ext/kind "foundation"
-     :ext/slash-commands (into workspace-slashes/specs session-slashes/specs)
+     :ext/slash-commands
+     (vec (concat workspace-slashes/specs session-slashes/specs rewind/slash-specs))
+     :ext/op-hooks rewind/op-hooks
+     :ext/channel-contributions {:gateway.slot/http-routes [{:id :rewind/http
+                                                             :fn rewind/routes-contribution}]}
+     :ext/cli shell/shell-cli
      :ext/ctx-fn combined-ctx
      :ext/prompt-fn combined-prompt
      :ext/doctor-fn lazy-doctor-fn}))
