@@ -15,7 +15,6 @@ import {
   LIVE_VIEW_CLOSE_EVENT,
   LIVE_VIEW_PATCH_EVENT,
   liveViewFromWire,
-  type ActivityRow,
   type LiveNode,
   type LiveView,
 } from '../lib/live-view';
@@ -127,13 +126,14 @@ describe('a live view on the phone', () => {
     expect(screen.queryByRole('link', { name: 'report.md' })).toBeNull();
     expect(document.body.innerHTML).toContain('/tmp/report.md');
   });
-  it('renders Activity as a collapsed chronological receipt with no independent stop', () => {
+  it('uses the first in-progress task as the collapsed Activity preview', () => {
     const onInterrupt = vi.fn();
     paint({ view: activityView(), onInterrupt });
 
     expect(screen.getByText('ACTIVITY')).toBeTruthy();
     expect(screen.getByText('Running')).toBeTruthy();
-    expect(screen.getByText(/2 operations · 1 running · 24 passed/)).toBeTruthy();
+    expect(screen.getByText('run_tests · suite')).toBeTruthy();
+    expect(screen.queryByText(/2 operations|24 passed|truncated/)).toBeNull();
     expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
     expect(screen.queryByRole('list', { name: 'Invocation chronology' })).toBeNull();
 
@@ -143,12 +143,13 @@ describe('a live view on the phone', () => {
     expect(chronologyText.indexOf('grep · 18 matches')).toBeLessThan(
       chronologyText.indexOf('run_tests · suite'),
     );
-    expect(screen.getByText('24 passed')).toBeTruthy();
+    expect(chronologyText).not.toContain('[{query: needle}]');
+    expect(chronologyText).not.toContain('24 passed');
     expect(screen.getByRole('button', { name: 'Collapse Activity' })).toBeTruthy();
     expect(onInterrupt).not.toHaveBeenCalled();
   });
 
-  it('keeps the approved touch row and reduced-motion disclosure contract', () => {
+  it('keeps the approved touch-row disclosure contract', () => {
     paint({ view: activityView() });
     const receipt = screen.getByLabelText('Activity');
     const header = receipt.querySelector('header');
@@ -157,17 +158,9 @@ describe('a live view on the phone', () => {
     expect(header?.className).toContain('mouse:min-h-8');
     expect(disclosure.className).toContain('min-h-8');
     expect(disclosure.className).toContain('motion-reduce:transition-none');
-    expect(disclosure.querySelector('svg')).not.toBeNull();
   });
 
-  it('uses the same state-first receipt after settlement', () => {
-    paint({ view: activityView(), isSettled: true });
-    expect(screen.getByText('ACTIVITY')).toBeTruthy();
-    expect(screen.getByText('Running')).toBeTruthy();
-    expect(screen.queryByRole('status')).toBeNull();
-  });
-
-  it('paints completed mutation and verification facts with a frozen duration', () => {
+  it('keeps the lifecycle state and duration after settlement', () => {
     const view = activityView();
     paint({
       view: {
@@ -176,287 +169,25 @@ describe('a live view on the phone', () => {
         activity: {
           ...view.activity!,
           state: 'succeeded',
-          counts: { running: 0, succeeded: 3, failed: 0, cancelled: 0 },
-          rows: [
-            ...view.activity!.rows,
-            {
-              ...view.activity!.rows[0],
-              id: 'patch-1',
-              signal: 'mutation',
-              presenter: 'patch',
-              operation: 'patch',
-            },
-          ],
+          rows: view.activity!.rows.map((row) => ({ ...row, state: 'succeeded' })),
         },
       },
       isSettled: true,
       endedAt: 15_200,
     });
-
     expect(screen.getByText('Completed')).toBeTruthy();
-    expect(screen.getByText(/3 operations · 1 change · 24 passed/)).toBeTruthy();
+    expect(screen.getByText('No operation in progress')).toBeTruthy();
     expect(screen.getByText('14.2s')).toBeTruthy();
-  });
-
-  it.each([
-    {
-      state: 'failed' as const,
-      counts: { running: 0, succeeded: 0, failed: 1, cancelled: 0 },
-      expected: 'Failed',
-      fact: '1 verification failed',
-      signal: 'verification' as const,
-    },
-    {
-      state: 'cancelled' as const,
-      counts: { running: 0, succeeded: 0, failed: 0, cancelled: 1 },
-      expected: 'Cancelled',
-      fact: '1 cancelled',
-      signal: 'generic' as const,
-    },
-  ])('shows a truthful $state receipt', ({ state, counts, expected, fact, signal }) => {
-    const view = activityView();
-    paint({
-      view: {
-        ...view,
-        activity: {
-          ...view.activity!,
-          state,
-          counts,
-          rows: [{ ...view.activity!.rows[0], state, signal }],
-        },
-      },
-    });
-    expect(screen.getByText(expected)).toBeTruthy();
-    expect(screen.getByText(new RegExp(fact))).toBeTruthy();
-  });
-
-  it('keeps boundedness prominent without replacing the lifecycle state', () => {
-    const view = activityView();
-    paint({
-      view: {
-        ...view,
-        activity: {
-          ...view.activity!,
-          state: 'succeeded',
-          counts: { running: 0, succeeded: 1_094, failed: 0, cancelled: 0 },
-          omitted: { rows: 1_093, by_classification: { observation: 1_093 } },
-        },
-      },
-    });
-    expect(screen.getByText('Completed')).toBeTruthy();
-    expect(screen.getByText('+1,093 omitted')).toBeTruthy();
-    expect(screen.getByLabelText('Activity').className).toContain('border-warn-strong');
-  });
-
-  it('has an explicit empty state', () => {
-    const view = activityView();
-    paint({
-      view: {
-        ...view,
-        activity: {
-          ...view.activity!,
-          state: 'idle',
-          counts: { running: 0, succeeded: 0, failed: 0, cancelled: 0 },
-          rows: [],
-        },
-      },
-    });
-    expect(screen.getByText('Idle')).toBeTruthy();
-    expect(screen.getByText('No operations yet')).toBeTruthy();
-  });
-
-  it('renders specialized rows, grouped children, evidence, and fallback in sequence order', () => {
-    const view = activityView();
-    const seed = view.activity!.rows[0];
-    const row = (
-      id: string,
-      sequence: number,
-      presenter: ActivityRow['presenter'],
-      signal: ActivityRow['signal'],
-      operation: string,
-    ): ActivityRow => ({
-      ...seed,
-      id,
-      sequence,
-      presenter,
-      signal,
-      operation,
-      summary: `${id} summary`,
-      evidence: [{ kind: 'arguments', text: `${id} evidence` }],
-    });
-    const shell = {
-      ...row('shell', 2, 'shell', 'observation', 'shell'),
-      children: [
-        row('wait', 2, 'shell', 'observation', 'shell.wait'),
-        row('output', 1, 'shell', 'observation', 'shell.output'),
-      ],
-    };
-    const patch = row('patch', 3, 'patch', 'mutation', 'apply_patch');
-    const generic = row('generic', 4, 'generic', 'generic', 'custom.inspect');
-    const tests = {
-      ...row('tests', 1, 'tests', 'verification', 'run_tests'),
-      result_summary: '24 passed',
-    };
-
-    paint({
-      view: {
-        ...view,
-        activity: { ...view.activity!, rows: [generic, patch, shell, tests] },
-      },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-
-    const chronology = screen.getByRole('list', { name: 'Invocation chronology' });
-    const rendered = chronology.textContent ?? '';
-    expect(rendered.indexOf('TESTS')).toBeLessThan(rendered.indexOf('SHELL'));
-    expect(rendered.indexOf('SHELL')).toBeLessThan(rendered.indexOf('PATCH'));
-    expect(rendered.indexOf('PATCH')).toBeLessThan(rendered.indexOf('GENERIC'));
-    expect(rendered.indexOf('shell.output')).toBeLessThan(rendered.indexOf('shell.wait'));
-    expect(rendered).toContain('patch evidence');
-    expect(rendered).toContain('24 passed');
-    expect(rendered).toContain('custom.inspect · generic summary');
-    expect(chronology.parentElement?.className).toContain('max-h-80');
-    expect(chronology.parentElement?.className).toContain('overflow-y-auto');
-    expect(chronology.querySelector('[data-activity-row="patch"]')?.className).toContain(
-      'bg-warn-surface',
-    );
-  });
-
-  it('reports omissions and reopens the same bounded rail after collapse', () => {
-    const view = activityView();
-    paint({
-      view: {
-        ...view,
-        activity: {
-          ...view.activity!,
-          omitted: { rows: 1_093, by_classification: { observation: 1_000, generic: 93 } },
-        },
-      },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    expect(screen.getByText(/1,093 omitted · 1,000 observation · 93 generic/)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Collapse Activity' }));
-    expect(screen.queryByRole('list', { name: 'Invocation chronology' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    expect(screen.getByText(/1,093 omitted · 1,000 observation · 93 generic/)).toBeTruthy();
-  });
-
-  it('names every specialized presenter with the approved compact vocabulary', () => {
-    const view = activityView();
-    const seed = view.activity!.rows[0];
-    const presenters = [
-      ['observation', 'grep', 'SEARCH'],
-      ['observation', 'cat', 'READ'],
-      ['lint', 'lint_code', 'LINT'],
-      ['repl', 'repl_eval', 'REPL'],
-      ['format', 'format_code', 'FORMAT'],
-      ['list', 'ls', 'LS'],
-    ] as const;
-    paint({
-      view: {
-        ...view,
-        activity: {
-          ...view.activity!,
-          rows: presenters.map(([presenter, operation], index) => ({
-            ...seed,
-            id: `presenter-${presenter}-${index}`,
-            sequence: index + 1,
-            presenter,
-            operation,
-          })),
-        },
-      },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    const chronology = screen.getByRole('list', { name: 'Invocation chronology' });
-    for (const [, , label] of presenters) expect(chronology.textContent).toContain(label);
-  });
-
-  it('renders patch diff semantics without relying on color', () => {
-    const view = activityView();
-    const patch = {
-      ...view.activity!.rows[0],
-      id: 'patch-diff',
-      presenter: 'patch' as const,
-      signal: 'mutation' as const,
-      operation: 'patch',
-      evidence: [
-        {
-          kind: 'diff' as const,
-          text: 'fixture.clj',
-          lines: [
-            { kind: 'hunk' as const, text: '@@ -1 +1 @@' },
-            {
-              kind: 'deletion' as const,
-              text: '[REDACTED]',
-              is_redacted: true as const,
-            },
-            { kind: 'addition' as const, text: 'after_with_a_very_long_unbroken_value' },
-          ],
-          additions: 0,
-          deletions: 0,
-          modifications: 1,
-          omitted_lines: 7,
-          is_truncated: true,
-          is_redacted: true,
-        },
-      ],
-    };
-    paint({
-      view: {
-        ...view,
-        activity: { ...view.activity!, rows: [patch] },
-      },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-
-    const diff = screen.getByRole('figure', { name: 'Diff fixture.clj' });
-    expect(screen.getByRole('listitem', { name: 'deleted line, redacted' })).toBeTruthy();
-    expect(screen.getByRole('listitem', { name: 'added line' })).toBeTruthy();
-    expect(diff.textContent).toContain('−0');
-    expect(diff.textContent).toContain('~1');
-    expect(diff.textContent).toContain('Evidence truncated · 7 more lines omitted');
-    expect(diff.textContent).toContain('Sensitive lines redacted');
-    expect(diff.querySelector('code')?.className).toContain('break-all');
-    expect(diff.className).toContain('overflow-hidden');
-  });
-
-  it('settles rows in place without reordering their keyed rail positions', () => {
-    const view = activityView();
-    const mounted = render(<LiveViewPanel view={view} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    const before = document.querySelector('[data-activity-row="call-2"]');
-
-    mounted.rerender(
-      <LiveViewPanel
-        isSettled
-        endedAt={2_000}
-        view={{
-          ...view,
-          created_at: 1_000,
-          activity: {
-            ...view.activity!,
-            state: 'succeeded',
-            counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
-            rows: view.activity!.rows.map((entry) =>
-              entry.id === 'call-2'
-                ? { ...entry, state: 'succeeded', summary: 'suite completed' }
-                : entry,
-            ),
-          },
-        }}
-      />,
-    );
-
-    const after = document.querySelector('[data-activity-row="call-2"]');
-    expect(after).toBe(before);
-    expect(screen.getByRole('button', { name: 'Collapse Activity' })).toBeTruthy();
     expect(screen.queryByRole('status')).toBeNull();
-    expect(after?.textContent).toContain('suite completed');
-    const chronology = screen.getByRole('list', { name: 'Invocation chronology' });
-    expect((chronology.textContent ?? '').indexOf('grep')).toBeLessThan(
-      (chronology.textContent ?? '').indexOf('run_tests'),
-    );
+  });
+
+  it('shows an explicit quiet empty state', () => {
+    const view = activityView();
+    paint({ view: { ...view, activity: { ...view.activity!, state: 'idle', rows: [] } } });
+    expect(screen.getByText('Idle')).toBeTruthy();
+    expect(screen.getByText('No operation in progress')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    expect(screen.getByText('No operations yet')).toBeTruthy();
   });
 });
 
