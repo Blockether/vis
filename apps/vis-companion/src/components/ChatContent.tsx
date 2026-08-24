@@ -3206,6 +3206,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   turn,
   streaming = false,
   activity,
+  pending,
   startedAt,
   settled = false,
   whole = false,
@@ -3217,6 +3218,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   turn: TranscriptTurn;
   streaming?: boolean;
   activity?: string;
+  /** A settled live bubble is waiting for its authoritative transcript row. */
+  pending?: string;
   startedAt?: number;
   /** This row's trace is already on screen — see `IterationTrace`'s `whole`. */
   whole?: boolean;
@@ -3311,6 +3314,8 @@ export const AssistantMessage = memo(function AssistantMessage({
             phase={activity ?? "Vis is working"}
             startedAt={startedAt}
           />
+        ) : pending ? (
+          <LiveProgress phase={pending} startedAt={startedAt} />
         ) : turn.status === "running" ? (
           // A row this screen has stopped following still reads `running`, so it
           // still says so: the spinner and the elapsed clock go (they are what

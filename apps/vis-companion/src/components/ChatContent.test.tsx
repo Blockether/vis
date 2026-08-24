@@ -993,6 +993,18 @@ describe("a turn that has not answered yet", () => {
     expect(html).not.toContain("animate-spinner-frame");
     expect(text(html)).not.toMatch(/\d/);
   });
+
+  it("says when a finished live turn is waiting for its transcript row", () => {
+    const html = renderToStaticMarkup(
+      <AssistantMessage
+        turn={{ ...running, status: "completed" }}
+        pending="Loading latest changes"
+      />,
+    );
+
+    expect(text(html)).toContain("Loading latest changes");
+    expect(html).toContain("animate-spinner-frame");
+  });
 });
 
 
