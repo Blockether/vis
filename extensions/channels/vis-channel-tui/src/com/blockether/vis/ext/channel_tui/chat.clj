@@ -1368,7 +1368,7 @@
   ([session text] (turn! session text {}))
   ([{:keys [id]} text
     {:keys [on-chunk cancel-token reasoning-default extra-body turn-features workspace
-            idempotency-key display-text]}]
+            idempotency-key display-text attachments]}]
    (try
      (vis/gateway-submit-turn-sync! id
                                     (cond-> {:request text
@@ -1401,6 +1401,9 @@
                                       ;; `/var/folders/…/clipboard-….png` the model reads.
                                       display-text
                                       (assoc :display-request display-text)
+
+                                      (seq attachments)
+                                      (assoc :attachments attachments)
 
                                       (seq workspace)
                                       (assoc :workspace workspace)))

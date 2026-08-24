@@ -147,6 +147,21 @@
        :rejected
        ["Attachments are unavailable because the gateway did not advertise a complete attachment contract."]})))
 
+(defn inline-payloads
+  "Read staged files into the explicit inline gateway shape.
+
+   The filesystem path is an intake-only implementation detail and never crosses the
+   submission boundary. Reading happens once per gateway attempt owner, so transport
+   retries reuse the same immutable base64 payload."
+  [staged]
+  (mapv (fn [{:keys [path filename media-type]}]
+          (let [^File file (File. ^String path)]
+            {:filename filename
+             :media-type media-type
+             :base64 (.encodeToString (Base64/getEncoder)
+                                      (java.nio.file.Files/readAllBytes (.toPath file)))}))
+        (or staged [])))
+
 (defn remove-attachment
   "Remove exactly the staged attachment with stable `id`, preserving order."
   [current id]

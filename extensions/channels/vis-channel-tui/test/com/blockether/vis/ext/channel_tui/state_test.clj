@@ -5353,3 +5353,153 @@
           ;; so does every tab that was never armed.
           (expect (nil? (fx armed :agent/hook)))
           (expect (nil? (fx (assoc armed :voice-conversation? false) :voice/input)))))))
+
+(defdescribe
+  explicit-attachment-lifecycle-test
+  (let [send-message-fn
+        (:fn (get @@#'state/event-registry :send-message))
+
+        reset-input-fn
+        (:fn (get @@#'state/event-registry :reset-input))
+
+        history-up-fn
+        (:fn (get @@#'state/event-registry :history-up))
+
+        attachment
+        {:id "sha256:a"
+         :path "/tmp/not-in-request.png"
+         :filename "screen.png"
+         :media-type "image/png"}]
+
+    (it "moves one attachment snapshot into a direct turn and clears the composer"
+        (with-redefs [vis/cancellation-token
+                      (constantly :token)
+
+                      input/expand-file-mentions
+                      identity]
+
+          (let [db
+                {:active-tab-id :main
+                 :session {:id "s1"}
+                 :messages []
+                 :input-history []
+                 :pastes {}
+                 :attachments [attachment]
+                 :settings {}}
+
+                result
+                (send-message-fn db [:send-message "describe this" :main])
+
+                turn-fx
+                (first (:fx result))
+
+                reset-db
+                (reset-input-fn (:db result) [:reset-input])]
+
+            (expect (= "describe this" (nth turn-fx 3)))
+            (expect (= [attachment] (last turn-fx)))
+            (expect (= [attachment] (get-in result [:db :submitted-input :attachments])))
+            (expect (= [] (:attachments reset-db))))))
+    (it "keeps attachments with queued text and restores them for editing"
+        (let [db
+              {:active-tab-id :main
+               :session {:id "s1"}
+               :loading? true
+               :input (input/empty-input)
+               :input-history []
+               :pending-sends []
+               :pastes {}
+               :attachments [attachment]
+               :settings {}}
+
+              queued
+              (send-message-fn db [:send-message "later" :main])
+
+              entry
+              (first (get-in queued [:db :pending-sends]))
+
+              restored
+              (history-up-fn (assoc (:db queued) :input (input/empty-input)) [:history-up])]
+
+          (expect (= [attachment] (:attachments entry)))
+          (expect (= [attachment] (get-in restored [:db :attachments])))
+          (expect (= "later" (input/input->text (get-in restored [:db :input]))))))
+    (it "restores snapshots without overwriting newer attachment work"
+        (let [snapshot
+              {:text "retry" :pastes {} :paste-counter 0 :attachments [attachment]}
+
+              newer
+              (assoc attachment
+                :id "sha256:newer"
+                :filename "newer.png")
+
+              pristine-db
+              {:input (input/empty-input) :submitted-input snapshot}
+
+              newer-db
+              (assoc pristine-db :attachments [newer])]
+
+          (expect (= [attachment]
+                     (:attachments (#'state/restore-editor-only pristine-db snapshot))))
+          (expect (= [newer] (:attachments (#'state/restore-editor-only newer-db snapshot))))))
+    (it "merges restored queue attachments by stable identity"
+        (let [second-attachment
+              (assoc attachment
+                :id "sha256:b"
+                :filename "other.png")
+
+              restored
+              (#'state/restore-entries-to-input
+               {:input (input/empty-input) :attachments [attachment]}
+               [{:text "one" :attachments [second-attachment attachment]}])]
+
+          (expect (= ["sha256:a" "sha256:b"] (mapv :id (:attachments restored))))))))
+
+(defdescribe
+  queued-attachment-request-test
+  (it "retries one immutable explicit attachment request without putting its path in text"
+      (flush-queue-io!)
+      (let [file
+            (java.io.File/createTempFile "vis-queued-attachment-" ".png")
+
+            _
+            (.deleteOnExit file)
+
+            _
+            (spit file "image")
+
+            attachment
+            {:id "sha256:a"
+             :path (.getCanonicalPath file)
+             :filename "screen.png"
+             :media-type "image/png"}
+
+            entry
+            {:text "describe this"
+             :preview-text "describe this"
+             :agent-text "describe this"
+             :client-id "client-a"
+             :mine? true
+             :attachments [attachment]}
+
+            calls
+            (atom [])
+
+            enqueue-fx
+            (get @@#'state/fx-registry :gateway-enqueue)]
+
+        (with-redefs [vis/gateway-submit-turn!
+                      (fn [_sid opts]
+                        (swap! calls conj opts)
+                        (if (= 1 (count @calls))
+                          (throw (ex-info "temporary transport failure" {}))
+                          {:turn
+                           {"turn_id" "turn-a" "status" "queued" "request" (:request opts)}}))]
+          (reset! state/app-db
+            {:active-tab-id :main :session {:id "s1"} :render-version 0 :pending-sends [entry]})
+          (await-enqueue! (enqueue-fx :main {:id "s1"} entry nil nil {} nil))
+          (expect (= 2 (count @calls)))
+          (expect (apply = @calls))
+          (expect (= "describe this" (:request (first @calls))))
+          (expect (= [{:filename "screen.png" :media-type "image/png" :base64 "aW1hZ2U="}]
+                     (:attachments (first @calls))))))))

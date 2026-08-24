@@ -843,3 +843,19 @@
                                                        :source "tool"
                                                        :transcription "spoken answer"}]))]
                      (expect (not (str/includes? out "vis-transcript")))))))
+
+(defdescribe explicit-turn-attachment-test
+             (it "passes explicit inline attachments to the canonical gateway request"
+                 (let [sent
+                       (atom nil)
+
+                       attachments
+                       [{:filename "screen.png" :media-type "image/png" :base64 "aW1hZ2U="}]]
+
+                   (with-redefs [vis/gateway-submit-turn-sync! (fn [_sid opts]
+                                                                 (reset! sent opts)
+                                                                 {"content" []})]
+                     (chat/turn! {:id "s1"} "describe this" {:attachments attachments})
+                     (expect (= {:request "describe this" :attachments attachments}
+                                (select-keys @sent [:request :attachments])))
+                     (expect (not (str/includes? (:request @sent) "screen.png")))))))

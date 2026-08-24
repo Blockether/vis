@@ -2112,35 +2112,40 @@
     (merge next-db (select-keys previous-db active-turn-state-keys))
     (clear-active-turn-state next-db)))
 
-(reg-event-db :init-session
-              (fn [db [_ session history workspace]]
-                (let [user-history (history-user-texts history)]
-                  (-> db
-                      ensure-tabs
-                      (assoc :session session
-                             ;; The session's current workspace record (trunk or draft) — the
-                             ;; single source the footer/header read to show trunk vs `<label>
-                             ;; (DRAFT)`. `:root` is the cwd for trunk, the clone for a draft.
-                             :workspace workspace
-                             :title nil
-                             ;; This tab is being REBOUND to another session, so the
-                             ;; previous session's optimistic model pick must not survive:
-                             ;; `session-model-pref` prefers this key over the gateway
-                             ;; value, so a leftover pinned the footer chip (and the codex
-                             ;; verbosity gating) to the OLD session's model until restart.
-                             ;; nil = re-read the new session's real preference.
-                             :session-model-pref nil
-                             :messages (or history [])
-                             :scroll scroll/follow
-                             :input (input/empty-input)
-                             :input-history user-history
-                             :input-history-index nil
-                             :input-history-draft nil
-                             :submitted-input nil
-                             :pastes {}
-                             :paste-counter 0
-                             :detail-expansions {})
-                      (reconcile-in-flight-state db session)))))
+(reg-event-db
+  :init-session
+  (fn [db [_ session history workspace]]
+    (let [user-history (history-user-texts history)]
+      (-> db
+          ensure-tabs
+          (assoc :session session
+                 ;; The session's current workspace record (trunk or draft) — the
+                 ;; single source the footer/header read to show trunk vs `<label>
+                 ;; (DRAFT)`. `:root` is the cwd for trunk, the clone for a draft.
+                 :workspace workspace
+                 :title nil
+                 ;; This tab is being REBOUND to another session, so the
+                 ;; previous session's optimistic model pick must not survive:
+                 ;; `session-model-pref` prefers this key over the gateway
+                 ;; value, so a leftover pinned the footer chip (and the codex
+                 ;; verbosity gating) to the OLD session's model until restart.
+                 ;; nil = re-read the new session's real preference.
+                 :session-model-pref nil
+                 :messages (or history [])
+                 :scroll scroll/follow
+                 :input (input/empty-input)
+                 :input-history user-history
+                 :input-history-index nil
+                 :input-history-draft nil
+                 :submitted-input nil
+                 :pastes {}
+                 :paste-counter 0
+                 :attachments []
+                 :attachment-feedback []
+                 :attachment-focus? false
+                 :attachment-index 0
+                 :detail-expansions {})
+          (reconcile-in-flight-state db session)))))
 
 (reg-event-fx
   :open-session-tab
@@ -3184,16 +3189,21 @@
           (subvec messages 0 (- n 2))
           :else messages)))
 
+(defn- composer-pristine?
+  "True when no work authored after submission occupies the composer."
+  [db]
+  (and (input/input-empty? (:input db)) (empty? (:attachments db))))
+
 (defn- restore-submitted-input
-  "Drop the pending turn pair and restore the submitted prompt only when the
-   editor is still pristine. Keystrokes entered while cancellation settles are
-   a newer draft and must never be overwritten by the cancellation ACK."
-  [db {:keys [text pastes paste-counter]}]
+  "Drop the pending turn pair and restore the submitted composer only when the
+   editor is still pristine. Work entered while cancellation settles is newer
+   and must never be overwritten by the cancellation ACK."
+  [db {:keys [text pastes paste-counter attachments]}]
   (let [visible-text
         (input/expand-paste-placeholders text pastes)
 
         restore-editor?
-        (input/input-empty? (:input db))]
+        (composer-pristine? db)]
 
     (cond-> (-> db
                 clear-active-turn-state
@@ -3211,14 +3221,15 @@
         0 :slash-command-hidden?
         false :pastes
         (or pastes {}) :paste-counter
-        (or paste-counter 0)))))
+        (or paste-counter 0) :attachments
+        (vec (or attachments []))))))
 
 (defn- restore-editor-only
-  "Restore the submitted prompt after a cancellation with visible work, unless
-   the user already started a newer draft while the cancellation settled."
-  [db {:keys [text pastes paste-counter]}]
+  "Restore a submitted composer after cancellation or failure unless the user
+   already started newer work while the turn settled."
+  [db {:keys [text pastes paste-counter attachments]}]
   (cond-> (dissoc db :submitted-input)
-    (input/input-empty? (:input db))
+    (composer-pristine? db)
     (assoc :input
       (text->input-state text) :input-history-index
       nil :input-history-draft
@@ -3226,7 +3237,8 @@
       0 :slash-command-hidden?
       false :pastes
       (or pastes {}) :paste-counter
-      (or paste-counter 0))))
+      (or paste-counter 0) :attachments
+      (vec (or attachments [])))))
 
 (defn- settle-cancelled-turn
   "Settle a cancel confirmed by the daemon ACK (or given up on by the self-heal)
@@ -3297,6 +3309,7 @@
                  :pending-sends (pop pending)
                  :pastes (or (:pastes entry) {})
                  :paste-counter (or (:paste-counter entry) 0)
+                 :attachments (vec (or (:attachments entry) []))
                  :input-history-index nil
                  :input-history-draft nil
                  :slash-command-index 0
@@ -3357,6 +3370,11 @@
                   :input-history-draft nil
                   :slash-command-index 0
                   :slash-command-hidden? false
+                  ;; The submitted snapshot already owns these attachments. Anything
+                  ;; staged later while its turn runs is independent composer state.
+                  :attachments []
+                  :attachment-focus? false
+                  :attachment-index 0
                   ;; A new empty input has no placeholder tokens, so the paste
                   ;; registry is dead state. Clearing it here keeps memory
                   ;; bounded across long sessions - every send + every history
@@ -3905,6 +3923,9 @@
         pastes
         (:pastes source-db)
 
+        attachments
+        (vec (or (:attachments source-db) []))
+
         session
         (:session source-db)
 
@@ -3973,6 +3994,7 @@
                      :mine? true
                      :pastes pastes
                      :paste-counter (:paste-counter source-db)
+                     :attachments attachments
                      :queued-at-ms (System/currentTimeMillis)}
               ;; Registered with the gateway but NOT acked yet. The row is on screen from
               ;; this instant, so `:drain-pending` must not ALSO send it locally: the ack
@@ -4028,6 +4050,9 @@
 
           pastes
           (:pastes source-db)
+
+          attachments
+          (vec (or (:attachments source-db) []))
 
           full-text
           (input/expand-paste-placeholders text pastes)
@@ -4096,7 +4121,8 @@
                                         :live-turn-client-id client-turn-id
                                         :submitted-input {:text text
                                                           :pastes (:pastes source-db)
-                                                          :paste-counter (:paste-counter source-db)}
+                                                          :paste-counter (:paste-counter source-db)
+                                                          :attachments attachments}
                                         :input-history-index nil
                                         :input-history-draft nil
                                         :slash-command-index 0
@@ -4110,7 +4136,7 @@
            ;; reopening a session re-rendered the verbose attachment
            ;; directive in the user bubble.
            :fx [[:session-turn workspace-id (:session source-db) agent-text token reasoning-level
-                 extra-body turn-features workspace client-turn-id preview-text]]})))))
+                 extra-body turn-features workspace client-turn-id preview-text attachments]]})))))
 
 (reg-event-fx :enqueue-message
               ;; Capture a user submission while a previous turn is still processing.
@@ -4436,12 +4462,10 @@
                (and client-id (= client-id (:live-turn-client-id w))))))
 
 (defn- restore-entries-to-input
-  "Append queued submissions `entries` (oldest first) to tab `w`'s editor, after
-   whatever is already typed, and merge their pastes in.
+  "Append queued submissions `entries` (oldest first) to tab `w`'s composer.
 
-   A DRAFT, never a send: the queue is gone, but the words the user wrote are
-   still theirs to re-send, edit or delete. Callers decide WHICH entries come
-   back; this is the one place that knows how they land in the editor."
+   A DRAFT, never a send: text, paste registries and staged attachment ownership
+   return together. Stable content ids deduplicate files while preserving order."
   [w entries]
   (let [entries (vec (remove nil? entries))]
     (if (empty? entries)
@@ -4450,12 +4474,21 @@
             texts (into (if (str/blank? cur-text) [] [cur-text]) (map :text entries))
             combined (str/join "\n\n" (remove str/blank? texts))
             merged-pastes (reduce merge (or (:pastes w) {}) (map :pastes entries))
-            merged-counter (apply max 0 (:paste-counter w 0) (map #(:paste-counter % 0) entries))]
+            merged-counter (apply max 0 (:paste-counter w 0) (map #(:paste-counter % 0) entries))
+            attachments (->> (concat (:attachments w) (mapcat :attachments entries))
+                             (reduce (fn [{:keys [seen items]} attachment]
+                                       (let [id (:id attachment)]
+                                         (if (contains? seen id)
+                                           {:seen seen :items items}
+                                           {:seen (conj seen id) :items (conj items attachment)})))
+                                     {:seen #{} :items []})
+                             :items)]
 
         (assoc w
           :input (text->input-state combined)
           :pastes merged-pastes
           :paste-counter merged-counter
+          :attachments attachments
           :input-history-index nil
           :input-history-draft nil)))))
 
@@ -4689,7 +4722,8 @@
                                                  (assoc w
                                                    :pending-sends (vec (rest q))
                                                    :pastes (or (:pastes head) {})
-                                                   :paste-counter (or (:paste-counter head) 0))))
+                                                   :paste-counter (or (:paste-counter head) 0)
+                                                   :attachments (vec (or (:attachments head) [])))))
                                :fx [[:dispatch [:send-message (:text head) workspace-id]]]}))))
 
 (reg-event-fx :reattach-disconnected-turn
@@ -5635,7 +5669,7 @@
 (reg-fx
   :session-turn
   (fn [workspace-id session text token reasoning-level extra-body turn-features workspace
-       client-turn-id & [display-text]]
+       client-turn-id & [display-text attachments]]
     (let [fut
           (vis/worker-future
             "vis-tui-turn"
@@ -5687,6 +5721,7 @@
                                                           :facts (:facts chunk)}])
                                               (catch Throwable _ nil)))
                                        (track-chunk chunk))))
+                      inline-attachments (composer-attachments/inline-payloads attachments)
                       result (chat/turn! session
                                          text
                                          {:on-chunk on-chunk
@@ -5706,11 +5741,12 @@
                                           :extra-body extra-body
                                           :turn-features turn-features
                                           :workspace workspace
-                                          :display-text display-text})]
+                                          :display-text display-text
+                                          :attachments inline-attachments})]
 
                   (if (get result "error")
                     (dispatch [:message-received workspace-id (chat/error-content result)
-                               {:client-turn-id client-turn-id}])
+                               {:client-turn-id client-turn-id :status :failed}])
                     (do (dispatch
                           [:message-received workspace-id (get result "content")
                            ;; Field-by-field pick from the canonical string-keyed
@@ -5769,7 +5805,7 @@
                                    "message" message}]
 
                         (dispatch [:message-received workspace-id [block]
-                                   {:client-turn-id client-turn-id}])))
+                                   {:client-turn-id client-turn-id :status :failed}])))
                     (let [cancelled? (vis/cancellation? t)
                           message (if cancelled?
                                     "Cancelled by user."
@@ -5780,9 +5816,8 @@
                                  "message" message}]
 
                       (dispatch [:message-received workspace-id [block]
-                                 (cond-> {:client-turn-id client-turn-id}
-                                   cancelled?
-                                   (assoc :status :cancelled))])))))))]
+                                 {:client-turn-id client-turn-id
+                                  :status (if cancelled? :cancelled :failed)}])))))))]
       (vis/cancellation-set-future! token fut))))
 
 (reg-fx
@@ -6022,7 +6057,10 @@
         (gateway-queue-io!
           (fn []
             (try
-              (let [res
+              (let [inline-attachments
+                    (composer-attachments/inline-payloads (:attachments entry))
+
+                    res
                     (submit-queued-turn! sid
                                          (cond-> {:request agent-text
                                                   ;; The gateway echoes this back on
@@ -6043,6 +6081,9 @@
 
                                            display-text
                                            (assoc :display-request display-text)
+
+                                           (seq inline-attachments)
+                                           (assoc :attachments inline-attachments)
 
                                            (seq workspace)
                                            (assoc :workspace workspace)))
@@ -6128,24 +6169,25 @@
 
 (reg-fx :submit-orphan-sends
         ;; A closing tab still held AUTHORED submissions that never reached the
-        ;; gateway (no :turn-id). Submit each to the gateway — the server-side queue
-        ;; of record — so the text survives the tab close: it runs/queues under the
-        ;; session and is visible on the next reattach. Best effort off the input
-        ;; thread; a failure surfaces as a warning notification, never a throw.
+        ;; gateway. Submit explicit bytes with their text so both survive tab close.
         (fn [sid entries]
-          (gateway-queue-io! (fn []
-                               (doseq [{:keys [text client-id]} entries]
-                                 (try (vis/gateway-submit-turn! sid
-                                                                (cond-> {:request text}
-                                                                  client-id
-                                                                  (assoc :idempotency-key
-                                                                    client-id)))
-                                      (catch Throwable t
-                                        (try (vis/notify! (str "Re-queue of unsent message failed: "
-                                                               (or (ex-message t) (str t)))
-                                                          :level :warn
-                                                          :ttl-ms 3000)
-                                             (catch Throwable _ nil)))))))))
+          (gateway-queue-io!
+            (fn []
+              (doseq [{:keys [text client-id attachments]} entries]
+                (try (let [inline-attachments (composer-attachments/inline-payloads attachments)]
+                       (vis/gateway-submit-turn! sid
+                                                 (cond-> {:request text}
+                                                   client-id
+                                                   (assoc :idempotency-key client-id)
+
+                                                   (seq inline-attachments)
+                                                   (assoc :attachments inline-attachments))))
+                     (catch Throwable t
+                       (try (vis/notify! (str "Re-queue of unsent message failed: "
+                                              (or (ex-message t) (str t)))
+                                         :level :warn
+                                         :ttl-ms 3000)
+                            (catch Throwable _ nil)))))))))
 
 (reg-fx :cancel-local-turn
         ;; Fast and synchronous by design: flip the cooperative flag and interrupt

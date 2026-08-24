@@ -120,6 +120,20 @@
 
         (expect (= 1 (count (:added staged))))
         (expect (re-find #"already attached" (first (:rejected staged))))))
+  (it "encodes explicit gateway payloads without leaking filesystem paths"
+      (let [file
+            (temporary-file ".png" one-pixel-png)
+
+            [payload]
+            (composer-attachments/inline-payloads [{:path (.getCanonicalPath file)
+                                                    :filename "screen shot.png"
+                                                    :media-type "image/png"}])]
+
+        (expect (= {:filename "screen shot.png"
+                    :media-type "image/png"
+                    :base64 (.encodeToString (java.util.Base64/getEncoder) one-pixel-png)}
+                   payload))
+        (expect (not (contains? payload :path)))))
   (it "removes one staged attachment by stable identity"
       (expect (= [{:id "sha256:b"}]
                  (composer-attachments/remove-attachment [{:id "sha256:a"} {:id "sha256:b"}]
