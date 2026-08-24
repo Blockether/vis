@@ -178,12 +178,13 @@ describe("a running turn the session read cannot confirm", () => {
     expect(panel.compareDocumentPosition(phase) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
-  // Regression, issue td-65cdf6: a production-position Activity could paint both
-  // at its Python anchor and again in the detached band during row handoff.
-  it("keeps one live Activity in its filed Python slot during handoff", async () => {
+  // Regression, issue td-65cdf6: while the optimistic row overlapped its persisted
+  // receipt, iOS painted Activity in both rows and placed the anchored copy between
+  // PYTHON and RESULT. Android exposed only the detached copy from its older bundle.
+  it("keeps one live Activity after its filed Python result during handoff", async () => {
     const activity = {
       ...activityFixture,
-      id: "activity-view",
+      id: "live-activity-view",
       activity: {
         ...activityFixture.activity,
         anchor: { evaluation_id: "evaluation-1", iteration: 41, form_index: 0 },
@@ -192,7 +193,7 @@ describe("a running turn the session read cannot confirm", () => {
     const filedRow = {
       id: "activity-turn",
       user_request: "inspect the run",
-      status: "completed",
+      status: "running",
       created_at: Date.now(),
       iterations: [
         {
@@ -221,21 +222,32 @@ describe("a running turn the session read cannot confirm", () => {
 
     renderSessionScreen({
       client: {
+        cachedLiveTurn: () => ({
+          turn: {
+            id: "activity-turn",
+            request: "inspect the run",
+            answer: "",
+            status: "running",
+            startedAt: Date.now(),
+            iterations: filedRow.iterations,
+          },
+          seq: 42,
+        }),
         transcript: () => Promise.resolve([filedRow]),
         liveViews: () => Promise.resolve([activity]),
       },
     });
 
     const panelLabel = await screen.findByText("ACTIVITY");
-    const python = screen.getByText("inspect_run()");
-    const result = screen.getByText("done");
+    const python = screen.getAllByText("inspect_run()")[0]!;
+    const result = screen.getAllByText("done")[0]!;
     expect(screen.getAllByText("ACTIVITY")).toHaveLength(1);
     expect(screen.queryByText("Loading Activity…")).toBeNull();
     expect(
-      python.compareDocumentPosition(panelLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+      python.compareDocumentPosition(result) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
     expect(
-      panelLabel.compareDocumentPosition(result) & Node.DOCUMENT_POSITION_FOLLOWING,
+      result.compareDocumentPosition(panelLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
   });
   it("keeps a genuinely unanchored Activity in the detached fallback", async () => {

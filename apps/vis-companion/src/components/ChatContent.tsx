@@ -1422,8 +1422,8 @@ const FormTrace = memo(function FormTrace({
             language={formCodeLanguage(form)}
             bare
           />
-          {activity}
           <CardGrid cards={cards} bare />
+          {activity}
         </div>
       ) : (
         <>
@@ -1434,8 +1434,8 @@ const FormTrace = memo(function FormTrace({
               language={formCodeLanguage(form)}
             />
           )}
-          {activity}
           <CardGrid cards={cards} />
+          {activity}
         </>
       )}
     </div>

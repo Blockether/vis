@@ -331,23 +331,35 @@ function rowId(turn: TranscriptTurn): string {
   return String(turn.id ?? turn.turn_id ?? "");
 }
 
+function activityMatchesReceipt(
+  activity: LiveViewModel,
+  attachment: NonNullable<TranscriptIteration["attachments"]>[number],
+): boolean {
+  if (attachment.classification !== "activity") return false;
+  if (attachment.view_id === activity.id) return true;
+  const filed = attachment.activity_anchor;
+  const live = activity.activity?.anchor;
+  if (!filed || !live || typeof live !== "object") return false;
+  const anchor = live as Record<string, unknown>;
+  return (
+    typeof filed.evaluation_id === "string" &&
+    filed.evaluation_id === anchor.evaluation_id &&
+    filed.iteration === anchor.iteration &&
+    filed.form_index === anchor.form_index
+  );
+}
+
 function filedActivitiesForTurn(
   turn: TranscriptTurn,
   activities: readonly LiveViewModel[],
 ): LiveViewModel[] {
-  const filedIds = new Set(
-    (turn.iterations ?? []).flatMap((iteration) =>
-      (iteration.attachments ?? []).flatMap((attachment) =>
-        attachment.classification === "activity" && attachment.view_id
-          ? [attachment.view_id]
-          : [],
-      ),
-    ),
+  const receipts = (turn.iterations ?? []).flatMap(
+    (iteration) => iteration.attachments ?? [],
   );
   return activities.filter(
     (activity) =>
-      filedIds.has(activity.id) &&
-      activityFitsIterations(activity, turn.iterations ?? []),
+      activityFitsIterations(activity, turn.iterations ?? []) &&
+      receipts.some((attachment) => activityMatchesReceipt(activity, attachment)),
   );
 }
 

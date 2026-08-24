@@ -606,8 +606,8 @@ describe("a command turn shows its answer, never a program", () => {
 });
 
 // Regression, issue td-cc41a1: Activity was appended after the entire assistant
-// row, so a multi-form iteration could not show which Python form owned it.
-describe("Activity owns the slot between its Python form and RESULT", () => {
+// row, so a multi-form iteration could not show which complete Python form owned it.
+describe("Activity owns the slot after its Python form and result", () => {
   const client = {
     attachmentUrl: async () => "blob:none",
     retainAttachment: () => () => {},
@@ -680,16 +680,19 @@ describe("Activity owns the slot between its Python form and RESULT", () => {
       ),
     );
     expect(rendered.indexOf("first_form()")).toBeLessThan(
+      rendered.indexOf("first result"),
+    );
+    expect(rendered.indexOf("first result")).toBeLessThan(
       rendered.indexOf("Loading Activity…"),
     );
     expect(rendered.indexOf("Loading Activity…")).toBeLessThan(
       rendered.indexOf("second_form()"),
     );
     expect(rendered.indexOf("second_form()")).toBeLessThan(
-      rendered.lastIndexOf("Loading Activity…"),
-    );
-    expect(rendered.lastIndexOf("Loading Activity…")).toBeLessThan(
       rendered.indexOf("RESULT"),
+    );
+    expect(rendered.indexOf("RESULT")).toBeLessThan(
+      rendered.lastIndexOf("Loading Activity…"),
     );
     expect(rendered.match(/Loading Activity/g)).toHaveLength(2);
   });
