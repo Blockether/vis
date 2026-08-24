@@ -4077,6 +4077,22 @@
                    :external_id external-id
                    :workspace_id workspace-id}))
 
+(defn- persisted-router-root
+  "Root provider/model persisted when `id`'s environment was built. A prewarm
+   carries this snapshot so adoption can reject a pool entry from an older router."
+  [id]
+  (when-let [{:keys [provider model]} (persistance/db-get-session (lp/db-info) id)]
+    (when model {:provider provider :model model})))
+
+(defn- current-router-root
+  []
+  (when-let [{:keys [provider name]} (lp/resolve-effective-model (lp/get-router))]
+    {:provider provider :model name}))
+
+(defn- prewarmed-current?
+  [session]
+  (and (:router-root session) (= (:router-root session) (current-router-root))))
+
 (defn- create-session-cold!
   [{:keys [channel title external-id workspace-id root prewarm?]}]
   (let [channel
@@ -4098,7 +4114,12 @@
                       (assoc :workspace-id workspace-id)
 
                       prewarm?
-                      (assoc :prewarm? true)))]
+                      (assoc :prewarm? true)))
+
+        created
+        (cond-> created
+          prewarm?
+          (assoc :router-root (persisted-router-root (:id created))))]
 
     (put-session! (:id created) {:next-seq 0 :last-active (System/currentTimeMillis)})
     created))
@@ -4131,6 +4152,14 @@
   [channel]
   (swap! prewarm-pool update-in [:in-flight channel] #(max 0 (dec (long (or % 0))))))
 
+(defn- discard-prewarmed-session!
+  [{:keys [id]}]
+  (drop-session! id)
+  (try (lp/delete! id)
+       (catch Throwable e
+         (tel/log! :warn ["gateway: failed to discard prewarmed session" (str id) (ex-message e)])))
+  nil)
+
 (defn- add-prewarmed!
   [channel session]
   (let [[old _] (swap-vals! prewarm-pool
@@ -4138,9 +4167,7 @@
                               (if (:accepting? pool)
                                 (update-in pool [:ready channel] (fnil conj []) session)
                                 pool)))]
-    (when-not (:accepting? old)
-      (drop-session! (:id session))
-      (try (lp/delete! (:id session)) (catch Throwable _ nil)))))
+    (when-not (:accepting? old) (discard-prewarmed-session! session))))
 
 (defn- kick-prewarm!
   [channel]
@@ -4202,7 +4229,9 @@
    Default-workspace creates consume the gateway-owned warm pool and replenish
    it in the background. An explicit `:root` can share that pool only when it
    matches the gateway launch root; other roots, `:workspace-id`, and
-   `:external-id` require a purpose-built environment."
+   `:external-id` require a purpose-built environment. A pooled session is
+   adopted only when its persisted root provider/model still matches the live
+   router default."
   [{:keys [channel external-id workspace-id root] :as opts}]
   (let [channel
         (or channel :api)
@@ -4215,8 +4244,14 @@
              (nil? workspace-id)
              (or (nil? root) (= (workspace/normalize-root root) (workspace/trunk-root))))
 
+        candidate
+        (when pool-eligible? (pop-prewarmed! channel))
+
         pooled
-        (when pool-eligible? (pop-prewarmed! channel))]
+        (when (and candidate (prewarmed-current? candidate)) candidate)
+
+        _
+        (when (and candidate (nil? pooled)) (discard-prewarmed-session! candidate))]
 
     (try (let [created
                (if pooled (claim-prewarmed! pooled (:title opts)) (create-session-cold! opts))]
@@ -4224,8 +4259,7 @@
            (session->wire created))
          (catch Throwable e
            (if pooled
-             (do (drop-session! (:id pooled))
-                 (try (lp/delete! (:id pooled)) (catch Throwable _ nil))
+             (do (discard-prewarmed-session! pooled)
                  (let [created (create-session-cold! opts)]
                    (when pool-eligible? (request-prewarm! channel))
                    (session->wire created)))
@@ -4243,12 +4277,8 @@
         ready
         (mapcat val (:ready (first (reset-vals! prewarm-pool stopped))))]
 
-    (doseq [{:keys [id]} ready]
-      (drop-session! id)
-      (try (lp/delete! id)
-           (catch Throwable e
-             (tel/log! :warn
-                       ["gateway: failed to discard prewarmed session" (str id) (ex-message e)])))))
+    (doseq [session ready]
+      (discard-prewarmed-session! session)))
   nil)
 
 (defn soul

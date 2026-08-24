@@ -2252,39 +2252,144 @@
                    (expect (= 1000 (recency {:created-at 1000} nil))))))
 (defdescribe
   gateway-prewarm-pool-test
-  (it "adopts a ready session and requests an asynchronous refill"
-      (let [pool
-            @#'state/prewarm-pool
-
-            prior
-            @pool
-
-            sid
+  (it "stamps a built prewarm with its persisted router root"
+      (let [sid
             (java.util.UUID/randomUUID)
 
-            refills
+            create-calls
+            (atom [])
+
+            db-calls
             (atom [])]
 
-        (try
-          (reset! pool
-            {:ready {:api
-                     [{:id sid :channel :api :title nil :external-id nil :workspace-id :workspace}]}
-             :in-flight {}
-             :accepting? true})
-          (with-redefs [state/ensure-prewarmed!
-                        #(swap! refills conj %)
+        (with-redefs-fn {#'lp/create! (fn [channel opts]
+                                        (swap! create-calls conj [channel opts])
+                                        {:id sid :channel channel :workspace-id :workspace})
+                         #'lp/db-info (constantly ::db)
+                         #'persistance/db-get-session (fn [db id]
+                                                        (swap! db-calls conj [db id])
+                                                        {:provider :provider-a :model "model-a"})
+                         #'state/put-session! (fn [& _])}
+          (fn []
+            (let [created (#'state/create-session-cold! {:channel :api :prewarm? true})]
+              (expect (= {:id sid
+                          :channel :api
+                          :workspace-id :workspace
+                          :router-root {:provider :provider-a :model "model-a"}}
+                         created))
+              (expect (= [[:api {:prewarm? true}]] @create-calls))
+              (expect (= [[::db sid]] @db-calls)))))))
+  (it
+    "adopts a ready session and requests an asynchronous refill"
+    (let [pool
+          @#'state/prewarm-pool
 
-                        state/claim-prewarmed!
-                        (fn [session title]
-                          (assoc session :title title))]
+          prior
+          @pool
 
-            (let [created (state/create-session!
-                            {:channel :api :title "Ready" :root (System/getProperty "user.dir")})]
-              (expect (= (str sid) (get created "id")))
-              (expect (= "Ready" (get created "title")))
-              (expect (= [:api] @refills))
-              (expect (empty? (get-in @pool [:ready :api])))))
-          (finally (reset! pool prior)))))
+          sid
+          (java.util.UUID/randomUUID)
+
+          refills
+          (atom [])]
+
+      (try (reset! pool {:ready {:api [{:id sid
+                                        :channel :api
+                                        :title nil
+                                        :external-id nil
+                                        :workspace-id :workspace
+                                        :router-root {:provider :provider-a :model "model-a"}}]}
+                         :in-flight {}
+                         :accepting? true})
+           (with-redefs [lp/get-router
+                         (constantly {:providers [{:id :provider-a :models [{:name "model-a"}]}]})
+
+                         state/ensure-prewarmed!
+                         #(swap! refills conj %)
+
+                         state/claim-prewarmed!
+                         (fn [session title]
+                           (assoc session :title title))]
+
+             (let [created (state/create-session!
+                             {:channel :api :title "Ready" :root (System/getProperty "user.dir")})]
+               (expect (= (str sid) (get created "id")))
+               (expect (= "Ready" (get created "title")))
+               (expect (= [:api] @refills))
+               (expect (empty? (get-in @pool [:ready :api])))))
+           (finally (reset! pool prior)))))
+  ;; Regression, issue #159: a ready prewarm built for the previous router root
+  ;; was claimed after the default changed, leaving persisted metadata on model A
+  ;; while the refreshed environment routed the first turn through model B.
+  (it
+    "discards a ready session whose router root no longer matches the default"
+    (let [pool
+          @#'state/prewarm-pool
+
+          prior
+          @pool
+
+          pooled-id
+          (java.util.UUID/randomUUID)
+
+          cold-id
+          (java.util.UUID/randomUUID)
+
+          claims
+          (atom [])
+
+          cold-calls
+          (atom [])
+
+          dropped
+          (atom [])
+
+          deleted
+          (atom [])
+
+          refills
+          (atom [])]
+
+      (try (reset! pool {:ready {:api [{:id pooled-id
+                                        :channel :api
+                                        :workspace-id :workspace
+                                        :router-root {:provider :provider-a :model "model-a"}}]}
+                         :in-flight {}
+                         :accepting? true})
+           (with-redefs [lp/get-router
+                         (constantly {:providers [{:id :provider-b :models [{:name "model-b"}]}]})
+
+                         state/claim-prewarmed!
+                         (fn [session title]
+                           (swap! claims conj [(:id session) title])
+                           (assoc session :title title))
+
+                         state/create-session-cold!
+                         (fn [opts]
+                           (swap! cold-calls conj opts)
+                           {:id cold-id
+                            :channel (:channel opts)
+                            :title (:title opts)
+                            :workspace-id :workspace})
+
+                         state/drop-session!
+                         #(swap! dropped conj %)
+
+                         lp/delete!
+                         #(swap! deleted conj %)
+
+                         state/ensure-prewarmed!
+                         #(swap! refills conj %)]
+
+             (let [created (state/create-session! {:channel :api :title "Current"})]
+               (expect (= (str cold-id) (get created "id")))
+               (expect (= "Current" (get created "title")))
+               (expect (empty? @claims))
+               (expect (= [{:channel :api :title "Current"}] @cold-calls))
+               (expect (= [pooled-id] @dropped))
+               (expect (= [pooled-id] @deleted))
+               (expect (= [:api] @refills))))
+           (finally (reset! pool prior)))))
   (it "bypasses the pool for a purpose-built workspace"
       (let [pool
             @#'state/prewarm-pool
