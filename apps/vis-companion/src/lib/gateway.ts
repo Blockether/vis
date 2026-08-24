@@ -2818,6 +2818,11 @@ export class GatewayClient {
     return result;
   }
 
+  /** Add an empty workspace root to the gateway's project inventory, idempotently. */
+  async ensureProject(root: string): Promise<void> {
+    await this.request("POST", "/v1/projects/actions/ensure", { root });
+  }
+
   /**
    * Delete a project AND every session in it.
    *

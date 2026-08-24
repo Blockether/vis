@@ -1583,7 +1583,7 @@ export function BandButton({
       } ${className}`}
       {...props}
     >
-      {children}
+      <span className="translate-y-px">{children}</span>
     </button>
   );
 }

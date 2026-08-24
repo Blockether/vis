@@ -674,6 +674,8 @@ describe("BandButton", () => {
     // No height of its own, and no frame of its own: the band spells both.
     expect(/\bh-\d/.test(html()), "a height of its own").toBe(false);
     expect(html()).not.toMatch(/class="[^"]*\bborder\s/);
+    // The glyphs in band cells optically sat one pixel above the heading beside them.
+    expect(html()).toContain("translate-y-px");
   });
 
   it("takes only the ink of the band it stands in", () => {

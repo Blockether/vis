@@ -164,9 +164,9 @@ describe('where "New session" lives', () => {
     expect(await screen.findByRole("dialog")).toBeTruthy();
   });
 
-  // Regression, user report: choosing a root from Manage projects only closed the sheet;
-  // its callback had no create handler, so the chosen project never joined the machine.
-  it("creates the first session in a project chosen from Manage projects", async () => {
+  // Regression, user report: `Use project` said it added a project but created and opened
+  // a session instead. A project may be empty; the gateway's idempotent ensure route owns it.
+  it("adds the chosen folder as a project without inventing a session", async () => {
     const opened: string[] = [];
     const view = renderSessionsScreen({
       machines: [
@@ -179,15 +179,7 @@ describe('where "New session" lives', () => {
               parent: "/Users",
               home: "/Users/dev",
               is_truncated: false,
-              entries: [
-                {
-                  name: "next-project",
-                  path: "/Users/dev/next-project",
-                  entry_count: 2,
-                  is_repo: true,
-                  branch: "main",
-                },
-              ],
+              entries: [],
             },
           },
         },
@@ -199,14 +191,23 @@ describe('where "New session" lives', () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Projects on alpha" }));
     await userEvent.click(screen.getByRole("button", { name: "New project…" }));
-    await screen.findByRole("menuitem", { name: /next-project/ });
+    await screen.findByText("No folders in here.");
+    view.requests.length = 0;
     await userEvent.click(screen.getByRole("button", { name: "Use project" }));
 
-    await waitFor(() => expect(opened).toHaveLength(1));
-    const create = view.requests.find(
-      (request) => request.method === "POST" && request.path === "/v1/sessions",
+    await waitFor(() =>
+      expect(
+        view.requests.find(
+          (request) => request.method === "POST" && request.path === "/v1/projects/actions/ensure",
+        )?.body,
+      ).toEqual({ root: "/Users/dev" }),
     );
-    expect(create?.body).toEqual({ channel: "web", root: "/Users/dev" });
+    expect(
+      view.requests.some(
+        (request) => request.method === "POST" && request.path === "/v1/sessions",
+      ),
+    ).toBe(false);
+    expect(opened).toEqual([]);
   });
 
   // Regression, user report (the machine band struck out on a screenshot, with the create

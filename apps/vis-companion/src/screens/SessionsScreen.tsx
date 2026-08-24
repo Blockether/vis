@@ -2638,7 +2638,7 @@ export function SessionsScreen({
           knownRoots={knownRoots}
           projects={targetMachine ? managedProjects(targetMachine) : []}
           onCancel={() => setStartFlow(startFlowBack)}
-          onChoose={(root) => void createSession({ kind: 'trunk' }, target, root)}
+          onChoose={(root) => createSession({ kind: 'trunk' }, target, root)}
           onRemove={(entry) => {
             if (!targetMachine) return;
             leaveStart();
@@ -2663,10 +2663,11 @@ export function SessionsScreen({
           )}
           projects={managedProjects(manageProjects.machine)}
           onCancel={() => setManageProjects(null)}
-          onChoose={(root: string) => {
+          onChoose={async (root: string) => {
             const conn = manageProjects.machine.conn;
+            await clientFor(conn).ensureProject(root);
+            await load();
             setManageProjects(null);
-            void createSession({ kind: 'trunk' }, conn, root);
           }}
           onRemove={(entry) => {
             const conn = manageProjects.machine.conn;

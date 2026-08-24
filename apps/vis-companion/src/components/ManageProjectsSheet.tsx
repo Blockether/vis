@@ -150,7 +150,7 @@ export function ManageProjectsSheet({
   /** What this machine ALREADY has. The portal opens on these, not on a filesystem. */
   projects: ManagedProject[];
   onCancel: () => void;
-  onChoose: (root: string) => void;
+  onChoose: (root: string) => void | Promise<void>;
   /** Remove every transcript in one project. The caller owns the confirmation. */
   onRemove: (project: ManagedProject) => void;
 }) {
@@ -242,21 +242,22 @@ export function ManageProjectsSheet({
   const alreadyProject = folder === null && !!target && knownRoots.has(target);
 
   const commit = useCallback(async () => {
-    if (folder === null) {
-      if (target) onChoose(target);
-      return;
-    }
-    const name = folder.trim();
-    if (!name || !here) return;
+    if (!target || alreadyProject) return;
+    const name = folder?.trim() ?? '';
+    if (folder !== null && (!name || !here)) return;
     setSaving(true);
     try {
+      if (folder === null) {
+        await onChoose(target);
+        return;
+      }
       const made = await client.createDirectory(here, name);
-      onChoose(made.path);
+      await onChoose(made.path);
     } catch (cause) {
       setError((cause as Error).message);
       setSaving(false);
     }
-  }, [client, folder, here, onChoose, target]);
+  }, [alreadyProject, client, folder, here, onChoose, target]);
 
   const enter = useCallback((path: string) => {
     setTyped(null);
