@@ -110,8 +110,7 @@
     :key \b
     :label "voice conversation"
     :group "Tools"
-    :show-when :never} {:action :open-drafts :key \d :label "drafts" :group "Session"}
-   {:action :toggle-help :key \h :label "help" :group "Buffer"}
+    :show-when :never} {:action :toggle-help :key \h :label "help" :group "Buffer"}
    {:action :new-session :key \n :label "new session" :group "Session"}
    {:action :show-sessions :key \s :label "switch session" :group "Session"}
    ;; fork: `y` = the Y-shaped split of a branch; `t` = fork AT a chosen turn.

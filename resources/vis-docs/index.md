@@ -195,7 +195,6 @@ Every page of this manual, in the order the sidebar lists them.
 - [Exporting sessions](exporting-sessions.md) — a past session as Markdown, HTML or an MP4 screencast.
 - [Skills](skills.md) — instructions the agent pulls only when a task needs them.
 - [Queue, cancel & quit](queue-and-cancel.md) — queueing follow-ups, auto-drain on resume, cancelling a turn, Ctrl+C.
-- [Drafts](drafts.md) — isolated workspaces for speculative changes: create, apply, park, resume, abandon.
 - [Gateway, pairing & remote access](gateway.md) — the daemon every session runs through, companion pairing, and driving a gateway on another machine with `--gateway`.
 - [Reporting bugs safely](reporting-bugs.md) — an issue that is reproducible for us and safe for you.
 

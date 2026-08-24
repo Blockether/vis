@@ -1,7 +1,7 @@
 // Unsent composer text, per session, kept across screens and app restarts.
 //
-// Named DRAFT MESSAGE, never just "draft": a draft in this system is an
-// isolated agent workspace (`/draft new`, `/draft apply`), a different thing.
+// Named DRAFT MESSAGE, never just "draft": this is unsent human text, not an
+// internal isolated-workspace record.
 //
 // What you typed is YOURS: leaving the session for the list, backgrounding the
 // app, or killing it outright must never eat it. React state alone dies with the

@@ -59,7 +59,6 @@ import type {
   McpServersResponse,
   McpTestResult,
   ForkPoint,
-  WorkspaceDraft,
   BrowseEntry,
   BrowseListing,
 } from "./types";
@@ -2676,49 +2675,6 @@ export class GatewayClient {
     });
   }
 
-  /**
-   * Every DRAFT of the repo `sid` lives in, newest first — the same list the TUI's
-   * `/draft list` prints. Repo-scoped, not session-scoped: drafts stashed by other
-   * sessions are in here too, which is what makes a "resume a draft" picker possible.
-   */
-  async drafts(sid: string, signal?: AbortSignal): Promise<WorkspaceDraft[]> {
-    const res = await this.request<{ drafts?: WorkspaceDraft[] }>(
-      "GET",
-      `/v1/sessions/${encodeURIComponent(sid)}/workspace/drafts`,
-      undefined,
-      signal,
-    );
-    return res.drafts ?? [];
-  }
-
-  /**
-   * Fork `sid` into a fresh draft and enter it — the wire twin of `/draft new`
-   * (a clone of the repo as it stands) and `/draft clean` (`clean: true`, seeded
-   * from the committed HEAD so the user's uncommitted work stays in the repo).
-   * The gateway rejects a blank label, and a clean draft in a repo without a
-   * commit.
-   */
-  createDraft(sid: string, label: string, clean = false): Promise<unknown> {
-    return this.request(
-      "POST",
-      `/v1/sessions/${encodeURIComponent(sid)}/workspace/drafts`,
-      {
-        label,
-        clean,
-      },
-    );
-  }
-
-  /** Move `sid` INTO an existing draft — the wire twin of `/draft resume <label>`. */
-  resumeDraft(sid: string, workspaceId: string): Promise<unknown> {
-    return this.request(
-      "POST",
-      `/v1/sessions/${encodeURIComponent(sid)}/workspace/resume`,
-      {
-        workspace_id: workspaceId,
-      },
-    );
-  }
 
   /**
    * Every turn of `sid` a fork can be cut at, oldest-first — `GET

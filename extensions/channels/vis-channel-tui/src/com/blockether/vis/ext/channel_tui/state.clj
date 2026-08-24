@@ -29,13 +29,12 @@
   "WHERE a MAIN-SCREEN transient sits: `{:content-top :prompt-h}`, read off the
    layout the renderer published for the live frame.
 
-   Every band on the session screen — the C-x hydra, the draft manager, the
-   start-in band — is anchored the SAME way: it may not climb over the header
-   (`[:layout :messages-top]`) and it sits ABOVE the prompt box at its LIVE
-   height (`[:layout :input-h]`, which grows with what is typed). Spelling that
-   pair out at each call site is how one band ended up glued to a
+   Every band on the session screen is anchored the SAME way: it may not climb
+   over the header (`[:layout :messages-top]`) and it sits ABOVE the prompt box
+   at its LIVE height (`[:layout :input-h]`, which grows with what is typed).
+   Spelling that pair out at each call site is how one band ended up glued to a
    three-row prompt while the box under it had grown to five, so the anchor is
-   read HERE and handed to `dialogs/session-band!` as one value.
+   read HERE and handed to the dialog band renderer as one value.
 
    0-arity reads the live db; the 1-arity is pure and is what tests use."
   ([] (band-anchor @app-db))
@@ -413,7 +412,7 @@
   [{"id" "pending" "type" "notice" "code" "turn_pending" "message" "Running shell command..."}])
 
 (def ^:private pending-slash-content
-  "Pending-assistant placeholder for a registered slash command (`/draft …`,
+  "Pending-assistant placeholder for a registered slash command (`/cd …`,
    `/voice`, …). Slash dispatch runs LOCALLY with no provider round-trip, so the
    bubble must never claim \"Sending request to provider…\". The engine flips it to
    `Vis is running: /<name>` the instant it emits the slash-phase chunk."
@@ -455,7 +454,7 @@
 
 (defn- pending-assistant-for
   "Pending-assistant slot for a submission. A shell-sugar (`!`/`!&`) turn or a
-   registered slash command (`/draft …`) runs LOCALLY with no provider round-trip,
+   registered slash command (`/cd …`) runs LOCALLY with no provider round-trip,
    so it gets a command-flavored placeholder and the `:slash?` command marker —
    which suppresses the model/provider footer, exactly like a resumed command turn
    (`:tag :user-shell` / `:user-slash`)."
@@ -2011,8 +2010,8 @@
                 (assoc db :shutdown? true)))
 
 (reg-event-db :set-workspace
-              ;; Replace the session's current workspace record (trunk or draft) after a
-              ;; turn that may have switched it (`/cd`, `/draft new | apply | abandon`).
+              ;; Replace the session's current workspace record after a turn that may
+              ;; have changed it (`/cd`, or a future model-managed isolation action).
               ;; Keep the denormalized root in lockstep; the footer reads it first.
               ;;
               ;; `workspace-id` = the tab whose session this workspace belongs to. A
@@ -2119,9 +2118,9 @@
       (-> db
           ensure-tabs
           (assoc :session session
-                 ;; The session's current workspace record (trunk or draft) — the
-                 ;; single source the footer/header read to show trunk vs `<label>
-                 ;; (DRAFT)`. `:root` is the cwd for trunk, the clone for a draft.
+                 ;; The session's current workspace record. `:root` is the active
+                 ;; filesystem root; `:repo-root` retains the canonical project
+                 ;; identity for internally isolated workspaces.
                  :workspace workspace
                  :title nil
                  ;; This tab is being REBOUND to another session, so the
@@ -5775,8 +5774,8 @@
                             :utilization (get result "utilization")
                             :slash (get result "slash")
                             :client-turn-id client-turn-id}])
-                        ;; A turn may have switched the session's workspace
-                        ;; (`/draft new | apply | abandon`, `/cd <path>`).
+                        ;; A turn may have changed the session's workspace (`/cd <path>`,
+                        ;; or a future model-managed isolation action).
                         ;; Re-sync so header/footer reflect it. The gateway ws
                         ;; fact already carries the server-resolved :git status,
                         ;; so re-dispatch it — no client-side git walk here.

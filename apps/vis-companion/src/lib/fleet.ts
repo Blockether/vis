@@ -1,4 +1,3 @@
-import type { MenuPosition } from './anchored-menu';
 import { hostOf } from './endpoints';
 import { homeifyPath } from './path';
 import type { GatewayConn, GatewayOverview, Session } from './types';
@@ -246,51 +245,6 @@ export function fleetError(machines: FleetMachine[]): string | null {
   return failed[0]?.error ?? null;
 }
 
-/**
- * Which gateway a "New session" tap creates on, or `null` when the user has to
- * be asked first. Scope answers it; so does owning exactly one machine — a solo
- * user must never be shown a chooser with one row in it.
- */
-export function newSessionTarget(
-  machines: FleetMachine[],
-  scope: string | null,
-): GatewayConn | null {
-  const inScope = scopedMachines(machines, scope);
-  return inScope.length === 1 ? inScope[0].conn : null;
-}
-
-/** The machines the chooser offers: reachable first, unreachable never. */
-export function creatableMachines(machines: FleetMachine[]): FleetMachine[] {
-  return machines.filter((machine) => !machine.error);
-}
-
-/** What the "New session" menu is asking right now. */
-export interface StartAsk {
-  /** The machine the session will be created on; `null` while WHICH is unanswered. */
-  on: GatewayConn | null;
-  /** That machine's live row — the parked-drafts read hangs off it. */
-  machine: FleetMachine | null;
-  /** The machines offered while `on` is still null. */
-  choices: FleetMachine[];
-}
-
-/**
- * The menu asks at most two questions, in this order: WHICH machine (only when
- * the scope cannot name one), then which workspace. Picking a machine ANSWERS
- * the first question — it must never be mistaken for the whole order, because
- * the parked drafts of that machine are what the second question offers.
- */
-export function startAsk(
-  machines: FleetMachine[],
-  scopeTarget: GatewayConn | null,
-  chosen: GatewayConn | null,
-): StartAsk {
-  const on = chosen ?? scopeTarget;
-  // A machine unpaired while its menu was open cannot answer for the session:
-  // ask again rather than aiming the create at a gateway that is no longer here.
-  const machine = on ? (machines.find((row) => machineKey(row.conn) === machineKey(on)) ?? null) : null;
-  return { on: machine ? on : null, machine, choices: creatableMachines(machines) };
-}
 
 /**
  * Per-machine tallies for its chip and its section header.
@@ -440,47 +394,6 @@ export function sessionOrder(
 }
 
 
-/**
- * What the start menu's parked-drafts picker should read, and NOTHING about when.
- *
- * Drafts are repo-scoped and the gateway only lists them through a session living
- * in that repo, so the read is a (machine, probe session) pair. Modelling it as a
- * value is the point: `draftsReadKey` gives that pair a STRING identity, and the
- * screen depends on the identity instead of on the objects. A background poll
- * hands back a new `FleetMachine` and new `Session` rows for the very same read —
- * keyed on object identity the request was aborted and restarted forever, and the
- * menu sat on "Reading drafts..." on a phone, where `resize` re-anchors it too.
- *
- * `wait` is the other half: a machine whose first list has not landed knows
- * nothing yet, and must not be reported as a project with no drafts parked.
- */
-export type DraftsRead =
-  | { kind: 'wait' }
-  | { kind: 'none' }
-  | { kind: 'read'; conn: GatewayConn; sid: string; repo: string };
-
-export function draftsRead(machine: FleetMachine | null, probe: Session | null): DraftsRead {
-  if (!machine) return { kind: 'none' };
-  // Still loading — but a machine that FAILED to load has answered: no drafts.
-  if (machine.sessions === null && !machine.error) return { kind: 'wait' };
-  const repo = probe ? projectPath(probe) : '';
-  if (!probe || !repo) return { kind: 'none' };
-  return { kind: 'read', conn: machine.conn, sid: probe.id, repo };
-}
-
-/**
- * Identity of a read: same key, same list — do not read it again, and paint what
- * that key already answered.
- *
- * Keyed on the machine and the REPO, never on the probe session: the session is
- * only the door the gateway opens a repo's drafts through. "New session" mints a
- * row in that same repo, which then becomes the probe — so a session-keyed read
- * changed identity on every create, threw away a list it already had, and sent the
- * picker back to "Reading drafts..." every single time the menu opened.
- */
-export function draftsReadKey(read: DraftsRead): string {
-  return read.kind === 'read' ? `${machineKey(read.conn)}\u0000${read.repo}` : read.kind;
-}
 
 /**
  * The rows a QUERY may match on one machine: what is loaded, plus the sessions a
@@ -867,86 +780,4 @@ export function machineProject(machine: FleetMachine | null): MachineProject | n
     label: best.path.split('/').filter(Boolean).pop() ?? best.path,
     when: best.when,
   };
-}
-
-/**
- * The whole "New session" order, as ONE value.
- *
- * It asks at most three questions, in this order: WHICH machine (only when the
- * scope cannot name one), which workspace, and — for a fork — what to call the
- * draft. Every answer belongs to the order and to nothing else, so LEAVING it (a
- * tap outside, Escape, Cancel) forgets all of them and the next "New session" tap
- * starts again at the first unanswered question.
- *
- * That is the entire point of one value. The picked machine used to live in a
- * state of its own, which the name dialog's dismissal never cleared: the next tap
- * found the leftover, took it for an answer, and created a session on that machine
- * without asking anything at all.
- */
-export type StartFlow =
-  | { step: 'idle' }
-  | { step: 'menu'; at: MenuPosition; on: GatewayConn | null }
-  /** The draft question, reached from the menu — a second verb, never the first. */
-  | { step: 'drafts'; at: MenuPosition; on: GatewayConn }
-  /** Browsing that machine's own files for the project to switch to. */
-  | { step: 'browse'; at: MenuPosition; on: GatewayConn }
-  | { step: 'name'; on: GatewayConn; clean: boolean };
-
-/** No order in progress — and therefore no answers lying around. */
-export const START_IDLE: StartFlow = { step: 'idle' };
-
-/**
- * Open the menu, or RE-ANCHOR the open one: a resize is not an answer, so the
- * machine already picked survives it. No anchor left to hang from ends the order.
- */
-export function startFlowOpen(flow: StartFlow, at: MenuPosition | null): StartFlow {
-  if (!at) return START_IDLE;
-  // A sub-question is still the same order: re-anchoring must not walk it back to
-  // the verbs it was opened from.
-  if (flow.step === 'drafts' || flow.step === 'browse') return { ...flow, at };
-  return { step: 'menu', at, on: flow.step === 'menu' ? flow.on : null };
-}
-
-/** Answer WHICH machine — an answer inside the order, never the whole order. */
-export function startFlowPick(flow: StartFlow, on: GatewayConn): StartFlow {
-  return flow.step === 'menu' ? { ...flow, on } : flow;
-}
-
-/**
- * Take that answer back: the machine question again, with the order still open and
- * every other answer in it untouched.
- */
-export function startFlowUnpick(flow: StartFlow): StartFlow {
-  return flow.step === 'menu' ? { ...flow, on: null } : flow;
-}
-
-/** Hand the order to the name dialog, WITH the machine the fork happens on. */
-export function startFlowName(on: GatewayConn, clean: boolean): StartFlow {
-  return { step: 'name', on, clean };
-}
-
-/**
- * Walk the open menu to one of its own sub-questions, keeping the anchor it hangs
- * from: a step is still the SAME order, so leaving it forgets everything at once.
- */
-export function startFlowStep(
-  flow: StartFlow,
-  step: 'drafts' | 'browse',
-  on: GatewayConn,
-): StartFlow {
-  return flow.step === 'menu' || flow.step === 'drafts' || flow.step === 'browse'
-    ? { step, at: flow.at, on }
-    : flow;
-}
-
-/** Back out of a sub-question to the machine's own menu, without ending the order. */
-export function startFlowBack(flow: StartFlow): StartFlow {
-  return flow.step === 'drafts' || flow.step === 'browse'
-    ? { step: 'menu', at: flow.at, on: flow.on }
-    : flow;
-}
-
-/** The machine this order aims at so far, or `null` while nothing has answered. */
-export function startFlowOn(flow: StartFlow): GatewayConn | null {
-  return flow.step === 'idle' ? null : flow.on;
 }

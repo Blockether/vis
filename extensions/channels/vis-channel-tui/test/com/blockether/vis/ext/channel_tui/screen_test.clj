@@ -121,8 +121,6 @@
 
 (def ^:private session-sort-key (deref #'screen/session-sort-key))
 
-(def ^:private apply-draft-picker-choice! (deref #'screen/apply-draft-picker-choice!))
-
 (def ^:private pre-resolve-session-id! (deref #'screen/pre-resolve-session-id!))
 
 (def ^:private terminal-ctrl-c-behaviour (deref #'screen/terminal-ctrl-c-behaviour))
@@ -678,79 +676,6 @@
                                             {:kind :workspace-entry :index 1})
                    (expect (= [false] @refreshes)))))
 
-(defdescribe
-  draft-picker-gateway-test
-  (it "keeps the selected current location as a no-op"
-      (let [calls (atom [])]
-        (with-redefs [vis/gateway-stash-draft! (fn [& xs]
-                                                 (swap! calls conj xs))
-                      vis/gateway-resume-draft! (fn [& xs]
-                                                  (swap! calls conj xs))]
-
-          (expect (= {:changed? false :message "Already on feature-a"}
-                     (apply-draft-picker-choice!
-                       "sid"
-                       {:action :draft :label "feature-a" :current? true})))
-          (expect (empty? @calls)))))
-  (it "routes trunk and draft switches through the canonical gateway APIs"
-      (let [calls
-            (atom [])
-
-            trunk
-            {"root" "/repo"}
-
-            draft
-            {"root" "/draft/feature-b"}]
-
-        (with-redefs [vis/gateway-stash-draft!
-                      (fn [sid]
-                        (swap! calls conj [:stash sid])
-                        trunk)
-
-                      vis/gateway-resume-draft!
-                      (fn [sid wid]
-                        (swap! calls conj [:resume sid wid])
-                        draft)]
-
-          (expect (= trunk
-                     (:workspace (apply-draft-picker-choice! "sid"
-                                                             {:action :trunk :label "Trunk"}))))
-          (expect (= draft
-                     (:workspace (apply-draft-picker-choice!
-                                   "sid"
-                                   {:action :draft :workspace-id "ws-b" :label "feature-b"}))))
-          (expect (= [[:stash "sid"] [:resume "sid" "ws-b"]] @calls))))))
-(it "routes create and abandon through canonical gateway APIs"
-    (let [calls
-          (atom [])
-
-          created
-          {"root" "/draft/new"}
-
-          trunk
-          {"root" "/repo"}]
-
-      (with-redefs [vis/gateway-create-draft!
-                    (fn [sid label clean?]
-                      (swap! calls conj [:create sid label clean?])
-                      created)
-
-                    vis/gateway-abandon-draft!
-                    (fn [sid wid reason]
-                      (swap! calls conj [:abandon sid wid reason])
-                      trunk)]
-
-        (expect (= created
-                   (:workspace (apply-draft-picker-choice! "sid"
-                                                           {:action :new :label "feature-c"}))))
-        (expect (= trunk
-                   (:workspace (apply-draft-picker-choice! "sid"
-                                                           {:action :abandon
-                                                            :workspace-id "ws-c"
-                                                            :label "feature-c"
-                                                            :reason "not needed"}))))
-        (expect (= [[:create "sid" "feature-c" false] [:abandon "sid" "ws-c" "not needed"]]
-                   @calls)))))
 
 (defdescribe terminal-interrupt-test
              (it "configures Lanterna to trap Ctrl+C instead of exiting inside pollInput"
@@ -2169,35 +2094,6 @@
       ;; per-thinking hit above is what must win before it.
       (expect (str/includes? (force (:text whole-bubble-hit)) second-thinking)))))
 
-;; A `/draft …` line asks exactly what the draft band asks, so the BAND answers
-;; it — inside the session's own frame, with the command the slash named already
-;; pressed. Typing `/draft new` and pressing `d` on the band are one path now;
-;; the modal text-input window that used to read the label is gone.
-
-(defdescribe draft-slash-band-test
-             (it "a `/draft …` line opens the band, on the command it already named"
-                 (let [band
-                       (var-get #'screen/draft-slash-for-input)
-
-                       typed
-                       #(band (reduce input/insert-char (input/empty-input) (seq %)))]
-
-                   (expect (= {:pressed nil} (typed "/draft")))
-                   (expect (= {:pressed :new-dirty} (typed "/draft new")))
-                   ;; Completing the slash from the overlay leaves a trailing space.
-                   (expect (= {:pressed :new-dirty} (typed "/draft new ")))
-                   (expect (= {:pressed :new-clean} (typed "/draft clean")))
-                   (expect (= {:pressed :switch} (typed "/draft resume")))
-                   (expect (= {:pressed :switch} (typed "/draft list")))
-                   (expect (= {:pressed :abandon} (typed "/draft abandon")))
-                   ;; A line that carries its own answer, and the two verbs with nothing
-                   ;; to ask, run as the engine slashes they are — the band would have no
-                   ;; question left to put.
-                   (expect (nil? (typed "/draft new feature-x")))
-                   (expect (nil? (typed "/draft apply")))
-                   (expect (nil? (typed "/draft stash")))
-                   (expect (nil? (typed "/export")))
-                   (expect (nil? (typed "hello"))))))
 
 ;; Regression (user report, from the TUI): ArrowUp recalled `/reload` out of the
 ;; input history and the slash overlay opened over the composer — and while it

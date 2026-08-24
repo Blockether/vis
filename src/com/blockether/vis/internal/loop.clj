@@ -9215,9 +9215,8 @@
   (when (clojure.string/blank? user-request)
     (throw (ex-info "run-turn! requires a non-blank user request" {:got user-request})))
   (let [;; Re-resolve the active workspace from the session's CURRENT pin so a
-        ;; mid-session `/draft new | apply | abandon` takes effect THIS turn.
-        ;; The cached env was built at session start (on trunk); without this
-        ;; the agent keeps editing trunk after entering a draft.
+        ;; model-managed workspace transition takes effect in the same turn. The cached
+        ;; env was built at session start; without this the agent keeps editing the old root.
         env
         (or (when-let [db (:db-info env)]
               (when-let [sid (or (:session/state-id env)
@@ -10267,9 +10266,8 @@
                                                             root-provider
                                                             (assoc :provider root-provider))))
             ;; Resolve the session_state row id ONCE here (reliable at env build)
-            ;; and stamp it on the env, so slashes/turns don't re-query it — the
-            ;; per-call re-query intermittently returns nil for fresh sessions,
-            ;; which broke `/draft new`'s pin ("session not ready").
+            ;; and stamp it on the env, so workspace operations and turns do not re-query
+            ;; it. The per-call re-query intermittently returned nil for fresh sessions.
             session-state-id (when (and db-info session-id)
                                (persistance/db-latest-session-state-id db-info session-id))
             ;; Context wiring (see ctx-loop). `ctx-atom` carries stable session
@@ -10572,9 +10570,8 @@
                          ;; from this so the prompt never claims a capability the
                          ;; sandbox lacks (no workspace ⇒ no fs; toggle off ⇒ no net).
                          :sandbox-caps {:fs? (boolean sandbox-roots-fn) :network network-opts}
-                         ;; Live workspace pointer for the sandbox confinement —
-                         ;; run-turn! resets it after its per-turn workspace
-                         ;; re-resolve so `sandbox-roots-fn` tracks /draft + /root.
+                         ;; Live workspace pointer for sandbox confinement. run-turn!
+                         ;; refreshes it so `sandbox-roots-fn` tracks the active root.
                          :workspace-atom workspace-atom
                          ;; routing digest → rendered into ctx as `routing`
                          ;; (current model + provider only).

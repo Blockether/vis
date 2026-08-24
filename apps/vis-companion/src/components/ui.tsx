@@ -27,7 +27,6 @@ import {
   CloseIcon,
   CopyIcon,
   DotsIcon,
-  DraftIcon,
   PlusIcon,
   ProjectsIcon,
   SearchIcon,
@@ -3208,38 +3207,12 @@ export function MachineTab({
 }
 
 /**
- * The verb this screen exists for, spelled as the ONE PLUS on the screen.
+ * The primary verb of the session list: start one session in this project.
  *
- * It used to be the first row of the header's `⋯` menu: a tap, a popover, a read,
- * and only then the thing people do all day. So it is a BUTTON now — the Blockether
- * yellow, on every project header, directly before the `⋯` that keeps the rarer
- * verbs — and the menu is left with the questions that actually deserve one.
- *
- * IT IS A MARK, NOT A WORD, because it repeats. A project header appears once per
- * repository, so a fleet with nine checkouts painted nine amber paragraphs of the
- * same eleven characters: measured on a 390px frame the word cost 83px of a row
- * whose name and path had 221px to share, and the ninth one said nothing the first
- * had not. The mark is 37px, the name column takes the 46px back, and the rank is
- * untouched — same amber, same compact box, same 44px touch target.
- *
- * The plus therefore means START A SESSION HERE and nothing else on this screen: the
- * machine's control wears the folder it opens (`MachineProjectsButton`), the draft
- * half wears a fork inside that folder, and no glyph is used for two meanings.
- *
- * It NAMES its machine, because every header carries one and three controls all
- * labelled "New session" say nothing to a screen reader; `where` puts the project it
- * will start in on the tooltip, since the header has no room to print a path.
- *
- * `pressEffect="none"`: a machine with no project yet falls through to the folder
- * browser anchored on this button, and a transform moves the box that was measured.
- *
- * `onDraft` makes it a SPLIT button. A draft is the same verb in a different place —
- * this project, copied privately — so it is not a second word-button, and it is no
- * longer a row in the machine's `⋯` two headers up, where it named a machine rather
- * than the project it actually forks. It is the amber half joined to the amber verb,
- * carrying the draft mark and nothing else: one control, one colour, one edge, and
- * the rarer half costs the width of a glyph. It exists only when the app was told to
- * offer drafts; without it this is a plain button again, exactly as it was.
+ * A project header repeats, so the resting control is one yellow plus rather
+ * than the same phrase on every row. The face stays on the compact 32px header
+ * rhythm while `Button` preserves a 44px touch target outside the painted box.
+ * `where` remains in the tooltip and `machine` in the accessible name.
  */
 export function NewSessionButton({
   machine,
@@ -3247,76 +3220,45 @@ export function NewSessionButton({
   disabled,
   busyLabel,
   onPress,
-  onDraft,
 }: {
   machine: string;
   where?: string | null;
   disabled?: boolean;
-  /**
-   * The work THIS button started, spoken inside it: "Creating...", "Forking...".
-   *
-   * A busy word parked beside the control said the screen was busy without saying
-   * which of a fleet's headers had been pressed; the verb that was pressed is the
-   * only honest place for it, so the button wears its own progress and refuses a
-   * second press while it does.
-   *
-   * A MARK HAS NOWHERE TO HOLD THAT WORD, so while the create runs this control is
-   * the word button it used to be — for exactly as long as the create runs, on the
-   * one header that was pressed, which is the only row that has anything to say.
-   */
+  /** The work this button started, spoken inside the pressed control. */
   busyLabel?: string | null;
   onPress: (anchor: HTMLElement) => void;
-  /** Omitted when the surface has no draft question — then there is no second half. */
-  onDraft?: (anchor: HTMLElement) => void;
 }) {
-  const isBusy = Boolean(busyLabel);
   const label = `New session on ${machine}`;
   const title = where ? `New session on ${machine}, in ${where}` : label;
-  const verb = isBusy ? (
-    <Button
-      type="button"
-      pressEffect="none"
-      density="compact"
-      disabled
-      aria-live="polite"
-      aria-label={label}
-      title={title}
-      className={`shrink-0 whitespace-nowrap${onDraft ? ' border-r-0' : ''}`}
-      onClick={(event) => onPress(event.currentTarget)}
-    >
-      {busyLabel}
-    </Button>
-  ) : (
+  if (busyLabel) {
+    return (
+      <Button
+        type="button"
+        pressEffect="none"
+        density="compact"
+        disabled
+        aria-live="polite"
+        aria-label={label}
+        title={title}
+        className="shrink-0 whitespace-nowrap"
+        onClick={(event) => onPress(event.currentTarget)}
+      >
+        {busyLabel}
+      </Button>
+    );
+  }
+  return (
     <IconButton
       variant="primary"
+      density="compact"
       disabled={disabled}
       aria-live="polite"
       label={label}
       title={title}
-      className={onDraft ? 'border-r-0' : ''}
       onClick={(event) => onPress(event.currentTarget)}
     >
-      <PlusIcon className="size-4" />
+      <PlusIcon className="size-3.5" />
     </IconButton>
-  );
-  if (!onDraft) return verb;
-  return (
-    <span className="flex shrink-0 items-stretch">
-      {verb}
-      {/* The seam is the only thing between the two halves: same fill, same height, a
-          hairline in the ink they both carry. A second bordered box beside the verb
-          would read as a different control doing a different thing. */}
-      <IconButton
-        variant="primary"
-        disabled={disabled || isBusy}
-        label={`New session in a draft of ${where ?? 'this project'} on ${machine}`}
-        title={`New session in a draft — a private copy of ${where ?? 'this project'}`}
-        className="border-l-accent-foreground/30"
-        onClick={(event) => onDraft(event.currentTarget)}
-      >
-        <DraftIcon className="size-4" />
-      </IconButton>
-    </span>
   );
 }
 

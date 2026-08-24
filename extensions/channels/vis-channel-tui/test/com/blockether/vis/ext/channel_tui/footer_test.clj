@@ -387,6 +387,23 @@
                               (filter #(= :right (:region %)))
                               (remove fixture-seg?)
                               (mapv :text)))))))))
+  (it "hides model-managed isolated workspace details"
+      (let [build-segments @#'footer/build-segments]
+        (with-redefs-fn {#'footer/chosen-model-info (fn []
+                                                      {:name "gpt-4o" :provider :openai})}
+          (fn []
+            (let [texts (->> (build-segments {:messages []
+                                              :settings {}
+                                              :workspace {"root" "/internal/isolated-copy"
+                                                          "fork_ms" 1
+                                                          "git" {"is_workspace" true
+                                                                 "repo" "isolated-copy"
+                                                                 "branch" "detached"}}}
+                                             0)
+                             (filter #(= :right (:region %)))
+                             (remove fixture-seg?)
+                             (mapv :text))]
+              (expect (empty? texts)))))))
   (it "renders the gateway :git fact even when the top-level root was lost"
       ;; A stale tab snapshot can null the denormalized `:workspace/root`, but the
       ;; git fact still rides on the session's `:workspace` record — the footer

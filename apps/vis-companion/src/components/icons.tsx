@@ -360,32 +360,8 @@ export function ProjectsIcon({ className }: { className?: string }) {
   );
 }
 
-/**
- * A DRAFT: the project folder with a BRANCH growing inside it. The outline is
- * `ProjectsIcon`'s own folder — a draft lives on disk like any project — and the
- * two-node fork inside says what makes it a draft: this project, split off, so
- * work happens away from the trunk. It replaces an earlier second folder drawn
- * behind the first, which at 16px was two nearly parallel outlines 2px apart and
- * read as a smudge rather than a mark. A fork reads at a glance and cannot be
- * mistaken for the `Manage projects` folder directly beneath it.
- */
-export function DraftIcon({ className }: { className?: string }) {
-  return (
-    <Icon className={className}>
-      <path d="M4.66 6.4h5.18l1.6 2.14h7.9v9.06H4.66z" />
-      <path d="M9.1 14.95V13.6c0-0.72 0.58-1.3 1.3-1.3h3" />
-      <circle cx="9.1" cy="15.9" r="0.95" />
-      <circle cx="14.35" cy="12.3" r="0.95" />
-    </Icon>
-  );
-}
 
-/**
- * A FORK of a conversation: the trunk standing on the left with one branch
- * leaving it and stopping. Deliberately NOT `DraftIcon` — that one is a folder
- * with the same stem inside it and means a copy of a PROJECT on disk; this is a
- * copy of a TALK, so the fork stands alone with no folder around it.
- */
+/** A fork of a conversation: one trunk with a branch leaving it. */
 export function ForkIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>

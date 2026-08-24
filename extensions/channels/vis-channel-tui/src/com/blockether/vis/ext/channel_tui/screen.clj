@@ -8,7 +8,6 @@
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
             [com.blockether.vis.ext.channel-tui.components :as components]
-            [com.blockether.vis.ext.channel-tui.drafts :as drafts]
             [com.blockether.vis.ext.channel-tui.file-suggest :as file-suggest]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.header :as header]
@@ -1099,8 +1098,7 @@
    `:slash/prompt-arg` and carries NO argument, return {:slash-text :prompt}
    so the channel can pop a text-input for the missing argument instead of
    running the slash blank. A trailing argument (`/session-title Foo`) returns
-   nil — that runs normally. The `/draft …` lines never reach here: they are
-   answered by the draft BAND above, on the session's own frame."
+   nil — that runs normally."
   [input-state]
   (let [text (str/trim (input/input->text input-state))]
     (some (fn [s]
@@ -1109,14 +1107,6 @@
                 (when (= text full) {:slash-text full :prompt prompt}))))
           (vis/registered-slashes))))
 
-(defn- draft-slash-for-input
-  "The draft BAND a typed `/draft …` line opens — `{:pressed id-or-nil}`, the
-   command the slash already named. nil when the line is not a question the band
-   answers (`/draft apply`, `/draft stash`, or any of them with its argument
-   already typed): that reaches the engine as the slash it is."
-  [input-state]
-  (when-let [{:keys [path]} (vis/slash-parse (input/input->text input-state))]
-    (drafts/slash-band path)))
 
 (defn- slash-suggestions-for-input
   ([screen input-state] (slash-suggestions-for-input screen input-state 0))
@@ -1874,9 +1864,9 @@
   (atom nil))
 
 (defonce ^:private last-image-regions
-  ;; The placements currently on the graphics layer. A band (C-x, drafts) has to
-  ;; re-place the images it does NOT cover, and it never runs a frame of its own,
-  ;; so the last painted set is remembered here instead of recomputed.
+  ;; The placements currently on the graphics layer. A prompt-attached band (such
+  ;; as C-x) has to re-place the images it does NOT cover, and it never runs a
+  ;; frame of its own, so the last painted set is remembered here instead of recomputed.
   (atom []))
 
 (defonce ^:private kitty-image-state
@@ -2033,8 +2023,8 @@
   "The placements a session BAND may KEEP on the graphics layer: every image whose
    whole reserved box ends above `band-top`.
 
-   A band is not a modal. The C-x hydra, the draft band and the start-in band are
-   a strip glued to the prompt, with the transcript still readable above them —
+   A band is not a modal. It is a strip glued to the prompt, with the transcript
+   still readable above it —
    dropping every inline image the way a full-screen dialog does made every
    picture in the session vanish the moment C-x was pressed and only come back
    after the band closed. Only a picture the band would sit UNDER has to go:
@@ -4710,38 +4700,10 @@
       (when-not (str/blank? (str title)) (str title)))))
 
 (defn- session-workspace
-  "The rift draft pinned to `session-id` — a workspace record whose
-   `:root` is the clone path. Lets the TUI display layer (footer / badge)
-   reflect the actual draft instead of falling back to trunk."
+  "Workspace metadata pinned to `session-id`."
   [session-id]
   (try (vis/gateway-session-workspace session-id) (catch Throwable _ nil)))
 
-(defn- apply-draft-picker-choice!
-  "Execute one draft-manager choice through the canonical gateway API. Switching,
-   creation, and destructive abandonment all return refreshed workspace data for
-   the TUI footer. Prompts and confirmation are handled by the screen loop."
-  [sid {:keys [action current? workspace-id label reason clean?]}]
-  (cond current? {:changed? false :message (str "Already on " label)}
-        (= action :trunk) {:changed? true
-                           :message "Stashed draft — switched to trunk"
-                           :workspace (vis/gateway-stash-draft! sid)}
-        (= action :draft) (do (when-not workspace-id
-                                (throw (ex-info "Draft picker row has no workspace id"
-                                                {:type :draft-picker/invalid-row})))
-                              {:changed? true
-                               :message (str "Switched to draft '" label "'")
-                               :workspace (vis/gateway-resume-draft! sid workspace-id)})
-        (= action :new) {:changed? true
-                         :message (str "Created draft '" label "'")
-                         :workspace (vis/gateway-create-draft! sid label (boolean clean?))}
-        (= action :abandon) (do (when-not workspace-id
-                                  (throw (ex-info "Draft manager row has no workspace id"
-                                                  {:type :draft-picker/invalid-row})))
-                                {:changed? true
-                                 :message (str "Abandoned draft '" label "'")
-                                 :workspace (vis/gateway-abandon-draft! sid workspace-id reason)})
-        :else (throw (ex-info "Unknown draft manager action"
-                              {:type :draft-picker/invalid-action :action action}))))
 
 (defn- abbrev-home
   "Shorten an absolute path by replacing the user's home dir with `~`."
@@ -4762,23 +4724,12 @@
           (if (<= (count segs) 2) p (str "…/" (str/join "/" (take-last 2 segs)))))))))
 
 (defn- enrich-session-row
-  "Attach `:draft-label` + `:work-dir` to a session summary for the navigator,
-   read from the session's pinned workspace. Working dir = the project root
-   the session edits in: for a draft that's the trunk it was cloned from
-   (`:repo-root`); for trunk it's the root itself. `:draft-label` is nil on
-   trunk. Prefers the lean `workspace` map the gateway folds into every
-   `list-sessions` soul (zero extra round-trips); falls back to the
-   per-session workspace fetch only against an older daemon."
+  "Attach the compact project directory used by the session navigator.
+   Prefer the workspace metadata already folded into list-sessions and fall
+   back to the per-session workspace fetch for an older daemon."
   [s]
-  (let [ws
-        (or (get s "workspace") (session-workspace (get s "id")))
-
-        draft?
-        (some? (get ws "fork_ms"))]
-
-    (assoc s
-      :draft-label (when draft? (or (not-empty (get ws "label")) "draft"))
-      :work-dir (short-dir (or (get ws "repo_root") (get ws "root"))))))
+  (let [ws (or (get s "workspace") (session-workspace (get s "id")))]
+    (assoc s :work-dir (short-dir (or (get ws "repo_root") (get ws "root"))))))
 
 (def ^:private project-session-probe-cap
   "How many newest sessions the no-sidecar startup fallback probes for a
@@ -4791,8 +4742,8 @@
    startup fallback when the per-place tab sidecar has nothing resumable
    (first launch here after the sidecar was lost, or every saved id is
    dead). Probes newest-first summaries, matching each session's pinned
-   workspace root (trunk `:root`, draft `:repo-root`) against the launch
-   dir, capped at `project-session-probe-cap` probes. Reads the summary's
+   workspace root (`:root`, or isolated workspace `:repo-root`) against the
+   launch dir, capped at `project-session-probe-cap` probes. Reads the summary's
    folded `workspace` map first; only an older daemon costs a per-session
    workspace fetch."
   []
@@ -5524,726 +5475,645 @@
            ;; copy-id glyph lives near the right edge!) survive intact.
            ;; The custom pattern registered above turns SGR sequences into
            ;; `MouseAction` instances with correct integer mx/my.
-           (let
-             [scrollbar-drag-offset (volatile! nil)
-              ;; `click-action-fired?` is set to true when the
-              ;; CLICK_DOWN branch already handled a click region
-              ;; (copy / link / image). The CLICK_RELEASE branch
-              ;; reads it to decide whether to fire the fallback
-              ;; release-only path - needed for terminals that
-              ;; deliver clicks as a single CLICK_RELEASE event
-              ;; (X10-style mouse mode, some SSH-tunnelled
-              ;; setups). Without this guard a normal
-              ;; DOWN+RELEASE pair would double-fire (open the link twice, copy twice).
-              click-action-fired? (volatile! false)
-              ;; App-side drag selection. Native terminal selection is
-              ;; unavailable while mouse reporting is enabled, so Vis tracks
-              ;; drag coordinates, highlights the range during render, then
-              ;; copies the visible text when the button is released.
-              mouse-selection-anchor (volatile! nil)
-              mouse-selection-focus (volatile! nil)
-              mouse-selection-source (volatile! nil)
-              mouse-selection-line? (volatile! false)
-              last-selection-click (volatile! nil)
-              ;; `paste-buffer` accumulates every keystroke received
-              ;; between `paste-start?` and `paste-end?`. We treat
-              ;; the whole block as one paste - newlines included -
-              ;; so a multi-line clipboard payload doesn't fire
-              ;; `KeyType/Enter` -> send mid-paste. The buffer is
-              ;; kept in a StringBuilder so accumulation stays
-              ;; allocation-cheap even for kilobyte pastes.
-              paste-buffer (volatile! nil)
-              ;; One-event stash used by wheel coalescing. When
-              ;; `read-chat-input!` drains wheel floods and sees a
-              ;; non-wheel event, it parks it here for the next loop
-              ;; iteration instead of dropping it.
-              pending-input-key (volatile! [])
-              ;; Running wheel-momentum for `scroll/merge-wheel-delta`: one pair —
-              ;; momentum plus the wall-clock ms of the LAST wheel event — PER
-              ;; SCROLLABLE SURFACE. A slow macOS trackpad emits a stream of
-              ;; sign-flipping inertia tail events; smoothing here (the input
-              ;; layer) absorbs the spurious reversals so the viewport can't
-              ;; bounce up/down mid-gesture. Decay is TIME-based
-              ;; (scroll/momentum-hold-ms) and computed at USE time from the
-              ;; timestamp — a poll-based decay died between two events of a slow
-              ;; trackpad inertia tail — and the `(nil? key)` branch only releases
-              ;; the lock once its window has expired. The band keeps its OWN pair
-              ;; because a gesture crossing its edge must neither carry the
-              ;; transcript's acceleration into a compact table nor reach the pane
-              ;; unsmoothed.
-              scroll-momentum (volatile! 0)
-              last-wheel-at-ms (volatile! 0)
-              live-scroll-momentum (volatile! 0)
-              last-live-wheel-at-ms (volatile! 0)
-              warm-session-render!
-              (fn [{:keys [id history]}]
-                (virtual/stop-rewarm!)
-                (when (seq history)
-                  (let [size (screen-size screen)
-                        cols (.getColumns size)
-                        bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
-                        settings (or (:settings @state/app-db) {})
-                        warm-opts {:session-id id
-                                   :detail-expansions (:detail-expansions @state/app-db)
-                                   ;; See init-path warm-opts: settle total-h
-                                   ;; via render bumps as the background warm
-                                   ;; lands, so a session/workspace switch
-                                   ;; doesn't jump the thumb on first scroll.
-                                   :on-warm #(state/dispatch [:bump-render-version])}]
+           (let [scrollbar-drag-offset (volatile! nil)
+                 ;; `click-action-fired?` is set to true when the
+                 ;; CLICK_DOWN branch already handled a click region
+                 ;; (copy / link / image). The CLICK_RELEASE branch
+                 ;; reads it to decide whether to fire the fallback
+                 ;; release-only path - needed for terminals that
+                 ;; deliver clicks as a single CLICK_RELEASE event
+                 ;; (X10-style mouse mode, some SSH-tunnelled
+                 ;; setups). Without this guard a normal
+                 ;; DOWN+RELEASE pair would double-fire (open the link twice, copy twice).
+                 click-action-fired? (volatile! false)
+                 ;; App-side drag selection. Native terminal selection is
+                 ;; unavailable while mouse reporting is enabled, so Vis tracks
+                 ;; drag coordinates, highlights the range during render, then
+                 ;; copies the visible text when the button is released.
+                 mouse-selection-anchor (volatile! nil)
+                 mouse-selection-focus (volatile! nil)
+                 mouse-selection-source (volatile! nil)
+                 mouse-selection-line? (volatile! false)
+                 last-selection-click (volatile! nil)
+                 ;; `paste-buffer` accumulates every keystroke received
+                 ;; between `paste-start?` and `paste-end?`. We treat
+                 ;; the whole block as one paste - newlines included -
+                 ;; so a multi-line clipboard payload doesn't fire
+                 ;; `KeyType/Enter` -> send mid-paste. The buffer is
+                 ;; kept in a StringBuilder so accumulation stays
+                 ;; allocation-cheap even for kilobyte pastes.
+                 paste-buffer (volatile! nil)
+                 ;; One-event stash used by wheel coalescing. When
+                 ;; `read-chat-input!` drains wheel floods and sees a
+                 ;; non-wheel event, it parks it here for the next loop
+                 ;; iteration instead of dropping it.
+                 pending-input-key (volatile! [])
+                 ;; Running wheel-momentum for `scroll/merge-wheel-delta`: one pair —
+                 ;; momentum plus the wall-clock ms of the LAST wheel event — PER
+                 ;; SCROLLABLE SURFACE. A slow macOS trackpad emits a stream of
+                 ;; sign-flipping inertia tail events; smoothing here (the input
+                 ;; layer) absorbs the spurious reversals so the viewport can't
+                 ;; bounce up/down mid-gesture. Decay is TIME-based
+                 ;; (scroll/momentum-hold-ms) and computed at USE time from the
+                 ;; timestamp — a poll-based decay died between two events of a slow
+                 ;; trackpad inertia tail — and the `(nil? key)` branch only releases
+                 ;; the lock once its window has expired. The band keeps its OWN pair
+                 ;; because a gesture crossing its edge must neither carry the
+                 ;; transcript's acceleration into a compact table nor reach the pane
+                 ;; unsmoothed.
+                 scroll-momentum (volatile! 0)
+                 last-wheel-at-ms (volatile! 0)
+                 live-scroll-momentum (volatile! 0)
+                 last-live-wheel-at-ms (volatile! 0)
+                 warm-session-render!
+                 (fn [{:keys [id history]}]
+                   (virtual/stop-rewarm!)
+                   (when (seq history)
+                     (let [size (screen-size screen)
+                           cols (.getColumns size)
+                           bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
+                           settings (or (:settings @state/app-db) {})
+                           warm-opts {:session-id id
+                                      :detail-expansions (:detail-expansions @state/app-db)
+                                      ;; See init-path warm-opts: settle total-h
+                                      ;; via render bumps as the background warm
+                                      ;; lands, so a session/workspace switch
+                                      ;; doesn't jump the thumb on first scroll.
+                                      :on-warm #(state/dispatch [:bump-render-version])}]
 
-                    (virtual/pre-warm-recent! history
-                                              bubble-w
-                                              settings
-                                              (assoc warm-opts
-                                                :count prewarm-sync-tail-count
-                                                :budget-ms prewarm-sync-budget-ms))
-                    (virtual/rewarm! history bubble-w settings warm-opts))))
-              ;; Open (or focus) a TAB for this session. Unlike the old
-              ;; in-place install, this NEVER resets the active tab — so a
-              ;; turn streaming in another tab keeps running. Each open
-              ;; session keeps its own title listener (so background
-              ;; auto-titles land live); prewarm re-binds to the front tab.
-              ensure-session-live!
-              (fn [id]
-                (let [sid (str id)]
-                  (when-not (get @session-live-listeners sid)
-                    (vswap! session-live-listeners assoc sid (subscribe-session-live! id)))))
-              ;; Pre-allocate NAME-ONLY member tabs AND wire each one's PERSISTENT
-              ;; event subscription up front. A pending tab that is never focused
-              ;; this session otherwise has NO subscription until first focus
-              ;; (hydrate-pending-tab! -> open-session-tab! -> ensure-session-live!),
-              ;; so a turn started from a SIBLING (the app / another TUI) on that
-              ;; session never reaches its idle tab ("not subscribed, turn not live").
-              ;; ensure-session-live! is idempotent and the mux shares one socket,
-              ;; so subscribing every launch-project member here is cheap.
-              preallocate-project-tabs! (fn [specs]
-                                          (when (seq specs)
-                                            (state/dispatch [:preallocate-project-tabs specs])
-                                            (doseq [{:keys [session-id]} specs]
-                                              (when session-id (ensure-session-live! session-id)))))
-              open-session-tab!
-              (fn [{:keys [id history] :as session-result} notify?]
-                (when (and id session-result)
-                  (state/dispatch [:open-session-tab
-                                   (select-keys session-result
-                                                [:id :status :current-turn-id :history-cursor])
-                                   history (session-workspace id)])
-                  ;; `:open-session-tab` already reset `:title nil`. Only
-                  ;; push a title when the DB actually has one — mirror
-                  ;; refresh-active-tab! and NEVER overwrite with "" (a
-                  ;; race where the background auto-title future hasn't
-                  ;; persisted yet would otherwise blank the tab).
-                  (when-let [title (session-db-title id)]
-                    (state/dispatch [:set-title title]))
-                  (ensure-session-live! id)
-                  ;; Attach + stream a turn already IN FLIGHT for this session so its
-                  ;; tab shows live progress instead of frozen history.
-                  (state/dispatch [:attach-running-turn (state/tab-id-for-session @state/app-db id)
-                                   session-result])
-                  (warm-session-render! session-result)
-                  (persist-tabs!)
-                  (when notify?
-                    (vis/notify! "Opened session" :level :success :ttl-ms copy-success-ttl-ms))))
-              ;; PENDING (name-only, pre-allocated — see restore-project-tabs!)
-              ;; tabs hydrate on FIRST FOCUS: one transcript fetch on a worker,
-              ;; then the normal open path (`:open-session-tab`'s pending
-              ;; branch) binds + focuses it. The volatile guards duplicate
-              ;; fetches while one is in flight; polled from the input loop.
-              hydrating-tabs* (volatile! #{})
-              hydrate-pending-tab!
-              (fn []
-                (let [db @state/app-db
-                      active-id (:active-tab-id db)
-                      entry (when active-id (some #(when (= (:id %) active-id) %) (:tabs db)))
-                      tab-id (:id entry)
-                      sid (:session-id entry)]
+                       (virtual/pre-warm-recent! history
+                                                 bubble-w
+                                                 settings
+                                                 (assoc warm-opts
+                                                   :count prewarm-sync-tail-count
+                                                   :budget-ms prewarm-sync-budget-ms))
+                       (virtual/rewarm! history bubble-w settings warm-opts))))
+                 ;; Open (or focus) a TAB for this session. Unlike the old
+                 ;; in-place install, this NEVER resets the active tab — so a
+                 ;; turn streaming in another tab keeps running. Each open
+                 ;; session keeps its own title listener (so background
+                 ;; auto-titles land live); prewarm re-binds to the front tab.
+                 ensure-session-live!
+                 (fn [id]
+                   (let [sid (str id)]
+                     (when-not (get @session-live-listeners sid)
+                       (vswap! session-live-listeners assoc sid (subscribe-session-live! id)))))
+                 ;; Pre-allocate NAME-ONLY member tabs AND wire each one's PERSISTENT
+                 ;; event subscription up front. A pending tab that is never focused
+                 ;; this session otherwise has NO subscription until first focus
+                 ;; (hydrate-pending-tab! -> open-session-tab! -> ensure-session-live!),
+                 ;; so a turn started from a SIBLING (the app / another TUI) on that
+                 ;; session never reaches its idle tab ("not subscribed, turn not live").
+                 ;; ensure-session-live! is idempotent and the mux shares one socket,
+                 ;; so subscribing every launch-project member here is cheap.
+                 preallocate-project-tabs! (fn [specs]
+                                             (when (seq specs)
+                                               (state/dispatch [:preallocate-project-tabs specs])
+                                               (doseq [{:keys [session-id]} specs]
+                                                 (when session-id
+                                                   (ensure-session-live! session-id)))))
+                 open-session-tab!
+                 (fn [{:keys [id history] :as session-result} notify?]
+                   (when (and id session-result)
+                     (state/dispatch [:open-session-tab
+                                      (select-keys session-result
+                                                   [:id :status :current-turn-id :history-cursor])
+                                      history (session-workspace id)])
+                     ;; `:open-session-tab` already reset `:title nil`. Only
+                     ;; push a title when the DB actually has one — mirror
+                     ;; refresh-active-tab! and NEVER overwrite with "" (a
+                     ;; race where the background auto-title future hasn't
+                     ;; persisted yet would otherwise blank the tab).
+                     (when-let [title (session-db-title id)]
+                       (state/dispatch [:set-title title]))
+                     (ensure-session-live! id)
+                     ;; Attach + stream a turn already IN FLIGHT for this session so its
+                     ;; tab shows live progress instead of frozen history.
+                     (state/dispatch [:attach-running-turn
+                                      (state/tab-id-for-session @state/app-db id) session-result])
+                     (warm-session-render! session-result)
+                     (persist-tabs!)
+                     (when notify?
+                       (vis/notify! "Opened session" :level :success :ttl-ms copy-success-ttl-ms))))
+                 ;; PENDING (name-only, pre-allocated — see restore-project-tabs!)
+                 ;; tabs hydrate on FIRST FOCUS: one transcript fetch on a worker,
+                 ;; then the normal open path (`:open-session-tab`'s pending
+                 ;; branch) binds + focuses it. The volatile guards duplicate
+                 ;; fetches while one is in flight; polled from the input loop.
+                 hydrating-tabs* (volatile! #{})
+                 hydrate-pending-tab!
+                 (fn []
+                   (let [db @state/app-db
+                         active-id (:active-tab-id db)
+                         entry (when active-id (some #(when (= (:id %) active-id) %) (:tabs db)))
+                         tab-id (:id entry)
+                         sid (:session-id entry)]
 
-                  (when (and (:pending? entry) sid (not (contains? @hydrating-tabs* tab-id)))
-                    (vswap! hydrating-tabs* conj tab-id)
-                    ;; Spinner + Enter-queues-into-:pending-sends while it loads.
-                    (state/dispatch [:mark-tab-loading tab-id true])
-                    (vis/worker-future "tui-hydrate-pending-tab"
-                                       (fn []
-                                         (try (if-let [sr (try (chat/resume-session sid)
-                                                               (catch Throwable _ nil))]
-                                                (open-session-tab! sr false)
-                                                (do (state/dispatch [:tab-hydration-failed tab-id])
-                                                    (vis/notify! "Session no longer exists"
-                                                                 :level :warn
-                                                                 :ttl-ms copy-success-ttl-ms)))
-                                              (finally (vswap! hydrating-tabs* disj tab-id))))))))
-              start-new-session!
-              ;; Ctrl+N / `+` / `/new-session`. NEVER blocks the input thread on
-              ;; the cold env/runtime build: a warm pool session opens instantly,
-              ;; and on a pool MISS we open an optimistic "Starting…" placeholder
-              ;; tab now and bind the real session once the background build lands
-              ;; (chat/make-session-async). Text typed meanwhile queues into the
-              ;; tab's `:pending-sends` and drains the moment it is bound.
-              (fn [config seed-text draft]
-                (let [seed (some-> seed-text
-                                   str/trim
-                                   not-empty)
-                      result (chat/make-session-async config)
-                      build-id (str (java.util.UUID/randomUUID))
-                      fut (:building result)]
+                     (when (and (:pending? entry) sid (not (contains? @hydrating-tabs* tab-id)))
+                       (vswap! hydrating-tabs* conj tab-id)
+                       ;; Spinner + Enter-queues-into-:pending-sends while it loads.
+                       (state/dispatch [:mark-tab-loading tab-id true])
+                       (vis/worker-future
+                         "tui-hydrate-pending-tab"
+                         (fn []
+                           (try (if-let [sr (try (chat/resume-session sid) (catch Throwable _ nil))]
+                                  (open-session-tab! sr false)
+                                  (do (state/dispatch [:tab-hydration-failed tab-id])
+                                      (vis/notify! "Session no longer exists"
+                                                   :level :warn
+                                                   :ttl-ms copy-success-ttl-ms)))
+                                (finally (vswap! hydrating-tabs* disj tab-id))))))))
+                 start-new-session!
+                 ;; Ctrl+N / `+` / `/new-session`. NEVER blocks the input thread on
+                 ;; the cold env/runtime build: a warm pool session opens instantly,
+                 ;; and on a pool MISS we open an optimistic "Starting…" placeholder
+                 ;; tab now and bind the real session once the background build lands
+                 ;; (chat/make-session-async). Text typed meanwhile queues into the
+                 ;; tab's `:pending-sends` and drains the moment it is bound.
+                 (fn [config seed-text]
+                   (let [seed (some-> seed-text
+                                      str/trim
+                                      not-empty)
+                         result (chat/make-session-async config)
+                         build-id (str (java.util.UUID/randomUUID))
+                         fut (:building result)]
 
-                  (state/dispatch [:open-building-tab build-id])
-                  (when seed (state/dispatch [:send-message seed]))
-                  (vis/worker-future
-                    "tui-new-session-bind"
-                    (fn []
-                      (try
-                        (let [{:keys [id history]} @fut]
-                          (ensure-session-live! id)
-                          ;; `draft` = `{:label … :clean? …}`: the user asked this session to
-                          ;; start in an isolated copy, so fork BEFORE the tab binds. The fork
-                          ;; is a SECOND call by construction (the gateway forks THROUGH the
-                          ;; session that will own the draft); when it throws, the catch below
-                          ;; reports it and no tab binds — nobody is silently dropped into
-                          ;; trunk, the one place they said not to work.
-                          (when draft
-                            (vis/gateway-create-draft! id (:label draft) (boolean (:clean? draft))))
-                          (state/dispatch [:bind-built-session build-id {:id id} history
-                                           (session-workspace id)])
-                          (persist-tabs!)
-                          (vis/notify! (if draft
-                                         (str "Opened session in draft '" (:label draft) "'")
-                                         "Opened session")
-                                       :level :success
-                                       :ttl-ms copy-success-ttl-ms))
-                        (catch Throwable e
-                          (vis/notify! (str "Failed to open new session: " (ex-message e))
-                                       :level :error
-                                       :ttl-ms copy-success-ttl-ms)))))))
-              refresh-active-tab-impl!
-              (fn [notify?]
-                (let [db @state/app-db]
-                  (when-let [id (current-session-id)]
-                    (when-let [title (session-db-title id)]
-                      (state/dispatch [:set-title title]))
-                    (ensure-session-live! id)
-                    (warm-session-render! {:id id :history (:messages db)})))
-                (persist-tabs!)
-                (when notify?
-                  (vis/notify! "Switched workspace" :level :success :ttl-ms copy-success-ttl-ms)))
-              ;; Tab/workspace switches only need to REPAINT — already done by the
-              ;; `:select-tab-index` dispatch's render-version bump. The title
-              ;; refresh + bubble warm + persist are settle-after work; running them
-              ;; inline made every switch block the INPUT THREAD on a gateway title
-              ;; fetch + a <=200ms warm-worker join + a <=120ms sync warm. Offload to
-              ;; ONE coalescing worker (a held Tab collapses to a single trailing
-              ;; pass) so switching is instant regardless of gateway load / history
-              ;; size. The worker reads app-db fresh, so it always refreshes the tab
-              ;; that is active WHEN it runs.
-              refresh-active-tab!
-              (fn [notify?]
-                (when notify? (reset! refresh-active-tab-notify* true))
-                (reset! refresh-active-tab-pending* true)
-                (when (compare-and-set! refresh-active-tab-running* false true)
-                  (vis/worker-future
-                    "tui-refresh-active-tab"
-                    (fn []
-                      (loop []
-
-                        (reset! refresh-active-tab-pending* false)
-                        (let [notify? (first (reset-vals! refresh-active-tab-notify* false))]
-                          (try (refresh-active-tab-impl! (boolean notify?))
-                               (catch Throwable _ nil)))
-                        (if @refresh-active-tab-pending*
-                          (recur)
-                          (do (reset! refresh-active-tab-running* false)
-                              (when (and @refresh-active-tab-pending*
-                                         (compare-and-set! refresh-active-tab-running* false true))
-                                (recur)))))))))
-              switch-session!
-              (fn [choice]
-                ;; No `:loading?` guard: opening or focusing a tab never
-                ;; disturbs a turn running in another tab, so there's
-                ;; nothing to wait for. Every action lands on a tab.
-                (cond
-                  (= :new (:action choice))
-                  (when-let [config (:config @state/app-db)]
-                    (start-new-session! config (:seed-text choice) (:draft choice)))
-                  (= :fork (:action choice))
-                  (if-let [current-id (or (:id choice) (current-session-id))]
-                    (let [db (vis/db-info)
-                          ;; A whole-session fork must become a NEW independent
-                          ;; session (its own soul -> its own tab). db-fork-session!
-                          ;; keeps the SAME soul (a prompt/model branch surfaced in
-                          ;; the fork tree), which can NEVER open as a distinct tab:
-                          ;; resume-session resolves it back to the source soul and
-                          ;; :open-session-tab just refocuses the source tab. So fork
-                          ;; THROUGH the last turn instead - exactly like fork-at-turn
-                          ;; with no picker - which mints a fresh soul + copies every
-                          ;; turn.
-                          turns (try (vis/db-list-session-turns db current-id)
-                                     (catch Throwable _ nil))
-                          through-turn-id (:id (last turns))]
-
-                      (if through-turn-id
-                        (let [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
-                                         (catch Throwable _ nil))
-                              fork-soul-id (try (vis/db-fork-session-at-turn! db
-                                                                              current-id
-                                                                              {:workspace-id ws-id
-                                                                               :through-turn-id
-                                                                               through-turn-id})
-                                                (catch Throwable _ nil))]
-
-                          (if fork-soul-id
-                            (if-let [session-result (chat/resume-session fork-soul-id)]
-                              (do (open-session-tab! session-result false)
-                                  (vis/notify! "Forked current session"
-                                               :level :success
-                                               :ttl-ms copy-success-ttl-ms))
-                              (vis/notify! "Forked, but failed to reload session"
-                                           :level :warn
-                                           :ttl-ms copy-success-ttl-ms))
-                            (vis/notify! "Could not fork current session"
-                                         :level :warn
-                                         :ttl-ms copy-success-ttl-ms)))
-                        (vis/notify! "No turns to fork from yet"
-                                     :level :warn
-                                     :ttl-ms copy-success-ttl-ms)))
-                    (vis/notify! "No current session to fork"
-                                 :level :warn
-                                 :ttl-ms copy-success-ttl-ms))
-                  (= :fork-at-turn (:action choice))
-                  (if-let [current-id (or (:id choice) (current-session-id))]
-                    (let [db (vis/db-info)
-                          turns (try (vis/db-list-session-turns db current-id)
-                                     (catch Throwable _ nil))]
-
-                      (if (seq turns)
-                        ;; Palette + fuzzy filter over the session's turns; the
-                        ;; pick is the LAST turn the fork keeps (copies THROUGH).
-                        (when-let [turn-id (:turn-id (with-dialog-lock
-                                                       #(dlg/searchable-select!
-                                                          screen
-                                                          "Fork session at…"
-                                                          (dlg/fork-turn-items turns)
-                                                          {:placeholder "Filter turns…"
-                                                           :enter-label "fork here"})))]
-                          (let [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
-                                           (catch Throwable _ nil))
-                                fork-soul-id (try (vis/db-fork-session-at-turn!
-                                                    db
-                                                    current-id
-                                                    {:workspace-id ws-id :through-turn-id turn-id})
-                                                  (catch Throwable _ nil))]
-
-                            (if fork-soul-id
-                              (if-let [session-result (chat/resume-session fork-soul-id)]
-                                (do (open-session-tab! session-result false)
-                                    (vis/notify! "Forked session at turn"
-                                                 :level :success
-                                                 :ttl-ms copy-success-ttl-ms))
-                                (vis/notify! "Forked, but failed to reload session"
-                                             :level :warn
+                     (state/dispatch [:open-building-tab build-id])
+                     (when seed (state/dispatch [:send-message seed]))
+                     (vis/worker-future
+                       "tui-new-session-bind"
+                       (fn []
+                         (try (let [{:keys [id history]} @fut]
+                                (ensure-session-live! id)
+                                (state/dispatch [:bind-built-session build-id {:id id} history
+                                                 (session-workspace id)])
+                                (persist-tabs!)
+                                (vis/notify! "Opened session"
+                                             :level :success
                                              :ttl-ms copy-success-ttl-ms))
-                              (vis/notify! "Could not fork session at turn"
-                                           :level :warn
-                                           :ttl-ms copy-success-ttl-ms))))
-                        (vis/notify! "No turns to fork from yet"
-                                     :level :warn
-                                     :ttl-ms copy-success-ttl-ms)))
-                    (vis/notify! "No current session to fork"
-                                 :level :warn
-                                 :ttl-ms copy-success-ttl-ms))
-                  (= :delete (:action choice))
-                  (when-let [target-id (:id choice)]
-                    (when (with-dialog-lock
-                            #(dlg/confirm-dialog!
-                               screen
-                               "Delete session"
-                               "Permanently delete this session? This cannot be undone."))
-                      (let [current? (= (str target-id) (current-session-id))]
-                        (try (vis/gateway-close-session! target-id) (catch Throwable _ nil))
-                        (if current?
-                          ;; Deleting the active session: drop into a fresh tab.
-                          (when-let [config (:config @state/app-db)]
-                            (let [old-tab-id (:active-tab-id @state/app-db)]
-                              (open-session-tab! (chat/make-session config) true)
-                              (when old-tab-id (state/dispatch [:close-tab old-tab-id]))))
-                          ;; Non-current: if it's open in a background tab, close
-                          ;; that now-dangling tab so it doesn't linger.
-                          (when-let [tab-id (state/tab-id-for-session @state/app-db target-id)]
-                            (state/dispatch [:close-tab tab-id])))
-                        (vis/notify! "Deleted session"
-                                     :level :success
-                                     :ttl-ms copy-success-ttl-ms))))
-                  ;; Ctrl+B in the navigator → move a session into a
-                  ;; persistent Project. Pick an existing one,
-                  ;; make a new one, or remove it from its project.
-                  (= :project (:action choice))
-                  (when-let [target-id (:id choice)]
-                    (let [projects (try (vis/gateway-list-projects) (catch Throwable _ nil))
-                          items
-                          (vec (concat
-                                 (mapv (fn [pr]
-                                         {:id (get pr "id")
-                                          :label
-                                          (str (get pr "name") "  (" (get pr "session_count") ")")})
-                                       projects)
-                                 [{:id ::new-project :label "＋ New project…"}
-                                  {:id ::remove-project :label "✗ Remove from project"}]))
-                          pick (with-dialog-lock #(dlg/searchable-select!
-                                                    screen
-                                                    "Move session to project…"
-                                                    items
-                                                    {:placeholder "Type to filter projects…"
-                                                     :enter-label "move"}))]
+                              (catch Throwable e
+                                (vis/notify! (str "Failed to open new session: " (ex-message e))
+                                             :level :error
+                                             :ttl-ms copy-success-ttl-ms)))))))
+                 refresh-active-tab-impl! (fn [notify?]
+                                            (let [db @state/app-db]
+                                              (when-let [id (current-session-id)]
+                                                (when-let [title (session-db-title id)]
+                                                  (state/dispatch [:set-title title]))
+                                                (ensure-session-live! id)
+                                                (warm-session-render! {:id id
+                                                                       :history (:messages db)})))
+                                            (persist-tabs!)
+                                            (when notify?
+                                              (vis/notify! "Switched workspace"
+                                                           :level :success
+                                                           :ttl-ms copy-success-ttl-ms)))
+                 ;; Tab/workspace switches only need to REPAINT — already done by the
+                 ;; `:select-tab-index` dispatch's render-version bump. The title
+                 ;; refresh + bubble warm + persist are settle-after work; running them
+                 ;; inline made every switch block the INPUT THREAD on a gateway title
+                 ;; fetch + a <=200ms warm-worker join + a <=120ms sync warm. Offload to
+                 ;; ONE coalescing worker (a held Tab collapses to a single trailing
+                 ;; pass) so switching is instant regardless of gateway load / history
+                 ;; size. The worker reads app-db fresh, so it always refreshes the tab
+                 ;; that is active WHEN it runs.
+                 refresh-active-tab!
+                 (fn [notify?]
+                   (when notify? (reset! refresh-active-tab-notify* true))
+                   (reset! refresh-active-tab-pending* true)
+                   (when (compare-and-set! refresh-active-tab-running* false true)
+                     (vis/worker-future
+                       "tui-refresh-active-tab"
+                       (fn []
+                         (loop []
 
-                      (when pick
-                        (let [pid (cond (= ::new-project (:id pick))
-                                        (let [nm (with-dialog-lock #(dlg/text-input-dialog!
-                                                                      screen
-                                                                      "New project"
-                                                                      "Project name"))]
-                                          (when-not (str/blank? (str nm))
-                                            (get (try (vis/gateway-create-project! {:name nm})
-                                                      (catch Throwable _ nil))
-                                                 "id")))
-                                        (= ::remove-project (:id pick)) nil
-                                        :else (:id pick))]
-                          (when (or (= ::remove-project (:id pick)) pid)
-                            (try (vis/gateway-assign-project! target-id pid)
-                                 (catch Throwable _ nil))
-                            (vis/notify! (if pid
-                                           "Moved session to project"
-                                           "Removed session from project")
-                                         :level :success
-                                         :ttl-ms copy-success-ttl-ms))))))
-                  ;; Shift/Alt+↑/↓ in the navigator → move THIS project
-                  ;; session up/down within its project's manual order
-                  ;; (movable tabs), persisted cross-channel via the gateway.
-                  (= :reorder (:action choice))
-                  (when-let [target-id (:id choice)]
-                    (let [summaries (tui-session-summaries)
-                          target (some #(when (= (str (get % "id")) (str target-id)) %) summaries)
-                          pid (get target "project_id")
-                          ordered (when pid
-                                    (->> summaries
-                                         (filter #(= (str (get % "project_id")) (str pid)))
-                                         (sort-by #(or (get % "project_position") Long/MAX_VALUE))
-                                         (mapv #(str (get % "id")))))
-                          idx (when ordered (.indexOf ^java.util.List ordered (str target-id)))
-                          swap-with
-                          (when (and idx (>= (long idx) 0))
-                            (case (:dir choice)
-                              :up
-                              (when (> (long idx) 0) (dec (long idx)))
-
-                              :down
-                              (when (< (long idx) (dec (count ordered))) (inc (long idx)))
-
-                              nil))
-                          reordered (when swap-with
-                                      (assoc ordered
-                                        idx (nth ordered swap-with)
-                                        swap-with (nth ordered idx)))]
-
-                      (when (and pid reordered)
-                        (try (vis/gateway-reorder-project-sessions! pid reordered)
-                             (catch Throwable _ nil))
-                        (vis/notify! "Reordered session"
-                                     :level :success
-                                     :ttl-ms copy-success-ttl-ms))))
-                  (= :switch (:action choice))
-                  ;; Focus the tab already bound to this session, or open a
-                  ;; new one — `:open-session-tab` decides. Switching to a
-                  ;; session whose turn is mid-flight just brings its tab to
-                  ;; the front; the turn was never paused.
-                  (let [target-id (:id choice)]
-                    (when-not (= (str target-id) (current-session-id))
-                      (if-let [session-result (chat/resume-session target-id)]
-                        (open-session-tab! session-result true)
-                        (vis/notify! "Session no longer exists"
-                                     :level :warn
-                                     :ttl-ms copy-success-ttl-ms))))))
-              ;; `/clear` (a `:slash/ui {:kind :clear-session}` slash):
-              ;; tear down THIS session (turns + soul + workspace links)
-              ;; and open a fresh empty one in its place, in the SAME tab
-              ;; slot (open a fresh focused tab,
-              ;; drop the old one) so you keep working right where you were.
-              clear-session! (fn []
-                               (when-not (:dialog-open? @state/app-db)
-                                 (when-let [config (:config @state/app-db)]
-                                   (let [old-id (current-session-id)
-                                         old-tab-id (:active-tab-id @state/app-db)]
-
-                                     (open-session-tab! (chat/make-session config) true)
-                                     (when old-tab-id (state/dispatch [:close-tab old-tab-id]))
-                                     (when old-id
-                                       (try (vis/gateway-close-session! old-id)
-                                            (catch Throwable _ nil)))
-                                     (vis/notify! "Cleared session"
-                                                  :level :success
-                                                  :ttl-ms copy-success-ttl-ms)))))
-              ;; Companion parity ("Start the session in"): a new session may begin in an
-              ;; isolated COPY of the project instead of the project itself. The dirty copy
-              ;; is the interesting one — the clone carries the uncommitted work with it, so
-              ;; risky work starts from the tree as it actually is, not from HEAD.
-              start-session-in!
-              (fn start-session-in! []
-                (when-not (:dialog-open? @state/app-db)
-                  (state/dispatch [:close-overlays])
-                  (when-let [choice (with-dialog-lock
-                                      #(dlg/start-in-transient! screen (state/band-anchor)))]
-                    (if (= :trunk (:start-in choice))
-                      (do (state/dispatch [:reset-input]) (switch-session! {:action :new}))
-                      (when-let [draft (:draft choice)]
-                        (state/dispatch [:reset-input])
-                        (switch-session! {:action :new :draft draft}))))))
-              ;; Canonical gateway draft picker (C-x e + palette "Switch Draft…").
-              ;; It is intentionally mutation-safe: the current location is selected
-              ;; first (Enter is a no-op), trunk stashes, and another draft performs
-              ;; the gateway's non-destructive stash-then-resume switch. Never switch
-              ;; roots under an in-flight turn.
-              show-drafts!
-              (fn show-drafts!
-                ;; `pressed` is a band command a `/draft …` slash already named;
-                ;; nil opens the band itself (C-x e, the palette).
-                ([] (show-drafts! nil))
-                ([pressed]
-                 (let [db @state/app-db]
+                           (reset! refresh-active-tab-pending* false)
+                           (let [notify? (first (reset-vals! refresh-active-tab-notify* false))]
+                             (try (refresh-active-tab-impl! (boolean notify?))
+                                  (catch Throwable _ nil)))
+                           (if @refresh-active-tab-pending*
+                             (recur)
+                             (do (reset! refresh-active-tab-running* false)
+                                 (when (and
+                                         @refresh-active-tab-pending*
+                                         (compare-and-set! refresh-active-tab-running* false true))
+                                   (recur)))))))))
+                 switch-session!
+                 (fn [choice]
+                   ;; No `:loading?` guard: opening or focusing a tab never
+                   ;; disturbs a turn running in another tab, so there's
+                   ;; nothing to wait for. Every action lands on a tab.
                    (cond
-                     (or (:loading? db) (seq (:pending-sends db)))
-                     (vis/notify!
-                       "Wait for the running or queued turn to finish before managing drafts"
-                       :level :warn
-                       :ttl-ms status-error-ttl-ms)
-                     (:dialog-open? db) nil
-                     :else
-                     (if-let [sid (current-session-id)]
-                       (try
-                         (state/dispatch [:close-overlays])
-                         (when (get-in @state/app-db [:search :active?])
-                           (state/dispatch [:search-clear]))
-                         (let [drafts (vis/gateway-list-drafts sid)
-                               ;; The band lives INSIDE this session's frame, under the
-                               ;; transcript it is about — never over the header, always
-                               ;; above the prompt (`state/band-anchor`).
-                               choice
-                               (with-dialog-lock
-                                 #(dlg/draft-transient! screen (state/band-anchor) drafts pressed))]
+                     (= :new (:action choice)) (when-let [config (:config @state/app-db)]
+                                                 (start-new-session! config (:seed-text choice)))
+                     (= :fork (:action choice))
+                     (if-let [current-id (or (:id choice) (current-session-id))]
+                       (let [db (vis/db-info)
+                             ;; A whole-session fork must become a NEW independent
+                             ;; session (its own soul -> its own tab). db-fork-session!
+                             ;; keeps the SAME soul (a prompt/model branch surfaced in
+                             ;; the fork tree), which can NEVER open as a distinct tab:
+                             ;; resume-session resolves it back to the source soul and
+                             ;; :open-session-tab just refocuses the source tab. So fork
+                             ;; THROUGH the last turn instead - exactly like fork-at-turn
+                             ;; with no picker - which mints a fresh soul + copies every
+                             ;; turn.
+                             turns (try (vis/db-list-session-turns db current-id)
+                                        (catch Throwable _ nil))
+                             through-turn-id (:id (last turns))]
 
-                           (when choice
-                             ;; A queued or externally-started turn can become active while a
-                             ;; modal is open. Check again immediately before changing roots.
-                             (let [db-now @state/app-db]
-                               (if (or (:loading? db-now) (seq (:pending-sends db-now)))
-                                 (vis/notify!
-                                   "A turn started while the draft manager was open; change cancelled"
-                                   :level :warn
-                                   :ttl-ms status-error-ttl-ms)
-                                 (let [{:keys [changed? message workspace]}
-                                       (apply-draft-picker-choice! sid choice)]
-                                   (when changed?
-                                     (state/dispatch [:set-workspace workspace])
-                                     (state/dispatch [:bump-render-version]))
-                                   (vis/notify! message
-                                                :level (if changed? :success :info)
-                                                :ttl-ms copy-success-ttl-ms))))))
-                         (catch Throwable t
-                           ;; Any gateway race is followed by an authoritative re-read, so the
-                           ;; footer never keeps painting a stale draft root.
-                           (try (when-let [workspace (vis/gateway-session-workspace sid)]
-                                  (state/dispatch [:set-workspace workspace])
-                                  (state/dispatch [:bump-render-version]))
-                                (catch Throwable _ nil))
-                           (vis/notify! (str "Could not manage drafts: "
-                                             (or (ex-message t) (str t)))
-                                        :level :error
-                                        :ttl-ms status-error-ttl-ms)))
-                       (vis/notify! "No current session for draft management"
+                         (if through-turn-id
+                           (let [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
+                                            (catch Throwable _ nil))
+                                 fork-soul-id (try (vis/db-fork-session-at-turn!
+                                                     db
+                                                     current-id
+                                                     {:workspace-id ws-id
+                                                      :through-turn-id through-turn-id})
+                                                   (catch Throwable _ nil))]
+
+                             (if fork-soul-id
+                               (if-let [session-result (chat/resume-session fork-soul-id)]
+                                 (do (open-session-tab! session-result false)
+                                     (vis/notify! "Forked current session"
+                                                  :level :success
+                                                  :ttl-ms copy-success-ttl-ms))
+                                 (vis/notify! "Forked, but failed to reload session"
+                                              :level :warn
+                                              :ttl-ms copy-success-ttl-ms))
+                               (vis/notify! "Could not fork current session"
+                                            :level :warn
+                                            :ttl-ms copy-success-ttl-ms)))
+                           (vis/notify! "No turns to fork from yet"
+                                        :level :warn
+                                        :ttl-ms copy-success-ttl-ms)))
+                       (vis/notify! "No current session to fork"
                                     :level :warn
-                                    :ttl-ms status-error-ttl-ms))))))
-              show-sessions!
-              (fn show-sessions! []
-                (when-not (:dialog-open? @state/app-db)
-                  (let [sessions (mapv enrich-session-row (tui-session-summaries))]
-                    (when-let [choice
-                               (with-dialog-lock
-                                 #(dlg/navigator-dialog!
-                                    screen
-                                    {:sessions sessions
-                                     :active-session-id (current-session-id)
-                                     :db @state/app-db
-                                     :search-transcript-ids
-                                     (fn [q]
-                                       (try (into
-                                              {}
-                                              (map
-                                                (fn [{:keys [id rank in-title? in-request? in-reply?
-                                                             in-thinking? request-snippet
-                                                             reply-snippet hits]}]
-                                                  [id
-                                                   {;; The gateway RANKED this row (0 title, 1 request, 2 reply,
-                                                    ;; 3 thinking) — the picker paints that order and never
-                                                    ;; invents one of its own.
-                                                    :rank rank
-                                                    :kind (cond in-title? :title
-                                                                (and in-request? in-reply?) :both
-                                                                in-request? :request
-                                                                in-reply? :reply
-                                                                in-thinking? :thinking
-                                                                :else :both)
-                                                    :request-snippet request-snippet
-                                                    :reply-snippet reply-snippet
-                                                    ;; Every hit the server sent, newest first — the
-                                                    ;; picker previews several per session, not one.
-                                                    :hits hits}]))
-                                              (vis/gateway-search-session-matches q))
-                                            (catch Throwable _ nil)))}))]
-                      (switch-session! choice)
-                      ;; After a delete, reopen the picker on the
-                      ;; refreshed list so pruning can continue.
-                      (when (#{:delete :project :reorder} (:action choice)) (show-sessions!))))))
-              ;; Per-session model PICKER (C-x o + palette "Choose Model…").
-              ;; Mirrors the web footer chooser: a searchable list of every
-              ;; configured model (active one marked) plus a "★ router
-              ;; default" reset. The choice flows through [:set-model …],
-              ;; the SAME per-session pref the C-x m cycle writes.
-              show-model-picker!
-              (fn show-model-picker! []
-                (when-not (:dialog-open? @state/app-db)
-                  (let [sid (current-session-id)
-                        current (when sid
-                                  (try (vis/gateway-session-model sid) (catch Throwable _ nil)))]
+                                    :ttl-ms copy-success-ttl-ms))
+                     (= :fork-at-turn (:action choice))
+                     (if-let [current-id (or (:id choice) (current-session-id))]
+                       (let [db (vis/db-info)
+                             turns (try (vis/db-list-session-turns db current-id)
+                                        (catch Throwable _ nil))]
 
-                    (when-let [choice (with-dialog-lock #(dlg/model-picker! screen current))]
-                      (if (:reset? choice)
-                        (state/dispatch [:set-model nil nil])
-                        (state/dispatch [:set-model (:provider choice) (:model choice)]))))))
-              ;; Show the launch PROJECT's OTHER member sessions as NAME-ONLY
-              ;; tabs immediately (the startup tab already resumed one). A
-              ;; project IS a tab set: every member's tab appears in the strip
-              ;; up front — title only, NO transcript fetch, NO focus change —
-              ;; and its transcript hydrates lazily on first focus (see
-              ;; hydrate-pending-tab!). One list-sessions scan, zero resumes.
-              restore-project-tabs!
-              (fn restore-project-tabs! []
-                (when-let [pid (ensure-active-project-id!)]
-                  (vis/worker-future
-                    "tui-restore-project-tabs"
-                    (fn []
-                      (try (let [root (launch-root)
-                                 specs (mapv (fn [s]
-                                               (let [title (str (get s "title"))]
-                                                 {:session-id (str (get s "id"))
-                                                  :label (when-not (str/blank? title) title)
-                                                  :root root}))
-                                             (project-member-sessions pid))]
+                         (if (seq turns)
+                           ;; Palette + fuzzy filter over the session's turns; the
+                           ;; pick is the LAST turn the fork keeps (copies THROUGH).
+                           (when-let [turn-id (:turn-id (with-dialog-lock
+                                                          #(dlg/searchable-select!
+                                                             screen
+                                                             "Fork session at…"
+                                                             (dlg/fork-turn-items turns)
+                                                             {:placeholder "Filter turns…"
+                                                              :enter-label "fork here"})))]
+                             (let [ws-id (try (:id (vis/workspace-ensure-workspace! db {}))
+                                              (catch Throwable _ nil))
+                                   fork-soul-id (try (vis/db-fork-session-at-turn!
+                                                       db
+                                                       current-id
+                                                       {:workspace-id ws-id
+                                                        :through-turn-id turn-id})
+                                                     (catch Throwable _ nil))]
 
-                             (when (seq specs)
-                               (preallocate-project-tabs! specs)
-                               ;; The eagerly-resumed startup tab was minted BEFORE
-                               ;; the member list was known, so it sits at the head
-                               ;; of the strip whatever its stored slot. Re-seat the
-                               ;; member tabs into `project_position` order, THEN
-                               ;; persist — the persisted order is the restored
-                               ;; order, so a relaunch is a fixed point.
-                               (state/dispatch [:order-project-tabs (mapv :session-id specs)])
-                               (persist-tabs!)))
-                           (catch Throwable _ nil))))))
-              ;; C-x w — switch the ACTIVE project (its tab set). Pick a
-              ;; project, re-point `active-project-id*`, and open that
-              ;; project's member sessions as tabs. A project IS a tab set.
-              switch-project!
-              (fn switch-project! []
-                (when-not (:dialog-open? @state/app-db)
-                  (let [projects (try (vis/gateway-list-projects) (catch Throwable _ []))
-                        cur (str @active-project-id*)
-                        items (mapv (fn [p]
-                                      (let [current? (= cur (str (get p "id")))
-                                            session-count (get p "session_count")
-                                            sessions-label
-                                            (when session-count
-                                              (str session-count
-                                                   " "
-                                                   (if (= 1 session-count) "session" "sessions")))]
+                               (if fork-soul-id
+                                 (if-let [session-result (chat/resume-session fork-soul-id)]
+                                   (do (open-session-tab! session-result false)
+                                       (vis/notify! "Forked session at turn"
+                                                    :level :success
+                                                    :ttl-ms copy-success-ttl-ms))
+                                   (vis/notify! "Forked, but failed to reload session"
+                                                :level :warn
+                                                :ttl-ms copy-success-ttl-ms))
+                                 (vis/notify! "Could not fork session at turn"
+                                              :level :warn
+                                              :ttl-ms copy-success-ttl-ms))))
+                           (vis/notify! "No turns to fork from yet"
+                                        :level :warn
+                                        :ttl-ms copy-success-ttl-ms)))
+                       (vis/notify! "No current session to fork"
+                                    :level :warn
+                                    :ttl-ms copy-success-ttl-ms))
+                     (= :delete (:action choice))
+                     (when-let [target-id (:id choice)]
+                       (when (with-dialog-lock
+                               #(dlg/confirm-dialog!
+                                  screen
+                                  "Delete session"
+                                  "Permanently delete this session? This cannot be undone."))
+                         (let [current? (= (str target-id) (current-session-id))]
+                           (try (vis/gateway-close-session! target-id) (catch Throwable _ nil))
+                           (if current?
+                             ;; Deleting the active session: drop into a fresh tab.
+                             (when-let [config (:config @state/app-db)]
+                               (let [old-tab-id (:active-tab-id @state/app-db)]
+                                 (open-session-tab! (chat/make-session config) true)
+                                 (when old-tab-id (state/dispatch [:close-tab old-tab-id]))))
+                             ;; Non-current: if it's open in a background tab, close
+                             ;; that now-dangling tab so it doesn't linger.
+                             (when-let [tab-id (state/tab-id-for-session @state/app-db target-id)]
+                               (state/dispatch [:close-tab tab-id])))
+                           (vis/notify! "Deleted session"
+                                        :level :success
+                                        :ttl-ms copy-success-ttl-ms))))
+                     ;; Ctrl+B in the navigator → move a session into a
+                     ;; persistent Project. Pick an existing one,
+                     ;; make a new one, or remove it from its project.
+                     (= :project (:action choice))
+                     (when-let [target-id (:id choice)]
+                       (let [projects (try (vis/gateway-list-projects) (catch Throwable _ nil))
+                             items (vec (concat (mapv (fn [pr]
+                                                        {:id (get pr "id")
+                                                         :label (str (get pr "name")
+                                                                     "  ("
+                                                                     (get pr "session_count")
+                                                                     ")")})
+                                                      projects)
+                                                [{:id ::new-project :label "＋ New project…"}
+                                                 {:id ::remove-project
+                                                  :label "✗ Remove from project"}]))
+                             pick (with-dialog-lock #(dlg/searchable-select!
+                                                       screen
+                                                       "Move session to project…"
+                                                       items
+                                                       {:placeholder "Type to filter projects…"
+                                                        :enter-label "move"}))]
 
-                                        {:id (get p "id")
-                                         :label (get p "name")
-                                         :hint (str (when current? "current")
-                                                    (when (and current? sessions-label) " · ")
-                                                    sessions-label)}))
-                                    projects)]
+                         (when pick
+                           (let [pid (cond (= ::new-project (:id pick))
+                                           (let [nm (with-dialog-lock #(dlg/text-input-dialog!
+                                                                         screen
+                                                                         "New project"
+                                                                         "Project name"))]
+                                             (when-not (str/blank? (str nm))
+                                               (get (try (vis/gateway-create-project! {:name nm})
+                                                         (catch Throwable _ nil))
+                                                    "id")))
+                                           (= ::remove-project (:id pick)) nil
+                                           :else (:id pick))]
+                             (when (or (= ::remove-project (:id pick)) pid)
+                               (try (vis/gateway-assign-project! target-id pid)
+                                    (catch Throwable _ nil))
+                               (vis/notify! (if pid
+                                              "Moved session to project"
+                                              "Removed session from project")
+                                            :level :success
+                                            :ttl-ms copy-success-ttl-ms))))))
+                     ;; Shift/Alt+↑/↓ in the navigator → move THIS project
+                     ;; session up/down within its project's manual order
+                     ;; (movable tabs), persisted cross-channel via the gateway.
+                     (= :reorder (:action choice))
+                     (when-let [target-id (:id choice)]
+                       (let [summaries (tui-session-summaries)
+                             target (some #(when (= (str (get % "id")) (str target-id)) %)
+                                          summaries)
+                             pid (get target "project_id")
+                             ordered (when pid
+                                       (->> summaries
+                                            (filter #(= (str (get % "project_id")) (str pid)))
+                                            (sort-by #(or (get % "project_position")
+                                                          Long/MAX_VALUE))
+                                            (mapv #(str (get % "id")))))
+                             idx (when ordered (.indexOf ^java.util.List ordered (str target-id)))
+                             swap-with (when (and idx (>= (long idx) 0))
+                                         (case (:dir choice)
+                                           :up
+                                           (when (> (long idx) 0) (dec (long idx)))
 
-                    (when-let [pick (with-dialog-lock #(dlg/searchable-select!
-                                                         screen
-                                                         "Switch project…"
-                                                         items
-                                                         {:placeholder "Type to filter projects…"
-                                                          :enter-label "switch"}))]
-                      (when-let [pid (some-> (:id pick)
-                                             str)]
-                        (when-not (= pid cur)
-                          ;; CAPTURE the OUTGOING project's id + tab order NOW with
-                          ;; cheap in-memory reads, then reconcile+reorder OFF the
-                          ;; input thread — a slow gateway must NEVER stall a switch.
-                          ;; Binding pid+ids here also fixes the race: the async
-                          ;; `persist-tabs!` worker reads `@active-project-id*` LIVE,
-                          ;; so after the reset below it would write the old order
-                          ;; under the NEW project. The captured values pin the
-                          ;; write to the OLD project.
-                          (let [out-pid (ensure-active-project-id!)
-                                out-ids
-                                (mapv :id (:sessions (state/tab-session-snapshot @state/app-db)))]
+                                           :down
+                                           (when (< (long idx) (dec (count ordered)))
+                                             (inc (long idx)))
 
-                            (when (and out-pid (seq out-ids))
-                              (vis/worker-future "tui-persist-tabs-switch"
-                                                 (fn []
-                                                   (persist-tabs-order! out-pid out-ids)))))
-                          (reset! active-project-id* pid)
-                          (let [root (launch-root)
-                                ;; One list-sessions scan — the target project's
-                                ;; members in manual tab order, like startup's
-                                ;; restore-project-tabs!.
-                                members (project-member-sessions pid)
-                                specs (mapv (fn [s]
-                                              (let [title (str (get s "title"))]
-                                                {:session-id (str (get s "id"))
-                                                 :label (when-not (str/blank? title) title)
-                                                 :root root}))
-                                            members)
-                                db @state/app-db
-                                ;; Member sessions ALREADY open KEEP their tabs —
-                                ;; a switch must never eat a live member view.
-                                keep-ids (into #{}
-                                               (keep #(state/tab-id-for-session db
-                                                                                (str (get % "id"))))
+                                           nil))
+                             reordered (when swap-with
+                                         (assoc ordered
+                                           idx (nth ordered swap-with)
+                                           swap-with (nth ordered idx)))]
+
+                         (when (and pid reordered)
+                           (try (vis/gateway-reorder-project-sessions! pid reordered)
+                                (catch Throwable _ nil))
+                           (vis/notify! "Reordered session"
+                                        :level :success
+                                        :ttl-ms copy-success-ttl-ms))))
+                     (= :switch (:action choice))
+                     ;; Focus the tab already bound to this session, or open a
+                     ;; new one — `:open-session-tab` decides. Switching to a
+                     ;; session whose turn is mid-flight just brings its tab to
+                     ;; the front; the turn was never paused.
+                     (let [target-id (:id choice)]
+                       (when-not (= (str target-id) (current-session-id))
+                         (if-let [session-result (chat/resume-session target-id)]
+                           (open-session-tab! session-result true)
+                           (vis/notify! "Session no longer exists"
+                                        :level :warn
+                                        :ttl-ms copy-success-ttl-ms))))))
+                 ;; `/clear` (a `:slash/ui {:kind :clear-session}` slash):
+                 ;; tear down THIS session (turns + soul + workspace links)
+                 ;; and open a fresh empty one in its place, in the SAME tab
+                 ;; slot (open a fresh focused tab,
+                 ;; drop the old one) so you keep working right where you were.
+                 clear-session! (fn []
+                                  (when-not (:dialog-open? @state/app-db)
+                                    (when-let [config (:config @state/app-db)]
+                                      (let [old-id (current-session-id)
+                                            old-tab-id (:active-tab-id @state/app-db)]
+
+                                        (open-session-tab! (chat/make-session config) true)
+                                        (when old-tab-id (state/dispatch [:close-tab old-tab-id]))
+                                        (when old-id
+                                          (try (vis/gateway-close-session! old-id)
+                                               (catch Throwable _ nil)))
+                                        (vis/notify! "Cleared session"
+                                                     :level :success
+                                                     :ttl-ms copy-success-ttl-ms)))))
+                 show-sessions!
+                 (fn show-sessions! []
+                   (when-not (:dialog-open? @state/app-db)
+                     (let [sessions (mapv enrich-session-row (tui-session-summaries))]
+                       (when-let [choice
+                                  (with-dialog-lock
+                                    #(dlg/navigator-dialog!
+                                       screen
+                                       {:sessions sessions
+                                        :active-session-id (current-session-id)
+                                        :db @state/app-db
+                                        :search-transcript-ids
+                                        (fn [q]
+                                          (try (into {}
+                                                     (map
+                                                       (fn [{:keys [id rank in-title? in-request?
+                                                                    in-reply? in-thinking?
+                                                                    request-snippet reply-snippet
+                                                                    hits]}]
+                                                         [id
+                                                          {;; The gateway RANKED this row (0 title, 1 request, 2 reply,
+                                                           ;; 3 thinking) — the picker paints that order and never
+                                                           ;; invents one of its own.
+                                                           :rank rank
+                                                           :kind (cond in-title? :title
+                                                                       (and in-request? in-reply?)
+                                                                       :both
+                                                                       in-request? :request
+                                                                       in-reply? :reply
+                                                                       in-thinking? :thinking
+                                                                       :else :both)
+                                                           :request-snippet request-snippet
+                                                           :reply-snippet reply-snippet
+                                                           ;; Every hit the server sent, newest first — the
+                                                           ;; picker previews several per session, not one.
+                                                           :hits hits}]))
+                                                     (vis/gateway-search-session-matches q))
+                                               (catch Throwable _ nil)))}))]
+                         (switch-session! choice)
+                         ;; After a delete, reopen the picker on the
+                         ;; refreshed list so pruning can continue.
+                         (when (#{:delete :project :reorder} (:action choice)) (show-sessions!))))))
+                 ;; Per-session model PICKER (C-x o + palette "Choose Model…").
+                 ;; Mirrors the web footer chooser: a searchable list of every
+                 ;; configured model (active one marked) plus a "★ router
+                 ;; default" reset. The choice flows through [:set-model …],
+                 ;; the SAME per-session pref the C-x m cycle writes.
+                 show-model-picker!
+                 (fn show-model-picker! []
+                   (when-not (:dialog-open? @state/app-db)
+                     (let [sid (current-session-id)
+                           current (when sid
+                                     (try (vis/gateway-session-model sid) (catch Throwable _ nil)))]
+
+                       (when-let [choice (with-dialog-lock #(dlg/model-picker! screen current))]
+                         (if (:reset? choice)
+                           (state/dispatch [:set-model nil nil])
+                           (state/dispatch [:set-model (:provider choice) (:model choice)]))))))
+                 ;; Show the launch PROJECT's OTHER member sessions as NAME-ONLY
+                 ;; tabs immediately (the startup tab already resumed one). A
+                 ;; project IS a tab set: every member's tab appears in the strip
+                 ;; up front — title only, NO transcript fetch, NO focus change —
+                 ;; and its transcript hydrates lazily on first focus (see
+                 ;; hydrate-pending-tab!). One list-sessions scan, zero resumes.
+                 restore-project-tabs!
+                 (fn restore-project-tabs! []
+                   (when-let [pid (ensure-active-project-id!)]
+                     (vis/worker-future
+                       "tui-restore-project-tabs"
+                       (fn []
+                         (try (let [root (launch-root)
+                                    specs (mapv (fn [s]
+                                                  (let [title (str (get s "title"))]
+                                                    {:session-id (str (get s "id"))
+                                                     :label (when-not (str/blank? title) title)
+                                                     :root root}))
+                                                (project-member-sessions pid))]
+
+                                (when (seq specs)
+                                  (preallocate-project-tabs! specs)
+                                  ;; The eagerly-resumed startup tab was minted BEFORE
+                                  ;; the member list was known, so it sits at the head
+                                  ;; of the strip whatever its stored slot. Re-seat the
+                                  ;; member tabs into `project_position` order, THEN
+                                  ;; persist — the persisted order is the restored
+                                  ;; order, so a relaunch is a fixed point.
+                                  (state/dispatch [:order-project-tabs (mapv :session-id specs)])
+                                  (persist-tabs!)))
+                              (catch Throwable _ nil))))))
+                 ;; C-x w — switch the ACTIVE project (its tab set). Pick a
+                 ;; project, re-point `active-project-id*`, and open that
+                 ;; project's member sessions as tabs. A project IS a tab set.
+                 switch-project!
+                 (fn switch-project! []
+                   (when-not (:dialog-open? @state/app-db)
+                     (let [projects (try (vis/gateway-list-projects) (catch Throwable _ []))
+                           cur (str @active-project-id*)
+                           items (mapv (fn [p]
+                                         (let [current? (= cur (str (get p "id")))
+                                               session-count (get p "session_count")
+                                               sessions-label (when session-count
+                                                                (str session-count
+                                                                     " "
+                                                                     (if (= 1 session-count)
+                                                                       "session"
+                                                                       "sessions")))]
+
+                                           {:id (get p "id")
+                                            :label (get p "name")
+                                            :hint (str (when current? "current")
+                                                       (when (and current? sessions-label) " · ")
+                                                       sessions-label)}))
+                                       projects)]
+
+                       (when-let [pick (with-dialog-lock #(dlg/searchable-select!
+                                                            screen
+                                                            "Switch project…"
+                                                            items
+                                                            {:placeholder "Type to filter projects…"
+                                                             :enter-label "switch"}))]
+                         (when-let [pid (some-> (:id pick)
+                                                str)]
+                           (when-not (= pid cur)
+                             ;; CAPTURE the OUTGOING project's id + tab order NOW with
+                             ;; cheap in-memory reads, then reconcile+reorder OFF the
+                             ;; input thread — a slow gateway must NEVER stall a switch.
+                             ;; Binding pid+ids here also fixes the race: the async
+                             ;; `persist-tabs!` worker reads `@active-project-id*` LIVE,
+                             ;; so after the reset below it would write the old order
+                             ;; under the NEW project. The captured values pin the
+                             ;; write to the OLD project.
+                             (let [out-pid (ensure-active-project-id!)
+                                   out-ids (mapv :id
+                                                 (:sessions (state/tab-session-snapshot
+                                                              @state/app-db)))]
+
+                               (when (and out-pid (seq out-ids))
+                                 (vis/worker-future "tui-persist-tabs-switch"
+                                                    (fn []
+                                                      (persist-tabs-order! out-pid out-ids)))))
+                             (reset! active-project-id* pid)
+                             (let [root (launch-root)
+                                   ;; One list-sessions scan — the target project's
+                                   ;; members in manual tab order, like startup's
+                                   ;; restore-project-tabs!.
+                                   members (project-member-sessions pid)
+                                   specs (mapv (fn [s]
+                                                 (let [title (str (get s "title"))]
+                                                   {:session-id (str (get s "id"))
+                                                    :label (when-not (str/blank? title) title)
+                                                    :root root}))
                                                members)
-                                close-ids (->> (:tabs db)
-                                               (mapv :id)
-                                               (remove keep-ids)
-                                               vec)]
+                                   db @state/app-db
+                                   ;; Member sessions ALREADY open KEEP their tabs —
+                                   ;; a switch must never eat a live member view.
+                                   keep-ids
+                                   (into #{}
+                                         (keep #(state/tab-id-for-session db (str (get % "id"))))
+                                         members)
+                                   close-ids (->> (:tabs db)
+                                                  (mapv :id)
+                                                  (remove keep-ids)
+                                                  vec)]
 
-                            ;; NAME-ONLY tabs for members not yet open — no
-                            ;; transcript fetch, no focus move; each hydrates
-                            ;; lazily on first focus (hydrate-pending-tab!).
-                            ;; Open member tabs are deduped, never duplicated.
-                            (preallocate-project-tabs! specs)
-                            ;; A project with NO members gets one fresh session
-                            ;; so the strip never empties (and only then — a
-                            ;; project WITH members must not gain a stray
-                            ;; empty session on switch).
-                            (when (empty? members)
-                              (when-let [config (:config @state/app-db)]
-                                (open-session-tab! (chat/make-session config) false)))
-                            (doseq [tid close-ids]
-                              (state/dispatch [:close-tab tid true]))
-                            ;; Safety second pass now that the outgoing tabs are
-                            ;; closed — any member the first pass could not seat
-                            ;; lands here (idempotent — open sessions are deduped).
-                            (preallocate-project-tabs! specs)
-                            ;; Same fixed-point rule as startup: re-seat the
-                            ;; member tabs into stored `project_position` order
-                            ;; BEFORE persisting, so the persist is a no-op
-                            ;; instead of a rotation.
-                            (state/dispatch [:order-project-tabs (mapv :session-id specs)])
-                            (persist-tabs!))))))))]
+                               ;; NAME-ONLY tabs for members not yet open — no
+                               ;; transcript fetch, no focus move; each hydrates
+                               ;; lazily on first focus (hydrate-pending-tab!).
+                               ;; Open member tabs are deduped, never duplicated.
+                               (preallocate-project-tabs! specs)
+                               ;; A project with NO members gets one fresh session
+                               ;; so the strip never empties (and only then — a
+                               ;; project WITH members must not gain a stray
+                               ;; empty session on switch).
+                               (when (empty? members)
+                                 (when-let [config (:config @state/app-db)]
+                                   (open-session-tab! (chat/make-session config) false)))
+                               (doseq [tid close-ids]
+                                 (state/dispatch [:close-tab tid true]))
+                               ;; Safety second pass now that the outgoing tabs are
+                               ;; closed — any member the first pass could not seat
+                               ;; lands here (idempotent — open sessions are deduped).
+                               (preallocate-project-tabs! specs)
+                               ;; Same fixed-point rule as startup: re-seat the
+                               ;; member tabs into stored `project_position` order
+                               ;; BEFORE persisting, so the persist is a no-op
+                               ;; instead of a rotation.
+                               (state/dispatch [:order-project-tabs (mapv :session-id specs)])
+                               (persist-tabs!))))))))]
 
              ;; --resume opens the session picker at startup, like `pi -r`.
              (when (and (:resume opts) (not (:dialog-open? @state/app-db))) (show-sessions!))
@@ -7352,12 +7222,6 @@
                                     (state/dispatch [:reset-input])
                                     (switch-session! {:action :new :seed-text seed}))
 
-                                  ;; Same verb, but it asks WHERE first: the project
-                                  ;; itself, or a fresh draft that (by default) carries
-                                  ;; the uncommitted changes into its own copy.
-                                  :new-session-in
-                                  (start-session-in!)
-
                                   ;; Workspace ops (`:workspace`,
                                   ;; `:apply-workspace-to-trunk`,
                                   ;; `:discard-workspace-{soft,hard}`) live as
@@ -7426,9 +7290,6 @@
 
                                   :show-sessions
                                   (show-sessions!)
-
-                                  :open-drafts
-                                  (show-drafts!)
 
                                   :switch-project
                                   (switch-project!)
@@ -7564,9 +7425,6 @@
 
                          :search-open
                          (do (state/dispatch [:search-open]) (recur))
-
-                         :open-drafts
-                         (do (show-drafts!) (recur))
 
                          :show-palette
                          (do (when-not (:dialog-open? @state/app-db)
@@ -7766,14 +7624,6 @@
                                                         screen
                                                         "Transcript"
                                                         (export-dialog-md))))
-                                 (state/dispatch [:reset-input]))
-                             ;; A `/draft …` line that asks what the draft band
-                             ;; already asks IS that band: `/draft new` is its
-                             ;; `d` key, pre-pressed. Typing the command and
-                             ;; pressing it on the band reach the same question,
-                             ;; on the same row, instead of a modal text prompt.
-                             (draft-slash-for-input state)
-                             (do (show-drafts! (:pressed (draft-slash-for-input state)))
                                  (state/dispatch [:reset-input]))
                              ;; A slash that requires an argument typed with
                              ;; none: pop a text-input for it, then run the

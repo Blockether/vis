@@ -195,32 +195,10 @@
          (str " " bits))
        ")"))
 
-(defn- abbreviate-home
-  "Shorten an absolute path by replacing the user's home dir with `~`."
-  [^String path]
-  (let [home (System/getProperty "user.home")]
-    (if (and path home (str/starts-with? path home))
-      (let [suffix (subs path (count home))]
-        (if (str/blank? suffix) "~/" (str "~" suffix)))
-      (str path))))
 
 (defn- git-footer-spans
-  [{:strs [is_workspace is_draft draft_root] :as status}]
+  [{:strs [is_workspace] :as status}]
   (cond
-    ;; In a draft, the clone's internal git details (clone dir name,
-    ;; detached HEAD, no-upstream) are noise — show the draft's location
-    ;; (so the user knows WHERE the isolated tree lives) and how many
-    ;; files differ, all in one chunk.
-    is_draft [{:text (str " DRAFT "
-                          (if draft_root (abbreviate-home draft_root) "draft")
-                          (when-let [bits (git-change-bits status)]
-                            (str " (" bits ")"))
-                          " ")
-               :fg t/footer-warning-fg
-               :bold? true
-               :region :right
-               :priority 2
-               :tint :draft}]
     is_workspace [{:text (str " " git-label " " (git-repo-label status) " ")
                    :fg t/footer-fg-strong
                    :bold? true
@@ -508,27 +486,6 @@
 (comment
   "Channel statuses and transient notifications render in the header; footer owns model, git, and budgets only.")
 
-(defn- active-tab-workspace-root
-  "Workspace root of the ACTIVE tab, read from the persistent tab bar (`:tabs`).
-
-   The footer's primary source is the denormalized top-level `:workspace/root`,
-   but that value can be transiently lost when a tab snapshot is taken before
-   `:set-workspace` lands (e.g. rapidly switching tabs right after opening a
-   session). The tab ENTRY, set at tab creation, keeps the root reliably. Read
-   it here so a session footer never silently falls through to the vis process
-   cwd and mislabels the session with the ENGINE's own repo. Nil when there is
-   no tab context (bare startup / tests) — callers then keep the cwd fallback."
-  [db]
-  (let [tabs
-        (:tabs db)
-
-        active-id
-        (or (:active-tab-id db) (:id (some #(when (:active? %) %) tabs)))
-
-        entry
-        (or (some #(when (= (:id %) active-id) %) tabs) (first tabs))]
-
-    (or (:workspace/root entry) (get (:workspace entry) "root"))))
 
 (defn- build-segments
   "Vector of `{:text :fg :bold? :region :priority}`.
@@ -569,10 +526,7 @@
         ws
         (:workspace db)
 
-        ws-root
-        (or (:workspace/root db) (get ws "root") (active-tab-workspace-root db))
-
-        in-draft?
+        isolated-workspace?
         (some? (get ws "fork_ms"))
 
         ;; Git status is a GATEWAY SESSION FACT (`:git` on the workspace record),
@@ -586,11 +540,7 @@
         (get ws "git")
 
         git-spans
-        (git-footer-spans (cond-> git-status
-                            in-draft?
-                            (assoc "is_draft"
-                              true "draft_root"
-                              (str ws-root))))]
+        (if isolated-workspace? [] (git-footer-spans git-status))]
 
     (cond-> (vec git-spans)
       ;; Response controls read reasoning → verbosity → fast, matching Companion.

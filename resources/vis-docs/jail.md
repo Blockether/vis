@@ -181,13 +181,13 @@ root out of the default `grep` sweep while explicit paths still reach it), a
 `draft` policy (default `shared`), and the mount conditions `when` and `optional`
 described below.
 
-`draft` decides what an isolated draft may do with the root: `shared` writes
-through to the real root, `copy-only` forks a private copy that `/draft apply`
-never lands back, `copy-and-apply` lands that copy on apply, and `not-allowed`
-withholds the root from a drafted session on read and write. This check is
-enforced by the engine's own path guard, so it holds with `jail.enabled: false`
-as well; a copy policy whose fork fails withholds the root rather than writing
-through. See [Drafts](drafts.md).
+`draft` decides what an engine-isolated session may do with the root: `shared`
+writes through to the real root, `copy-only` forks a private copy that never lands
+back, `copy-and-apply` lands that copy only when the engine applies the workspace,
+and `not-allowed` withholds the root from the isolated session on read and write.
+This check is enforced by the engine's own path guard, so it holds with
+`jail.enabled: false` as well; a copy policy whose fork fails withholds the root
+rather than writing through.
 
 `jail.filesystem.allow` then lists the ids that enter the OS jail
 (deny-by-omission — a catalog root NOT listed is not confined-granted); RW vs
@@ -199,7 +199,7 @@ workspace:
     - id: shared
       path: ~/shared-repository
       description: shared code the agent may edit
-      draft: copy-and-apply    # forked per draft, landed by /draft apply
+      draft: copy-and-apply    # copied if the engine isolates this session
     - id: reference
       path: ~/reference-data
       access: read-only

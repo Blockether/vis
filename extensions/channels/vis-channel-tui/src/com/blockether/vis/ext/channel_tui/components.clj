@@ -632,7 +632,6 @@
            [(keymap/label-for :search-open) "Search in session"]
            [(keymap/label-for :pick-file) "Attach file"]
            [(keymap/label-for :toggle-voice-recording) "Voice recording"]
-           [(keymap/label-for :open-drafts) "Switch draft / stash to trunk"]
            [(keymap/label-for :toggle-help) "Toggle this help"]]}
    {:title "Messaging & navigation"
     :rows

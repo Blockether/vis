@@ -45,7 +45,7 @@
   ;; --- positives: real failing replies seen live (sessions 2e98be97 / 4c0eff03)
   (it "flags markdown heading + prose (apostrophe -> unterminated string)"
       (expect (prose-leading?
-                "## Root cause found\n\n`/draft` clones via rift's CoW.\ndone(\"x\")")))
+                "## Root cause found\n\nRift clones via copy-on-write.\ndone(\"x\")")))
   (it "flags a prose sentence with a unicode char (invalid character ×)"
       (expect (prose-leading?
                 "Both dialogs now resolve to an identical box at 120×40.\ndone(\"\"\"ok\"\"\")")))

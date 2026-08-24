@@ -2,7 +2,6 @@
   (:require [clojure.string :as str]
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
-            [com.blockether.vis.ext.channel-tui.drafts :as drafts]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.terminals :as term]
@@ -1139,64 +1138,6 @@
       (expect (str/includes? inactive-label "│     0 │"))
       (expect (str/includes? inactive-label "-"))
       (expect (str/includes? inactive-label "Untitled session"))))
-  (it
-    "the draft band is a TRANSIENT: one key per verb, and a `/draft …` slash is one of them already pressed"
-    ;; Drafts used to be a modal picker, then a text-input modal, then a confirm
-    ;; modal — three windows stacked over the very session the draft belongs to.
-    ;; It is one band inside the session's frame now, exactly like the HITL form.
-    (let [drafts
-          [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}
-           {"workspace_id" "ws-b" "label" "feature-b" "is_current" false}]
-
-          ch
-          (fn [c]
-            (KeyStroke. (Character/valueOf (char c)) false false false))
-
-          band!
-          ;; `pressed` is the band command a slash already named; nil is the band
-          ;; opening as itself and reading every key from the human.
-          (fn [rows pressed keys]
-            (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
-                  (term/virtual-screen)]
-              (try (doseq [k keys]
-                     (.addInput terminal k))
-                   (dlg/draft-transient! screen {:content-top 1 :prompt-h 3} rows pressed)
-                   (finally (.stopScreen screen)))))]
-
-      ;; Switching is its OWN command: `s` opens a second band over the same
-      ;; rows, where a parked draft carries its own key — no cursor, no Enter.
-      (expect (= {:action :draft :workspace-id "ws-b" :label "feature-b" :current? false}
-                 (band! drafts nil [(ch \s) (ch \b)])))
-      ;; `t` is always trunk, and it knows that is not where we are.
-      (expect (= {:action :trunk :label "Trunk" :current? false}
-                 (band! drafts nil [(ch \s) (ch \t)])))
-      ;; Creating is two commands rather than a command plus an armed flag:
-      ;; `c` forks the committed HEAD, `d` carries the working tree along, and
-      ;; either way the name is read INLINE on the hint row.
-      (expect (= {:action :new :clean? true :label "wire-rework"}
-                 (band! drafts
-                        nil
-                        (concat [(ch \c)] (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))
-      (expect (= {:action :new :clean? false :label "wire-rework"}
-                 (band! drafts
-                        nil
-                        (concat [(ch \d)] (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))
-      ;; `/draft new` used to pop a text-input WINDOW for the label. It is the
-      ;; band's own `d`, already pressed: same band, same inline question, no
-      ;; keystroke to repeat.
-      (expect
-        (= {:action :new :clean? false :label "wire-rework"}
-           (band! drafts :new-dirty (concat (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))
-      (expect
-        (= {:action :new :clean? true :label "wire-rework"}
-           (band! drafts :new-clean (concat (map ch "wire-rework") [(KeyStroke. KeyType/Enter)]))))
-      (expect (= {:action :draft :workspace-id "ws-b" :label "feature-b" :current? false}
-                 (band! drafts :switch [(ch \b)])))
-      ;; A command the band does not offer right now (`/draft resume` with no
-      ;; drafts) opens the band itself rather than firing something the human
-      ;; was never shown — `c` still means `c`.
-      (expect (= {:action :new :clean? true :label "x"}
-                 (band! [] :switch (concat [(ch \c)] (map ch "x") [(KeyStroke. KeyType/Enter)]))))))
   (it "command palette exposes the frequent app verbs; Providers is the provider/settings hub"
       (let [palette-commands
             (var-get #'dlg/palette-commands)
@@ -1215,12 +1156,10 @@
         (expect (contains? ids :settings))
         ;; The palette is THE entry point (Ctrl+P) for the verbs whose Alt chords
         ;; don't survive macOS — so the frequent ones must be present + runnable.
-        (expect (every? ids
-                        [:search-open :show-sessions :pick-file :new-session :new-session-in
-                         :fork-session]))
+        (expect (every? ids [:search-open :show-sessions :pick-file :new-session :fork-session]))
         (expect (not (some ids
                            [:cycle-model :pick-model :cycle-reasoning :cycle-verbosity
-                            :open-drafts])))
+                            :new-session-in :open-drafts])))
         (expect (not (contains? ids :open-resources)))))
   (it "a turnless session hides BOTH fork verbs from the palette"
       ;; Forking a session with no turns is prohibited, so it must not even be
@@ -1889,58 +1828,61 @@
              (finally (.stopScreen screen))))))
 
 
-;; Regression (reported from the TUI, screenshot of the draft band): a band asked
-;; its follow-up question on its own hint row while its COMMAND rows stayed
-;; painted right above it — `c`, `d`, `s` and `k` still advertised as verbs while
-;; every one of those keys typed a letter into the draft's name — and the answer
-;; itself was a bare label on the footer line instead of a field anyone could see
-;; they were typing into.
+;; Regression (reported from the TUI, with a screenshot): a band asked its
+;; follow-up question on its own hint row while its COMMAND rows stayed painted
+;; right above it, so those command keys looked live while each key actually typed
+;; a letter into the answer. The answer itself was a bare label on the footer line
+;; instead of a field anyone could see they were typing into.
 (defdescribe
   band-question-test
   (it "a band's typed question REPLACES its commands and is drawn as an INPUT"
       (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
-        (try (let [g (.newTextGraphics screen)
-                   region (assoc (tr/band-region 80 30 1) :restore! (dlg/frame-restorer screen))
-                   rows [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}]
-                   host (dlg/transient-host screen g)
-                   _ (do (tr/paint! host region (drafts/spec rows) {:switches #{} :options {}})
-                         ((:refresh! host)))
-                   _ (doseq [k (concat (map term/keystroke "wire-rework")
-                                       [(KeyStroke. KeyType/Enter)])]
-                       (.addInput terminal k))
-                   answer ((:read! (dlg/band-questions screen g region))
-                            "Name the draft (with my changes):")
-                   painted (str/join "\n" (map :text (term/painted-rows terminal)))]
+        (try
+          (let [g (.newTextGraphics screen)
+                region (assoc (tr/band-region 80 30 1) :restore! (dlg/frame-restorer screen))
+                spec {:title "Project"
+                      :groups [{:title "Commands"
+                                :items [{:key "c" :type :action :id :create :label "Create session"}
+                                        {:key "d" :type :action :id :delete :label "Delete session"}
+                                        {:key "s" :type :action :id :switch :label "Switch session"}
+                                        {:key "k" :type :action :id :keep :label "Keep session"}]}]}
+                host (dlg/transient-host screen g)
+                _ (do (tr/paint! host region spec {:switches #{} :options {}}) ((:refresh! host)))
+                _ (doseq [k (concat (map term/keystroke "wire-rework")
+                                    [(KeyStroke. KeyType/Enter)])]
+                    (.addInput terminal k))
+                answer ((:read! (dlg/band-questions screen g region)) "Name the session:")
+                painted (str/join "\n" (map :text (term/painted-rows terminal)))]
 
-               (expect (= "wire-rework" answer))
-               ;; The question owns the band: its own title row, and the line being
-               ;; typed on the very field surface the human-input form paints.
-               (expect (str/includes? painted "Name the draft (with my changes):"))
-               (expect (str/includes? painted "wire-rework"))
-               ;; …and NOTHING on screen still claims a command key does something,
-               ;; because every key belongs to the field now.
-               (expect (not (str/includes? painted "New draft from the committed HEAD")))
-               (expect (not (str/includes? painted "New draft with my uncommitted changes")))
-               (expect (not (str/includes? painted "Switch to another draft"))))
-             (finally (.stopScreen screen)))))
+            (expect (= "wire-rework" answer))
+            ;; The question owns the band: its own title row, and the line being
+            ;; typed on the very field surface the human-input form paints.
+            (expect (str/includes? painted "Name the session:"))
+            (expect (str/includes? painted "wire-rework"))
+            ;; …and NOTHING on screen still claims a command key does something,
+            ;; because every key belongs to the field now.
+            (expect (not (str/includes? painted "Create session")))
+            (expect (not (str/includes? painted "Delete session")))
+            (expect (not (str/includes? painted "Switch session"))))
+          (finally (.stopScreen screen)))))
   (it "a band's y/n question is a band too — the question, then Yes and No on their own keys"
       (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (term/virtual-screen)]
-        (try (let [g (.newTextGraphics screen)
-                   region (assoc (tr/band-region 80 30 1) :restore! (dlg/frame-restorer screen))
-                   rows [{"workspace_id" "ws-a" "label" "feature-a" "is_current" true}]
-                   host (dlg/transient-host screen g)
-                   _ (do (tr/paint! host region (drafts/spec rows) {:switches #{} :options {}})
-                         ((:refresh! host)))
-                   _ (.addInput terminal (term/keystroke \y))
-                   answer ((:confirm! (dlg/band-questions screen g region)) "Discard 'feature-a'?")
-                   painted (str/join "\n" (map :text (term/painted-rows terminal)))]
+        (try
+          (let [g (.newTextGraphics screen)
+                region (assoc (tr/band-region 80 30 1) :restore! (dlg/frame-restorer screen))
+                spec {:groups [{:items [{:key "a" :type :action :id :choose :label "feature-a"}]}]}
+                host (dlg/transient-host screen g)
+                _ (do (tr/paint! host region spec {:switches #{} :options {}}) ((:refresh! host)))
+                _ (.addInput terminal (term/keystroke \y))
+                answer ((:confirm! (dlg/band-questions screen g region)) "Discard 'feature-a'?")
+                painted (str/join "\n" (map :text (term/painted-rows terminal)))]
 
-               (expect (true? answer))
-               (expect (str/includes? painted "Discard 'feature-a'?"))
-               (expect (str/includes? painted "Yes"))
-               (expect (str/includes? painted "No"))
-               (expect (not (str/includes? painted "Abandon draft"))))
-             (finally (.stopScreen screen)))))
+            (expect (true? answer))
+            (expect (str/includes? painted "Discard 'feature-a'?"))
+            (expect (str/includes? painted "Yes"))
+            (expect (str/includes? painted "No"))
+            (expect (not (str/includes? painted "Abandon draft"))))
+          (finally (.stopScreen screen)))))
   (it "a DESTRUCTIVE y/n names what saying yes COSTS, and what each answer does"
       ;; `Yes` alone never says what it agrees to. The companion's confirm row
       ;; spells the cost over the two answers and labels them with the verb, so

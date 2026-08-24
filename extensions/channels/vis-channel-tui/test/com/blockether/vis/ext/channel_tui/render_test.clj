@@ -1256,17 +1256,17 @@
         ;; A normal turn (no label) still legitimately waits on the provider.
         (expect (str/includes? normal "Vis is calling the provider"))))
   (it "labels a pure slash command in the spinner instead of the provider placeholder"
-      ;; A registered slash (for example `/draft`) runs LOCALLY via run-slash-turn! and
+      ;; A registered slash (for example `/cd`) runs LOCALLY via run-slash-turn! and
       ;; never touches a provider, so it streams ONE :slash phase chunk; the spinner
       ;; must read `Vis is running: /<name>` — never the zero-iterations provider fallback.
       (let [body (strip-ansi (render/progress->text {:iterations [{:iteration 1
                                                                    :activity :slash
-                                                                   :slash/label "/draft list"}]}
+                                                                   :slash/label "/cd /repo"}]}
                                                     80
                                                     {:show-thinking true :show-iterations true}
                                                     {:now-ms 1000 :turn-start-ms 0}))]
         (expect (str/includes? body "Vis is running:"))
-        (expect (str/includes? body "/draft list"))
+        (expect (str/includes? body "/cd /repo"))
         (expect (not (str/includes? body "Vis is calling the provider")))))
   (it "labels a nested tool call in the spinner while the block runs"
       ;; A `shell` run INSIDE a python block streams

@@ -105,9 +105,10 @@ describe('where "New session" lives', () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     await screen.findByText("First");
-    // The header SHOWS the short path, with what the project holds beside it...
+    // The title already names the project, so the qualifier shows only its compact parent.
     const qualifier = screen.getByTitle("/Users/dev/project");
-    expect(qualifier.textContent).toContain("~/project");
+    expect(qualifier.textContent).toContain("~");
+    expect(qualifier.textContent).not.toContain("~/project");
     expect(qualifier.textContent).toContain("1 session");
 
     view.requests.length = 0;

@@ -23,8 +23,8 @@
    exactly when no daemon is running.
 
    `purge!` routes deletions through `workspace/abandon!` for live draft rows so
-   the DB transition, hooks, and backend root release all happen exactly as they
-   would from `/draft abandon`. Only rows already `:discarded`, directories with
+   the DB transition, hooks, and backend root release all use the canonical engine
+   path. Only rows already `:discarded`, directories with
    no row at all, and journal files are removed directly — and every direct
    delete is confined to a path under the drafts store or the events dir."
   (:require [clojure.java.io :as io]
@@ -573,8 +573,8 @@
 (defn- purge-one!
   [db-info drafts-root events-root {:keys [kind root workspace-id] :as item}]
   (let [ok (case kind
-             ;; A live draft row goes out the front door: state transition, hooks,
-             ;; and backend-owned root release, identical to `/draft abandon`.
+             ;; A live draft row uses the canonical state transition, hooks, and
+             ;; backend-owned root release.
              :stale
              (try (let [{:keys [discard-future]} (workspace/abandon! db-info
                                                                      {:workspace-id workspace-id

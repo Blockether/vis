@@ -169,7 +169,7 @@
    terminal drop pastes `/var/folders/…/shot.png what is this` and that
    must run as a normal turn (image attachment scan included), not die
    as `Unknown slash command`. Slash names never contain `/`; nested
-   commands are separate tokens (`/draft new`)."
+   commands are separate tokens (`/config set`)."
   [text]
   (boolean (and (string? text) (re-find #"^/[^\s/]+(?:\s|$)" text))))
 

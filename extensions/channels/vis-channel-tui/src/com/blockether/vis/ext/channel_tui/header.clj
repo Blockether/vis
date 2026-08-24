@@ -812,7 +812,6 @@
     (p/set-colors! g t/footer-fg t/terminal-bg)
     (p/fill-rect! g 0 content-row cols 1)
     ;; LEFT 20%: latest notification, otherwise channel status. No title here.
-    ;; (Draft status lives in the footer — one indicator, not two.)
     (components/notification-slot! g (+ left-x edge-pad) content-row left-text left-level)
     ;; CENTER 60%: the workspace tab strip. Even a single session renders as a
     ;; real tab, so there's one consistent affordance — no special inert-title

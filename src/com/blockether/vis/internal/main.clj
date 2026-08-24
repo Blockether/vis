@@ -2071,13 +2071,10 @@
       (stdout! (str "  Model:        " model)))
     (when-let [provider (:provider session)]
       (stdout! (str "  Provider:     " (name provider))))
-    ;; Workspace: trunk vs draft, and any extra filesystem roots (auto-cloned in
-    ;; a draft). This is the CLI/JSON surface for "what drafts + filesystem roots
-    ;; does this session have".
+    ;; The backend-resolved root remains useful session metadata; whether the engine
+    ;; isolated it is intentionally not a human-facing mode.
     (when-let [ws (when-let [sid (persistance/db-latest-session-state-id d (:id session))]
                     (workspace/for-session d sid))]
-      (stdout! (str "  Workspace:    "
-                    (if (workspace/draft? ws) "draft (isolated workspace)" "trunk (live)")))
       (stdout! (str "  Root:         " (:root ws))))
     (when (seq states)
       (stdout! "")
@@ -2226,55 +2223,6 @@
     (stdout! (str "Deleted session " (:id session)))
     (shutdown-agents)))
 
-(defn- cli-draft-session!
-  "Start a DRAFT for a session using an available isolation backend
-   and pin the session to the draft until `/draft apply` or `/draft abandon`."
-  [parsed _residual]
-  (config/init-cli!)
-  (let [d
-        (lp/db-info)
-
-        session
-        (session-or-exit! d (get parsed "session-id"))
-
-        label
-        (some-> (get parsed "label")
-                str
-                str/trim
-                not-empty)
-
-        state-id
-        (persistance/db-latest-session-state-id d (:id session))]
-
-    (cond
-      (nil? state-id)
-      (do (stdout! "Session has no state to draft from.") (shutdown-agents) (System/exit 1))
-      (not (workspace/isolated-workspaces-supported? (or (:root (workspace/for-session d state-id))
-                                                         (workspace/trunk-root))))
-      (do
-        (stdout!
-          "Drafts need a workspace backend with isolation, rollback, merge-back, and retained revisions.")
-        (stdout! (str "  "
-                      (workspace/isolation-unavailable-hint
-                        (or (:root (workspace/for-session d state-id)) (workspace/trunk-root)))))
-        (shutdown-agents)
-        (System/exit 1))
-      :else (let [current (workspace/for-session d state-id)]
-              (if (workspace/draft? current)
-                (do (stdout! (str "Session is already in a draft: " (:root current)))
-                    (stdout! "  Apply or abandon it first (TUI: /draft apply | /draft abandon).")
-                    (shutdown-agents)
-                    (System/exit 1))
-                (let [draft (workspace/create! d
-                                               (cond-> {:session-state-id state-id :from current}
-                                                 label
-                                                 (assoc :label label)))]
-                  (stdout! (str "\n  Started draft for session " (:id session)))
-                  (stdout! (str "    Clone: " (:root draft)))
-                  (stdout! (str "    Trunk: " (:repo-root draft) "  (where /draft apply lands)"))
-                  (stdout! "    Land: /draft apply   ·   Discard: /draft abandon")
-                  (stdout! "")
-                  (shutdown-agents)))))))
 
 (defn- cli-fork-session-command!
   [parsed _residual]
@@ -4210,20 +4158,6 @@
      :cmd/examples ["vis-agent sessions fork 3a7b2c1d"
                     "vis-agent sessions fork 3a7b2c1d --title \"Branch A\""]
      :cmd/run-fn cli-fork-session-command!}
-    {:cmd/name "draft"
-     :cmd/parent ["sessions"]
-     :cmd/doc "Start an isolated workspace draft for a session (apply/abandon via the TUI)."
-     :cmd/usage "vis-agent sessions draft <SESSION-ID> [--label NAME]"
-     :cmd/args
-     [{:name "session-id"
-       :kind :positional
-       :type :string
-       :required true
-       :doc "Session id (full UUID or unambiguous prefix)."}
-      {:name "label" :kind :flag :type :string :doc "Draft folder label (default: auto)."}]
-     :cmd/examples ["vis-agent sessions draft 3a7b2c1d"
-                    "vis-agent sessions draft 3a7b2c1d --label feature-x"]
-     :cmd/run-fn cli-draft-session!}
     {:cmd/name "delete"
      :cmd/parent ["sessions"]
      :cmd/doc "Delete a session tree from persistent storage."

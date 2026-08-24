@@ -28,8 +28,6 @@
           :blurb "On-demand skills the agent loads only when a task needs them."}
          {:file "queue-and-cancel.md" :title "Queue, cancel & quit" :section "Using Vis" :order 62
           :blurb "Queueing follow-up messages, auto-drain on resume, cancelling a turn, and Ctrl+C quit."}
-         {:file "drafts.md" :title "Drafts" :section "Using Vis" :order 63
-          :blurb "Isolated workspaces for speculative changes: create, apply, park, resume, abandon, and gateway semantics."}
          {:file "gateway.md" :title "Gateway, pairing & remote access" :section "Using Vis" :order 65
           :blurb "The gateway server, companion pairing, and driving a gateway on another machine from the CLI."}
          {:file "reporting-bugs.md" :title "Reporting bugs safely" :section "Using Vis" :order 68

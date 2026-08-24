@@ -499,24 +499,24 @@ Filesystem roots are declared once, in the `workspace.filesystem` catalog:
 
 | key | meaning |
 |---|---|
-| `id` | the name the allow list, the TUI and drafts use |
+| `id` | the name the allow list and TUI use |
 | `path` | the directory itself |
 | `description` | optional; what the model is told the root is for |
 | `access` | `read-write` or `read-only` |
 | `search` | whether search may index it |
-| `draft` | the root's isolation policy for a drafted session (below) |
+| `draft` | the root's policy if the engine isolates a session (below) |
 | `when`, `optional` | conditional mount — declare a root that may not exist |
 
 `jail.filesystem.allow` then lists the ids that enter the jail. It is **deny-by-omission**: a root the list does not name is not there.
 
-`draft` decides what a drafted session sees:
+`draft` decides what an engine-isolated session sees:
 
 - `shared` (default) — writes through to the real root.
-- `copy-only` — forks a private copy the draft never lands back.
-- `copy-and-apply` — lands that private copy on `/draft apply`.
-- `not-allowed` — withholds the root from a drafted session, on read and on write.
+- `copy-only` — forks a private copy that never lands back.
+- `copy-and-apply` — lands that private copy only when the engine applies the workspace.
+- `not-allowed` — withholds the root from the isolated session, on read and on write.
 
-Draft isolation is independent of the jail and applies with `jail.enabled: false` too — see [Drafts](drafts.md).
+Isolation policy is independent of the jail and applies with `jail.enabled: false` too.
 
 Vis's own session folder `~/.vis` is granted implicitly (read/write, `search: false`) whatever the catalog and the allow list say; declare it to override that.
 
@@ -548,7 +548,7 @@ workspace:
   filesystem:
     - id: sibling
       path: ~/sibling-repository
-      draft: copy-and-apply      # forked per draft, landed by /draft apply
+      draft: copy-and-apply      # copied if the engine isolates this session
     - id: reference
       path: ~/shared-reference
       access: read-only

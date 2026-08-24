@@ -657,9 +657,8 @@
 
 (defn hint-pairs
   "The footer THIS transient shows: what a command key does, the way out, and
-   what a flag key does ONLY when the spec actually has a flag. A band whose
-   keys are all commands (the draft band spends `c`/`d`/`s`/`k` on verbs) must
-   not advertise a `-key` nothing responds to."
+   what a flag key does ONLY when the spec actually has a flag. A command-only
+   band must not advertise a `-key` nothing responds to."
   [spec]
   (cond-> []
     (some (comp sp/flag-types :type) (mapcat :items (:groups spec)))

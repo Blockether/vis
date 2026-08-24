@@ -1,6 +1,5 @@
 (ns com.blockether.vis.ext.channel-tui.dialogs
   (:require [clojure.string :as str]
-            [com.blockether.vis.ext.channel-tui.drafts :as drafts]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.highlight :as highlight]
@@ -4787,7 +4786,6 @@
      :title (session-title session)
      :opening (navigator-opening (get session "first_request"))
      :session (short-session-id session)
-     :draft (or (not-empty (:draft-label session)) "trunk")
      :group (not-empty (get session "project_name"))
      :position (get session "project_position")
      :dir work-dir
@@ -4850,13 +4848,11 @@
   (let [needle (str/lower-case (str/trim (or query "")))]
     (or (empty? needle)
         (some #(str/includes? (str/lower-case (str (get row % ""))) needle)
-              [:title :session :draft :dir :work-dir :status]))))
+              [:title :session :dir :work-dir :status]))))
 
 (def ^:private navigator-local-only-rank
-  "Band of a row only the LOCAL list could match — its project path, its work dir,
-   its status, an unsent draft. The gateway ranks everything it can see, so these
-   sit after every ranked row instead of competing on a relevance this side is in
-   no position to judge."
+  "Band of a row only the local list could match: project path, work dir,
+   status, or unsent composer text."
   100)
 
 (defn- navigator-search-rank
@@ -5608,10 +5604,9 @@
    minibuffer (`band-questions`) asks its follow-up question, on the hint row,
    instead of opening a modal. Returns `f`'s value, or nil on Esc.
 
-   `pressed` is that action ALREADY chosen — a slash that names one command of
-   this band (`/draft new`) is exactly that key, pre-pressed, so the band paints
-   itself and goes straight to the question instead of waiting for a keystroke
-   the human already typed."
+   `pressed` is an action ALREADY chosen by the caller. The band paints itself
+   and goes straight to that action's question instead of waiting for a duplicate
+   keystroke."
   ([^TerminalScreen screen anchor spec f] (session-band! screen anchor spec f nil))
   ([^TerminalScreen screen anchor spec f pressed]
    (session-band-instance! screen
@@ -5673,150 +5668,6 @@
                             (band-frame! screen g region spec)
                             (read-chord-key! screen))))
 
-;;; ── Questions a band asks on its OWN hint row ───────────────────────────────
-;; `ctx` is what `session-band!` hands its `f`: the screen, its graphics and the
-;; band's region. These wrappers are the whole reason a band's follow-up
-;; question reads as a QUESTION at the call site — they name it, while
-;; `band-questions` is what binds it to the band's own coordinates.
-
-(defn- band-ask
-  "The questions THIS band can ask, bound to the region `session-band!` handed
-   `f` — one composed map instead of six coordinates unpacked again in every
-   branch that has something to ask."
-  [{:keys [screen g region]}]
-  (band-questions screen g region))
-
-(defn- band-read!
-  "Ask for one line of text on the band's hint row; nil on Esc."
-  ([ctx label] (band-read! ctx label {}))
-  ([ctx label opts] ((:read! (band-ask ctx)) label opts)))
-
-(defn- band-choose!
-  "Ask WHICH one, single-key, on the band's hint row; returns the chosen `:id`."
-  [ctx title choices]
-  ((:choose! (band-ask ctx)) title choices))
-
-(defn- band-confirm!
-  "Ask y/n on the band's hint row."
-  [ctx question]
-  ((:confirm! (band-ask ctx)) question))
-
-(defn- band-run!
-  "Run ANOTHER transient over the SAME band region — a transient that opens a
-   transient, which is how a band asks a second question without a second
-   window. The frame is snapshotted and restored once, by the `session-band!`
-   that owns this region."
-  [ctx spec]
-  ((:transient! (band-ask ctx)) spec))
-
-;;; ── Drafts ──────────────────────────────────────────────────────────────────
-
-(defn- draft-name-prompt
-  "Which working tree the draft forks, said in the prompt itself: the band has
-   no armed flag to read it off any more, so the question has to carry it."
-  [clean?]
-  (if clean? "Name the draft (from committed HEAD):" "Name the draft (with my changes):"))
-
-(defn- name-new-draft!
-  "`c` / `d`: name the draft inline, or back out. An empty name is a cancelled
-   prompt, never an unnamed draft."
-  [ctx {:keys [clean?] :as choice}]
-  (when-let [label (band-read! ctx (draft-name-prompt clean?))]
-    (when-let [label (not-empty (str/trim label))]
-      (assoc choice :label label))))
-
-(defn- switch-draft!
-  "`s`: the SWITCH band — trunk and every draft, `●` on the one we are in —
-   resolved to the choice the screen's draft executor speaks."
-  [ctx draft-rows]
-  (drafts/switch-choice draft-rows (band-run! ctx (drafts/switch-spec draft-rows))))
-
-(defn- abandon-draft!
-  "`k`: WHICH draft (asked only when more than one exists), then a y/n that
-   names the draft it is about. Both on the hint row."
-  [ctx draft-rows]
-  (let [choices
-        (drafts/abandon-choices draft-rows)
-
-        ws-id
-        (if (= 1 (count choices)) (:id (first choices)) (band-choose! ctx "Abandon draft:" choices))
-
-        row
-        (drafts/row-by-id (drafts/rows draft-rows) ws-id)]
-
-    (when (and row
-               (band-confirm!
-                 ctx
-                 (str "Permanently discard '" (:label row) "' and its isolated files?")))
-      {:action :abandon
-       :workspace-id ws-id
-       :label (:label row)
-       :reason "abandoned from the TUI draft transient"})))
-
-(defn- draft-band-choice
-  "ONE finished keystroke of the draft band, answered: create asks for a name,
-   switch opens the switch band, abandon asks which and then whether."
-  [ctx draft-rows]
-  (let [choice (drafts/choice (:result ctx))]
-    (case (:action choice)
-      :new
-      (name-new-draft! ctx choice)
-
-      :switch
-      (switch-draft! ctx draft-rows)
-
-      :abandon
-      (abandon-draft! ctx draft-rows)
-
-      choice)))
-
-(defn draft-transient!
-  "The DRAFT band: create, switch and abandon a draft workspace without ever
-   leaving the session. Returns the choice the screen executes — `:trunk`,
-   `:draft`, `:new` (with the typed `:label` and `:clean?`) or `:abandon` (with
-   `:workspace-id` and `:reason`) — or nil when the human backed out at any
-   step.
-
-   Creating, switching and abandoning are three separate keys: `c`/`d` fork a
-   draft and name it inline, `s` opens the switch band, `k` abandons one. No
-   step opens a window.
-
-   `pressed` is one of those commands named by a SLASH instead of by a key
-   (`drafts/slash-band`): `/draft new` IS `d`, already pressed. A command this
-   band does not offer right now (`/draft resume` with no drafts) opens the band
-   itself rather than firing something the human was never shown."
-  ([^TerminalScreen screen anchor draft-rows] (draft-transient! screen anchor draft-rows nil))
-  ([^TerminalScreen screen anchor draft-rows pressed]
-   (let [spec (drafts/spec draft-rows)]
-     (session-band! screen
-                    anchor
-                    spec
-                    #(draft-band-choice % draft-rows)
-                    (when (tr/item-by-id spec pressed) pressed)))))
-
-;;; ── Where a NEW session starts ──────────────────────────────────────────────
-
-(defn- start-in-band-choice
-  "ONE finished keystroke of the start-in band: the project itself is the whole
-   answer, a draft still needs its name."
-  [ctx]
-  (let [choice (drafts/start-in-choice (:result ctx))]
-    (cond (nil? choice) nil
-          (= :trunk (:start-in choice)) choice
-          :else (when-let [label (band-read! ctx (draft-name-prompt (:clean? choice)))]
-                  (when-let [draft (drafts/draft-spec choice label)]
-                    (assoc choice :draft draft))))))
-
-(defn start-in-transient!
-  "Ask WHERE a new session starts, as a band in the current session's frame:
-   `t` the project itself, `c` a draft forked from the committed HEAD, `d` a
-   draft carrying the uncommitted working tree. A draft is named inline on the
-   hint row.
-
-   Returns `{:start-in :trunk}`, `{:start-in :draft :clean? bool :draft {:label :clean?}}`,
-   or nil."
-  [^TerminalScreen screen anchor]
-  (session-band! screen anchor drafts/start-in-spec start-in-band-choice))
 
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}. The `:id` is the
@@ -5826,12 +5677,10 @@
    The palette is THE discoverable entry point for every app verb: opened with
    C-x p (reliable on every terminal, unlike Alt/Option chords on macOS) and
    filtered by typing."
-  ;; Whole-session Markdown copy lives in the header as an icon. Draft ops
-  ;; are slash-only (`/draft …`) and surface through `menu-commands` which
-  ;; aggregates them from the engine slash registry (passed as extra-commands).
+  ;; Whole-session Markdown copy lives in the header as an icon.
   [{:id :search-open :label "Search in Session"} {:id :show-sessions :label "Switch Session"}
    {:id :pick-file :label "Attach File"} {:id :toggle-voice-recording :label "Voice Recording"}
-   {:id :new-session :label "New Session"} {:id :new-session-in :label "New Session in a Draft…"}
+   {:id :new-session :label "New Session"}
    ;; Both fork verbs are `:has-turns`-gated: a session with no turns has
    ;; nothing to fork, so the palette must not even offer them.
    {:id :fork-session :label "Fork Session" :show-when :has-turns}

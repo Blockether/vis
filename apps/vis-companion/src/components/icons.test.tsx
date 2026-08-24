@@ -1,6 +1,4 @@
 import iconsSource from "./icons.tsx?raw";
-import uiSource from "./ui.tsx?raw";
-import sessionsSource from "../screens/SessionsScreen.tsx?raw";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
@@ -14,7 +12,6 @@ import {
   CloseIcon,
   CopyIcon,
   DotsIcon,
-  DraftIcon,
   ImageIcon,
   MicIcon,
   PencilIcon,
@@ -513,31 +510,5 @@ describe("the shipped screens", () => {
     expect(
       oversizedOnChipLines(chip.replace("text-chip", "text-meta")),
     ).toEqual([]);
-  });
-});
-
-// Regression, user report ("New session in the draft should also have the icon"):
-// the draft verb sat directly under `Manage projects` in the same menu band, but
-// only one of the two carried a mark, so the pair read as a heading and an item.
-describe("DraftIcon", () => {
-  // Follow-up report: the copied-folder mark was too weak to read at 16px.
-  it("is the project folder with a branch forking inside it", () => {
-    const html = renderToStaticMarkup(<DraftIcon />);
-    // The folder is `ProjectsIcon`'s own outline, unchanged.
-    expect(html).toContain("M4.66 6.4h5.18l1.6 2.14h7.9v9.06H4.66z");
-    // ...and the fork is a stem into two nodes, never a second folder.
-    expect(html.match(/<path/g)?.length).toBe(2);
-    expect(html.match(/<circle/g)?.length).toBe(2);
-  });
-
-  // Regression, user report ("New session in a draft should be under the project line,
-  // not the machine one — and there is already a New session button there"): the draft
-  // verb lived in the machine's menu, two headers above the project it forks. It is now
-  // the second half of that project's own split button, and the machine menu has no
-  // draft row left to carry a mark.
-  it("marks the draft half of the project header's split button", () => {
-    const split = uiSource.slice(uiSource.indexOf("export function NewSessionButton"));
-    expect(split).toContain('<DraftIcon className="size-4" />');
-    expect(sessionsSource).not.toContain("<DraftIcon");
   });
 });

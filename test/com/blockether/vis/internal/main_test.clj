@@ -345,7 +345,8 @@
                    (expect (.contains help "show"))
                    (expect (.contains help "fork"))
                    (expect (.contains help "delete"))
-                   (expect (.contains help "export")))))
+                   (expect (.contains help "export"))
+                   (expect (not (.contains help "draft"))))))
 
 (defdescribe provider-override-error-test
              (it "marks unknown --provider as user error"

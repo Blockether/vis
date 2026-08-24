@@ -859,10 +859,9 @@
   "Active/stashed DRAFTS for the repo the session pinned to `sid` lives in, in
    THE canonical string-keyed wire shape
    `[{\"workspace_id\" \"label\" \"root\" \"repo_root\" \"fork_ms\" \"is_current\"}]`,
-   newest first — the parked drafts any channel can `resume-draft!`. The session's
-   own current draft (when it is in one) rides `\"is_current\" true`. Server-side
-   twin of the `/draft list` slash: ONE gateway fact every channel (web picker,
-   TUI drafts view) reads instead of typing the slash. Never throws; returns []
+   newest first. The session's own current draft (when it is in one) rides
+   `\"is_current\" true`. This is the canonical server-side inventory for future
+   model-managed isolation and gateway callers. Never throws; returns []
    when the session or its repo is unknown."
   [sid]
   (or (try (when-let [db (lp/db-info)]
@@ -884,7 +883,7 @@
    on disk, repoint the session back to trunk — then return the refreshed
    `session-workspace-info`. The non-destructive twin of abandoning; a no-op that
    returns trunk info when the session is already on trunk. Runs SERVER-SIDE in
-   the daemon that owns the DB. Channel-agnostic twin of the `/draft stash` slash."
+   the daemon that owns the DB."
   [sid]
   (when-let [db (lp/db-info)]
     (when-let [state-id (resolve-state-id db sid)]
@@ -898,7 +897,7 @@
    is currently in another draft it is then stashed non-destructively, so this is a
    true draft switch, not just an enter-from-trunk. Runs SERVER-SIDE in the daemon.
    Throws `ex-info` with a `:type` when `workspace-id` is not resumable (see
-   `workspace/resume!`). Channel-agnostic twin of the `/draft resume` slash."
+   `workspace/resume!`)."
   [sid workspace-id]
   (when-let [db (lp/db-info)]
     (when-let [state-id (resolve-state-id db sid)]

@@ -24,7 +24,7 @@ import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
 import notifyVerdictSource from "../lib/notify-verdict.ts?raw";
 
-import { DraftIcon, PlusIcon, ProjectsIcon } from "./icons";
+import { PlusIcon, ProjectsIcon } from "./icons";
 import { MACHINE_COLORS } from "../lib/machine-colors";
 import {
   BackButton,
@@ -1718,22 +1718,14 @@ describe("the trailing control cluster", () => {
   });
 });
 
-// Regression, user report ("remove this setting and always show the icon with draft"):
-// "Where a new session starts" was an app switch that hid the draft half of the
-// project header's split button, so the private copy — the reason drafts exist —
-// was invisible until you found a preference in a dialog two screens away.
+// New sessions have one human action: create them in the selected project.
 describe("where a new session starts", () => {
-  it("is not a setting at all: no draft preference is left anywhere", () => {
+  it("has no human workspace-mode setting or draft picker", () => {
     expect(settingsSource).not.toContain("offerDrafts");
-    expect(settingsSource).not.toContain("Where a new session starts");
     expect(storageSource).not.toContain("OfferDrafts");
-    expect(sessionsListSource).not.toContain("offerDrafts");
-  });
-
-  it("always offers the draft half of the project header's button", () => {
-    expect(sessionsListSource).toContain(
-      "openDraftsAt(anchor, machine.conn, root, probe)",
-    );
+    expect(sessionsListSource).not.toContain("openDraftsAt");
+    expect(sessionsListSource).not.toContain("onNewDraft");
+    expect(gatewaySource).not.toContain("/workspace/drafts");
   });
 
   it("picks every setting with the one ChoiceCell, spelled once", () => {
@@ -1761,48 +1753,20 @@ describe("where a new session starts", () => {
   });
 });
 
-// Regression, user report ("New session in a draft should be under the project line,
-// not the machine one — and there is already a New session button there"): the draft
-// verb was a row in the machine's kebab menu, two headers above the project it forks,
-// while the project header carried the plain verb alone.
-describe("NewSessionButton, split", () => {
-  it("carries the draft as a joined second half, not a second button", () => {
-    const html = renderToStaticMarkup(
-      <NewSessionButton
-        machine="visgw"
-        where="vis"
-        onPress={() => {}}
-        onDraft={() => {}}
-      />,
-    );
-    // One cluster, two halves of the same amber box: the verb drops its trailing
-    // border and the draft half wears the seam.
-    expect(html).toContain("border-r-0");
-    expect(html).toContain("border-l-accent-foreground/30");
-    // It NAMES the project it forks and the machine it forks on: several headers are
-    // on screen at once and "New session" alone says nothing to a screen reader.
-    expect(html).toContain(
-      'aria-label="New session in a draft of vis on visgw"',
-    );
-  });
-
-  it("is a plain button when drafts are not offered", () => {
+describe("NewSessionButton, one action", () => {
+  it("paints one compact plus rather than a split control", () => {
     const html = renderToStaticMarkup(
       <NewSessionButton machine="visgw" where="vis" onPress={() => {}} />,
     );
+    expect(html.match(/<button/g)).toHaveLength(1);
+    expect(html).toContain(renderToStaticMarkup(<PlusIcon className="size-3.5" />));
     expect(html).not.toContain("border-r-0");
-    expect(html).not.toContain("in a draft");
   });
 
-  it("hangs the draft question off the project header, never the machine menu", () => {
-    // The project header's split button is the only way in...
-    expect(sessionsListSource).toContain("onDraft={onNewDraft ?");
-    expect(sessionsListSource).toContain("const openDraftsAt = useCallback(");
-    // ...and the machine's own menu keeps only what is genuinely a machine verb.
-    expect(sessionsListSource).not.toContain('title="New session in a draft…"');
-    // The parked drafts read belongs to the project that was tapped, not to whatever
-    // the machine happened to touch last.
-    expect(sessionsListSource).toContain("projectPath(session) === draftRoot");
+  it("is the only create control wired into a project header", () => {
+    expect(sessionsListSource).toContain("<NewSessionButton");
+    expect(sessionsListSource).not.toContain("onDraft=");
+    expect(sessionsListSource).not.toContain("openDraftsAt");
   });
 });
 
@@ -2117,32 +2081,21 @@ describe("MachineProjectsButton", () => {
   });
 });
 
-// Regression, same report: THREE verbs stand on this screen — a machine's projects, a
-// session in a project, that session in a draft — and a glyph used twice makes two of
-// them one control. One meaning, one mark.
-describe("three verbs, three marks", () => {
-  const glyph = (markup: string) => markup.match(/<svg[\s\S]*?<\/svg>/g) ?? [];
+describe("project verbs use distinct marks", () => {
   const session = renderToStaticMarkup(
-    <NewSessionButton
-      machine="tower"
-      where="vis"
-      onPress={() => {}}
-      onDraft={() => {}}
-    />,
+    <NewSessionButton machine="tower" where="vis" onPress={() => {}} />,
   );
   const projects = renderToStaticMarkup(
     <MachineProjectsButton machine="tower" onPress={() => {}} />,
   );
 
-  it("gives the plus to a session, the folder to a machine, the fork to a draft", () => {
-    const [start, draft] = glyph(session);
-    const [inventory] = glyph(projects);
-    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-4" />));
-    expect(draft).toBe(renderToStaticMarkup(<DraftIcon className="size-4" />));
-    expect(inventory).toBe(
-      renderToStaticMarkup(<ProjectsIcon className="size-4" />),
-    );
-    expect(new Set([start, draft, inventory]).size).toBe(3);
+  it("gives the plus to a session and the folder to project inventory", () => {
+    const glyph = (markup: string) => markup.match(/<svg[\s\S]*?<\/svg>/g)?.[0];
+    const start = glyph(session);
+    const inventory = glyph(projects);
+    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-3.5" />));
+    expect(inventory).toBe(renderToStaticMarkup(<ProjectsIcon className="size-4" />));
+    expect(start).not.toBe(inventory);
   });
 });
 
@@ -2165,18 +2118,8 @@ describe("NewSessionButton, busy", () => {
   });
 
   it("refuses a second press while that create is in flight", () => {
-    expect(busy).toContain('disabled=""');
-    // The draft half is the same create on the same project: it goes with it.
-    const split = renderToStaticMarkup(
-      <NewSessionButton
-        machine="tower"
-        where="vis"
-        busyLabel="Forking..."
-        onPress={() => {}}
-        onDraft={() => {}}
-      />,
-    );
-    expect(split.match(/disabled=""/g)?.length).toBe(2);
+    expect(busy.match(/disabled=""/g)).toHaveLength(1);
+    expect(busy.match(/<button/g)).toHaveLength(1);
   });
 
   it("still names its machine, so the announcement says which one", () => {

@@ -30,7 +30,7 @@
                  (expect (= :cycle-reasoning (keymap/prefix-action-for \r)))
                  (expect (= :toggle-codex-fast (keymap/prefix-action-for \q)))
                  (expect (= :cycle-verbosity (keymap/prefix-action-for \l)))
-                 (expect (= :open-drafts (keymap/prefix-action-for \d)))
+                 (expect (nil? (keymap/prefix-action-for \d)))
                  (expect (nil? (keymap/prefix-action-for \e)))
                  (expect (= :pick-model (keymap/prefix-action-for \c)))
                  (expect (= :show-sessions (keymap/prefix-action-for \s)))
@@ -51,7 +51,7 @@
                  (expect (= :focus-attachments (keymap/prefix-action-for \i)))
                  (expect (= \x keymap/prefix-key)))
              (it "no emacs editing key is a direct app verb (action-for returns nil)"
-                 ;; The C-x prefix's second-keys (m/r/v/d/s) live behind C-x — a different
+                 ;; The C-x prefix's second-keys (m/r/v/s) live behind C-x — a different
                  ;; keyspace — so they don't shadow the editing chords.
                  (doseq [c emacs-letters]
                    (expect (nil? (keymap/action-for c))))
@@ -70,7 +70,7 @@
                  (expect (= "C-x f" (keymap/label-for :search-open)))
                  (expect (= "C-x a" (keymap/label-for :pick-file)))
                  (expect (= "C-x v" (keymap/label-for :toggle-voice-recording)))
-                 (expect (= "C-x d" (keymap/label-for :open-drafts)))
+                 (expect (nil? (keymap/label-for :open-drafts)))
                  (expect (nil? (keymap/label-for :open-resources)))
                  (expect (= "C-x h" (keymap/label-for :toggle-help)))
                  (expect (= "C-x c" (keymap/label-for :pick-model)))

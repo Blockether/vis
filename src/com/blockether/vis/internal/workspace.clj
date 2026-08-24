@@ -2,12 +2,12 @@
   "Backend-neutral workspaces, DB-pinned to session_state 1:1.
 
    The user's real cwd is *trunk* — Vis never mutates it, and Vis no
-   longer requires it to be a git repo. A session works in trunk by
-   default; `/draft new` opts into an isolated workspace forked by Rift, the
-   only backend Vis ships. Rift declares concrete capabilities such as
-   isolated fork, rollback, merge-back, retained revisions, and parallel
-   safety; core exposes them as a diagnostics/feature-discovery surface
-   rather than a selection mechanism.
+   longer requires it to be a git repo. A session works in trunk by default.
+   Isolation operations are backend primitives reserved for engine-managed work;
+   Rift is the only backend Vis ships. Rift declares concrete capabilities such as
+   isolated fork, rollback, merge-back, retained revisions, and parallel safety;
+   core exposes them as a diagnostics/feature-discovery surface rather than a
+   selection mechanism.
 
    'What changed since the fork' is computed git-free: `clonefile`
    preserves source mtimes, so files the agent touches in the clone get
@@ -488,7 +488,7 @@
   "Directory names skipped AT ANY DEPTH when toggling source perms for a fork:
    VCS internals plus build/dependency/editor caches. They hold thousands of
    gitignored files that are never part of the fork, so walking them just to
-   flip a write bit is what made `/draft new` stall on a large repo."
+   flip a write bit used to stall isolation on a large repo."
   #{".git" ".rift" ".trash" ".cpcache" ".lsp" ".lsp-cache" "target" "node_modules" ".shadow-cljs"
     ".cljs_node_repl" ".gitlibs" ".gradle" ".idea"})
 
@@ -811,8 +811,8 @@
 
 (defonce ^:private discard-executor
   ;; Single daemon thread: serializes physical clone reclamation OFF the request
-  ;; thread so `/draft abandon` never blocks the UI on file deletion, and keeps
-  ;; the global `rift/gc` from running concurrently with a fork.
+  ;; thread so discarding an isolated workspace never blocks on file deletion, and
+  ;; keeps the global `rift/gc` from running concurrently with a fork.
   (delay (java.util.concurrent.Executors/newSingleThreadExecutor
            (reify
              java.util.concurrent.ThreadFactory
@@ -1268,9 +1268,8 @@
 
 (defn ensure-workspace!
   "Find-or-create the session's workspace. The DEFAULT is TRUNK — the
-   user's real cwd (no clone); the agent works directly in the repo
-   until `/draft new`. Resume returns whatever the session was pinned to
-   (trunk, or an open draft). Idempotent per session-state."
+   user's real cwd (no clone). Resume returns whatever workspace the session was
+   pinned to. Idempotent per session-state."
   [db-info {:keys [session-state-id]}]
   (or (for-session db-info session-state-id) (insert-trunk! db-info session-state-id)))
 
@@ -1285,7 +1284,7 @@
 
 (defn change-root!
   "Repoint `session-state-id`'s primary workspace root to `path`. Refuses while
-   the session is in a draft, which must be applied or abandoned first."
+   the session is in an isolated workspace."
   [db-info session-state-id path]
   (let [canon
         (normalize-root path)
@@ -1300,9 +1299,8 @@
                       {:type :workspace/not-a-directory :path path})))
     (let [current (for-session db-info session-state-id)]
       (when (draft? current)
-        (throw (ex-info
-                 "Session is in a draft — /draft apply or /draft abandon before changing the root"
-                 {:type :workspace/root-change-in-draft :workspace-id (:id current)})))
+        (throw (ex-info "Session is in an isolated workspace; its root cannot be changed"
+                        {:type :workspace/root-change-in-draft :workspace-id (:id current)})))
       (if (= canon
              (some-> (:root current)
                      normalize-root))

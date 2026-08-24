@@ -4860,18 +4860,18 @@
           ;; "Vis is calling the provider" — a bang turn makes NO provider call.
           (expect (= "Running shell command" (:command-phase-label m)))))
     (it "gives a REGISTERED slash command a command placeholder + the :slash? marker"
-        ;; A registered `/draft …` slash dispatches LOCALLY (no provider call), so its
+        ;; A registered slash dispatches LOCALLY (no provider call), so its
         ;; bubble must drop the model/provider footer exactly like a `!` shell turn.
         ;; An UNKNOWN `/foo` (no registered root) falls through to template expansion
         ;; or a normal LLM turn and legitimately keeps its footer; a pasted absolute
         ;; path (`/var/…/shot.png …`) is prose, never a slash.
         (with-redefs [com.blockether.vis.core/registered-slashes
                       (fn []
-                        [{:slash/name "draft-blank" :slash/parent []}
-                         {:slash/name "draft" :slash/parent []}
-                         {:slash/name "abandon" :slash/parent ["draft"]}])]
-          (let [blank (pending-assistant-for "/draft-blank empty-provider-list")
-                sub (pending-assistant-for "/draft abandon")
+                        [{:slash/name "reload" :slash/parent []}
+                         {:slash/name "config" :slash/parent []}
+                         {:slash/name "show" :slash/parent ["config"]}])]
+          (let [blank (pending-assistant-for "/reload")
+                sub (pending-assistant-for "/config show")
                 unk (pending-assistant-for "/nope do a thing")
                 path (pending-assistant-for "/var/folders/67/x/shot.png what is this")]
 

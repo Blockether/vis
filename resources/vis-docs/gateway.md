@@ -601,12 +601,6 @@ as the TUI, then adds client-native navigation commands such as `/new-session`
 and `/sessions`. Sending an engine command as a normal turn still uses the
 canonical slash dispatcher and does not call an LLM.
 
-## Draft workspaces
-
-The gateway also owns each session's current workspace and the repo-scoped draft
-list. That shared ownership is why a draft survives client reconnects and why TUI
-and web surfaces see the same state. Draft creation, safety, persistence, slash
-commands, and the workspace HTTP routes are documented in [Drafts](drafts.md).
 
 ## Resource limits and metrics
 
@@ -633,6 +627,5 @@ when requested with `Accept: application/json`).
 ## See also
 
 - [Process jail & egress](jail.md) — the egress proxy and the policy it enforces.
-- [Drafts](drafts.md) — draft workspaces over the gateway API.
 - [Configuration](configuration.md) — every `gateway` key, and the token model in config form.
 - [Runtime distributions](distributions.md) — which runtime the daemon you are talking to is.

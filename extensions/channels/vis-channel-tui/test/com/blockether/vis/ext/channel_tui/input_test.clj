@@ -161,7 +161,7 @@
                    (input/handle-key (alt-shift-special-key KeyType/ArrowDown) state)))))
   (it "verbs dispatch from the C-x prefix; the freed Ctrl letters are Emacs keys"
       ;; No DIRECT verb chords anymore: every vis command lives behind the Emacs
-      ;; prefix C-x (C-x C-m/r/l/f/a/v/d/s/h), and the Ctrl letters they vacated
+      ;; prefix C-x (C-x C-m/r/l/f/a/v/s/h), and the Ctrl letters they vacated
       ;; are Emacs editing keys.
       (let [state
             (-> (input/empty-input)
@@ -181,7 +181,7 @@
         (expect (= :pick-file (:action (input/handle-key (char-key (Character. \a)) armed))))
         (expect (= :toggle-voice-recording
                    (:action (input/handle-key (char-key (Character. \v)) armed))))
-        (expect (= :open-drafts (:action (input/handle-key (char-key (Character. \d)) armed))))
+        (expect (= :continue (:action (input/handle-key (char-key (Character. \d)) armed))))
         (expect (= :toggle-help (:action (input/handle-key (char-key (Character. \h)) armed))))
         ;; WITHOUT the prefix the same Ctrl letters are Emacs keys / abort — NOT verbs:
         (expect (= :continue (:action (input/handle-key (ctrl-key (Character. \h)) state))))      ; C-h inert (help is C-x C-h)

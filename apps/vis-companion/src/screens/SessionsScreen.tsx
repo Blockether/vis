@@ -32,7 +32,6 @@ import {
 } from '../components/ui';
 import {
   Menu,
-  MenuBack,
   MenuHeading,
   MenuItem,
   MenuNote,
@@ -41,8 +40,8 @@ import {
 } from '../components/Menu';
 import { GatewayClient, type ProjectWindows, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { ForkPoint, GatewayConn, Session, SessionUsage, WorkspaceDraft } from '../lib/types';
-import { homeifyPath } from '../lib/path';
+import type { ForkPoint, GatewayConn, Session, SessionUsage } from '../lib/types';
+import { compactProjectPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
 import { reassertBadge, syncBadge } from '../lib/badge';
@@ -76,7 +75,6 @@ import {
   TrashIcon,
 } from '../components/icons';
 import { useFitRows, useMouseDensity } from '../lib/fit-rows';
-import { hostOf } from '../lib/endpoints';
 import {
   clearMachineOutage,
   machineOutage,
@@ -97,16 +95,12 @@ import type { PendingAttachment } from '../lib/attachments';
 import { shareSummary, type SharedPayload } from '../lib/share-intake';
 import { favoriteRank, isFavorite, nextFavoriteRank } from '../lib/favorites';
 import {
-  draftsRead,
-  draftsReadKey,
   fleetError,
   isFleetLoaded,
   machineCounts,
   machineKey,
   machineLabel,
-  newSessionTarget,
   projectGroups,
-  projectLabel,
   searchGroups,
   type Tally,
   reconcileMachines,
@@ -123,18 +117,7 @@ import {
   sessionOrder,
   timeLabel,
   withSearchHits,
-  isDraftWorkspace,
-  projectPath,
-  startAsk,
-  START_IDLE,
-  startFlowName,
-  startFlowOn,
-  startFlowOpen,
-  startFlowBack,
   machineProject,
-  startFlowPick,
-  startFlowUnpick,
-  type StartFlow,
   type FleetMachine,
 } from '../lib/fleet';
 import { projectFoldKey, readProjectFold, writeProjectFold } from '../lib/project-fold';
@@ -359,17 +342,6 @@ function useSessionsPerPage(): number {
  */
 const BROWSE_WIDTH = PANEL_SIZES.browse.width;
 
-/**
- * Where a new session begins. `trunk` is the plain session this screen always made:
- * the agent edits the project directly. The other two are DRAFTS — isolated clones
- * parked at `~/.vis/drafts/<repo>/<label>` — either forked fresh (a clone of the repo
- * as it stands, or one rewound to the last commit) or an existing draft someone
- * stashed earlier.
- */
-type StartIn =
-  | { kind: 'trunk' }
-  | { kind: 'fork'; label: string; clean: boolean }
-  | { kind: 'resume'; draft: WorkspaceDraft };
 
 interface Props {
   /** Every paired machine, in pairing order. This screen renders the FLEET. */
@@ -466,38 +438,15 @@ export function SessionsScreen({
   // back one after the other, so a machine files its matches first and its
   // hydrated rows a round trip later.
   const [searchAnswers, setSearchAnswers] = useState<SearchAnswers>(NO_SEARCH);
-  // The create in flight, and WHERE it was started: `at` is the project header whose
-  // own button is saying the word, and null when the app bar's menu started it.
-  // "Creating..." is a lie while a 12k-file repo is being cloned, so the busy word
-  // follows the WORK: fork, enter, or plain create.
+  // The create in flight and the project header that started it. Only that
+  // header replaces its plus with the busy word.
   const [creating, setCreating] = useState<{ at: string | null; label: string } | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [manageProjects, setManageProjects] = useState<{
     machine: FleetMachine;
     at: { top: number; left: number };
   } | null>(null);
-  // The start order — which machine, which workspace, what to call the draft — is ONE
-  // value, so leaving it anywhere forgets every answer in it. The yellow `New session`
-  // beside it needs none of those answers: it starts where the machine already is.
-  // Portalled and viewport-anchored because the header panel clips its overflow.
-  const [startFlow, setStartFlow] = useState<StartFlow>(START_IDLE);
-  // The menu and its draft sub-question share one surface, so both anchor from the
-  // control the order started at. Browsing is NOT that surface: it takes the screen.
-  const startMenu =
-    startFlow.step === 'menu' || startFlow.step === 'drafts' ? startFlow.at : null;
-  const browseAt = startFlow.step === 'browse' ? startFlow.at : null;
-  // Forking asks for the draft's name first: the gateway rejects a blank label, and
-  // the name is what `/draft list` and every later resume will show.
-  const namePrompt = startFlow.step === 'name' ? startFlow : null;
-  // The control the open order hangs from — a project header's draft half, or its
-  // New session button when that machine has no project yet. An element, not a ref,
-  // because every header carries its own pair.
-  const startAnchorEl = useRef<HTMLElement | null>(null);
-  // One entry per machine+repo, kept across openings; see `forgetParkedDrafts`.
-  const [draftsCache, setDraftsCache] = useState<
-    Record<string, { rows: WorkspaceDraft[]; error: string | null }>
-  >({});
-  const [draftLabel, setDraftLabel] = useState('');
+  const forkAnchorEl = useRef<HTMLElement | null>(null);
   const pollStartedAt = useRef<number | null>(null);
   // The verbs the slide uncovers on a row, plus the group header's project delete. One dialog
   // serves all three: renaming asks for the new title, both deletes ask for consent
@@ -1446,13 +1395,7 @@ export function SessionsScreen({
     [machines],
   );
 
-  const selectScope = useCallback((next: string | null) => {
-    setScopePick(next);
-    // Drafts are repo-scoped ON a machine, and the scope is what decides which
-    // machine the next session lands on: the open order asks a question that just
-    // changed underneath it, so it ends rather than answering the old one.
-    setStartFlow(START_IDLE);
-  }, []);
+  const selectScope = useCallback((next: string | null) => setScopePick(next), []);
 
   // ONE sheet, opened from wherever the machine is named: the row above the card when
   // the list is scoped, and that machine's own band in the fleet view. It is anchored
@@ -1463,241 +1406,17 @@ export function SessionsScreen({
     setManageProjects({ machine, at });
   }, []);
 
-  /**
-   * Drafts are REPO-scoped, and the gateway only lists them through a session that
-   * lives in that repo. The picker therefore reads them off the most recent session
-   * that has a workspace, and the menu NAMES that repo — a fleet spanning several
-   * projects must not be told these drafts belong to whatever it creates next.
-   */
-  // Which machine the start order is about while the bar speaks for the whole fleet: the
-  // scoped machine, or the only one paired. `null` means the app must ASK before it
-  // can create anything.
-  const scopeTarget = newSessionTarget(machines, scope);
-  // Several machines: the menu asks WHICH first, and that answer — not a session on
-  // trunk — is what the workspace question below is then asked about.
-  const ask = startAsk(machines, scopeTarget, startFlowOn(startFlow));
-  const target = ask.on;
-  // That answer was given INSIDE this menu — not by the scope, and not by the project
-  // header the order started on — so it is the one answer the menu can take back.
-  const pickedHere = startFlow.step === 'menu' && startFlow.on !== null;
-  const targetMachine = ask.machine;
-  // Which project header opened the draft picker, so the list it reads is that
-  // project's own and not merely the machine's most recent one.
-  const [draftRoot, setDraftRoot] = useState<string | null>(null);
-  // A row of that very project, handed over by the header that was tapped: this device
-  // holds a WINDOW of the machine, so the project whose drafts are being asked for may
-  // have no row in it at all, and the group that asked is the one place a row of it is
-  // certain to exist.
-  const [draftProbeRow, setDraftProbeRow] = useState<Session | null>(null);
-  // Parked drafts belong to a PROJECT, and the split button that asks for them sits on
-  // that project's header — so the probe is a session in the very root that was tapped.
-  // Falling back to any session of the machine keeps every other caller unchanged.
-  const draftProbe = useMemo(
-    () =>
-      (draftProbeRow && projectPath(draftProbeRow) === draftRoot ? draftProbeRow : null) ??
-      targetMachine?.sessions?.find(
-        (session) => draftRoot !== null && projectPath(session) === draftRoot,
-      ) ??
-      targetMachine?.sessions?.find((session) => projectPath(session)) ??
-      null,
-    [targetMachine, draftRoot, draftProbeRow],
-  );
-  const draftRepo = draftProbe ? projectLabel([draftProbe]) : '';
-  // Where that machine is working RIGHT NOW: the root of its most recent session.
-  // "New session" needs no question because of this — the machine has been somewhere.
-  const project = useMemo(() => machineProject(targetMachine), [targetMachine]);
-  // Every root that machine already runs sessions in, so the browse sheet can badge
-  // a folder the user has been in instead of making them recognise the path.
-  // Every root that machine already runs sessions in, so the browse sheet can badge a
-  // folder the user has been in instead of making them recognise the path. Read from
-  // the gateway's own project tally: a root this device has paged no row of is still a
-  // folder its owner has worked in.
-  const knownRoots = useMemo(() => {
-    const roots = new Set<string>();
-    for (const project of targetMachine?.overview?.projects ?? [])
-      if (project.root) roots.add(project.root);
-    for (const session of targetMachine?.sessions ?? []) {
-      const root = projectPath(session);
-      if (root) roots.add(root);
-    }
-    return roots;
-  }, [targetMachine]);
 
-  // The parked drafts are read for the question that OFFERS them, and for nothing
-  // else: while the menu is still asking WHICH machine there is no repo to read them
-  // from, and it must not wait on a list it does not show.
-  const isWorkspaceAsk = startMenu !== null && target !== null;
-  // WHAT the picker reads, as a value with a string identity. The effect below
-  // depends on that identity and reaches the value through a ref, so the objects
-  // changing underneath it — a background poll replacing the machine and its
-  // sessions, `resize` re-anchoring the menu — cannot abort a request in flight.
-  const draftsSource = draftsRead(targetMachine, draftProbe);
-  const draftsSourceKey = draftsReadKey(draftsSource);
-  const draftsSourceRef = useRef(draftsSource);
-  useEffect(() => {
-    draftsSourceRef.current = draftsSource;
-  }, [draftsSource]);
-  // The answer for that key, KEPT. Creating a session mints a row in the very repo
-  // the picker reads, so the menu reopens on a list this screen already holds:
-  // going back to the gateway for an answer that cannot have changed is exactly the
-  // "Reading drafts..." jump on every single New session. Presence of the entry —
-  // not `null` rows — is what "already read" means, so a repo with nothing parked
-  // is an answer too and is not re-asked either.
-  const draftsEntry = draftsCache[draftsSourceKey] ?? null;
-  const drafts = draftsEntry?.rows ?? null;
-  const draftsError = draftsEntry?.error ?? null;
-  const isDraftsRead = draftsEntry !== null;
-
-  // A fork or a resume changed THAT repo's parked list. Forget that one key; every
-  // other machine and repo keeps the list it already paid for.
-  const forgetParkedDrafts = useCallback((key: string) => {
-    setDraftsCache((cache) => {
-      if (!(key in cache)) return cache;
-      const next = { ...cache };
-      delete next[key];
-      return next;
-    });
-  }, []);
-
-  /**
-   * Open — or RE-ANCHOR — the start order on the control it came from. Re-anchoring
-   * keeps every answer already in it: a resize is not an answer, and on a phone the
-   * on-screen keyboard fires one in the very tap that opens the menu.
-   */
-  const openStartMenu = useCallback(() => {
-    const at = menuPosition(startAnchorEl.current?.getBoundingClientRect(), MENU_WIDTH);
-    setStartFlow((flow) => startFlowOpen(flow, at));
-  }, []);
-
-  /**
-   * The draft half of a project header's split button: one tap lands on the draft
-   * question with machine AND project already answered. It used to be a row inside a
-   * machine-level menu, two headers above the project it actually forks.
-   */
-  const openDraftsAt = useCallback(
-    (anchor: HTMLElement, on: GatewayConn, root: string, probe: Session | null) => {
-      startAnchorEl.current = anchor;
-      const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
-      if (!at) return;
-      setDraftRoot(root);
-      setDraftProbeRow(probe);
-      setStartFlow({ step: 'drafts', at, on });
-    },
-    [],
-  );
-
-  // Leaving the order — tap outside, Escape, Cancel, or a session actually created
-  // — forgets every answer in it, INCLUDING which machine. That machine used to
-  // outlive the dialog it was picked for: the next "New session" tap found a target
-  // already set and created a session on it without asking a single question.
-  const leaveStart = useCallback((restoreFocus = false) => {
-    setStartFlow(START_IDLE);
-    if (restoreFocus) startAnchorEl.current?.focus();
-  }, []);
-
-  // Read the parked drafts ONCE per machine+repo, and again only after a fork or a
-  // resume dropped that key. A failure is reported IN the menu: the three fixed
-  // choices above it still work without it.
-  //
-  // Deps are the OPEN flag, whether that key is already answered, and the key —
-  // never the menu position or the machine object: on a phone the on-screen keyboard
-  // fires `resize` in the very tap that opens the menu, and the fleet poll replaces
-  // the machine every few seconds. Depending on either aborted this request on the
-  // frame it started, over and over, and the menu never left "Reading drafts...".
-  useEffect(() => {
-    if (!isWorkspaceAsk || isDraftsRead) return;
-    const source = draftsSourceRef.current;
-    // That machine's first session list has not landed: keep reading, do not
-    // answer "nothing parked" on behalf of a project we have not seen yet.
-    if (source.kind === 'wait') return;
-    const key = draftsSourceKey;
-    const remember = (rows: WorkspaceDraft[], error: string | null) =>
-      setDraftsCache((cache) => ({ ...cache, [key]: { rows, error } }));
-    if (source.kind === 'none') {
-      remember([], null);
-      return;
-    }
-    const controller = new AbortController();
-    void clientFor(source.conn)
-      .drafts(source.sid, controller.signal)
-      .then((rows) => remember(rows, null))
-      .catch((cause) => {
-        if (controller.signal.aborted) return;
-        remember([], (cause as Error).message);
-      });
-    return () => controller.abort();
-  }, [isWorkspaceAsk, isDraftsRead, draftsSourceKey]);
-
-  // An anchored popover whose anchor moved is a lie, so a resize RE-ANCHORS it to
-  // the live caret; only a caret that has left the document closes it. Closing on
-  // resize is what made this menu look dead on a phone: the on-screen
-  // keyboard hiding — one tap after the filter, in the very tap that opens this
-  // menu — fires `resize`, and the menu died on the frame it was born. Escape
-  // closes it and hands focus back to the caret it came from.
-  useEffect(() => {
-    if (!startMenu) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') leaveStart(true);
-    };
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('resize', openStartMenu);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('resize', openStartMenu);
-    };
-  }, [startMenu, leaveStart, openStartMenu]);
-
-  /**
-   * Create the session, then put it where the user asked. The workspace move is a
-   * SECOND call by construction (the gateway forks through the session that will own
-   * the draft), so a failed fork must not leave a session sitting on trunk — the one
-   * place the user said not to work. It has no turns yet, so it is taken back out.
-   */
-  async function createSession(
-    startIn: StartIn = { kind: 'trunk' },
-    on: GatewayConn | null = target,
-    root?: string,
-  ) {
-    // Several machines in scope: the app cannot guess which one should run this
-    // session, so it asks instead of creating one somewhere arbitrary.
-    if (!on) {
-      openStartMenu();
-      return;
-    }
+  async function createSession(on: GatewayConn, root: string) {
     setCreating({
-      // WHICH button was pressed, so only that project header goes busy.
-      at: root ? `${clientFor(on).base}\u0000${root}` : null,
-      label:
-        startIn.kind === 'fork' ? 'Forking...' : startIn.kind === 'resume' ? 'Entering...' : 'Creating...',
+      at: `${clientFor(on).base}\u0000${root}`,
+      label: 'Creating...',
     });
     setCreateError(null);
-    leaveStart();
     try {
-      const api = clientFor(on);
-      // The machine's CURRENT project, or the one just browsed to. Absent only for a
-      // machine that has never run a session: the gateway then picks its own default.
-      const session = await api.createSession(root ? { root } : {});
-      if (startIn.kind !== 'trunk') {
-        try {
-          if (startIn.kind === 'fork')
-            await api.createDraft(session.id, startIn.label, startIn.clean);
-          else await api.resumeDraft(session.id, startIn.draft.workspace_id);
-        } catch (cause) {
-          await api.deleteSession(session.id).catch(() => {});
-          throw cause;
-        }
-        // The repo's draft list just changed; re-read it next time the menu opens.
-        forgetParkedDrafts(draftsSourceKey);
-      }
-      // Regression, user report (paraphrased: creating a new session from the app
-      // took several seconds): the fleet re-read used to stand between the tap and
-      // the session. It is a full walk of every 100-row window on every machine —
-      // 11 serial round trips and ~728KB on a 1100-session gateway — and it repaints
-      // a list the user is leaving. Open FIRST, then refresh in the background: this
-      // screen stays mounted behind the session, so the rows are already reconciled
-      // by the time anyone comes back to them.
-      // The row the reader just asked for is theirs, so it joins the list without
-      // waiting behind the pill (see `mintedSet`).
+      const session = await clientFor(on).createSession({ root });
+      // Open before refreshing the fleet. The full list walk is background work,
+      // while the session the reader just requested is their immediate destination.
       if (session.id) setMinted((was) => [session.id, ...was].slice(0, MINTED_KEEP));
       if (session.id) await onOpen(on, session.id, true);
       void load();
@@ -1709,35 +1428,15 @@ export function SessionsScreen({
   }
 
 
-  function askDraftName(clean: boolean) {
-    if (!target) return;
-    setDraftLabel('');
-    // The machine travels WITH the order into the name dialog, instead of waiting
-    // behind it in a state of its own that dismissing the dialog would leave set.
-    setStartFlow(startFlowName(target, clean));
-  }
-
-  function commitDraftName() {
-    const label = draftLabel.trim();
-    if (startFlow.step !== 'name' || !label) return;
-    const { on, clean } = startFlow;
-    setStartFlow(START_IDLE);
-    void createSession({ kind: 'fork', label, clean }, on);
-  }
-
   const startRename = useCallback((session: Session, conn: GatewayConn) => {
     setRowAction({ mode: 'rename', session, conn });
     setRenameDraft(session.title?.trim() ?? '');
     setActionError(null);
   }, []);
 
-  /**
-   * The slide's `Fork` verb: hang the fork question under the cell the thumb
-   * touched, exactly like the project header's draft half — the row's own strip
-   * is gone by the time the panel paints, so the anchor comes with the verb.
-   */
+  /** Open the conversation-fork question under the row action that invoked it. */
   const startFork = useCallback((session: Session, conn: GatewayConn, anchor: HTMLElement) => {
-    startAnchorEl.current = anchor;
+    forkAnchorEl.current = anchor;
     const at = menuPosition(anchor.getBoundingClientRect(), MENU_WIDTH);
     if (!at) return;
     forkSourceRef.current = { sid: session.id, conn };
@@ -1749,13 +1448,10 @@ export function SessionsScreen({
   const leaveFork = useCallback((restoreFocus = false) => {
     setForkFlow(null);
     setForkBusy(null);
-    if (restoreFocus) startAnchorEl.current?.focus();
+    if (restoreFocus) forkAnchorEl.current?.focus();
   }, []);
 
-  // The turns are read ONCE per opening, keyed by the ROW — never by the flow
-  // object or the machine, both of which the 5.5s fleet poll replaces under an
-  // open panel (the drafts menu learned this the hard way and never left
-  // "Reading drafts..."), so the source travels in a ref like that one's does.
+  // Read turns once per opening, keyed by row rather than by objects replaced by fleet polling.
   const forkSid = forkFlow?.session.id ?? null;
   const forkMachine = forkFlow ? machineKey(forkFlow.conn) : null;
   useEffect(() => {
@@ -2392,13 +2088,8 @@ export function SessionsScreen({
                           deleteError={actionError}
                           onConfirmDelete={confirmDelete}
                           onCancelDelete={cancelDelete}
-                          onNewSession={(root) => void createSession({ kind: 'trunk' }, machine.conn, root)}
+                           onNewSession={(root) => void createSession(machine.conn, root)}
                           creating={creating}
-                          // A draft is not a preference: every project header offers
-                          // the private copy beside its own "New session".
-                          onNewDraft={(anchor, root, probe) =>
-                            openDraftsAt(anchor, machine.conn, root, probe)
-                          }
                           pageSize={pageSize}
                           epoch={epoch}
                           admitted={admitted}
@@ -2489,111 +2180,8 @@ export function SessionsScreen({
         </Modal>
       )}
 
-      {startMenu && (
-        <Menu
-          label={target ? 'Start the new session in' : 'Create the new session on'}
-          at={startMenu}
-          onDismiss={() => leaveStart(true)}
-        >
-          {target ? (
-            <>
-              {/* WHICH machine was answered inside this very menu, so that answer can be
-                  taken back without leaving the order. A draft question opened from a
-                  project header was never asked it: it gets a heading, never a Back to a
-                  question nobody answered. */}
-              {pickedHere ? (
-                <MenuBack
-                  label="Back to which machine runs this session"
-                  onBack={() => setStartFlow(startFlowUnpick)}
-                >
-                  Start the session in · {machineLabel(target)}
-                </MenuBack>
-              ) : (
-                <MenuHeading>
-                  Start the session in
-                  {machines.length > 1 ? ` · ${machineLabel(target)}` : ''}
-                </MenuHeading>
-              )}
-              <MenuItem
-                title="The project itself"
-                hint="Edits land straight in the repo — no isolated copy."
-                badge="Default"
-                onSelect={() => void createSession({ kind: 'trunk' }, target, project?.path)}
-              />
-              <MenuItem
-                title="A new draft, with my uncommitted changes"
-                hint="A private copy of this project exactly as it is now — your uncommitted changes come with it. The real project stays untouched."
-                onSelect={() => askDraftName(false)}
-              />
-              <MenuItem
-                title="A new draft, without my uncommitted changes"
-                hint="A private copy of this project as of your last commit. Your uncommitted work stays here, in the real project, untouched."
-                onSelect={() => askDraftName(true)}
-              />
-              {/* The SECOND band of the same menu, so it is the quiet one: a treatment
-                  that shouts once is a barcode when it is charged twice. */}
-              <MenuHeading tone="quiet">
-                Or a draft you parked{draftRepo ? ` · ${draftRepo}` : ''}
-              </MenuHeading>
-              {drafts === null ? (
-                <MenuNote>
-                  <Spinner tone="accent" />
-                  Reading drafts...
-                </MenuNote>
-              ) : drafts.length === 0 ? (
-                <MenuNote>{draftsError ?? 'No drafts parked in this project yet.'}</MenuNote>
-              ) : (
-                drafts.map((draft) => (
-                  <MenuItem
-                    key={draft.workspace_id}
-                    title={draft.label?.trim() || shortId(draft.workspace_id)}
-                    hint={draftHint(draft)}
-                    badge={draft.is_current ? 'in use' : undefined}
-                    onSelect={() => void createSession({ kind: 'resume', draft })}
-                  />
-                ))
-              )}
-            </>
-          ) : (
-            /* No machine is in scope, so the session has no home yet. The draft
-               question comes AFTER this one — a workspace only exists on a
-               machine — so this menu asks the one question that has to be first. */
-            <>
-              <MenuHeading>Create the session on</MenuHeading>
-              {ask.choices.length === 0 ? (
-                <MenuNote>No paired machine is answering right now.</MenuNote>
-              ) : (
-                ask.choices.map((machine) => {
-                  const tally = tallies.get(machineKey(machine.conn));
-                  const count = tally?.sessions ?? 0;
-                  return (
-                    <MenuItem
-                      key={machineKey(machine.conn)}
-                      title={machineLabel(machine.conn)}
-                      hint={`${count} ${count === 1 ? 'session' : 'sessions'} · ${hostOf(machine.conn.url)}`}
-                      badge={tally?.live ? `${tally.live} live` : undefined}
-                      onSelect={() => {
-                        // An ANSWER, never the whole order: the workspace question
-                        // comes next, and the drafts it offers are parked on THIS
-                        // machine — another key, read on the very next frame.
-                        setStartFlow((flow) => startFlowPick(flow, machine.conn));
-                      }}
-                    />
-                  );
-                })
-              )}
-            </>
-          )}
-        </Menu>
-      )}
 
-      {/* THE FORK QUESTION, under the row's own slide.
-
-          It rises from the same anchored panel the drafts question uses, because
-          it asks the same shape of thing: one default at the top, then the list
-          the reader may cut at instead. Forking is never destructive — the row
-          it was started from is untouched — so there is no confirm in front of
-          it, only the choice of WHERE the copy stops. */}
+       {/* Conversation fork choices, anchored under the row action that opened them. */}
       {forkFlow && (
         <Menu label="Fork this session" at={forkFlow.at} onDismiss={() => leaveFork(true)}>
           <MenuHeading>
@@ -2630,26 +2218,6 @@ export function SessionsScreen({
         </Menu>
       )}
 
-      {/* The folder browser the start flow falls through to when a machine has no
-          project yet. `manageProjects` below is the same sheet, reached deliberately
-          from the projects mark on the row above the list. */}
-      {target && browseAt && (
-        <ManageProjectsSheet
-          label={machineLabel(target)}
-          at={browseAt}
-          client={clientFor(target)}
-          startAt={project?.path ?? null}
-          knownRoots={knownRoots}
-          projects={targetMachine ? managedProjects(targetMachine) : []}
-          onCancel={() => setStartFlow(startFlowBack)}
-          onChoose={(root) => createSession({ kind: 'trunk' }, target, root)}
-          onRemove={(entry) => {
-            if (!targetMachine) return;
-            leaveStart();
-            startProjectDelete(entry, target);
-          }}
-        />
-      )}
 
       {manageProjects && (
         <ManageProjectsSheet
@@ -2681,49 +2249,6 @@ export function SessionsScreen({
         />
       )}
 
-      {namePrompt && (
-        <Modal onDismiss={() => leaveStart()}>
-            <DialogFrame
-              title={namePrompt.clean ? 'Name the clean draft' : 'Name the draft'}
-              onClose={() => leaveStart()}
-            >
-              <div className="space-y-3 p-4">
-                <p className="font-mono text-meta text-dialog-hint">
-                  {namePrompt.clean
-                    ? 'A private copy of this project as of your last commit — your uncommitted changes stay here and are not copied in. Applying it later is what moves the work back.'
-                    : 'A private copy of this project exactly as it is now, uncommitted changes included. Applying it later is what moves the work back.'}
-                </p>
-                <label className="block">
-                  <span className="mb-1 block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-                    Draft name
-                  </span>
-                  <Input
-                    autoFocus
-                    value={draftLabel}
-                    maxLength={80}
-                    placeholder="wire-rework"
-                    onChange={(event) => setDraftLabel(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') commitDraftName();
-                    }}
-                  />
-                </label>
-                <div className="flex justify-end gap-2">
-                  <Button variant="secondary" onClick={() => leaveStart()}>
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="primary"
-                    disabled={!draftLabel.trim()}
-                    onClick={commitDraftName}
-                  >
-                    Create
-                  </Button>
-                </div>
-              </div>
-            </DialogFrame>
-        </Modal>
-      )}
     </section>
   );
 }
@@ -2915,7 +2440,6 @@ const ProjectGroup = memo(function ProjectGroup({
   onCancelDelete,
   onNewSession,
   creating,
-  onNewDraft,
   pageSize,
   epoch,
   admitted,
@@ -2961,8 +2485,6 @@ const ProjectGroup = memo(function ProjectGroup({
    * instead of a label parked on the app bar saying it for the whole fleet.
    */
   creating: { at: string | null; label: string } | null;
-  /** Opens the private-copy question for this project, anchored on the button. */
-  onNewDraft?: (anchor: HTMLElement, root: string, probe: Session | null) => void;
   pageSize: number;
   /** The order this reader agreed to, which the page below is held in (`lib/order-epoch`). */
   epoch: OrderEpoch | null;
@@ -3275,8 +2797,10 @@ const ProjectGroup = memo(function ProjectGroup({
             // there is: one quiet line under the name, in the hint ink both already
             // wear. The count had a shelf of its own under this band until the pager
             // took the band's trailing column and left it nothing to stand on.
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="min-w-0 truncate">{homeifyPath(root) || 'No workspace path'}</span>
+            <span className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+              <span className="min-w-0 truncate">
+                {compactProjectPath(root, project) || 'No workspace path'}
+              </span>
               <span className="flex shrink-0 items-center gap-2">
                 <span aria-hidden>·</span>
                 <HeaderTally count={tally.count} unit="session" />
@@ -3311,7 +2835,6 @@ const ProjectGroup = memo(function ProjectGroup({
               creating && creating.at === `${base}\u0000${root}` ? creating.label : null
             }
             onPress={() => onNewSession(root)}
-            onDraft={onNewDraft ? (anchor) => onNewDraft(anchor, root, rows[0] ?? null) : undefined}
           />
         </HeaderActions>
       </SectionHeader>
@@ -3436,9 +2959,6 @@ const SessionRow = memo(function SessionRow({
   // on page one — belongs to the group that pages it, so `ProjectGroup` owns the
   // follow. This is only the mark and the strip's verb.
   const toggleStar = useCallback(() => onToggleStar(session), [onToggleStar, session]);
-  // A draft is a per-session clone of the project; the row says so instead of
-  // the list inventing a project for it.
-  const draftName = isDraftWorkspace(session) ? session.workspace?.label?.trim() : '';
 
   return (
     <div className="[&+&]:border-t [&+&]:border-dialog-edge">
@@ -3530,10 +3050,7 @@ const SessionRow = memo(function SessionRow({
             >
               {title}
             </span>
-            {/* The star sits immediately RIGHT of the title, on every row: the strip
-                that leaves the mark is under the row, so the mark itself has to be ON
-                it. Riding at the end of the flag cluster it landed behind
-                `new`/`dirty`/`draft`, moving with whatever else the row carried. */}
+            {/* The favorite mark stays immediately beside the title. */}
             {isStarred && (
               <span className="shrink-0">
                 <StarIcon filled className="size-3" />
@@ -3541,20 +3058,7 @@ const SessionRow = memo(function SessionRow({
               </span>
             )}
           </span>
-          {/* What the session HAS — unread answers, unsent words, the draft it was
-              forked into — in ONE column of its own, so the flags of every
-              row line up with each other instead of with the end of a title. On a
-              phone the flags sit directly BESIDE the status they qualify — `NEW`
-              against `IDLE` — which is what the fixed 6.75rem status track broke:
-              it right-aligned four characters inside 108px and parked the badge 86px
-              away from the word it belongs to. The flag track is `auto` and the
-              status track next to it is fixed at the width of its longest label
-              (`WAITING`), aligned to that track's END — the same right margin the
-              timestamp on the line below stops on, so `NEW IDLE` and `7 hours ago`
-              finish on one edge instead of the badge floating mid-row. The clock
-              SPANS both columns rather than sharing the status one: sharing it, the
-              wider of the two sized the track and pushed `IDLE` 48px away from the
-              `NEW` it qualifies. */}
+          {/* Unread and unsent-message flags share one aligned column. */}
           <span className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 font-mono text-chip sm:col-start-auto sm:row-start-auto">
             {unread > 0 && (
               <span className="shrink-0 bg-accent px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-accent-foreground">
@@ -3567,14 +3071,6 @@ const SessionRow = memo(function SessionRow({
                 title="Unsent message waiting in this session's composer"
               >
                 dirty
-              </span>
-            )}
-            {draftName !== '' && (
-              <span
-                className="shrink-0 border border-warn-strong px-1 font-mono text-chip font-bold uppercase tracking-[0.08em] text-warn-strong"
-                title={session.workspace?.root}
-              >
-                draft {draftName}
               </span>
             )}
           </span>
@@ -3976,18 +3472,6 @@ function dateMillis(value?: string): number {
   return Number.isFinite(millis) ? millis : 0;
 }
 
-function relativeTime(value?: string): string {
-  const millis = dateMillis(value);
-  if (!millis) return '-';
-  const seconds = Math.round((millis - Date.now()) / 1000);
-  const absolute = Math.abs(seconds);
-  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
-  if (absolute < 60) return formatter.format(seconds, 'second');
-  if (absolute < 3_600) return formatter.format(Math.round(seconds / 60), 'minute');
-  if (absolute < 86_400) return formatter.format(Math.round(seconds / 3_600), 'hour');
-  if (absolute < 604_800) return formatter.format(Math.round(seconds / 86_400), 'day');
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(millis);
-}
 
 function formatExact(value?: string): string {
   const millis = dateMillis(value);
@@ -4050,15 +3534,6 @@ function escapeRegExp(value: string): string {
 }
 
 
-// A parked draft says WHEN it forked, because that — not its name — is what tells
-// you whether it still matches the project. A draft with no recorded fork time
-// names its clone instead of inventing a date.
-function draftHint(draft: WorkspaceDraft): string {
-  const forked = draft.fork_ms
-    ? relativeTime(new Date(draft.fork_ms).toISOString())
-    : '';
-  return forked ? `forked ${forked}` : homeifyPath(draft.root ?? '') || 'isolated workspace';
-}
 
 // The first line of an unsent message, short enough to sit on one row. A dirty
 // session has no other name, and a wall of pasted text must not become one.
