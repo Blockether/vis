@@ -14,6 +14,34 @@ import { renderSessionScreen } from "./session-screen-harness";
 // lives in `lib/reading-position.ts` and is pinned there against real figures.
 // jsdom lays nothing out (`scrollHeight` is 0), so a mounted screen can prove
 // what it SHOWS, never how far it scrolled.
+// Regression, session 976f705e-fd80-4787-adc6-1ae8388fdaa2: returning to a cached
+// session still covered ready-to-paint rows with the cold-load sheet on every visit.
+describe("returning to a cached session", () => {
+  it("paints the cached transcript without showing the loading sheet", () => {
+    renderSessionScreen({
+      client: {
+        cachedTranscript: () => [
+          {
+            id: "cached-turn",
+            user_request: "Already in memory",
+            status: "completed",
+            iterations: [],
+          },
+        ],
+      },
+    });
+
+    expect(screen.getByText("Already in memory")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Loading session")).not.toBeInTheDocument();
+  });
+
+  it("treats a cached empty transcript as ready rather than cold", () => {
+    renderSessionScreen({ client: { cachedTranscript: () => [] } });
+
+    expect(screen.queryByLabelText("Loading session")).not.toBeInTheDocument();
+  });
+});
+
 describe("opening a session", () => {
   it("shows the transcript instead of the loading sheet once turns arrive", async () => {
     renderSessionScreen({
@@ -30,6 +58,7 @@ describe("opening a session", () => {
       },
     });
 
+    expect(screen.getByLabelText("Loading session")).toBeInTheDocument();
     expect(await screen.findByText("Rename the machine tag")).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.queryByText(/Loading session/)).not.toBeInTheDocument(),

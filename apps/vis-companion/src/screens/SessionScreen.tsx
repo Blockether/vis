@@ -919,9 +919,8 @@ function expandFileMentions(text: string): string {
 const VEIL_FADE_MS = 200;
 
 // Mirrors the TUI's `paint-content-loading!`: a centered Braille spinner next
-// to "Loading session…" while an existing session hydrates. New-session creation
-// never mounts this — it opens straight to the empty transcript, matching the
-// TUI (which suppresses the spinner for a still-building `:build-id` tab).
+// to "Loading session…" only when an existing session has no transcript snapshot
+// to paint. Cached re-entry and new-session creation both open straight to content.
 function LoadingSession() {
   return (
     <div
@@ -1170,12 +1169,16 @@ export function SessionScreen({
   // widths are transitional and every answer taken from them is thrown away.
   // Every screen-level snapshot is seeded from the client's cache: reopening a
   // session paints its last known transcript on the FIRST frame and revalidates
-  // underneath, instead of holding the loading sheet over an empty view.
+  // underneath, instead of holding the loading sheet over ready-to-paint rows.
+  const openingTranscript = useMemo(
+    () => client.cachedTranscript(sid),
+    [client, sid],
+  );
   const [session, setSession] = useState<Session | null>(() =>
     client.cachedSession(sid),
   );
   const [turns, setTurns] = useState<TranscriptTurn[]>(
-    () => client.cachedTranscript(sid) ?? [],
+    () => openingTranscript ?? [],
   );
   // Whether the turns on screen were confirmed against the gateway during THIS
   // visit. Cached rows paint the first frame, but a cached 'running' row is a
@@ -1218,9 +1221,14 @@ export function SessionScreen({
     client.cachedDefaultModel(),
   );
   const [routerOpen, setRouterOpen] = useState(false);
-  const [loading, setLoading] = useState(!fresh);
-  // The veil outlives `loading` by one transition so it can dissolve.
-  const [veiled, setVeiled] = useState(!fresh);
+  // A cached transcript is already the honest first frame. Reserve the veil for
+  // a genuinely cold open while its first transcript page crosses the network.
+  const [loading, setLoading] = useState(
+    () => !fresh && openingTranscript === null,
+  );
+  const [veiled, setVeiled] = useState(
+    () => !fresh && openingTranscript === null,
+  );
   const [connected, setConnected] = useState(false);
   // The bubble this screen re-enters with, resolved ONCE at mount.
   const [liveSeed] = useState(() => seedLiveTurn(client, subscriptions, sid));
@@ -1632,8 +1640,8 @@ export function SessionScreen({
   );
   const preLiveTurnIdsRef = useRef<Set<string>>(preLiveTurnIdsSeed);
   const cancelRef = useRef<() => void>(() => undefined);
-  // Keep the loading overlay up until a freshly opened session has been
-  // scrolled to its bottom, so persisted history never flashes at the top first.
+  // A cold open stays veiled until its first transcript page has been placed. A
+  // cached re-entry still runs the same positioning pass, but paints immediately.
   const initialScrollPendingRef = useRef(!fresh);
   // Mirror the latest render values for async callbacks. Written in an effect so
   // render itself stays pure.
@@ -1679,11 +1687,12 @@ export function SessionScreen({
     // An artifact overlay only hands itself over to the row that replaces it as a
     // turn settles. Changing session is not that: nothing here may re-open.
     dropOverlayHandovers();
+    const cachedTranscript = client.cachedTranscript(sid);
     void recordingRef.current?.cancel();
     recordingRef.current = null;
     void endVoiceAudioSession();
     pendingVoiceRef.current = null;
-    setTurns(client.cachedTranscript(sid) ?? []);
+    setTurns(cachedTranscript ?? []);
     setTurnsFresh(false);
     setEarlierRemaining(client.transcriptWindow(sid).offset);
     setLoadingEarlier(false);
@@ -1700,7 +1709,7 @@ export function SessionScreen({
     lastLiveSeqRef.current = seed?.seq ?? -1;
     liveSidRef.current = sid;
     preLiveTurnIdsRef.current = new Set(
-      (client.cachedTranscript(sid) ?? [])
+      (cachedTranscript ?? [])
         .filter((turn) => !isRunningRow(turn))
         .map(rowId),
     );
@@ -1731,8 +1740,9 @@ export function SessionScreen({
       voiceModeHoldRef.current = null;
     }
     setVoiceModeHolding(false);
-    setLoading(!fresh);
-    setVeiled(!fresh);
+    const needsColdLoad = !fresh && cachedTranscript === null;
+    setLoading(needsColdLoad);
+    setVeiled(needsColdLoad);
     setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
     setHydratedTurnCount(FIRST_PAINT_TURNS);
     followingRef.current = true;
@@ -2315,8 +2325,8 @@ export function SessionScreen({
       // that is often a phone on someone else's network. Ask for both at once
       // there. A re-entry keeps the meta-first order, where the stamp is exactly
       // what makes the transcript read free.
-      const cold = !client.cachedTranscript(sid)?.length;
-      const body = cold ? loadTranscript() : null;
+      const noRows = !client.cachedTranscript(sid)?.length;
+      const body = noRows ? loadTranscript() : null;
       let row: Session | null = null;
       try {
         row = await client.session(sid, controller.signal, true);
@@ -3752,12 +3762,10 @@ export function SessionScreen({
     cancelReveal,
   ]);
 
-  // The veil must DISSOLVE, not vanish. Unmounting it the instant the transcript
-  // is ready swaps a full-bleed `bg-ink` sheet for the whole transcript inside a
-  // single frame — and reopening a *cached* session is exactly that worst case:
-  // the turns are already painted, so the veil is only up for a frame or two and
-  // its removal reads as a jump rather than a load. Holding it mounted at
-  // `opacity-0` for one transition lets the transcript cross-fade in underneath.
+  // A cold-open veil must DISSOLVE, not vanish. Unmounting it the instant the
+  // transcript is ready swaps a full-bleed `bg-ink` sheet for the whole transcript
+  // inside a single frame. Holding it mounted at `opacity-0` for one transition
+  // lets the transcript cross-fade in underneath. Cached sessions never mount it.
   useEffect(() => {
     if (loading) {
       setVeiled(true);
