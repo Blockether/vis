@@ -4710,17 +4710,31 @@
           ;; Forwarding that verbatim makes append-only consumers (CLI
           ;; trace, JSON/EDN trace streams) re-emit the entire growing
           ;; block on every tick — the screenshotted "sending and sending"
-          ;; bug. We close that here at the producer: track per-iteration
-          ;; accumulated length, compute `:delta` (just the new tail) and
+          ;; bug. We close that here at the producer: remember the cumulative
+          ;; text already forwarded, compute `:delta` (just the new tail) and
           ;; ship it alongside `:thinking` (still the full accumulated text
           ;; for redraw-style consumers like the TUI timeline). Consumers
           ;; that want append-only streaming append `:delta`; the others
           ;; ignore it and read `:thinking` as before.
-          reasoning-len-volatile (volatile! 0)
-          content-len-volatile (volatile! 0)
+          ;;
+          ;; Remember the TEXT, not its length. A producer that REWRITES the
+          ;; cumulative — Codex streamed two reasoning summary parts glued and
+          ;; re-joined them with a blank line when the item closed — makes a
+          ;; slice at the previous LENGTH hand append-only consumers a mid-word
+          ;; tail like `on**`. A rewrite carries no increment: report none and
+          ;; let the corrected cumulative riding alongside repaint.
+          reasoning-prev-volatile (volatile! "")
+          content-prev-volatile (volatile! "")
           reset-stream-state! (fn []
-                                (vreset! reasoning-len-volatile 0)
-                                (vreset! content-len-volatile 0))
+                                (vreset! reasoning-prev-volatile "")
+                                (vreset! content-prev-volatile ""))
+          cumulative-delta! (fn [prev-volatile s]
+                              (let [prev (str @prev-volatile)]
+                                (vreset! prev-volatile (or s ""))
+                                (cond (nil? s) nil
+                                      (= prev s) ""
+                                      (str/starts-with? s prev) (subs s (count prev))
+                                      :else "")))
           streaming-fn
           (when on-chunk
             (fn [{:keys [reasoning content done?] :as chunk}]
@@ -4768,14 +4782,8 @@
                                       thinking (some-> reasoning
                                                        str
                                                        strutil/strip-elision-marker)
-                                      prev-len (long @reasoning-len-volatile)
-                                      cur-len (long (count (or thinking "")))
-                                      delta (cond (nil? thinking) nil
-                                                  (< cur-len prev-len) thinking
-                                                  (= cur-len prev-len) ""
-                                                  :else (subs thinking prev-len))]
+                                      delta (cumulative-delta! reasoning-prev-volatile thinking)]
 
-                                  (vreset! reasoning-len-volatile cur-len)
                                   (on-chunk {:phase :reasoning
                                              :iteration iteration-position
                                              :thinking thinking
@@ -4789,14 +4797,8 @@
                                 ;; reasoning; consumers redraw or append.
                                 (let [content-s (some-> content
                                                         str)
-                                      prev-len (long @content-len-volatile)
-                                      cur-len (long (count (or content-s "")))
-                                      delta (cond (nil? content-s) nil
-                                                  (< cur-len prev-len) content-s
-                                                  (= cur-len prev-len) ""
-                                                  :else (subs content-s prev-len))]
+                                      delta (cumulative-delta! content-prev-volatile content-s)]
 
-                                  (vreset! content-len-volatile cur-len)
                                   (on-chunk {:phase :content
                                              :iteration iteration-position
                                              :content content-s

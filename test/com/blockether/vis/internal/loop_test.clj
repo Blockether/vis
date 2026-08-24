@@ -746,6 +746,23 @@
           (expect (= 1 (count resets)))
           (expect (= :llm.routing/provider-retry (get-in (first resets) [:event :event/type])))
           (expect (= ["partial thought" "replacement thought"] deltas))))
+    (it "reports no increment when the provider rewrites the reasoning cumulative"
+        ;; Regression: the increment was sliced at the previous LENGTH, so when
+        ;; Codex re-joined its reasoning summary parts with a blank line the
+        ;; cumulative grew WITHOUT extending - and every append-only consumer was
+        ;; handed a mid-word tail (`on**`) instead of the text the model wrote.
+        (let [first-part "**Designing the role**"
+              glued (str first-part "**Implementing the log**")
+              rewritten (str first-part "\n\n**Implementing the log**")
+              chunks (chunks-of (fn [on-chunk]
+                                  (on-chunk {:reasoning first-part :done? false})
+                                  (on-chunk {:reasoning glued :done? false})
+                                  (on-chunk {:reasoning rewritten :done? false})))
+              reasoning-chunks (filterv #(= :reasoning (:phase %)) chunks)
+              deltas (mapv :delta reasoning-chunks)]
+
+          (expect (= [first-part "**Implementing the log**"] (filterv seq deltas)))
+          (expect (some #{rewritten} (mapv :thinking reasoning-chunks)))))
     (it "still reports a routing event as a provider fallback"
         (let [chunks (chunks-of (fn [on-chunk]
                                   (on-chunk {:event/type :llm.routing/provider-fallback
