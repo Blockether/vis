@@ -448,9 +448,8 @@ export function SessionsScreen({
   } | null>(null);
   const forkAnchorEl = useRef<HTMLElement | null>(null);
   const pollStartedAt = useRef<number | null>(null);
-  // The verbs the slide uncovers on a row, plus the group header's project delete. One dialog
-  // serves all three: renaming asks for the new title, both deletes ask for consent
-  // — a destructive tap two pixels from a thumb rest position must never be one-way.
+  // The row action belongs to one session on one machine. Renaming needs an input
+  // dialog; deleting asks through `ConfirmRow` exactly where that session row stood.
   // FORKING one session, from that row's own slide. The order is one value like
   // the start order above it: which row, on which machine, and where the panel
   // hangs — leaving it forgets all three.
@@ -475,10 +474,6 @@ export function SessionsScreen({
   const [renameDraft, setRenameDraft] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  // Fan-out progress. Deleting a group that is not a project row is one request per
-  // session, and forty of them behind a motionless 'Deleting...' is indistinguishable
-  // from a hang.
-  const [actionProgress, setActionProgress] = useState<{ done: number; total: number } | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const hintRef = useRef<HTMLDivElement>(null);
   // How far the finger has pulled the top of the list down, in the only three
@@ -1492,35 +1487,94 @@ export function SessionsScreen({
     [forkFlow, onOpen],
   );
 
+  // Apply a successful gateway deletion to exactly the machine that owned it. The
+  // gateway already answered which ids disappeared, so neither a session nor a project
+  // removal re-downloads the fleet merely to rediscover that answer.
+  const forgetSessions = useCallback(
+    (conn: GatewayConn, ids: string[], project?: ManagedProject) => {
+      const api = clientFor(conn);
+      for (const sid of ids) clearDraftMessage(draftMessageKey(api.base, sid));
+      if (ids.length > 0) void flushDraftMessages();
+
+      const gone = new Set(ids);
+      patchMachine(machineKey(conn), (machine) => {
+        const rows = machine.sessions;
+        const sessions = rows && gone.size > 0
+          ? rows.filter((row) => !gone.has(row.id))
+          : rows;
+        let overview = machine.overview;
+        if (project && overview) {
+          const projects = overview.projects.filter((entry) =>
+            project.projectId
+              ? entry.project_id !== project.projectId
+              : entry.root !== project.root,
+          );
+          if (projects.length !== overview.projects.length) {
+            overview = {
+              ...overview,
+              projects,
+              project_count: projects.length,
+              session_count: projects.reduce((total, entry) => total + entry.session_count, 0),
+              live_count: projects.reduce((total, entry) => total + entry.live_count, 0),
+              awaiting_count: projects.reduce((total, entry) => total + entry.awaiting_count, 0),
+            };
+          }
+        }
+        if (sessions === rows && overview === machine.overview) return machine;
+        return { ...machine, sessions, overview };
+      });
+    },
+    [patchMachine],
+  );
+
+  // The unit is the group ON THIS MACHINE, never "this project everywhere": the same
+  // repo checked out on two machines is two projects and two deletes. A saved project is
+  // one gateway request; a root-only group keeps the existing complete, best-effort walk.
+  const removeManagedProject = useCallback(
+    async (
+      project: ManagedProject,
+      conn: GatewayConn,
+      onProgress: (progress: { done: number; total: number }) => void,
+    ) => {
+      const api = clientFor(conn);
+      if (project.projectId) {
+        const deleted = await api.deleteProject(project.projectId);
+        forgetSessions(conn, deleted, project);
+        return;
+      }
+
+      const ids = await projectSessionIds(api, project.root);
+      const gone: string[] = [];
+      let failed = 0;
+      onProgress({ done: 0, total: ids.length });
+      for (const sid of ids) {
+        try {
+          await api.deleteSession(sid);
+          gone.push(sid);
+        } catch {
+          failed += 1;
+        }
+        onProgress({ done: gone.length + failed, total: ids.length });
+      }
+      // A partial fan-out is exactly known too: successful ids leave while refusals keep
+      // their rows. Only a complete answer removes the project itself from the overview.
+      forgetSessions(conn, gone, failed === 0 ? project : undefined);
+      if (failed > 0)
+        throw new Error(`${failed} of ${ids.length} sessions could not be deleted.`);
+    },
+    [forgetSessions],
+  );
+
   const startDelete = useCallback((session: Session, conn: GatewayConn) => {
     setRowAction({ mode: 'delete', session, conn });
     setActionError(null);
   }, []);
 
-  // The unit is the group ON THIS MACHINE, never "this project everywhere": the same
-  // repo checked out on two machines is two projects and two deletes.
-  const startProjectDelete = useCallback((project: ManagedProject, conn: GatewayConn) => {
-    setRowAction({
-      mode: 'project',
-      project: project.name,
-      root: project.root,
-      projectId: project.projectId,
-      count: project.count,
-      live: project.live,
-      conn,
-    });
-    setActionError(null);
-    setActionProgress(null);
-  }, []);
-
-  // Dismissable even mid-request. A delete is already on the wire and cannot be
-  // taken back, but the SCREEN must always come back: a confirm dialog that
-  // refuses to close until the gateway answers reads as a frozen app (and with
-  // an unreachable machine it stayed up for the full request timeout).
+  // Dismissable even mid-request. A delete already on the wire cannot be taken back, but
+  // the row must never trap the screen for the full timeout of an unreachable machine.
   const cancelDelete = useCallback(() => {
     setRowAction(null);
     setActionError(null);
-    setActionProgress(null);
   }, []);
 
   function closeRowAction() {
@@ -1529,116 +1583,46 @@ export function SessionsScreen({
 
   async function commitRowAction() {
     if (!rowAction) return;
-    const api = clientFor(rowAction.conn);
-    const key = machineKey(rowAction.conn);
-    // The words that made a row dirty die with it: a draft message kept under a
-    // session id that no longer exists is unreachable forever. The star needs no
-    // sweep of its own — it lived on the session the gateway just deleted.
-    const forgetDraftMessages = (ids: string[]) => {
-      for (const sid of ids) clearDraftMessage(draftMessageKey(api.base, sid));
-      if (ids.length > 0) void flushDraftMessages();
-    };
-    // A finished row action is not news to go and FETCH. The gateway has already
-    // answered — which ids died, or the row it stored — so the new list is the old
-    // one with that answer applied, on THIS machine, because no other one was
-    // touched.
-    //
-    // Regression, user report (paraphrased: removing a single session re-downloaded
-    // every session): this used to end in `load()`, a full walk of every 100-row
-    // window on every paired machine (~728KB over 11 serial round trips on a
-    // 1100-session gateway, see `createSession`) to be told one id that was already
-    // in hand — with the confirm standing over the list until the whole fleet
-    // drained. Deleting one row costs no request beyond the DELETE itself.
-    //
-    // Returning the SAME array means nothing changed, which bails `patchMachine`
-    // out before any row re-renders.
-    const patchRows = (update: (rows: Session[]) => Session[]) =>
-      patchMachine(key, (machine) => {
-        const rows = machine.sessions;
-        if (!rows) return machine;
-        const next = update(rows);
-        return next === rows ? machine : { ...machine, sessions: next };
-      });
-    const forgetRows = (ids: string[]) => {
-      if (ids.length === 0) return;
-      const gone = new Set(ids);
-      patchRows((rows) => {
-        const kept = rows.filter((row) => !gone.has(row.id));
-        return kept.length === rows.length ? rows : kept;
-      });
-    };
+    const action = rowAction;
+    const api = clientFor(action.conn);
+    const key = machineKey(action.conn);
     const title = renameDraft.trim();
-    if (rowAction.mode === 'rename' && !title) {
+    if (action.mode === 'rename' && !title) {
       setActionError('A session name cannot be empty.');
       return;
     }
     setActionBusy(true);
     setActionError(null);
     try {
-      if (rowAction.mode === 'rename') {
-        // The gateway echoes the row it stored, so the new name arrives WITH the
-        // answer. Keyed by the id we asked about and with the requested title left
-        // standing under the echo, so a thin answer still repaints the row rather
-        // than leaving the old name up until the next poll. Ordering is deliberately
-        // untouched: a row that jumps out from under the thumb the instant it is
-        // named reads as a bug, and the poll re-ranks it soon enough.
-        const sid = rowAction.session.id;
+      if (action.mode === 'rename') {
+        // The gateway echoes the row it stored, so the new name arrives WITH the answer.
+        // Ordering stays untouched: a row that jumps from under the thumb the instant it
+        // is named reads as a bug, and the poll re-ranks it soon enough.
+        const sid = action.session.id;
         const renamed = await api.renameSession(sid, title);
-        patchRows((rows) =>
-          rows.some((row) => row.id === sid)
-            ? rows.map((row) => (row.id === sid ? { ...row, title, ...renamed, id: sid } : row))
-            : rows,
-        );
-      } else if (rowAction.mode === 'delete') {
-        await api.deleteSession(rowAction.session.id);
-        forgetDraftMessages([rowAction.session.id]);
-        forgetRows([rowAction.session.id]);
+        patchMachine(key, (machine) => {
+          const rows = machine.sessions;
+          if (!rows || !rows.some((row) => row.id === sid)) return machine;
+          return {
+            ...machine,
+            sessions: rows.map((row) =>
+              row.id === sid ? { ...row, title, ...renamed, id: sid } : row,
+            ),
+          };
+        });
       } else {
-        // ONE REQUEST WHERE THE GATEWAY OWNS THE PROJECT: it deletes the members it
-        // knows about, which is more than any list paints.
-        if (rowAction.projectId) {
-          const deleted = await api.deleteProject(rowAction.projectId);
-          forgetDraftMessages(deleted);
-          forgetRows(deleted);
-        } else {
-          // No project row to hand the group to, so the fan-out IS the delete — over
-          // the ids the GATEWAY says the root holds, walked at the moment the purge is
-          // confirmed, because this device holds a window and never the project. It
-          // keeps going past a failure and says what survived, instead of stopping half
-          // way with nothing said.
-          const ids = await projectSessionIds(api, rowAction.root);
-          const gone: string[] = [];
-          let failed = 0;
-          setActionProgress({ done: 0, total: ids.length });
-          for (const sid of ids) {
-            try {
-              await api.deleteSession(sid);
-              gone.push(sid);
-            } catch {
-              failed += 1;
-            }
-            setActionProgress({ done: gone.length + failed, total: ids.length });
-          }
-          forgetDraftMessages(gone);
-          // A partial fan-out is exactly known too: the ids that died leave, the ones
-          // that refused keep their rows, and the note says how many refused.
-          forgetRows(gone);
-          if (failed > 0) {
-            setActionError(`${failed} of ${ids.length} sessions could not be deleted.`);
-            return;
-          }
-        }
+        // Regression, user report: deleting one session used to end in `load()`, a full
+        // walk of every paired machine. The DELETE already names the one row to forget.
+        await api.deleteSession(action.session.id);
+        forgetSessions(action.conn, [action.session.id]);
       }
-      setRowAction(null);
+      setRowAction((current) => (current === action ? null : current));
     } catch (cause) {
       setActionError((cause as Error).message);
     } finally {
       setActionBusy(false);
-      setActionProgress(null);
     }
   }
-
-  const rowCopy = rowAction ? rowActionCopy(rowAction, machineLabel(rowAction.conn)) : null;
 
   // Deleting ONE session is confirmed IN the row, so the confirm has to reach
   // `commitRowAction` from inside a memoised row. Through a ref, not a fresh
@@ -2121,62 +2105,45 @@ export function SessionsScreen({
         )}
       </div>
 
-      {/* Renaming and the group purge keep the dialog. Deleting ONE session does
-          not: its confirm is the row itself — see `SessionRow`. */}
-      {rowAction && rowCopy && rowAction.mode !== 'delete' && (
+      {/* Renaming needs a field. Both destructive questions stay in the row they
+          act on: a session in `SessionRow`, a project in `ManageProjectsSheet`. */}
+      {rowAction?.mode === 'rename' && (
         <Modal size="fit" onDismiss={closeRowAction}>
-            <DialogFrame title={rowCopy.title} onClose={closeRowAction}>
-              <div className="space-y-3 p-4">
-                <p className="truncate font-mono text-meta text-dialog-hint">{rowCopy.subject}</p>
-                {rowAction.mode === 'rename' ? (
-                  <label className="block">
-                    <span className="mb-1 block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-                      Session name
-                    </span>
-                    <Input
-                      autoFocus
-                      value={renameDraft}
-                      maxLength={200}
-                      placeholder="Session name"
-                      onChange={(event) => setRenameDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') void commitRowAction();
-                      }}
-                    />
-                  </label>
-                ) : (
-                  <p className="font-mono text-body text-white">{rowCopy.body}</p>
-                )}
-                {rowCopy.live > 0 && (
-                  <Banner kind="warn">
-                    {rowCopy.live === 1
-                      ? 'One of them is running right now and will be stopped.'
-                      : `${rowCopy.live} of them are running right now and will be stopped.`}
-                  </Banner>
-                )}
-                {actionError && <Banner kind="err">{actionError}</Banner>}
-                <div className="flex justify-end gap-2">
-                  <Button variant="secondary" onClick={closeRowAction}>
-                    Cancel
-                  </Button>
-                  <Button
-                    variant={rowAction.mode === 'rename' ? 'primary' : 'danger'}
-                    disabled={actionBusy}
-                    onClick={() => void commitRowAction()}
-                  >
-                    {actionBusy
-                      ? rowAction.mode === 'rename'
-                        ? 'Saving...'
-                        : actionProgress
-                          ? `Purging ${actionProgress.done} of ${actionProgress.total}...`
-                          : rowAction.mode === 'project' ? 'Purging...' : 'Deleting...'
-                      : rowAction.mode === 'rename'
-                        ? 'Save'
-                        : rowAction.mode === 'project' ? 'Purge' : 'Delete'}
-                  </Button>
-                </div>
+          <DialogFrame title="Rename session" onClose={closeRowAction}>
+            <div className="space-y-3 p-4">
+              <p className="truncate font-mono text-meta text-dialog-hint">
+                {rowAction.session.title?.trim() || 'Untitled session'} · {shortId(rowAction.session.id)}
+              </p>
+              <label className="block">
+                <span className="mb-1 block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+                  Session name
+                </span>
+                <Input
+                  autoFocus
+                  value={renameDraft}
+                  maxLength={200}
+                  placeholder="Session name"
+                  onChange={(event) => setRenameDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void commitRowAction();
+                  }}
+                />
+              </label>
+              {actionError && <Banner kind="err">{actionError}</Banner>}
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={closeRowAction}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  disabled={actionBusy}
+                  onClick={() => void commitRowAction()}
+                >
+                  {actionBusy ? 'Saving...' : 'Save'}
+                </Button>
               </div>
-            </DialogFrame>
+            </div>
+          </DialogFrame>
         </Modal>
       )}
 
@@ -2241,11 +2208,9 @@ export function SessionsScreen({
             await load();
             setManageProjects(null);
           }}
-          onRemove={(entry) => {
-            const conn = manageProjects.machine.conn;
-            setManageProjects(null);
-            startProjectDelete(entry, conn);
-          }}
+          onRemove={(entry, onProgress) =>
+            removeManagedProject(entry, manageProjects.machine.conn, onProgress)
+          }
         />
       )}
 
@@ -2253,53 +2218,10 @@ export function SessionsScreen({
   );
 }
 
-/** Rename one row, delete one row, or delete a whole group on ONE machine. */
+/** Rename or delete one session on ONE machine. */
 type RowAction =
   | { mode: 'rename'; session: Session; conn: GatewayConn }
-  | { mode: 'delete'; session: Session; conn: GatewayConn }
-  | {
-      mode: 'project';
-      /** The header's own name and canonical root. */
-      project: string;
-      root: string;
-      /** The gateway's project id, or `''` when the group is only a shared root. */
-      projectId: string;
-      /** What the GATEWAY says the group holds: the blast radius, not what is on screen. */
-      count: number;
-      live: number;
-      conn: GatewayConn;
-    };
-
-/**
- * What the confirm says.
- *
- * A group delete states the FULL blast radius: the count is every session the gateway
- * tallies in the group, never the rows this device happens to hold, and it names the
- * machine — the same repo on two machines is two groups. It also never claims to
- * delete a project when the group is only a shared root.
- */
-function rowActionCopy(
-  action: RowAction,
-  machine: string,
-): { title: string; subject: string; body: string; live: number } {
-  if (action.mode !== 'project') {
-    return {
-      title: action.mode === 'rename' ? 'Rename session' : 'Delete session',
-      subject: `${action.session.title?.trim() || 'Untitled session'} · ${shortId(action.session.id)}`,
-      body: 'Delete this session and its transcript from the gateway? This cannot be undone.',
-      live: action.mode === 'delete' && sessionIsLive(action.session) ? 1 : 0,
-    };
-  }
-  const sessions = `${action.count} ${action.count === 1 ? 'session' : 'sessions'}`;
-  return {
-    title: 'Purge sessions',
-    subject: `${action.project} · ${machine}`,
-    body: action.projectId
-      ? `Purge all ${sessions} in this project, with every transcript, from ${machine}? This cannot be undone.`
-      : `Purge all ${sessions} in this group, with every transcript, from ${machine}? They share a workspace but no saved project, so nothing else is removed. This cannot be undone.`,
-    live: action.live,
-  };
-}
+  | { mode: 'delete'; session: Session; conn: GatewayConn };
 
 /** How many rows one purge walk asks for at a time — a read nobody is watching. */
 const PURGE_WALK = 200;
@@ -2972,9 +2894,8 @@ const SessionRow = memo(function SessionRow({
 
   return (
     <div className="[&+&]:border-t [&+&]:border-dialog-edge">
-      {/* The confirm IS the row (`ConfirmRow`, shared with a machine's `Forget`).
-          Renaming and the group purge, which state a wider blast radius, still
-          ask in a dialog. */}
+      {/* The confirm IS the row (`ConfirmRow`, shared with machine and project
+          removal). Only renaming needs a dialog because its answer is a field. */}
       {isConfirmingDelete ? (
         <ConfirmRow
           question={`Delete ${title}?`}

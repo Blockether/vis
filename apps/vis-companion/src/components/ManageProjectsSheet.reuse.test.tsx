@@ -481,8 +481,11 @@ describe("the projects mark opens the inventory", () => {
     expect(path).toHaveClass("block");
     expect(path.parentElement).toBe(row.querySelector("span.min-w-0.flex-1"));
   });
-  it("lists the machine's projects, each with its trash, before any browse", async () => {
-    const { client, onRemove } = sheet();
+  // Regression, user report: the project's trash was narrower than the close cell and
+  // left the sheet for a second dialog. The question belongs exactly where that project row
+  // stood, with the same full-width yes/no answer used by session deletion.
+  it("asks to delete inside the project row, from a close-width trash cell", async () => {
+    const { client, onRemove, panel } = sheet();
 
     const row = await screen.findByRole("menuitem", { name: /vis/ });
     expect(row).toBeInTheDocument();
@@ -490,10 +493,41 @@ describe("the projects mark opens the inventory", () => {
     // Nothing was asked of the gateway: the inventory is what this device already knows.
     expect(client.browse.mock.calls.length).toBe(0);
 
+    const trash = screen.getByRole("button", {
+      name: "Remove every transcript in vis",
+    });
+    const close = screen.getByRole("button", { name: "Close projects on tower" });
+    expect(trash).toHaveClass("w-12", "mouse:w-9");
+    expect(close).toHaveClass("w-12", "mouse:w-9");
+
+    await userEvent.click(trash);
+
+    const question = screen.getByRole("group", { name: "Delete vis?" });
+    expect(question.textContent).toContain("3 transcripts");
+    expect(question.textContent).toContain("1 running");
+    expect(screen.queryByRole("menuitem", { name: /vis/ })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: /spel/ })).toBeInTheDocument();
+    // The anchored projects sheet is still the only dialog on screen.
+    expect(screen.getAllByRole("dialog")).toEqual([panel()]);
+    expect(onRemove).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "No, keep" }));
+    expect(await screen.findByRole("menuitem", { name: /vis/ })).toBeInTheDocument();
+    expect(onRemove).not.toHaveBeenCalled();
+
     await userEvent.click(
       screen.getByRole("button", { name: "Remove every transcript in vis" }),
     );
-    expect(onRemove).toHaveBeenCalledWith(PROJECTS[0]);
+    await userEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+
+    await waitFor(() =>
+      expect(onRemove).toHaveBeenCalledWith(PROJECTS[0], expect.any(Function)),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("menuitem", { name: /vis/ })).toBeNull(),
+    );
+    expect(screen.getByRole("menuitem", { name: /spel/ })).toBeInTheDocument();
+    expect(screen.getAllByRole("dialog")).toEqual([panel()]);
   });
 
   it("leaves `New project…` the way it was entered", async () => {

@@ -222,9 +222,15 @@ export const IconButton = forwardRef<
      * the target grows to the edge instead of leaving a dead 16px strip beside it.
      */
     edge?: boolean;
+    /**
+     * This is the row's ONE trailing action, so its column is the same 48px touch /
+     * 36px mouse cell as the `CloseButton` that ends the sheet above it. A row with a
+     * cluster of disclosure controls keeps the narrower gutter geometry instead.
+     */
+    fullCell?: boolean;
   }
 >(function IconButton(
-  { label, className = '', variant = 'secondary', density = 'compact', edge, children, ...props },
+  { label, className = '', variant = 'secondary', density = 'compact', edge, fullCell, children, ...props },
   ref,
 ) {
   // `border-r-0`: this box ends ON the paper's own edge, and the paper already draws
@@ -241,7 +247,9 @@ export const IconButton = forwardRef<
   // desktop list kept a 24px disclosure at the TOP of its 32px row, its chevron four
   // pixels above the title beside it.
   const box = edge
-    ? 'h-auto min-w-10 justify-items-end self-stretch border-r-0 pl-0 pr-3 -mr-3 after:content-none sm:min-w-12 sm:pr-4 sm:-mr-4 mouse:h-auto mouse:min-w-10'
+    ? `h-auto justify-items-end self-stretch border-r-0 pl-0 pr-3 -mr-3 after:content-none sm:pr-4 sm:-mr-4 mouse:h-auto ${
+        fullCell ? 'w-12 mouse:w-9' : 'min-w-10 sm:min-w-12 mouse:min-w-10'
+      }`
     : 'min-w-7 place-items-center px-0 sm:min-w-8 sm:px-0 mouse:min-w-6';
   return (
     <Button

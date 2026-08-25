@@ -1679,6 +1679,22 @@ describe("a row-ending icon button fills its row", () => {
     expect(line).toContain("after:content-none");
   });
 
+  // Regression, user report: the trash ending a project row occupied a narrower column
+  // than the close cell directly above it, even though each was the row's only last action.
+  it("offers the close cell's exact width to a lone row action", () => {
+    const trash = renderToStaticMarkup(
+      <IconButton edge fullCell label="Delete project" onClick={() => {}} />,
+    );
+    const close = renderToStaticMarkup(
+      <CloseButton isBand label="Close projects" onClick={() => {}} />,
+    );
+    for (const token of ["w-12", "mouse:w-9"]) {
+      expect(trash).toContain(token);
+      expect(close).toContain(token);
+    }
+    expect(trash).not.toContain("min-w-10");
+  });
+
   // Regression, user report ("during the search the > are not having correct line
   // height"): the cancellation was spelled once, unvarianted, so at mouse density the
   // compact scale's own `mouse:h-6` outlived it. Measured on the 1440px desktop list,

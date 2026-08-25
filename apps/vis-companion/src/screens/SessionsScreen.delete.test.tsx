@@ -18,8 +18,8 @@ const machines = () => [
 ];
 
 // Deleting ONE session is a row-level answer to a row-level question, so it is
-// asked IN the row: two full-width answers standing the row's own height. Only
-// the wider blast radius (rename, group purge) still opens a dialog.
+// asked IN the row: two full-width answers standing the row's own height. Renaming
+// still needs a field; project deletion asks in its own inventory row too.
 describe("deleting one session confirms inside its own row", () => {
   it("asks in the row, not in a dialog, and only that row is asked", async () => {
     const view = renderSessionsScreen({ machines: machines() });
@@ -83,6 +83,61 @@ describe("deleting one session confirms inside its own row", () => {
     );
     expect(screen.getByText("First")).toBeTruthy();
     expect(view.requests.some((request) => request.method === "DELETE")).toBe(false);
+  });
+});
+
+// Regression, user report: project trash left its inventory row and opened a second
+// dialog. The project manager must ask and commit in that exact row, like a session does.
+describe("deleting a project confirms inside its inventory row", () => {
+  it("keeps the projects sheet and replaces only the selected row", async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: "alpha",
+          sessions: [listSession({ id: "a1", title: "First" })],
+        },
+      ],
+    });
+    restore = view.restore;
+    await screen.findByText("First");
+    fireEvent.click(screen.getByRole("button", { name: "Projects on alpha" }));
+    const sheet = await screen.findByRole("dialog", {
+      name: "Manage projects on alpha",
+    });
+    view.requests.length = 0;
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Remove every transcript in project",
+      }),
+    );
+
+    await screen.findByRole("group", { name: "Delete project?" });
+    expect(screen.getAllByRole("dialog")).toEqual([sheet]);
+    expect(view.requests.some((request) => request.method === "DELETE")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "No, keep" }));
+    expect(await screen.findByRole("menuitem", { name: /project/ })).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Remove every transcript in project",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Yes, delete" }));
+
+    await waitFor(() =>
+      expect(
+        view.requests.some(
+          (request) =>
+            request.method === "DELETE" && request.path === "/v1/sessions/a1",
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("group", { name: "Delete project?" })).toBeNull(),
+    );
+    expect(screen.getAllByRole("dialog")).toEqual([sheet]);
+    expect(screen.getByText("This machine has no projects yet.")).toBeTruthy();
   });
 });
 

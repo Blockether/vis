@@ -20,7 +20,7 @@
  * It is `AnchoredPanel` + `MenuHeading` + `MenuItem` now, so it cannot drift again.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BandButton, IconButton, Input, Spinner } from './ui';
+import { BandButton, ConfirmRow, IconButton, Input, Spinner } from './ui';
 import { AnchoredPanel, MenuBack, MenuHeading, MenuItem, MenuNote } from './Menu';
 import type { MenuPosition } from '../lib/anchored-menu';
 import { ChevronIcon, PencilIcon, ProjectsIcon, TrashIcon } from './icons';
@@ -120,6 +120,37 @@ export interface ManagedProject {
   live: number;
 }
 
+export interface ProjectRemovalProgress {
+  done: number;
+  total: number;
+}
+
+interface ProjectRemoval {
+  project: ManagedProject;
+  busy: boolean;
+  error: string | null;
+  progress: ProjectRemovalProgress | null;
+}
+
+/** The full blast radius stays inside the row whose destructive question it labels. */
+function removalCost(
+  project: ManagedProject,
+  machine: string,
+  progress: ProjectRemovalProgress | null,
+  error: string | null,
+): string {
+  const transcripts = `${project.count} ${project.count === 1 ? 'transcript' : 'transcripts'}`;
+  const scope = project.projectId
+    ? `Deletes all ${transcripts} from ${machine}.`
+    : `Deletes all ${transcripts} in this workspace group from ${machine}; the shared folder stays.`;
+  const running = project.live > 0
+    ? `${project.live} running ${project.live === 1 ? 'session is' : 'sessions are'} stopped too.`
+    : '';
+  const progressCopy = progress ? `Deleted ${progress.done} of ${progress.total}.` : '';
+  const failure = error ? `Could not delete: ${error}` : '';
+  return [scope, running, 'This cannot be undone.', progressCopy, failure].filter(Boolean).join(' ');
+}
+
 export function ManageProjectsSheet({
   label,
   isAdding,
@@ -151,8 +182,14 @@ export function ManageProjectsSheet({
   projects: ManagedProject[];
   onCancel: () => void;
   onChoose: (root: string) => void | Promise<void>;
-  /** Remove every transcript in one project. The caller owns the confirmation. */
-  onRemove: (project: ManagedProject) => void;
+  /**
+   * Remove every transcript in one project. This sheet owns the in-row question; the
+   * caller owns the gateway mutation and reports a fallback fan-out as it advances.
+   */
+  onRemove: (
+    project: ManagedProject,
+    onProgress: (progress: ProjectRemovalProgress) => void,
+  ) => void | Promise<void>;
 }) {
   // The portal opens on what this machine HAS; the filesystem is one step in, behind
   // the verb that needs it. It used to open on `GET /v1/fs` — a folder browser called
@@ -174,6 +211,14 @@ export function ManageProjectsSheet({
   // `null` is not creating; a string is the folder that does not exist yet.
   const [folder, setFolder] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // The destructive question REPLACES exactly one inventory row. Successful removals
+  // stay gone even though the caller's `machine` snapshot predates the request.
+  const [removing, setRemoving] = useState<ProjectRemoval | null>(null);
+  const [removedRoots, setRemovedRoots] = useState<Set<string>>(() => new Set());
+  const visibleProjects = useMemo(
+    () => projects.filter((project) => !removedRoots.has(project.root)),
+    [projects, removedRoots],
+  );
 
   const typedSplit = typed === null ? null : splitTyped(typed);
 
@@ -258,6 +303,52 @@ export function ManageProjectsSheet({
       setSaving(false);
     }
   }, [alreadyProject, client, folder, here, onChoose, target]);
+
+  const askRemove = useCallback((project: ManagedProject) => {
+    setRemoving({ project, busy: false, error: null, progress: null });
+  }, []);
+
+  const keepProject = useCallback(() => setRemoving(null), []);
+
+  const commitRemove = useCallback(
+    async (project: ManagedProject) => {
+      if (removing?.project.root !== project.root || removing.busy) return;
+      setRemoving((current) =>
+        current?.project.root === project.root
+          ? { ...current, busy: true, error: null, progress: null }
+          : current,
+      );
+      try {
+        await onRemove(project, (progress) =>
+          setRemoving((current) =>
+            current?.project.root === project.root ? { ...current, progress } : current,
+          ),
+        );
+        setRemovedRoots((current) => {
+          if (current.has(project.root)) return current;
+          const next = new Set(current);
+          next.add(project.root);
+          return next;
+        });
+        setRemoving((current) =>
+          current?.project.root === project.root ? null : current,
+        );
+      } catch (cause) {
+        const message = (cause as Error).message;
+        setRemoving((current) =>
+          current?.project.root === project.root
+            ? {
+                ...current,
+                busy: false,
+                error: message,
+                progress: null,
+              }
+            : current,
+        );
+      }
+    },
+    [onRemove, removing],
+  );
 
   const enter = useCallback((path: string) => {
     setTyped(null);
@@ -365,32 +456,51 @@ export function ManageProjectsSheet({
               because this is the portal that manages projects — it was a `⋯` on every
               project header opening a popover with one destructive row in it. */}
           <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0">
-            {projects.length === 0 ? (
+            {visibleProjects.length === 0 ? (
               <MenuNote>This machine has no projects yet.</MenuNote>
             ) : (
-              projects.map((entry) => (
-                <MenuItem
-                  key={entry.root}
-                  icon={<ProjectsIcon className="size-4" />}
-                  title={entry.name}
-                  meta={`${entry.count} ${entry.count === 1 ? 'transcript' : 'transcripts'}${
-                    entry.live > 0 ? `, ${entry.live} running` : ''
-                  }`}
-                  hint={homeifyPath(entry.root) || entry.root}
-                  badge={entry.root === startAt ? 'current' : undefined}
-                  onSelect={() => onChoose(entry.root)}
-                  action={
-                    <IconButton
-                      edge
-                      variant="remove"
-                      label={`Remove every transcript in ${entry.name}`}
-                      onClick={() => onRemove(entry)}
-                    >
-                      <TrashIcon className="size-4" />
-                    </IconButton>
-                  }
-                />
-              ))
+              visibleProjects.map((entry) =>
+                removing?.project.root === entry.root ? (
+                  <ConfirmRow
+                    key={entry.root}
+                    question={`Delete ${entry.name}?`}
+                    cost={removalCost(entry, label, removing.progress, removing.error)}
+                    confirmLabel={
+                      removing.busy
+                        ? removing.progress
+                          ? `Deleting ${removing.progress.done} of ${removing.progress.total}...`
+                          : 'Deleting...'
+                        : 'Yes, delete'
+                    }
+                    isBusy={removing.busy}
+                    onKeep={keepProject}
+                    onConfirm={() => void commitRemove(entry)}
+                  />
+                ) : (
+                  <MenuItem
+                    key={entry.root}
+                    icon={<ProjectsIcon className="size-4" />}
+                    title={entry.name}
+                    meta={`${entry.count} ${entry.count === 1 ? 'transcript' : 'transcripts'}${
+                      entry.live > 0 ? `, ${entry.live} running` : ''
+                    }`}
+                    hint={homeifyPath(entry.root) || entry.root}
+                    badge={entry.root === startAt ? 'current' : undefined}
+                    onSelect={() => onChoose(entry.root)}
+                    action={
+                      <IconButton
+                        edge
+                        fullCell
+                        variant="remove"
+                        label={`Remove every transcript in ${entry.name}`}
+                        onClick={() => askRemove(entry)}
+                      >
+                        <TrashIcon className="size-4" />
+                      </IconButton>
+                    }
+                  />
+                ),
+              )
             )}
           </div>
         </>
