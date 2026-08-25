@@ -8,34 +8,35 @@
  ;; engine slurps off the classpath as `vis/__init__.py` and execs into every
  ;; extension context. One file, both distributions.
  :paths ["src" "resources" "packages/vis-agent/src"]
-
  ;; tools.deps reads :mvn/repos ONLY from the project it is invoked on, never from a
  ;; :local/root dep's deps.edn, so the JitPack repo the voice extension declares has
  ;; to be repeated here for the aggregate build to resolve com.github.k2-fsa.sherpa-onnx.
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
-
  :deps
  {;; The extension CONTRACT, published on its own so an extension — or a tool in
   ;; somebody else's repository — can read what the host offers without depending on
   ;; the engine. It carries `resources/vis-contract/*.edn`, so the engine reads its
   ;; own contract off this dependency's classpath.
   com.blockether/vis-contract {:local/root "packages/vis-contract"}
-
   com.blockether/vis-channel-tui {:local/root "extensions/channels/vis-channel-tui"}
   com.blockether/vis-foundation-search {:local/root "extensions/common/vis-foundation-search"}
   com.blockether/vis-foundation-voice {:local/root "extensions/common/vis-foundation-voice"}
   com.blockether/vis-language-clojure {:local/root "extensions/languages/vis-language-clojure"}
   com.blockether/vis-language-python {:local/root "extensions/languages/vis-language-python"}
-  com.blockether/vis-persistance-sqlite {:local/root "extensions/persistance/vis-persistance-sqlite"}
+  com.blockether/vis-persistance-sqlite {:local/root
+                                         "extensions/persistance/vis-persistance-sqlite"}
   com.blockether/vis-provider-alibaba {:local/root "extensions/providers/vis-provider-alibaba"}
   com.blockether/vis-provider-anthropic {:local/root "extensions/providers/vis-provider-anthropic"}
-  com.blockether/vis-provider-github-copilot {:local/root "extensions/providers/vis-provider-github-copilot"}
-  com.blockether/vis-provider-openai-codex {:local/root "extensions/providers/vis-provider-openai-codex"}
-  com.blockether/vis-provider-opencode-go {:local/root "extensions/providers/vis-provider-opencode-go"}
-  com.blockether/vis-provider-openrouter {:local/root "extensions/providers/vis-provider-openrouter"}
+  com.blockether/vis-provider-github-copilot {:local/root
+                                              "extensions/providers/vis-provider-github-copilot"}
+  com.blockether/vis-provider-openai-codex {:local/root
+                                            "extensions/providers/vis-provider-openai-codex"}
+  com.blockether/vis-provider-opencode-go {:local/root
+                                           "extensions/providers/vis-provider-opencode-go"}
+  com.blockether/vis-provider-openrouter {:local/root
+                                          "extensions/providers/vis-provider-openrouter"}
   com.blockether/vis-provider-standard {:local/root "extensions/providers/vis-provider-standard"}
   com.blockether/vis-provider-zai {:local/root "extensions/providers/vis-provider-zai"}
-
   ;; --- third party -----------------------------------------------------------
   babashka/fs {:mvn/version "0.5.34"}
   babashka/process {:mvn/version "0.6.25"}
@@ -56,7 +57,7 @@
   com.blockether/parinferish {:mvn/version "0.1.2"}
   com.blockether/rift {:mvn/version "0.0.10-11"}
   com.blockether/ruff {:mvn/version "0.3.5"}
-  com.blockether/svar {:mvn/version "0.7.140"}
+  com.blockether/svar {:mvn/version "0.7.141"}
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
@@ -126,11 +127,8 @@
   org.graalvm.truffle/truffle-runtime {:mvn/version "25.1.3"}
   org.yamlstar/yamlstar {:mvn/version "0.1.17"}
   ring/ring-core {:mvn/version "1.15.5"}}
-
  :aliases
- {:antq {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}}
-         :main-opts ["-m" "antq.core"]}
-
+ {:antq {:deps {com.github.liquidz/antq {:mvn/version "RELEASE"}} :main-opts ["-m" "antq.core"]}
   :build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.14"}
                  org.apache.commons/commons-compress {:mvn/version "1.28.0"}
                  slipset/deps-deploy {:mvn/version "0.2.5"}}
@@ -138,16 +136,13 @@
           ;; (tools.deps pulls slf4j-nop). WARN verbosity silences it.
           :jvm-opts ["-Dslf4j.internal.verbosity=WARN"]
           :ns-default build}
-
   :clj-watson {:main-opts ["-m" "clj-watson.cli"]
                :replace-deps {io.github.clj-holmes/clj-watson
-                              {:git/sha "be98e4db74fb8927db4825cc73bbe2606e44e5e3" :git/tag "v6.1.0"}}}
-
+                              {:git/sha "be98e4db74fb8927db4825cc73bbe2606e44e5e3"
+                               :git/tag "v6.1.0"}}}
   ;; Regenerate the companion's STATIC theme assets from `theme.clj`. Themes are
   ;; data, not a gateway service: `apps/vis-companion` ships the rendered CSS.
-  :companion-themes {:exec-fn com.blockether.vis.dev.companion-themes/write!
-                     :extra-paths ["dev"]}
-
+  :companion-themes {:exec-fn com.blockether.vis.dev.companion-themes/write! :extra-paths ["dev"]}
   ;; The whole-tree static-analysis gate CI runs. clj-kondo straight from its own
   ;; CLI, pinned to the SAME version the Clojure language pack loads in process for
   ;; `lint_code`, so the gate and the tool can never disagree. :replace-deps keeps
@@ -156,9 +151,7 @@
   ;; what CI lints; extra paths on the command line append to them.
   :lint {:main-opts ["-m" "clj-kondo.main" "--lint" "src" "test" "dev"]
          :replace-deps {clj-kondo/clj-kondo {:mvn/version "2026.07.24"}}}
-
   :native {:extra-deps {com.github.clj-easy/graal-build-time {:mvn/version "1.0.6"}}}
-
   ;; The whole-repo suite. The two path lists below carry the same test roots and
   ;; must stay in step: :extra-paths puts them on the CLASSPATH, the bare paths
   ;; after `lazytest.main` are what lazytest WALKS (`dev` is classpath-only). The
@@ -166,45 +159,36 @@
   ;; flags (--namespace / --var) to `clojure -M:test`.
   :test
   {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
-   :extra-paths ["test"
-                 "dev"
-                 "extensions/channels/vis-channel-tui/test"
-                 "extensions/common/vis-foundation-search/test"
-                 "extensions/common/vis-foundation-voice/test"
-                 "extensions/languages/vis-language-clojure/test"
-                 "extensions/languages/vis-language-python/test"
-                 "extensions/persistance/vis-persistance-sqlite/test"
-                 "extensions/providers/vis-provider-alibaba/test"
-                 "extensions/providers/vis-provider-anthropic/test"
-                 "extensions/providers/vis-provider-github-copilot/test"
-                 "extensions/providers/vis-provider-openai-codex/test"
-                 "extensions/providers/vis-provider-opencode-go/test"
-                 "extensions/providers/vis-provider-openrouter/test"
-                 "extensions/providers/vis-provider-standard/test"
-                 "extensions/providers/vis-provider-zai/test"]
+   :extra-paths
+   ["test" "dev" "extensions/channels/vis-channel-tui/test"
+    "extensions/common/vis-foundation-search/test" "extensions/common/vis-foundation-voice/test"
+    "extensions/languages/vis-language-clojure/test" "extensions/languages/vis-language-python/test"
+    "extensions/persistance/vis-persistance-sqlite/test"
+    "extensions/providers/vis-provider-alibaba/test"
+    "extensions/providers/vis-provider-anthropic/test"
+    "extensions/providers/vis-provider-github-copilot/test"
+    "extensions/providers/vis-provider-openai-codex/test"
+    "extensions/providers/vis-provider-opencode-go/test"
+    "extensions/providers/vis-provider-openrouter/test"
+    "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]
    :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
               "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
               "-Dvis.drafts.dir=target/vis-drafts-test"]
    ;; --hook refuses non-loopback HTTP for the whole run: see
    ;; com.blockether.vis.test-network-guard.
-   :main-opts ["-m" "lazytest.main"
-               "--hook" "com.blockether.vis.test-network-guard/no-network"
-               "test"
-               "extensions/channels/vis-channel-tui/test"
-               "extensions/common/vis-foundation-search/test"
-               "extensions/common/vis-foundation-voice/test"
-               "extensions/languages/vis-language-clojure/test"
-               "extensions/languages/vis-language-python/test"
-               "extensions/persistance/vis-persistance-sqlite/test"
-               "extensions/providers/vis-provider-alibaba/test"
-               "extensions/providers/vis-provider-anthropic/test"
-               "extensions/providers/vis-provider-github-copilot/test"
-               "extensions/providers/vis-provider-openai-codex/test"
-               "extensions/providers/vis-provider-opencode-go/test"
-               "extensions/providers/vis-provider-openrouter/test"
-               "extensions/providers/vis-provider-standard/test"
-               "extensions/providers/vis-provider-zai/test"]}
-
+   :main-opts
+   ["-m" "lazytest.main" "--hook" "com.blockether.vis.test-network-guard/no-network" "test"
+    "extensions/channels/vis-channel-tui/test" "extensions/common/vis-foundation-search/test"
+    "extensions/common/vis-foundation-voice/test" "extensions/languages/vis-language-clojure/test"
+    "extensions/languages/vis-language-python/test"
+    "extensions/persistance/vis-persistance-sqlite/test"
+    "extensions/providers/vis-provider-alibaba/test"
+    "extensions/providers/vis-provider-anthropic/test"
+    "extensions/providers/vis-provider-github-copilot/test"
+    "extensions/providers/vis-provider-openai-codex/test"
+    "extensions/providers/vis-provider-opencode-go/test"
+    "extensions/providers/vis-provider-openrouter/test"
+    "extensions/providers/vis-provider-standard/test" "extensions/providers/vis-provider-zai/test"]}
   ;; The NATIVE BINARY's own suite (test-native/): what only `target/vis` can answer
   ;; — the TUI's first frame on a pty, a whole one-shot agent turn, the provider
   ;; extensions linked into it. A SEPARATE alias because it needs a ~20-minute
@@ -220,7 +204,6 @@
                 :jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
                            "--enable-preview" "--sun-misc-unsafe-memory-access=allow"]
                 :main-opts ["-m" "lazytest.main" "test-native"]}
-
   ;; The TUI/gateway JVM. Past the native-access grants every Vis JVM needs, these
   ;; flags exist to keep IDLE RSS down: the live heap is small, but G1 over-commits
   ;; and never hands the pages back on its own.
@@ -241,7 +224,6 @@
   :vis {:jvm-opts ["-XX:+IgnoreUnrecognizedVMOptions" "--enable-native-access=ALL-UNNAMED"
                    "--enable-preview" "--sun-misc-unsafe-memory-access=allow"
                    "-XX:+G1PeriodicGCInvokesConcurrent" "-XX:G1PeriodicGCInterval=60000"
-                   "-XX:MinHeapFreeRatio=10" "-XX:MaxHeapFreeRatio=25"
-                   "-Xmx5g"
+                   "-XX:MinHeapFreeRatio=10" "-XX:MaxHeapFreeRatio=25" "-Xmx5g"
                    "-XX:+UseStringDeduplication"]
         :main-opts ["-m" "com.blockether.vis.core"]}}}

@@ -87,12 +87,9 @@
    continue is different and does not time out by default; see
    `ASK_CODE_SEMANTIC_TIMEOUT_MS`.
 
-   The FIRST byte is bounded tighter than this: svar's idle watchdog caps the
-   pre-first-byte wait at `llm/*stream-first-byte-timeout-ms*` (120s) and only
-   ever tightens, so a stream that answers headers and then writes nothing is
-   named in two minutes and re-issued by `loop/pre-output-stream-retryable?`
-   instead of holding the turn for the full 300s. This 300s governs the gaps
-   AFTER that byte."
+   The FIRST byte has its own svar watchdog. Provider-scoped policy may widen
+   that prefill window independently; this 300s default governs gaps after the
+   first byte."
   300000)
 
 (def ASK_CODE_SEMANTIC_TIMEOUT_MS
@@ -107,17 +104,16 @@
    ignore this setting and retain their transport-specific idle policy."
   240000)
 
+(def ^:private ask-code-runtime-network-defaults
+  {:ttft-timeout-ms ASK_CODE_TTFT_TIMEOUT_MS
+   :idle-timeout-ms ASK_CODE_IDLE_TIMEOUT_MS
+   :semantic-timeout-ms ASK_CODE_SEMANTIC_TIMEOUT_MS})
+
 (defn with-default-ask-code-idle-timeout
-  [opts]
-  (cond-> opts
-    (not (contains? opts :ttft-timeout-ms))
-    (assoc :ttft-timeout-ms ASK_CODE_TTFT_TIMEOUT_MS)
-
-    (not (contains? opts :idle-timeout-ms))
-    (assoc :idle-timeout-ms ASK_CODE_IDLE_TIMEOUT_MS)
-
-    (and (some? ASK_CODE_SEMANTIC_TIMEOUT_MS) (not (contains? opts :semantic-timeout-ms)))
-    (assoc :semantic-timeout-ms ASK_CODE_SEMANTIC_TIMEOUT_MS)))
+  "Merge streaming limits with precedence: explicit call opts, provider policy,
+   Vis runtime defaults, then svar defaults for keys Vis leaves absent."
+  ([opts] (with-default-ask-code-idle-timeout opts nil))
+  ([opts provider-network] (merge ask-code-runtime-network-defaults (or provider-network {}) opts)))
 
 (def AGENT_INITIATOR_HEADERS
   "`X-Initiator: agent` — the header GitHub Copilot bills by.

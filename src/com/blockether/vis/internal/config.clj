@@ -324,6 +324,9 @@
           (:extra-body provider-md)
           (assoc :extra-body (:extra-body provider-md))
 
+          (:network provider-md)
+          (assoc :network (:network provider-md))
+
           (:is-hidden provider-md)
           (assoc :is-hidden true))))))
 
@@ -593,7 +596,7 @@
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,
    `:base-url`, `:api-style`, `:models`, optional `:responses-path`,
-   optional `:llm-headers`).
+   optional `:llm-headers`, and Vis-owned `:network` request defaults).
 
    svar's `make-router` calls `normalize-provider` which auto-resolves
    `:base-url` from svar's `KNOWN_PROVIDERS` table for built-in
@@ -689,6 +692,11 @@
         merged-extra-body
         (not-empty (merge (:extra-body template) (:extra-body provider)))
 
+        ;; Kept on the pre-normalized provider so Vis can reattach it after svar
+        ;; normalizes the router. Explicit provider config wins over its preset.
+        merged-network
+        (not-empty (merge (:network template) (:network provider)))
+
         get-token-fn
         (when (nil? api-key)
           (some-> (registry/provider-by-id pid)
@@ -736,7 +744,10 @@
           (assoc :llm-headers merged-headers)
 
           merged-extra-body
-          (assoc :extra-body merged-extra-body)))
+          (assoc :extra-body merged-extra-body)
+
+          merged-network
+          (assoc :network merged-network)))
       (cond-> {:id pid :models models}
         (or api-key catalog-api-key)
         (assoc :api-key (or api-key catalog-api-key))
@@ -760,7 +771,10 @@
         (assoc :llm-headers explicit-headers)
 
         merged-extra-body
-        (assoc :extra-body merged-extra-body)))))
+        (assoc :extra-body merged-extra-body)
+
+        merged-network
+        (assoc :network merged-network)))))
 
 ;;; ── Config I/O ──────────────────────────────────────────────────────────
 
@@ -810,11 +824,11 @@
                  :api-key :api-key-command :models :base-url :api-style :compatibility
                  :responses-path :llm-headers :extra-body :rate-limit :budget :tokens
                  :same-provider-delays-ms :fallback-after-ms :timeout-ms :ttft-timeout-ms
-                 :idle-timeout-ms :semantic-timeout-ms :max-retries :initial-delay-ms :max-delay-ms
-                 :multiplier :max-tokens :max-cost :pricing :context-limits :output-reserve
-                 :failure-threshold :recovery-ms :transient-status-codes :window-ms :cooldown-ms
-                 :max-wait-ms :allow-read-write :allow-read :allow-write :deny-read :deny-write
-                 :path :access :description :inbound-ports :deny-exec :allowed-domains
+                 :first-byte-timeout-ms :idle-timeout-ms :semantic-timeout-ms :max-retries
+                 :initial-delay-ms :multiplier :max-tokens :max-cost :pricing :context-limits
+                 :output-reserve :failure-threshold :recovery-ms :transient-status-codes :window-ms
+                 :cooldown-ms :max-wait-ms :allow-read-write :allow-read :allow-write :deny-read
+                 :deny-write :path :access :description :inbound-ports :deny-exec :allowed-domains
                  :denied-domains :exclude-domains :allow-private :rules :host :methods :allow
                  :method :text :is-replace :include-gitignored-paths :always-exclude :backend
                  :theme-name :contributors-disabled :servers :transport :command :args :cwd :env

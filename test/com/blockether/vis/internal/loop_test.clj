@@ -98,34 +98,46 @@
         (expect (= 0 @provider-calls))
         (expect (= :vis/unsupported-reasoning-effort (:type (ex-data thrown))))
         (expect (= ["high" "max"] (:supported (ex-data thrown))))))
-  (it "does not inject a prompt for models without native reasoning"
-      (let [environment
-            (lp/create-environment ::router {:db :memory})
+  (it
+    "does not inject a prompt for models without native reasoning"
+    (let [environment
+          (lp/create-environment {:providers [{:id :lmstudio
+                                               :network {:timeout-ms 1800000
+                                                         :first-byte-timeout-ms 600000
+                                                         :idle-timeout-ms 600000
+                                                         :semantic-timeout-ms 600000}}]}
+                                 {:db :memory})
 
-            seen
-            (atom nil)
+          seen
+          (atom nil)
 
-            messages
-            [{:role "system" :content "core"} {:role "user" :content "task"}]
+          messages
+          [{:role "system" :content "core"} {:role "user" :content "task"}]
 
-            message-text
-            (fn [{:keys [content]}]
-              (if (string? content) content (apply str (keep :text content))))]
+          message-text
+          (fn [{:keys [content]}]
+            (if (string? content) content (apply str (keep :text content))))]
 
-        (try (with-redefs [svar/ask-code!
-                           (fn [_router opts]
-                             (reset! seen opts)
-                             {:stop-reason :end :tool-calls [] :content "done" :tokens {}})]
-               (lp/run-iteration environment
-                                 messages
-                                 {:iteration 0
-                                  :reasoning-level :deep
-                                  :resolved-model
-                                  {:provider :lmstudio :name "local-model" :reasoning? false}})
-               (expect (= ["system" "user"] (mapv :role (:messages @seen))))
-               (expect (= ["core" "task"] (mapv message-text (:messages @seen))))
-               (expect (not (contains? @seen :reasoning))))
-             (finally (lp/dispose-environment! environment)))))
+      (try (with-redefs [svar/ask-code!
+                         (fn [_router opts]
+                           (reset! seen opts)
+                           {:stop-reason :end :tool-calls [] :content "done" :tokens {}})]
+             (lp/run-iteration environment
+                               messages
+                               {:iteration 0
+                                :reasoning-level :deep
+                                :resolved-model
+                                {:provider :lmstudio :name "local-model" :reasoning? false}})
+             (expect (= ["system" "user"] (mapv :role (:messages @seen))))
+             (expect (= ["core" "task"] (mapv message-text (:messages @seen))))
+             (expect (not (contains? @seen :reasoning))))
+           (expect (= 1800000 (:timeout-ms @seen)))
+           (expect (= 600000 (:first-byte-timeout-ms @seen)))
+           (expect (= 600000 (:idle-timeout-ms @seen)))
+           (expect (= 600000 (:semantic-timeout-ms @seen)))
+           ;; Provider policy leaves Vis' existing pre-header TTFT behavior intact.
+           (expect (= rt/ASK_CODE_TTFT_TIMEOUT_MS (:ttft-timeout-ms @seen)))
+           (finally (lp/dispose-environment! environment)))))
   (it "builds valid evidence for same-model retries"
       (let [iteration
             {:iteration 1

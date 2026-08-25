@@ -610,6 +610,14 @@
       (and provider-id (not (contains? routing :provider)))
       (assoc :provider provider-id))))
 
+(defn- provider-network-policy
+  "Provider defaults baked into the current router, resolved at the request boundary."
+  [router resolved-model]
+  (let [provider-id (some-> (:provider resolved-model)
+                            name
+                            keyword)]
+    (:network (some #(when (= provider-id (:id %)) %) (:providers router)))))
+
 (def ^:private casual-request-pattern
   #"(?iu)^\s*(hi|hey|hello|yo|sup|siema|cześć|czesc|hej|dzień dobry|dzie dobry|thanks|thank you|thx|ok|okay|👍|👋)[\s!.?,]*\s*$")
 
@@ -4946,7 +4954,8 @@
               (assoc :cancel-fn
                 (let [ca (:cancel-atom environment)]
                   (fn []
-                    (boolean (deref ca)))))))
+                    (boolean (deref ca))))))
+            (provider-network-policy (:router environment) resolved-model))
           ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
                                                             :session-turn-id (:environment-id
                                                                                environment)
@@ -5813,9 +5822,29 @@
                t))))
 
 (defn- build-router
-  "`svar/make-router` for a resolved config, with the env-gap diagnosis attached."
+  "Build a router and retain Vis provider network policy after svar normalization."
   [config]
-  (try (svar/make-router (runtime-router-providers config) (config/router-opts config))
+  (try (let [providers
+             (runtime-router-providers config)
+
+             network-by-id
+             (into {}
+                   (keep (fn [p]
+                           (when-let [policy (:network p)]
+                             [(:id p) policy])))
+                   providers)
+
+             router
+             (svar/make-router providers (config/router-opts config))]
+
+         (update router
+                 :providers
+                 (fn [normalized]
+                   (mapv (fn [provider]
+                           (if-let [policy (get network-by-id (:id provider))]
+                             (assoc provider :network policy)
+                             provider))
+                         normalized))))
        (catch Throwable t (throw (env-gap-router-error config t)))))
 
 (defn get-router

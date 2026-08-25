@@ -81,9 +81,18 @@
 ;; Provider/model contract -----------------------------------------------------
 
 (def model-keys #{"name" "context" "output_limit" "is_tool_call" "api_style"})
+(def network-timeout-schema
+  {"timeout_ms" non-negative-number?
+   "ttft_timeout_ms" non-negative-number?
+   "first_byte_timeout_ms" non-negative-number?
+   "idle_timeout_ms" non-negative-number?
+   "semantic_timeout_ms" non-negative-number?})
+
+(defn- network-timeout-map? [m] (closed-map? network-timeout-schema m))
+
 (def provider-keys
   #{"id" "api_key" "api_key_command" "models" "base_url" "compatibility" "api_style"
-    "responses_path" "llm_headers" "extra_body" "is_stateless" "is_image_input"})
+    "responses_path" "llm_headers" "extra_body" "network" "is_stateless" "is_image_input"})
 
 (def api-style-aliases
   "Every spelling Vis accepts for a wire dialect -> the `:api-style` svar
@@ -169,6 +178,7 @@
    "responses_path" non-blank-string?
    "llm_headers" string-map?
    "extra_body" yaml-map?
+   "network" network-timeout-map?
    ;; Gateways that load-balance across several Azure OpenAI resources cannot
    ;; resolve an item id minted by another replica; replaying one is a hard
    ;; HTTP 400. `is_stateless: true` stops sending server-minted item ids
@@ -187,8 +197,8 @@
 (def rate-limit-keys
   #{"same_provider_delays_ms" "fallback_after_ms" "is_respect_retry_after" "is_fallback_provider"})
 (def router-network-keys
-  #{"timeout_ms" "ttft_timeout_ms" "idle_timeout_ms" "semantic_timeout_ms" "max_retries"
-    "initial_delay_ms" "max_delay_ms" "multiplier"})
+  #{"timeout_ms" "ttft_timeout_ms" "first_byte_timeout_ms" "idle_timeout_ms" "semantic_timeout_ms"
+    "max_retries" "initial_delay_ms" "max_delay_ms" "multiplier"})
 (def budget-keys #{"max_tokens" "max_cost"})
 (def token-keys #{"is_check_context" "pricing" "context_limits" "output_reserve"})
 (def router-keys

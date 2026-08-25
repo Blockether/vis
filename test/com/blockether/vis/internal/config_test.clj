@@ -54,6 +54,29 @@
                  :router {:rate-limit {:fallback-after-ms 1}}}]
         (expect (= {:rate-limit {:fallback-after-ms 1}} (config/router-opts cfg))))))
 
+(defdescribe provider-network-config-test
+             (it "round-trips the closed provider network timeout vocabulary"
+                 (let [wire
+                       {"providers" [{"id" "local"
+                                      "network" {"timeout_ms" 1800000
+                                                 "first_byte_timeout_ms" 600000
+                                                 "idle_timeout_ms" 600000
+                                                 "semantic_timeout_ms" 600000}}]}
+
+                       runtime
+                       (config/runtime-config wire)]
+
+                   (expect (s/valid? ::config-spec/providers (get wire "providers")))
+                   (expect (= {:timeout-ms 1800000
+                               :first-byte-timeout-ms 600000
+                               :idle-timeout-ms 600000
+                               :semantic-timeout-ms 600000}
+                              (get-in runtime [:providers 0 :network])))
+                   (expect (= (get-in wire ["providers" 0 "network"])
+                              (get-in (#'config/->yaml-safe runtime) ["providers" 0 "network"]))))
+                 (expect (not (s/valid? ::config-spec/providers
+                                        [{"id" "local" "network" {"first_byte_timeout_ms" -1}}])))))
+
 (defdescribe
   ->svar-provider-test
   "`->svar-provider` coerces a vis provider map to svar-native shape. Local
@@ -74,6 +97,14 @@
       (expect (= "user-key"
                  (:api-key (config/->svar-provider
                              {:id :lmstudio :api-key "user-key" :models [{:name "probe"}]})))))
+  (it "merges explicit provider network values over preset defaults"
+      (expect (= {:timeout-ms 1800000
+                  :first-byte-timeout-ms 700000
+                  :idle-timeout-ms 600000
+                  :semantic-timeout-ms 600000}
+                 (:network (config/->svar-provider {:id :lmstudio
+                                                    :models [{:name "probe"}]
+                                                    :network {:first-byte-timeout-ms 700000}})))))
   (it "leaves cloud presets keyless when none is configured (no catalog dummy)"
       ;; Hermetic: a DEVELOPER machine may hold a real OpenRouter credential
       ;; (env/keychain), and the registry token fn would resolve it — the claim
