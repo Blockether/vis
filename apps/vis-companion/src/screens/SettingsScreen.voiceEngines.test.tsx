@@ -267,10 +267,16 @@ describe("the speech-engines band", () => {
     });
     // It belongs to the engine by POSITION: no indent leaves its rows short of the left
     // edge the engine's own row reaches, and a rail down its left says where the cluster
-    // begins AND where it stops.
+    // begins AND where it stops. The rail is the panel's own hairline ink at double weight,
+    // never the selection amber, which would draw structure with the colour of a choice.
     const groupClasses = voiceGroup.className.split(/\s+/);
     expect(groupClasses).not.toContain("pl-3");
-    expect(groupClasses).toContain("border-accent/40");
+    expect(groupClasses).toContain("border-dialog-edge");
+    expect(groupClasses).not.toContain("border-accent/40");
+    const foot = voiceGroup.lastElementChild as HTMLElement;
+    expect(foot.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(["h-1.5", "w-3", "bg-dialog-edge"]),
+    );
     // The engine that owns the list outweighs it: two lines against a voice's one.
     expect(piper.className.split(/\s+/)).toContain("min-h-10");
     const amy = await within(voiceGroup).findByRole("button", { name: /Amy/ });

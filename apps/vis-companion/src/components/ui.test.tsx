@@ -3896,7 +3896,9 @@ describe("the meter", () => {
 // edge while still reaching the right one — a pale gutter down one side that nothing closed —
 // and the two clusters of one engine, Voices and Speech rate, stood on different left edges.
 // Reported again over the same panel: stepping the label alone still said where a cluster
-// began and never where it ended, and every heading was a banded rule of its own.
+// began and never where it ended, and every heading was a banded rule of its own. Reported a
+// third time: the rail that was supposed to say how things nest was the SELECTION amber at 40%,
+// so structure and selection were drawn with one pen — and the block still had no bottom.
 describe("SettingsChoiceGroup", () => {
   const group = (isNested: boolean) =>
     renderToStaticMarkup(
@@ -3912,10 +3914,26 @@ describe("SettingsChoiceGroup", () => {
     expect(uiSource).not.toContain("isNested ? 'pl-3'");
   });
 
-  it("holds a nested cluster in a rail that begins and ends", () => {
-    expect(group(true)).toContain("border-l-2 border-accent/40");
-    expect(group(false)).not.toContain("border-accent/40");
+  it("draws a nested cluster with the panel's own hairline pen, and closes it", () => {
+    expect(group(true)).toContain("border-l-2 border-dialog-edge");
+    expect(group(true)).toContain('class="h-1.5 w-3 bg-dialog-edge"');
+    expect(group(true)).not.toContain("border-accent");
     expect(group(true)).not.toContain("ml-3");
+    expect(group(false)).toContain("border-l-2 border-accent");
+    expect(group(false)).not.toContain("border-dialog-edge");
+  });
+
+  it("steps the type of a nested cluster one notch, and its rows not at all", () => {
+    const nested = renderToStaticMarkup(
+      <SettingsChoiceGroup label="Voices" isNested>
+        <ChoiceCell title="Albert" sub="en-US" isSelected={false} isLeaf />
+      </SettingsChoiceGroup>,
+    );
+    expect(nested).toContain("pl-6 pr-3");
+    expect(nested).not.toContain("px-3");
+    expect(
+      renderToStaticMarkup(<ChoiceCell title="Albert" sub="en-US" isSelected={false} isLeaf />),
+    ).toContain("px-3");
   });
 
   it("stands its heading on the panel's own paper, never on a band", () => {

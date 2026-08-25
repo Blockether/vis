@@ -1207,6 +1207,14 @@ export function TextButton({
 }
 
 /**
+ * WHETHER THE CHOICES AROUND THIS ONE STAND INSIDE A NESTED CLUSTER.
+ *
+ * `SettingsChoiceGroup` owns the depth of what it holds, so a cell ASKS the cluster it
+ * stands in instead of taking a prop every call site would have to keep in step with the
+ * group it is already written inside.
+ */
+const IsNestedChoice = createContext(false);
+/**
  * ONE VALUE OF A SETTING, and there is only one of it.
  *
  * Theme, where a session starts: a segmented grid where
@@ -1229,6 +1237,11 @@ export function TextButton({
  * line of height. The two-line stack is what a cell keeps when it owns the cluster
  * that follows, and when it is one column of a segmented grid (Theme's modes, speech
  * rate), where there is no width for a trailing meta.
+ *
+ * DEPTH IS NOT THE CELL'S OWN DECISION. Inside a nested `SettingsChoiceGroup` its content
+ * steps one notch right — the second channel that draws the tree — while the row itself
+ * stays full-bleed, because the row is a thumb target and the panel edge is where a thumb
+ * lands.
  */
 export function ChoiceCell({
   title,
@@ -1248,11 +1261,14 @@ export function ChoiceCell({
   /** Hide the choice glyph when an adjacent action occupies its trailing place. */
   showSelectionMark?: boolean;
 }) {
+  const isNested = useContext(IsNestedChoice);
   return (
     <button
       type="button"
       aria-pressed={isSelected}
-      className={`flex min-w-0 items-center gap-3 px-3 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none ${
+      className={`flex min-w-0 items-center gap-3 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none ${
+        isNested ? 'pl-6 pr-3' : 'px-3'
+      } ${
         isLeaf ? 'min-h-9 mouse:min-h-8' : 'min-h-10 justify-between py-1.5 mouse:min-h-9'
       } ${
         isSelected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'
@@ -1340,7 +1356,16 @@ export function SettingsChoiceDisclosure({
  *
  * The heading is not a band. Its own paper between two rules made a third horizontal line
  * for every cluster — ten of them down one open panel, all of equal weight — so it sits
- * flush on the panel's paper with air above it, and the amber notch alone marks it.
+ * flush on the panel's paper with air above it, and at the top level the amber notch marks it.
+ *
+ * NESTING IS DRAWN WITH THE HAIRLINE PEN, AND IT CLOSES. The rail down a nested cluster was
+ * the SELECTION amber at 40%: beside a selected row it read as a faded selection rather than
+ * as structure, and it was four times lighter than the hairlines it met. A mark that only
+ * began also said where a cluster started and never where it ended. The rail is now the same
+ * ink as every hairline in the panel at double weight and turns a foot under the last row, so
+ * the block closes; the amber notch belongs to the top level alone, one meaning per colour.
+ * Depth steps the type as well: the heading, and through `IsNestedChoice` every cell's
+ * content, move one notch right while the rows stay full-bleed.
  */
 export function SettingsChoiceGroup({
   label,
@@ -1356,17 +1381,24 @@ export function SettingsChoiceGroup({
     <section
       role="group"
       aria-labelledby={headingId}
-      className={isNested ? 'min-w-0 border-l-2 border-accent/40' : 'min-w-0'}
+      className={isNested ? 'min-w-0 bg-panel border-l-2 border-dialog-edge' : 'min-w-0'}
     >
-      <header className="flex min-h-6 items-center bg-panel px-3 pb-1.5 pt-3">
+      <header
+        className={`flex min-h-6 items-center bg-panel pb-1.5 pt-3 ${
+          isNested ? 'pl-6 pr-3' : 'px-3'
+        }`}
+      >
         <h4
           id={headingId}
-          className="border-l-2 border-accent pl-2 font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint"
+          className={`font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint ${
+            isNested ? '' : 'border-l-2 border-accent pl-2'
+          }`}
         >
           {label}
         </h4>
       </header>
-      {children}
+      <IsNestedChoice.Provider value={isNested}>{children}</IsNestedChoice.Provider>
+      {isNested && <div className="h-1.5 w-3 bg-dialog-edge" />}
     </section>
   );
 }
