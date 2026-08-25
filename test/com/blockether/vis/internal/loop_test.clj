@@ -281,6 +281,82 @@
         (expect (= 1 @opened))
         (expect (= [[::session [system user]] [::session [result]]] @turns))
         (expect (= [] @closed)))))
+  ;; Regression, issue 9cc1d0a0-2836-4518-b504-bc9f70eae7c4: the per-attempt
+  ;; credential hydration rebuilt `:providers` with `mapv`, so every attempt
+  ;; carried an equal-but-NEW router. The session identity check missed, and the
+  ;; Codex socket was closed and re-handshaken (prewarm + full replay) on every
+  ;; single iteration.
+  (it
+    "keeps one session when the per-attempt credential hydration changes nothing"
+    (let [session-atom
+          (atom nil)
+
+          history
+          (atom [])
+
+          opened
+          (atom 0)
+
+          closed
+          (atom [])
+
+          router
+          {:providers [{:id :openai-codex :api-key "k"}] :health ::live}
+
+          environment
+          {:router router :llm-session-atom session-atom}
+
+          resolved
+          {:provider :openai-codex :name "gpt-5.6"}
+
+          system
+          {:role "system" :content "stable"}
+
+          user
+          {:role "user" :content "act"}
+
+          assistant
+          {:role "assistant" :content [{:type "tool_use" :id "call-1"}]}
+
+          result
+          {:role "user" :content [{:type "tool_result" :tool_use_id "call-1"}]}]
+
+      (with-redefs [registry/provider-by-id
+                    (fn [_]
+                      nil)
+
+                    config/command-token
+                    (fn [_]
+                      nil)
+
+                    svar/open-session
+                    (fn [_ _]
+                      (swap! opened inc)
+                      ::session)
+
+                    svar/session-history
+                    (fn [_]
+                      @history)
+
+                    svar/ask!
+                    (fn [_ opts]
+                      (reset! history (into @history (concat (:messages opts) [assistant])))
+                      {:stop-reason :tool-calls :assistant-message assistant})
+
+                    svar/close-session!
+                    (fn [session]
+                      (swap! closed conj session))]
+
+        (let [first-attempt (#'lp/hydrate-environment-router environment)]
+          (#'lp/ask-code-with-session! first-attempt resolved {:messages [system user]})
+          (let [second-attempt (#'lp/hydrate-environment-router environment)]
+            (expect (identical? router (:router second-attempt)))
+            (#'lp/ask-code-with-session!
+             second-attempt
+             resolved
+             {:messages [system user assistant result]})
+            (expect (= 1 @opened))
+            (expect (= [] @closed)))))))
   (it
     "reuses one Codex socket across model changes and pins each turn's model"
     (let [session-atom

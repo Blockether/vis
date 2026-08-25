@@ -6349,59 +6349,64 @@
    waiting for the next router build.
 
    Router health, budget and retry state are preserved by sharing the original
-   map and replacing only `:providers`. A provider token lookup failure is
-   deliberately failure-safe: that provider retains its previous snapshot so
-   normal request/error handling remains authoritative."
+   map, and a hydration that changed NOTHING answers the very same router object:
+   a stateful provider session (Codex's single Responses socket) is keyed on this
+   snapshot's IDENTITY, so minting an equal-but-new map per attempt tore the
+   socket down and re-handshook it on every iteration. A provider token lookup
+   failure is deliberately failure-safe: that provider retains its previous
+   snapshot so normal request/error handling remains authoritative."
   [router]
-  (update router
-          :providers
-          (fn [provider-entries]
-            (mapv
-              (fn [{:keys [id] :as provider-entry}]
-                (if-let [get-token-fn (some-> (registry/provider-by-id id)
-                                              :provider/get-token-fn)]
-                  (try (let [{:keys [token api-url llm-headers responses-path api-style]}
-                             (get-token-fn)
-                             ;; The credential may also NAME the wire it issued
-                             ;; (#152): an extension that mints its own `api_url`
-                             ;; is the only thing that knows the dialect. Config
-                             ;; precedence was resolved when the router was built,
-                             ;; so a runtime dialect fills a gap, never overrides.
-                             dialect (when (nil? (:api-style provider-entry))
-                                       (config/effective-api-style {:runtime api-style}))]
+  (let [provider-entries
+        (:providers router)
 
-                         (cond-> provider-entry
-                           (some? token)
-                           (assoc :api-key token)
+        hydrated
+        (mapv
+          (fn [{:keys [id] :as provider-entry}]
+            (if-let [get-token-fn (some-> (registry/provider-by-id id)
+                                          :provider/get-token-fn)]
+              (try (let [{:keys [token api-url llm-headers responses-path api-style]} (get-token-fn)
+                         ;; The credential may also NAME the wire it issued
+                         ;; (#152): an extension that mints its own `api_url`
+                         ;; is the only thing that knows the dialect. Config
+                         ;; precedence was resolved when the router was built,
+                         ;; so a runtime dialect fills a gap, never overrides.
+                         dialect (when (nil? (:api-style provider-entry))
+                                   (config/effective-api-style {:runtime api-style}))]
 
-                           (some? api-url)
-                           (assoc :base-url api-url)
+                     (cond-> provider-entry
+                       (some? token)
+                       (assoc :api-key token)
 
-                           (some? llm-headers)
-                           (assoc :llm-headers llm-headers)
+                       (some? api-url)
+                       (assoc :base-url api-url)
 
-                           (some? responses-path)
-                           (assoc :responses-path responses-path)
+                       (some? llm-headers)
+                       (assoc :llm-headers llm-headers)
 
-                           (some? dialect)
-                           (assoc :api-style dialect)))
-                       (catch Throwable t
-                         (tel/log! {:level :warn
-                                    :id ::provider-credential-hydration-failed
-                                    :data {:provider id :error (ex-message t)}}
-                                   (str "Could not hydrate current credential for "
-                                        id
-                                        "; retaining the previous request snapshot"))
-                         provider-entry))
-                  ;; Command-backed: the cache serves the same token in the
-                  ;; steady state (no fork per request) and re-execs the
-                  ;; helper exactly once after a 401 invalidated it. A helper
-                  ;; that is failing right now yields nil and keeps the
-                  ;; snapshot, so the provider error stays authoritative.
-                  (if-let [token (config/command-token id)]
-                    (assoc provider-entry :api-key token)
-                    provider-entry)))
-              provider-entries))))
+                       (some? responses-path)
+                       (assoc :responses-path responses-path)
+
+                       (some? dialect)
+                       (assoc :api-style dialect)))
+                   (catch Throwable t
+                     (tel/log! {:level :warn
+                                :id ::provider-credential-hydration-failed
+                                :data {:provider id :error (ex-message t)}}
+                               (str "Could not hydrate current credential for "
+                                    id
+                                    "; retaining the previous request snapshot"))
+                     provider-entry))
+              ;; Command-backed: the cache serves the same token in the
+              ;; steady state (no fork per request) and re-execs the
+              ;; helper exactly once after a 401 invalidated it. A helper
+              ;; that is failing right now yields nil and keeps the
+              ;; snapshot, so the provider error stays authoritative.
+              (if-let [token (config/command-token id)]
+                (assoc provider-entry :api-key token)
+                provider-entry)))
+          provider-entries)]
+
+    (if (= hydrated provider-entries) router (assoc router :providers hydrated))))
 
 (defn- hydrate-environment-router
   "Hydrate only the router snapshot used by this provider attempt."
