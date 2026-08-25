@@ -80,6 +80,33 @@ function installFrames() {
   };
 }
 
+/** ResizeObserver reduced to firing every callback watching one element. */
+function installObserver(): (element: Element) => void {
+  const watchers: { target: Element; run: () => void }[] = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      private readonly callback: () => void;
+      constructor(callback: () => void) {
+        this.callback = callback;
+      }
+      observe(target: Element) {
+        watchers.push({ target, run: () => this.callback() });
+      }
+      unobserve() {}
+      disconnect() {}
+      takeRecords() {
+        return [];
+      }
+    },
+  );
+  return (element) => {
+    for (const watcher of watchers) {
+      if (watcher.target === element) watcher.run();
+    }
+  };
+}
+
 /** Is the "↓ Latest" offer on screen? */
 function latestOffered(): boolean {
   return !!screen.queryByRole("button", { name: /Latest/ });
@@ -165,5 +192,51 @@ describe("a reader reaching the end of a turn that is still being written", () =
     expect(gap).toBeGreaterThan(SHELL);
     expect(latestOffered()).toBe(true);
     expect(parkedReadingPosition("reading")).toBe(gap);
+  });
+
+  // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: every large
+  // tool/result block arriving at the end moved the transcript by that block's
+  // full height. Measured in WebKit, one 261 px update moved scrollTop 259 px in
+  // a 489 px viewport; a tool-heavy turn repeatedly replaced what was on screen.
+  it("stops following before a large live batch yanks the visible page", async () => {
+    const paint = installFrames();
+    const resize = installObserver();
+    const live = { height: 46_000 };
+    // No gesture from an earlier test may own this test's scroller.
+    const now = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(now + 1_000);
+    renderSessionScreen({
+      session: sessionFixture({ id: "bursty", status: "running" }),
+      client: {
+        cachedTranscript: () => transcript(),
+        transcript: () => Promise.resolve(transcript()),
+      },
+    });
+    await act(async () => {});
+    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const content = viewport.firstElementChild!;
+    const moves: number[] = [];
+    measure(viewport, live, moves);
+    await paint();
+
+    viewport.scrollTop = live.height - SHELL;
+    fireEvent.scroll(viewport);
+    await paint();
+    moves.length = 0;
+
+    // A line-sized stream flush remains a follow: reading current prose should
+    // still reveal its next line without an offer to jump.
+    live.height += 40;
+    act(() => resize(content));
+    expect(viewport.scrollTop).toBe(live.height - SHELL);
+    expect(latestOffered()).toBe(false);
+
+    // A card-sized batch is different: keep the current line on the glass and
+    // let Latest offer the new block instead of moving half a screen at once.
+    const before = viewport.scrollTop;
+    live.height += SHELL / 2;
+    act(() => resize(content));
+    expect(viewport.scrollTop).toBe(before);
+    expect(latestOffered()).toBe(true);
   });
 });

@@ -72,6 +72,25 @@ export function isAtBottom(box: ScrollBox): boolean {
 }
 
 /**
+ * Whether one content resize is small enough to keep following without replacing
+ * the page under the reader.
+ *
+ * Line-sized stream flushes should reveal themselves. A card-sized tool result is
+ * different: moving more than a quarter of the viewport in one frame makes the
+ * transcript look as though it jumped, so the caller should hold the current line
+ * and offer Latest instead. The bottom tolerance is the floor so compact viewports
+ * still admit an ordinary line. A zero height is only an unmeasured first sample.
+ */
+export function growthFitsFollowWindow(
+  box: ScrollBox,
+  previousHeight: number,
+): boolean {
+  if (previousHeight <= 0) return true;
+  const growth = box.scrollHeight - previousHeight;
+  return growth <= Math.max(AT_BOTTOM_PX, box.clientHeight / 4);
+}
+
+/**
  * Whether the reader ARRIVED at the end — with `aimed` as the end they were
  * reaching for, not the one the transcript has now.
  *

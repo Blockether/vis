@@ -118,6 +118,7 @@ import {
   applyReadingPosition,
   arrivedAtEnd,
   followEnd,
+  growthFitsFollowWindow,
   forgetReadingPosition,
   heightSettler,
   isAtBottom,
@@ -2019,6 +2020,7 @@ export function SessionScreen({
     if (!viewport || !transcript || typeof ResizeObserver === "undefined")
       return;
     let frame: number | null = null;
+    let previousHeight = viewport.scrollHeight;
     // `captureScrollAnchor` already ignores the echo of our own corrections.
     // Rotation is its own transaction and owns the anchor for its duration.
     const busy = () =>
@@ -2031,17 +2033,29 @@ export function SessionScreen({
       if (frame === null) frame = window.requestAnimationFrame(recapture);
     };
     const observer = new ResizeObserver(() => {
+      const before = previousHeight;
+      previousHeight = viewport.scrollHeight;
       if (busy()) return;
+      const readerOwns = readerOwnsScroll();
       // The end is its own anchor, and a hand on the glass owns the scroller: in
       // both cases the reader's line is wherever they just put it, so re-read it.
-      if (followingRef.current || readerOwnsScroll()) {
+      if (followingRef.current || readerOwns) {
         // For a reader following the end, the end IS the anchor — and this
-        // callback is the one place that sees the growth before it paints, so
-        // re-seat it here instead of leaving the last chunk under the composer
-        // until some later effect happens to fire. Measured, the opening ramp's
-        // final 402 px stayed below the fold with "↓ Latest" offered to a reader
-        // who had not scrolled at all.
-        if (followingRef.current && !readerOwnsScroll()) {
+        // callback is the one place that sees the growth before it paints. A
+        // line-sized stream flush follows naturally, but a whole result card must
+        // not replace half the visible page. Hold this line and let Latest offer
+        // the new block instead. Opening hydration remains absolutely pinned.
+        if (followingRef.current && !readerOwns) {
+          if (
+            !loading &&
+            !initialScrollPendingRef.current &&
+            !growthFitsFollowWindow(viewport, before)
+          ) {
+            followingRef.current = false;
+            scrollAnchorRef.current = scrollAnchorFor(viewport, transcript);
+            syncJump();
+            return;
+          }
           followEnd(viewport);
           correctedTopRef.current = viewport.scrollTop;
           syncJump();
@@ -2068,7 +2082,7 @@ export function SessionScreen({
       viewport.removeEventListener("scroll", handleViewportScroll);
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [captureScrollAnchor, syncJump]);
+  }, [captureScrollAnchor, loading, syncJump]);
 
   // Rotation is one transaction: snapshot before intermediate reflows, then wait
   // two paint frames after the final viewport measurement before restoring once.
@@ -3786,22 +3800,17 @@ export function SessionScreen({
     return () => window.clearTimeout(timer);
   }, [loading]);
 
-  // Deferred Markdown, fonts, and content-visibility can change the transcript's
-  // measured height after React commits. Keep a newly opened/followed session at
-  // its actual bottom as those measurements settle.
-  //
-  // The SCROLLER itself must be observed too, not just its content. Focusing the
-  // composer raises the keyboard, which shrinks the shell and therefore the
-  // scroller's `clientHeight` while the transcript's own height never changes —
-  // so a content-only observer stays silent, `scrollTop` is left where it was,
-  // and the bottom of the conversation slides under the keyboard. That is the
-  // "I tapped the input and got scrolled up" jump: nothing scrolled, the window
-  // shrank around a reader who was pinned to the end.
+  // The SCROLLER itself must be observed, independently of the transcript content
+  // observer above. Focusing the composer raises the keyboard, which shrinks the
+  // shell and therefore the scroller's `clientHeight` while the transcript's own
+  // height never changes — so a content-only observer stays silent, `scrollTop` is
+  // left where it was, and the bottom of the conversation slides under the keyboard.
+  // That is the "I tapped the input and got scrolled up" jump: nothing scrolled, the
+  // window shrank around a reader who was pinned to the end.
   useEffect(() => {
-    const transcript = transcriptRef.current;
     const viewport = scrollRef.current;
-    if (!transcript || typeof ResizeObserver === "undefined") return;
-    viewportHeightRef.current = viewport?.clientHeight ?? null;
+    if (!viewport || typeof ResizeObserver === "undefined") return;
+    viewportHeightRef.current = viewport.clientHeight;
     shellHeightRef.current = shellViewportHeight();
 
     const observer = new ResizeObserver(() => {
@@ -3867,19 +3876,12 @@ export function SessionScreen({
       // paint window, and a reader with a parked position is not following the
       // end even while the flag still says so.
       if (initialScrollPendingRef.current || !box) return;
-      // Everything else that grows the transcript in this frame — a hydrated
-      // chunk of history, an image or a code block that finished measuring, a
-      // trace that expanded — lands ABOVE the fold, and this callback still runs
-      // before the browser paints. Write the end HERE. Handing it to the next
-      // animation frame paints one frame of the old `scrollTop` against the new
-      // height, which is a screenful of OLDER history flashed under the reader
-      // and snapped away again — once per growth, for the whole opening ramp.
-      // Measured on a 47 189 px session: 12 painted frames in 135 ms, each one
-      // showing a different part of the transcript. That is the flicker.
+      // Keep a followed viewport pinned when its own box changes size. Transcript
+      // growth belongs exclusively to the content observer above; letting this
+      // observer watch both boxes gave one mutation two competing scroll writers.
       followEnd(box);
     });
-    observer.observe(transcript);
-    if (viewport) observer.observe(viewport);
+    observer.observe(viewport);
 
     return () => {
       observer.disconnect();
