@@ -5,6 +5,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -218,12 +219,15 @@ export function App() {
   const [compat, setCompat] = useState<Compat | null>(null);
   const [compatChecking, setCompatChecking] = useState(false);
   const [compatNonce, setCompatNonce] = useState(0);
-  // Both read by the 426 listener, which is registered ONCE and would otherwise
-  // close over the verdict as it stood at mount: whether a re-read is already on
-  // its way, and what the last one concluded.
+  // The 426 listener is registered once, while its Effect Event always reads
+  // whether a re-read is already on its way and the latest verdict. Keeping
+  // that verdict in an Effect Event avoids mutating a ref during render.
   const compatRecheckPending = useRef(false);
-  const compatRef = useRef<Compat | null>(null);
-  compatRef.current = compat;
+  const handleGatewayIncompatible = useEffectEvent(() => {
+    if (!shouldRereadCompat(compatRecheckPending.current, compat)) return;
+    compatRecheckPending.current = true;
+    setCompatNonce((n) => n + 1);
+  });
 
   const sessionConn = openTarget?.conn ?? active;
   // Transport identity is the URL/token pair — the only fields `GatewayClient`
@@ -658,12 +662,7 @@ export function App() {
   // refusal is the whole story; recovery is the retry button, which bumps the
   // same nonce deliberately.
   useEffect(
-    () =>
-      onGatewayIncompatible(() => {
-        if (!shouldRereadCompat(compatRecheckPending.current, compatRef.current)) return;
-        compatRecheckPending.current = true;
-        setCompatNonce((n) => n + 1);
-      }),
+    () => onGatewayIncompatible(handleGatewayIncompatible),
     [],
   );
 
