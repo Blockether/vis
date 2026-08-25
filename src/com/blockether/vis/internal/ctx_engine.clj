@@ -190,6 +190,11 @@
       "session_scope" (-> cursor
                           (update "iter" inc)
                           (assoc "next_form" 1)))))
+(def prompt-cache-status-key
+  "Engine-only slot for Svar's latest provider prompt-cache status. The value is
+   already a complete metric; Vis only projects it into `session_utilization`."
+  "engine_prompt_cache_status")
+
 ;; --- GC TTL constants ----------------------------------------------------
 (defn gc-pass
   "Passthrough. Tasks/facts/archive are gone — there is nothing to GC.
@@ -199,26 +204,31 @@
   ctx)
 
 (defn enter-turn
-  "Idempotent turn-start sync. Sets `:session/turn` to `turn-pos`,
-   resets `:session/scope` to `{:turn turn-pos :iter 1 :next-form 1}`,
-   clears `:engine/blockers`, then runs `gc-pass`.
-   Safe to call repeatedly with the same `turn-pos` (no-op
-   semantically); safe to call when ctx was loaded fresh from DB at
-   turn-pos > 1.
+  "Idempotent turn-start sync. Sets `:session/turn` to `turn-pos`, resets
+   `:session/scope` to `{:turn turn-pos :iter 1 :next-form 1}`, clears
+   `:engine/blockers`, and drops the prior turn's ephemeral provider telemetry.
+   Safe to call repeatedly with the same `turn-pos` (no-op semantically); safe to
+   call when ctx was loaded fresh from DB at turn-pos > 1.
 
-   THIS is what the integration layer (vis loop) calls at the start
-   of every turn. Single chokepoint for engine turn-state advance —
-   no `advance-turn` alias, no auto-incrementing variant. The integration
-   layer always knows the target turn-pos (DB tracks
-   `session_turn_soul.position`), so the engine takes it as an explicit
-   arg."
+   THIS is what the integration layer (vis loop) calls at the start of every turn.
+   Single chokepoint for engine turn-state advance — no `advance-turn` alias, no
+   auto-incrementing variant. The integration layer always knows the target
+   turn-pos (DB tracks `session_turn_soul.position`), so the engine takes it as an
+   explicit arg."
   [ctx turn-pos]
-  (let [next-turn (long (or turn-pos 1))]
-    (-> ctx
-        (assoc "session_turn" next-turn)
-        (assoc "session_scope" {"turn" next-turn "iter" 1 "next_form" 1})
-        (assoc "engine_blockers" [])
-        gc-pass)))
+  (let [next-turn
+        (long (or turn-pos 1))
+
+        turn-changed?
+        (not= next-turn (long (or (get ctx "session_turn") 1)))]
+
+    (cond-> (-> ctx
+                (assoc "session_turn" next-turn)
+                (assoc "session_scope" {"turn" next-turn "iter" 1 "next_form" 1})
+                (assoc "engine_blockers" [])
+                gc-pass)
+      turn-changed?
+      (dissoc prompt-cache-status-key))))
 ;; Empty-ctx constructor — used by tests + scenario replayer
 (defn empty-ctx
   "A minimal CTX scaffold with all model-facing keys filled by empty /
@@ -284,14 +294,11 @@
      auto_compress_above  soft guardrail threshold for request size
      turn_total_tokens    cumulative input this turn (billing, NOT a
                           per-call limit — may exceed the limit safely)
-      cache_hit_rate       share of input tokens the provider served from its
-                           PROMPT CACHE across the last few requests, as a
-                           rounded percentage — a cached token bills at a
-                           fraction of a fresh one, so this is what a fallback
-                           onto a cold peer actually costs; folded in by
-                           `session-view` (`with-cache-hit-rate`) and absent
-                           until a request has been measured
-      cache_hit_window     how many recent requests that share averages
+     prompt_cache        Svar's fresh, route- and cache-scope-specific provider
+                           prompt-cache status. It reports token-read and request-hit
+                           percentages separately; WebSocket continuation is a
+                           different transport metric. Vis only renders this opaque
+                           status and omits it until Svar measures the current turn
       hint                 throttled compaction nudge, present ONLY when the
                           handled context has grown past `auto_compress_above`
                           (a bigger task) — the actionable partner to the passive
@@ -316,152 +323,12 @@
           (long (Math/round (* 100.0 (/ (double req) (double win))))) "headroom_tokens"
           (max 0 (- win req)))))))
 
-(def CACHE_RATE_WINDOW
-  "How many recent provider requests the rolling cache-hit rate averages.
-   Short enough that ONE cold provider shows within a couple of iterations —
-   that visibility is the whole point of the number — and long enough that a
-   single cache-missing call does not read as a lost cache."
-  8)
-
-(def cache-samples-key
-  "ctx key holding the bounded ring of recent request measurements
-   (`{\"input\" \"cached\"}`, oldest first). `engine_*` is engine bookkeeping:
-   `session-view` never ships the ring itself, only the rate derived from it."
-  "engine_cache_samples")
-
-(def ^:private MAX_SAMPLE_TOKENS
-  "Ceiling for ONE request's token count. Far above any provider's window, and
-   low enough that a full window of them still sums inside a long — an
-   `ArithmeticException` from a nonsense reading must never reach the render."
-  1000000000000)
-
-(defn- token-count
-  "A provider's usage numbers are not a promise: an OpenAI-compatible gateway
-   may report a count as a string, a double, `Infinity`, or not at all.
-   Anything that is not a finite, positive number reads as NOT MEASURED (0),
-   and an impossible magnitude is capped. This readout must never be the
-   reason a render or a turn dies."
-  ^long [v]
-  (if (number? v)
-    (let [d (double v)]
-      (cond (Double/isNaN d) 0
-            ;; `Infinity` tokens is not a big number, it is a broken reading.
-            (Double/isInfinite d) 0
-            (<= d 0.0) 0
-            (>= d (double MAX_SAMPLE_TOKENS)) (long MAX_SAMPLE_TOKENS)
-            :else (long d)))
-    0))
-
-(defn- sum-tokens
-  "Total of one column across the sampled window, summed as primitives so a
-   nonsense reading cannot overflow into an exception at render time."
-  ^long [rows k]
-  (loop [acc
-         0
-
-         rs
-         (seq rows)]
-
-    (if rs (recur (+ acc (token-count (get (first rs) k))) (next rs)) acc)))
-
-(defn- sample-rows
-  "Only maps inside a sequential ring are samples. A scalar or a string in the
-   slot — a hand-edited ctx, a bad restore — is history nobody can read, not a
-   reason to blow up `session-view`."
-  [samples]
-  (if (sequential? samples) (filterv map? samples) []))
-
-(defn note-cache-sample
-  "Pure: append ONE request's measurement to `samples`, keeping the
-   `CACHE_RATE_WINDOW` newest. A call with no measured input is NOT a sample —
-   an iteration that errored before reaching the provider would otherwise drag
-   the rate to zero and read as a lost cache. `cached` above `input` is clamped:
-   cache reads are normalized as a SUBSET of input tokens, so a provider that
-   reports more is capped at a full hit instead of an impossible percentage.
-   Total on every input — see `token-count`."
-  [samples input-tokens cached-tokens]
-  (let [in
-        (token-count input-tokens)
-
-        cached
-        (token-count cached-tokens)
-
-        rows
-        (sample-rows samples)]
-
-    (if (pos? in)
-      (vec (take-last CACHE_RATE_WINDOW (conj rows {"input" in "cached" (min in cached)})))
-      rows)))
-
-(defn route-label
-  "Pure: `\"provider/model\"` — the identity of ONE endpoint's prompt cache, or nil
-   when either side is unnamed. Half a route names no cache, so it is never
-   compared with one."
-  [provider model]
-  (let [p
-        (some-> provider
-                name
-                str/trim
-                not-empty)
-
-        m
-        (some-> model
-                str
-                str/trim
-                not-empty)]
-
-    (when (and p m) (str p "/" m))))
-
-(defn attribute-cache-samples
-  "Pure: name `route` on the samples nobody had named yet, then keep only the
-   trailing run that belongs to it.
-
-   A prompt cache is the property of ONE provider's model, so a window that mixes
-   the provider a session just LEFT with the one that rescued it publishes the
-   comfortable average of the two: a 95%-warm pin rescued onto a cold peer reads
-   72% in the very turn whose note says the cache was lost. A measurement lands
-   BEFORE anything has said who answered it, which is why attribution is a second
-   step; an unnamed route leaves the window untouched, because a reading nobody
-   could attribute is no evidence of a move."
-  [samples route]
-  (if-let [r (some-> route
-                     str
-                     str/trim
-                     not-empty)]
-    (let [rows (mapv #(if (get % "route") % (assoc % "route" r)) (sample-rows samples))]
-      (vec (reverse (take-while #(= r (get % "route")) (rseq rows)))))
-    (sample-rows samples)))
-(defn cache-hit-rate
-  "Pure: percentage of input tokens served from the provider's prompt cache
-   across `samples`, rounded. nil when the window holds nothing measured — the
-   caller then omits the key instead of publishing a confident 0%, which is
-   exactly what a first, legitimately cold request would look like. Total: a
-   ring of junk answers nil, never an exception."
-  [samples]
-  (let [rows
-        (sample-rows samples)
-
-        total
-        (sum-tokens rows "input")
-
-        cached
-        (sum-tokens rows "cached")]
-
-    (when (pos? total) (min 100 (long (Math/round (* 100.0 (/ (double cached) (double total)))))))))
-
-(defn with-cache-hit-rate
-  "Pure: fold the rolling cache readout — `cache_hit_rate` and the
-   `cache_hit_window` it averages — into a `utilization` map. Kept out of
-   `utilization` itself because the ring spans TURNS while that map is
-   stamped per request: the number worth seeing is the one that keeps falling
-   after a rescue moved the session to a provider whose prefix is cold.
-   Returns `util` untouched when nothing measurable is in the window."
-  [util samples]
-  (if-let [rate (when (map? util) (cache-hit-rate samples))]
-    (assoc util
-      "cache_hit_rate" rate
-      "cache_hit_window" (count (sample-rows samples)))
-    util))
+(defn with-prompt-cache-status
+  "Pure: attach Svar's already-computed prompt-cache status to a utilization map.
+   Vis deliberately performs no cache arithmetic, freshness policy, route grouping,
+   or persistence here. A missing status leaves the map untouched."
+  [util status]
+  (if (and (map? util) (map? status)) (assoc util "prompt_cache" status) util))
 
 (def served-route-key
   "ctx key holding the provider/model pair that ACTUALLY answered the last
@@ -1194,7 +1061,7 @@
 
                hint
                (assoc "hint" hint))
-             (with-cache-hit-rate (get ctx cache-samples-key)))]
+             (with-prompt-cache-status (get ctx prompt-cache-status-key)))]
 
      (cond-> (select-keys ctx model-facing-keys)
        (seq util)

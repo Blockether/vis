@@ -293,13 +293,12 @@
         (expect (= 1 @opened))
         (expect (= [[::session [system user]] [::session [result]]] @turns))
         (expect (= [] @closed)))))
-  ;; Regression, issue 9cc1d0a0-2836-4518-b504-bc9f70eae7c4: the per-attempt
-  ;; credential hydration rebuilt `:providers` with `mapv`, so every attempt
-  ;; carried an equal-but-NEW router. The session identity check missed, and the
-  ;; Codex socket was closed and re-handshaken (prewarm + full replay) on every
-  ;; single iteration.
+  ;; Regression, issue 9cc1d0a0-2836-4518-b504-bc9f70eae7c4: the real Codex
+  ;; credential hydration adds the token, endpoint, and account header to its bare
+  ;; provider preset on every attempt. Equal effective routers were distinct objects,
+  ;; so the session identity check closed and re-opened the socket every iteration.
   (it
-    "keeps one session when the per-attempt credential hydration changes nothing"
+    "keeps one session across equivalent real Codex credential hydration"
     (let [session-atom
           (atom nil)
 
@@ -313,7 +312,12 @@
           (atom [])
 
           router
-          {:providers [{:id :openai-codex :api-key "k"}] :health ::live}
+          {:providers [{:id :openai-codex}] :health ::live}
+
+          credential
+          {:token "k"
+           :api-url "https://chatgpt.example.test/backend-api"
+           :llm-headers {"chatgpt-account-id" "account-1"}}
 
           environment
           {:router router :llm-session-atom session-atom}
@@ -335,7 +339,7 @@
 
       (with-redefs [registry/provider-by-id
                     (fn [_]
-                      nil)
+                      {:provider/get-token-fn (constantly credential)})
 
                     config/command-token
                     (fn [_]
@@ -359,10 +363,24 @@
                     (fn [session]
                       (swap! closed conj session))]
 
-        (let [first-attempt (#'lp/hydrate-environment-router environment)]
+        (let [first-attempt
+              (#'lp/hydrate-environment-router environment)
+
+              first-router
+              (:router first-attempt)]
+
+          (expect (not (identical? router first-router)))
+          (expect (= "k" (get-in first-router [:providers 0 :api-key])))
+          (expect (= (:api-url credential) (get-in first-router [:providers 0 :base-url])))
           (#'lp/ask-code-with-session! first-attempt resolved {:messages [system user]})
-          (let [second-attempt (#'lp/hydrate-environment-router environment)]
-            (expect (identical? router (:router second-attempt)))
+          (let [second-attempt
+                (#'lp/hydrate-environment-router environment)
+
+                second-router
+                (:router second-attempt)]
+
+            (expect (= first-router second-router))
+            (expect (not (identical? first-router second-router)))
             (#'lp/ask-code-with-session!
              second-attempt
              resolved
@@ -1578,9 +1596,7 @@
                    (expect (= {:last-request-tokens 51000
                                :last-request-turn-id "t2"
                                :last-request-turn-position 2
-                               :last-request-iteration 2
-                               :cache-samples [{"input" 10000 "cached" 0} {"input" 42000 "cached" 0}
-                                               {"input" 51000 "cached" 0}]}
+                               :last-request-iteration 2}
                               (previous-request-usage {:session-id "s1" :db-info ::db} "t3")))))
              (it "returns nil when no prior iteration has input tokens"
                  (with-redefs [persistance/db-list-session-turns
@@ -4987,252 +5003,100 @@
           (expect (= {"provider" "pinned" "model" "big"} (get enriched "session_routing")))))))
 
 
-;; Regression, issue #154: a 401 moved the turn onto a peer whose prompt prefix was cold,
-;; and nothing in `session["utilization"]` priced it — the session kept paying full input
-;; rates for every later iteration with no number showing the cache was gone.
+;; Regression, issue #154: Vis recomputed and restored a stale prompt-cache ratio instead
+;; of rendering the current, route-scoped status already measured by Svar.
 (defdescribe
-  rolling-cache-hit-rate-test
-  "The rolling cache readout is measured, bounded and honest: one sample per REQUEST,
-   the newest window only, no number at all before something was measured, and it rides
-   `session_utilization` while the ring it is derived from never reaches the model."
-  (let [stamp!
-        @#'lp/stamp-cache-sample!
+  prompt-cache-status-render-test
+  "Vis treats Svar's prompt-cache status as opaque current-process telemetry."
+  (let [stamp! @#'lp/stamp-prompt-cache-status!]
+    (it "passes Svar's status through without inventing another cache metric"
+        (let [status {:kind :provider-prompt-cache
+                      :provider-id :openai-codex
+                      :model "gpt-5.6-sol"
+                      :fresh? true
+                      :sample-count 2
+                      :token-read-percent 82
+                      :request-hit-percent 50}
+              ctx-atom (atom {"session_id" "s"
+                              "session_turn" 2
+                              "engine_utilization" {"last_request_tokens" 1000}})]
 
-        ring
-        (fn [& pairs]
-          (reduce (fn [acc [in cached]]
-                    (eng/note-cache-sample acc in cached))
-                  []
-                  pairs))
-
-        attributed
-        (fn [route & pairs]
-          (reduce (fn [acc [in cached]]
-                    (-> (eng/note-cache-sample acc in cached)
-                        (eng/attribute-cache-samples route)))
-                  []
-                  pairs))]
-
-    (it "one measured request is one sample"
-        (expect (= [{"input" 1000 "cached" 900}] (ring [1000 900]))))
-    (it "a call that measured no input is not a sample"
-        ;; An iteration that died before the provider answered must not read as a lost cache.
-        (expect (= [] (ring [0 0])))
-        (expect (= [{"input" 1000 "cached" 900}] (ring [1000 900] [0 0]))))
-    (it "keeps only the newest window"
-        (let [full (apply ring
-                     (map (fn [i]
-                            [1000 i])
-                          (range 20)))]
-          (expect (= eng/CACHE_RATE_WINDOW (count full)))
-          (expect (= 19 (get (last full) "cached")))))
-    (it "clamps a provider that claims more cache reads than it read input"
-        (expect (= [{"input" 1000 "cached" 1000}] (ring [1000 5000])))
-        (expect (= 100 (eng/cache-hit-rate (ring [1000 5000])))))
-    (it "clamps a negative reading to nothing"
-        (expect (= [{"input" 1000 "cached" 0}] (ring [1000 -5]))))
-    (it "publishes NO rate before anything was measured"
-        ;; A confident 0% is indistinguishable from a genuinely cold first request.
-        (expect (nil? (eng/cache-hit-rate nil)))
-        (expect (nil? (eng/cache-hit-rate [])))
-        (expect (nil? (eng/cache-hit-rate [{"input" 0 "cached" 0}]))))
-    (it "weighs TOKENS across the window, not requests"
-        ;; Per-request averaging would call this 45%; the money is in the tokens.
-        (expect (= 82 (eng/cache-hit-rate (ring [10000 9000] [1000 0])))))
-    (it "falls as a cold provider takes over — the number the issue asked for"
-        (let [warm
-              (apply ring (repeat 4 [10000 9500]))
-
-              cold
-              (reduce (fn [acc _]
-                        (eng/note-cache-sample acc 10000 0))
-                      warm
-                      (range 4))]
-
-          (expect (= 95 (eng/cache-hit-rate warm)))
-          (expect (= 48 (eng/cache-hit-rate cold)))))
-    (it "rides session_utilization, and the ring itself never ships"
-        (let [ctx
-              {"session_id" "s"
-               "session_turn" 2
-               "engine_utilization" {"last_request_tokens" 1000 "saturation" 1}
-               eng/cache-samples-key (ring [1000 250])}
-
-              view
-              (eng/session-view ctx)]
-
-          (expect (= 25 (get-in view ["session_utilization" "cache_hit_rate"])))
-          (expect (= 1 (get-in view ["session_utilization" "cache_hit_window"])))
-          (expect (not (contains? view eng/cache-samples-key)))))
-    (it "adds no key to a utilization nothing has been measured against"
+          (stamp! ctx-atom status)
+          (let [util (get (eng/session-view @ctx-atom) "session_utilization")]
+            (expect (= {"kind" "provider-prompt-cache"
+                        "provider_id" "openai-codex"
+                        "model" "gpt-5.6-sol"
+                        "is_fresh" true
+                        "sample_count" 2
+                        "token_read_percent" 82
+                        "request_hit_percent" 50}
+                       (get util "prompt_cache")))
+            (expect (not (contains? util "cache_hit_rate")))
+            (expect (not (contains? util "cache_hit_window")))
+            (expect (not (contains? (eng/session-view @ctx-atom) eng/prompt-cache-status-key))))))
+    (it "omits prompt-cache telemetry before Svar measures this process and turn"
         (let [util (eng/utilization 1000 200000 1000 100000)]
-          (expect (not (contains? (eng/with-cache-hit-rate util []) "cache_hit_rate")))
-          (expect (= util (eng/with-cache-hit-rate util nil)))))
-    (it "never invents a utilization map to carry the rate"
-        (expect (nil? (eng/with-cache-hit-rate nil (ring [1000 900])))))
-    (it "stamps the ctx ring once per request and leaves a measureless call out"
-        (let [ca (atom {})]
-          (stamp! ca 1000 800)
-          (stamp! ca 0 0)
-          (stamp! ca 2000 0)
-          (expect (= [{"input" 1000 "cached" 800} {"input" 2000 "cached" 0}]
-                     (get @ca eng/cache-samples-key)))
-          (expect (= 27 (eng/cache-hit-rate (get @ca eng/cache-samples-key))))))
-    (it "works headless: no ctx-atom, no ring, no throw" (expect (nil? (stamp! nil 1000 800))))
-    ;; The four below are what a randomized attack on this readout actually threw:
-    ;; a readout is never worth a dead render or a dead turn.
-    (it "a gateway that reports its token counts as STRINGS measures nothing"
-        (expect (= [] (eng/note-cache-sample [] "800" "100")))
-        (expect (nil? (eng/cache-hit-rate [{"input" "800" "cached" "100"}])))
-        (let [ca (atom {})]
-          (stamp! ca "800" "100")
-          (expect (not (contains? @ca eng/cache-samples-key)))))
-    (it "an infinite or not-a-number reading is not a sample"
-        (expect (= [] (eng/note-cache-sample [] ##Inf 1)))
-        (expect (= [] (eng/note-cache-sample [] ##NaN 1)))
-        (expect (= [{"input" 1000 "cached" 0}] (eng/note-cache-sample [] 1000 ##NaN))))
-    (it "a window of impossible magnitudes answers a percentage, not an overflow"
-        (let [absurd [{"input" Long/MAX_VALUE "cached" Long/MAX_VALUE}
-                      {"input" Long/MAX_VALUE "cached" Long/MAX_VALUE}]]
-          (expect (= 100 (eng/cache-hit-rate absurd)))))
-    (it "a scalar where the ring should be still renders the session dict"
-        (let [view (eng/session-view {"session_id" "s"
-                                      "session_turn" 1
-                                      "engine_utilization" {"last_request_tokens" 10}
-                                      eng/cache-samples-key 42})]
-          (expect (= {"last_request_tokens" 10} (get view "session_utilization")))))
-    (it "a resumed session inherits the rate it earned on disk"
-        (with-redefs [persistance/db-list-session-turns
-                      (constantly [{:id "t1" :position 1} {:id "t2" :position 2}])
+          (expect (= util (eng/with-prompt-cache-status util nil)))
+          (expect (nil? (eng/with-prompt-cache-status nil {:fresh? true})))
+          (expect (not (contains? (get (eng/session-view {"session_id" "s"
+                                                          "session_turn" 1
+                                                          "engine_utilization" util})
+                                       "session_utilization")
+                                  "prompt_cache")))))
+    (it "clears the prior turn's snapshot while preserving an idempotent same-turn sync"
+        (let [status {"kind" "provider-prompt-cache" "is_fresh" true}
+              ctx {"session_turn" 2 eng/prompt-cache-status-key status}]
 
-                      persistance/db-list-session-turn-iterations
-                      (fn [_db-info turn-id]
-                        (case turn-id
-                          "t1"
-                          [{:position 1 :input-tokens 10000 :input-cache-read-tokens 9000}]
-
-                          "t2"
-                          [{:position 1 :input-tokens 10000 :input-cache-read-tokens 8000}]
-
-                          []))]
-
-          (let [seeded (:cache-samples (previous-request-usage {:session-id "s1" :db-info ::db}
-                                                               "t3"))]
-            (expect (= [{"input" 10000 "cached" 9000} {"input" 10000 "cached" 8000}] seeded))
-            (expect (= 85 (eng/cache-hit-rate seeded))))))
-    (it "reads only as far back as the window — a long session costs one page"
+          (expect (= status (get (eng/enter-turn ctx 2) eng/prompt-cache-status-key)))
+          (expect (not (contains? (eng/enter-turn ctx 3) eng/prompt-cache-status-key)))))
+    (it "restores only the latest request size, never provider-cache telemetry from disk"
         (let [asked (atom [])]
-          (with-redefs [persistance/db-list-session-turns (constantly (mapv (fn [i]
-                                                                              {:id (str "t" i)
-                                                                               :position i})
-                                                                            (range 1 41)))
+          (with-redefs [persistance/db-list-session-turns (constantly [{:id "t1" :position 1}
+                                                                       {:id "t2" :position 2}
+                                                                       {:id "t3" :position 3}])
                         persistance/db-list-session-turn-iterations
                         (fn [_db-info turn-id]
                           (swap! asked conj turn-id)
-                          [{:position 1 :input-tokens 1000 :input-cache-read-tokens 500}])]
+                          (case turn-id
+                            "t2"
+                            [{:position 4 :input-tokens 2000 :input-cache-read-tokens 1800}]
 
-            (let [samples (:cache-samples (previous-request-usage {:session-id "s1" :db-info ::db}
-                                                                  "t41"))]
-              (expect (= eng/CACHE_RATE_WINDOW (count samples)))
-              (expect (= eng/CACHE_RATE_WINDOW (count @asked)))))))
-    ;; Regression, issue #154: the window kept averaging the provider the session had just
-    ;; LEFT, so a 95%-warm pin rescued onto a cold peer published a comfortable 72% in the
-    ;; very turn whose note says the prompt cache was lost.
-    (it "drops the samples of the endpoint the session left the moment another one answers"
-        (let [warm
-              (attributed "anthropic-coding-plan/claude-opus-5"
-                          [100000 95000]
-                          [100000 96000]
-                          [100000 95000])
+                            "t1"
+                            [{:position 1 :input-tokens 1000 :input-cache-read-tokens 900}]
 
-              rescued
-              (-> (eng/note-cache-sample warm 100000 0)
-                  (eng/attribute-cache-samples "openrouter/kimi-k2.7"))]
+                            []))]
 
-          (expect (= 95 (eng/cache-hit-rate warm)))
-          (expect (= 0 (eng/cache-hit-rate rescued)))
-          (expect (= 1 (count rescued)))))
-    (it "measures the rescuing endpoint as IT warms, never the one it replaced"
-        (let [rescued
-              (attributed "openrouter/kimi-k2.7" [100000 0])
+            (let [restored (previous-request-usage {:session-id "s1" :db-info ::db} "t3")]
+              (expect (= {:last-request-tokens 2000
+                          :last-request-turn-id "t2"
+                          :last-request-turn-position 2
+                          :last-request-iteration 4}
+                         restored))
+              (expect (= ["t2"] @asked))
+              (expect (not (contains? restored :cache-samples)))))))
+    (it "carries Svar's prompt-cache status out of a one-shot iteration unchanged"
+        (let [environment (lp/create-environment ::router {:db :memory})
+              status {:kind :provider-prompt-cache
+                      :provider-id :lmstudio
+                      :model "local-model"
+                      :fresh? true
+                      :token-read-percent 75
+                      :request-hit-percent 100}]
 
-              warming
-              (-> (eng/note-cache-sample rescued 100000 60000)
-                  (eng/attribute-cache-samples "openrouter/kimi-k2.7"))]
-
-          (expect (= 30 (eng/cache-hit-rate warming)))
-          (expect (= 2 (count warming)))))
-    (it "a reading nobody could attribute never resets the window"
-        ;; An iteration that errored before naming its route is not evidence of a move.
-        (let [warm
-              (attributed "a/one" [1000 900] [1000 900])
-
-              unnamed
-              (-> (eng/note-cache-sample warm 1000 900)
-                  (eng/attribute-cache-samples nil))]
-
-          (expect (= 3 (count unnamed)))
-          (expect (= 90 (eng/cache-hit-rate unnamed)))))
-    (it "coming back measures the NEW visit, not the visit before the move"
-        (let [there
-              (-> (attributed "a/one" [1000 900])
-                  (eng/note-cache-sample 1000 0)
-                  (eng/attribute-cache-samples "b/two"))
-
-              back
-              (-> (eng/note-cache-sample there 1000 500)
-                  (eng/attribute-cache-samples "a/one"))]
-
-          (expect (= [{"input" 1000 "cached" 500 "route" "a/one"}] back))))
-    (it "half a route names no cache, so it resets nothing"
-        (expect (nil? (eng/route-label "openrouter" nil)))
-        (expect (nil? (eng/route-label nil "kimi-k2.7")))
-        (expect (= "openrouter/kimi-k2.7" (eng/route-label :openrouter "kimi-k2.7"))))
-    (it "attribution survives a ring that is not a ring"
-        (expect (= [] (eng/attribute-cache-samples 42 "a/b")))
-        (expect (= [] (eng/attribute-cache-samples nil "a/b"))))
-    (it "the served-route stamp is what names the samples of the request it followed"
-        (let [ca
-              (atom {"session_turn" 3})
-
-              stamp-route!
-              @#'lp/stamp-served-route!]
-
-          (stamp! ca 1000 900)
-          (stamp-route! {:ctx-atom ca}
-                        {:llm-provider :anthropic-coding-plan :llm-model "claude-opus-5"})
-          (stamp! ca 1000 0)
-          (stamp-route! {:ctx-atom ca} {:llm-provider :openrouter :llm-model "kimi-k2.7"})
-          (expect (= [{"input" 1000 "cached" 0 "route" "openrouter/kimi-k2.7"}]
-                     (get @ca eng/cache-samples-key)))
-          (expect (= 0 (eng/cache-hit-rate (get @ca eng/cache-samples-key))))))
-    (it "a resumed session inherits only what the endpoint it will talk to earned"
-        (with-redefs [persistance/db-list-session-turns
-                      (constantly [{:id "t1" :position 1} {:id "t2" :position 2}])
-
-                      persistance/db-list-session-turn-iterations
-                      (fn [_db-info turn-id]
-                        (case turn-id
-                          "t1"
-                          [{:position 1
-                            :input-tokens 10000
-                            :input-cache-read-tokens 9500
-                            :llm-actual-provider "anthropic-coding-plan"
-                            :llm-actual-model "claude-opus-5"}]
-
-                          "t2"
-                          [{:position 1
-                            :input-tokens 10000
-                            :input-cache-read-tokens 0
-                            :llm-actual-provider "openrouter"
-                            :llm-actual-model "kimi-k2.7"}]
-
-                          []))]
-
-          (let [seeded (:cache-samples (previous-request-usage {:session-id "s1" :db-info ::db}
-                                                               "t3"))]
-            (expect (= [{"input" 10000 "cached" 0 "route" "openrouter/kimi-k2.7"}] seeded))
-            (expect (= 0 (eng/cache-hit-rate seeded))))))))
+          (try (with-redefs [svar/ask-code! (fn [_router _opts]
+                                              {:stop-reason :end
+                                               :tool-calls []
+                                               :content "done"
+                                               :tokens {}
+                                               :prompt-cache status})]
+                 (let [result (lp/run-iteration environment
+                                                []
+                                                {:iteration 0
+                                                 :resolved-model {:provider :lmstudio
+                                                                  :name "local-model"
+                                                                  :reasoning? false}})]
+                   (expect (= status (:prompt-cache result)))))
+               (finally (lp/dispose-environment! environment)))))))
 
 (defdescribe
   router-with-pinned-model-test

@@ -209,9 +209,10 @@
                         ;; Name the ratio the fold triggers actually use.
                         "pressure is `last_request_tokens`" "`auto_compress_above`"
                         "`saturation`/`headroom_tokens` price" "`hint` only arms at 75% of it"
-                        ;; The rolling cache readout is only worth its keys if the reader knows a
-                        ;; collapsed rate means a MOVED endpoint, not a grown request (issue #154).
-                        "`cache_hit_rate` is the share of recent input"
+                        ;; Svar owns prompt-cache policy; the core tells the model which explicit
+                        ;; provider-cache fields it receives and separates transport continuation.
+                        "`prompt_cache.token_read_percent`" "`request_hit_percent`"
+                        "WebSocket delta continuation is separate transport telemetry"
                         ;; `session_drop` is gone: omitting the gist IS the discard, and a model
                         ;; that does not know that writes a useless gist instead of dropping.
                         "the gist discards outright" "named unresolved decision blocks the edit"
