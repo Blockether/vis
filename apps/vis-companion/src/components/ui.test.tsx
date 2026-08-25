@@ -334,6 +334,22 @@ describe("MachineRail", () => {
     expect(html).toContain("rows");
   });
 
+  // Regression, user report: on a phone the machine rail stopped at the side while
+  // the enclosing sheet drew an unrelated dark rule underneath the machine.
+  it("closes each machine in its own hue instead of the sheet's edge", () => {
+    const html = renderToStaticMarkup(
+      <MachineRail color={MACHINE_COLORS[3]!}>rows</MachineRail>,
+    );
+
+    expect(html).toContain("border-b-2");
+    expect(html).toContain(MACHINE_COLORS[3]!.rail);
+    expect(sessionsListSource).toContain(
+      "overflow-hidden border-t border-dialog-edge",
+    );
+    expect(sessionsListSource).not.toContain(
+      "overflow-hidden border-y border-dialog-edge",
+    );
+  });
   it("gives two machines two different rails", () => {
     const first = renderToStaticMarkup(
       <MachineRail color={MACHINE_COLORS[0]!}>a</MachineRail>,

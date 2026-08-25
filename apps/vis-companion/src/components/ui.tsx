@@ -3192,22 +3192,23 @@ export function ProjectStatusCounts({
 }
 
 /**
- * THE SPINE OF A MACHINE: 2px of its own hue down everything it owns, banner
- * included. A project boundary is a hairline and a machine boundary is a colour
- * change, so where one computer ends is seen before it is read — and, unlike the
- * band at the top of the block, the spine is still on screen once the reader has
- * scrolled past it, which is the whole reason ownership lives here.
+ * THE RAIL OF A MACHINE: 2px of its own hue down everything it owns and across
+ * the edge that closes it. A project boundary is a hairline and a machine boundary is
+ * a colour change, so where one computer ends is seen before it is read — and, unlike
+ * a band at the top of the block, the rail is still on screen after the reader scrolls
+ * past that band.
  *
- * It is the card's LEFT FRAME, not a line inside it — see `LIST_FRAME`. That is the
- * whole difference from the version that had to be removed: it doubled the card's
- * own border and, being a border, pushed every railed row deeper than its own
- * trailing edge stopped. Now one border paints the left side and a machine simply
- * COLOURS it — same 2px as the grey frame it falls back to, and as the leading edge of
- * the tag that names it, so nothing on this side of the list is wider than the rest.
+ * It is the card's LEFT AND BOTTOM FRAME, not a line inside it — see `LIST_FRAME`.
+ * A grey bottom rule on the enclosing phone sheet used to close the whole fleet while
+ * the coloured rail simply stopped, making the machine look unfinished. The machine
+ * owns that edge now: one 2px border paints both sides in the same hue, and the sheet
+ * draws neither a duplicate left line nor an unrelated closing line on the phone.
  */
 export function MachineRail({ color, children }: { color?: MachineColor; children: ReactNode }) {
   return (
-    <div className={color ? `border-l-2 ${color.rail}` : LIST_FRAME}>{children}</div>
+    <div className={`border-b-2 border-l-2 ${color ? color.rail : 'border-dialog-edge'}`}>
+      {children}
+    </div>
   );
 }
 
