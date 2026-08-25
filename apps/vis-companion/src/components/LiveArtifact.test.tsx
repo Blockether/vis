@@ -294,7 +294,13 @@ describe('the settled run in the transcript', () => {
     expect(liveRunName(undefined)).toBe('run');
   });
 
-  it('replays structured Activity diff evidence through the settled artifact', async () => {
+  // `757e158a refactor(companion): quiet Activity receipts` deleted the loud
+  // `ActivityDiff` figure — and the matching LiveView cases with it — but this
+  // one was left behind still asking for it. Structured diff evidence is still
+  // PARSED and still rides a settled record, so the case keeps its subject: the
+  // artifact must replay such a row rather than fall over the shape it no
+  // longer paints.
+  it('replays a settled Activity row carrying structured diff evidence', async () => {
     const activity = {
       ...activityFixture,
       activity: {
@@ -343,8 +349,10 @@ describe('the settled run in the transcript', () => {
     );
     await waitFor(() => expect(screen.getByText('ACTIVITY')).toBeTruthy());
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    expect(screen.getByRole('figure', { name: 'Diff fixture.clj' })).toBeTruthy();
-    expect(screen.getByRole('listitem', { name: 'deleted line' })).toBeTruthy();
-    expect(screen.getByRole('listitem', { name: 'added line' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Activity' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Collapse Activity' })).toBeTruthy();
+    // The receipt is quiet by design now: the diff is data the row carries, not
+    // a figure it paints.
+    expect(screen.queryByRole('figure', { name: 'Diff fixture.clj' })).toBeNull();
   });
 });
