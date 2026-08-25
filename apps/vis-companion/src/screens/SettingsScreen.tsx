@@ -1000,6 +1000,14 @@ export function VoicesPanel({
   // Which voice this device is auditioning right now. One at a time on purpose: the
   // player has one output, so a second press replaces the sound instead of layering it.
   const [playing, setPlaying] = useState<string | null>(null);
+  const auditionRef = useRef<AbortController | null>(null);
+  const cancelAudition = useCallback(() => {
+    const controller = auditionRef.current;
+    if (!controller) return;
+    auditionRef.current = null;
+    controller.abort();
+    speechOutput.stop();
+  }, []);
   const load = useCallback(
     async (signal?: AbortSignal) => {
       try {
@@ -1034,6 +1042,8 @@ export function VoicesPanel({
     return () => controller.abort();
   }, [load]);
 
+  useEffect(() => () => cancelAudition(), [cancelAudition]);
+
   useEffect(() => {
     if (!catalogue?.voices?.some((voice) => voice.model?.status === "downloading")) return;
     const timer = window.setTimeout(() => void load(), ENGINE_POLL_MS);
@@ -1052,17 +1062,26 @@ export function VoicesPanel({
    * has to be downloaded first costs 60-100 MB.
    */
   async function playSample(voice: SpeechVoice) {
+    cancelAudition();
+    const controller = new AbortController();
+    auditionRef.current = controller;
     setPlaying(voice.id);
     setErr(null);
     try {
       const audio = await client.speechVoiceSample(voice.id, {
+        signal: controller.signal,
         engine,
       });
+      if (controller.signal.aborted || auditionRef.current !== controller) return;
       await speechOutput.playSample(audio);
     } catch (e) {
+      if (controller.signal.aborted || auditionRef.current !== controller) return;
       setErr((e as Error).message);
     } finally {
-      setPlaying(null);
+      if (auditionRef.current === controller) {
+        auditionRef.current = null;
+        setPlaying(null);
+      }
     }
   }
   function chooseClip(file: File | null) {

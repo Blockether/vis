@@ -1269,7 +1269,10 @@ export function ChoiceCell({
   isLeaf?: boolean;
   /** Hide the choice glyph when an adjacent action occupies its trailing place. */
   showSelectionMark?: boolean;
-  /** An independent icon action that sits before the value's name, never after it. */
+  /**
+   * An independent icon action that sits before the value's name, never after it. The
+   * one-pixel panel hairline keeps its square from dissolving into the choice surface.
+   */
   leadingAction?: {
     label: string;
     icon: ReactNode;
@@ -1320,7 +1323,7 @@ export function ChoiceCell({
   if (!leadingAction) return choice;
 
   return (
-    <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)]">
+    <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-px bg-dialog-edge">
       <button
         type="button"
         aria-label={leadingAction.label}
@@ -1400,10 +1403,10 @@ export function SettingsChoiceDisclosure({
  *
  * NESTING IS DRAWN WITH THE HAIRLINE PEN, AND IT CLOSES. The rail down a nested cluster was
  * the SELECTION amber at 40%: beside a selected row it read as a faded selection rather than
- * as structure, and it was four times lighter than the hairlines it met. A mark that only
- * began also said where a cluster started and never where it ended. The rail is now the same
- * ink as every hairline in the panel at double weight and turns a foot under the last row, so
- * the block closes; the amber notch belongs to the top level alone, one meaning per colour.
+ * as structure, and it was four times lighter than the hairlines it met. The rail is now the
+ * same ink as every hairline in the panel at double weight, and a one-pixel rule closes the
+ * cluster across its full width; the amber notch belongs to the top level alone, one meaning
+ * per colour.
  * Depth steps the type as well: the heading, and through `IsNestedChoice` every cell's
  * content, move one notch right while the rows stay full-bleed.
  */
@@ -1438,7 +1441,7 @@ export function SettingsChoiceGroup({
         </h4>
       </header>
       <IsNestedChoice.Provider value={isNested}>{children}</IsNestedChoice.Provider>
-      {isNested && <div className="h-1.5 w-3 bg-dialog-edge" />}
+      {isNested && <div className="h-px w-full bg-dialog-edge" />}
     </section>
   );
 }

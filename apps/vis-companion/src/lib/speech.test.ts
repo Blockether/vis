@@ -134,6 +134,48 @@ describe("spoken reply routing", () => {
   });
 });
 
+// Regression, user report: replacing one voice preview made the deliberately interrupted
+// audio element reject, and Settings painted that ordinary handoff as an error.
+describe("voice sample playback", () => {
+  it("settles the previous sample when a new one replaces it", async () => {
+    const samples: InterruptingAudio[] = [];
+    class InterruptingAudio {
+      onloadedmetadata: (() => void) | null = null;
+      ontimeupdate: (() => void) | null = null;
+      onended: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      currentTime = 0;
+      duration = 1;
+      src: string;
+
+      constructor(url: string) {
+        this.src = url;
+        samples.push(this);
+      }
+
+      play(): Promise<void> {
+        return Promise.resolve();
+      }
+
+      pause(): void {
+        this.onerror?.();
+      }
+    }
+    vi.stubGlobal("Audio", InterruptingAudio);
+    const { speechOutput } = await import("./speech");
+    const sample = new Blob([new Uint8Array([1, 2])], { type: "audio/wav" });
+
+    const first = speechOutput.playSample(sample);
+    const second = speechOutput.playSample(sample);
+    samples[1]?.onended?.();
+
+    expect((await Promise.allSettled([first, second])).map(({ status }) => status)).toEqual([
+      "fulfilled",
+      "fulfilled",
+    ]);
+  });
+});
+
 // These two came from the device-only output this router replaced: it still has to
 // resolve when the ENGINE finishes rather than when the call returns, and it still has
 // to go quiet the moment the reader taps stop.

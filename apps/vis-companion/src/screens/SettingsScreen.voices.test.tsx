@@ -128,9 +128,10 @@ describe("hearing a voice before choosing it", () => {
     );
 
     await waitFor(() =>
-      expect(client.speechVoiceSample).toHaveBeenCalledWith("kristin", {
-        engine: "piper-local",
-      }),
+      expect(client.speechVoiceSample).toHaveBeenCalledWith(
+        "kristin",
+        expect.objectContaining({ engine: "piper-local" }),
+      ),
     );
     await waitFor(() => expect(played).toHaveBeenCalledWith(sample));
     expect(client.speechModel).not.toHaveBeenCalled();
@@ -162,6 +163,57 @@ describe("hearing a voice before choosing it", () => {
     ).toBeNull();
   });
 
+  // Regression, user report: moving from one voice to another showed the first sample's
+  // interrupted stream as an error instead of treating the newer audition as its replacement.
+  it("silently replaces an interrupted sample stream", async () => {
+    const sample = new Blob(["wav"], { type: "audio/wav" });
+    const interrupted = new Error("The sample stream was interrupted.");
+    let firstSignal: AbortSignal | undefined;
+    let firstSettled = false;
+    let rejectFirst: ((reason: Error) => void) | null = null;
+    const client = {
+      speechVoices: vi.fn().mockResolvedValue(catalogue),
+      speechVoiceSample: vi.fn(
+        (id: string, options: { signal?: AbortSignal } = {}) => {
+          if (id === "kristin") {
+            firstSignal = options.signal;
+            return new Promise<Blob>((_resolve, reject) => {
+              rejectFirst = (reason) => {
+                firstSettled = true;
+                reject(reason);
+              };
+              options.signal?.addEventListener(
+                "abort",
+                () => rejectFirst?.(interrupted),
+                { once: true },
+              );
+            });
+          }
+          rejectFirst?.(interrupted);
+          return Promise.resolve(sample);
+        },
+      ),
+      speechModel: vi.fn(),
+    } as unknown as GatewayClient;
+    const played = vi.spyOn(speechOutput, "playSample").mockResolvedValue(undefined);
+    render(<VoicesPanel client={client} prefs={prefs} onChange={vi.fn()} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Play a sample of Kristin (en-US, medium)",
+      }),
+    );
+    await waitFor(() => expect(client.speechVoiceSample).toHaveBeenCalledTimes(1));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Play a sample of Cori (en-GB, high)" }),
+    );
+
+    await waitFor(() => expect(played).toHaveBeenCalledWith(sample));
+    await waitFor(() => expect(firstSettled).toBe(true));
+    expect(firstSignal?.aborted).toBe(true);
+    expect(screen.queryByText(interrupted.message)).toBeNull();
+  });
+
   // Choosing is silent otherwise: the preference is saved and nothing tells the ear
   // what it just bought.
   it("plays the voice it has just chosen", async () => {
@@ -172,8 +224,9 @@ describe("hearing a voice before choosing it", () => {
 
     await waitFor(() => expect(onChange).toHaveBeenCalled());
     await waitFor(() => expect(played).toHaveBeenCalledWith(sample));
-    expect(client.speechVoiceSample).toHaveBeenCalledWith("cori", {
-      engine: "piper-local",
-    });
+    expect(client.speechVoiceSample).toHaveBeenCalledWith(
+      "cori",
+      expect.objectContaining({ engine: "piper-local" }),
+    );
   });
 });

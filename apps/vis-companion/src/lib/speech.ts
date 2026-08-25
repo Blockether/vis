@@ -125,7 +125,10 @@ class SpeechOutput {
   private gateway: GatewaySpeaker | null = null;
   private notice: ((message: string) => void) | null = null;
   private prefs: SpeechPrefs | null = null;
-  private playing: HTMLAudioElement | null = null;
+  private playing: {
+    element: HTMLAudioElement;
+    interrupt: () => void;
+  } | null = null;
 
   /** The screen with a live session hands the machine's voice in, and takes it back. */
   setGateway(
@@ -170,7 +173,8 @@ class SpeechOutput {
   /**
    * Play bytes the caller already holds: settings is auditioning a voice, not speaking a
    * reply, so no preference is read and the device never stands in — one press plays the
-   * one voice that was pressed, and whatever was playing stops first.
+   * one voice that was pressed, and whatever was playing stops first. Replacing a sample is
+   * an ordinary completion for its caller, never an audio failure.
    */
   async playSample(audio: Blob, listener?: SpeechListener): Promise<void> {
     this.stop();
@@ -179,10 +183,12 @@ class SpeechOutput {
 
   stop(): void {
     const playing = this.playing;
-    this.playing = null;
     if (playing) {
-      playing.pause();
-      playing.src = "";
+      // Settle and detach the old element before changing its source. WebKit reports that
+      // deliberate source change through `onerror`; to this API it is a successful handoff.
+      playing.interrupt();
+      playing.element.pause();
+      playing.element.src = "";
     }
     this.device.stop();
   }
@@ -196,7 +202,6 @@ class SpeechOutput {
     }
     const url = URL.createObjectURL(audio);
     const element = new Audio(url);
-    this.playing = element;
     // The shape and the clock both come from THESE bytes: the peaks are read off the
     // audio that is about to play and the position is the player's own `currentTime`,
     // so nothing the reader sees is inferred from the length of the text.
@@ -210,23 +215,31 @@ class SpeechOutput {
       void measured.then((peaks) => listener?.onTrack?.({ peaks, duration }));
     };
     element.ontimeupdate = () => listener?.onProgress?.(element.currentTime);
-    const done = () => {
-      if (this.playing === element) this.playing = null;
-      URL.revokeObjectURL(url);
-    };
     return new Promise<void>((resolve, reject) => {
-      element.onended = () => {
-        done();
-        resolve();
+      let settled = false;
+      const settle = (cause?: Error) => {
+        if (settled) return;
+        settled = true;
+        element.onloadedmetadata = null;
+        element.ontimeupdate = null;
+        element.onended = null;
+        element.onerror = null;
+        if (this.playing?.element === element) this.playing = null;
+        URL.revokeObjectURL(url);
+        if (cause) reject(cause);
+        else resolve();
       };
-      element.onerror = () => {
-        done();
-        reject(new Error("The audio the machine sent could not be played."));
-      };
-      void Promise.resolve(element.play()).catch((cause: unknown) => {
-        done();
-        reject(cause as Error);
-      });
+      const fail = (cause: unknown) =>
+        settle(cause instanceof Error ? cause : new Error(String(cause)));
+      this.playing = { element, interrupt: () => settle() };
+      element.onended = () => settle();
+      element.onerror = () =>
+        fail(new Error("The audio the machine sent could not be played."));
+      try {
+        void Promise.resolve(element.play()).catch(fail);
+      } catch (cause) {
+        fail(cause);
+      }
     });
   }
 }

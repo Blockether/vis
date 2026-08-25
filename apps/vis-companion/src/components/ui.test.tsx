@@ -2870,6 +2870,24 @@ describe("a setting is picked and switched by one control each", () => {
     expect(classes(off)).not.toContain("border");
   });
 
+  // Regression, user report: the square voice-preview action and the choice beside it
+  // shared one unbroken fill, so the action disappeared into the row to its right.
+  it("separates a leading action from the choice with one hairline", () => {
+    const html = renderToStaticMarkup(
+      <ChoiceCell
+        title="Albert"
+        sub="en-US"
+        isSelected={false}
+        isLeaf
+        leadingAction={{ label: "Play Albert", icon: <span>▶</span>, onClick: () => {} }}
+      />,
+    );
+    const wrapper = /<div[^>]*class="([^"]*)"/.exec(html)?.[1].split(" ") ?? [];
+
+    expect(html.match(/<button/g)).toHaveLength(2);
+    expect(wrapper).toEqual(expect.arrayContaining(["gap-px", "bg-dialog-edge"]));
+  });
+
   // Regression, user report over the open TTS panel ("that full-width stack of things still
   // does not look good"): every choice spent two lines of the same height, so ten identical
   // bars read as a shutter, and the engine that owned the voices under it weighed no more
@@ -3931,7 +3949,8 @@ describe("the meter", () => {
 // Reported again over the same panel: stepping the label alone still said where a cluster
 // began and never where it ended, and every heading was a banded rule of its own. Reported a
 // third time: the rail that was supposed to say how things nest was the SELECTION amber at 40%,
-// so structure and selection were drawn with one pen — and the block still had no bottom.
+// so structure and selection were drawn with one pen. Reported now: its short dark foot stopped
+// after 12px instead of closing the full width of the cluster.
 describe("SettingsChoiceGroup", () => {
   const group = (isNested: boolean) =>
     renderToStaticMarkup(
@@ -3949,7 +3968,7 @@ describe("SettingsChoiceGroup", () => {
 
   it("draws a nested cluster with the panel's own hairline pen, and closes it", () => {
     expect(group(true)).toContain("border-l-2 border-dialog-edge");
-    expect(group(true)).toContain('class="h-1.5 w-3 bg-dialog-edge"');
+    expect(group(true)).toContain('class="h-px w-full bg-dialog-edge"');
     expect(group(true)).not.toContain("border-accent");
     expect(group(true)).not.toContain("ml-3");
     expect(group(false)).toContain("border-l-2 border-accent");

@@ -275,7 +275,7 @@ describe("the speech-engines band", () => {
     expect(groupClasses).not.toContain("border-accent/40");
     const foot = voiceGroup.lastElementChild as HTMLElement;
     expect(foot.className.split(/\s+/)).toEqual(
-      expect.arrayContaining(["h-1.5", "w-3", "bg-dialog-edge"]),
+      expect.arrayContaining(["h-px", "w-full", "bg-dialog-edge"]),
     );
     // The engine that owns the list outweighs it: two lines against a voice's one.
     expect(piper.className.split(/\s+/)).toContain("min-h-10");
