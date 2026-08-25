@@ -302,6 +302,19 @@
                  (:tabs @state/app-db)))
       (expect (= :tab-1 (:active-tab-id @state/app-db)))
       (expect (= 1 (:render-version @state/app-db))))
+  (it "replaces the synthetic bootstrap tab with one loading session tab"
+      (reset! state/app-db {:title "Synthetic"
+                            :tabs [{:id :main :label "Synthetic" :active? true}]
+                            :active-tab-id :main
+                            :tab-locals {:main {:session nil}}
+                            :render-version 0})
+      (state/dispatch [:init-building-tab "startup-build"])
+      (expect (= [{:id :tab-1 :label "Starting…" :active? true :build-id "startup-build"}]
+                 (:tabs @state/app-db)))
+      (expect (= :tab-1 (:active-tab-id @state/app-db)))
+      (expect (true? (:loading? @state/app-db)))
+      (expect (not (contains? (:tab-locals @state/app-db) :main)))
+      (expect (contains? (:tab-locals @state/app-db) :tab-1)))
   (it "adds the next unique workspace and makes it active"
       ;; New workspaces default to the untitled placeholder; `:set-title`
       ;; renames the active workspace once a title is generated.
@@ -2536,6 +2549,24 @@
           (expect (= :a (nth gw 1)))
           (expect (= "queued" (:text entry)))
           (expect (= {1 {:id 1 :content "payload"}} (:pastes entry))))))
+  (it "names session readiness when Enter is queued during startup"
+      (let [enqueue-fn
+            (:fn (get @@#'state/event-registry :enqueue-message))
+
+            result
+            (enqueue-fn {:active-tab-id :a
+                         :tabs [{:id :a :active? true :build-id "startup"}]
+                         :session nil
+                         :loading? true
+                         :pending-sends []
+                         :input-history []
+                         :pastes {}
+                         :paste-counter 0}
+                        [:enqueue-message "queued before ready" :a])]
+
+        (expect (= ["queued before ready"] (mapv :text (get-in result [:db :pending-sends]))))
+        (expect (= [[:notify "Queued — will send when session is ready" :info 1500]]
+                   (:fx result)))))
   (it "paints ONE visible queued row on Enter and reconciles the gateway ack into it"
       ;; REGRESSION (real session): a message submitted while a turn was running got
       ;; registered with the gateway but NOTHING appeared in the TUI — the channel

@@ -54,6 +54,12 @@
     (it "shows the C-g / Esc cancel hint while a turn is live"
         (expect (= [(str (keymap/abort-hint) " cancel")]
                    (mapv :text (echo-segments {:loading? true :input (input/empty-input)})))))
+    (it "explains that the startup editor accepts input while its session builds"
+        (expect (= ["Starting session… type now; Enter sends when ready"]
+                   (mapv :text
+                         (echo-segments {:loading? true
+                                         :active-tab-id :tab-1
+                                         :tabs [{:id :tab-1 :build-id "startup"}]})))))
     (it "shows a wait notice while cancelling, not the cancel hint"
         (expect (= ["Cancelling... please wait"]
                    (mapv :text

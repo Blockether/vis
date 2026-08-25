@@ -2282,41 +2282,53 @@
 
                     {:db (seed-ctx db')})))))
 
-(reg-event-db :open-building-tab
-              ;; Optimistic new tab for a session whose cold env/runtime is still being
-              ;; built on a background worker (chat/make-session-async's `:building`
-              ;; branch), so the input thread NEVER blocks on the 3-4s build. Mints a fresh
-              ;; active tab with NO session bound yet and `:loading? true`: any Enter while
-              ;; it builds queues into `:pending-sends` (`:send-message` enqueues when
-              ;; `:loading?`) instead of being lost or sent to a dead session. `build-id`
-              ;; tags the tab entry so the async callback (`:bind-built-session`) can find
-              ;; it again across intervening tab churn.
+(defn- building-tab-db
+  "Create the optimistic loading tab used while a session runtime is built.
+   `replace-tabs?` is only for application bootstrap: the synthetic base tab is
+   not a real user tab and must not survive beside the startup session."
+  [db build-id replace-tabs?]
+  (let [db
+        (if replace-tabs?
+          (assoc db
+            :tabs []
+            :active-tab-id nil
+            :tab-locals {})
+          (-> db
+              ensure-tabs
+              sync-active-tab))
+
+        entries
+        (vec (:tabs db))
+
+        n
+        (next-tab-number entries)
+
+        id
+        (keyword (str "tab-" n))
+
+        entry
+        {:id id :label starting-session-label :active? true :build-id build-id}]
+
+    (-> db
+        (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
+               :active-tab-id id)
+        (merge (empty-tab-state))
+        (assoc :title nil
+               :loading? true
+               :progress {:iterations []}
+               :turn-start-ms (System/currentTimeMillis)))))
+
+(reg-event-db :init-building-tab
+              ;; Bootstrap has only a synthetic base tab. Replace it so the first real frame
+              ;; contains exactly the one session the startup worker will bind.
               (fn [db [_ build-id]]
-                (let [db
-                      (-> db
-                          ensure-tabs
-                          sync-active-tab)
+                (building-tab-db db build-id true)))
 
-                      entries
-                      (vec (:tabs db))
-
-                      n
-                      (next-tab-number entries)
-
-                      id
-                      (keyword (str "tab-" n))
-
-                      entry
-                      {:id id :label starting-session-label :active? true :build-id build-id}]
-
-                  (-> db
-                      (assoc :tabs (conj (mapv #(dissoc % :active?) entries) entry)
-                             :active-tab-id id)
-                      (merge (empty-tab-state))
-                      (assoc :title nil
-                             :loading? true
-                             :progress {:iterations []}
-                             :turn-start-ms (System/currentTimeMillis))))))
+(reg-event-db :open-building-tab
+              ;; Optimistic NEW tab for a session whose cold env/runtime is still being built
+              ;; on a background worker. Existing user tabs remain open.
+              (fn [db [_ build-id]]
+                (building-tab-db db build-id false)))
 
 (reg-event-fx
   :bind-built-session
@@ -4026,7 +4038,10 @@
                                        (fn [q]
                                          (conj (vec (or q [])) entry)))
                                (remember-input text))))
-         :fx (cond-> [[:notify "Queued — will send after current turn" :info 1500]]
+         :fx (cond-> [[:notify
+                       (if session
+                         "Queued — will send after current turn"
+                         "Queued — will send when session is ready") :info 1500]]
                gw-fx
                (into gw-fx))}))))
 

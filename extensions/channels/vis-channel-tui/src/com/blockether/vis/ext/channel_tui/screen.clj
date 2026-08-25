@@ -468,12 +468,20 @@
         ;; queued send) into whatever session is focused THEN. Capturing it here
         ;; keeps the submission on the tab the user actually typed into.
         wid
-        (or (:active-tab-id db) (:id (some #(when (:active? %) %) (:tabs db))))]
+        (or (:active-tab-id db) (:id (some #(when (:active? %) %) (:tabs db))))
 
-    ;; T-003: never silently drop a non-empty submission while a turn
-    ;; is in flight. Idle -> send-message. Busy -> enqueue with visible
-    ;; feedback; drained from `:message-received` once :loading? clears.
-    (when (and (seq (str/trim text)) (:session db))
+        ;; The first painted tab intentionally has no gateway session yet. Its
+        ;; build marker is the durable boundary that makes Enter queue locally
+        ;; rather than disappearing while the startup worker connects.
+        building?
+        (boolean (some (fn [{:keys [id build-id]}]
+                         (and (= wid id) build-id))
+                       (:tabs db)))]
+
+    ;; T-003: never silently drop a non-empty submission while a turn or the
+    ;; initial session build is in flight. Idle -> send-message. Busy/building ->
+    ;; enqueue with visible feedback; binding/completion drains it.
+    (when (and (seq (str/trim text)) (or (:session db) building?))
       (cond
         ;; Cancel in flight: the user pressed Esc to STOP this turn, so a new
         ;; submission is a fresh intent — not queue fodder. Keep it in the editor
@@ -482,8 +490,8 @@
         (:cancelling? db) (vis/notify! "Cancelling current turn — press Enter again once it stops"
                                        :level :warn
                                        :ttl-ms 2500)
-        (:loading? db) (do (state/dispatch [:enqueue-message text wid])
-                           (state/dispatch [:reset-input]))
+        (or building? (:loading? db)) (do (state/dispatch [:enqueue-message text wid])
+                                          (state/dispatch [:reset-input]))
         :else (do (state/dispatch [:send-message text wid]) (state/dispatch [:reset-input]))))))
 
 (def ^:private copy-success-ttl-ms 1500)
@@ -2547,8 +2555,8 @@
   (and (:loading? db)
        (empty? (:messages db))
        ;; A brand-new session whose env is still building carries `:build-id` on
-       ;; its active tab entry (`:open-building-tab`; cleared by
-       ;; `:bind-built-session`). That is CREATION, not hydration, so show the
+       ;; its active tab entry (`:init-building-tab` / `:open-building-tab`; cleared
+       ;; by `:bind-built-session`). That is creation, not hydration, so show the
        ;; empty transcript rather than a "Loading session…" spinner. Existing
        ;; sessions hydrating on focus (`:pending?`/`:session-id`, no build-id)
        ;; still spin.
@@ -2558,8 +2566,7 @@
 (defn- paint-content-loading!
   "Center an animated spinner + 'Loading session…' in the transcript band while
    a freshly focused tab hydrates, so switching to a not-yet-loaded tab shows
-   motion INSIDE the tab content instead of a blank void. Mirrors
-   `paint-boot-splash!` but scoped to the messages area. Caller holds
+   motion inside the tab content instead of a blank void. Caller holds
    `draw-lock`."
   [g cols messages-top messages-bottom now-ms]
   (let [messages-top
@@ -4935,21 +4942,6 @@
                                             (compare-and-set! persist-tabs-running* false true))
                                    (recur)))))))))
 
-(defn- init-visible-session!
-  "Install a session into app-db and repaint the workspace strip. Returns the\n   cleanup fn for that session's title listener."
-  [{:keys [id history] :as session-result}]
-  ;; `:history-cursor` MUST survive this projection: the session opened on its
-  ;; newest turns only, and that cursor is the sole record of what is still
-  ;; unfetched above. Drop it and scroll-up silently stops at a false top.
-  (state/dispatch [:init-session
-                   (select-keys session-result [:id :status :current-turn-id :history-cursor])
-                   history (session-workspace id)])
-  (state/dispatch [:set-title (or (session-db-title id) "")])
-  ;; If a turn is IN FLIGHT for this session (e.g. started in the web or a
-  ;; sibling process), ATTACH so it streams live into the tab instead of
-  ;; showing frozen history until it lands in the DB.
-  (state/dispatch [:attach-running-turn nil session-result])
-  (subscribe-session-live! id))
 
 (defn- resolve-prefix!
   "C-x is a HYDRA, not a dead prefix: the moment `input/handle-key` arms it, the
@@ -5078,7 +5070,7 @@
   nil)
 
 (defn- pre-resolve-session-id!
-  "Resolve an optional session id through the gateway before Lanterna starts.
+  "Resolve an optional session id in the post-first-frame startup worker.
    Reconcile orphaned :running turns FIRST (via the gateway) so the rebuilt
    history carries no stale :running turns."
   [opts]
@@ -5087,107 +5079,6 @@
     (or (chat/resume-session cid)
         (throw (ex-info (format-session-not-found cid) {:vis/user-error true :id cid})))))
 
-(def ^:private boot-splash-frames ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
-
-(def ^:private boot-splash-grace-ms
-  "Don't paint the splash until the work has outlasted this window, so a fast
-   warm attach to an already-running daemon never flashes a spinner."
-  250)
-
-(defn- paint-boot-splash!
-  "Paint ONE centered 'Starting vis…' frame. The caller MUST hold
-   `draw-lock` (this touches `screen-size`/`refresh`). Best-effort — the
-   animation loop swallows throws so a paint hiccup can never kill startup."
-  [^TerminalScreen screen frame]
-  (let [size
-        (screen-size screen)
-
-        cols
-        (.getColumns size)
-
-        rows
-        (.getRows size)
-
-        g
-        (.newTextGraphics screen)
-
-        spin
-        (nth boot-splash-frames (mod (long frame) (count boot-splash-frames)))
-
-        label
-        (str spin "  Starting vis…")
-
-        row
-        (max 0 (quot (dec rows) 2))]
-
-    (p/set-colors! g t/terminal-bg t/terminal-bg)
-    (p/fill-rect! g 0 0 cols rows)
-    (p/set-colors! g t/text-fg t/terminal-bg)
-    (p/put-str! g 0 row (p/center-text label cols))
-    (.setCursorPosition screen nil)
-    (.refresh screen Screen$RefreshType/DELTA)))
-
-(defn- with-boot-splash!
-  "Run `thunk` while animating a centered 'Starting vis…' splash on
-   `screen`, then clear it and return `thunk`'s value.
-
-   Bridges the one window where the user is otherwise staring at a blank screen:
-   after `.startScreen` but before the render thread exists, the first gateway
-   call spins up the detached daemon (up to ~15s on a native cold start) and the
-   client's own progress spinner only reaches stderr — invisible once Lanterna
-   owns the alternate buffer. This paints IN the TUI instead.
-
-   Beautiful + correct: it stays silent for the first `boot-splash-grace-ms` so a
-   warm attach never flashes; it paints under a non-blocking `tryLock` and skips
-   whenever a modal is up (`:dialog-open?`), so it never fights the no-provider
-   manager `make-startup` may open on the rotated-creds path; and it always joins
-   the animator + clears the buffer in a `finally` so the first real frame paints
-   clean even if the body throws."
-  [^TerminalScreen screen thunk]
-  (let [stop?
-        (atom false)
-
-        painted?
-        (atom false)
-
-        animator
-        (doto (Thread. ^Runnable
-                       (fn []
-                         (let [start (System/currentTimeMillis)]
-                           (loop [frame 0]
-                             (when-not @stop?
-                               (when (and (>= (- (System/currentTimeMillis) start)
-                                              (long boot-splash-grace-ms))
-                                          (not (:dialog-open? @state/app-db))
-                                          (.tryLock ^ReentrantLock draw-lock))
-                                 (try (paint-boot-splash! screen frame)
-                                      (reset! painted? true)
-                                      (catch Throwable _ nil)
-                                      (finally (.unlock ^ReentrantLock draw-lock))))
-                               (Thread/sleep 90)
-                               (recur (inc frame))))))
-                       "vis-channel-tui-boot-splash")
-          (.setDaemon true))]
-
-    (.start animator)
-    (try (thunk)
-         (finally (reset! stop? true)
-                  (try (.join animator 500) (catch InterruptedException _ nil))
-                  ;; Wipe the splash so the render thread's first frame paints onto a
-                  ;; clean buffer (skip entirely when nothing was ever drawn).
-                  (when @painted?
-                    (.lock ^ReentrantLock draw-lock)
-                    (try (let [size
-                               (screen-size screen)
-
-                               g
-                               (.newTextGraphics screen)]
-
-                           (p/set-colors! g t/terminal-bg t/terminal-bg)
-                           (p/fill-rect! g 0 0 (.getColumns size) (.getRows size))
-                           (.refresh screen Screen$RefreshType/COMPLETE))
-                         (catch Throwable _ nil)
-                         (finally (.unlock ^ReentrantLock draw-lock))))))))
 
 (defn- authenticated-provider-config
   "Return a runtime provider config when OAuth presets are already authenticated.
@@ -5197,6 +5088,36 @@
          {:providers (vec providers)})
        (catch Throwable _ nil)))
 
+(defn- make-startup-session
+  "Resolve or create the one session that initially occupies the editor.
+
+   Called only by the worker armed from `start-render-thread!`'s first-frame
+   callback. Every gateway lookup stays behind that paint boundary."
+  [opts resolve-requested-session config]
+  (cond (:session-id opts) (resolve-requested-session)
+        ;; --continue: reopen the most-recent :tui session.
+        (:continue opts) (if-let [latest (first (remove empty-untitled-session?
+                                                  (tui-session-summaries)))]
+                           (or (chat/resume-session (:id latest)) (chat/make-session config))
+                           (chat/make-session config))
+        ;; --resume starts fresh; the session picker opens after this session binds.
+        (:resume opts) (chat/make-session config)
+        ;; A project IS a tab set. Eagerly resume only its most-recent member;
+        ;; the rest become name-only tabs after the UI is live.
+        :else (let [members
+                    (project-member-sessions (ensure-active-project-id!))
+
+                    _
+                    (reset! launch-member-ids* (into #{} (map #(str (get % "id"))) members))
+
+                    preferred
+                    (most-recent-session-ids members)]
+
+                (or (some chat/resume-session preferred)
+                    (some-> (latest-project-session-id)
+                            chat/resume-session)
+                    (chat/make-session config)))))
+
 
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
@@ -5205,13 +5126,10 @@
      :resume          true        - resume the latest :tui session"
   ([] (run-chat! {}))
   ([opts]
-   ;; Validate --session-id BEFORE we boot Lanterna. A miss here
-   ;; used to crash mid-screen-startup with a stack trace; now it
-   ;; surfaces as a `:vis/user-error` and `channel-main` prints a
-   ;; clean, actionable message + exit code 2 (no trace, no torn-down
-   ;; terminal state). Sweep first so precomputed resume history never
-   ;; includes orphaned `:running` turns from a killed prior process.
-   (let [resumed-from-flag (pre-resolve-session-id! opts)]
+   ;; Keep explicit-session resolution as a thunk. Calling it here used to start
+   ;; and await a cold gateway before Lanterna owned the terminal, leaving the
+   ;; user with no frame. The first-frame callback below starts the worker.
+   (let [resolve-requested-session #(pre-resolve-session-id! opts)]
      (state/init!)
      ;; Subscribe to host notifications so any (vis/notify! ...) push
      ;; - from anywhere: this channel's click handler, an extension,
@@ -5264,7 +5182,27 @@
            ;; Toggle listeners are process-global. Keep the disposal thunk so a
            ;; closed TUI cannot keep invalidating the next TUI's transcript.
            toggle-listener-dispose (volatile! nil)
-           ;; Gateway slash loading starts from the first-frame callback below.
+           ;; Gateway work is armed now but starts only from the first successful
+           ;; render callback. The task remains visible to settle + teardown.
+           startup-build-id (str (java.util.UUID/randomUUID))
+           startup-task (volatile! nil)
+           startup-retried? (atom false)
+           start-startup!
+           (fn []
+             (when (nil? @startup-task)
+               (when-let [config (:config @state/app-db)]
+                 (vreset! startup-task
+                          (vis/worker-future
+                            "tui-startup-session"
+                            (fn []
+                              (try
+                                (let [{:keys [id] :as startup-session}
+                                      (make-startup-session opts resolve-requested-session config)]
+                                  {:session startup-session
+                                   ;; Keep completion on the input thread memory-only.
+                                   :workspace (try (session-workspace id) (catch Throwable _ nil))
+                                   :title (try (session-db-title id) (catch Throwable _ nil))})
+                                (catch Throwable e {:error e}))))))))
            gateway-slash-load (volatile! nil)]
 
        (.startScreen screen)
@@ -5349,129 +5287,23 @@
                                                        (when (seq (:providers c)) c))))))]
                (state/dispatch [:set-config c])
                (state/dispatch [:force-provider-limits-refresh])))
-           ;; Init session: resume if --session-id given, else fresh. The --session-id case was
-           ;; already validated above (before Lanterna started), so here we only need the
-           ;; pre-resolved value.
-           (when-let [config (:config @state/app-db)]
-             (let [make-startup
-                   (fn [config]
-                     (cond (:session-id opts) resumed-from-flag
-                           ;; --continue: reopen the most-recent :tui session
-                           (:continue opts) (if-let [latest (first (remove empty-untitled-session?
-                                                                     (tui-session-summaries)))]
-                                              (or (chat/resume-session (:id latest))
-                                                  (chat/make-session config))
-                                              (chat/make-session config))
-                           ;; --resume: start fresh; the session picker opens
-                           ;; before the main loop (see below), like `pi -r`.
-                           (:resume opts) (chat/make-session config)
-                           ;; Plain launch: a project IS a tab set. Resolve the
-                           ;; launch dir's PROJECT and eagerly resume its
-                           ;; most-recent member as the ONE startup tab (one
-                           ;; transcript fetch); the REST of the set restores as
-                           ;; tabs in the background once the UI is live (see
-                           ;; restore-project-tabs! below). No project / no
-                           ;; members → fall back to the newest non-empty session
-                           ;; pinned to this root, else a fresh session.
-                           :else (let [members (project-member-sessions (ensure-active-project-id!))
-                                       ;; Remember the ON-DISK member set: a startup tab
-                                       ;; that is already a member must not be persisted
-                                       ;; alone (see below).
-                                       _ (reset! launch-member-ids* (into #{}
-                                                                          (map #(str (get % "id")))
-                                                                          members))
-                                       ;; Recency picks WHICH member opens eagerly; the
-                                       ;; strip order stays `project_position`.
-                                       preferred (most-recent-session-ids members)]
-
-                                   (or (some chat/resume-session preferred)
-                                       (some-> (latest-project-session-id)
-                                               chat/resume-session)
-                                       (chat/make-session config)))))
-                   {:keys [id history] :as startup-session}
-                   ;; No provider is usable: either nothing is configured at all,
-                   ;; or a config EXISTS and every provider failed to resolve at
-                   ;; router-build time (rotated/expired creds). Onboarding is
-                   ;; skipped whenever a config is present, and the gateway wraps
-                   ;; the verdict on its way back, so classify the whole cause
-                   ;; chain AND the wire payload — then surface the provider
-                   ;; manager here and retry the build ONCE with the freshest
-                   ;; config.
-                   (with-boot-splash!
-                     screen
-                     (fn []
-                       (try (make-startup config)
-                            (catch Throwable e
-                              (if (vis-config/no-provider-ex e)
-                                (do (with-dialog-lock #(open-settings-modal! screen "Providers"))
-                                    (when-let [c (vis/load-config)]
-                                      (state/dispatch [:set-config c])
-                                      (state/dispatch [:force-provider-limits-refresh]))
-                                    (make-startup (:config @state/app-db)))
-                                (throw e))))))]
-
-               (vswap! session-live-listeners
-                       assoc
-                       (str id)
-                       (init-visible-session! startup-session))
-               ;; Record this place's tab set (just the single startup tab)
-               ;; — otherwise a session never persists and a plain relaunch
-               ;; wouldn't restore it. Also self-heals a stale multi-tab
-               ;; sidecar down to what is actually open.
-               ;;
-               ;; NOT when the startup session is ALREADY a project member: its
-               ;; order is on disk and the rest of the set is still being
-               ;; restored, so persisting this ONE tab renumbers
-               ;; `project_position` with it first — which rotated the strip by
-               ;; one on every relaunch. `restore-project-tabs!` persists once
-               ;; the full set is back.
-               (when-not (contains? @launch-member-ids* (str id)) (persist-tabs!))
-               ;; Kick off background pre-warm of the LRU. Walks the
-               ;; history bottom-up calling project + bubble-height,
-               ;; so by the time the user scrolls UP the cache is
-               ;; already hot. Empty sessions skip this entirely.
-               ;; Cancelled in the shutdown hook below.
-               (when (seq history)
-                 (let [size (screen-size screen)
-                       cols (.getColumns size)
-                       bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
-                       settings (or (:settings @state/app-db) {})
-                       warm-opts {:session-id id
-                                  :detail-expansions (:detail-expansions @state/app-db)
-                                  ;; Re-layout as background warm lands so
-                                  ;; total-h SETTLES while idle at auto-bottom
-                                  ;; (thumb pinned to bottom = invisible) instead
-                                  ;; of snapping ~20% on the first wheel-up.
-                                  :on-warm #(state/dispatch [:bump-render-version])}]
-
-                   ;; Head-start warm on the input thread so immediate
-                   ;; first-scroll doesn't hit a cold heavy trace bubble.
-                   ;; Full history still warms async below.
-                   (virtual/pre-warm-recent! history
-                                             bubble-w
-                                             settings
-                                             (assoc warm-opts
-                                               :count prewarm-sync-tail-count
-                                               :budget-ms prewarm-sync-budget-ms))
-                   (virtual/rewarm! history bubble-w settings warm-opts)))))
-           ;; Spawn the render thread BEFORE the input loop. It will paint
-           ;; the first frame as soon as `:render-version` is non-zero (every
-           ;; init dispatch above bumps it).
+           ;; Install an optimistic tab before the render thread starts. It is a
+           ;; complete editor surface, not a splash: typing works immediately and
+           ;; Enter queues prompts until the deferred gateway session binds.
+           (when (:config @state/app-db) (state/dispatch [:init-building-tab startup-build-id]))
            (vreset! render-thread
-                    (start-render-thread! screen
-                                          #(vreset! gateway-slash-load
-                                                    (start-deferred-gateway-slash-load!
-                                                      (:session-id @state/app-db)))))
-           ;; Prewarm the slash-command machinery OFF the hot path so the
-           ;; FIRST `/` keystroke doesn't pay cold JIT + registry harvest
-           ;; (registry-slash-commands → menu-commands → slash/suggestions →
-           ;; fuzzy-score) mid-frame — that dropped a frame and flickered the
-           ;; popup on first open. Also fills the registry memo cell. Fire-
-           ;; and-forget; failure is harmless (the live path recomputes).
+                    (start-render-thread!
+                      screen
+                      (fn []
+                        (start-startup!)
+                        ;; These pollers can touch the gateway/router, so they share
+                        ;; the same strict AFTER-FIRST-FRAME boundary.
+                        (vreset! provider-limits-thread (start-provider-limits-thread!))
+                        (vreset! workspace-refresh-thread (start-workspace-refresh-thread!)))))
+           ;; Prewarm the local slash-command machinery off the hot path. Gateway
+           ;; and Python rows are fetched only after the startup session binds.
            (future (try (slash-suggestions-for-input screen (input-state-from-text "/"))
                         (catch Throwable _ nil)))
-           (vreset! provider-limits-thread (start-provider-limits-thread!))
-           (vreset! workspace-refresh-thread (start-workspace-refresh-thread!))
            ;; Local UI state that lives only in the input thread.
            ;;
            ;; `scrollbar-drag-offset` is `nil` when no drag is in
@@ -6048,6 +5880,54 @@
                                   (state/dispatch [:order-project-tabs (mapv :session-id specs)])
                                   (persist-tabs!)))
                               (catch Throwable _ nil))))))
+                 startup-pending? (fn []
+                                    (and (:config @state/app-db) (not= ::settled @startup-task)))
+                 settle-startup!
+                 (fn []
+                   (let [task @startup-task]
+                     (when (and (some? task) (not (keyword? task)) (realized? task))
+                       ;; Claim this result once; the 16ms pending loop may revisit us
+                       ;; while a dialog or local warm-up is settling the session.
+                       (vreset! startup-task ::settling)
+                       (let [{:keys [session workspace title error]} @task]
+                         (cond
+                           session
+                           (let [{:keys [id history] :as startup-session} session]
+                             (state/dispatch [:bind-built-session startup-build-id
+                                              (select-keys startup-session
+                                                           [:id :status :current-turn-id
+                                                            :history-cursor]) history workspace])
+                             (when title (state/dispatch [:set-title title]))
+                             (ensure-session-live! id)
+                             (state/dispatch [:attach-running-turn
+                                              (state/tab-id-for-session @state/app-db id)
+                                              startup-session])
+                             (warm-session-render! startup-session)
+                             ;; The UI is fully bound now. All follow-up work is either
+                             ;; local or already asynchronous.
+                             (vreset! startup-task ::settled)
+                             (when-not (contains? @launch-member-ids* (str id)) (persist-tabs!))
+                             (vreset! gateway-slash-load (start-deferred-gateway-slash-load! id))
+                             (when (and (:resume opts) (not (:dialog-open? @state/app-db)))
+                               (show-sessions!))
+                             (when-not (or (:session-id opts) (:resume opts))
+                               (restore-project-tabs!)))
+                           (and error
+                                (vis-config/no-provider-ex error)
+                                (compare-and-set! startup-retried? false true))
+                           (do
+                             ;; The dialog must own input on THIS thread. Once it saves,
+                             ;; re-arm the same deferred worker exactly once.
+                             (with-dialog-lock #(open-settings-modal! screen "Providers"))
+                             (when-let [c (vis/load-config)]
+                               (state/dispatch [:set-config c])
+                               (state/dispatch [:force-provider-limits-refresh]))
+                             (vreset! startup-task nil)
+                             (start-startup!))
+                           :else (do (vreset! startup-task ::settled)
+                                     (throw (or error
+                                                (ex-info "TUI startup worker returned no session"
+                                                         {})))))))))
                  ;; C-x w — switch the ACTIVE project (its tab set). Pick a
                  ;; project, re-point `active-project-id*`, and open that
                  ;; project's member sessions as tabs. A project IS a tab set.
@@ -6148,20 +6028,14 @@
                                (state/dispatch [:order-project-tabs (mapv :session-id specs)])
                                (persist-tabs!))))))))]
 
-             ;; --resume opens the session picker at startup, like `pi -r`.
-             (when (and (:resume opts) (not (:dialog-open? @state/app-db))) (show-sessions!))
-             ;; Plain launch AND `--continue` restore the WHOLE launch-project
-             ;; tab set (the startup tab opened one/the most-recent; the rest
-             ;; come back as tabs) — a project IS a tab set, so "continue where I
-             ;; left off" means my working dir's tabs, not a lone tab. Only the
-             ;; TARGETED flags stay single-tab: `--session-id` (one explicit
-             ;; session) and `--resume` (the picker opens below).
-             (when-not (or (:session-id opts) (:resume opts)) (restore-project-tabs!))
+             ;; Startup settlement opens the optional picker or restores the project
+             ;; only after the gateway-backed session has been bound.
              (loop []
 
-               ;; Hydrate a PENDING pre-allocated tab the moment it is the
-               ;; ACTIVE tab (tab click / C-x cycle / picker): the fetch runs
-               ;; off the input thread while the tab paints its loading state.
+               ;; The worker is polled only while startup is pending, keeping the
+               ;; input thread live without a cross-thread terminal read.
+               (settle-startup!)
+               ;; Hydrate a pending pre-allocated tab after startup has settled.
                (hydrate-pending-tab!)
                ;; Layout fields are populated by the render thread after the first paint. Until
                ;; then, scroll handlers fall back to safe defaults and act as a no-op. Pure
@@ -6197,20 +6071,13 @@
                    (do
                      (release-wheel-momentum! scroll-momentum last-wheel-at-ms :transcript)
                      (release-wheel-momentum! live-scroll-momentum last-live-wheel-at-ms :live-view)
-                     ;; Idle wait. With no wheel gesture still coasting, the
-                     ;; input thread has NOTHING to do until the next event —
-                     ;; the render thread owns every repaint / spinner tick /
-                     ;; resize poll. So BLOCK on `.readInput` (parks the
-                     ;; thread → zero idle CPU) instead of busy-polling
-                     ;; `.pollInput` + `(Thread/sleep 16)` (~62 wakeups/sec of
-                     ;; pure idle churn — the FileInputStream.available poll
-                     ;; the JFR flagged). Consistent with modal dialogs, which
-                     ;; already block on `.readInput`. The blocking read is
-                     ;; stashed for the next iteration so it flows through the
-                     ;; normal `read-chat-input!` coalescing / escape path.
-                     ;; While a gesture is still decaying, keep the 16ms tick
-                     ;; so its directional-lock hold window can expire.
-                     (if (and (zero? (long @scroll-momentum)) (zero? (long @live-scroll-momentum)))
+                     ;; Idle wait. During deferred startup, wake every 16ms to bind
+                     ;; its result (and keep accepting keystrokes). Once settled and
+                     ;; no wheel gesture is coasting, return to the zero-CPU blocking
+                     ;; read used by the steady-state editor.
+                     (if (and (not (startup-pending?))
+                              (zero? (long @scroll-momentum))
+                              (zero? (long @live-scroll-momentum)))
                        (when-let [k (.readInput ^TerminalScreen screen)]
                          (vswap! pending-input-key conj k))
                        (Thread/sleep 16))
@@ -7812,9 +7679,9 @@
              ;; no-op when shutdown? was already true) finish before we
              ;; tear down the screen.
              (state/dispatch [:shutdown])
-             ;; Cancel the pre-warm worker BEFORE joining the render
-             ;; thread - it might still be holding `cached*` work
-             ;; that we'd rather drop than wait on.
+             (when-let [task @startup-task]
+               (when-not (keyword? task) (try (future-cancel task) (catch Throwable _ nil))))
+             ;; Cancel the pre-warm worker BEFORE joining the render thread.
              (virtual/stop-rewarm!)
              (when-let [t @render-thread]
                (try (.join ^Thread t 500) (catch Throwable _ nil)))

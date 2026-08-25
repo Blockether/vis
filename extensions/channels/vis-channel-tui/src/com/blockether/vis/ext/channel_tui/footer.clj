@@ -1023,6 +1023,7 @@
   "Content for the Emacs echo-area row directly above the input box.
 
    NORMALLY EMPTY — the row lights up only when there is something to say:
+     - startup session building → typing is live; Enter waits for readiness
      - live turn / cancelling   → the `C-g / Esc cancel` abort hint
      - an open live view        → what it is doing and that Esc stops IT first
      - a transient `:echo` msg  → a one-shot message (the caller clears it)
@@ -1030,15 +1031,17 @@
    No idle keybinding nags, and no which-key strip: C-x opens the HYDRA band
    itself (`keymap/prefix-spec` → `dialogs/prefix-band!`), which lists the next
    keys where they belong — over the transcript, not in a one-row strip."
-  [{:keys [loading? cancelling? echo live-views]}]
-  (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
-        ;; A live view outranks the turn's own abort hint because ESCAPE DOES:
-        ;; while one is open the abort key stops the VIEW (screen.clj's `:cancel`
-        ;; branch), so the row advertising that key has to name what it will hit.
-        (some? (lv/interruptible live-views)) [(hint-segment (live-view-hint live-views) 1)]
-        loading? [(hint-segment (str (keymap/abort-hint) " cancel") 1)]
-        (not (str/blank? (str echo))) [(hint-segment (str/trim (str echo)) 1)]
-        :else []))
+  [{:keys [loading? cancelling? echo live-views tabs active-tab-id]}]
+  (let [building? (some #(and (= active-tab-id (:id %)) (:build-id %)) tabs)]
+    (cond cancelling? [(hint-segment "Cancelling... please wait" 1)]
+          ;; A live view outranks the turn's own abort hint because ESCAPE DOES:
+          ;; while one is open the abort key stops the VIEW (screen.clj's `:cancel`
+          ;; branch), so the row advertising that key has to name what it will hit.
+          (some? (lv/interruptible live-views)) [(hint-segment (live-view-hint live-views) 1)]
+          building? [(hint-segment "Starting session… type now; Enter sends when ready" 1)]
+          loading? [(hint-segment (str (keymap/abort-hint) " cancel") 1)]
+          (not (str/blank? (str echo))) [(hint-segment (str/trim (str echo)) 1)]
+          :else [])))
 
 (defn draw-echo-area!
   "Emacs echo area / minibuffer analogue: ONE flat row directly above the

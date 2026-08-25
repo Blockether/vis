@@ -26,10 +26,20 @@
             [com.blockether.vis.internal.human-input :as engine]
             [com.blockether.vis.internal.human-input.live :as live]
             [lazytest.core :refer [defdescribe it expect]])
-  (:import [com.googlecode.lanterna TerminalPosition]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
-           [com.googlecode.lanterna.input MouseAction MouseActionType]
-           [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]))
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
+           [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]
+           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
+
+(defn- await-pred
+  [pred timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
+    (loop []
+
+      (cond (pred) true
+            (< (System/currentTimeMillis) deadline) (do (Thread/sleep 10) (recur))
+            :else false))))
 
 (def ^:private parse-args (deref #'screen/parse-args))
 
@@ -776,6 +786,146 @@
                  (with-redefs [vis/authenticated-preset-providers (constantly [])]
                    (expect (nil? (authenticated-provider-config))))))
 
+(defn- assert-first-frame-before-startup-session!
+  [opts]
+  (let [old-db
+        @state/app-db
+
+        terminal
+        (DefaultVirtualTerminal. (TerminalSize. 80 30))
+
+        gateway-entered
+        (promise)
+
+        release-gateway
+        (promise)
+
+        sent-text
+        (promise)
+
+        runner-error
+        (atom nil)
+
+        session-id
+        (java.util.UUID/randomUUID)
+
+        config
+        {:providers [{:id :openai-codex :models [{:name "gpt-5.5"}]}]}
+
+        blocking-session
+        (fn [& _]
+          (deliver gateway-entered true)
+          @release-gateway
+          {:id session-id :history []})
+
+        gateway-bindings
+        (if (:session-id opts)
+          {#'vis/gateway-reconcile-running-turns! (fn []
+                                                    nil)
+           #'chat/resume-session blocking-session}
+          {#'chat/make-session blocking-session})
+
+        bindings
+        (merge
+          {#'screen/create-terminal! (fn [_]
+                                       terminal)
+           #'screen/configure-terminal-input! (fn [_ _]
+                                                nil)
+           #'screen/probe-terminal-cell-size! (fn []
+                                                nil)
+           #'screen/register-terminal-interrupt-handlers! (fn []
+                                                            nil)
+           #'screen/enable-terminal-escape-modes! (fn [_]
+                                                    nil)
+           #'screen/disable-terminal-escape-modes! (fn [_]
+                                                     nil)
+           #'screen/install-ssh-passphrase-prompt! (fn [_]
+                                                     nil)
+           #'screen/start-provider-limits-thread! (fn []
+                                                    nil)
+           #'screen/start-workspace-refresh-thread! (fn []
+                                                      nil)
+           #'screen/ensure-active-project-id! (fn []
+                                                nil)
+           #'screen/latest-project-session-id (fn []
+                                                nil)
+           #'screen/session-workspace (fn [_]
+                                        {:root "/tmp"})
+           #'screen/session-db-title (fn [_]
+                                       nil)
+           #'screen/subscribe-session-live! (fn [_]
+                                              (fn []
+                                                nil))
+           #'screen/persist-tabs! (fn []
+                                    nil)
+           #'screen/release-workspace-sessions! (fn []
+                                                  nil)
+           #'screen/start-deferred-gateway-slash-load! (fn [_]
+                                                         nil)
+           #'chat/turn! (fn [_ text _]
+                          (deliver sent-text text)
+                          {"content" []})
+           #'timg/images-protocol (fn []
+                                    nil)
+           #'vis/load-config (fn []
+                               config)
+           #'vis/load-config-raw (fn []
+                                   {})
+           #'vis/reload-config! (fn []
+                                  nil)
+           #'vis/toggles-hydrate-from-config! (fn [_]
+                                                nil)
+           #'vis/toggle-add-listener! (fn [_]
+                                        (fn []
+                                          nil))
+           #'vis/save-toggles! (fn [_]
+                                 nil)
+           #'vis/watch-notifications! (fn [_ _]
+                                        nil)
+           #'vis/unwatch-notifications! (fn [_]
+                                          nil)
+           #'vis/add-channel-event-listener! (fn [_ _ _]
+                                               nil)
+           #'vis/remove-channel-event-listener! (fn [_ _]
+                                                  nil)
+           #'vis/gateway-release-session! (fn [_]
+                                            nil)}
+          gateway-bindings)
+
+        runner
+        (future (try (with-redefs-fn bindings #(screen/run-chat! opts))
+                     (catch Throwable t (reset! runner-error t))))]
+
+    (try
+      ;; A real render publishes layout; the old blocking bootstrap could only
+      ;; paint its isolated splash while the gateway call was stuck.
+      (expect (true? (await-pred #(some? (:layout @state/app-db)) 5000)))
+      (expect (= 1 (count (:tabs @state/app-db))))
+      (expect (= true (deref gateway-entered 5000 ::timeout)))
+      (.addInput terminal (term/keystroke \h))
+      (expect (true? (await-pred #(= ["h"] (get-in @state/app-db [:input :lines])) 2000)))
+      ;; Enter before the session exists is durable intent: it leaves the editor,
+      ;; appears in the local queue, and cannot reach the model yet.
+      (.addInput terminal (KeyStroke. KeyType/Enter))
+      (expect (true? (await-pred #(= ["h"] (mapv :text (:pending-sends @state/app-db))) 2000)))
+      (expect (= ::timeout (deref sent-text 100 ::timeout)))
+      (deliver release-gateway true)
+      (expect (true? (await-pred #(= session-id (get-in @state/app-db [:session :id])) 2000)))
+      (expect (= "h" (deref sent-text 2000 ::timeout)))
+      (finally (deliver release-gateway true)
+               (await-pred #(= session-id (get-in @state/app-db [:session :id])) 2000)
+               (state/dispatch [:shutdown])
+               (.addInput terminal (term/keystroke \x))
+               (deref runner 3000 nil)
+               (reset! state/app-db old-db)))
+    (expect (nil? @runner-error))))
+
+(defdescribe startup-first-frame-test
+             (it "paints the editor and queues input before a new gateway session is ready"
+                 (assert-first-frame-before-startup-session! {}))
+             (it "paints before resolving an explicit --session-id through the gateway"
+                 (assert-first-frame-before-startup-session! {:session-id "abcd1234"})))
+
 (defdescribe startup-resume-test
              (it "--session-id reconciles orphaned running turns before rebuilding history"
                  ;; The sweep now goes through the gateway (`gateway-reconcile-running-turns!`)
@@ -799,7 +949,22 @@
                                    resumed)]
 
                      (expect (= resumed (pre-resolve-session-id! {:session-id "c1"})))
-                     (expect (= [:reconcile [:resume "c1"]] @calls))))))
+                     (expect (= [:reconcile [:resume "c1"]] @calls)))))
+             (it "keeps a missing explicit session as a friendly user error after the first frame"
+                 (with-redefs [vis/gateway-reconcile-running-turns!
+                               (constantly nil)
+
+                               chat/resume-session
+                               (constantly nil)
+
+                               vis/gateway-list-sessions
+                               (constantly [])]
+
+                   (let [error (try (pre-resolve-session-id! {:session-id "missing"})
+                                    nil
+                                    (catch clojure.lang.ExceptionInfo e e))]
+                     (expect (true? (:vis/user-error (ex-data error))))
+                     (expect (str/includes? (ex-message error) "Session not found: missing"))))))
 
 (defdescribe
   session-switcher-data-test
@@ -833,7 +998,8 @@
             (atom [])
 
             payload
-            "therapy line 1\ntherapy line 2"
+            "therapy line 1
+therapy line 2"
 
             token
             (input/format-paste-placeholder {:id 1 :content payload})
@@ -846,7 +1012,22 @@
           (submit-input! {:session {:id "c1"} :loading? false :active-tab-id :tab-a} input-state)
           ;; The submitting tab is pinned into the event so a tab
           ;; switch between Enter and the reduce cannot reroute it.
-          (expect (= [[:send-message (str "context " token) :tab-a] [:reset-input]] @events))))))
+          (expect (= [[:send-message (str "context " token) :tab-a] [:reset-input]] @events)))))
+  (it "queues Enter on the startup tab before a gateway session exists"
+      (let [events
+            (atom [])
+
+            input-state
+            (input/paste-text (input/empty-input) "queued before ready")]
+
+        (with-redefs [state/dispatch (fn [event]
+                                       (swap! events conj event))]
+          (submit-input! {:session nil
+                          :loading? true
+                          :active-tab-id :tab-1
+                          :tabs [{:id :tab-1 :build-id "startup"}]}
+                         input-state)
+          (expect (= [[:enqueue-message "queued before ready" :tab-1] [:reset-input]] @events))))))
 
 (defdescribe
   selectable-ranges-test
