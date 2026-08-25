@@ -137,7 +137,57 @@ describe("a finished turn handed to its persisted row", () => {
     expect(screen.queryByText("THE FINAL ANSWER")).not.toBeNull();
   });
 });
+// Regression, Vis session 976f705e-fd80-4787-adc6-1ae8388fdaa2: cancelling
+// mounted a second loading status beneath the cancellation, so the live row grew
+// for the handover and shrank again when its persisted row arrived.
+describe("a turn cancelled from this screen", () => {
+  it("keeps one stable cancellation status while the transcript catches up", async () => {
+    const events = hub();
+    const persisted = deferred<never[]>();
+    const bubble = {
+      id: "gw-cancel",
+      request: "stop this turn",
+      answer: "",
+      iterations: [],
+      startedAt: Date.now(),
+      status: "running" as const,
+    };
 
+    renderSessionScreen({
+      client: {
+        cachedLiveTurn: () => ({ turn: bubble, seq: 5 }),
+        cachedTranscript: () => [],
+        transcript: () => persisted.promise,
+      },
+      subscriptions: {
+        subscribeSession: events.subscribeSession,
+      },
+    });
+
+    expect(await screen.findByText("stop this turn")).toBeInTheDocument();
+    const liveRow = document.querySelector('[data-live="true"]') as HTMLElement;
+    const phaseSlot = liveRow.querySelector('[aria-hidden="true"].mt-5');
+    expect(phaseSlot).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    events.emit({
+      type: "turn.cancelled",
+      turn_id: "gw-cancel",
+      seq: 6,
+      status: "cancelled",
+    } as unknown as SseEvent);
+
+    expect(await screen.findAllByText("Cancelled by user.")).toHaveLength(2);
+    expect(screen.queryByText("Loading latest changes")).toBeNull();
+    const cancelledRow = document.querySelector(
+      '[data-live="true"]',
+    ) as HTMLElement;
+    expect(cancelledRow).not.toBeNull();
+    expect(cancelledRow.querySelector('[aria-hidden="true"].mt-5')).toBe(
+      phaseSlot,
+    );
+    expect(cancelledRow.querySelector(".bg-answer")?.textContent).toBe("");
+  });
+});
 // Regression, reported from an iPhone: "the stream finished, the answer is
 // ready, but it is not showing — I have to go back to the session list and
 // reopen the session". The terminal frame was lost with the suspended socket,

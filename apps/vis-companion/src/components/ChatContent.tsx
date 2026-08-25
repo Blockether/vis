@@ -2886,18 +2886,22 @@ function LiveProgress({
   phase,
   startedAt,
   still = false,
+  terminal = false,
 }: {
   phase: string;
   startedAt?: number;
   still?: boolean;
+  /** A final phase keeps the same slot but has no activity punctuation. */
+  terminal?: boolean;
 }) {
   const [now, setNow] = useState(() => Date.now());
 
+  const ticking = !still && !terminal;
   useEffect(() => {
-    if (still) return;
+    if (!ticking) return;
     const timer = window.setInterval(() => setNow(Date.now()), 100);
     return () => window.clearInterval(timer);
-  }, [still]);
+  }, [ticking]);
 
   const elapsed =
     formatDuration(Math.max(0, now - (startedAt ?? now))) ?? "0ms";
@@ -2908,11 +2912,12 @@ function LiveProgress({
         className="mt-5 truncate whitespace-nowrap font-mono text-ui text-vis-message"
         aria-hidden="true"
       >
-        {still ? null : <Spinner />}
+        {ticking ? <Spinner /> : null}
         <span>
-          {still ? null : <>&nbsp;&nbsp;</>}
-          {phase}...
-          {still ? null : <>&nbsp;&nbsp;{elapsed}</>}
+          {ticking ? <>&nbsp;&nbsp;</> : null}
+          {phase}
+          {terminal ? null : "..."}
+          {ticking ? <>&nbsp;&nbsp;{elapsed}</> : null}
         </span>
       </div>
       <span className="sr-only" role="status">
@@ -3356,14 +3361,9 @@ export const AssistantMessage = memo(function AssistantMessage({
           {!streaming &&
             !blocks.length &&
             !fallback &&
+            !cancelled &&
             turn.status !== "completed" &&
-            turn.status !== "running" && (
-              <span>
-                {cancelled
-                  ? "Cancelled by user."
-                  : (turn.status ?? "No response")}
-              </span>
-            )}
+            turn.status !== "running" && <span>{turn.status ?? "No response"}</span>}
         </div>
         {livePanel}
         {streaming ? (
@@ -3371,6 +3371,8 @@ export const AssistantMessage = memo(function AssistantMessage({
             phase={activity ?? "Vis is working"}
             startedAt={startedAt}
           />
+        ) : cancelled ? (
+          <LiveProgress phase="Cancelled by user." terminal />
         ) : pending ? (
           <LiveProgress phase={pending} startedAt={startedAt} />
         ) : turn.status === "running" ? (

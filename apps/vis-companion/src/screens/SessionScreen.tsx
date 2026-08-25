@@ -5169,7 +5169,9 @@ export function SessionScreen({
           }}
           streaming={liveTurn.status === "running"}
           pending={
-            liveTurn.status === "running" ? undefined : "Loading latest changes"
+            liveTurn.status === "completed" || liveTurn.status === "failed"
+              ? "Loading latest changes"
+              : undefined
           }
           activity={liveProgressPhase(
             liveTurn,
