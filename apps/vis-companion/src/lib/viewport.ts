@@ -131,6 +131,9 @@ function rememberKeyboardHeight(height: number): void {
  */
 const WAKE_RESYNC_MS = [0, 60, 160, 320, 600, 900, 1400];
 
+/** Let UIKit finish foregrounding before asking its editor to become first responder. */
+const RESUME_KEYBOARD_FOCUS_MS = 150;
+
 type Box = { height: number; top: number };
 
 /**
@@ -967,10 +970,31 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     }
 
     // Native resume: Capacitor fires this on iOS/Android even when the webview
-    // emits no viewport event at all. No-op on the web build.
+    // emits no viewport event at all. iOS's AppDelegate deliberately releases
+    // WebKit's editor before suspension so UIKit cannot deadlock its keyboard queue.
+    // The DOM does not learn that it lost first responder: clear its stale pin in
+    // the first foreground frame, then make one real focus change so the keyboard
+    // returns instead of leaving a keyboard-sized empty band.
+    const onNativeResume = () => {
+      const active = document.activeElement;
+      const staleNativeKeyboard = nativeKeyboard && (keyboardPinned || softKeyboardUp);
+      const editor =
+        staleNativeKeyboard && isKeyboardInputElement(active) ? active : null;
+      if (staleNativeKeyboard) reclaimViewportForExternalNavigation();
+      resync();
+      if (!editor) return;
+      timers.push(
+        window.setTimeout(() => {
+          if (!editor.isConnected) return;
+          const focused = document.activeElement;
+          if (focused !== document.body && focused !== document.documentElement) return;
+          editor.focus({ preventScroll: true });
+        }, RESUME_KEYBOARD_FOCUS_MS),
+      );
+    };
     let disposeNative = () => {};
     try {
-      void App.addListener('resume', resync)
+      void App.addListener('resume', onNativeResume)
         .then((sub) => {
           disposeNative = () => void sub.remove();
         })
