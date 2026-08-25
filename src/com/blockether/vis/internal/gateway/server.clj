@@ -56,7 +56,8 @@
            [java.security MessageDigest]
            [java.util.concurrent ArrayBlockingQueue TimeUnit]
            [org.eclipse.jetty.server ConnectionFactory HttpConfiguration HttpConnectionFactory
-            Server ServerConnector]))
+            Server ServerConnector]
+           [org.eclipse.jetty.server.handler.gzip GzipHandler]))
 
 
 (def ^:private DEFAULT_PORT 7890)
@@ -542,6 +543,47 @@
   (some-> (get-in request [:headers "x-vis-client-pid"])
           parse-long))
 
+(def ^:private SETTLED_PICTURE_PROTOCOL
+  "First client protocol that rebuilds a live view's finished picture itself, so
+   the close frame no longer has to carry a copy of it."
+  3)
+
+(defn- omits-settled-picture?
+  "True when the client on this connection speaks a protocol that settles a live
+   view from the patches it already applied.
+
+   A missing or unparseable `x-vis-protocol` reads as the OLDEST possible peer:
+   a caller that never announced itself is handed the fullest shape rather than
+   one it may not know how to rebuild.
+
+   With `min-client-protocol` at 3 the 426 gate already turns every older peer
+   away, so today this answers true for everything that reaches a socket. It
+   stays a per-connection question because the FLOOR is what moves — a protocol
+   this decides for itself does not have to be re-derived the next time the
+   oldest served client changes."
+  [request]
+  (>= (long (or (some-> (get-in request [:headers protocol/protocol-header])
+                        parse-long)
+                0))
+      (long SETTLED_PICTURE_PROTOCOL)))
+
+(defn- without-settled-picture
+  "One outbound frame with `result.view` dropped from a `human_input.live.close`.
+
+   The close repeats a picture its own patch stream already ended on — measured
+   byte-identical to the state `open` + patches produce for every close a real
+   gateway had on hand, at tens of kilobytes a frame. A client from protocol 3
+   settles the view it built instead, so the copy is pure wire weight.
+
+   Applied HERE, on the way out, rather than where the event is produced: the
+   STORED event must keep the picture regardless. The on-disk record and the
+   model both read the whole verdict, and the transcript serves that record back
+   as the run's receipt — SSE is the one reader that can rebuild it instead."
+  [event]
+  (if (and (= "human_input.live.close" (get event "type")) (map? (get event "result")))
+    (update event "result" dissoc "view")
+    event))
+
 (def ^:private sse-wake
   "Sentinel queued to unpark a pump parked in `.poll`; never written to a socket."
   ::sse-wake)
@@ -673,12 +715,15 @@
    event can land in both replay and the queue). A stalled client fills its
    own queue and is dropped — it can never park the turn's appender or
    sibling watchers."
-  [sid cursor proxied? owner-pid]
+  [sid cursor proxied? owner-pid slim-close?]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
         (let [^OutputStream out
               output-stream
+
+              outbound
+              (if slim-close? without-settled-picture identity)
 
               sub-id
               (str (java.util.UUID/randomUUID))
@@ -701,7 +746,8 @@
               write!
               (fn [event]
                 (when (> (long (get event "seq")) (long @last-seq))
-                  (.write out (.getBytes (wire/sse-frame event) StandardCharsets/UTF_8))
+                  (.write out
+                          (.getBytes (wire/sse-frame (outbound event)) StandardCharsets/UTF_8))
                   (.flush out)
                   (reset! last-seq (long (get event "seq")))))]
 
@@ -740,7 +786,8 @@
                        ;; only then is the anti-buffering pad worth its bytes
                        (boolean (some #(get-in request [:headers %])
                                       ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))
-                       (request-client-pid request))}
+                       (request-client-pid request)
+                       (omits-settled-picture? request))}
       (session-404 (get-in request [:path-params :sid])))))
 
 (defn- parse-multi-sids
@@ -798,12 +845,15 @@
    each session's monotonic stream independently. Replays each session
    (events past its cursor) then drains live; an idle gap emits the shared
    heartbeat, and a dead client's IO error → unsubscribe of every session."
-  [sid+cursors proxied? owner-pid]
+  [sid+cursors proxied? owner-pid slim-close?]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
         (let [^OutputStream out
               output-stream
+
+              outbound
+              (if slim-close? without-settled-picture identity)
 
               sub-id
               (str (java.util.UUID/randomUUID))
@@ -832,7 +882,8 @@
               (fn [event]
                 (let [esid (str (get event "session_id"))]
                   (when (> (long (get event "seq")) (long (get @last-seqs esid Long/MIN_VALUE)))
-                    (.write out (.getBytes (wire/sse-frame event) StandardCharsets/UTF_8))
+                    (.write out
+                            (.getBytes (wire/sse-frame (outbound event)) StandardCharsets/UTF_8))
                     (.flush out)
                     (swap! last-seqs assoc esid (long (get event "seq"))))))]
 
@@ -872,7 +923,8 @@
        :body (multi-sse-body sid+cursors
                              (boolean (some #(get-in request [:headers %])
                                             ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))
-                             (request-client-pid request))}
+                             (request-client-pid request)
+                             (omits-settled-picture? request))}
       (error-response 400 :bad-request "no valid sids"))))
 
 ;; /metrics (§6.5)
@@ -4360,6 +4412,39 @@
       (.setPort mirror (int port))
       (.addConnector server mirror))))
 
+(def ^:private GZIP_MIN_BYTES
+  "Response floor below which gzip is not worth its own framing (1 KiB). Jetty's
+   own default is 32 bytes, which spends a deflate on envelopes smaller than the
+   header it adds."
+  1024)
+
+(defn- gzip-handler
+  "A `GzipHandler` wrapping the gateway's handler, so JSON bodies cross the wire
+   compressed.
+
+   The transcript surface is what makes this worth having: a session's
+   `/v1/sessions/:sid/transcript` is a single unpaginated envelope holding every
+   form's `stdout` verbatim, and command output is the most redundant payload the
+   gateway serves — repeated file paths, repeated classpaths, repeated framing.
+   Measured on a real 27.5 MB transcript, deflate returns it in 6.8 MB (4.0x), and
+   the `stdout` inside it alone compresses 7.2x. A phone on Tailscale pays that
+   difference directly.
+
+   `text/event-stream` MUST NOT be compressed. Jetty already ships it in
+   `excludedMimeTypes`, but the exclusion is re-stated here because it is a
+   correctness invariant of the live surface rather than a tuning preference: the
+   deflater buffers, and a buffered SSE body is one that stops arriving as it
+   happens — `client.clj` disables compression on its own side for exactly this
+   reason. Re-stating it costs nothing and keeps a Jetty default change from
+   silently freezing every live view.
+
+   Note this also enables REQUEST inflation for `Content-Encoding: gzip` uploads,
+   which the gateway simply did not accept before."
+  []
+  (doto (GzipHandler.)
+    (.setMinGzipSize (int GZIP_MIN_BYTES))
+    (.addExcludedMimeTypes (into-array String ["text/event-stream"]))))
+
 (defn- gateway-configurator
   "The adapter's `:configurator` — the seam for `Server` tuning no Ring option
    expresses. A nil `mirror-port` skips the loopback mirror above.
@@ -4374,6 +4459,7 @@
                        loopback-mirror-configurator)]
     (fn [^Server server]
       (.setStopAtShutdown server false)
+      (.insertHandler server (gzip-handler))
       (when mirror (mirror server)))))
 
 (defn start!

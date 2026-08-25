@@ -387,6 +387,33 @@ describe('the three session events', () => {
     },
   );
 
+  // Checked against a real gateway's sessions: all 258 closes carried a picture
+  // byte-identical to what `open` + patches had already produced. A gateway that
+  // stops sending the copy must settle the pane, never drop it.
+  it('settles the patched Activity picture when the close carries no view', () => {
+    const running = liveViewFromWire({
+      id: 'activity-1',
+      title: 'Activity',
+      classification: 'activity',
+      activity: activityProjection(),
+      nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
+    })!;
+    const views = applyLiveViewEvent([running], {
+      type: LIVE_VIEW_CLOSE_EVENT,
+      view_id: running.id,
+      ts: 42,
+      result: { is_completed: true, reason: 'completed' },
+    });
+    expect(views).toHaveLength(1);
+    expect(views[0]).toMatchObject({
+      id: running.id,
+      classification: 'activity',
+      is_settled: true,
+      ended_at: 42,
+      nodes: [{ text: 'running' }],
+    });
+  });
+
   it('drops an Activity close whose terminal picture is not paintable', () => {
     const running = liveViewFromWire({
       id: 'activity-1',

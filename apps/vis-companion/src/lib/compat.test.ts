@@ -4,6 +4,7 @@ import {
   APP_PROTOCOL,
   compatFromHealth,
   compatOf,
+  shouldRereadCompat,
 } from './compat';
 
 // Regression: a matching pair showed the full-screen "Update the gateway" wall.
@@ -61,5 +62,54 @@ describe('compatOf', () => {
   it('judges a protocol block on its own', () => {
     expect(compatOf({ protocol: APP_PROTOCOL }).isCompatible).toBe(true);
     expect(compatOf(undefined).reason).toBe('unknown');
+  });
+
+  // Both floors moved to the contract this build speaks, so a daemon one release
+  // behind is now REFUSED rather than tolerated. The verdict has to name the
+  // gateway — a screen that says "update this app" to someone whose app is
+  // already current sends them to fix the half that is fine.
+  it('names the gateway when the gateway is the half that is behind', () => {
+    const stale = compatOf({ protocol: APP_MIN_GATEWAY_PROTOCOL - 1, min_client: 1 });
+    expect(stale.isCompatible).toBe(false);
+    expect(stale.reason).toBe('gateway-too-old');
+    expect(stale.upgrade).toBe('gateway');
+    expect(stale.title).toBe('Update the gateway');
+    expect(stale.remedy.length).toBeGreaterThan(0);
+  });
+
+  // …and the mirror, so neither direction can silently start naming the other.
+  it('names the app when the app is the half that is behind', () => {
+    const stale = compatOf({ protocol: APP_PROTOCOL + 1, min_client: APP_PROTOCOL + 1 });
+    expect(stale.isCompatible).toBe(false);
+    expect(stale.reason).toBe('client-too-old');
+    expect(stale.upgrade).toBe('client');
+    expect(stale.title).toBe('Update this app');
+  });
+});
+
+// A refused gateway refuses everything at once, and this app has been burned by
+// exactly that feedback shape before: an unthrottled reaction to a dead gateway
+// once produced ~300 fetches per second on the simulator (see App.tsx). One
+// refusal has to buy one question.
+describe('shouldRereadCompat', () => {
+  const refused = compatOf({ protocol: APP_PROTOCOL + 1, min_client: APP_PROTOCOL + 1 });
+  const fine = compatOf({ protocol: APP_PROTOCOL });
+
+  it('asks on the first refusal, when nothing is known yet', () => {
+    expect(shouldRereadCompat(false, null)).toBe(true);
+  });
+
+  it('stays silent while an answer is already on its way', () => {
+    expect(shouldRereadCompat(true, null)).toBe(false);
+    expect(shouldRereadCompat(true, refused)).toBe(false);
+  });
+
+  it('stays silent once the refusal is already the verdict on screen', () => {
+    expect(shouldRereadCompat(false, refused)).toBe(false);
+  });
+
+  it('asks again when the last verdict said the gateway was fine', () => {
+    // The floor moved under a healthy connection — the case this exists for.
+    expect(shouldRereadCompat(false, fine)).toBe(true);
   });
 });

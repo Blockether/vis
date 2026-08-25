@@ -511,9 +511,16 @@
                           (fn [& _]
                             (let [attach (swap! attaches inc)]
                               (when (> attach 1)
-                                ;; What this process starts in its place speaks this build's protocol.
-                                (reset! handshake
-                                  {:protocol 2 :min-client 2 :min-gateway 2 :version "0.1.40"}))
+                                ;; What this process starts in its place speaks this build's
+                                ;; protocol — READ, not spelled out, so raising the floor never
+                                ;; leaves this fixture pretending to be a daemon it just refused.
+                                (let [now (deref (requiring-resolve
+                                                   'com.blockether.vis.internal.gateway.protocol/protocol-version))]
+                                  (reset! handshake
+                                    {:protocol now
+                                     :min-client now
+                                     :min-gateway now
+                                     :version "0.1.40"})))
                               {:entry (if (> attach 1) new-entry fake-entry)}))
                           #'client/stop-daemon! (fn []
                                                   (swap! stops inc)

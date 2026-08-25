@@ -15,11 +15,23 @@
 
 import type { GatewayHealth, GatewayProtocol } from './types';
 
-/** Wire protocol number THIS app build speaks. Bump on a breaking wire change. */
-export const APP_PROTOCOL = 2;
+/**
+ * Wire protocol number THIS app build speaks. Bump on a breaking wire change.
+ *
+ * 3 tells the gateway this build settles a live view from the patches it already
+ * applied, so the close frame may arrive without its `result.view` copy. The app
+ * reads both shapes; the number is what lets the gateway stop sending the bytes.
+ */
+export const APP_PROTOCOL = 3;
 
-/** Oldest gateway protocol this app accepts: only the current wire contract. */
-export const APP_MIN_GATEWAY_PROTOCOL = 2;
+/**
+ * Oldest gateway protocol this app accepts: only the current wire contract.
+ *
+ * Raised to 3 alongside the gateway's own floor, so the two halves refuse each
+ * other symmetrically — whichever side is behind is the side named in the
+ * verdict, and neither is left reading a shape the other stopped sending.
+ */
+export const APP_MIN_GATEWAY_PROTOCOL = 3;
 
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';
@@ -160,4 +172,23 @@ export function compatOf(block?: GatewayProtocol | null): Compat {
 export function compatFromHealth(health?: GatewayHealth | null): Compat | null {
   if (!health) return null;
   return compatOf(health.protocol);
+}
+
+/**
+ * Whether a gateway's 426 is worth re-reading the verdict for.
+ *
+ * A gateway that refuses this build refuses EVERY call, so the moment one
+ * arrives, every poll, prefetch and retry already in flight is about to report
+ * the same refusal — often a dozen of them inside the same second. Re-asking
+ * `/healthz` for each would answer one storm with another, against a gateway
+ * that has just said it wants less traffic from us, not more.
+ *
+ * So: ask once. Not while an answer is already on its way (`isAsking`), and not
+ * at all once a verdict is in hand and it is already a refusal — that screen is
+ * on and says everything the next 426 would. Recovery is deliberate: the retry
+ * button re-reads regardless of what this says.
+ */
+export function shouldRereadCompat(isAsking: boolean, known: Compat | null): boolean {
+  if (isAsking) return false;
+  return !(known && !known.isCompatible);
 }

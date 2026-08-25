@@ -54,7 +54,14 @@ export const LIVE_GROUP_DIRECTIONS = ['row', 'column'] as const;
 /** How a surface COLOURS one line, row, step or stat (`live-tones`). CLOSED. */
 export const LIVE_TONES = ['idle', 'running', 'ok', 'warn', 'error'] as const;
 
-/** Everything a patch can do to a view (`live-ops`). CLOSED. */
+/**
+ * Everything a patch can do to a view (`live-ops`). CLOSED.
+ *
+ * The first four address ONE node by id, the next two change the view's SHAPE,
+ * and `set-activity` replaces the host-owned Activity projection that stands
+ * beside a view's ordinary nodes — which is why `applyOp` answers it before it
+ * ever looks for a `node_id`.
+ */
 export const LIVE_OPS = [
   'set',
   'append',
@@ -62,6 +69,7 @@ export const LIVE_OPS = [
   'clear',
   'add-node',
   'remove-node',
+  'set-activity',
 ] as const;
 
 /** What a link POINTS AT (`live-link-targets`). CLOSED. */
@@ -1063,10 +1071,18 @@ export function isLiveViewEvent(event: SseEvent): boolean {
  * Fold one session event into the views on screen.
  *
  * A repeated `open` REPLACES its view instead of stacking a second copy. An
- * ordinary close drops its view; an Activity close overlays the authoritative
- * terminal picture and keeps it settled through the record-filing handoff. The
+ * ordinary close drops its view; an Activity close settles the picture the
+ * patches already built and keeps it through the record-filing handoff. The
  * list identity is preserved when nothing changed so the section does not
  * remount under the operator's finger.
+ *
+ * A close does NOT have to carry that picture. The patch stream already ends on
+ * it — every one of a real session's closes was verified byte-identical to the
+ * state `open` + patches produce — so a gateway that omits `result.view` settles
+ * exactly the same view for a fraction of the bytes. One that still sends it is
+ * still obeyed: it stays authoritative, which is what keeps this readable by an
+ * older gateway and by the NDJSON record, where the close frame is the only
+ * place the finished picture is written down.
  */
 export function applyLiveViewEvent(views: LiveView[], event: SseEvent): LiveView[] {
   if (event.type === LIVE_VIEW_CLOSE_EVENT) {
@@ -1077,7 +1093,8 @@ export function applyLiveViewEvent(views: LiveView[], event: SseEvent): LiveView
     const current = views[at];
     if (current.classification === 'activity') {
       const result = record(event.result);
-      const terminal = recordedViewFromWire(result?.view, current);
+      const terminal =
+        result?.view === undefined ? current : recordedViewFromWire(result.view, current);
       if (terminal?.classification === 'activity') {
         const merged = views.slice();
         merged[at] = {

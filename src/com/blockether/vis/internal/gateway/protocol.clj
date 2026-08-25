@@ -33,18 +33,32 @@
 
 (def protocol-version
   "Wire protocol number THIS build speaks. Monotonic; bump on every BREAKING
-   change to the gateway HTTP/SSE surface."
-  2)
+   change to the gateway HTTP/SSE surface.
+
+   3 — a `human_input.live.close` frame no longer repeats the finished picture in
+   `result.view`. The patch stream already ends on it (verified byte-identical
+   across a real gateway's closes), so a client at 3 settles the view it built
+   and the frame drops from tens of kilobytes to its verdict."
+  3)
 
 (def min-client-protocol
-  "Oldest CLIENT protocol this gateway serves. This release supports only the
-   current wire contract; older clients are refused with 426."
-  2)
+  "Oldest CLIENT protocol this gateway serves. Older clients are refused with
+   426.
+
+   Raised to 3 with the shape it names: a protocol-2 peer is now TOLD it is too
+   old — the companion paints `Update this app` and the steps to do it — rather
+   than quietly served a frame shape nobody maintains. Being refused loudly is
+   the whole purpose of this number, and it reaches an old `vis-agent` binary and
+   a remote `--gateway` peer exactly as it reaches a phone."
+  3)
 
 (def min-gateway-protocol
-  "Oldest GATEWAY protocol this client accepts. This release supports only the
-   current daemon wire contract."
-  2)
+  "Oldest GATEWAY protocol this client accepts.
+
+   The mirror of [[min-client-protocol]]: when THIS build is the client and the
+   daemon is the stale half, the verdict names the gateway instead, so whichever
+   side is behind is the side the human is told to update."
+  3)
 
 (def protocol-header "Request header carrying the client's own protocol number." "x-vis-protocol")
 

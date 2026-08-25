@@ -22,10 +22,13 @@
       (is (false? (:is-compatible verdict))))))
 
 (deftest compatibility-verdict-test
-  (testing "this release serves only the current wire protocol"
-    (is (= 2 protocol/protocol-version))
-    (is (= 2 protocol/min-client-protocol))
-    (is (= 2 protocol/min-gateway-protocol)))
+  ;; The three numbers move together here: a release that only ever speaks its
+  ;; own contract refuses the half that is behind, in whichever direction it is
+  ;; behind, instead of serving a shape neither side maintains.
+  (testing "this release serves only the protocol it speaks"
+    (is (= 3 protocol/protocol-version))
+    (is (= 3 protocol/min-client-protocol))
+    (is (= 3 protocol/min-gateway-protocol)))
   (testing "a gateway rejects an explicitly too-old client"
     (let [verdict
           (protocol/verdict
@@ -59,11 +62,13 @@
         previous
         @handshake-atom
 
+        ;; A gateway demanding MORE than this build speaks — the point of the
+        ;; case, so the floor has to stay ahead of `protocol-version`.
         body
-        {"status" "ok" "protocol" {"protocol" 3 "min_client" 3 "min_gateway" 2 "version" "3.0.0"}}]
+        {"status" "ok" "protocol" {"protocol" 4 "min_client" 4 "min_gateway" 2 "version" "4.0.0"}}]
 
     (try (is (= body ((client-var 'note-handshake!) body)))
-         (is (= {:protocol 3 :min-client 3 :min-gateway 2 :version "3.0.0" :build nil}
+         (is (= {:protocol 4 :min-client 4 :min-gateway 2 :version "4.0.0" :build nil}
                 @handshake-atom))
          (is (= "client-too-old" (:reason (client/compatibility))))
          (finally (reset! handshake-atom previous)))))

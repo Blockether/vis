@@ -1479,7 +1479,7 @@
                   (java.io.ByteArrayOutputStream.)
 
                   body
-                  (multi-sse-body [[sid-a 0] [sid-b 0]] false nil)
+                  (multi-sse-body [[sid-a 0] [sid-b 0]] false nil false)
 
                   fut
                   (future (try (write-body body {} baos) (catch Throwable _ nil)))]
@@ -1546,7 +1546,7 @@
                 true
                 {"type" "turn.started" "turn_id" "t-live" "session_id" sid-live})
               (let [body
-                    (multi-sse-body [[sid-live 0] [sid-idle 0]] false nil)
+                    (multi-sse-body [[sid-live 0] [sid-idle 0]] false nil false)
 
                     fut
                     (future (try (write-body body {} baos) (catch Throwable _ nil)))]
@@ -3250,3 +3250,103 @@
       (is (= 200
              (:status (call {:query-params {"id" "server_test_value_bool" "action" "toggle"}}))))
       (is (false? (toggles/enabled? "server_test_value_bool"))))))
+
+;; Compression is a transport win everywhere EXCEPT the live stream, where the
+;; deflater's buffering is indistinguishable from a stalled turn. Jetty happens to
+;; ship `text/event-stream` in its default exclusions today, so this test is not
+;; guarding our own `addExcludedMimeTypes` call so much as the invariant itself —
+;; it fails whether the regression comes from our configurator or from a Jetty
+;; default changing under us.
+(deftest gzip-handler-never-compresses-the-live-stream-test
+  (let [^org.eclipse.jetty.server.handler.gzip.GzipHandler g ((rv 'gzip-handler))]
+    (testing "SSE never deflates"
+      (is (false? (.isMimeTypeDeflatable g "text/event-stream"))
+          "a buffered SSE body stops arriving as it happens - the live view freezes"))
+    (testing "the surfaces gzip exists for still deflate"
+      (is (true? (.isMimeTypeDeflatable g "application/json"))
+          "the transcript envelope is why compression was turned on at all"))
+    (testing "tiny envelopes are left alone"
+      (is (= 1024 (.getMinGzipSize g))
+          "Jetty's own 32-byte floor spends a deflate on bodies smaller than its header"))))
+
+;; Protocol 3 stops repeating a live view's finished picture to clients that
+;; rebuild it themselves. The negotiation is per CONNECTION, so both shapes have
+;; to keep leaving this server — a client that never announced a protocol is the
+;; oldest peer there is and still gets the copy.
+(deftest live-close-sheds-its-picture-only-for-clients-that-rebuild-it-test
+  (let [omits? (rv 'omits-settled-picture?)
+        slim (rv 'without-settled-picture)
+        close-frame {"type" "human_input.live.close"
+                     "seq" 7
+                     "result" {"view" {"id" "v1" "nodes" []}
+                               "reason" "completed"
+                               "is_completed" true}}]
+    (testing "the protocol header decides, and silence means the oldest peer"
+      (is (true? (omits? {:headers {"x-vis-protocol" "3"}})))
+      (is (true? (omits? {:headers {"x-vis-protocol" "4"}})))
+      (is (false? (omits? {:headers {"x-vis-protocol" "2"}})))
+      (is (false? (omits? {:headers {}})))
+      (is (false? (omits? {:headers {"x-vis-protocol" "not-a-number"}}))))
+    (testing "only the picture goes; the verdict is the point of the frame"
+      (let [out (slim close-frame)]
+        (is (nil? (get-in out ["result" "view"])))
+        (is (= "completed" (get-in out ["result" "reason"])))
+        (is (true? (get-in out ["result" "is_completed"])))
+        (is (= 7 (get out "seq")))))
+    (testing "no other frame is touched"
+      (doseq [other [{"type" "human_input.live.open" "view" {"id" "v1"}}
+                     {"type" "human_input.live.patch" "patch" {"ops" []}}
+                     {"type" "content.block.delta" "result" {"view" "not a live close"}}]]
+        (is (= other (slim other)))))
+    (testing "a close carrying no result map is left alone rather than reshaped"
+      (is (= {"type" "human_input.live.close"} (slim {"type" "human_input.live.close"}))))))
+
+;; The unit case above proves the RESHAPE; this proves the WIRING — that the
+;; per-connection flag actually reaches the socket writer, and that two clients
+;; reading the same session at once are each served their own shape from one
+;; stored event.
+(deftest live-close-shape-is-per-connection-not-per-event-test
+  (with-redefs-fn {#'server/stop! (fn [] nil)}
+    (fn []
+      (with-server-state!
+        {}
+        (fn []
+          (let [multi-sse-body (rv 'multi-sse-body)
+                write-body (requiring-resolve 'ring.core.protocols/write-body-to-stream)
+                sid (str (java.util.UUID/randomUUID))
+                legacy (java.io.ByteArrayOutputStream.)
+                modern (java.io.ByteArrayOutputStream.)
+                text (fn [^java.io.ByteArrayOutputStream o] (String. (.toByteArray o) "UTF-8"))
+                legacy-fut (future (try (write-body (multi-sse-body [[sid 0]] false nil false)
+                                                    {}
+                                                    legacy)
+                                        (catch Throwable _ nil)))
+                modern-fut (future (try (write-body (multi-sse-body [[sid 0]] false nil true)
+                                                    {}
+                                                    modern)
+                                        (catch Throwable _ nil)))]
+            (is (wait-until #(and (re-find #"subscription.ready" (text legacy))
+                                  (re-find #"subscription.ready" (text modern)))))
+            (state/append-event! sid
+                                 "human_input.live.close"
+                                 {:view-id "v1"
+                                  :result {:view {:id "v1" :title "Activity" :nodes []}
+                                           :reason "completed"
+                                           :is-completed true}})
+            (is (wait-until #(and (re-find #"live.close" (text legacy))
+                                  (re-find #"live.close" (text modern)))))
+            (future-cancel legacy-fut)
+            (future-cancel modern-fut)
+
+            (testing "a protocol-2 reader still receives the finished picture"
+              (is (re-find #"\"view\"" (text legacy)))
+              (is (re-find #"Activity" (text legacy))))
+
+            (testing "a protocol-3 reader receives the verdict and nothing else"
+              (is (nil? (re-find #"\"view\"" (text modern))))
+              (is (nil? (re-find #"Activity" (text modern)))))
+
+            (testing "the verdict itself survives on both"
+              (doseq [out [(text legacy) (text modern)]]
+                (is (re-find #"completed" out))
+                (is (re-find #"v1" out))))))))))
