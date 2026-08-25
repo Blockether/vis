@@ -22,11 +22,11 @@ const searches = (requests: { path: string }[]) =>
     .filter((request) => request.path.startsWith("/v1/sessions/actions/search"))
     .map((request) => new URLSearchParams(request.path.split("?")[1]).get("q"));
 
-// The fleet search is one ranked FTS query per paired machine and the gateway spends real
+// Search is one ranked FTS query on the active machine and the gateway spends real
 // time in SQLite before it answers, so the ONE thing this screen owes the network is
 // restraint: ask once when typing rests, and never let a query the user has already
 // replaced land on top of the one they are looking at.
-describe("fleet search asks the gateway once per pause", () => {
+describe("search asks the active gateway once per pause", () => {
   it("asks once for the query the typing rested on, not once per keystroke", async () => {
     const view = renderSessionsScreen({ machines: machines([hit]) });
     restore = view.restore;
@@ -112,42 +112,36 @@ describe("fleet search asks the gateway once per pause", () => {
     expect(screen.queryByText("searching...")).toBeNull();
   });
 
-  // A fleet search is one round trip PER MACHINE, so "how far along" is a real
-  // number the reader can be given — and the machine that answered must not be held
-  // behind the one that has not.
-  it("reports how much of the fleet has answered, and paints the machine that did", async () => {
+  // Search follows the selected machine. An inactive destination must not add a request
+  // or make the active machine's complete answer look unfinished.
+  it("does not wait for an inactive machine", async () => {
     const view = renderSessionsScreen({
       machines: [
         ...machines([hit]),
         {
           label: "beta",
           sessions: [listSession({ id: "b1", title: "Second" })],
-          hangs: true,
+          searchHangs: true,
         },
       ],
     });
     restore = view.restore;
     await screen.findByText("First");
-    await screen.findByText("Second");
+    expect(screen.queryByText("Second")).toBeNull();
+    view.requests.length = 0;
 
     view.setQuery("needle");
-    expect(await screen.findByText("searching 1 of 2 machines...")).toBeTruthy();
-    // alpha's hit is on screen while beta is still out, and beta's own section says
-    // it is still reading rather than that it found nothing.
-    expect(screen.getByText("First")).toBeTruthy();
-    expect(screen.getByText("Searching this machine...")).toBeTruthy();
+    expect(await screen.findByText("1 match")).toBeTruthy();
+    expect(searches(view.requests)).toEqual(["needle"]);
+    expect(document.body.textContent).not.toContain("machines...");
   });
 });
 
-// Regression, user report (paraphrased: "if we have many gateways this can be even
-// worse, and the search might not take into account that some gateway is dead or not
-// available"): every paired machine was asked — including one the fleet had already
-// dropped out of `All` for failing its list read — and a machine that never answered
-// held the progress line for the transport's whole 30s budget before being filed as an
-// answer of "no matches". Both halves told the reader a machine had looked and found
-// nothing when it had not looked at all.
-describe("a dead machine is reported, not counted as an answer", () => {
-  it("says a machine could not be reached instead of that it found nothing", async () => {
+// A machine outside the selected scope is not part of the question. In particular, a
+// paired machine already known to be unreachable must not turn a complete local answer
+// into a partial-fleet warning.
+describe("an inactive dead machine is outside the search", () => {
+  it("asks only the active machine", async () => {
     const view = renderSessionsScreen({
       machines: [
         ...machines([hit]),
@@ -159,11 +153,8 @@ describe("a dead machine is reported, not counted as an answer", () => {
     view.requests.length = 0;
 
     view.setQuery("needle");
-    expect(await screen.findByText("1 machine did not answer")).toBeTruthy();
-    // It found alpha's hit, and it does not pretend beta looked.
-    expect(screen.getByText("1 match")).toBeTruthy();
-    expect(document.body.textContent).not.toContain("No matches on this machine");
-    // A machine that is already known to be dark is asked for nothing at all.
+    expect(await screen.findByText("1 match")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("did not answer");
     expect(searches(view.requests)).toEqual(["needle"]);
   });
 });
@@ -183,14 +174,13 @@ describe("a search gives up on a silent machine on its own clock", () => {
     });
   };
 
-  it("stops waiting on a blackholed machine long before the transport would", async () => {
+  it("stops waiting on the selected machine long before the transport would", async () => {
     const view = renderSessionsScreen({
       machines: [
-        ...machines([hit]),
         {
-          label: "beta",
-          sessions: [listSession({ id: "b1", title: "Second" })],
-          hangs: true,
+          label: "alpha",
+          sessions: [listSession({ id: "a1", title: "First" })],
+          searchHangs: true,
         },
       ],
     });
@@ -199,18 +189,16 @@ describe("a search gives up on a silent machine on its own clock", () => {
 
     view.setQuery("needle");
     await settle(300);
-    expect(screen.getByText("searching 1 of 2 machines...")).toBeTruthy();
+    expect(screen.getByText("searching...")).toBeTruthy();
 
     // Seven seconds of silence is still a machine reading its transcripts.
     await settle(7_000);
-    expect(screen.getByText("searching 1 of 2 machines...")).toBeTruthy();
+    expect(screen.getByText("searching...")).toBeTruthy();
 
-    // Past the search's own deadline it is absence, and it is reported as absence —
-    // not as a thirty-second wait ending in "no matches".
+    // Past the search's own deadline it is absence, not a transport-length wait.
     await settle(2_000);
-    expect(screen.queryByText("searching 1 of 2 machines...")).toBeNull();
-    expect(screen.getByText("1 machine did not answer")).toBeTruthy();
-    expect(screen.getByText("1 match")).toBeTruthy();
+    expect(screen.queryByText("searching...")).toBeNull();
+    expect(screen.getByText("This machine did not answer.")).toBeTruthy();
   });
 
   // A machine that stopped answering is not a machine that read its transcripts and
@@ -238,11 +226,9 @@ describe("a search gives up on a silent machine on its own clock", () => {
   });
 });
 
-// Regression, user report (paraphrased: "make sure we are not putting search requests to
-// machines that are genuinely dead"): a machine that had just spent a whole search
-// deadline in silence was asked again by the very next query, so every further keystroke
-// bought another eight seconds of waiting on a gateway already known to be dark — and the
-// more gateways are paired, the more of them there are to wait on.
+// Regression, user report: an active machine that had just spent a whole search
+// deadline in silence was asked again by the very next query, so every further pause
+// bought another wait on a gateway already known to be dark.
 describe("a machine already known to be dark is not asked again", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -259,59 +245,50 @@ describe("a machine already known to be dark is not asked again", () => {
   };
 
   /** Alive to the list, silent to every search — dark in the only way a search can tell. */
-  const fleet = () => [
-    ...machines([hit]),
+  const machine = () => [
     {
-      label: "beta",
-      sessions: [listSession({ id: "b1", title: "Second" })],
+      label: "alpha",
+      sessions: [listSession({ id: "a1", title: "First" })],
       searchHangs: true,
     },
   ];
 
   it("answers for a silent machine without spending a second request on it", async () => {
-    const view = renderSessionsScreen({ machines: fleet() });
+    const view = renderSessionsScreen({ machines: machine() });
     restore = view.restore;
     await settle(50);
     view.requests.length = 0;
 
     view.setQuery("needle");
-    // The query lands one PAUSE after the last keystroke (`SEARCH_DEBOUNCE_MS`), and the
-    // search's own deadline starts from there.
     await settle(300);
     await settle(8_700);
-    // Both were asked the first time — nothing yet said beta was dark.
-    expect(searches(view.requests)).toEqual(["needle", "needle"]);
-    expect(screen.getByText("1 machine did not answer")).toBeTruthy();
+    expect(searches(view.requests)).toEqual(["needle"]);
+    expect(screen.getByText("This machine did not answer.")).toBeTruthy();
 
     view.requests.length = 0;
     view.setQuery("other");
     await settle(300);
-    // The second query goes ONLY to the machine that answers. Beta is reported as
-    // unreachable at once, instead of holding the fleet for another deadline.
-    expect(searches(view.requests)).toEqual(["other"]);
-    expect(screen.getByText("1 machine did not answer")).toBeTruthy();
-    expect(screen.getByText("1 match")).toBeTruthy();
+    expect(searches(view.requests)).toEqual([]);
+    expect(screen.getByText("This machine did not answer.")).toBeTruthy();
   });
 
   it("asks it again as soon as a list read proves the machine alive", async () => {
-    const view = renderSessionsScreen({ machines: fleet() });
+    const view = renderSessionsScreen({ machines: machine() });
     restore = view.restore;
     await settle(50);
 
     view.setQuery("needle");
-    // The query lands one PAUSE after the last keystroke (`SEARCH_DEBOUNCE_MS`), and the
-    // search's own deadline starts from there.
     await settle(300);
     await settle(8_700);
-    expect(screen.getByText("1 machine did not answer")).toBeTruthy();
+    expect(screen.getByText("This machine did not answer.")).toBeTruthy();
 
     // The blackout is a memory of one failure, not a verdict on the machine: the 10s
-    // poll's list read lands and the next search puts its question to beta again.
+    // poll's list read lands and the next search asks this machine again.
     view.requests.length = 0;
     await settle(2_000);
     view.setQuery("third");
     await settle(300);
-    expect(searches(view.requests)).toEqual(["third", "third"]);
+    expect(searches(view.requests)).toEqual(["third"]);
   });
 });
 

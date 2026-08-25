@@ -166,11 +166,11 @@ describe("deleting a session does not re-download the fleet", () => {
         !request.path.includes("root="),
     );
 
-  it("drops the row locally and re-lists nothing", async () => {
+  it("drops the active row locally and re-lists nothing", async () => {
     const view = renderSessionsScreen({ machines: fleet() });
     restore = view.restore;
     await screen.findByText("First");
-    await screen.findByText("Elsewhere");
+    expect(screen.queryByText("Elsewhere")).toBeNull();
     view.requests.length = 0;
 
     fireEvent.click(
@@ -183,7 +183,7 @@ describe("deleting a session does not re-download the fleet", () => {
     // The row goes because the delete succeeded, not because a fresh list said so.
     await waitFor(() => expect(screen.queryByText("First")).toBeNull());
     expect(screen.getByText("Second")).toBeTruthy();
-    expect(screen.getByText("Elsewhere")).toBeTruthy();
+    expect(screen.queryByText("Elsewhere")).toBeNull();
     expect(listReads(view)).toEqual([]);
   });
 
@@ -200,7 +200,7 @@ describe("deleting a session does not re-download the fleet", () => {
     });
     restore = view.restore;
     await screen.findByText("First");
-    await screen.findByText("Elsewhere");
+    expect(screen.queryByText("Elsewhere")).toBeNull();
     view.requests.length = 0;
 
     fireEvent.click(
@@ -214,6 +214,7 @@ describe("deleting a session does not re-download the fleet", () => {
     fireEvent.click(screen.getByText("Save"));
 
     await waitFor(() => expect(screen.getByText("Renamed")).toBeTruthy());
+    expect(screen.queryByText("Elsewhere")).toBeNull();
     expect(listReads(view)).toEqual([]);
   });
 });
