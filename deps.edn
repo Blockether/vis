@@ -26,7 +26,6 @@
   com.blockether/vis-foundation-voice {:local/root "extensions/common/vis-foundation-voice"}
   com.blockether/vis-language-clojure {:local/root "extensions/languages/vis-language-clojure"}
   com.blockether/vis-language-python {:local/root "extensions/languages/vis-language-python"}
-  com.blockether/vis-language-typescript-bun {:local/root "extensions/languages/vis-language-typescript-bun"}
   com.blockether/vis-persistance-sqlite {:local/root "extensions/persistance/vis-persistance-sqlite"}
   com.blockether/vis-provider-alibaba {:local/root "extensions/providers/vis-provider-alibaba"}
   com.blockether/vis-provider-anthropic {:local/root "extensions/providers/vis-provider-anthropic"}
@@ -174,7 +173,6 @@
                  "extensions/common/vis-foundation-voice/test"
                  "extensions/languages/vis-language-clojure/test"
                  "extensions/languages/vis-language-python/test"
-                 "extensions/languages/vis-language-typescript-bun/test"
                  "extensions/persistance/vis-persistance-sqlite/test"
                  "extensions/providers/vis-provider-alibaba/test"
                  "extensions/providers/vis-provider-anthropic/test"
@@ -197,7 +195,6 @@
                "extensions/common/vis-foundation-voice/test"
                "extensions/languages/vis-language-clojure/test"
                "extensions/languages/vis-language-python/test"
-               "extensions/languages/vis-language-typescript-bun/test"
                "extensions/persistance/vis-persistance-sqlite/test"
                "extensions/providers/vis-provider-alibaba/test"
                "extensions/providers/vis-provider-anthropic/test"

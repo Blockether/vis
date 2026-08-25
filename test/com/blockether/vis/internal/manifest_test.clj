@@ -22,14 +22,6 @@
                    (doseq [resource apropos]
                      (expect (some? (io/resource resource)) resource)))))
 
-(defdescribe
-  distribution-membership-test
-  (it "keeps disabled packs out of startup initialization"
-      (let [initializers (set (:initialization (manifest/read-manifest)))]
-        (expect (not (contains? initializers
-                                'com.blockether.vis.ext.language-typescript-bun.core/register!)))
-        (expect (not (contains? initializers
-                                'com.blockether.vis.ext.foundation-bridge.core/register!))))))
 (defdescribe initialization-order-test
              (it "invokes each listed function once in manifest order"
                  (let [calls
