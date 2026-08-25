@@ -157,6 +157,14 @@ export function PlayIcon({ className }: { className?: string }) {
   );
 }
 
+/** Stop — a solid square paired with Play's solid triangle. */
+export function StopIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <rect x="5.5" y="5.5" width="13" height="13" fill="currentColor" />
+    </Icon>
+  );
+}
 /** Pause — the same solid weight as play, because they are one control. */
 export function PauseIcon({ className }: { className?: string }) {
   return (

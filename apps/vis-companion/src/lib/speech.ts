@@ -170,6 +170,12 @@ class SpeechOutput {
     await this.device.speak(text, prefs.deviceVoice, prefs.rate);
   }
 
+  /** Audition one exact system voice without changing the saved reply route. */
+  async playDeviceSample(text: string, voiceId: string | null, rate: number): Promise<void> {
+    this.stop();
+    await this.device.speak(text, voiceId, rate);
+  }
+
   /**
    * Play bytes the caller already holds: settings is auditioning a voice, not speaking a
    * reply, so no preference is read and the device never stands in — one press plays the

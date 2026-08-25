@@ -154,6 +154,54 @@ describe("hearing a voice before choosing it", () => {
     expect(play.querySelector("svg")).not.toBeNull();
   });
 
+  // Regression, user report: an active sample still looked like Play, so there was no way
+  // to stop it or see which voice owned the one shared player.
+  it("turns play into stop and hands that control to the next voice", async () => {
+    const sample = new Blob(["wav"], { type: "audio/wav" });
+    const client = {
+      speechVoices: vi.fn().mockResolvedValue(catalogue),
+      speechVoiceSample: vi.fn().mockResolvedValue(sample),
+      speechModel: vi.fn(),
+    } as unknown as GatewayClient;
+    vi.spyOn(speechOutput, "playSample").mockImplementation(
+      () => new Promise<void>(() => undefined),
+    );
+    const stopped = vi.spyOn(speechOutput, "stop");
+    render(<VoicesPanel client={client} prefs={prefs} onChange={vi.fn()} />);
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Play a sample of Kristin (en-US, medium)",
+      }),
+    );
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Stop the sample of Kristin (en-US, medium)",
+      }),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Play a sample of Cori (en-GB, high)" }),
+    );
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Play a sample of Kristin (en-US, medium)",
+      }),
+    ).toBeTruthy();
+    const stopCori = screen.getByRole("button", {
+      name: "Stop the sample of Cori (en-GB, high)",
+    });
+    fireEvent.click(stopCori);
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Play a sample of Cori (en-GB, high)",
+      }),
+    ).toBeTruthy();
+    expect(stopped).toHaveBeenCalledTimes(2);
+  });
+
   it("offers no sample where there is nothing to play", async () => {
     mount(new Blob(["wav"], { type: "audio/wav" }));
 

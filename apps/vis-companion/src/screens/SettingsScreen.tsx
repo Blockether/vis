@@ -77,7 +77,7 @@ import {
   setThemePref,
 } from "../lib/storage";
 import { speechOutput } from "../lib/speech";
-import { PlayIcon } from "../components/icons";
+import { PlayIcon, StopIcon } from "../components/icons";
 import { bestDeviceVoices, deviceVoices, type DeviceVoice } from "../lib/speech-voices";
 import {
   DEFAULT_THEME,
@@ -1001,12 +1001,13 @@ export function VoicesPanel({
   // player has one output, so a second press replaces the sound instead of layering it.
   const [playing, setPlaying] = useState<string | null>(null);
   const auditionRef = useRef<AbortController | null>(null);
-  const cancelAudition = useCallback(() => {
+  const cancelAudition = useCallback((resetControl = true) => {
     const controller = auditionRef.current;
     if (!controller) return;
     auditionRef.current = null;
     controller.abort();
     speechOutput.stop();
+    if (resetControl) setPlaying(null);
   }, []);
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -1042,7 +1043,7 @@ export function VoicesPanel({
     return () => controller.abort();
   }, [load]);
 
-  useEffect(() => () => cancelAudition(), [cancelAudition]);
+  useEffect(() => () => cancelAudition(false), [cancelAudition]);
 
   useEffect(() => {
     if (!catalogue?.voices?.some((voice) => voice.model?.status === "downloading")) return;
@@ -1214,6 +1215,7 @@ export function VoicesPanel({
         )}
 
         {voices.map((voice) => {
+          const isPlaying = playing === voice.id;
           const model = voice.model;
           const canPrepare = model?.status === "absent" || model?.status === "failed";
           const modelWord =
@@ -1257,10 +1259,18 @@ export function VoicesPanel({
                   leadingAction={
                     canHear
                       ? {
-                          label: `Play a sample of ${voice.label ?? voice.id}`,
-                          icon: <PlayIcon className="size-3.5" />,
-                          disabled: playing === voice.id,
-                          onClick: () => void playSample(voice),
+                          label: isPlaying
+                            ? `Stop the sample of ${voice.label ?? voice.id}`
+                            : `Play a sample of ${voice.label ?? voice.id}`,
+                          icon: isPlaying ? (
+                            <StopIcon className="size-3.5" />
+                          ) : (
+                            <PlayIcon className="size-3.5" />
+                          ),
+                          onClick: () => {
+                            if (isPlaying) cancelAudition();
+                            else void playSample(voice);
+                          },
                         }
                       : undefined
                   }
@@ -1430,6 +1440,9 @@ const SPEECH_RATE_WORDS: Record<string, string> = {
   "1.2": "brisk",
 };
 
+/** One stable line lets the ear compare device voices rather than compare wording. */
+const DEVICE_VOICE_SAMPLE = "This is what this voice sounds like.";
+
 type EngineReading = {
   state: VoiceModelState | null;
   /** Set when the direction has NO engine at all — 501, with whatever failed to load. */
@@ -1560,6 +1573,17 @@ export function SpeechEnginesPanel({
     () => new Set(),
   );
   const [err, setErr] = useState<string | null>(null);
+  // `undefined` is silence; `null` is the system default actively speaking.
+  const [playingDeviceVoice, setPlayingDeviceVoice] = useState<
+    string | null | undefined
+  >(undefined);
+  const deviceAuditionRef = useRef<object | null>(null);
+  const cancelDeviceAudition = useCallback((resetControl = true) => {
+    if (!deviceAuditionRef.current) return;
+    deviceAuditionRef.current = null;
+    speechOutput.stop();
+    if (resetControl) setPlayingDeviceVoice(undefined);
+  }, []);
 
   const voiceFeature = capabilities?.features?.voice;
   const speechFeature = capabilities?.features?.speech;
@@ -1604,6 +1628,11 @@ export function SpeechEnginesPanel({
       isLive = false;
     };
   }, []);
+
+  useEffect(
+    () => () => cancelDeviceAudition(false),
+    [cancelDeviceAudition],
+  );
 
   const readOne = useCallback(
     async (
@@ -1689,6 +1718,25 @@ export function SpeechEnginesPanel({
       setErr(null);
     } catch (cause) {
       setErr((cause as Error).message);
+    }
+  }
+
+  async function playDeviceVoice(voiceId: string | null) {
+    cancelDeviceAudition();
+    const audition = {};
+    deviceAuditionRef.current = audition;
+    setPlayingDeviceVoice(voiceId);
+    setErr(null);
+    try {
+      await speechOutput.playDeviceSample(DEVICE_VOICE_SAMPLE, voiceId, prefs.rate);
+    } catch (cause) {
+      if (deviceAuditionRef.current !== audition) return;
+      setErr((cause as Error).message);
+    } finally {
+      if (deviceAuditionRef.current === audition) {
+        deviceAuditionRef.current = null;
+        setPlayingDeviceVoice(undefined);
+      }
     }
   }
 
@@ -1845,24 +1893,62 @@ export function SpeechEnginesPanel({
                                 sub="the voice this device prefers"
                                 isSelected={prefs.deviceVoice === null}
                                 isLeaf
+                                leadingAction={{
+                                  label:
+                                    playingDeviceVoice === null
+                                      ? "Stop the sample of System default"
+                                      : "Play a sample of System default",
+                                  icon:
+                                    playingDeviceVoice === null ? (
+                                      <StopIcon className="size-3.5" />
+                                    ) : (
+                                      <PlayIcon className="size-3.5" />
+                                    ),
+                                  onClick: () => {
+                                    if (playingDeviceVoice === null) cancelDeviceAudition();
+                                    else void playDeviceVoice(null);
+                                  },
+                                }}
                                 onClick={() =>
                                   void chooseDeviceSetting(() => setSpeechDeviceVoice(null))
                                 }
                               />
-                              {deviceList.map((voice) => (
-                                <ChoiceCell
-                                  key={voice.id}
-                                  title={voice.label}
-                                  sub={[voice.language, voice.isDefault ? "device default" : null]
-                                    .filter(Boolean)
-                                    .join(" · ")}
-                                  isSelected={prefs.deviceVoice === voice.id}
-                                  isLeaf
-                                  onClick={() =>
-                                    void chooseDeviceSetting(() => setSpeechDeviceVoice(voice.id))
-                                  }
-                                />
-                              ))}
+                              {deviceList.map((voice) => {
+                                const isPlaying = playingDeviceVoice === voice.id;
+                                return (
+                                  <ChoiceCell
+                                    key={voice.id}
+                                    title={voice.label}
+                                    sub={[
+                                      voice.language,
+                                      voice.isDefault ? "device default" : null,
+                                    ]
+                                      .filter(Boolean)
+                                      .join(" · ")}
+                                    isSelected={prefs.deviceVoice === voice.id}
+                                    isLeaf
+                                    leadingAction={{
+                                      label: isPlaying
+                                        ? `Stop the sample of ${voice.label}`
+                                        : `Play a sample of ${voice.label}`,
+                                      icon: isPlaying ? (
+                                        <StopIcon className="size-3.5" />
+                                      ) : (
+                                        <PlayIcon className="size-3.5" />
+                                      ),
+                                      onClick: () => {
+                                        if (isPlaying) cancelDeviceAudition();
+                                        else void playDeviceVoice(voice.id);
+                                      },
+                                    }}
+                                    onClick={() =>
+                                      void chooseDeviceSetting(() =>
+                                        setSpeechDeviceVoice(voice.id),
+                                      )
+                                    }
+                                  />
+                                );
+                              })}
                             </div>
                           </SettingsChoiceGroup>
                         )}

@@ -9,6 +9,19 @@ import type { GatewayClient } from "../lib/gateway";
 import { getSpeechPrefs } from "../lib/storage";
 import type { SpeechPrefs, VoiceModelState } from "../lib/types";
 
+class DevicePreviewUtterance {
+  onend: (() => void) | null = null;
+  onerror: ((event: { error: string }) => void) | null = null;
+  rate = 1;
+  voice: SpeechSynthesisVoice | null = null;
+
+  readonly text: string;
+
+  constructor(text: string) {
+    this.text = text;
+  }
+}
+
 const initialPrefs: SpeechPrefs = {
   asrEngine: null,
   ttsEngine: null,
@@ -222,16 +235,16 @@ describe("the speech-engines band", () => {
       within(engines).getByRole("button", { name: "Settings for This device" }),
     );
     const deviceVoices = within(deviceEngine).getByRole("group", { name: "Voices" });
-    expect(within(deviceVoices).getByRole("button", { name: /Samantha/ })).toBeTruthy();
-    expect(within(deviceVoices).getByRole("button", { name: /Ava/ })).toBeTruthy();
-    expect(within(deviceVoices).getByRole("button", { name: /Tom/ })).toBeTruthy();
+    expect(within(deviceVoices).getByRole("button", { name: /^Samantha/ })).toBeTruthy();
+    expect(within(deviceVoices).getByRole("button", { name: /^Ava/ })).toBeTruthy();
+    expect(within(deviceVoices).getByRole("button", { name: /^Tom/ })).toBeTruthy();
     expect(within(deviceVoices).queryByRole("button", { name: /Piper/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Alex/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Zoe/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Daniel/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Fred Compact/ })).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /Samantha/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Samantha/ }));
     await waitFor(async () =>
       expect((await getSpeechPrefs()).deviceVoice).toBe(
         "com.apple.voice.premium.en-US.Samantha",
@@ -247,6 +260,49 @@ describe("the speech-engines band", () => {
     );
     expect(pocket.getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: /^Samantha/ })).toBeTruthy();
+  });
+
+  // Regression, user report: iOS listed its system voices but gave them no sample action,
+  // unlike every gateway voice beside them.
+  it("plays and stops an exact system voice on this device", async () => {
+    const { client } = machine();
+    const spoken: DevicePreviewUtterance[] = [];
+    const speak = vi.fn((utterance: DevicePreviewUtterance) => spoken.push(utterance));
+    const cancel = vi.fn();
+    const synthesis = window.speechSynthesis;
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: { getVoices: () => synthesis.getVoices(), speak, cancel },
+    });
+    vi.stubGlobal("SpeechSynthesisUtterance", DevicePreviewUtterance);
+    render(<Harness client={client} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /TTS/ }));
+    const engines = await screen.findByRole("group", { name: "TTS engines" });
+    fireEvent.click(within(engines).getByRole("button", { name: "Settings for This device" }));
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Play a sample of Samantha" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Stop the sample of Samantha" }),
+    ).toBeTruthy();
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]?.text.length).toBeGreaterThan(0);
+    expect(spoken[0]?.voice?.voiceURI).toBe("com.apple.voice.premium.en-US.Samantha");
+    expect(screen.getByRole("button", { name: "Play a sample of Ava" })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Play a sample of Ava" }));
+    expect(
+      await screen.findByRole("button", { name: "Play a sample of Samantha" }),
+    ).toBeTruthy();
+    const stopAva = screen.getByRole("button", { name: "Stop the sample of Ava" });
+    fireEvent.click(stopAva);
+
+    expect(
+      await screen.findByRole("button", { name: "Play a sample of Ava" }),
+    ).toBeTruthy();
+    expect(cancel).toHaveBeenCalled();
   });
 
   // Regression, user report: gateway voices were detached into a separate panel below
