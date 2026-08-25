@@ -228,11 +228,10 @@
                  (refuses language-surface/repl-stop "clojure" "extensions/foo")))
       (expect (= :language-surface/bad-args
                  (refuses language-surface/connect-repl "clojure" "extensions/foo")))))
-  ;; Regression, issue #project-root-alias: `project_root` was passed by the Python
-  ;; tool surface but ignored, so the verb acted at the workspace root. The same
-  ;; normalization seam owns the earlier report where `root` was ignored.
+  ;; Regression, issue #project-directory-selection: a declared project-directory
+  ;; key was ignored at the Python boundary, so the verb acted at the workspace root.
   (it
-    "reads `root`, `project`, and `project_root` as `cwd` on every verb, and refuses disagreements"
+    "normalizes every declared directory key and refuses disagreements"
     (let [seen
           (atom nil)
 
@@ -271,7 +270,7 @@
       (expect (= {"code" "(+ 1 2)" "cwd" "ext"} @seen))
       (language-surface/run-tests env {"root" "ext"})
       (expect (= {"cwd" "ext"} @seen))
-      ;; Repeating one directory under aliases is valid; differing ones are ambiguous.
+      ;; Equal values across accepted keys are valid; conflicting values are ambiguous.
       (expect (= {:op "start" :opts {"cwd" "ext"}}
                  (:result (language-surface/repl-start
                             env
@@ -281,7 +280,7 @@
                       nil
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
   (it
-    "declares every directory alias and each verb's real requiredness"
+    "declares directory keys structurally and states each verb's real requiredness"
     (let [keys-of
           (fn [sym]
             (into {} (map (juxt :name identity)) (:ext.symbol/params sym)))
@@ -309,8 +308,7 @@
                  language-surface/connect-repl-symbol language-surface/repl-stop-symbol])]
 
       (expect (true? (:required? (get evaluate "code"))))
-      ;; A dict-shaped Python callable can expose key semantics only through :params.
-      ;; Keep every accepted spelling visible rather than hiding aliases in prose.
+      ;; Dict-shaped callables expose accepted keys through :params, not description prose.
       (doseq [params directory-options]
         (doseq [k ["cwd" "root" "project" "project_root"]]
           (expect (contains? params k) (str "missing directory key " k)))
@@ -318,8 +316,8 @@
         (doseq [k ["root" "project" "project_root"]]
           (expect (= "alias of `cwd`" (:note (get params k))))))
       (doseq [sym language-surface/symbols]
-        (expect (str/includes? (:ext.symbol/description sym) "`project_root`")
-                (str (:ext.symbol/symbol sym) " hides project_root")))
+        (expect (not (str/includes? (:ext.symbol/description sym) "`project_root`"))
+                (str (:ext.symbol/symbol sym) " repeats a structured directory key in prose")))
       ;; `language` is INFERRED on every verb (choose-handler falls back to the
       ;; workspace's candidate languages and to a single active pack), and
       ;; repl_stop needs no `id` when the pack's REPL under `cwd` is the target:

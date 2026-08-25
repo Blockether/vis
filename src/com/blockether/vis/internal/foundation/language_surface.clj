@@ -134,14 +134,13 @@
         (map? arg) arg
         :else {:arg arg}))
 
-;; `root`, `project`, and `project_root` are aliases of `cwd` — the directory a
-;; call acts in. Resolve them HERE, once, for every verb. Multiple spellings may
-;; repeat one directory, but different directories are refused rather than silently
+;; Normalize project-directory keys here once for every verb. Several keys may
+;; repeat one directory, but conflicting values are refused rather than silently
 ;; reduced to one.
 (def ^:private directory-keys ["cwd" "root" "project" "project_root"])
 
 (defn- directory->cwd
-  "The call's project-directory aliases normalized to `cwd`."
+  "Normalize the call's project-directory keys to canonical `cwd`."
   [m]
   (if-not (map? m)
     m
@@ -159,8 +158,7 @@
           (set (vals named))]
 
       (when (> (count dirs) 1)
-        (throw (ex-info (str "A call names ONE directory; `cwd`, `root`, `project`, and "
-                             "`project_root` disagree: "
+        (throw (ex-info (str "A call names ONE directory, but its project-directory keys disagree: "
                              (pr-str named))
                         {:type :language-surface/bad-args :directories named})))
       (cond-> (apply dissoc m (rest directory-keys))
@@ -457,11 +455,10 @@
 
 (defn repl-stop
   "Stop a REPL: `repl_stop(id)` with the exact id `repl_start`/`repl_status`
-   answered with. NOTHING is required — `language` is inferred, and `cwd`, `root`,
-   `project`, or `project_root` names the SAME project directory. It defaults to the
-   WORKSPACE ROOT, so a bare `repl_stop()` ends the inferred pack's REPL there, which
-   is rarely the one you meant. `build` (clojure) detaches just that shadow-cljs
-   attachment."
+   answered with. NOTHING is required: `language` is inferred and the project directory
+   defaults to the WORKSPACE ROOT, so a bare `repl_stop()` ends the inferred pack's REPL
+   there, which is rarely the one you meant. `build` (clojure) detaches just that
+   shadow-cljs attachment."
   [env & args]
   (let [[id language opts] (repl-call env args)]
     (if id
@@ -482,9 +479,8 @@
 (defn repl-status
   "Report REPL state: `repl_status(language,{cwd})` — the pack's answer for that
    project PLUS `resources`, every live REPL of this session whatever directory it
-   runs in. Nothing is required; `cwd`, `root`, `project`, or `project_root` chooses
-   the SAME project directory and defaults to the workspace root. A REPL id answers
-   for that one REPL alone."
+   runs in. Nothing is required; the project directory defaults to the workspace root.
+   A REPL id answers for that one REPL alone."
   [env & args]
   (let [[id language opts]
         (repl-call env args)
@@ -566,9 +562,9 @@
    test wherever it lives) selects; clojure ALSO takes `ns` / `nses` (a namespace
    name, or `ns/var` for one test) and resolves it the same way, and runs
    `*_test.cljs` through the project's own shadow-cljs build (`build` names which one
-   when several could); `include` / `exclude` narrow by metadata tag; `cwd`, `root`,
-   `project`, or `project_root` chooses the SAME project directory, defaulting to the
-   WORKSPACE ROOT, which is where a relative `paths` entry resolves; `runner` picks the python backend
+   when several could); `include` / `exclude` narrow by metadata tag; `cwd` chooses
+   the project directory and defaults to the WORKSPACE ROOT, which is where a relative
+   `paths` entry resolves; `runner` picks the python backend
    (`\"project\"` for the project interpreter's own pytest, else the hermetic sandbox).
    `aliases` (clojure) adds EXTRA deps.edn aliases to that clean-JVM command —
    `clojure -M:test:<name>`, `:test` always kept — for a project whose tests need
@@ -606,21 +602,20 @@
 (defn repl-eval
   "Eval in an already-running project REPL: `repl_eval(language,{code,cwd,id,timeout_ms})`.
    `code` is the one REQUIRED key; `language` may lead the call. Nothing else is required:
-   `cwd`, `root`, `project`, or `project_root` chooses the SAME project directory (default
-   the workspace root), `id`/`repl_id` picks one of several REPLs, and `timeout_ms` is this
-   eval's budget. Clojure also reads `ns` (the namespace the form is read in) and
-   `port`/`host`, which dial an nREPL directly instead of a REPL this session owns."
+   `cwd` chooses the project directory (default the workspace root), `id`/`repl_id` picks
+   one of several REPLs, and `timeout_ms` is this eval's budget. Clojure also reads `ns`
+   (the namespace the form is read in) and `port`/`host`, which dial an nREPL directly
+   instead of a REPL this session owns."
   [env & args]
   (dispatch! env :repl-eval-fn args))
 
 (defn repl-start
   "Start a language REPL resource: `repl_start(language,{cwd,id,aliases,env})`.
-   NOTHING is required: `language` is inferred, while `cwd`, `root`, `project`, or
-   `project_root` chooses the SAME project directory and defaults to the WORKSPACE ROOT.
-   `id` LABELS a second REPL in one project (python/bun; a clojure id is derived from its
-   `cwd`), `aliases` is clojure-only, and `env` belongs to THIS REPL. Neither `port` nor
-   `build` starts anything here — attaching to a process already running is `repl_connect`.
-   There is no restart: `repl_stop`, then `repl_start`."
+   NOTHING is required: `language` is inferred, while `cwd` chooses the project directory
+   and defaults to the WORKSPACE ROOT. `id` LABELS a second REPL in one project (python/bun;
+   a clojure id is derived from its `cwd`), `aliases` is clojure-only, and `env` belongs to
+   THIS REPL. Neither `port` nor `build` starts anything here — attaching to a process
+   already running is `repl_connect`. There is no restart: `repl_stop`, then `repl_start`."
   [env & args]
   (dispatch-repl-call! env "start" args))
 
@@ -629,9 +624,8 @@
    CLOJURE only — Vis owns the python and bun runtimes and those packs refuse to attach.
    `port` is REQUIRED unless `build` names a shadow-cljs build; that attaches to the
    project's `shadow-cljs watch` and selects it, making eval ClojureScript. `host` defaults
-   to localhost. `cwd`, `root`, `project`, or `project_root` chooses the SAME project
-   directory. Registers the attachment for eval, tests, and context but never owns or
-   kills its process; stop only detaches."
+   to localhost, and `cwd` chooses the project directory. Registers the attachment for
+   eval, tests, and context but never owns or kills its process; stop only detaches."
   [env & args]
   (dispatch-repl-call! env "connect" args))
 
@@ -647,11 +641,11 @@
      (str
        "Format through the active pack — `format_code({\"path\": \"src/a.clj\"})`, or "
        "`format_code(\"python\", {\"paths\": [\"src\"]})`. `language` leads the call and is optional: it is "
-       "inferred from paths and workspace. `cwd`, `root`, `project`, and `project_root` are aliases for "
-       "the project directory. `path` formats one file or directory; `paths` formats a list recursively, in place, and answers per-file "
-       "changes. `code` formats one snippet and answers `changed` + char delta, NEVER the text. Omit "
-       "all selectors to format the pack's default source paths. python also takes ruff's own "
-       "knobs: `line_length` overrides the discovered config, `config` pins one file.")
+       "inferred from paths and workspace. `cwd` selects the project directory and defaults to the workspace "
+       "root. `path` formats one file or directory; `paths` formats a list recursively, in place, and answers "
+       "per-file changes. `code` formats one snippet and answers `changed` + char delta, NEVER the text. Omit "
+       "all selectors to format the pack's default source paths. python also takes ruff's own knobs: "
+       "`line_length` overrides the discovered config, `config` pins one file.")
      ;; NAME(language, {payload}) — optional leading `language`, the rest a
      ;; pure options dict (always emitted so the payload stays a map).
      :params [{:name "language" :note "inferred; name it when ambiguous"}
@@ -680,10 +674,10 @@
      (str
        "Lint through the active pack, editing nothing — `lint_code({\"path\": \"src/a.clj\"})`, or "
        "`lint_code(\"python\", {\"paths\": [\"src\"]})`. `language` leads the call and is optional: it is "
-       "inferred from paths and workspace. `cwd`, `root`, `project`, and `project_root` are aliases for "
-       "the project directory. `path` lints one disk target, `paths` lints a list, `code` lints one snippet, and omitting all selectors "
-       "lints the pack's defaults across the workspace. Answers findings plus severity counts. python also "
-       "takes ruff's own knobs for this call: `select`/`ignore` choose rules, `line_length` "
+       "inferred from paths and workspace. `cwd` selects the project directory and defaults to the workspace "
+       "root. `path` lints one disk target, `paths` lints a list, `code` lints one snippet, and omitting all "
+       "selectors lints the pack's defaults across the workspace. Answers findings plus severity counts. "
+       "python also takes ruff's own knobs for this call: `select`/`ignore` choose rules, `line_length` "
        "overrides the discovered config, `config` pins one file.")
      :params [{:name "language" :note "inferred; name it when ambiguous"}
               {:name "cwd" :note "default workspace ROOT"} {:name "root" :note "alias of `cwd`"}
@@ -720,10 +714,9 @@
        "(inferred from the paths and the workspace). Prefer the smallest target: `path` selects one and "
        "`paths` selects a list; each target is a file, a directory, or `<path>::<test-name>` for a "
        "single test; clojure also takes `ns` — a namespace name, or `ns/var` for one test. "
-       "`include`/`exclude` (clojure) narrow by metadata tag; `cwd`, `root`, `project`, and "
-       "`project_root` are aliases for the SAME directory and default to the WORKSPACE ROOT, "
-       "which is where a relative `paths` entry resolves; `runner` (python) selects `project` — the "
-       "interpreter's own pytest "
+       "`include`/`exclude` (clojure) narrow by metadata tag; `cwd` selects the project directory and "
+       "defaults to the WORKSPACE ROOT, which is where a relative `paths` entry resolves; `runner` "
+       "(python) selects `project` — the interpreter's own pytest "
        "— over the hermetic sandbox. `aliases` (clojure) ADDS deps.edn aliases to the clean-JVM "
        "`clojure -M:test:<name>` when `:test` alone does not carry the classpath the tests need; "
        "a run that REUSED a REPL cannot apply them and says so. "
@@ -759,9 +752,8 @@
        "Evaluate `code` in an already-running project REPL — "
        "`repl_eval({\"language\": \"clojure\", \"code\": \"(+ 1 1)\"})`. `code` is REQUIRED and "
        "`language` may lead the call; nothing else is. `id`/`repl_id` picks one of several REPLs. "
-       "`cwd`, `root`, `project`, and `project_root` are aliases for its project directory "
-       "(default the WORKSPACE ROOT, not the project you meant); "
-       "`timeout_ms` its budget. Lifecycle is `repl_start` / `repl_status` / `repl_stop`. A REPL attached to a "
+       "`cwd` selects its project directory (default the WORKSPACE ROOT, not the project you meant); "
+       "`timeout_ms` is its budget. Lifecycle is `repl_start` / `repl_status` / `repl_stop`. A REPL attached to a "
        "shadow-cljs `build` evaluates ClojureScript inside that build's JS runtime and the result "
        "names the `build` it landed in. Clojure also reads `ns` — the namespace the form is "
        "read in — and `port`/`host`, which dial an nREPL DIRECTLY instead of a REPL this "
@@ -797,13 +789,11 @@
      :description
      (str
        "Start a project REPL — `repl_start(\"clojure\")`, or "
-       "`repl_start({\"language\": \"python\", \"project_root\": \"extensions/foo\"})`. "
-       "NOTHING is required: `language` is inferred from the workspace and named only when several "
-       "packs match. `cwd`, `root`, `project`, and `project_root` are aliases for the project directory; "
-       "omitting them starts the REPL at the WORKSPACE ROOT, not at the project you meant "
-       "(the typescript pack refuses a bare start at a monorepo root for exactly that reason). "
-       "Neither `port` nor `build` starts anything here: attaching to a process already running is "
-       "`repl_connect`. "
+       "`repl_start({\"language\": \"python\", \"cwd\": \"extensions/foo\"})`. NOTHING is required: "
+       "`language` is inferred from the workspace and named only when several packs match. `cwd` selects "
+       "the project directory; omitting it starts the REPL at the WORKSPACE ROOT, not at the project you meant "
+       "(the typescript pack refuses a bare start at a monorepo root for exactly that reason). Neither `port` "
+       "nor `build` starts anything here: attaching to a process already running is `repl_connect`. "
        "`aliases` (clojure) ADDS deps.edn aliases to the `:dev` + `:test` every managed REPL "
        "already boots with — name the extra ones a project needs on its classpath; they never "
        "replace the defaults, and a live REPL keeps the aliases it started with. "
@@ -841,13 +831,12 @@
      :description
      (str
        "State of the project's REPL — `repl_status(\"clojure\")`, or "
-       "`repl_status({\"language\": \"python\", \"project_root\": \"extensions/foo\"})`. "
-       "Nothing else lists live REPLs: this is the only answer — reuse `up`, recheck `starting`, "
-       "`repl_start` when absent/down/failed. `cwd`, `root`, `project`, and `project_root` are aliases "
-       "for the project directory. `resources` beside the result names every REPL this session owns, "
-       "so one running under another directory is never invisible. An `id` — leading or in the "
-       "options — reports that REPL alone. NOTHING is required; the directory defaults to the "
-       "WORKSPACE ROOT.")
+       "`repl_status({\"language\": \"python\", \"cwd\": \"extensions/foo\"})`. Nothing else lists "
+       "live REPLs: this is the only answer — reuse `up`, recheck `starting`, `repl_start` when "
+       "absent/down/failed. `cwd` selects the project directory. `resources` beside the result names every "
+       "REPL this session owns, so one running under another directory is never invisible. An `id` — "
+       "leading or in the options — reports that REPL alone. NOTHING is required; the directory defaults "
+       "to the WORKSPACE ROOT.")
      :params [{:name "language" :note "inferred; name it when ambiguous"}
               {:name "cwd" :note "default workspace ROOT"} {:name "root" :note "alias of `cwd`"}
               {:name "project" :note "alias of `cwd`"} {:name "project_root" :note "alias of `cwd`"}
@@ -866,14 +855,13 @@
      :description
      (str
        "Attach an external running REPL — `repl_connect(\"clojure\", {\"port\": 56428})`. CLOJURE only: "
-       "Vis owns the python and bun runtimes, and those packs refuse to attach. `port` names it — "
-       "REQUIRED unless `build` does — and `host` defaults to localhost. `cwd`, `root`, `project`, "
-       "and `project_root` are aliases for where it lives. `build` instead attaches to the "
-       "`shadow-cljs watch` under that directory — it publishes its own port, so `port` is optional "
-       "there — and selects that build, making `repl_eval` ClojureScript in its JS runtime. It rides "
-       "BESIDE the managed JVM REPL for the same project, each under its own id "
-       "(`nrepl:~/proj` and `nrepl:~/proj#app`). Vis registers it for eval, tests, and context but "
-       "never owns or kills its process, so stopping it only detaches.")
+       "Vis owns the python and bun runtimes, and those packs refuse to attach. `port` names it — REQUIRED "
+       "unless `build` does — and `host` defaults to localhost. `cwd` selects where it lives and defaults "
+       "to the workspace root. `build` instead attaches to the `shadow-cljs watch` under that directory — "
+       "it publishes its own port, so `port` is optional there — and selects that build, making `repl_eval` "
+       "ClojureScript in its JS runtime. It rides BESIDE the managed JVM REPL for the same project, each "
+       "under its own id (`nrepl:~/proj` and `nrepl:~/proj#app`). Vis registers it for eval, tests, and context "
+       "but never owns or kills its process, so stopping it only detaches.")
      :params [{:name "language" :note "clojure — the only pack that attaches"}
               {:name "port" :required? true :note "or `build` names one"}
               {:name "host" :note "default localhost"} {:name "cwd" :note "default workspace ROOT"}
@@ -894,12 +882,12 @@
      :description
      (str
        "Stop a REPL after verification, so nothing is left running — `repl_stop(id)` with the exact "
-       "id `repl_start`/`repl_status` answered with. NOTHING is required: `language` is inferred. "
-       "`cwd`, `root`, `project`, and `project_root` are aliases for the project directory and default "
-       "to the WORKSPACE ROOT, so a bare `repl_stop()` ends the inferred pack's REPL there — rarely "
-       "the one you meant. Name it: `repl_stop(id)`, or `repl_stop(\"clojure\", {\"cwd\": \"…\"})` "
-       "for the pack's REPL under a directory. A REPL attached by `repl_connect` is only detached, "
-       "never killed. `build` detaches just that shadow-cljs attachment.")
+       "id `repl_start`/`repl_status` answered with. NOTHING is required: `language` is inferred. `cwd` "
+       "selects the project directory and defaults to the WORKSPACE ROOT, so a bare `repl_stop()` ends "
+       "the inferred pack's REPL there — rarely the one you meant. Name it: `repl_stop(id)`, or "
+       "`repl_stop(\"clojure\", {\"cwd\": \"…\"})` for the pack's REPL under a directory. A REPL "
+       "attached by `repl_connect` is only detached, never killed. `build` detaches just that shadow-cljs "
+       "attachment.")
      ;; repl_stop(id) — one positional id, or the language-led form the other
      ;; lifecycle verbs take.
      :params [{:name "id" :note "the exact id `repl_status` answered"}
