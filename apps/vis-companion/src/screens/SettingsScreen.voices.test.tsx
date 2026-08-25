@@ -22,9 +22,9 @@ afterEach(() => {
 });
 
 describe("licence-gated gateway voices", () => {
-  // Regression, user report: an unavailable voice showed a choice mark beside its
-  // download action, making one row look like two competing controls.
-  it("replaces the unavailable choice mark with its download action", async () => {
+  // Regression, user report: a voice that still needed its model put Play on the left and a
+  // worded Download action on the right. Download is the row's one leading action until ready.
+  it("puts an icon-only download action before an unavailable voice", async () => {
     const catalogue: SpeechVoices = {
       engine: { id: "piper-local", label: "Piper (local)" },
       voices: [
@@ -51,11 +51,19 @@ describe("licence-gated gateway voices", () => {
     const onChange = vi.fn().mockResolvedValue(prefs);
 
     render(<VoicesPanel client={client} prefs={prefs} onChange={onChange} />);
-    const voiceChoice = await screen.findByRole("button", { name: /Ryan/ });
-    const voiceRow = voiceChoice.parentElement;
-    expect(voiceRow).toBeTruthy();
+    const voiceChoice = await screen.findByRole("button", {
+      name: /^Ryan \(en-US, high\)en-US/,
+    });
+    const actionStrip = voiceChoice.parentElement;
+    expect(actionStrip).toBeTruthy();
     expect(voiceChoice.textContent).not.toContain("○");
-    const download = within(voiceRow as HTMLElement).getByRole("button", { name: "Download" });
+    const download = within(actionStrip as HTMLElement).getByRole("button", {
+      name: "Download Ryan (en-US, high)",
+    });
+    expect(actionStrip?.firstElementChild).toBe(download);
+    expect(actionStrip?.children.item(1)).toBe(voiceChoice);
+    expect(download.textContent).toBe("");
+    expect(download.querySelector("svg")).not.toBeNull();
     fireEvent.click(download);
 
     expect(screen.getByText("Non-commercial use only, with attribution.")).toBeTruthy();
@@ -83,7 +91,7 @@ describe("hearing a voice before choosing it", () => {
         label: "Kristin (en-US, medium)",
         language: "en-US",
         is_sample_ready: true,
-        model: { status: "absent", engine: "piper-local" },
+        model: { status: "ready", engine: "piper-local" },
       },
       {
         id: "cori",
@@ -101,9 +109,9 @@ describe("hearing a voice before choosing it", () => {
     ],
   };
 
-  function mount(sample: Blob) {
+  function mount(sample: Blob, answer: SpeechVoices = catalogue) {
     const client = {
-      speechVoices: vi.fn().mockResolvedValue(catalogue),
+      speechVoices: vi.fn().mockResolvedValue(answer),
       speechVoiceSample: vi.fn().mockResolvedValue(sample),
       speechModel: vi.fn(),
     } as unknown as GatewayClient;
@@ -115,26 +123,29 @@ describe("hearing a voice before choosing it", () => {
     return { client, onChange, played };
   }
 
-  // A Piper voice is a 60-100 MB download, so a catalogue that can only be READ makes
-  // every choice blind: the sample has to play while the model is still absent.
-  it("plays a voice whose model is not downloaded", async () => {
-    const sample = new Blob(["wav"], { type: "audio/wav" });
-    const { client, played } = mount(sample);
+  // Regression, user report: even a cheap ready-made sample must not disguise that the
+  // selected voice itself still needs a model download. Download owns the leading square first.
+  it("shows download instead of play while the voice model is absent", async () => {
+    const unavailable: SpeechVoices = {
+      ...catalogue,
+      voices: catalogue.voices.map((voice) =>
+        voice.id === "kristin"
+          ? { ...voice, model: { status: "absent", engine: "piper-local" } }
+          : voice,
+      ),
+    };
+    mount(new Blob(["wav"], { type: "audio/wav" }), unavailable);
 
-    fireEvent.click(
+    expect(
       await screen.findByRole("button", {
+        name: "Download Kristin (en-US, medium)",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("button", {
         name: "Play a sample of Kristin (en-US, medium)",
       }),
-    );
-
-    await waitFor(() =>
-      expect(client.speechVoiceSample).toHaveBeenCalledWith(
-        "kristin",
-        expect.objectContaining({ engine: "piper-local" }),
-      ),
-    );
-    await waitFor(() => expect(played).toHaveBeenCalledWith(sample));
-    expect(client.speechModel).not.toHaveBeenCalled();
+    ).toBeNull();
   });
 
   // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: every sample

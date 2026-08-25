@@ -184,6 +184,15 @@ export function ArrowDownIcon({ className }: { className?: string }) {
   );
 }
 
+/** Bring one not-yet-local thing down onto this machine. */
+export function DownloadIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M12 4.75v9.5M7.75 10l4.25 4.25L16.25 10M5.25 16.25v2h13.5v-2" />
+    </Icon>
+  );
+}
+
 /** Out of here — a citation, a link, a thing that opens elsewhere. */
 export function ArrowOutIcon({ className }: { className?: string }) {
   return (

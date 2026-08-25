@@ -2886,9 +2886,9 @@ describe("a setting is picked and switched by one control each", () => {
     expect(classes(off)).not.toContain("border");
   });
 
-  // Regression, user report: the square voice-preview action and the choice beside it
-  // shared one unbroken fill, so the action disappeared into the row to its right.
-  it("separates a leading action from the choice with one hairline", () => {
+  // Regression, user report: a one-pixel rule still left the preview square visually
+  // attached to the choice beside it; these are two controls and need real air between them.
+  it("separates a leading action from the choice with a visible gap", () => {
     const html = renderToStaticMarkup(
       <ChoiceCell
         title="Albert"
@@ -2901,7 +2901,8 @@ describe("a setting is picked and switched by one control each", () => {
     const wrapper = /<div[^>]*class="([^"]*)"/.exec(html)?.[1].split(" ") ?? [];
 
     expect(html.match(/<button/g)).toHaveLength(2);
-    expect(wrapper).toEqual(expect.arrayContaining(["gap-px", "bg-dialog-edge"]));
+    expect(wrapper).toEqual(expect.arrayContaining(["gap-1", "bg-panel"]));
+    expect(wrapper).not.toContain("gap-px");
   });
 
   // Regression, user report over the open TTS panel ("that full-width stack of things still
@@ -3966,7 +3967,8 @@ describe("the meter", () => {
 // began and never where it ended, and every heading was a banded rule of its own. Reported a
 // third time: the rail that was supposed to say how things nest was the SELECTION amber at 40%,
 // so structure and selection were drawn with one pen. Reported now: its short dark foot stopped
-// after 12px instead of closing the full width of the cluster.
+// after 12px instead of closing the full width of the cluster. The next phone capture also showed
+// that the top of each nested cluster and the line between its heading and rows were still open.
 describe("SettingsChoiceGroup", () => {
   const group = (isNested: boolean) =>
     renderToStaticMarkup(
@@ -3982,11 +3984,18 @@ describe("SettingsChoiceGroup", () => {
     expect(uiSource).not.toContain("isNested ? 'pl-3'");
   });
 
-  it("draws a nested cluster with the panel's own hairline pen, and closes it", () => {
-    expect(group(true)).toContain("border-l-2 border-dialog-edge");
-    expect(group(true)).toContain('class="h-px w-full bg-dialog-edge"');
-    expect(group(true)).not.toContain("border-accent");
-    expect(group(true)).not.toContain("ml-3");
+  it("draws every structural boundary of a nested cluster with the hairline pen", () => {
+    const nested = group(true);
+    const frame = /<section[^>]*class="([^"]*)"/.exec(nested)?.[1].split(" ") ?? [];
+    const heading = /<header[^>]*class="([^"]*)"/.exec(nested)?.[1].split(" ") ?? [];
+
+    expect(frame).toEqual(
+      expect.arrayContaining(["border-l-2", "border-t", "border-dialog-edge"]),
+    );
+    expect(heading).toEqual(expect.arrayContaining(["border-b", "border-dialog-edge"]));
+    expect(nested).toContain('class="h-px w-full bg-dialog-edge"');
+    expect(nested).not.toContain("border-accent");
+    expect(nested).not.toContain("ml-3");
     expect(group(false)).toContain("border-l-2 border-accent");
     expect(group(false)).not.toContain("border-dialog-edge");
   });

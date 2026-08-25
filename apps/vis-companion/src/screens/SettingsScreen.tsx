@@ -77,7 +77,7 @@ import {
   setThemePref,
 } from "../lib/storage";
 import { speechOutput } from "../lib/speech";
-import { PlayIcon, StopIcon } from "../components/icons";
+import { DownloadIcon, PlayIcon, StopIcon } from "../components/icons";
 import { bestDeviceVoices, deviceVoices, type DeviceVoice } from "../lib/speech-voices";
 import {
   DEFAULT_THEME,
@@ -1215,9 +1215,12 @@ export function VoicesPanel({
         )}
 
         {voices.map((voice) => {
+          const name = voice.label ?? voice.id;
           const isPlaying = playing === voice.id;
           const model = voice.model;
           const canPrepare = model?.status === "absent" || model?.status === "failed";
+          const isDownloading = model?.status === "downloading";
+          const hasDownloadAction = canPrepare || isDownloading;
           const modelWord =
             model?.status === "downloading"
               ? `${model.phase === "extracting" ? "unpacking" : "downloading"}${
@@ -1230,11 +1233,42 @@ export function VoicesPanel({
                   : model?.status === "ready"
                     ? "ready"
                     : null;
-          // Ready means the sample is already on the machine; preparable means it is one
-          // cheap step away (a 0.7 MB pack, or a line synthesized by a model already
-          // installed) - never the voice model itself, which is what this button avoids.
+          // Once the model is local, a ready or cheap-to-prepare sample can be heard without
+          // changing the choice. Until then, the model download is the row's leading action.
           const canHear = !!(voice.is_sample_ready || voice.is_sample_preparable);
-          const hasTrailing = !!voice.is_imported || canPrepare;
+          const hasTrailing = !!voice.is_imported;
+          const leadingAction = hasDownloadAction
+            ? {
+                label: isDownloading
+                  ? `Downloading ${name}`
+                  : model?.status === "failed"
+                    ? `Retry download ${name}`
+                    : `Download ${name}`,
+                icon: <DownloadIcon className="size-3.5" />,
+                disabled: isDownloading || pending === `install:${voice.id}`,
+                onClick: () => {
+                  cancelAudition();
+                  if (!canPrepare) return;
+                  if (voice.is_opt_in) setConfirmingInstall(voice.id);
+                  else void prepareVoice(voice, false);
+                },
+              }
+            : canHear
+              ? {
+                  label: isPlaying
+                    ? `Stop the sample of ${name}`
+                    : `Play a sample of ${name}`,
+                  icon: isPlaying ? (
+                    <StopIcon className="size-3.5" />
+                  ) : (
+                    <PlayIcon className="size-3.5" />
+                  ),
+                  onClick: () => {
+                    if (isPlaying) cancelAudition();
+                    else void playSample(voice);
+                  },
+                }
+              : undefined;
           return (
             <div key={voice.id}>
               <div
@@ -1247,7 +1281,7 @@ export function VoicesPanel({
                 <ChoiceCell
                   className="w-full min-w-0"
                   isLeaf
-                  title={voice.label ?? voice.id}
+                  title={name}
                   sub={[
                     voice.language,
                     voice.is_imported ? "imported here" : modelWord ?? "ships with the engine",
@@ -1256,24 +1290,7 @@ export function VoicesPanel({
                     .join(" · ")}
                   isSelected={prefs?.gatewayVoice === voice.id}
                   showSelectionMark={!model || model.status === "ready"}
-                  leadingAction={
-                    canHear
-                      ? {
-                          label: isPlaying
-                            ? `Stop the sample of ${voice.label ?? voice.id}`
-                            : `Play a sample of ${voice.label ?? voice.id}`,
-                          icon: isPlaying ? (
-                            <StopIcon className="size-3.5" />
-                          ) : (
-                            <PlayIcon className="size-3.5" />
-                          ),
-                          onClick: () => {
-                            if (isPlaying) cancelAudition();
-                            else void playSample(voice);
-                          },
-                        }
-                      : undefined
-                  }
+                  leadingAction={leadingAction}
                   disabled={!!model && model.status !== "ready"}
                   onClick={() => {
                     void chooseVoice(voice.id);
@@ -1285,23 +1302,6 @@ export function VoicesPanel({
                     {voice.is_imported && confirming !== voice.id && (
                       <Button variant="secondary" onClick={() => setConfirming(voice.id)}>
                         Forget
-                      </Button>
-                    )}
-                    {canPrepare && confirmingInstall !== voice.id && (
-                      <Button
-                        variant="secondary"
-                        disabled={pending === `install:${voice.id}`}
-                        onClick={() =>
-                          voice.is_opt_in
-                            ? setConfirmingInstall(voice.id)
-                            : void prepareVoice(voice, false)
-                        }
-                      >
-                        {pending === `install:${voice.id}`
-                          ? "Starting…"
-                          : model?.status === "failed"
-                            ? "Try again"
-                            : "Download"}
                       </Button>
                     )}
                   </div>

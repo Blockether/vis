@@ -647,11 +647,11 @@ export interface SpeechVoice {
   source_url?: string;
   model?: VoiceModelState;
   /**
-   * What a play button may promise for THIS voice. `is_sample_ready` plays at once;
-   * `is_sample_preparable` plays after the machine makes one out of very little (a
-   * small pack of samples, or one sentence spoken by a model it already has). Neither
-   * means there is nothing to hear until the voice itself is installed — so no play
-   * button, rather than one that turns into a 116 MB download.
+   * What the sample endpoint can promise for THIS voice. `is_sample_ready` plays at once;
+   * `is_sample_preparable` plays after the machine makes one out of very little (a small pack
+   * of samples, or one sentence spoken by a model it already has). The UI has one leading
+   * action: a non-ready voice model gets Download there first, then these flags decide whether
+   * the ready voice gets Play. Neither flag ever turns Play into a large model download.
    */
   is_sample_ready?: boolean;
   is_sample_preparable?: boolean;

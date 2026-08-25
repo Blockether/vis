@@ -1270,8 +1270,8 @@ export function ChoiceCell({
   /** Hide the choice glyph when an adjacent action occupies its trailing place. */
   showSelectionMark?: boolean;
   /**
-   * An independent icon action that sits before the value's name, never after it. The
-   * one-pixel panel hairline keeps its square from dissolving into the choice surface.
+   * An independent icon action that sits before the value's name, never after it. A real
+   * panel gutter keeps its square visibly separate from the choice surface beside it.
    */
   leadingAction?: {
     label: string;
@@ -1323,7 +1323,7 @@ export function ChoiceCell({
   if (!leadingAction) return choice;
 
   return (
-    <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-px bg-dialog-edge">
+    <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-1 bg-panel">
       <button
         type="button"
         aria-label={leadingAction.label}
@@ -1391,24 +1391,14 @@ export function SettingsChoiceDisclosure({
  *
  * Depth is DRAWN, never spent as empty space. A nested cluster used to indent its whole
  * body, so its rows stood a step in from the left while still reaching the right edge: a
- * pale gutter down one side that nothing closed at the bottom. Stepping the LABEL instead
- * left the same question unanswered — where does the cluster end? Rows stay full-bleed,
- * because the hairlines belong to the parent grid, and a nested cluster is held by a RAIL
- * down its left: an accent line that begins at the heading and stops under the last row,
- * so the block closes at the bottom without a second left edge.
+ * pale gutter down one side that nothing closed at the bottom. Rows stay full-bleed because
+ * the hairlines belong to the parent grid. The heading and, through `IsNestedChoice`, every
+ * cell's content move one notch right while the rows remain full-width thumb targets.
  *
- * The heading is not a band. Its own paper between two rules made a third horizontal line
- * for every cluster — ten of them down one open panel, all of equal weight — so it sits
- * flush on the panel's paper with air above it, and at the top level the amber notch marks it.
- *
- * NESTING IS DRAWN WITH THE HAIRLINE PEN, AND IT CLOSES. The rail down a nested cluster was
- * the SELECTION amber at 40%: beside a selected row it read as a faded selection rather than
- * as structure, and it was four times lighter than the hairlines it met. The rail is now the
- * same ink as every hairline in the panel at double weight, and a one-pixel rule closes the
- * cluster across its full width; the amber notch belongs to the top level alone, one meaning
- * per colour.
- * Depth steps the type as well: the heading, and through `IsNestedChoice` every cell's
- * content, move one notch right while the rows stay full-bleed.
+ * The heading stays on the panel's paper rather than becoming a filled band. Its lower
+ * hairline separates the name from the controls, while the nested cluster's top rule, left
+ * rail and full-width foot make every boundary explicit. All use the panel's structural ink;
+ * amber belongs to selection and to the top-level heading notch, never to nesting.
  */
 export function SettingsChoiceGroup({
   label,
@@ -1424,11 +1414,15 @@ export function SettingsChoiceGroup({
     <section
       role="group"
       aria-labelledby={headingId}
-      className={isNested ? 'min-w-0 bg-panel border-l-2 border-dialog-edge' : 'min-w-0'}
+      className={
+        isNested
+          ? 'min-w-0 border-l-2 border-t border-dialog-edge bg-panel'
+          : 'min-w-0'
+      }
     >
       <header
         className={`flex min-h-6 items-center bg-panel pb-1.5 pt-3 ${
-          isNested ? 'pl-6 pr-3' : 'px-3'
+          isNested ? 'border-b border-dialog-edge pl-6 pr-3' : 'px-3'
         }`}
       >
         <h4
