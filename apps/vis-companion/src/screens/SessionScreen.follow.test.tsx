@@ -179,6 +179,48 @@ describe("a reader reaching the end of a turn that is still being written", () =
     expect(parkedReadingPosition("chasing")).toBe(null);
   });
 
+  // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: nudging a
+  // streaming transcript upward by less than the 64 px bottom tolerance left follow
+  // armed, so the first live flush after the gesture grace snapped it to the end.
+  it("honours even a small upward gesture from the live end", async () => {
+    const paint = installFrames();
+    const resize = installObserver();
+    const live = { height: 46_000 };
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    renderSessionScreen({
+      session: sessionFixture({ id: "small-retreat", status: "running" }),
+      client: {
+        cachedTranscript: () => transcript(),
+        transcript: () => Promise.resolve(transcript()),
+      },
+    });
+    await act(async () => {});
+    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const content = viewport.firstElementChild!;
+    const moves: number[] = [];
+    measure(viewport, live, moves);
+    await paint();
+
+    viewport.scrollTop = live.height - SHELL;
+    fireEvent.scroll(viewport);
+    await paint();
+
+    noteReaderGesture();
+    viewport.scrollTop -= 24;
+    fireEvent.scroll(viewport);
+    await paint();
+    const chosenTop = viewport.scrollTop;
+    moves.length = 0;
+
+    now += 301;
+    live.height += 40;
+    act(() => resize(content));
+
+    expect(viewport.scrollTop).toBe(chosenTop);
+    expect(moves).toEqual([]);
+  });
+
   it("leaves a reader who stayed in history where they are", async () => {
     const { viewport, live } = await readerDrags({
       sid: "reading",

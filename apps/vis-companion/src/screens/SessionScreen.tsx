@@ -4792,9 +4792,16 @@ export function SessionScreen({
       // put at the end, drops `followingRef` and vetoes every later catch-up.
       // Measured on a 46 373 px transcript, the session opened 6 917 px above its
       // newest turn with "↓ Latest" painted over the composer.
-      const settled = isCorrectionEcho(viewport, seenTopRef.current);
+      const previousTop = seenTopRef.current;
+      const settled = isCorrectionEcho(viewport, previousTop);
       seenTopRef.current = viewport.scrollTop;
       if (settled) return;
+      // The bottom tolerance only helps a downward gesture ARRIVE at a live end.
+      // An upward gesture means “hold this line”, even when it moved less than
+      // that tolerance; leaving follow armed there lets the next stream flush
+      // snap the scroller straight back after gesture ownership expires.
+      const readerOwns = readerOwnsScroll();
+      const readerRetreated = readerOwns && viewport.scrollTop < previousTop;
       // Being at the end IS following; leaving it is only ever the reader's own
       // doing. `reader-gesture.ts` is the one place that knows the difference,
       // and a scroll event raised by growth, by a clamp or by one of this
@@ -4807,9 +4814,10 @@ export function SessionScreen({
         viewport.clientHeight
       )
         aimedEndRef.current = viewport.scrollHeight;
-      if (arrivedAtEnd(viewport, aimedEndRef.current))
+      if (readerRetreated) followingRef.current = false;
+      else if (arrivedAtEnd(viewport, aimedEndRef.current))
         followingRef.current = true;
-      else if (readerOwnsScroll()) followingRef.current = false;
+      else if (readerOwns) followingRef.current = false;
       // The reader's place, kept for the next time this session is opened.
       // A reader who ARRIVED parks nothing: their place is the newest turn, and
       // a distance frozen while that turn was still being written would reopen
