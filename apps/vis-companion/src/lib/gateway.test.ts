@@ -785,3 +785,58 @@ describe('GatewayClient device list', () => {
     expect(asked).toHaveBeenCalledTimes(3);
   });
 });
+
+// A gateway can raise its protocol floor under a running app: someone updates
+// Vis on the machine and bounces the daemon. Every call then answers 426, and
+// the connect-time compatibility verdict is already long read — so the refusal
+// itself has to be what re-opens the question, or the app paints a stream of
+// unrelated request failures instead of the screen naming which half is behind.
+describe('a gateway that stops serving this build', () => {
+  const refusal = {
+    error: {
+      type: 'incompatible_protocol',
+      title: 'Update this client',
+      message: 'The gateway speaks protocol 3 and no longer serves clients below protocol 3.',
+      remedy: ['Update Vis on this device to the version running the gateway.'],
+    },
+  };
+
+  it('announces a 426 to the app instead of leaving it inside one failed call', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(refusal), {
+          status: 426,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+    const mod = await import('./gateway');
+    const seen: number[] = [];
+    const stop = mod.onGatewayIncompatible((error) => seen.push(error.status));
+
+    await expect(new mod.GatewayClient(conn).listSessions()).rejects.toThrow(
+      /no longer serves clients/,
+    );
+
+    expect(seen).toEqual([mod.INCOMPATIBLE_STATUS]);
+    stop();
+  });
+
+  it('says nothing for ordinary failures, which are that call’s problem alone', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: 'no such session' }), { status: 404 }),
+      ),
+    );
+    const mod = await import('./gateway');
+    const seen: number[] = [];
+    const stop = mod.onGatewayIncompatible((error) => seen.push(error.status));
+
+    await expect(new mod.GatewayClient(conn).listSessions()).rejects.toThrow(/no such session/);
+
+    expect(seen).toEqual([]);
+    stop();
+  });
+});

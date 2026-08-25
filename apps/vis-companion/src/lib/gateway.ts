@@ -94,6 +94,33 @@ export class GatewayError extends Error {
   }
 }
 
+/** HTTP status a gateway refuses an unsupported client protocol with. */
+export const INCOMPATIBLE_STATUS = 426;
+
+let incompatibleListener: ((error: GatewayError) => void) | null = null;
+
+/**
+ * Watch for a gateway REFUSING this build's wire protocol.
+ *
+ * The compatibility verdict is normally read once, from `/healthz` at connect
+ * time — but a gateway can raise its floor while this app is already running
+ * (someone updates Vis on the machine and bounces the daemon). From that moment
+ * every ordinary call answers 426, and without this the app would keep painting
+ * them as unrelated request failures instead of the one screen that explains
+ * which half is behind and how to fix it.
+ *
+ * Module-level on purpose: clients are constructed per connection, all over the
+ * app, and a 426 from any of them says the same thing about this build.
+ */
+export function onGatewayIncompatible(
+  listener: (error: GatewayError) => void,
+): () => void {
+  incompatibleListener = listener;
+  return () => {
+    if (incompatibleListener === listener) incompatibleListener = null;
+  };
+}
+
 // One transcript-search hit inside a session: which SIDE it landed on (the
 // user's own request, the assistant's answer, or the reasoning aside it thought
 // out loud), a short preview snippet, and when it happened. Several travel per
@@ -865,7 +892,12 @@ export class GatewayClient {
           (typeof problem?.error === "string"
             ? problem.error
             : problem?.error?.message) ?? `HTTP ${res.status}`;
-        throw new GatewayError(res.status, msg, parsed);
+        const error = new GatewayError(res.status, msg, parsed);
+        // A refused protocol is not this call's problem, it is the whole
+        // connection's: announce it so the app can re-read the verdict and show
+        // the screen, rather than let one failed request explain it alone.
+        if (res.status === INCOMPATIBLE_STATUS) incompatibleListener?.(error);
+        throw error;
       }
       return {
         status: res.status,

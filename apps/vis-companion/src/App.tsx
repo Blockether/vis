@@ -10,8 +10,16 @@ import {
   useState,
 } from "react";
 import type { GatewayConn } from "./lib/types";
-import { type Compat, compatFromHealth } from "./lib/compat";
-import { GatewayClient, ROUTER_TTL_MS } from "./lib/gateway";
+import {
+  type Compat,
+  compatFromHealth,
+  shouldRereadCompat,
+} from "./lib/compat";
+import {
+  GatewayClient,
+  ROUTER_TTL_MS,
+  onGatewayIncompatible,
+} from "./lib/gateway";
 import {
   getPrimaryConnection,
   loadConnections,
@@ -210,6 +218,12 @@ export function App() {
   const [compat, setCompat] = useState<Compat | null>(null);
   const [compatChecking, setCompatChecking] = useState(false);
   const [compatNonce, setCompatNonce] = useState(0);
+  // Both read by the 426 listener, which is registered ONCE and would otherwise
+  // close over the verdict as it stood at mount: whether a re-read is already on
+  // its way, and what the last one concluded.
+  const compatRecheckPending = useRef(false);
+  const compatRef = useRef<Compat | null>(null);
+  compatRef.current = compat;
 
   const sessionConn = openTarget?.conn ?? active;
   // Transport identity is the URL/token pair — the only fields `GatewayClient`
@@ -623,6 +637,7 @@ export function App() {
         if (!cancelled) setCompat(null);
       })
       .finally(() => {
+        compatRecheckPending.current = false;
         if (!cancelled) setCompatChecking(false);
       });
     return () => {
@@ -630,6 +645,27 @@ export function App() {
       ctrl.abort();
     };
   }, [client, compatNonce]);
+
+  // The verdict above is read at CONNECT time, but a gateway can raise its
+  // protocol floor under a running app — someone updates Vis on the machine and
+  // bounces the daemon. The first 426 is the only notice we get, so it re-reads
+  // the verdict; `/healthz` answers regardless of protocol (it is exempt from
+  // the gate) precisely so this question stays answerable after the refusal.
+  //
+  // ONCE per episode, though. A refused gateway refuses EVERYTHING, so every
+  // poller, prefetch and retry in flight reports the same 426 within the same
+  // second — re-asking for each would answer one storm with another. The first
+  // refusal is the whole story; recovery is the retry button, which bumps the
+  // same nonce deliberately.
+  useEffect(
+    () =>
+      onGatewayIncompatible(() => {
+        if (!shouldRereadCompat(compatRecheckPending.current, compatRef.current)) return;
+        compatRecheckPending.current = true;
+        setCompatNonce((n) => n + 1);
+      }),
+    [],
+  );
 
   // ── Address preference ──────────────────────────────────────────
   // One gateway answers on several addresses at once (Tailscale, LAN, tunnel,
