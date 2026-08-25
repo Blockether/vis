@@ -60,7 +60,7 @@ export function compactProjectPath(
   const withoutLeaf = project && leaf === project
     ? path.slice(0, path.length - leaf.length).replace(/\/+$/, '')
     : path;
-  if (!withoutLeaf) return path;
+  if (!withoutLeaf || withoutLeaf === '~') return path;
 
   const prefix = withoutLeaf.startsWith('~/')
     ? '~/'

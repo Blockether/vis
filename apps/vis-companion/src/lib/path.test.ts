@@ -24,7 +24,10 @@ describe('compactProjectPath', () => {
     );
   });
 
+  // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: a project directly
+  // under the home directory was labelled only `~`, hiding its actual workspace root.
   it('keeps the full root when stripping its only segment would erase context', () => {
     expect(compactProjectPath('/uberworkspace', 'uberworkspace')).toBe('/uberworkspace');
+    expect(compactProjectPath('/Users/ana/vis', 'vis')).toBe('~/vis');
   });
 });
