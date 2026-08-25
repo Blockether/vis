@@ -43,7 +43,7 @@
    the VIS palette (cobalt on white, Hanken Grotesk + JetBrains Mono)."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.manifest :as manifest])
+            [com.blockether.vis.internal.doc-corpus :as doc-corpus])
   (:import [java.io ByteArrayOutputStream]
            [java.nio.charset StandardCharsets]
            [java.util.zip GZIPOutputStream]
@@ -123,31 +123,10 @@
 
  ;; explicit documentation records
 
-(defonce ^:private documentation-records
-  (delay (->> (manifest/read-apropos-resources)
-              (mapcat identity)
-              (filter #(= "doc" (:kind %)))
-              vec)))
-
-(defn- resource-url
-  [{:keys [name resource]}]
-  (or (io/resource resource)
-      (throw (ex-info "Missing documentation resource"
-                      {:type :docs/missing-resource :name name :resource resource}))))
-
-(defn- url-mark
-  [^java.net.URL url]
-  (let [text (str url)]
-    (if (= "file" (.getProtocol url))
-      (try (let [^java.io.File file (io/file (.toURI url))]
-             [text (.lastModified file) (.length file)])
-           (catch Throwable _ [text 0 -1]))
-      [text 0 -1])))
-
 (defn- collect*
   []
   (let [records
-        @documentation-records
+        (doc-corpus/documents)
 
         site
         (reduce (fn [acc record]
@@ -156,12 +135,9 @@
                 records)
 
         pages
-        (mapv (fn [{:keys [name title section order blurb] :as record}]
-                (let [url
-                      (resource-url record)
-
-                      md
-                      (slurp url)
+        (mapv (fn [{:keys [name title section order blurb text]}]
+                (let [md
+                      (str text)
 
                       [html toc]
                       (anchors+toc (md->html md))]
@@ -173,8 +149,7 @@
                    :order (or order 100)
                    :md md
                    :html html
-                   :toc toc
-                   :url url}))
+                   :toc toc}))
               records)
 
         sec-order
@@ -188,39 +163,18 @@
           (juxt #(if (= "index" (:slug %)) 0 1) #(get sec-order (:section %) 100) :order :title)
           pages)]
 
-    {:site site :pages (mapv #(dissoc % :url) ordered) :urls (mapv :url pages)}))
+    {:site site :pages (vec ordered)}))
 
-(defonce ^:private page-cache (atom nil))
-
-(defn- ensure-pages!
-  []
-  (let [cached
-        @page-cache
-
-        urls
-        (mapv resource-url @documentation-records)
-
-        marks
-        (mapv url-mark urls)]
-
-    (if (and cached (= marks (:marks cached)))
-      cached
-      (swap! page-cache (fn [prev]
-                          (let [{:keys [site pages]} (collect*)]
-                            {:marks marks
-                             :generation (inc (long (:generation prev 0)))
-                             :result {:site site :pages pages}}))))))
+(defonce ^:private rendered (delay (collect*)))
 
 (defn collect
-  "Read the documentation records named by the closed manifest and render their
-   exact Markdown resources. Pages retain manifest order within their sections."
+  "The whole site: every documentation record the corpus read, rendered to HTML
+   with anchors and a table of contents, pages in manifest order within their
+   sections. Rendered ONCE — the records are read at load and a distribution's
+   documents cannot change under a running process, so there is nothing to
+   invalidate and no freshness check to pay for."
   []
-  (:result (ensure-pages!)))
-
-(defn generation
-  "How many times a documentation resource changed and was re-rendered."
-  []
-  (:generation (ensure-pages!)))
+  @rendered)
 
 ;; theme (VIS palette) — enterprise docs layout
 

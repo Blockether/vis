@@ -5,7 +5,8 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.doc-corpus :as dc]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [clojure.spec.alpha :as s]
+            [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defdescribe
   entry-shape-test
@@ -174,3 +175,37 @@ Whole skill body."}
   (it "answers an empty string when there is no prose"
       (expect (= "" (dc/body-text nil)))
       (expect (= "" (dc/body-text "   \n  ")))))
+
+(defdescribe
+  static-record-test
+  "A static record is CHECKED where it is READ. The manifest declares which
+   resources exist; `:vis.doc/record` declares what a record inside one has to be
+   — before this, a catalogue with a typo contributed nothing to search and said
+   nothing about it."
+  (it "accepts the two shapes the store carries"
+      (expect (s/valid? :vis.doc/record
+                        {:name "pandas.read_csv" :kind "function" :text "Read a CSV file."}))
+      (expect (s/valid? :vis.doc/record
+                        {:name "gateway"
+                         :kind "doc"
+                         :resource "vis-docs/gateway.md"
+                         :title "Gateway"
+                         :section "Run it"
+                         :order 30
+                         :blurb "One sentence."})))
+  (it "refuses a record no reader could use, naming the resource it came from"
+      (doseq [bad [{:kind "doc" :resource "vis-docs/gateway.md"}
+                   {:name "" :kind "function" :text "x"} {:name "x" :kind "page" :text "x"}
+                   {:name "x" :kind "function"}
+                   {:name "x" :kind "function" :text "x" :resource "vis-docs/gateway.md"}
+                   {:name "x" :kind "doc" :text "inline"}]]
+        (expect (not (s/valid? :vis.doc/record bad)) (pr-str bad))
+        (expect (throws? clojure.lang.ExceptionInfo #(#'dc/checked-record "test.edn" bad))
+                (pr-str bad))))
+  (it "reads every declared record once, spending the resource it named"
+      (let [rs dc/records]
+        (expect (seq rs))
+        (doseq [r rs]
+          (expect (contains? dc/kinds (:kind r)) (str (:name r) " carries no kind"))
+          (expect (not (contains? r :resource)) (str (:name r) " still points at a resource"))
+          (expect (not (str/blank? (:text r))) (str (:name r) " carries no text"))))))

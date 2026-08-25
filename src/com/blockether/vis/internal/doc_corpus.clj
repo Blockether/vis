@@ -3,8 +3,10 @@
 
    `META-INF/vis/manifest.edn` names every static EDN resource explicitly. Each
    resource is a vector of records shaped as `{:name :kind :text}` or, for a
-   documentation page, `{:name :kind doc :resource ...}`. Dynamic skills,
-   MCP tools and live callable contracts append records through `register-source!`.
+   documentation page, `{:name :kind doc :resource ...}`; every one of them is
+   checked against `:vis.doc/record` and read WHOLE at load, once, into `records`
+   — the docs site renders that same value. Dynamic skills, MCP tools and live
+   callable contracts append records through `register-source!`.
 
    `apropos` applies one regular expression to record names and preserves corpus
    order. There is no ranking, tokenization, search index or classpath discovery.
@@ -140,30 +142,78 @@
                      (conj ss [id entries-fn]))))
   id)
 
-(defn- static-entry
-  [{:keys [name title section blurb resource] :as entry}]
+(defn- one-body?
+  "A record carries its text EITHER inline — `:text`, how a harvested symbol lends
+   its own docstring — OR in the resource it names, never both and never neither,
+   so nothing downstream decides which of the two is authoritative."
+  [{:keys [text resource]}]
+  (if (some? resource) (nil? text) (not (str/blank? (str text)))))
+
+(s/def :vis.doc/resource string?)
+(s/def :vis.doc/title (s/nilable string?))
+(s/def :vis.doc/section (s/nilable string?))
+(s/def :vis.doc/blurb (s/nilable string?))
+(s/def :vis.doc/order (s/nilable nat-int?))
+(s/def :vis.doc/site (s/nilable map?))
+(s/def :vis.doc/record
+  (s/and (s/keys :req-un [:vis.doc/name :vis.doc/kind]
+                 :opt-un [:vis.doc/text :vis.doc/resource :vis.doc/call :vis.doc/params
+                          :vis.doc/title :vis.doc/section :vis.doc/blurb :vis.doc/order
+                          :vis.doc/site])
+         #(not (str/blank? (:name %)))
+         one-body?
+         ;; A page IS a markdown file: `docs` renders exactly the resource it names.
+         #(or (not= "doc" (:kind %)) (string? (:resource %)))))
+
+(defn- checked-record
+  "`record`, or a throw naming it and explaining why. The manifest declares WHICH
+   resources exist; this is what a record inside one has to BE — so a hand-edited
+   catalogue and a regenerated symbol index both fail at load with `explain-data`
+   instead of quietly contributing nothing to search."
+  [resource record]
+  (if (s/valid? :vis.doc/record record)
+    record
+    (throw (ex-info (str "Invalid document record in " (pr-str resource))
+                    {:type :vis.doc/invalid-record
+                     :resource resource
+                     :name (:name record)
+                     :explain (s/explain-data :vis.doc/record record)}))))
+
+(defn- resolved-record
+  "The record with its body in `:text`: a named resource is slurped HERE, once, so
+   no reader downstream reaches for the classpath again."
+  [{:keys [name resource] :as record}]
   (if resource
     (let [url (or (io/resource resource)
                   (throw (ex-info
-                           "Missing apropos document resource"
-                           {:type :apropos/missing-resource :name name :resource resource})))]
-      (-> entry
-          (assoc :text (str (or (not-empty (str title)) (str name))
-                            (when (seq (str section)) (str " · " section))
-                            (when (seq (str blurb)) (str "
+                           "Missing document resource"
+                           {:type :vis.doc/missing-resource :name name :resource resource})))]
+      (-> record
+          (assoc :text (slurp url))
+          (dissoc :resource)))
+    record))
 
-" blurb))
-                            "
+(def records
+  "Every static record the manifest names, in manifest order and already whole:
+   checked against `:vis.doc/record` and carrying its `:text`.
 
-"
-                            (slurp url)))
-          (dissoc :resource :title :section :blurb :order :site)))
-    entry))
+   A `def`, not a `delay`: a distribution's documents cannot change while it runs,
+   a delay only moves the failure to whichever reader forces it first, and reading
+   at LOAD is what lets a native image bake this value at build time instead of
+   carrying the resources and parsing them again in every process."
+  (into []
+        (comp (mapcat (fn [[resource value]]
+                        (map #(checked-record resource %) value)))
+              (map resolved-record))
+        (map vector (manifest/apropos-resource-paths) (manifest/read-apropos-resources))))
 
-(def ^:private static-apropos-entries
-  (delay (->> (manifest/read-apropos-resources)
-              (mapcat identity)
-              (mapv static-entry))))
+(defn documents
+  "Every documentation PAGE, in manifest order and whole: `:text` is the page's
+   markdown and its site metadata (`:title`, `:section`, `:order`, `:blurb`,
+   `:site`) travels with it. The docs site renders from THIS — one read, one
+   validation, one order, and no second reader of the same resources."
+  []
+  (filterv #(= "doc" (:kind %)) records))
 
 (defn- skill-entries
   "Every discovered skill as an entry carrying its WHOLE `SKILL.md` body. The
@@ -185,7 +235,9 @@
 ")) body)})))
         (discovery/skills)))
 
-(register-source! :manifest-apropos #(force static-apropos-entries))
+(register-source! :manifest-apropos
+                  (fn []
+                    records))
 (register-source! :skills #'skill-entries)
 
 (defn- dedupe-by-name
