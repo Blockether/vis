@@ -228,10 +228,11 @@
                  (refuses language-surface/repl-stop "clojure" "extensions/foo")))
       (expect (= :language-surface/bad-args
                  (refuses language-surface/connect-repl "clojure" "extensions/foo")))))
-  ;; Regression, session report a114a0ab-8083-45dc-924f-0e005b20f965: a call that
-  ;; spelled its directory `root` was ignored, so tools ran at the workspace root.
+  ;; Regression, issue #project-root-alias: `project_root` was passed by the Python
+  ;; tool surface but ignored, so the verb acted at the workspace root. The same
+  ;; normalization seam owns the earlier report where `root` was ignored.
   (it
-    "reads `root` and `project` as `cwd` on every verb, and refuses disagreements"
+    "reads `root`, `project`, and `project_root` as `cwd` on every verb, and refuses disagreements"
     (let [seen
           (atom nil)
 
@@ -260,6 +261,10 @@
                  (:result (language-surface/repl-start env
                                                        {"language" "clojure"
                                                         "root" "repositories/plc3"}))))
+      (expect (= {:op "start" :opts {"language" "clojure" "cwd" "repositories/plc3"}}
+                 (:result (language-surface/repl-start env
+                                                       {"language" "clojure"
+                                                        "project_root" "repositories/plc3"}))))
       (expect (= {:op "status" :opts {"cwd" "ext"} "resources" []}
                  (:result (language-surface/repl-status env "clojure" {"project" "ext"}))))
       (language-surface/repl-eval env "clojure" {"code" "(+ 1 2)" "root" "ext"})
@@ -268,14 +273,15 @@
       (expect (= {"cwd" "ext"} @seen))
       ;; Repeating one directory under aliases is valid; differing ones are ambiguous.
       (expect (= {:op "start" :opts {"cwd" "ext"}}
-                 (:result
-                   (language-surface/repl-start env {"root" "ext" "cwd" "ext" "project" "ext"}))))
+                 (:result (language-surface/repl-start
+                            env
+                            {"root" "ext" "cwd" "ext" "project" "ext" "project_root" "ext"}))))
       (expect (= :language-surface/bad-args
-                 (try (language-surface/repl-start env {"root" "ext" "project" "other"})
+                 (try (language-surface/repl-start env {"root" "ext" "project_root" "other"})
                       nil
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
   (it
-    "states each verb's real requiredness: only repl_eval's `code`, never `language`"
+    "declares every directory alias and each verb's real requiredness"
     (let [keys-of
           (fn [sym]
             (into {} (map (juxt :name identity)) (:ext.symbol/params sym)))
@@ -293,20 +299,34 @@
           (keys-of language-surface/repl-stop-symbol)
 
           connect
-          (keys-of language-surface/connect-repl-symbol)]
+          (keys-of language-surface/connect-repl-symbol)
+
+          directory-options
+          (mapv keys-of
+                [language-surface/format-symbol language-surface/lint-symbol
+                 language-surface/test-symbol language-surface/repl-eval-symbol
+                 language-surface/repl-start-symbol language-surface/repl-status-symbol
+                 language-surface/connect-repl-symbol language-surface/repl-stop-symbol])]
 
       (expect (true? (:required? (get evaluate "code"))))
-      (expect (str/includes? (:note (get start "cwd")) "project"))
-      (expect (str/includes? (:note (get evaluate "cwd")) "project"))
-      (expect (str/includes? (:note (get (keys-of language-surface/repl-status-symbol) "cwd"))
-                             "project"))
+      ;; A dict-shaped Python callable can expose key semantics only through :params.
+      ;; Keep every accepted spelling visible rather than hiding aliases in prose.
+      (doseq [params directory-options]
+        (doseq [k ["cwd" "root" "project" "project_root"]]
+          (expect (contains? params k) (str "missing directory key " k)))
+        (expect (= "default workspace ROOT" (:note (get params "cwd"))))
+        (doseq [k ["root" "project" "project_root"]]
+          (expect (= "alias of `cwd`" (:note (get params k))))))
+      (doseq [sym language-surface/symbols]
+        (expect (str/includes? (:ext.symbol/description sym) "`project_root`")
+                (str (:ext.symbol/symbol sym) " hides project_root")))
       ;; `language` is INFERRED on every verb (choose-handler falls back to the
       ;; workspace's candidate languages and to a single active pack), and
       ;; repl_stop needs no `id` when the pack's REPL under `cwd` is the target:
       ;; nothing on this surface is required except repl_eval's `code`.
       (expect (nil? (some :required? (vals stop))))
       (expect (str/includes? (:note (get stop "language")) "inferred"))
-      (expect (str/includes? (:note (get stop "cwd")) "project"))
+      (expect (= "default workspace ROOT" (:note (get stop "cwd"))))
       (expect (str/includes? (:ext.symbol/description language-surface/repl-stop-symbol)
                              "NOTHING is required"))
       (expect (str/includes? (:note (get start "language")) "inferred"))
@@ -338,7 +358,6 @@
       ;; run_tests and repl_eval are the two verbs a session calls without reading
       ;; the page first: what they REQUIRE, and where they run when `cwd` is
       ;; omitted, has to be on their own params.
-      (expect (str/includes? (:note (get tests "cwd")) "project"))
       (expect (str/includes? (:note (get tests "cwd")) "workspace ROOT"))
       (expect (str/includes? (:note (get tests "paths")) "omit"))
       (expect (nil? (some :required? (vals tests))))
