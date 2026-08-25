@@ -2502,10 +2502,13 @@ const ProjectGroup = memo(function ProjectGroup({
     writeProjectFold(foldKey, open);
     setIsOpen(open);
   };
+  // A project with no sessions has nothing to reveal. It still names the destination
+  // of its New-session action, but it is not a fold and must not wear disclosure furniture.
+  const hasSessions = tally.count > 0;
   // A FILTER is a fleet-wide question and its answer may not sit behind a fold: while
   // a query is on, every project that still has rows shows them. The fold the reader
   // set is untouched and is back the moment the query is.
-  const isShowing = isOpen || needle !== '';
+  const isShowing = hasSessions && (isOpen || needle !== '');
   const searching = needle !== '';
   // THE PAGE IS ASKED FOR, NOT SLICED.
   //
@@ -2745,9 +2748,15 @@ const ProjectGroup = memo(function ProjectGroup({
             </span>
           }
           qualifierTitle={root}
-          isOpen={isShowing}
-          onToggle={() => fold(!isShowing)}
-          label={`${isShowing ? 'Collapse' : 'Expand'} ${project}`}
+          disclosure={
+            hasSessions
+              ? {
+                  isOpen: isShowing,
+                  onToggle: () => fold(!isShowing),
+                  label: `${isShowing ? 'Collapse' : 'Expand'} ${project}`,
+                }
+              : null
+          }
         />
         {/* The trailing cluster holds how this group is WALKED and what it OFFERS:
             the project's pages, then its one verb. The pager rode on a shelf hung

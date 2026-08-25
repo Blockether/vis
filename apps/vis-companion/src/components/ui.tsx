@@ -2801,17 +2801,22 @@ export function HeaderTitle({
 }
 
 /**
- * The leading half of a PROJECT header, and the whole of it is the disclosure.
+ * The leading half of a PROJECT header.
  *
- * A project is the level a reader scopes by, so it is the level that folds: with
- * four checkouts on one machine the screen is otherwise a scroll through work
- * nobody asked about. The mark column `HeaderTitle` already reserves carries the
- * chevron, so the name stays on the one leading edge every row in this list shares
- * — the disclosure buys a glyph, never an indent.
+ * A project holding sessions is the level a reader scopes by, so it is the level that
+ * folds: with four checkouts on one machine the screen is otherwise a scroll through
+ * work nobody asked about. The mark column `HeaderTitle` already reserves carries the
+ * chevron, so the name stays on the one leading edge every row in this list shares —
+ * the disclosure buys a glyph, never an indent.
  *
- * It is a `HeaderTitle` inside a pressable, not a button beside one: the whole
- * naming half answers the thumb, and the trailing cluster (`HeaderActions`) keeps
- * its own controls, so "New session" is never swallowed by the fold.
+ * A persisted project with no sessions still names where New session will start, but
+ * has no list to reveal. `disclosure={null}` renders that name as a plain HeaderTitle:
+ * no button, no expanded state, and no chevron pointing at nothing.
+ *
+ * When present, the disclosure is a `HeaderTitle` inside a pressable, not a button
+ * beside one: the whole naming half answers the thumb, and the trailing cluster
+ * (`HeaderActions`) keeps its own controls, so "New session" is never swallowed by
+ * the fold.
  *
  * Its qualifier line carries what the project HOLDS as well as where it lives. The
  * count stood on a shelf of its own under this band, so one heading was two papers,
@@ -2823,32 +2828,42 @@ export function ProjectCrumb({
   name,
   qualifier,
   qualifierTitle,
-  isOpen,
-  onToggle,
-  label,
+  disclosure,
 }: {
   name: ReactNode;
   qualifier?: ReactNode;
   qualifierTitle?: string;
-  isOpen: boolean;
-  onToggle: () => void;
-  /** What the fold is called to a screen reader: `Collapse vis`. */
-  label: string;
+  /** The fold to expose, or null when this project has no session list. */
+  disclosure: {
+    isOpen: boolean;
+    onToggle: () => void;
+    /** What the fold is called to a screen reader: `Collapse vis`. */
+    label: string;
+  } | null;
 }) {
+  const title = (
+    <HeaderTitle
+      mark={
+        disclosure ? (
+          <ChevronIcon open={disclosure.isOpen} className="size-3.5 text-dialog-hint" />
+        ) : undefined
+      }
+      name={name}
+      qualifier={qualifier}
+      qualifierTitle={qualifierTitle}
+    />
+  );
+  if (!disclosure) return title;
+
   return (
     <button
       type="button"
-      aria-expanded={isOpen}
-      aria-label={label}
-      onClick={onToggle}
+      aria-expanded={disclosure.isOpen}
+      aria-label={disclosure.label}
+      onClick={disclosure.onToggle}
       className="flex min-w-0 flex-1 items-center text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none"
     >
-      <HeaderTitle
-        mark={<ChevronIcon open={isOpen} className="size-3.5 text-dialog-hint" />}
-        name={name}
-        qualifier={qualifier}
-        qualifierTitle={qualifierTitle}
-      />
+      {title}
     </button>
   );
 }

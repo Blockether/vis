@@ -90,4 +90,35 @@ describe("folding a project", () => {
       view.restore();
     }
   });
+
+  // Regression, user report, Vis session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25:
+  // a persisted project with zero sessions still wore a disclosure chevron, even though
+  // there was no session list for that control to reveal.
+  it("does not make an empty project a disclosure", async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          sessions: [],
+          projects: [
+            {
+              root: "/Users/dev/vis",
+              project_id: "p-vis",
+              name: "vis",
+              session_count: 0,
+              live_count: 0,
+              awaiting_count: 0,
+              last_activity_ms: 0,
+            },
+          ],
+        },
+      ],
+    });
+    try {
+      await waitFor(() => expect(view.getByText("0 sessions")).toBeTruthy());
+      expect(view.getByText("vis").closest("button")).toBeNull();
+      expect(view.queryByLabelText(/^(Expand|Collapse) vis$/)).toBeNull();
+    } finally {
+      view.restore();
+    }
+  });
 });

@@ -254,9 +254,11 @@ describe("ProjectCrumb", () => {
       <ProjectCrumb
         name="vis"
         qualifier="~/vis"
-        isOpen
-        onToggle={() => {}}
-        label="Collapse vis"
+        disclosure={{
+          isOpen: true,
+          onToggle: () => {},
+          label: "Collapse vis",
+        }}
       />,
     );
 
@@ -273,9 +275,11 @@ describe("ProjectCrumb", () => {
     const folded = renderToStaticMarkup(
       <ProjectCrumb
         name="vis"
-        isOpen={false}
-        onToggle={() => {}}
-        label="Expand vis"
+        disclosure={{
+          isOpen: false,
+          onToggle: () => {},
+          label: "Expand vis",
+        }}
       />,
     );
 
@@ -290,14 +294,27 @@ describe("ProjectCrumb", () => {
     const html = renderToStaticMarkup(
       <ProjectCrumb
         name="vis"
-        isOpen
-        onToggle={() => {}}
-        label="Collapse vis"
+        disclosure={{
+          isOpen: true,
+          onToggle: () => {},
+          label: "Collapse vis",
+        }}
       />,
     );
 
     expect(html).toContain("flex-1");
     expect(html).not.toContain("w-full");
+  });
+
+  it("is plain when the project has no session list", () => {
+    const html = renderToStaticMarkup(
+      <ProjectCrumb name="vis" qualifier="~/vis" disclosure={null} />,
+    );
+
+    expect(html).toContain("vis");
+    expect(html).not.toContain("<button");
+    expect(html).not.toContain("aria-expanded");
+    expect(html).not.toContain("<svg");
   });
 });
 
