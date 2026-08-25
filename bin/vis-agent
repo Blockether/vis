@@ -770,9 +770,9 @@ build_native_runtime() {
 # ── update: source runtime ───────────────────────────────────────────────────
 # Follow the development branch: the checkout Vis owns is moved onto the newest
 # commit of `$vis_branch`, or onto an exact ref you name. Release tags are not
-# consulted at all — a release is a commit like any other, and asking for the
-# newest tag is how an install lands on published-but-broken source. A checkout
-# of your own is never moved by this path: git owns it.
+# consulted at all by default — a release is a commit like any other, and asking
+# for the newest tag is how an install lands on published-but-broken source. A
+# checkout of your own is never moved by this path: git owns it.
 #
 # Pinned is meant literally. This source is built by hand — `git init` plus ONE
 # shallow ref — rather than cloned, and every branch and remote-tracking ref is
@@ -782,12 +782,34 @@ build_native_runtime() {
 # there cannot be followed, and an install downloads one commit instead of every
 # commit ever made.
 
-# Fetch exactly one ref and nothing else. A branch (or tag) is advertised, so a
-# single shallow commit is enough; an exact SHA usually is not advertised, and
-# only that case pays for history.
+# Fetch exactly one ref and nothing else. A transport reset is not evidence that
+# `main` disappeared: retry the same shallow fetch first. Only an `ls-remote`
+# result that proves the ref is not advertised unlocks the existing exact-SHA
+# fallback through branch history.
 fetch_pinned_ref() {
-  local ref="$1"
-  git -C "$managed_src" fetch --quiet --force --depth 1 origin "$ref" 2>/dev/null && return 0
+  local ref="$1" attempt advertised_status fetch_error="" advertisement_error=""
+  for attempt in 1 2 3; do
+    if fetch_error="$(git -C "$managed_src" fetch --quiet --force --depth 1 origin "$ref" 2>&1)"; then
+      return 0
+    fi
+    if (( attempt < 3 )); then
+      say "fetch failed for $ref - retrying ($((attempt + 1))/3)"
+      sleep "$attempt"
+    fi
+  done
+
+  if advertisement_error="$(git -C "$managed_src" ls-remote --exit-code origin "$ref" 2>&1)"; then
+    [[ -z "$fetch_error" ]] || printf '%s\n' "$fetch_error" >&2
+    return 1
+  else
+    advertised_status=$?
+  fi
+  if (( advertised_status != 2 )); then
+    [[ -n "$advertisement_error" ]] || advertisement_error="$fetch_error"
+    [[ -z "$advertisement_error" ]] || printf '%s\n' "$advertisement_error" >&2
+    return 1
+  fi
+
   say "$ref is not an advertised branch or tag — fetching history to find it"
   git -C "$managed_src" fetch --force --prune origin '+refs/heads/*:refs/remotes/origin/*'
 }
@@ -805,6 +827,8 @@ drop_moving_refs() {
 update_source() {
   local ref="${1:-}" target pinned
   require_cmd git "the source runtime"
+  # `latest` is the source runtime's moving main, not a literal Git ref.
+  [[ "$ref" != latest ]] || ref=""
   if [[ ! -d "$managed_src/.git" ]]; then
     say "creating $managed_src for $vis_repo_slug"
     mkdir -p "$managed_src" || exit 1
@@ -826,7 +850,9 @@ update_source() {
   target="$ref"
   git -C "$managed_src" rev-parse --verify --quiet "$ref^{commit}" >/dev/null 2>&1 \
     || target=FETCH_HEAD
-  git -C "$managed_src" checkout --force --detach "$target" || exit 1
+  # The old detached pin is Vis-owned implementation state, not a local commit the
+  # reader needs Git's branch-recovery warning for.
+  git -C "$managed_src" checkout --quiet --force --detach "$target" || exit 1
   drop_moving_refs
   # The pin recorded is the COMMIT, never the branch that pointed at it: a branch
   # name in there is a moving pin, and no drift check can verify a moving pin.
@@ -960,10 +986,10 @@ Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild] [--keep-gatew
                        that source
          --keep-gateway
                        leave a running gateway alone. By default an idle one is
-                       released after the install (nothing is watching it) so the
-                       next session starts on the runtime just installed. A busy
-                       or user-owned gateway is never touched: the first session
-                       that later finds it unused replaces it itself
+                       released before its runtime is replaced (nothing is watching
+                       it) so the next session starts on the runtime just installed.
+                       A busy or user-owned gateway is never touched: once its work
+                       closes, its own reap lets the next session start the new build
        Update takes the runtime that is installed forward; it never swaps one
        runtime for the other, and never changes track on its own. The vis-agent
        command travels with it: a native update replaces this file from the
@@ -972,14 +998,14 @@ Usage: vis-agent update [vX.Y.Z] [--track stable|beta] [--rebuild] [--keep-gatew
 EOF
 }
 
-# After a successful install the runtime on disk is NEW and every daemon still
-# running is OLD. Releasing an IDLE managed one is free - nothing is watching it,
-# it self-reaps anyway, and the next client spawns the new build - so update does
-# it without asking. A busy or user-owned daemon is never touched: the runtime's
-# own `--if-idle` rule decides that, this shell decides nothing, and a failure
-# here never fails an update that already succeeded. Nor is a daemon left running
-# left stale - the next client that attaches one older than itself, with nobody
-# using it, replaces it (`client/stale-bounce-verdict`).
+# Release an IDLE managed gateway BEFORE replacing the runtime, using the client that
+# started it and therefore still speaks its protocol. Doing this after the install made
+# a protocol-3 client ask a protocol-2 gateway to stop; the safety query itself was
+# refused, so a successful update ended with a fatal-looking mismatch. An idle daemon
+# holds no work, so a later install failure costs nothing: the next client starts the
+# still-installed runtime again. A busy or user-owned daemon is never touched, and a
+# failure here never fails the update. Once its users leave, it self-reaps; the next
+# client starts the build now on disk.
 release_stale_gateway() {
   local native source_root
   case "$(runtime_effective)" in
@@ -1044,6 +1070,14 @@ vis_do_update() {
     say "following the $track track"
   fi
 
+  # This must run while the OLD source/binary is still on disk. It is the only client
+  # guaranteed to speak to the gateway that old runtime spawned.
+  if (( keep_gateway )); then
+    say "leaving the gateway alone (--keep-gateway)"
+  else
+    release_stale_gateway
+  fi
+
   case "$(runtime_effective)" in
     jvm)
       [[ -z "$track" ]] || die "update: --track selects a PUBLISHED native distribution, and this Vis runs the source runtime" \
@@ -1058,11 +1092,6 @@ vis_do_update() {
       update_native "${target:-latest}" "$(vis_track)"
       ;;
   esac
-  if (( keep_gateway )); then
-    say "leaving the gateway alone (--keep-gateway)"
-  else
-    release_stale_gateway
-  fi
   exit 0
 }
 

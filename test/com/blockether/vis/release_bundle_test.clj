@@ -34,6 +34,176 @@
 
       {:exit (.waitFor process) :output output})))
 
+(defn- git!
+  "Run git in `dir`, returning its trimmed output or throwing with the command output."
+  [dir & args]
+  (let [{:keys [exit output]}
+        (run-bash (into ["git" "-C" (.getAbsolutePath ^java.io.File dir)] args) {})]
+    (when-not (zero? (long exit))
+      (throw (ex-info "Git fixture command failed" {:dir dir :args args :output output})))
+    (str/trim output)))
+
+(defn- with-source-update-fixture
+  "Run one source update between two fixture commits with controlled fetch failures."
+  [{:keys [fetch-failures keep-gateway?]} f]
+  (let [root
+        (.toFile (Files/createTempDirectory "vis-source-update-test-" (make-array FileAttribute 0)))
+
+        home
+        (doto (io/file root "home") .mkdirs)
+
+        vis-home
+        (io/file home ".vis")
+
+        install-dir
+        (doto (io/file vis-home "install") .mkdirs)
+
+        managed-src
+        (io/file install-dir "src")
+
+        remote
+        (doto (io/file root "remote") .mkdirs)
+
+        remote-bin
+        (doto (io/file remote "bin") .mkdirs)
+
+        launcher-dir
+        (doto (io/file root "installed") .mkdirs)
+
+        launcher
+        (io/file launcher-dir "vis-agent")
+
+        path-dir
+        (doto (io/file root "path") .mkdirs)
+
+        clojure-calls
+        (io/file root "clojure-calls")
+
+        fetch-calls
+        (io/file root "fetch-calls")
+
+        failed-fetch
+        (io/file root "failed-fetch")
+
+        real-git
+        (str/trim (:output (run-bash ["bash" "-lc" "command -v git"] {})))]
+
+    (try
+      (spit (io/file remote "deps.edn") "{}\n")
+      (spit (io/file remote "update-marker") "old\n")
+      (io/copy (io/file "bin/vis-agent") (io/file remote-bin "vis-agent"))
+      (.setExecutable ^java.io.File (io/file remote-bin "vis-agent") true)
+      (git! remote "init" "--quiet" "--initial-branch=main")
+      (git! remote "add" ".")
+      (git! remote
+            "-c" "user.name=Vis Test"
+            "-c" "user.email=vis@example.com"
+            "commit" "--quiet"
+            "-m" "old source")
+      (let [old-commit (git! remote "rev-parse" "HEAD")]
+        (spit (io/file remote "update-marker") "new\n")
+        (git! remote "add" "update-marker")
+        (git! remote
+              "-c" "user.name=Vis Test"
+              "-c" "user.email=vis@example.com"
+              "commit" "--quiet"
+              "-m" "new source")
+        (let [new-commit (git! remote "rev-parse" "HEAD")]
+          (git! root "clone" "--quiet" (.getAbsolutePath remote) (.getAbsolutePath managed-src))
+          (git! managed-src "checkout" "--quiet" "--force" "--detach" old-commit)
+          (git! managed-src "branch" "-D" "main")
+          (git! managed-src "update-ref" "-d" "refs/remotes/origin/main")
+          (spit (io/file install-dir "ref") (str old-commit "\n"))
+          (io/copy (io/file "bin/vis-agent") launcher)
+          (.setExecutable ^java.io.File launcher true)
+          (write-executable!
+            (io/file path-dir "clojure")
+            (str
+              "#!/usr/bin/env bash\n" "set -euo pipefail\n"
+              "head=\"$(\"$VIS_TEST_REAL_GIT\" -C \"$VIS_HOME/install/src\" rev-parse HEAD)\"\n"
+              "printf '%s\\n' \"$head\" >> \"$VIS_TEST_CLOJURE_CALLS\"\n"
+              "if [[ \"$head\" != \"$VIS_TEST_OLD\" ]]; then\n"
+              "  printf '%s\\n' 'vis-agent: fatal error - Update the gateway - protocol mismatch' >&2\n"
+              "  exit 1\n" "fi\n"))
+          (when (pos? (long (or fetch-failures 0)))
+            (write-executable!
+              (io/file path-dir "git")
+              (str
+                "#!/usr/bin/env bash\n"
+                "set -euo pipefail\n" "is_fetch=0\n"
+                "for arg in \"$@\"; do [[ \"$arg\" != fetch ]] || is_fetch=1; done\n"
+                "if (( is_fetch )); then\n"
+                "  printf '%q ' \"$@\" >> \"$VIS_TEST_FETCH_CALLS\"; printf '\\n' >> \"$VIS_TEST_FETCH_CALLS\"\n"
+                "  failures=0\n"
+                "  [[ ! -e \"$VIS_TEST_FAILED_FETCH\" ]] || read -r failures < \"$VIS_TEST_FAILED_FETCH\"\n"
+                "  if (( failures < VIS_TEST_FETCH_FAILURES )); then\n"
+                "    printf '%s\\n' \"$((failures + 1))\" > \"$VIS_TEST_FAILED_FETCH\"\n"
+                "    printf '%s\\n' 'fatal: unable to access remote: connection reset by peer' >&2\n"
+                "    exit 128\n" "  fi\n"
+                "fi\n" "exec \"$VIS_TEST_REAL_GIT\" \"$@\"\n")))
+          (let [{:keys [exit output]}
+                (run-bash (cond-> ["bash" (.getAbsolutePath launcher) "update"]
+                            keep-gateway?
+                            (conj "--keep-gateway"))
+                          {"HOME" (.getAbsolutePath home)
+                           "VIS_HOME" (.getAbsolutePath vis-home)
+                           "VIS_REPO_SLUG" "local/vis"
+                           "VIS_REPO_URL" (.getAbsolutePath remote)
+                           "VIS_NO_AUTO_INSTALL" "1"
+                           "VIS_TEST_REAL_GIT" real-git
+                           "VIS_TEST_OLD" old-commit
+                           "VIS_TEST_CLOJURE_CALLS" (.getAbsolutePath clojure-calls)
+                           "VIS_TEST_FETCH_CALLS" (.getAbsolutePath fetch-calls)
+                           "VIS_TEST_FAILED_FETCH" (.getAbsolutePath failed-fetch)
+                           "VIS_TEST_FETCH_FAILURES" (or fetch-failures 0)
+                           "PATH" (str (.getAbsolutePath path-dir) ":" (System/getenv "PATH"))})]
+            (f {:exit exit
+                :output output
+                :old-commit old-commit
+                :new-commit new-commit
+                :managed-src managed-src
+                :clojure-calls clojure-calls
+                :fetch-calls fetch-calls}))))
+      (finally (delete-tree! root)))))
+
+;; Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: source update
+;; replaced the runtime before asking its protocol-2 gateway to stop, then labelled a
+;; transient fetch reset as an unadvertised main branch and downloaded all history.
+(defdescribe source-update-transaction-test
+             (it
+               "releases the old gateway with the old runtime and keeps Git's detached pin private"
+               (with-source-update-fixture
+                 {}
+                 (fn [{:keys [exit output old-commit new-commit managed-src clojure-calls]}]
+                   (expect (zero? exit) output)
+                   (expect (= old-commit (str/trim (slurp clojure-calls))) output)
+                   (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
+                   (expect (not (str/includes? output "Update the gateway")) output)
+                   (expect (not (str/includes? output "leaving 1 commit behind")) output))))
+             (it "retries the pinned fetch without pretending main is unadvertised"
+                 (with-source-update-fixture
+                   {:fetch-failures 1 :keep-gateway? true}
+                   (fn [{:keys [exit output new-commit managed-src fetch-calls]}]
+                     (let [calls (str/split-lines (slurp fetch-calls))]
+                       (expect (zero? exit) output)
+                       (expect (= new-commit (git! managed-src "rev-parse" "HEAD")) output)
+                       (expect (= 2 (count calls)) (pr-str calls))
+                       (expect (every? #(str/includes? % "--depth 1") calls) (pr-str calls))
+                       (expect (str/includes? output "retrying") output)
+                       (expect (not (str/includes? output "connection reset by peer")) output)
+                       (expect (not (str/includes? output "not an advertised branch")) output)))))
+             (it "keeps a repeated transport failure bounded and reports the real error"
+                 (with-source-update-fixture
+                   {:fetch-failures 3 :keep-gateway? true}
+                   (fn [{:keys [exit output old-commit managed-src fetch-calls]}]
+                     (let [calls (str/split-lines (slurp fetch-calls))]
+                       (expect (not (zero? exit)) output)
+                       (expect (= old-commit (git! managed-src "rev-parse" "HEAD")) output)
+                       (expect (= 3 (count calls)) (pr-str calls))
+                       (expect (every? #(str/includes? % "--depth 1") calls) (pr-str calls))
+                       (expect (str/includes? output "connection reset by peer") output)
+                       (expect (not (str/includes? output "not an advertised branch")) output))))))
+
 (defdescribe
   native-image-language-resources-test
   (it "keeps the language resources beside the image instead of inside it"

@@ -254,6 +254,20 @@
   []
   (protocol/client-verdict client-label @gateway-handshake*))
 
+(defn- lifecycle-protocol-headers
+  "Let local status/stop cross ONLY a gateway-too-old boundary.
+
+   `/healthz` already identified the peer and remains protocol-open. Its advertised
+   protocol is safe to echo as this request's minimum for two lifecycle routes: the
+   status shape is read fail-closed by [[daemon-idle?]], and stop either follows that
+   idle proof or an explicit human command. Session data still goes through the real
+   minimum and is refused. This narrow bridge is what lets a freshly updated runtime
+   release the old gateway instead of failing the update on its safety query."
+  []
+  (let [{:keys [reason gateway-protocol]} (compatibility)]
+    (when (and (= "gateway-too-old" reason) gateway-protocol)
+      {"X-Vis-Min-Gateway-Protocol" (str gateway-protocol)})))
+
 (defn- assert-compatible!
   "Refuse to drive a daemon whose wire protocol this build cannot speak, with the
    rendered mismatch screen attached. Returns `entry` when compatible."
@@ -623,7 +637,11 @@
           entry (discovery/read-registry db)]
 
       (if (discovery/registry-fresh? entry probe-entry?)
-        (send-json-with-entry! entry "GET" "/v1/admin/status")
+        (send-json-with-entry! entry
+                               "GET"
+                               "/v1/admin/status"
+                               nil
+                               {:headers (lifecycle-protocol-headers)})
         {"status" "stopped"
          "db" (when-not (discovery/memory-db? db) (str (discovery/db-target db)))}))))
 
@@ -735,7 +753,11 @@
                               "`vis-agent gateway stop`.")})))]
 
     (if (discovery/registry-fresh? entry probe-entry?)
-      (let [res (try (send-json-with-entry! entry "POST" "/v1/admin/stop")
+      (let [res (try (send-json-with-entry! entry
+                                            "POST"
+                                            "/v1/admin/stop"
+                                            nil
+                                            {:headers (lifecycle-protocol-headers)})
                      (catch Throwable _ ::unreachable))]
         (if (= ::unreachable res) (escalate!) (do (forget!) res)))
       (if (and (:host entry) (:port entry) (not (port-free? (str (:host entry)) (:port entry))))
@@ -916,7 +938,11 @@
           (not (compare-and-set! stale-bounce-attempted? false true)) {:bounced? false
                                                                        :reason :checked}
           :else (let [status
-                      (try (send-json-with-entry! entry "GET" "/v1/admin/status")
+                      (try (send-json-with-entry! entry
+                                                  "GET"
+                                                  "/v1/admin/status"
+                                                  nil
+                                                  {:headers (lifecycle-protocol-headers)})
                            (catch Throwable _ nil))
 
                       verdict

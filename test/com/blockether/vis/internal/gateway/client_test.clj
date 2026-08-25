@@ -336,6 +336,43 @@
           (is (true? (:stopped? verdict)))
           (is (= 1 @stops)))))))
 
+;; Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: the freshly
+;; updated protocol-3 runtime could probe its protocol-2 gateway, but the safety
+;; status and stop requests were refused before the idle daemon could be released.
+(deftest update-can-release-an-idle-gateway-across-the-old-protocol-boundary
+  (let [handshake
+        @(rv 'gateway-handshake*)
+
+        previous
+        @handshake
+
+        calls
+        (atom [])]
+
+    (reset! handshake {:protocol 2 :min-client 2 :min-gateway 2 :version "0.1.41"})
+    (try
+      (with-redefs-fn
+        {(rv 'remote-gateway) (constantly nil)
+         (rv 'db-target) (constantly "/tmp/vis-update-control-test.db")
+         #'discovery/read-registry (constantly fake-entry)
+         #'discovery/registry-fresh? (constantly true)
+         #'http/request
+         (fn [{:keys [method headers] :as request}]
+           (swap! calls conj request)
+           (if (= "2" (get headers "X-Vis-Min-Gateway-Protocol"))
+             {:status 200
+              :body
+              (if (= :get method)
+                "{\"status\":\"running\",\"managed\":true,\"clients\":0,\"running_turns\":0,\"pid\":4242}"
+                "{\"status\":\"stopped\",\"stopping\":false}")}
+             {:status 400 :body "{\"message\":\"Update the gateway\"}"}))}
+        (fn []
+          (let [result (client/stop-daemon-if-idle!)]
+            (is (true? (:stopped? result)))
+            (is (= [:get :post] (mapv :method @calls)))
+            (is (every? #(= "2" (get-in % [:headers "X-Vis-Min-Gateway-Protocol"])) @calls)))))
+      (finally (reset! handshake previous)))))
+
 ;; The state `vis-agent update` leaves behind when a session was open: the daemon
 ;; keeps serving the old image, so the next client to find it unused replaces it.
 (deftest a-daemon-older-than-this-build-is-replaced-only-when-nobody-is-using-it
@@ -497,43 +534,41 @@
     (reset! guard false)
     (reset! cached nil)
     (reset! handshake {:protocol 1 :min-client 1 :min-gateway 1 :version "0.1.39"})
-    (try (with-redefs-fn {(requiring-resolve
-                            'com.blockether.vis.internal.gateway.protocol/release-version)
-                          (constantly "0.1.40")
-                          (rv 'report-version-bounce!) (constantly nil)
-                          (rv 'remote-gateway) (constantly nil)
-                          (rv 'db-target) (constantly "/tmp/vis-stale-bounce-test.db")
-                          (rv 'send-json-with-entry!) (fn [& _]
-                                                        idle-status)
-                          (rv 'await-daemon-down!) (constantly true)
-                          #'discovery/registry-fresh? (constantly false)
-                          (rv 'discover-or-recover!)
-                          (fn [& _]
-                            (let [attach (swap! attaches inc)]
-                              (when (> attach 1)
-                                ;; What this process starts in its place speaks this build's
-                                ;; protocol — READ, not spelled out, so raising the floor never
-                                ;; leaves this fixture pretending to be a daemon it just refused.
-                                (let [now (deref (requiring-resolve
-                                                   'com.blockether.vis.internal.gateway.protocol/protocol-version))]
-                                  (reset! handshake
-                                    {:protocol now
-                                     :min-client now
-                                     :min-gateway now
-                                     :version "0.1.40"})))
-                              {:entry (if (> attach 1) new-entry fake-entry)}))
-                          #'client/stop-daemon! (fn []
-                                                  (swap! stops inc)
-                                                  (reset! cached nil)
-                                                  {:status "stopped" :stopping false})}
-           (fn []
-             (is (= new-entry (client/ensure-gateway!))
-                 "an idle daemon older than this build is replaced, not refused as incompatible")
-             (is (= 1 @stops))
-             (is (= 2 @attaches))))
-         (finally (reset! guard false)
-                  (reset! handshake previous-handshake)
-                  (reset! cached previous-entry)))))
+    (try
+      (with-redefs-fn
+        {(requiring-resolve 'com.blockether.vis.internal.gateway.protocol/release-version)
+         (constantly "0.1.40")
+         (rv 'report-version-bounce!) (constantly nil)
+         (rv 'remote-gateway) (constantly nil)
+         (rv 'db-target) (constantly "/tmp/vis-stale-bounce-test.db")
+         (rv 'send-json-with-entry!) (fn [& _]
+                                       idle-status)
+         (rv 'await-daemon-down!) (constantly true)
+         #'discovery/registry-fresh? (constantly false)
+         (rv 'discover-or-recover!)
+         (fn [& _]
+           (let [attach (swap! attaches inc)]
+             (when (> attach 1)
+               ;; What this process starts in its place speaks this build's
+               ;; protocol — READ, not spelled out, so raising the floor never
+               ;; leaves this fixture pretending to be a daemon it just refused.
+               (let [now (deref (requiring-resolve
+                                  'com.blockether.vis.internal.gateway.protocol/protocol-version))]
+                 (reset! handshake
+                   {:protocol now :min-client now :min-gateway now :version "0.1.40"})))
+             {:entry (if (> attach 1) new-entry fake-entry)}))
+         #'client/stop-daemon! (fn []
+                                 (swap! stops inc)
+                                 (reset! cached nil)
+                                 {:status "stopped" :stopping false})}
+        (fn []
+          (is (= new-entry (client/ensure-gateway!))
+              "an idle daemon older than this build is replaced, not refused as incompatible")
+          (is (= 1 @stops))
+          (is (= 2 @attaches))))
+      (finally (reset! guard false)
+               (reset! handshake previous-handshake)
+               (reset! cached previous-entry)))))
 ;; Regression (reported: a gateway that stopped answering had to be killed by hand):
 ;; `stop-daemon!` reported a live orphan and handed the human an `lsof` line, with
 ;; the daemon's pid sitting in the registry entry it had just read.
