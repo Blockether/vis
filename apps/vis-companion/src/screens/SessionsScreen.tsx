@@ -2562,8 +2562,13 @@ const ProjectGroup = memo(function ProjectGroup({
   // The question the last read asked, so a page TURN paints what is already held and a
   // poll that only moved the list under an unchanged page repaints nothing.
   const asked = useRef('');
-  // The page LAST ANSWERED, whichever it is: the rows and the project's own count.
-  const [paged, setPaged] = useState<{ rows: Session[]; total: number } | null>(null);
+  // The page LAST ANSWERED, whichever it is: its place, rows, and the project's own
+  // count travel together. A slow answer must never put one page's number over another's rows.
+  const [paged, setPaged] = useState<{
+    start: number;
+    rows: Session[];
+    total: number;
+  } | null>(null);
   // A project FOLDS, and only the top one starts open: the screen's job is to show
   // the work that moved last, not four checkouts' history at once. What the reader
   // folds afterwards is theirs and outlives this component — see `lib/project-fold`.
@@ -2614,7 +2619,8 @@ const ProjectGroup = memo(function ProjectGroup({
     if (question !== asked.current) {
       asked.current = question;
       const held = api.heldProjectPage(root, limit, after, pins.current);
-      if (held) setPaged({ rows: held.rows.slice(start - from), total: held.total });
+      if (held)
+        setPaged({ start, rows: held.rows.slice(start - from), total: held.total });
     }
     void (async () => {
       try {
@@ -2629,6 +2635,7 @@ const ProjectGroup = memo(function ProjectGroup({
         if (answer.nextCursor)
           cursors.current.set(from + answer.rows.length, answer.nextCursor);
         setPaged({
+          start,
           rows: answer.rows.slice(start - from),
           total: answer.total,
         });
@@ -2666,13 +2673,16 @@ const ProjectGroup = memo(function ProjectGroup({
   // answer is on this device, and then what is on screen is the honest count.
   const total = searching ? sessions.length : (paged?.total ?? tally.count);
   const pageCount = Math.max(1, Math.ceil(Math.max(total, 1) / pageSize));
-  const shownPage = Math.min(page, pageCount);
+  const shownPage = searching
+    ? Math.min(page, pageCount)
+    : Math.min(paged ? Math.floor(paged.start / pageSize) + 1 : 1, pageCount);
   // A PAGE ARRIVES OVER THE ONE BEFORE IT, NEVER OVER A HOLE. The read a step takes
   // lands a beat after the tap, and a group that painted nothing meanwhile lost its
-  // rows, its height AND the pager the thumb had just pressed — the reflow this
-  // whole seam exists to end. So the last page answered stays on the glass until the
-  // next one lands, and only page ONE has something else to open on: what this device
-  // holds of this project, out of the machine's own window.
+  // rows, its height AND the pager the thumb had just pressed — the reflow this seam
+  // exists to end. The last page answered therefore stays on the glass until the next
+  // one lands, and its number stays attached to those rows for that whole wait. Only
+  // page ONE has something else to open on: what this device holds of this project,
+  // out of the machine's own window.
   const pageRows = paged?.rows ?? null;
   // Those held rows are a HEAD, not a page — a project deeper than the machine's window
   // has none of them — so they are only painted when they can fill the page. A group

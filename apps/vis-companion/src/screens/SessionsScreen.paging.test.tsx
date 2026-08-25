@@ -85,4 +85,35 @@ describe("a project is paged by the gateway that counts it", () => {
       view.restore();
     }
   });
+
+  // Regression, user report: on a slow connection the pager moved to the next
+  // number while the rows still belonged to the previous page, making page turns
+  // look ignored and sessions appear under the wrong page.
+  it("keeps a slow page turn attached to the rows the pager names", async () => {
+    window.innerHeight = 844;
+    const view = renderSessionsScreen({
+      machines: [{ sessions: rows, holdsDeeperPages: true }],
+    });
+    try {
+      await waitFor(() => expect(shown(view)).toHaveLength(12));
+      expect(shown(view)[0]).toBe("alpha 00");
+      await waitFor(() => expect(pageReads(view)).toHaveLength(2));
+
+      fireEvent.click(view.getByLabelText("Next page"));
+
+      // Until the slow answer lands, both halves keep saying page one. It used to
+      // announce page two over page one's rows for the whole network round trip.
+      expect(shown(view)[0]).toBe("alpha 00");
+      expect(view.getByLabelText("Page 1")).toHaveAttribute("aria-current", "page");
+      expect(view.getByLabelText("Page 2")).not.toHaveAttribute("aria-current");
+
+      view.releasePages();
+      await waitFor(() => expect(shown(view)[0]).toBe("alpha 12"));
+      expect(view.getByLabelText("Page 2")).toHaveAttribute("aria-current", "page");
+    } finally {
+      view.releasePages();
+      view.unmount();
+      view.restore();
+    }
+  });
 });

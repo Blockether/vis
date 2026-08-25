@@ -45,6 +45,11 @@ export interface MachineFixture {
    */
   holdsPages?: boolean;
   /**
+   * Answers the visible project page, then holds every page carrying an `after`
+   * cursor until `releasePages`, like a slow link behind the project head.
+   */
+  holdsDeeperPages?: boolean;
+  /**
    * Answers NOTHING until `releasePages`: its reads are accepted and held, the way a
    * paired machine that is slow to speak keeps its whole section off the glass while
    * the machines beside it paint.
@@ -347,7 +352,12 @@ export function renderSessionsScreen({
       if (held) await held;
       const reads = (listReads.get(machine) ?? 0) + 1;
       listReads.set(machine, reads);
-      if (!pagesReleased && (machine.holdsList || (machine.holdsPages && reads > 1))) {
+      if (
+        !pagesReleased &&
+        (machine.holdsList ||
+          (machine.holdsPages && reads > 1) ||
+          (machine.holdsDeeperPages && isPage && url.searchParams.has("after")))
+      ) {
         if (!heldPages)
           heldPages = new Promise<void>((resolve) => {
             releasePagesFn = resolve;
