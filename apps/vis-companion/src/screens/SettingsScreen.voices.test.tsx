@@ -136,6 +136,23 @@ describe("hearing a voice before choosing it", () => {
     expect(client.speechModel).not.toHaveBeenCalled();
   });
 
+  // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: every sample
+  // was a worded button at the far right, detached from the voice it lets you hear.
+  it("puts an icon-only sample action before the voice name", async () => {
+    mount(new Blob(["wav"], { type: "audio/wav" }));
+
+    const play = await screen.findByRole("button", {
+      name: "Play a sample of Kristin (en-US, medium)",
+    });
+    const voice = screen.getByRole("button", { name: /^Kristin/ });
+    const row = voice.parentElement;
+
+    expect(row?.firstElementChild).toBe(play);
+    expect(row?.children.item(1)).toBe(voice);
+    expect(play.textContent).toBe("");
+    expect(play.querySelector("svg")).not.toBeNull();
+  });
+
   it("offers no sample where there is nothing to play", async () => {
     mount(new Blob(["wav"], { type: "audio/wav" }));
 

@@ -77,6 +77,7 @@ import {
   setThemePref,
 } from "../lib/storage";
 import { speechOutput } from "../lib/speech";
+import { PlayIcon } from "../components/icons";
 import { bestDeviceVoices, deviceVoices, type DeviceVoice } from "../lib/speech-voices";
 import {
   DEFAULT_THEME,
@@ -1212,7 +1213,7 @@ export function VoicesPanel({
           // cheap step away (a 0.7 MB pack, or a line synthesized by a model already
           // installed) - never the voice model itself, which is what this button avoids.
           const canHear = !!(voice.is_sample_ready || voice.is_sample_preparable);
-          const hasTrailing = canHear || !!voice.is_imported || canPrepare;
+          const hasTrailing = !!voice.is_imported || canPrepare;
           return (
             <div key={voice.id}>
               <div
@@ -1234,6 +1235,16 @@ export function VoicesPanel({
                     .join(" · ")}
                   isSelected={prefs?.gatewayVoice === voice.id}
                   showSelectionMark={!model || model.status === "ready"}
+                  leadingAction={
+                    canHear
+                      ? {
+                          label: `Play a sample of ${voice.label ?? voice.id}`,
+                          icon: <PlayIcon className="size-3.5" />,
+                          disabled: playing === voice.id,
+                          onClick: () => void playSample(voice),
+                        }
+                      : undefined
+                  }
                   disabled={!!model && model.status !== "ready"}
                   onClick={() => {
                     void chooseVoice(voice.id);
@@ -1242,16 +1253,6 @@ export function VoicesPanel({
                 />
                 {hasTrailing && (
                   <div className="flex shrink-0 items-center gap-2">
-                    {canHear && (
-                      <Button
-                        variant="secondary"
-                        aria-label={`Play a sample of ${voice.label ?? voice.id}`}
-                        disabled={playing === voice.id}
-                        onClick={() => void playSample(voice)}
-                      >
-                        {playing === voice.id ? "Playing…" : "Play"}
-                      </Button>
-                    )}
                     {voice.is_imported && confirming !== voice.id && (
                       <Button variant="secondary" onClick={() => setConfirming(voice.id)}>
                         Forget
