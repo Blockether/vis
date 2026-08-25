@@ -1977,15 +1977,15 @@ export function SessionsScreen({
         )}
         {sessions === null ? (
           <NavigatorSkeleton />
-        ) : visible?.length === 0 ? (
+        ) : visible?.length === 0 && sections.every(({ groups }) => groups.length === 0) ? (
           <div className={`px-5 py-16 text-center ${LIST_FRAME}`}>
             {/* A query whose answer has not come back yet is not a dead end, and
                 saying "No matching sessions" while every gateway is still reading
                 its transcripts is the screen lying about a result it does not
-                have. It was the whole report: no word about where the search was,
-                then a list that arrived much later. */}
+                have. Outside search, this state means there is NO PROJECT: an empty
+                project still renders its own header and the New session action it owns. */}
             <p className="font-mono text-body font-bold text-white/70">
-              {searchPending ? 'Searching...' : query ? 'No matching sessions' : 'No sessions yet'}
+              {searchPending ? 'Searching...' : query ? 'No matching sessions' : 'No projects yet'}
             </p>
             <p aria-live="polite" className="mt-2 font-mono text-ui text-dialog-hint">
               {searchPending
@@ -1994,7 +1994,7 @@ export function SessionsScreen({
                   : 'Reading this machine’s transcripts.'
                 : query
                   ? searchVerdict
-                  : 'Open the ⋯ menu to start one.'}
+                  : 'Add a project to start a session.'}
             </p>
             {/* The field is in the app bar now, a screen away from this sentence, so the
                 way back to a full list is offered where the dead end is. A search still
@@ -2040,7 +2040,7 @@ export function SessionsScreen({
                                   : searchAnswered.has(key)
                                     ? 'No matches on this machine.'
                                     : 'Searching this machine...'
-                                : 'No sessions on this machine yet.'}
+                                : 'No projects on this machine yet.'}
                           </p>
                         </div>
                       )

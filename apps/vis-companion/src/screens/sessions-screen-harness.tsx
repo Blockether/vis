@@ -10,7 +10,7 @@ import { render } from "@testing-library/react";
 
 import { projectPath, sessionIsLive } from "../lib/fleet";
 import { SessionsScreen } from "./SessionsScreen";
-import type { GatewayConn, Session } from "../lib/types";
+import type { GatewayConn, ProjectOverview, Session } from "../lib/types";
 import type { SharedPayload } from "../lib/share-intake";
 
 export interface MachineFixture {
@@ -55,6 +55,8 @@ export interface MachineFixture {
    * the machines beside it paint.
    */
   holdsList?: boolean;
+  /** Persisted projects, including roots that do not have a session yet. */
+  projects?: ProjectOverview[];
   routes?: Record<string, unknown>;
 }
 
@@ -150,21 +152,28 @@ function listCursor(row: Session, dirty: ReadonlySet<string>): string {
 }
 
 /** The stable totals the real gateway carries beside its session-list head. */
-function overviewFor(rows: Session[]) {
+function overviewFor(rows: Session[], saved: ProjectOverview[] = []) {
   const byRoot = new Map<string, Session[]>();
   for (const row of rows)
     byRoot.set(projectPath(row), [...(byRoot.get(projectPath(row)) ?? []), row]);
-  return {
-    projects: [...byRoot.entries()].map(([root, group]) => ({
+  const known = new Map(saved.map((project) => [project.root, project]));
+  const roots = [...new Set([...known.keys(), ...byRoot.keys()])];
+  const projects = roots.map((root) => {
+    const group = byRoot.get(root) ?? [];
+    const project = known.get(root);
+    return {
       root,
-      project_id: null,
-      name: "",
+      project_id: project?.project_id ?? null,
+      name: project?.name ?? "",
       session_count: group.length,
       live_count: group.filter(sessionIsLive).length,
       awaiting_count: group.filter((row) => row.is_awaiting_input === true).length,
-      last_activity_ms: 0,
-    })),
-    project_count: byRoot.size,
+      last_activity_ms: project?.last_activity_ms ?? 0,
+    };
+  });
+  return {
+    projects,
+    project_count: projects.length,
     session_count: rows.length,
     live_count: rows.filter(sessionIsLive).length,
     awaiting_count: rows.filter((row) => row.is_awaiting_input === true).length,
@@ -178,7 +187,7 @@ function overviewFor(rows: Session[]) {
  * and a fake that cut it a second way would prove the app against a list nobody
  * runs.
  */
-export function sessionsWindow(rows: Session[], url: URL) {
+export function sessionsWindow(rows: Session[], url: URL, projects: ProjectOverview[] = []) {
   // The device sends the ONE fact this gateway cannot know: which of its sessions
   // are holding words typed here. Everything else about the order is answered.
   const dirty = new Set(
@@ -208,7 +217,7 @@ export function sessionsWindow(rows: Session[], url: URL) {
     // head window, complete however deep the fleet sits. A project's page is not
     // that head: it carries neither.
     awaiting: ranked.filter((session) => session.is_awaiting_input === true),
-    ...(after || root ? {} : { overview: overviewFor(ranked) }),
+    ...(after || root ? {} : { overview: overviewFor(ranked, projects) }),
   };
 }
 
@@ -306,7 +315,7 @@ export function renderSessionsScreen({
       if (machine.down || machine.hangs) throw new TypeError("Failed to fetch");
       if (machine.routes && url.pathname in machine.routes)
         return answer(machine.routes[url.pathname]);
-      return answer(overviewFor(machine.sessions ?? []));
+      return answer(overviewFor(machine.sessions ?? [], machine.projects));
     }
     // A project's page is a read of ITS OWN (`GatewayClient.listProjectPage`) and it
     // rides on whatever the machine is doing. What a fixture COUNTS is the fleet read
@@ -325,6 +334,27 @@ export function renderSessionsScreen({
     if (machine.down && !(machine.heals && seen > 1)) throw new TypeError("Failed to fetch");
     if (machine.routes && url.pathname in machine.routes)
       return answer(machine.routes[url.pathname]);
+    if (
+      url.pathname === "/v1/projects/actions/ensure" &&
+      (init?.method ?? "GET") === "POST"
+    ) {
+      const body = (sent ? JSON.parse(sent) : {}) as Record<string, unknown>;
+      const root = typeof body.root === "string" ? body.root : "";
+      let project = machine.projects?.find((entry) => entry.root === root);
+      if (!project) {
+        project = {
+          root,
+          project_id: `project-${++created}`,
+          name: "",
+          session_count: 0,
+          live_count: 0,
+          awaiting_count: 0,
+          last_activity_ms: 0,
+        };
+        machine.projects = [...(machine.projects ?? []), project];
+      }
+      return answer({ id: project.project_id });
+    }
     // PATCH /v1/sessions/:sid — the gateway OWNS what this changes: it applies the
     // star (or the rename) to its own row, echoes the row back, and every later list
     // read from this machine tells the same story.
@@ -364,7 +394,7 @@ export function renderSessionsScreen({
           });
         await heldPages;
       }
-      return answer(sessionsWindow(machine.sessions ?? [], url));
+      return answer(sessionsWindow(machine.sessions ?? [], url, machine.projects));
     }
     if (url.pathname === "/v1/sessions/actions/search") return answer({ matches: [] });
     return answer({});

@@ -211,6 +211,42 @@ describe('where "New session" lives', () => {
     expect(opened).toEqual([]);
   });
 
+  // Regression, user report, Vis session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25:
+  // the empty state pointed at an overflow menu that did not exist, then adding the first
+  // project left that dead end over its header and made New session unreachable.
+  it("guides the first project into a usable session action", async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: "alpha",
+          sessions: [],
+          routes: {
+            "/v1/fs": {
+              path: "/Users/dev",
+              parent: "/Users",
+              home: "/Users/dev",
+              is_truncated: false,
+              entries: [],
+            },
+          },
+        },
+      ],
+    });
+    restore = view.restore;
+
+    expect(await screen.findByText("No projects yet")).toBeInTheDocument();
+    expect(screen.getByText("Add a project to start a session.")).toBeInTheDocument();
+    expect(screen.queryByText(/Open the .* menu/)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Projects on alpha" }));
+    await screen.findByText("No folders in here.");
+    await userEvent.click(screen.getByRole("button", { name: "Use project" }));
+
+    const project = await screen.findByLabelText("dev sessions");
+    const create = within(project).getByRole("button", { name: "New session on alpha" });
+    expect(create.getAttribute("title")).toBe("New session on alpha, in dev");
+  });
+
   // Regression, user report (the machine band struck out on a screenshot, with the create
   // verb moved up to the row that holds the machine chips): a band inside the card named
   // the machine the chips had just named, printed "2 projects · 1080 sessions" that every
@@ -262,7 +298,7 @@ describe("machine, project and session are three different shapes", () => {
     const view = renderSessionsScreen({ machines: [{ label: "alpha", sessions: [] }] });
     restore = view.restore;
 
-    await screen.findByText("No sessions yet");
+    await screen.findByText("No projects yet");
     expect(screen.getAllByRole("button", { name: "Projects on alpha" })).toHaveLength(1);
   });
 
