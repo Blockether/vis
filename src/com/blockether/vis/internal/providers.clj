@@ -239,13 +239,20 @@
    session had `vis.jailed_shell_session` and `vis.ask` refuse it as \"available
    only while handling a session\", `vis.state` fall back to the process-wide DB,
    and a `vis.jailed_shell` spawn scoped to the process cwd instead of the
-   caller's workspace."
-  [label f]
-  (let [fut (cancel/worker-future (str "vis-provider-" label) (bound-fn* f))]
-    (try (let [value (deref fut probe-timeout-ms ::timed-out)]
-           (when (identical? ::timed-out value) (.cancel ^java.util.concurrent.Future fut true))
-           value)
-         (catch java.util.concurrent.ExecutionException e (throw (or (.getCause e) e))))))
+   caller's workspace.
+
+   The 4-arity takes the wall explicitly and decides whether a late probe is
+   CANCELLED. A callback whose result is MEMOIZED must be left running: the value
+   it is still computing is exactly what makes the next request fast, and an
+   interrupt would cache the failure instead."
+  ([label f] (probe-within label probe-timeout-ms true f))
+  ([label timeout-ms cancel? f]
+   (let [fut (cancel/worker-future (str "vis-provider-" label) (bound-fn* f))]
+     (try (let [value (deref fut timeout-ms ::timed-out)]
+            (when (and cancel? (identical? ::timed-out value))
+              (.cancel ^java.util.concurrent.Future fut true))
+            value)
+          (catch java.util.concurrent.ExecutionException e (throw (or (.getCause e) e)))))))
 
 (defn safe-provider-status
   "Status of a REGISTERED provider descriptor via its `:provider/status-fn`
@@ -327,17 +334,45 @@
                 :error
                 (str "Can't reach " label " at " host " (" (or (ex-message e) (str e)) ")")))))))))
 
+(def limits-probe-timeout-ms
+  "Wall a provider's `:provider/limits-fn` gets before its report is declared
+   late. `/v1/router` asks EVERY provider for one before the model picker can
+   paint, so a single account endpoint that hangs used to hold the entire payload
+   until the client's own 30s bound aborted it — and the model you were switching
+   to never arrived."
+  4000)
+
+(defn- limits-error-report
+  "The report shape a failed or late limits probe answers instead of throwing."
+  [provider-id message]
+  {:provider-id provider-id
+   :status :error
+   :static {}
+   :dynamic {:limits []}
+   :error {:message message}})
+
 (defn provider-limits-safe
   "Normalized limits report for a provider id; an error report instead
-   of a throw."
+   of a throw, and never slower than `limits-probe-timeout-ms`.
+
+   A late probe is deliberately NOT cancelled: `provider-limits` memoizes the
+   report it is still computing, so abandoning this read leaves the next one warm."
   [provider]
-  (try (provider-limits/provider-limits (:id provider))
-       (catch Throwable e
-         {:provider-id (:id provider)
-          :status :error
-          :static {}
-          :dynamic {:limits []}
-          :error {:message (or (ex-message e) (str e))}})))
+  (let [provider-id
+        (:id provider)
+
+        value
+        (try (probe-within (str provider-id "-limits")
+                           limits-probe-timeout-ms
+                           false
+                           #(provider-limits/provider-limits provider-id))
+             (catch Throwable e (limits-error-report provider-id (or (ex-message e) (str e)))))]
+
+    (if (identical? ::timed-out value)
+      (limits-error-report
+        provider-id
+        (str "limits check timed out after " (quot (long limits-probe-timeout-ms) 1000) "s"))
+      value)))
 
 (defn- limits-status-message
   [limits fallback]

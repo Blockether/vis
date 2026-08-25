@@ -704,6 +704,32 @@
     (is (false? (:is-authenticated detected)))
     (is (str/includes? (str (:error detected)) "timed out"))))
 
+;; Regression, issue 9cc1d0a0-2836-4518-b504-bc9f70eae7c4: `/v1/router` asks EVERY
+;; provider for its account limits before the model picker can paint, and that
+;; probe had no wall — a single hung endpoint held the whole payload until the
+;; app's own 30s request bound aborted it, so changing the model in a session took
+;; minutes and often just failed.
+(deftest provider-limits-probe-never-runs-unbounded-test
+  (let [;; The contract under test is the WALL, not its length, so shrink the
+        ;; production ceiling instead of sleeping through it. The stand-in still
+        ;; outlives that ceiling by an order of magnitude, which is what an
+        ;; unbounded probe used to hand straight to the client.
+        outcome
+        (with-redefs [providers/limits-probe-timeout-ms 250
+                      provider-limits/provider-limits
+                      (fn [provider-id]
+                        (Thread/sleep 3000)
+                        {:provider-id provider-id :status :ok :static {} :dynamic {:limits []}})]
+
+          (let [started (System/nanoTime)
+                value (providers/provider-limits-safe {:id :wedged})]
+
+            {:value value :elapsed-ms (quot (- (System/nanoTime) started) 1000000)}))]
+    (is (= :error (:status (:value outcome))))
+    (is (str/includes? (str (get-in outcome [:value :error :message])) "timed out"))
+    (is (= [] (get-in outcome [:value :dynamic :limits])))
+    (is (< (long (:elapsed-ms outcome)) 2000))))
+
 ;; Regression, issue #113: bounding the probe moved the callback onto a bare
 ;; worker thread with no binding conveyance, so a provider callback invoked from
 ;; inside a LIVE session saw no session at all — `vis.jailed_shell_session` and
