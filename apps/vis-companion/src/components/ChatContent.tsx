@@ -2453,7 +2453,6 @@ const TraceSegment = memo(function TraceSegment({
                 <LiveViewPanel
                   view={liveActivity}
                   isSettled={liveActivity.is_settled}
-                  endedAt={liveActivity.ended_at}
                 />
               ) : client && sid && chunk.attachment ? (
                 <LiveRunRow

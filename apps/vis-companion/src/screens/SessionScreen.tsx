@@ -192,6 +192,8 @@ interface LiveTurn {
   request: string;
   answer: string;
   iterations: TranscriptIteration[];
+  /** Replay head announced before its older frames, so the ticker starts at NOW. */
+  latestIteration?: number;
   activity?: LiveActivity;
   startedAt: number;
   cancelling?: boolean;
@@ -482,6 +484,27 @@ function commandPhase(request: string): string | null {
   return null;
 }
 
+interface LiveReplayHead {
+  turnId: string;
+  iteration: number;
+}
+
+/** Keep a chronological replay from walking the visible ticker back to its start. */
+function withReplayHead(
+  turn: LiveTurn | null,
+  head: LiveReplayHead | null,
+): LiveTurn | null {
+  if (
+    !turn ||
+    turn.status !== "running" ||
+    !head ||
+    turn.id !== head.turnId ||
+    (turn.latestIteration ?? 0) >= head.iteration
+  )
+    return turn;
+  return { ...turn, latestIteration: head.iteration };
+}
+
 function liveProgressPhase(
   turn: LiveTurn,
   connected: boolean,
@@ -495,6 +518,7 @@ function liveProgressPhase(
   const activity = turn.activity;
   const iteration = Math.max(
     turn.iterations.length,
+    turn.latestIteration ?? 0,
     activity?.iteration == null ? 0 : activity.iteration,
   );
 
@@ -1513,6 +1537,10 @@ export function SessionScreen({
   // ALREADY in it, and re-applying them would reset it to empty and re-append
   // the same prose. Anything at or below this seq is dropped.
   const lastLiveSeqRef = useRef(liveSeed?.seq ?? -1);
+  // `subscription.ready` is flushed before the chronological running-turn replay.
+  // Hold its current position across that backfill so the ticker says where the
+  // turn IS, while old thinking/forms arrive underneath without counting upward.
+  const latestReplayHeadRef = useRef<LiveReplayHead | null>(null);
   // The sid whose bubble the cache effect last wrote, so a session switch never
   // stores the outgoing bubble under the incoming id.
   const liveSidRef = useRef(sid);
@@ -2319,8 +2347,9 @@ export function SessionScreen({
         startedAt,
         status: "running",
       };
-      liveTurnRef.current = adopted;
-      setLiveTurn(adopted);
+      const current = withReplayHead(adopted, latestReplayHeadRef.current) ?? adopted;
+      liveTurnRef.current = current;
+      setLiveTurn(current);
       setRunning(true);
     },
     [client, sid],
@@ -2650,6 +2679,23 @@ export function SessionScreen({
           typeof event.current_turn_id === "string"
             ? event.current_turn_id
             : "";
+        const latest =
+          typeof event.latest_iteration === "number" &&
+          Number.isFinite(event.latest_iteration) &&
+          event.latest_iteration > 0
+            ? Math.trunc(event.latest_iteration)
+            : 0;
+        if (running && latest > 0) {
+          const head = { turnId: running, iteration: latest };
+          latestReplayHeadRef.current = head;
+          const headed = withReplayHead(live, head);
+          if (headed !== live) {
+            liveTurnRef.current = headed;
+            setLiveTurn(headed);
+          }
+        } else if (event.is_live === false) {
+          latestReplayHeadRef.current = null;
+        }
         // An older daemon omits the state entirely; then the frame degrades to
         // "reconcile on every reconnect", which is merely one extra read.
         if (typeof event.is_live === "boolean" && running === painted) return;
@@ -3379,7 +3425,10 @@ export function SessionScreen({
       // still the PREVIOUS batch's bubble when `settle` reads it three lines
       // below — and settle decides both who owns the terminal frame and what
       // this bubble had already painted from exactly that read.
-      const reduced = batch.reduce(reduceLiveEvent, liveTurnRef.current);
+      const reduced = withReplayHead(
+        batch.reduce(reduceLiveEvent, liveTurnRef.current),
+        latestReplayHeadRef.current,
+      );
       liveTurnRef.current = reduced;
       setLiveTurn(reduced);
 

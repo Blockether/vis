@@ -1582,6 +1582,64 @@
                     (is (nil? (re-find #"\"current_turn_id\"\s*:\s*\""
                                        (get ready sid-idle))))))))))))))
 
+;; Regression, issue reported in session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25:
+;; a phone joining iteration 420 learned that position only after replaying the
+;; running turn from iteration 1, so its live ticker visibly counted through history.
+(deftest subscription-ready-leads-running-replay-with-its-latest-iteration
+  (testing "the current position arrives before the journal frames it summarizes"
+    (with-redefs-fn {#'server/stop! (fn []
+                                      nil)}
+      (fn []
+        (with-server-state!
+          {}
+          (fn []
+            (let [multi-sse-body
+                  (rv 'multi-sse-body)
+
+                  write-body
+                  (requiring-resolve 'ring.core.protocols/write-body-to-stream)
+
+                  sid
+                  (str (java.util.UUID/randomUUID))
+
+                  baos
+                  (java.io.ByteArrayOutputStream.)]
+
+              (state/append-event! sid "test.seed" {:n 1})
+              (state/append-event! sid "iteration.completed" {:turn-id "t-old" :iteration 900})
+              (state/ingest-mirrored-event! sid
+                                            true
+                                            {"type" "turn.started"
+                                             "turn_id" "t-live"
+                                             "request" "keep working"
+                                             "session_id" sid})
+              (state/ingest-mirrored-event!
+                sid
+                true
+                {"type" "iteration.completed" "turn_id" "t-live" "iteration" 420 "session_id" sid})
+              (let [body
+                    (multi-sse-body [[sid 0]] false nil false)
+
+                    fut
+                    (future (try (write-body body {} baos) (catch Throwable _ nil)))]
+
+                (is (wait-until #(re-find #"iteration.completed"
+                                          (String. (.toByteArray baos) "UTF-8"))))
+                (future-cancel fut)
+                (let [wire
+                      (String. (.toByteArray baos) "UTF-8")
+
+                      ready-at
+                      (.indexOf wire "subscription.ready")
+
+                      replay-at
+                      (.indexOf wire "turn.started")]
+
+                  (is (<= 0 ready-at))
+                  (is (< ready-at replay-at))
+                  (is (re-find #"\"latest_iteration\"\s*:\s*420"
+                               (subs wire ready-at replay-at))))))))))))
+
 ;; ── Resource rid rides the QUERY STRING, not a path segment (issue #14) ──
 ;; A resource id can embed an absolute path — an nREPL id is `nrepl:/Users/…/ws`.
 ;; Percent-encoded into a PATH SEGMENT its `/` becomes `%2F`, which Jetty rejects

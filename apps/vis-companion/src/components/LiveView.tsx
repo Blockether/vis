@@ -522,17 +522,6 @@ const ACTIVITY_FACE = {
   },
 } as const;
 
-function activityElapsed(startedAt?: number, endedAt?: number): string | null {
-  if (startedAt === undefined || endedAt === undefined) return null;
-  const milliseconds = Math.max(0, endedAt - startedAt);
-  if (milliseconds < 1000) return `${Math.round(milliseconds)}ms`;
-  const seconds = milliseconds / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remaining = Math.floor(seconds % 60);
-  if (minutes < 60) return `${minutes}m ${remaining}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
 
 function activityPreview(activity?: ActivityProjection): string {
   const row = activity?.rows.find((candidate) => candidate.state === 'running');
@@ -574,44 +563,24 @@ function ActivityRail({ activity }: { activity?: ActivityProjection }) {
 function ActivityViewPanel({
   view,
   isSettled,
-  endedAt,
 }: {
   view: LiveViewModel;
   isSettled: boolean;
-  endedAt?: number;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const activity = view.activity;
   const state = activity?.state ?? 'idle';
   const face = ACTIVITY_FACE[state];
-  const rail = face.rail;
-  const ink = face.ink;
-  const mark = face.mark;
   const preview = activityPreview(activity);
-  const duration = activityElapsed(view.created_at, endedAt ?? (isSettled ? undefined : now));
-
-  useEffect(() => {
-    if (isSettled || state !== 'running' || view.created_at === undefined) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(timer);
-  }, [isSettled, state, view.created_at]);
 
   return (
     <section
-      className={`min-w-0 overflow-hidden border border-dialog-edge border-l-2 ${rail} bg-result shadow-[2px_2px_0_var(--dialog-shadow)]`}
+      className={`min-w-0 overflow-hidden border-l-2 ${face.rail} bg-result`}
       aria-label="Activity"
       role={isSettled ? undefined : 'status'}
       aria-live={isSettled ? undefined : 'polite'}
     >
-      <header className="flex min-h-10 items-center gap-2 bg-result px-2.5 mouse:min-h-8">
-        {state === 'running' ? (
-          <Spinner tone="accent" />
-        ) : (
-          <span aria-hidden="true" className={`font-mono text-ui font-bold ${ink}`}>
-            {mark}
-          </span>
-        )}
+      <header className="flex min-h-8 items-center gap-1.5 bg-result px-2">
         <Disclosure
           isOpen={expanded}
           tone="step"
@@ -622,21 +591,13 @@ function ActivityViewPanel({
           <span className="flex min-w-0 flex-1 items-baseline gap-2">
             <BandLabel className="shrink-0">ACTIVITY</BandLabel>
             <span
-              className={`shrink-0 font-mono text-chip font-bold normal-case tracking-normal ${ink}`}
+              className={`shrink-0 font-mono text-chip font-bold normal-case tracking-normal ${face.ink}`}
             >
               {face.label}
             </span>
             <span className="min-w-0 flex-1 truncate font-normal tracking-normal text-code-result">
               {preview}
             </span>
-            {duration && (
-              <span
-                aria-hidden="true"
-                className="shrink-0 font-mono text-chip font-normal tabular-nums tracking-normal text-code-duration"
-              >
-                {duration}
-              </span>
-            )}
           </span>
         </Disclosure>
       </header>
@@ -657,7 +618,6 @@ export function LiveViewPanel({
   error,
   load,
   isSettled = false,
-  endedAt,
 }: {
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
@@ -673,8 +633,6 @@ export function LiveViewPanel({
    * itself to a screen reader as one that can.
    */
   isSettled?: boolean;
-  /** Record seal time; paired with `created_at` for a frozen settled duration. */
-  endedAt?: number;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
@@ -690,7 +648,7 @@ export function LiveViewPanel({
     send(typed.trim() === '' ? null : typed.trim());
   };
   if (view.classification === 'activity') {
-    return <ActivityViewPanel view={view} isSettled={isSettled} endedAt={endedAt} />;
+    return <ActivityViewPanel view={view} isSettled={isSettled} />;
   }
 
   return (

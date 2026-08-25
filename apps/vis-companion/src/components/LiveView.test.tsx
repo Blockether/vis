@@ -149,18 +149,23 @@ describe('a live view on the phone', () => {
     expect(onInterrupt).not.toHaveBeenCalled();
   });
 
-  it('keeps the approved touch-row disclosure contract', () => {
+  it('matches the compact result-band height without a leading status mark', () => {
     paint({ view: activityView() });
     const receipt = screen.getByLabelText('Activity');
     const header = receipt.querySelector('header');
     const disclosure = screen.getByRole('button', { name: 'Expand Activity' });
-    expect(header?.className).toContain('min-h-10');
-    expect(header?.className).toContain('mouse:min-h-8');
+
+    expect(receipt.classList.contains('border')).toBe(false);
+    expect(receipt.className).toContain('border-l-2');
+    expect(header?.classList.contains('min-h-8')).toBe(true);
+    expect(header?.classList.contains('min-h-10')).toBe(false);
+    expect(header?.querySelector('.animate-spinner-frame')).toBeNull();
+    expect(header?.querySelector('.text-code-duration')).toBeNull();
     expect(disclosure.className).toContain('min-h-8');
     expect(disclosure.className).toContain('motion-reduce:transition-none');
   });
 
-  it('keeps the lifecycle state and duration after settlement', () => {
+  it('keeps the lifecycle words without a status mark after settlement', () => {
     const view = activityView();
     paint({
       view: {
@@ -173,11 +178,11 @@ describe('a live view on the phone', () => {
         },
       },
       isSettled: true,
-      endedAt: 15_200,
     });
+    const header = screen.getByLabelText('Activity').querySelector('header');
     expect(screen.getByText('Completed')).toBeTruthy();
     expect(screen.getByText('No operation in progress')).toBeTruthy();
-    expect(screen.getByText('14.2s')).toBeTruthy();
+    expect(header?.textContent).not.toContain('✓');
     expect(screen.queryByRole('status')).toBeNull();
   });
 

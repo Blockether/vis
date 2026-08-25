@@ -1026,5 +1026,10 @@ export interface SseEvent {
    */
   current_turn_id?: string | null;
   is_live?: boolean;
+  /**
+   * `subscription.ready` only: newest 1-based iteration in the replay that
+   * follows this control frame. The UI paints this head before backfilling.
+   */
+  latest_iteration?: number;
   [k: string]: unknown;
 }

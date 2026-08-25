@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 
-import { renderSessionScreen } from "./session-screen-harness";
+import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 import activityFixture from "../lib/activity.fixture.json";
 
 // Reported from a phone: the message was sent and the session title updated, but
@@ -40,6 +40,80 @@ describe("a running turn the session read cannot confirm", () => {
     expect(
       (await screen.findAllByText(/Vis is waiting for an update/)).length,
     ).toBeGreaterThan(0);
+  });
+
+  // Regression, issue reported in session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25:
+  // opening a turn already at iteration 420 replayed its journal from iteration 1,
+  // so the live ticker visibly counted through old work before reaching the present.
+  it("paints the replay's latest iteration before its older frames", async () => {
+    const listeners = new Set<(event: Record<string, unknown>) => void>();
+    const never = new Promise<never>(() => {});
+
+    renderSessionScreen({
+      session: sessionFixture({
+        status: "running",
+        live: true,
+        current_turn_id: "t-live",
+        running_request: "keep working",
+      }),
+      client: {
+        cachedTranscript: () => [],
+        transcript: () => never,
+        turnTrace: () => never,
+      },
+      subscriptions: {
+        subscribeConnection: (on: (live: boolean) => void) => {
+          on(true);
+          return () => {};
+        },
+        subscribeSession: (
+          _sid: string,
+          on: (event: Record<string, unknown>) => void,
+        ) => {
+          listeners.add(on);
+          return () => listeners.delete(on);
+        },
+      },
+    });
+
+    await waitFor(() => expect(listeners.size).toBeGreaterThanOrEqual(2));
+    const emit = (event: Record<string, unknown>) => {
+      for (const listener of listeners) listener(event);
+    };
+
+    act(() => {
+      emit({
+        type: "subscription.ready",
+        session_id: "s1",
+        current_turn_id: "t-live",
+        is_live: true,
+        latest_iteration: 420,
+      });
+      emit({
+        type: "turn.started",
+        session_id: "s1",
+        turn_id: "t-live",
+        request: "keep working",
+        seq: 1,
+      });
+    });
+
+    expect(
+      (await screen.findAllByText(/Vis is working \(iter 420\)/)).length,
+    ).toBeGreaterThan(0);
+
+    act(() => {
+      emit({
+        type: "iteration.completed",
+        session_id: "s1",
+        turn_id: "t-live",
+        iteration: 1,
+        seq: 2,
+      });
+    });
+
+    expect(screen.queryByText(/\(iter 1\)/)).toBeNull();
+    expect(screen.getAllByText(/\(iter 420\)/).length).toBeGreaterThan(0);
   });
 
   it("does not hand painted output to a matching but still empty settled row", async () => {

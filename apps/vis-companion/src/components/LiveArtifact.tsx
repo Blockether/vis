@@ -217,7 +217,7 @@ function ActivityReceipt({
   }, [client, sid, iterationId, index]);
 
   if (record?.view.classification === 'activity') {
-    return <LiveViewPanel view={record.view} isSettled endedAt={record.ended_at} />;
+    return <LiveViewPanel view={record.view} isSettled />;
   }
   return (
     <p className="border border-dialog-edge bg-panel px-3 py-2 font-mono text-chip text-dialog-hint">

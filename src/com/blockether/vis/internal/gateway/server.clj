@@ -669,6 +669,25 @@
       (long (or (state/running-turn-start-cursor sid) current))
       requested)))
 
+(defn- latest-replay-iteration
+  "Highest 1-based iteration for the current turn in an atomically captured SSE
+   replay. The ready frame sends this HEAD before the replay body, so a joining
+   UI can state where the live turn is now while it backfills older frames."
+  ^long [replay turn-id]
+  (if-let [wanted (some-> turn-id
+                          str)]
+    (reduce (fn [^long latest event]
+              (let [event-turn (some-> (get event "turn_id")
+                                       str)
+                    position (get event "iteration")]
+
+                (if (and (= wanted event-turn) (number? position))
+                  (max latest (long position))
+                  latest)))
+            0
+            replay)
+    0))
+
 (defn- sse-ready!
   "Write the `subscription.ready` control frame for one subscribed session,
    echoing the cursor the server actually resumed from so a client that asked
@@ -683,6 +702,10 @@
    verdict that the socket missed a terminal frame, so the client reconciles at
    once instead of waiting out a grace + probe interval.
 
+   `latest_iteration` is the replay's high-water position. It rides this first,
+   flushed frame so a client paints iteration 420 immediately, then fills its
+   details from the chronological replay without visibly counting 1…420.
+
    `is_live` is what keeps 'the session is idle' distinguishable from 'this
    daemon is too old to say': a client that sees no `is_live` must treat the
    frame as no verdict at all and fall back to asking.
@@ -691,19 +714,26 @@
    multiplexed alike — so no client has to special-case which endpoint it is
    attached to. Like every other frame it rides `wire/sse-frame`, i.e. it is an
    ordinary `id:`/`event:`/`data:` frame, not a bespoke encoding."
-  [^OutputStream out sid ^long cursor]
-  (let [tid (state/current-turn-id sid)]
-    (.write out
-            (.getBytes (wire/sse-frame (wire/canonical {:type "subscription.ready"
-                                                        :session_id (str sid)
-                                                        :cursor cursor
-                                                        :current_turn_id (some-> tid
-                                                                                 str)
-                                                        :is_live (some? tid)
-                                                        :server_time_ms
-                                                        (System/currentTimeMillis)}))
-                       StandardCharsets/UTF_8)))
-  (.flush out))
+  [^OutputStream out sid ^long cursor replay]
+  (let [tid
+        (state/current-turn-id sid)
+
+        latest-iteration
+        (latest-replay-iteration replay tid)
+
+        payload
+        (cond-> {:type "subscription.ready"
+                 :session_id (str sid)
+                 :cursor cursor
+                 :current_turn_id (some-> tid
+                                          str)
+                 :is_live (some? tid)
+                 :server_time_ms (System/currentTimeMillis)}
+          (pos? latest-iteration)
+          (assoc :latest-iteration latest-iteration))]
+
+    (.write out (.getBytes (wire/sse-frame (wire/canonical payload)) StandardCharsets/UTF_8))
+    (.flush out)))
 
 (defn- sse-body
   "Ring streamable body for one SSE subscription. Replay-then-live without
@@ -758,7 +788,7 @@
                                               {:pid owner-pid :close! close!}))))
           (try (when proxied? (sse-proxy-pad! out))
                (let [replay (state/subscribe! sid sub-id sink @last-seq)]
-                 (sse-ready! out sid @last-seq)
+                 (sse-ready! out sid @last-seq replay)
                  (doseq [event replay]
                    (write! event)))
                (pump-sse! out queue dead? write!)
@@ -898,7 +928,7 @@
                    ;; Seed the guard before atomic registration.
                    (swap! last-seqs assoc (str sid) cursor)
                    (let [replay (state/subscribe! sid sub-id sink cursor)]
-                     (sse-ready! out sid cursor)
+                     (sse-ready! out sid cursor replay)
                      (doseq [event replay]
                        (write! event)))))
                (pump-sse! out queue dead? write!)
