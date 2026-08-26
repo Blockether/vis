@@ -2,12 +2,11 @@
   "The TUI's session-wide attachment inspector. Composer files and durable model
    artifacts remain separate lifecycles, but share one discoverable C-x i surface."
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.internal.attachments :as attachments]
-            [com.blockether.vis.internal.gateway.client :as gateway-client]
-            [com.blockether.vis.internal.gateway.wire :as wire])
+            [com.blockether.vis.internal.attachments :as attachments])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [java.io File FileOutputStream]))
@@ -15,19 +14,14 @@
 (set! *unchecked-math* :warn-on-boxed)
 
 (defn fetch-session-artifacts!
-  "Fetch the whole-session artifact index through the canonical gateway client.
-   Returns `{:artifacts [...]}` or `{:artifacts [] :error string}`."
+  "Whole-session artifact index through the facade. Returns `{:artifacts [...]}`,
+   or `{:artifacts [] :error string}` when the daemon cannot answer."
   [session-id]
   (if (str/blank? (str session-id))
     {:artifacts []}
-    (try (let [response (gateway-client/request! :get
-                                                 (str "/v1/sessions/" session-id "/artifacts")
-                                                 {:timeout-ms 5000})]
-           (if (= 200 (:status response))
-             {:artifacts (vec (get (wire/parse-json (:body response)) "artifacts" []))}
-             {:artifacts []
-              :error (str "Artifact index unavailable (HTTP " (:status response) ")")}))
-         (catch Throwable _ {:artifacts [] :error "Artifact index unavailable"}))))
+    (if-let [artifacts (vis/gateway-session-artifacts session-id)]
+      {:artifacts artifacts}
+      {:artifacts [] :error "Artifact index unavailable"})))
 
 (defn- field [m k] (or (get m k) (get m (keyword k))))
 
@@ -252,8 +246,7 @@
   (when (and (not (str/blank? (str session-id)))
              (not (str/blank? (str iteration-id)))
              (number? index))
-    (when-let [^bytes bytes
-               (gateway-client/iteration-attachment-bytes session-id iteration-id index)]
+    (when-let [^bytes bytes (vis/gateway-iteration-attachment-bytes session-id iteration-id index)]
       (let [dir (doto (File. (System/getProperty "java.io.tmpdir")
                              (str "vis-artifact-" (random-uuid)))
                   (.mkdirs))

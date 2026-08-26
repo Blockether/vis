@@ -41,6 +41,33 @@
                 [:request fake-entry "POST" "/v1/debug" {:body {:hello "world"} :timeout-ms 1200}]]
                @calls))))))
 
+;; Regression: the TUI spoke raw gateway HTTP for these two reads, so a channel
+;; extension had to reach past the facade into this namespace to make either one.
+(deftest channel-reads-answer-data-or-nil-when-the-daemon-cannot
+  (let [seen
+        (atom [])
+
+        respond
+        (fn [status body]
+          (fn [method path opts]
+            (swap! seen conj [method path opts])
+            {:status status :body body}))]
+
+    (with-redefs-fn {#'client/request!
+                     (respond 200 "{\"artifacts\":[{\"filename\":\"decision.html\"}]}")}
+      (fn []
+        (is (= [{"filename" "decision.html"}] (client/session-artifacts "session-1")))))
+    (with-redefs-fn {#'client/request! (respond 200 "{\"attachments\":{\"max_bytes\":10}}")}
+      (fn []
+        (is (= {"attachments" {"max_bytes" 10}} (client/capabilities)))))
+    (testing "each read is bounded, because a person is waiting at an open dialog"
+      (is (= [[:get "/v1/sessions/session-1/artifacts" {:timeout-ms 5000}]
+              [:get "/v1/capabilities" {:timeout-ms 5000}]]
+             @seen)))
+    (with-redefs-fn {#'client/request! (respond 503 "")}
+      (fn []
+        (is (nil? (client/session-artifacts "session-1")))
+        (is (nil? (client/capabilities)))))))
 (defn- await-value
   "Wait for a background cache refresh to publish its expected value."
   [read expected]

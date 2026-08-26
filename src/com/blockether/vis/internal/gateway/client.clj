@@ -1076,6 +1076,31 @@
                path
                opts))))
 
+(def ^:private channel-read-timeout-ms
+  "Ceiling for a read a CHANNEL makes while a person waits at an open dialog.
+   Short on purpose: an unreachable daemon must paint \"unavailable\" within
+   seconds instead of parking a terminal thread on the transport's own default."
+  5000)
+
+(defn capabilities
+  "The daemon's capability document, string-keyed, or nil when it cannot answer.
+   The attachment contract a channel admits file drops against comes from here."
+  []
+  (try (let [response (request! :get "/v1/capabilities" {:timeout-ms channel-read-timeout-ms})]
+         (when (= 200 (:status response)) (wire/parse-json (:body response))))
+       (catch Throwable _ nil)))
+
+(defn session-artifacts
+  "Every durable artifact `sid` has produced, string-keyed and in gateway order,
+   or nil when the daemon cannot answer. nil is UNAVAILABLE — a channel must
+   paint it differently from an index that is genuinely empty."
+  [sid]
+  (try (let [response (request! :get
+                                (str "/v1/sessions/" (enc sid) "/artifacts")
+                                {:timeout-ms channel-read-timeout-ms})]
+         (when (= 200 (:status response))
+           (vec (get (wire/parse-json (:body response)) "artifacts" []))))
+       (catch Throwable _ nil)))
 (defn toggle-setting!
   "Atomically flip one boolean setting in the gateway and return its refreshed
    string-keyed settings row. The gateway owns both persistence and live runtime

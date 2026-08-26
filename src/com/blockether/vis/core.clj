@@ -58,6 +58,7 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.limits-format :as limits-format]
             [com.blockether.vis.internal.loop :as lp]
+            [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.titling :as titling]
             [com.blockether.vis.internal.main :as binary]
             [com.blockether.vis.internal.render :as ir]
@@ -80,6 +81,9 @@
             [com.blockether.vis.internal.toggles :as toggles]
             [com.blockether.vis.internal.workspace :as workspace]))
 
+;; The one closed distribution manifest, read-only: an extension can ask whether
+;; its own initializer is listed, and in which order the engine runs it.
+(import-vars [manifest-initializers manifest/initializers])
 ;; Gateway (HTTP/SSE server over the session/turn runtime)
 ;;
  ;; `gateway-register-routes!` is the route-contribution seam. Initializers in
@@ -151,7 +155,9 @@
              [gateway-list-resources-cached gateway-client/list-resources-cached]
              [gateway-stop-resource! gateway-client/stop-resource!]
              [gateway-resource-logs gateway-client/resource-logs]
-             [gateway-iteration-attachment-bytes gateway-client/iteration-attachment-bytes])
+             [gateway-iteration-attachment-bytes gateway-client/iteration-attachment-bytes]
+             [gateway-capabilities gateway-client/capabilities]
+             [gateway-session-artifacts gateway-client/session-artifacts])
 
 (import-vars [gateway-events-since gateway-client/events-since]
              [gateway-toggle-setting! gateway-client/toggle-setting!]

@@ -1,8 +1,8 @@
 (ns com.blockether.vis.ext.channel-tui.artifact-inspector-test
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.artifact-inspector :as inspector]
             [com.blockether.vis.ext.channel-tui.capture :as cap]
-            [com.blockether.vis.internal.gateway.client :as gateway-client]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]
            [java.nio.file Files]))
@@ -109,27 +109,30 @@
                    (:action (:com.blockether.vis.ext.channel-tui.dialogs/done remove-result))))
         (expect (nil? (:com.blockether.vis.ext.channel-tui.dialogs/done protected-result))))))
 
-(defdescribe
-  artifact-inspector-gateway
-  (it "loads the whole-session index through the canonical gateway client"
-      (let [request (atom nil)]
-        (with-redefs [gateway-client/request!
-                      (fn [method path opts]
-                        (reset! request [method path opts])
-                        {:status 200 :body "{\"artifacts\":[{\"filename\":\"decision.html\"}]}"})]
-          (expect (= "decision.html"
-                     (get (first (:artifacts (inspector/fetch-session-artifacts! "session-1")))
-                          "filename")))
-          (expect (= [:get "/v1/sessions/session-1/artifacts" {:timeout-ms 5000}] @request)))))
-  (it "materializes durable bytes under the artifact basename"
-      (with-redefs [gateway-client/iteration-attachment-bytes
-                    (fn [sid iid idx]
-                      (expect (= ["session-1" "iteration-new" 2] [sid iid idx]))
-                      (.getBytes "<html>decision</html>" "UTF-8"))]
-        (let [file (inspector/materialize-artifact!
-                     "session-1"
-                     {:filename "decision.html" :iteration-id "iteration-new" :index 2})]
-          (try (expect (= "decision.html" (.getName file)))
-               (expect (= "<html>decision</html>"
-                          (String. (Files/readAllBytes (.toPath file)) "UTF-8")))
-               (finally (.delete file) (.delete (.getParentFile file))))))))
+(defdescribe artifact-inspector-gateway
+             (it "loads the whole-session index through the facade"
+                 (let [asked (atom nil)]
+                   (with-redefs [vis/gateway-session-artifacts (fn [session-id]
+                                                                 (reset! asked session-id)
+                                                                 [{"filename" "decision.html"}])]
+                     (expect (= "decision.html"
+                                (get (first (:artifacts (inspector/fetch-session-artifacts!
+                                                          "session-1")))
+                                     "filename")))
+                     (expect (= "session-1" @asked)))))
+             (it "paints an index it could not read as unavailable, never as empty"
+                 (with-redefs [vis/gateway-session-artifacts (constantly nil)]
+                   (expect (= {:artifacts [] :error "Artifact index unavailable"}
+                              (inspector/fetch-session-artifacts! "session-1")))))
+             (it "materializes durable bytes under the artifact basename"
+                 (with-redefs [vis/gateway-iteration-attachment-bytes
+                               (fn [sid iid idx]
+                                 (expect (= ["session-1" "iteration-new" 2] [sid iid idx]))
+                                 (.getBytes "<html>decision</html>" "UTF-8"))]
+                   (let [file (inspector/materialize-artifact!
+                                "session-1"
+                                {:filename "decision.html" :iteration-id "iteration-new" :index 2})]
+                     (try (expect (= "decision.html" (.getName file)))
+                          (expect (= "<html>decision</html>"
+                                     (String. (Files/readAllBytes (.toPath file)) "UTF-8")))
+                          (finally (.delete file) (.delete (.getParentFile file))))))))

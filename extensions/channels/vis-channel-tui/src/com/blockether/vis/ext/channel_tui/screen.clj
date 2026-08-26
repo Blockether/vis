@@ -2155,7 +2155,7 @@
 (defn- attachment-capabilities!
   []
   (or (:attachment-capabilities @state/app-db)
-      (when-let [capabilities (attachment-intake/fetch-gateway-capabilities!)]
+      (when-let [capabilities (vis/gateway-capabilities)]
         (state/dispatch [:set-attachment-capabilities capabilities])
         capabilities)))
 

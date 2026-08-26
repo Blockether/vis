@@ -6,21 +6,11 @@
             [com.blockether.vis.ext.channel-tui.composer-attachments :as composer]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.file-picker :as file-picker]
-            [com.blockether.vis.internal.gateway.client :as gateway-client]
-            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.paths :as paths])
   (:import [java.io File]
            [java.net URI]))
 
 (set! *unchecked-math* :warn-on-boxed)
-
-(defn fetch-gateway-capabilities!
-  "Fetch the attachment contract through the canonical authenticated gateway
-   client. Returns the string-keyed capabilities body on HTTP 200, otherwise nil."
-  []
-  (try (let [response (gateway-client/request! :get "/v1/capabilities" {:timeout-ms 5000})]
-         (when (= 200 (:status response)) (wire/parse-json (:body response))))
-       (catch Throwable _ nil)))
 
 (defn- finish-token [tokens token] (if (seq token) (conj tokens (apply str token)) tokens))
 

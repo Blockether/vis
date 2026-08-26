@@ -13,7 +13,6 @@
             [com.blockether.vis.ext.language-clojure.paren-repair :as repair]
             [com.blockether.parinferish.balance :as balance]
             [com.blockether.vis.internal.foundation.editing.parse :as parse]
-            [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Files)
@@ -62,7 +61,7 @@
 (defdescribe manifest-initialization-test
              (it "names the language extension's explicit initializer"
                  (expect (some #{'com.blockether.vis.ext.language-clojure.core/register!}
-                               (manifest/initializers)))
+                               (vis/manifest-initializers)))
                  (expect (ifn? core/register!))))
 
 (defdescribe surface-test
