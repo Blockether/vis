@@ -28,27 +28,53 @@
 (defn utf8-bytes ^long [x] (long (alength (.getBytes (str x) StandardCharsets/UTF_8))))
 
 (defn bounded-text
-  "UTF-8 truncate text to at most `limit`, appending an omission marker."
+  "UTF-8 truncate text to at most `limit` bytes, appending an omission marker.
+
+   ONE cut, on a code-point boundary, over a prefix of at most `limit`
+   CHARACTERS — UTF-8 spends at least one byte per character, so nothing past
+   that prefix can survive the limit anyway. The walk this replaced moved the cut
+   down ONE character at a time, re-`subs`ing and re-encoding the WHOLE string on
+   every pass: quadratic, and event construction runs on the CALLING thread with
+   no interrupt point in it, so one tool result carrying a 3.2 MB single line (a
+   minified JSON blob under `cat`/`grep`) burned an hour of CPU — the block's
+   timeout fired while that thread kept running and every later block queued
+   behind it."
   [value limit]
   (let [s
         (str value)
 
         limit
-        (long limit)]
+        (long limit)
 
-    (if (<= (utf8-bytes s) limit)
+        char-count
+        (long (count s))]
+
+    ;; bytes >= chars in UTF-8, so a string longer than `limit` CHARS cannot fit
+    ;; and never has to be encoded whole just to find that out.
+    (if (and (<= char-count limit) (<= (utf8-bytes s) limit))
       s
       (let [marker
             "…"
 
             room
-            (Math/max 0 (- limit (utf8-bytes marker)))]
+            (long (max 0 (- limit (utf8-bytes marker))))
 
-        (loop [end (long (count s))]
-          (let [candidate (subs s 0 end)]
-            (if (or (zero? end) (<= (utf8-bytes candidate) room))
-              (str candidate marker)
-              (recur (dec end)))))))))
+            ^bytes head
+            (.getBytes ^String (subs s 0 (int (min char-count room))) StandardCharsets/UTF_8)
+
+            head-len
+            (long (alength head))
+
+            ;; step back over any UTF-8 continuation byte (0b10xxxxxx) so the cut
+            ;; lands between code points and never splits one into U+FFFD
+            end
+            (loop [i (long (min head-len room))]
+              (cond (not (pos? i)) 0
+                    (>= i head-len) head-len
+                    (= 0x80 (bit-and 0xC0 (aget head (int i)))) (recur (dec i))
+                    :else i))]
+
+        (str (String. head 0 (int end) StandardCharsets/UTF_8) marker)))))
 
 (defn redact
   "Remove credential-bearing values recursively before summaries or sizes exist."

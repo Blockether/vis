@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.activity.event-test
   (:require [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.gateway.wire :as wire]
+            [clojure.string :as string]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -192,3 +193,80 @@
 
         (expect (= [{:type :shell-handle :id "test-1"}] (:resources run-terminal)))
         (expect (= [{:type :shell-handle :id "test-1"}] (:resources wait-start))))))
+
+(defdescribe
+  activity-event-bounded-text-test
+  ;; Regression, session ce61af4d: ONE tool result carrying a 3.2 MB single line
+  ;; (a minified JSON blob reached by `cat`/`grep`) spent over an hour inside
+  ;; `bounded-text`, which walked the cut down one character at a time and
+  ;; re-encoded the whole string on every pass. Event construction runs on the
+  ;; CALLING thread, so the block's 300 s timeout fired while that thread kept
+  ;; burning and every later block in the session queued behind it.
+  (it "bounds a multi-megabyte single line without walking it character by character"
+      (let [blob
+            (str (.repeat "abcdefghij" 400000) "needle")
+
+            answer
+            (promise)
+
+            worker
+            (doto (Thread. ^Runnable
+                           (fn []
+                             (deliver answer (event/bounded-text blob event/max-detail-bytes))))
+              (.setDaemon true)
+              (.start))
+
+            bounded
+            (deref answer 5000 ::timed-out)]
+
+        (expect (not= ::timed-out bounded))
+        (expect (<= (event/utf8-bytes bounded) event/max-detail-bytes))
+        (expect (string/starts-with? bounded "abcdefghij"))
+        (expect (string/ends-with? bounded "…"))
+        (expect (some? worker))))
+  (it "cuts between code points, never inside one"
+      (let [blob
+            (string/join (repeat 5000 "źółw"))
+
+            bounded
+            (event/bounded-text blob 64)]
+
+        (expect (<= (event/utf8-bytes bounded) 64))
+        (expect (not (string/includes? bounded "�")))
+        (expect (string/ends-with? bounded "…"))))
+  (it "leaves text that already fits untouched"
+      (expect (= "źółw" (event/bounded-text "źółw" event/max-summary-bytes))))
+  (it
+    "builds a terminal event for a multi-megabyte single-line result"
+    (let [ctx
+          (event/context {})
+
+          invocation
+          (event/invocation ctx nil)
+
+          blob
+          (str (.repeat "abcdefghij" 400000) "needle")
+
+          answer
+          (promise)
+
+          _worker
+          (doto (Thread. ^Runnable
+                         (fn []
+                           (deliver answer
+                                    (event/terminal-event ctx
+                                                          invocation
+                                                          {:operation :cat
+                                                           :presenter :generic
+                                                           :args ["minified.json"]
+                                                           :started-at-ms (System/currentTimeMillis)
+                                                           :outcome :succeeded
+                                                           :result blob}))))
+            (.setDaemon true)
+            (.start))
+
+          terminal
+          (deref answer 5000 ::timed-out)]
+
+      (expect (not= ::timed-out terminal))
+      (expect (<= (event/utf8-bytes (:result-summary terminal)) event/max-detail-bytes)))))
