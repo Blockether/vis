@@ -1080,7 +1080,7 @@
              :elapsed-ms 1200
              :is-reopened false
              :is-activity true
-             :status-text "RUNNING · SHELL · npm test · and others"
+             :status-text "RUNNING · SHELL · npm test · and more"
              :status-tone :running
              :anchor {:iteration-index 0 :form-index 0}}
 
@@ -1095,7 +1095,7 @@
             (strip-sentinels (strip-ansi (str/join "\n" (:lines payload))))]
 
         (expect (not (str/includes? body "ACTIVITY")))
-        (expect (str/includes? body "▸ RUNNING · SHELL · npm test · and others"))))
+        (expect (str/includes? body "▸ RUNNING · SHELL · npm test · and more"))))
   (it "paints an unanchored Activity receipt after the live trace, never dropping it"
       ;; Regression, td-821868: same gap, receipt without a form anchor.
       (render/invalidate-cache!)
@@ -1107,7 +1107,7 @@
              :elapsed-ms 800
              :is-reopened false
              :is-activity true
-             :status-text "RUNNING · running activity · and others"
+             :status-text "RUNNING · running activity · and more"
              :status-tone :running}
 
             payload
@@ -1121,7 +1121,7 @@
             (strip-sentinels (strip-ansi (str/join "\n" (:lines payload))))]
 
         (expect (str/includes? body "ACTIVITY"))
-        (expect (str/includes? body "RUNNING · running activity · and others"))
+        (expect (str/includes? body "RUNNING · running activity · and more"))
         (expect (str/includes? body "Vis is calling the provider"))))
   (it
     "uses the same trace renderer for live progress and cancelled bubbles"
@@ -4801,7 +4801,7 @@
           {:view-id "activity-1"
            :title "Activity"
            :is-activity true
-           :status-text "RUNNING · RUN_TESTS · companion suite · and others"
+           :status-text "RUNNING · RUN_TESTS · companion suite · and more"
            :status-tone :running
            :activity-view {:classification :activity :nodes []}
            :activity-rows
@@ -4829,11 +4829,11 @@
           expanded
           (render-row 80 {:vis.channel-tui/expand-all-details? true})]
 
-      (expect (str/includes? collapsed "▸ RUNNING · RUN_TESTS · companion suite · and others"))
+      (expect (str/includes? collapsed "▸ RUNNING · RUN_TESTS · companion suite · and more"))
       (expect (not (str/includes? collapsed "grep({...})")))
       (expect (not (str/includes? collapsed "18 matches")))
       (expect (not (str/includes? collapsed "ACTIVITY")))
-      (expect (str/includes? expanded "▾ RUNNING · RUN_TESTS · companion suite · and others"))
+      (expect (str/includes? expanded "▾ RUNNING · RUN_TESTS · companion suite · and more"))
       (expect (< (.indexOf ^String expanded "PYTHON")
                  (.indexOf ^String expanded "grep({...})")
                  (.indexOf ^String expanded "18 matches")
@@ -4937,7 +4937,7 @@
           [{:view-id "activity-1"
             :is-activity true
             :is-reopened true
-            :status-text "RUNNING · FIRST OPERATION · and others"
+            :status-text "RUNNING · FIRST OPERATION · and more"
             :status-tone :running
             :activity-view {:classification :activity :nodes []}
             :activity-rows (activity-rows "FIRST")
@@ -4945,7 +4945,7 @@
            {:view-id "activity-2"
             :is-activity true
             :is-reopened true
-            :status-text "RUNNING · SECOND OPERATION · and others"
+            :status-text "RUNNING · SECOND OPERATION · and more"
             :status-tone :running
             :activity-view {:classification :activity :nodes []}
             :activity-rows (activity-rows "SECOND")
@@ -4966,7 +4966,7 @@
               strip-ansi
               strip-sentinels)]
 
-      (expect (< (.indexOf ^String body "RUNNING · FIRST OPERATION · and others")
+      (expect (< (.indexOf ^String body "RUNNING · FIRST OPERATION · and more")
                  (.indexOf ^String body "first()")
                  (.indexOf ^String body "FIRST RESULT")
                  (.indexOf ^String body "ACTIVITY")

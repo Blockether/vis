@@ -1229,6 +1229,7 @@
 
 ;; Regression, issue td-20b238: a presenter fallback repeated `run_tests` as both
 ;; the operation and its detail, adding no information to the live summary.
+;; Regression, issue td-ca9c44: live overflow copy still said “and others”.
 (deftest activity-default-detail-is-not-repeated-test
   (let [pane
         (lv/opened (activity-view "activity-default" 2))
@@ -1241,7 +1242,7 @@
         row
         (lv/run-row (assoc-in pane [:view :activity] activity))]
 
-    (is (= "RUNNING · RUN_TESTS · and others" (:status-text row)))
+    (is (= "RUNNING · RUN_TESTS · and more" (:status-text row)))
     (is (not (str/includes? (:status-text row) "RUN_TESTS · run_tests")))))
 
 ;; Regression, issue td-1a38ec: Activity repeated its status sentence and four separate
@@ -1259,7 +1260,7 @@
       (is (lv/dormant? p) "the default receipt gives no rows to the live band")
       (is (nil? (lv/interruptible [p])) "turn cancellation remains the only stop action")
       (is (:is-activity row))
-      (is (= "RUNNING · INSPECT SOURCE · operation 6 · and others" (:status-text row)))
+      (is (= "RUNNING · INSPECT SOURCE · operation 6 · and more" (:status-text row)))
       (is (= :activity (get-in p [:view :classification])))))
   (testing "settlement reports only the actual number of activities"
     (is (= ["DONE · RUN TESTS and more · 6 activities"
@@ -1329,7 +1330,7 @@
                                                      :activity (assoc-in (:activity view)
                                                                  [:rows 5 :summary]
                                                                  "updated operation")}])])
-          (is (= "RUNNING · INSPECT SOURCE · updated operation · and others"
+          (is (= "RUNNING · INSPECT SOURCE · updated operation · and more"
                  (get-in @state/app-db [:messages 1 :runs 0 :status-text]))
               "the semantic Activity patch replaces the same transcript receipt")
           (state/dispatch [:live-view-close "activity-1" {:reason :completed}])

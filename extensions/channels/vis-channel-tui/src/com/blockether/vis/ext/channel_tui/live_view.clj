@@ -490,7 +490,7 @@
       (str state
            " · "
            (if active (activity-row-label active) "running activity")
-           (when (or (> (count rows) 1) (pos? omitted)) " · and others"))
+           (when (or (> (count rows) 1) (pos? omitted)) " · and more"))
       (str state
            (when primary-copy
              (str " · " primary-copy (when (or (> finished 1) (pos? omitted)) " and more")))
