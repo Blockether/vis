@@ -30,6 +30,7 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.manifest :as manifest]
             [com.blockether.vis.internal.nativeimage :as nativeimage]
             [lazytest.core :refer [defdescribe expect it]]
             [yamlstar.core :as yamlstar]))
@@ -152,10 +153,12 @@
 (def ^:private manifest-file (io/file "resources" "META-INF" "vis" "manifest.edn"))
 
 (defn- manifest-initialization-nses
-  "Namespaces derived from the ordered initializer symbols in the closed manifest."
+  "Namespaces derived from the ordered initializer symbols in the closed manifest,
+   read through the SAME parser `build.clj` derives native reachability from, so a
+   change of manifest shape reaches this gate instead of silently voiding it."
   []
-  (->> (:initialization (edn/read-string (slurp manifest-file)))
-       (map (comp symbol namespace))
+  (->> (manifest/parse (str manifest-file) (slurp manifest-file))
+       (map (comp symbol namespace :register))
        set))
 
 (defn- first-party-source-dirs
@@ -215,6 +218,10 @@
 ;; Regression: native binaries cannot define a namespace when a lazy handler is
 ;; first selected. The build keeps JVM initialization cheap while treating the
 ;; closed first-party source set and manifest initializer namespaces as reachable.
+;;
+;; Regression: once a manifest entry became a MAP, reading it as a bare symbol
+;; threw ClassCastException here, so this gate stopped checking anything at all
+;; while the native build kept deriving its roots from `:register`.
 (defdescribe closed-manifest-namespaces-reach-the-native-image-test
              (it "derives native initializer roots from the one distribution manifest"
                  (let [initializers
