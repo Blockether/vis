@@ -16,11 +16,7 @@
  :mvn/repos {"jitpack" {:url "https://jitpack.io"}}
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         ;; vis owns the extension/provider registries.
-        com.blockether/vis {:local/root "../../.."}
-        ;; JSON for the persisted auth file (charred is already on the runtime
-        ;; classpath via vis itself).
-        com.cnuernber/charred {:mvn/version "1.041"}
-        com.taoensso/telemere {:mvn/version "1.2.1"}}
+        com.blockether/vis {:local/root "../../.."}}
  :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
                   :extra-paths ["test"]
                   :main-opts ["-m" "lazytest.main" "test"]}}}

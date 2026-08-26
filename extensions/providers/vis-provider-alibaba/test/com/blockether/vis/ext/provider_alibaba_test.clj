@@ -1,6 +1,5 @@
 (ns com.blockether.vis.ext.provider-alibaba-test
   (:require [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.provider-alibaba :as alibaba]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe
@@ -64,81 +63,40 @@
         (expect (some #(= "         export ALIBABA_TOKEN_PLAN_API_KEY=<your-alibaba-api-key>" %)
                       token-lines)))))
 
-(defdescribe
-  auth-detection-test
-  (it "detects the TUI/config API key used by runtime model calls"
-      (require 'com.blockether.vis.ext.provider-alibaba :reload)
-      (with-redefs-fn {#'alibaba/load-auth-file (constantly nil)
-                       #'alibaba/env-key-for-plan (constantly nil)
-                       #'vis/current-config (constantly {:providers [{:id :alibaba-token-plan
+(defdescribe auth-detection-test
+             ;; The lookup ORDER, the plan isolation and the token envelope belong to the
+             ;; shared key store (`provider-key-store-test`); what this pack owns is that
+             ;; its two plans are wired to their OWN provider ids.
+             (it "detects the TUI/config API key used by runtime model calls"
+                 (require 'com.blockether.vis.ext.provider-alibaba :reload)
+                 (with-redefs-fn {#'vis/current-config (constantly {:providers
+                                                                    [{:id :alibaba-token-plan
                                                                       :api-key "config-key"}]})}
-        (fn []
-          (expect (= {:api-key "config-key" :source :config} (#'alibaba/detect-key :token)))
-          ;; Plan-scoped: the Token Plan key must never authenticate the
-          ;; Coding Plan, which the live endpoints reject with 401.
-          (expect (nil? (#'alibaba/detect-key :coding))))))
-  (it "reads each plan's own env var and never the sibling's"
-      (require 'com.blockether.vis.ext.provider-alibaba :reload)
-      (with-redefs-fn {#'alibaba/load-auth-file (constantly nil)
-                       #'alibaba/configured-key-for-plan (constantly nil)
-                       #'vis/current-config (constantly {:providers []})}
-        (fn []
-          (with-redefs-fn {#'alibaba/env-key-for-plan (fn [plan-tag]
-                                                        (when (= :coding plan-tag) "env-key"))}
-            (fn []
-              (expect (= {:api-key "env-key" :source :env-var} (#'alibaba/detect-key :coding)))
-              (expect (nil? (#'alibaba/detect-key :token)))))))))
+                   (fn []
+                     (expect (= {:api-key "config-key" :source :config}
+                                ((:provider/detect-fn (vis/provider-by-id :alibaba-token-plan)))))
+                     ;; Plan-scoped: the Token Plan key must never authenticate the Coding
+                     ;; Plan, which the live endpoints reject with 401.
+                     (expect (not= "config-key"
+                                   (:api-key ((:provider/detect-fn (vis/provider-by-id
+                                                                     :alibaba-coding-plan))))))))))
 
 (defdescribe
-  get-token-test
-  (it "answers the plan's own endpoint in the token envelope"
+  limits-test
+  (it "reports :unsupported with a console note - no endpoint verifies the key"
       (require 'com.blockether.vis.ext.provider-alibaba :reload)
-      (with-redefs-fn {#'alibaba/detect-key (constantly {:api-key "k" :source :auth-file})}
+      (with-redefs-fn {#'vis/provider-key-detect (constantly {:api-key "k" :source :auth-file})}
         (fn []
-          (expect (= {:token "k"
-                      :api-url
-                      "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"}
-                     ((:provider/get-token-fn (vis/provider-by-id :alibaba-token-plan))))))))
-  (it "fails fast with the plan's auth command when no key exists anywhere"
+          (let [report (vis/provider-limits :alibaba-token-plan)]
+            (expect (= :alibaba-token-plan (:provider-id report)))
+            (expect (= :unsupported (:status report)))
+            (expect (= [] (get-in report [:dynamic :limits])))
+            (expect (re-find #"Model Studio console" (get-in report [:dynamic :note])))))))
+  (it "reports :unauthenticated when the plan key is absent"
       (require 'com.blockether.vis.ext.provider-alibaba :reload)
-      (with-redefs-fn {#'alibaba/detect-key (constantly nil)}
+      (with-redefs-fn {#'vis/provider-key-detect (constantly nil)}
         (fn []
-          (let [thrown (try ((:provider/get-token-fn (vis/provider-by-id :alibaba-coding-plan)))
-                            nil
-                            (catch clojure.lang.ExceptionInfo e e))]
-            (expect (some? thrown))
-            (expect (= :vis/alibaba-not-authenticated (:type (ex-data thrown))))
-            (expect (= :alibaba-coding-plan (:provider-id (ex-data thrown))))
-            (expect (re-find #"ALIBABA_CODING_PLAN_API_KEY" (ex-message thrown))))))))
-
-(defdescribe limits-test
-             (it
-               "reports :unsupported with a console note - no endpoint verifies the key"
-               (require 'com.blockether.vis.ext.provider-alibaba :reload)
-               (with-redefs-fn {#'alibaba/detect-key (constantly {:api-key "k" :source :auth-file})}
-                 (fn []
-                   (let [report (vis/provider-limits :alibaba-token-plan)]
-                     (expect (= :alibaba-token-plan (:provider-id report)))
-                     (expect (= :unsupported (:status report)))
-                     (expect (= [] (get-in report [:dynamic :limits])))
-                     (expect (re-find #"Model Studio console" (get-in report [:dynamic :note])))))))
-             (it "reports :unauthenticated when the plan key is absent"
-                 (require 'com.blockether.vis.ext.provider-alibaba :reload)
-                 (with-redefs-fn {#'alibaba/detect-key (constantly nil)}
-                   (fn []
-                     (let [report ((:provider/limits-fn (vis/provider-by-id :alibaba-coding-plan)))]
-                       (expect (= :alibaba-coding-plan (:provider-id report)))
-                       (expect (= :unauthenticated (:status report)))
-                       (expect (= [] (get-in report [:dynamic :limits]))))))))
-
-(defdescribe status-test
-             (it "previews the key without exposing it"
-                 (require 'com.blockether.vis.ext.provider-alibaba :reload)
-                 (with-redefs-fn {#'alibaba/detect-key
-                                  (constantly {:api-key "sk-sp-0123456789abcdef" :source :env-var})}
-                   (fn []
-                     (let [report ((:provider/status-fn (vis/provider-by-id :alibaba-token-plan)))]
-                       (expect (true? (:is-authenticated report)))
-                       (expect (= :env-var (:source report)))
-                       ;; 8-char prefix only - the rest of the key never reaches the UI.
-                       (expect (= "sk-sp-01..." (:api-key-preview report))))))))
+          (let [report ((:provider/limits-fn (vis/provider-by-id :alibaba-coding-plan)))]
+            (expect (= :alibaba-coding-plan (:provider-id report)))
+            (expect (= :unauthenticated (:status report)))
+            (expect (= [] (get-in report [:dynamic :limits]))))))))

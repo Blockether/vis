@@ -68,6 +68,7 @@
             [com.blockether.vis.internal.pyfmt :as pyfmt]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.python-test-runner :as python-test-runner]
+            [com.blockether.vis.internal.provider-key-store :as provider-key-store]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.session-model :as session-model]
@@ -450,6 +451,11 @@
              [provider-initial-limits providers/initial-provider-limits]
              [provider-status-text providers/status-text]
              [provider-status-md providers/status-md]
+             ;; Static-API-key providers (Alibaba, Z.ai): one owner for the auth
+             ;; file, the lookup order and the per-plan extension entries, so a
+             ;; plug-in declares its plan table and nothing else.
+             [provider-key-entries provider-key-store/provider-entries]
+             [provider-key-detect provider-key-store/detect-key]
              [configured-providers providers/configured-providers]
              [configured-providers-cached providers/configured-providers-cached]
              [picker-fleet providers/picker-fleet]

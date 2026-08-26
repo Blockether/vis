@@ -39,24 +39,23 @@
         (expect (some #(= (str "  Endpoint: " (svar/provider-base-url :zai-coding-plan)) %)
                       lines)))))
 
-(defdescribe
-  auth-detection-test
-  (it "detects the TUI/config API key used by runtime model calls"
-      (require 'com.blockether.vis.ext.provider-zai :reload)
-      (with-redefs-fn {#'zai/load-auth-file (constantly nil)
-                       #'zai/env-key-for-plan (constantly nil)
-                       #'vis/current-config (constantly {:providers [{:id :zai-coding-plan
+(defdescribe auth-detection-test
+             (it "detects the TUI/config API key used by runtime model calls"
+                 (require 'com.blockether.vis.ext.provider-zai :reload)
+                 (with-redefs-fn {#'vis/current-config (constantly {:providers
+                                                                    [{:id :zai-coding-plan
                                                                       :api-key "config-key"}]})}
-        (fn []
-          (expect (= {:api-key "config-key" :source :config} (#'zai/detect-key :coding)))))))
+                   (fn []
+                     (expect (= {:api-key "config-key" :source :config}
+                                ((:provider/detect-fn (vis/provider-by-id :zai-coding-plan)))))))))
 
 (defdescribe
   limits-test
   (it "reports live 5h and 7d coding-plan quota when the coding-plan key is available"
       (require 'com.blockether.vis.ext.provider-zai :reload)
-      (with-redefs-fn {#'zai/detect-key (fn [plan-tag]
-                                          (when (= :coding plan-tag)
-                                            {:api-key "k" :source :auth-file}))
+      (with-redefs-fn {#'vis/provider-key-detect (fn [_book plan-tag]
+                                                   (when (= :coding plan-tag)
+                                                     {:api-key "k" :source :auth-file}))
                        #'zai/fetch-quota! (fn [api-key]
                                             (expect (= "k" api-key))
                                             {:data {:level "pro"
@@ -91,7 +90,7 @@
                        (get-in report [:dynamic :limits 1 :window])))))))
   (it "reports :unauthenticated when the coding-plan key is absent"
       (require 'com.blockether.vis.ext.provider-zai :reload)
-      (with-redefs-fn {#'zai/detect-key (constantly nil)}
+      (with-redefs-fn {#'vis/provider-key-detect (constantly nil)}
         (fn []
           (let [report ((:provider/limits-fn (vis/provider-by-id :zai-coding-plan)))]
             (expect (= :zai-coding-plan (:provider-id report)))
@@ -100,8 +99,9 @@
   (it "treats an application-level 401 quota response as rejected credentials"
       (require 'com.blockether.vis.ext.provider-zai :reload)
       (with-redefs-fn
-        {#'zai/detect-key (fn [plan-tag]
-                            (when (= :coding plan-tag) {:api-key "rejected-key" :source :config}))
+        {#'vis/provider-key-detect (fn [_book plan-tag]
+                                     (when (= :coding plan-tag)
+                                       {:api-key "rejected-key" :source :config}))
          #'http/get (fn [_url _request]
                       {:status 200
                        :body
@@ -117,9 +117,10 @@
 (defdescribe pass-limits-test
              (it "keeps a saved Pass key unverified when no live quota endpoint exists"
                  (require 'com.blockether.vis.ext.provider-zai :reload)
-                 (with-redefs-fn {#'zai/detect-key (fn [plan-tag]
-                                                     (when (= :pass plan-tag)
-                                                       {:api-key "saved-key" :source :config}))}
+                 (with-redefs-fn {#'vis/provider-key-detect (fn [_book plan-tag]
+                                                              (when (= :pass plan-tag)
+                                                                {:api-key "saved-key"
+                                                                 :source :config}))}
                    (fn []
                      (let [report ((:provider/limits-fn (vis/provider-by-id :zai)))]
                        (expect (= :unsupported (:status report)))
