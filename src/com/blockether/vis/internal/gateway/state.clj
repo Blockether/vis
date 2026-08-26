@@ -4012,6 +4012,24 @@
                                                       cancel-waiting-turn!)
                      {:status "cancelling"})))))
 
+(defn- cancel-turn-on-manual-model-change!
+  "Stop the old-route turn when a human changes this session's model pin.
+
+   The engine snapshots the route at turn start, so persisting a new pin alone
+   cannot redirect an in-flight provider retry. A manual change is an explicit
+   takeover: cancel that running turn and let the next submission start from the
+   new pin. Engine-driven auth rescue carries a non-nil reason and already reroutes
+   the same turn, so it must not be cancelled here."
+  [sid {:keys [reason]}]
+  (when (nil? reason)
+    (when-let [tid (:current-turn (session-entry sid))]
+      (let [result (cancel-turn! sid tid :model-switch)]
+        (when-not (:error result) result)))))
+
+(defonce model-switch-cancel-listener
+  ;; A Var survives namespace reloads without leaving stale function objects in
+  ;; the listener set, matching `model-listener` above.
+  (smodel/add-model-listener! #'cancel-turn-on-manual-model-change!))
 (defn cancel-current-turn!
   "Tid-less twin of `cancel-turn!`: fire the cancellation token of the turn
    currently holding `sid`'s `:current-turn` slot, but ONLY when `owner-key` is

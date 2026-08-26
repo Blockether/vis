@@ -123,6 +123,50 @@
             (expect (= after (state/set-session-model! "sess-1" "openai" "gpt-5")))
             (expect (= [:db "sess-1" nil after :gateway] @recorded)))))))
 
+;; Regression, issue #154: changing the session pin while a provider retry was active
+;; updated the chip but left the old-model turn running, so the new model could not take over.
+(defdescribe
+  active-model-switch-test
+  (it
+    "cancels only the running turn behind a changed MANUAL model pick"
+    (let [manual-sid
+          (str "model-switch-manual-" (java.util.UUID/randomUUID))
+
+          rescue-sid
+          (str "model-switch-rescue-" (java.util.UUID/randomUUID))
+
+          manual-token
+          (cancellation/cancellation-token)
+
+          rescue-token
+          (cancellation/cancellation-token)
+
+          registry
+          (atom {manual-sid {:current-turn "manual-turn"
+                             :turns {"manual-turn" {:turn_id "manual-turn"
+                                                    :status "running"
+                                                    :cancel-token manual-token}}}
+                 rescue-sid {:current-turn "rescue-turn"
+                             :turns {"rescue-turn" {:turn_id "rescue-turn"
+                                                    :status "running"
+                                                    :cancel-token rescue-token}}}})
+
+          notify!
+          (fn [sid pick]
+            (doseq [listener @@#'smodel/model-listeners]
+              (listener sid pick)))]
+
+      (with-redefs-fn {#'state/registry registry
+                       #'state/append-event! (fn [& _]
+                                               nil)
+                       #'state/start-cancel-terminal-backstop! (fn [& _]
+                                                                 nil)}
+        (fn []
+          (notify! manual-sid {:provider "openai-codex" :model "gpt-5.6" :reason nil})
+          (notify! rescue-sid
+                   {:provider "anthropic" :model "claude-opus-5" :reason :authentication-fallback})
+          (expect (= :model-switch (cancellation/cancel-reason manual-token)))
+          (expect (nil? (cancellation/cancel-reason rescue-token))))))))
 (defdescribe
   soul-model-pin-test
   "The session's model PIN rides the soul, so ONE `GET /v1/sessions` already says

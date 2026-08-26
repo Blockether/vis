@@ -156,7 +156,8 @@
 
    `reason` names why a writer that is NOT the human moved the pick (the engine's
    `:authentication-fallback` rescue); it rides the broadcast so a surface can say
-   why the chip changed under the user's hands. nil for a manual pick."
+   why the chip changed under the user's hands. nil for a manual pick. An
+   idempotent write neither schedules storage nor announces a change."
   ([db-info sid provider model] (set-model! db-info sid provider model nil))
   ([db-info sid provider model reason]
    (when (and db-info sid)
@@ -172,29 +173,37 @@
                    str/trim
                    not-empty)
 
+           result
+           (when model {:provider provider :model model})
+
+           before
+           (model-of db-info sid)
+
            k
            (str sid)]
 
-       (swap! pending assoc k {:db-info db-info :provider provider :model model})
-       (swap! display-cache dissoc k)
-       (when-let [^ScheduledFuture old (get @flush-futures k)]
-         (.cancel old false))
-       (let [^ScheduledExecutorService s
-             scheduler
+       (if (= before result)
+         result
+         (do (swap! pending assoc k {:db-info db-info :provider provider :model model})
+             (swap! display-cache dissoc k)
+             (when-let [^ScheduledFuture old (get @flush-futures k)]
+               (.cancel old false))
+             (let [^ScheduledExecutorService s
+                   scheduler
 
-             f
-             (.schedule s
-                        ^Runnable
-                        (fn []
-                          (flush-one! k))
-                        (long debounce-ms)
-                        TimeUnit/MILLISECONDS)]
+                   f
+                   (.schedule s
+                              ^Runnable
+                              (fn []
+                                (flush-one! k))
+                              (long debounce-ms)
+                              TimeUnit/MILLISECONDS)]
 
-         (swap! flush-futures assoc k f))
-       ;; Broadcast AFTER the in-memory value is live, so a listener that re-reads
-       ;; the pick sees the new one.
-       (broadcast-model-change! sid {:provider provider :model model :reason reason})
-       (when model {:provider provider :model model})))))
+               (swap! flush-futures assoc k f))
+             ;; Broadcast AFTER the in-memory value is live, so a listener that re-reads
+             ;; the pick sees the new one.
+             (broadcast-model-change! sid {:provider provider :model model :reason reason})
+             result))))))
 
 (defn record-switch!
   "Persist one manual model-preference transition for the session-usage routing

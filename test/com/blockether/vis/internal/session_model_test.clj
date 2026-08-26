@@ -8,8 +8,14 @@
   "Run `f` with the debounced DB write stubbed out and the pending queue emptied after,
    so a unit test can drive `set-model!` without a database or a late flush."
   [f]
-  (with-redefs [persistance/db-set-session-model-pref! (fn [& _]
-                                                         nil)]
+  (with-redefs [persistance/db-get-session-model-pref
+                (fn [& _]
+                  nil)
+
+                persistance/db-set-session-model-pref!
+                (fn [& _]
+                  nil)]
+
     (try (f) (finally (reset! @#'smodel/pending {})))))
 
 (defn- capturing
@@ -38,6 +44,10 @@
   (it "hands every registered listener the pick that was just set"
       (expect (= [["sess-1" {:provider "openai" :model "gpt-5" :reason nil}]]
                  (capturing #(smodel/set-model! :db "sess-1" "openai" "gpt-5")))))
+  (it "does not announce an idempotent write as a model change"
+      (expect (= [["sess-1" {:provider "openai" :model "gpt-5" :reason nil}]]
+                 (capturing #(do (smodel/set-model! :db "sess-1" "openai" "gpt-5")
+                                 (smodel/set-model! :db "sess-1" "openai" "gpt-5"))))))
   (it "carries the REASON a non-human writer moved the pick"
       ;; Without it a surface can show the new model but not why it changed by itself.
       (expect (= [["sess-1" {:provider "openai" :model "gpt-5.4" :reason :authentication-fallback}]]
@@ -45,6 +55,7 @@
                    #(smodel/set-model! :db "sess-1" "openai" "gpt-5.4" :authentication-fallback)))))
   (it "broadcasts a CLEARED pick as blanks rather than staying silent"
       ;; Silence would freeze the last pick on every chip that mirrors this store.
+      (reset! @#'smodel/pending {"sess-1" {:db-info :db :provider "openai" :model "gpt-5"}})
       (expect (= [["sess-1" {:provider nil :model nil :reason nil}]]
                  (capturing #(smodel/set-model! :db "sess-1" nil "   ")))))
   (it "says nothing when there is no session or no store to write to"
