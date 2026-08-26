@@ -197,12 +197,14 @@
                         :result nil}]})
             80
             1
-            {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+            {:session-id "s1"
+             :session-turn-id "t1"
+             :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
           txt
           (str/join "\n" (map (comp strip-ansi :line) entries))]
 
-      (expect (not (str/includes? txt "PYTHON")))
+      (expect (not (str/includes? txt "PYTHON +")))
       (expect (str/includes? txt "first = 1"))
       (expect (str/includes? txt "x = 1 / 0"))
       (expect (= 1 (count (re-seq #"PYCODEMARKER" txt))))
@@ -227,7 +229,10 @@
                                          :result nil}]})
                              80
                              1
-                             {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})))]
+                             {:session-id "s1"
+                              :session-turn-id "t1"
+                              :detail-expansions {:vis.channel-tui/expand-execution-details?
+                                                  true}})))]
 
         (expect (str/includes? txt "PYTHON +"))
         (expect (str/includes? txt "first = 1"))
@@ -308,7 +313,9 @@
                                                 :duration-ms 2300}]})
               80
               1
-              {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+              {:session-id "s1"
+               :session-turn-id "t1"
+               :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
             head
             (first (filter #(str/includes? (body-of (:line %)) "12 results") entries))]
@@ -350,7 +357,9 @@
                                                 :duration-ms 61000}]})
               80
               1
-              {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+              {:session-id "s1"
+               :session-turn-id "t1"
+               :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
             head
             (first (filter #(str/includes? (body-of (:line %)) "RESULT") entries))]
@@ -1335,44 +1344,51 @@
                  [{:code "(+ 1 2)" :stdout nil :duration-ms 1 :success? true :silent? false}]}]}
               96
               {:show-thinking true :show-iterations true}
-              {:now-ms 1000 :turn-start-ms 0 :session-id "session" :detail-expansions {}})]
+              {:now-ms 1000
+               :turn-start-ms 0
+               :session-id "session"
+               :detail-expansions {:vis.channel-tui/expand-execution-details? true}})]
 
         (expect (not (str/includes? (:text payload) "RESULT")))
         (expect (not (str/includes? (:text payload) "chars hidden")))
         (expect (not (str/includes? (:text payload) huge-result)))
-        (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
-  (it "live progress always renders every iteration with no PROGRESS HISTORY toggle"
-      (with-raw-code-on
-        ;; Per user directive: no collapsible iteration history. Every
-        ;; iteration paints in place; the PROGRESS HISTORY summary band
-        ;; is gone.
-        (let [mk-entry
-              (fn [n]
-                {:forms [{:code (str "(+ " n " 1)")
-                          :comment nil
-                          :render-segments nil
-                          :stdout nil
-                          :error nil
-                          :started-at-ms nil
-                          :duration-ms 1
-                          :success? true
-                          :silent? false}]})
+        (expect (not-any? #(= :progress-history (:kind %)) (:line-meta payload)))))
+  (it
+    "live progress always renders every iteration with no PROGRESS HISTORY toggle"
+    (with-raw-code-on
+      ;; Per user directive: no collapsible iteration history. Every
+      ;; iteration paints in place; the PROGRESS HISTORY summary band
+      ;; is gone.
+      (let [mk-entry
+            (fn [n]
+              {:forms [{:code (str "(+ " n " 1)")
+                        :comment nil
+                        :render-segments nil
+                        :stdout nil
+                        :error nil
+                        :started-at-ms nil
+                        :duration-ms 1
+                        :success? true
+                        :silent? false}]})
 
-              payload
-              (render/progress->lines-data
-                {:iterations (mapv mk-entry (range 12))}
-                80
-                {:show-thinking true :show-iterations true}
-                {:now-ms 1000 :turn-start-ms 0 :session-id "session" :detail-expansions {}})
+            payload
+            (render/progress->lines-data {:iterations (mapv mk-entry (range 12))}
+                                         80
+                                         {:show-thinking true :show-iterations true}
+                                         {:now-ms 1000
+                                          :turn-start-ms 0
+                                          :session-id "session"
+                                          :detail-expansions
+                                          {:vis.channel-tui/expand-execution-details? true}})
 
-              body
-              (strip-ansi (:text payload))]
+            body
+            (strip-ansi (:text payload))]
 
-          (expect (not (str/includes? body "PROGRESS HISTORY")))
-          (expect (not (str/includes? body "iterations hidden")))
-          (expect (str/includes? body "(+ 0 1)"))
-          (expect (str/includes? body "(+ 11 1)"))
-          (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload))))))
+        (expect (not (str/includes? body "PROGRESS HISTORY")))
+        (expect (not (str/includes? body "iterations hidden")))
+        (expect (str/includes? body "(+ 0 1)"))
+        (expect (str/includes? body "(+ 11 1)"))
+        (expect (not-any? #(= :progress-history (:kind %)) (:line-meta payload))))))
   (it "toggles :vis/silent forms in live progress traces"
       (with-raw-code-on
         (let [progress
@@ -2467,7 +2483,9 @@
         (expect (not (str/includes? (:text payload) "chars hidden")))
         (expect (not (str/includes? (:text payload) "[iteration 1 · block 1]")))
         (expect (not (str/includes? (:text payload) huge-result)))
-        (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
+        (expect (every? #(or (not= :toggle-details (:kind %))
+                             (str/ends-with? (str (:node-id %)) ":execution"))
+                        (:line-meta payload)))))
   (it "collapses completed reasoning behind the badge on the answer view"
       ;; Completed reasoning defaults collapsed; the legacy
       ;; `:detail-expansions` toggle now drives expansion again.
@@ -2597,7 +2615,9 @@
                        :silent? false}]}]
 
             opts
-            {:session-id "session" :session-turn-id "123e4567-e89b-12d3-a456-426614174000"}
+            {:session-id "session"
+             :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
+             :detail-expansions {:vis.channel-tui/expand-execution-details? true}}
 
             payload
             (render/format-answer-with-thinking-data nil
@@ -3987,7 +4007,8 @@
                                false
                                {:session-id "s"
                                 :session-turn-id "123e4567-e89b-12d3-a456-426614174000"
-                                :detail-expansions {}})
+                                :detail-expansions {:vis.channel-tui/expand-execution-details?
+                                                    true}})
                              rows (filter #(#{:image :image-pad} (:kind %)) line-meta)]
 
                          {:rows (count rows) :img (:img (first rows))})))]
@@ -4138,14 +4159,16 @@
                         :result "ok"}]})
             80
             1
-            {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+            {:session-id "s1"
+             :session-turn-id "t1"
+             :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
           lines
-          (mapv (comp body-of strip-ansi :line) entries)
+          (mapv (comp strip-sentinels body-of strip-ansi :line) entries)
 
           toggle-i
           (first (keep-indexed (fn [i l]
-                                 (when (str/includes? l "PYTHON") i))
+                                 (when (str/includes? l "PYTHON +") i))
                                lines))
 
           first-code-i
@@ -4174,13 +4197,15 @@
                                        :forms [{:success? true :display-code code :result "ok"}]})
               40
               1
-              {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+              {:session-id "s1"
+               :session-turn-id "t1"
+               :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
             lines
-            (mapv (comp body-of strip-ansi :line) entries)
+            (mapv (comp strip-sentinels body-of strip-ansi :line) entries)
 
             summary
-            (first (filter #(str/includes? % "PYTHON") lines))]
+            (first (filter #(str/includes? % "PYTHON +") lines))]
 
         (expect (str/includes? summary "+3 more"))))
   (it "uses the code band's bottom edge as Python result spacing"
@@ -4195,7 +4220,9 @@
                           :result "ok"}]})
               80
               1
-              {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+              {:session-id "s1"
+               :session-turn-id "t1"
+               :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
             lines
             (mapv (comp body-of strip-ansi :line) entries)
@@ -4229,11 +4256,15 @@
                                    :result "ok"}]})
                        80
                        1
-                       {:session-id "s1" :session-turn-id "t1" :detail-expansions {}})
+                       {:session-id "s1"
+                        :session-turn-id "t1"
+                        :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
                      toggle-i
                      (first (keep-indexed (fn [i e]
-                                            (when (str/includes? (str (:line e)) "PYTHON") i))
+                                            (when (str/includes? (strip-sentinels (str (:line e)))
+                                                                 "PYTHON +")
+                                              i))
                                           entries))
 
                      _
@@ -4261,11 +4292,14 @@
                                      (assoc h :row row))))
                            (range 0 (+ 2 (count entries) 4)))
 
+                     code-hits
+                     (filterv #(str/ends-with? (str (:node-id %)) ":code") hits)
+
                      hit
-                     (first hits)]
+                     (first code-hits)]
 
                  (expect (some? toggle-i))
-                 (expect (= 1 (count hits)))
+                 (expect (= 1 (count code-hits)))
                  (expect (= :toggle-details (:kind hit)))
                  (expect (= "iteration:tt1:i1:b1:code" (:node-id hit)))
                  ;; collapsed now → a click asks for EXPANDED
@@ -4611,7 +4645,9 @@
           {:show-thinking true :show-iterations true}
           nil
           false
-          {:session-id "sid" :session-turn-id "abcd1234-5678-9999" :detail-expansions {}})
+          {:session-id "sid"
+           :session-turn-id "abcd1234-5678-9999"
+           :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
         message
         {:role :assistant
@@ -4645,7 +4681,7 @@
           (apply str (map :ch (filter pred row))))]
 
     (it "paints the collapsed code band's name bold and leaves its tally quiet"
-        (let [row (band-row "PYTHON")]
+        (let [row (band-row "PYTHON +")]
           (expect (str/includes? (row-text row) "▸ PYTHON +3 more"))
           (expect (= "PYTHON" (ink row :bold)))))
     (it "paints THINKING bold ON TOP of the band's own italic"
@@ -4684,7 +4720,8 @@
                          false
                          {:session-id "sid"
                           :session-turn-id "abcd1234-5678-9999"
-                          :detail-expansions detail-expansions}))
+                          :detail-expansions (assoc detail-expansions
+                                               :vis.channel-tui/expand-execution-details? true)}))
                (map (comp str/trim strip-sentinels strip-ansi body-of))
                (filter #(str/includes? % "RESULT"))
                first))]
@@ -4704,7 +4741,8 @@
                                   false
                                   {:session-id "sid"
                                    :session-turn-id "abcd1234-5678-9999"
-                                   :detail-expansions {}}))
+                                   :detail-expansions {:vis.channel-tui/expand-execution-details?
+                                                       true}}))
                         (filter #(str/includes? (str %) "RESULT"))
                         first)]
           (expect (str/includes? (str line) (str p/INLINE_BOLD_ON "RESULT" p/INLINE_BOLD_OFF)))))))
@@ -4845,6 +4883,42 @@
                                                  {:vis.channel-tui/expand-all-details? true}))]
           (expect (every? #(<= (count %) width) lines)
                   (str "the unified receipt stays inside a " width "-column grid"))))))
+  ;; Regression, issue td-546817: Python evaluations without detected host activities
+  ;; bypassed the execution receipt and remained in the legacy always-expanded layout.
+  (it "uses the unified execution receipt when Python has no detected activities"
+      (render/invalidate-cache!)
+      (let [trace
+            [{:forms
+              [{:code "print(1)" :stdout "Hello from Python!" :success? true :duration-ms 29}]}]
+
+            render-row
+            (fn [detail-expansions]
+              (-> (render/format-answer-with-thinking-data "Hello from Python!"
+                                                           trace
+                                                           80
+                                                           nil
+                                                           nil
+                                                           false
+                                                           {:session-id "s1"
+                                                            :session-turn-id "turn-1"
+                                                            :detail-expansions detail-expansions})
+                  :text
+                  strip-ansi
+                  strip-sentinels))
+
+            collapsed
+            (render-row {})
+
+            expanded
+            (render-row {:vis.channel-tui/expand-all-details? true})]
+
+        (expect (str/includes? collapsed "▸ DONE · PYTHON · 29ms"))
+        (expect (not (str/includes? collapsed "print(1)")))
+        (expect (str/includes? expanded "▾ DONE · PYTHON · 29ms"))
+        (expect (str/includes? expanded "PYTHON"))
+        (expect (str/includes? expanded "print(1)"))
+        (expect (str/includes? expanded "RESULT"))
+        (expect (not (str/includes? expanded "ACTIVITY")))))
   ;; Regression, issues td-2abd04 and td-e72bfd: terminal receipts omitted elapsed time
   ;; before close and reduced distinct executions to the same state-plus-count summary.
   (it

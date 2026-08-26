@@ -1227,6 +1227,53 @@
     (is (= "DONE · RUN_TESTS · 1 activity" (status-text 1)))
     (is (= "DONE · RUN_TESTS and more · 2 activities" (status-text 2)))))
 
+;; Regression, issue td-83c8e4: a shell invocation and its infrastructure wait inflated
+;; the collapsed receipt to two activities while disclosure showed one semantic operation.
+(deftest activity-receipt-counts-semantic-operations-test
+  (let [pane
+        (lv/opened (activity-view "activity-semantic-count" 1))
+
+        one-shell
+        (-> (get-in pane [:view :activity])
+            (assoc :state "succeeded"
+                   :counts {:running 0 :succeeded 2 :failed 0 :cancelled 0}
+                   :rows [{:id "shell-1"
+                           :operation "shell"
+                           :summary "running: git status --short"
+                           :state "succeeded"}]))
+
+        live-activity
+        (assoc one-shell
+          :state "running"
+          :counts {:running 2 :succeeded 0 :failed 0 :cancelled 0}
+          :rows [(assoc (first (:rows one-shell)) :state "running")])
+
+        two-operations
+        (assoc one-shell
+          :counts {:running 0 :succeeded 3 :failed 0 :cancelled 0}
+          :rows (conj
+                  (:rows one-shell)
+                  {:id "grep-1" :operation "grep" :summary "searched source" :state "succeeded"}))
+
+        terminal-pane
+        (ended (assoc-in pane [:view :activity] one-shell)
+               {:reason :completed :view {:nodes [] :activity one-shell}})
+
+        live-row
+        (lv/run-row (assoc-in pane [:view :activity] live-activity))
+
+        settled-row
+        (lv/run-row terminal-pane)
+
+        restored-row
+        (lv/run-row (lv/reopened terminal-pane))]
+
+    (is (= "RUNNING · SHELL · cmd: git status --short" (:status-text live-row)))
+    (is (= ["DONE · SHELL · 1 activity" "DONE · SHELL · 1 activity"]
+           (mapv :status-text [settled-row restored-row])))
+    (is (= 1 (count (:activity-rows restored-row))))
+    (is (= "DONE · SHELL and more · 2 activities"
+           (:status-text (lv/run-row (assoc-in pane [:view :activity] two-operations)))))))
 ;; Regression, issue td-20b238: a presenter fallback repeated `run_tests` as both
 ;; the operation and its detail, adding no information to the live summary.
 ;; Regression, issue td-ca9c44: live overflow copy still said “and others”.

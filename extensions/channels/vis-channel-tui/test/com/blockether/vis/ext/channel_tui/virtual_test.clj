@@ -311,13 +311,11 @@
 
         (expect (seq visible))
         (expect (not (some #(= last-idx (:idx %)) visible)))))
-    (it "folds a huge streaming result behind its own disclosure"
+    (it "folds a huge streaming result behind its execution disclosure"
         ;; A live bubble must never grow by the SIZE of what the block produced:
-        ;; the result rides behind its own `▸ RESULT` disclosure, so a 10 000-char
-        ;; value costs the streaming frame one row, not a wall. A projection's
-        ;; `:text` is the COPY payload, sentinel-free, so it pins the band's
-        ;; NAME only; that the name paints bold is pinned on the real grid in
-        ;; `render-test/band-label-emphasis-test`.
+        ;; the result rides behind the unified execution disclosure, so a 10 000-char
+        ;; value costs the streaming frame one row, not a wall. The inner RESULT
+        ;; remains available after the execution receipt opens.
         (render/invalidate-cache!)
         (let [huge-result
               (str/join " " (repeat 1000 "abcdefghij"))
@@ -347,7 +345,7 @@
               projected
               (:projected (first visible))]
 
-          (expect (str/includes? (:text projected) "▸ RESULT"))
+          (expect (str/includes? (:text projected) "▸ DONE · PYTHON · 1ms"))
           (expect (not (str/includes? (:text projected) "chars hidden")))
           (expect (not (str/includes? (:text projected) huge-result)))
           (expect (some #(= :toggle-details (:kind %)) (:line-meta projected)))))

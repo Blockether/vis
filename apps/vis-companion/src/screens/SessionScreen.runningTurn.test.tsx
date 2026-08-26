@@ -318,7 +318,7 @@ describe("a running turn the session read cannot confirm", () => {
       },
     });
 
-    await screen.findByText(/run_tests · suite/);
+    await screen.findByText(/RUN_TESTS · suite/);
     expect(screen.getAllByRole("button", { name: "Expand execution trace" })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Expand execution trace" }));
     const panelLabel = await screen.findByText("ACTIVITY");
@@ -361,9 +361,10 @@ describe("a running turn the session read cannot confirm", () => {
       },
     });
 
-    await screen.findByText(/run_tests · suite/);
-    expect(screen.getAllByRole("button", { name: "Expand execution trace" })).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Expand execution trace" }));
+    await screen.findByText(/RUN_TESTS · suite/);
+    const receipts = screen.getAllByRole("button", { name: "Expand execution trace" });
+    expect(receipts).toHaveLength(2);
+    receipts.forEach((receipt) => fireEvent.click(receipt));
     const filedPython = await screen.findByText("inspect_run()");
     const nextPython = await screen.findByText("next_step()");
     const panel = screen.getAllByText("ACTIVITY")[0]!;

@@ -669,6 +669,126 @@ describe("a command turn shows its answer, never a program", () => {
   });
 });
 
+// Regression, issue td-546817: Python evaluations without detected Activity
+// retained the old always-expanded frame instead of the canonical execution receipt.
+describe("a Python evaluation without detected Activity", () => {
+  const turnWith = (form: Record<string, unknown>, status = "completed") => ({
+    id: "python-only",
+    status,
+    iterations: [{ id: "iteration-1", position: 41, forms: [form] }],
+    content: [],
+  }) as unknown as TranscriptTurn;
+
+  it("is the running execution before any semantic activity appears", () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnWith({ source: "answer = 42" }, "running")}
+        streaming
+      />,
+    );
+
+    expect(painted.getByRole("button", { name: "Expand execution trace" })).toBeTruthy();
+    expect(painted.container.textContent).toContain("RUNNING · PYTHON");
+    expect(painted.container.textContent).not.toContain("answer = 42");
+    expect(painted.container.textContent).not.toContain("0 activities");
+  });
+
+  it("restores one settled receipt with Python and Result evidence", () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnWith({ source: "answer = 42", result: 42, duration_ms: 29 })}
+      />,
+    );
+
+    expect(painted.container.textContent).toContain("DONE · PYTHON · 29ms");
+    expect(painted.container.textContent).not.toContain("answer = 42");
+    fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
+    expect(painted.container.textContent).toContain("answer = 42");
+    expect(painted.container.textContent).toContain("RESULT");
+    expect(painted.container.textContent).not.toContain("ACTIVITY");
+  });
+
+  it("keeps a failed Python execution in the same receipt anatomy", () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnWith({ source: "raise Error()", error: "failed", duration_ms: 29 })}
+      />,
+    );
+
+    expect(painted.container.textContent).toContain("FAILED · PYTHON · 29ms");
+    expect(painted.getByRole("button", { name: "Expand execution trace" })).toBeTruthy();
+  });
+
+  it("enhances the same receipt when semantic activity arrives", () => {
+    const runningTurn = turnWith({ source: "answer = search()" }, "running");
+    const painted = render(<AssistantMessage turn={runningTurn} streaming />);
+    const receipt = painted.getByRole("button", { name: "Expand execution trace" });
+    expect(painted.container.textContent).toContain("RUNNING · PYTHON");
+
+    const detected = {
+      id: "detected-activity",
+      title: "Activity",
+      classification: "activity",
+      seq: 1,
+      activity: {
+        schema_version: 1,
+        anchor: { iteration: 41, form_index: 0 },
+        state: "running",
+        counts: { running: 1, succeeded: 0, failed: 0, cancelled: 0 },
+        rows: [{
+          id: "grep-1",
+          sequence: 1,
+          operation: "grep",
+          state: "running",
+          summary: "searching",
+          resources: [],
+          evidence: [],
+        }],
+        omitted: { rows: 0, by_classification: {} },
+      },
+      nodes: [],
+    } as unknown as LiveViewModel;
+    painted.rerender(
+      <AssistantMessage turn={runningTurn} streaming liveActivities={[detected]} />,
+    );
+
+    expect(painted.getByRole("button", { name: "Expand execution trace" })).toBe(receipt);
+    expect(painted.container.textContent).toContain("RUNNING · GREP · searching");
+  });
+
+  it("does not invent Activity when an empty projection settles", () => {
+    const emptyActivity = {
+      id: "empty-activity",
+      title: "Activity",
+      classification: "activity",
+      seq: 0,
+      is_settled: true,
+      created_at: 1_000,
+      ended_at: 1_029,
+      activity: {
+        schema_version: 1,
+        anchor: { iteration: 41, form_index: 0 },
+        state: "succeeded",
+        counts: { running: 0, succeeded: 0, failed: 0, cancelled: 0 },
+        rows: [],
+        omitted: { rows: 0, by_classification: {} },
+      },
+      nodes: [],
+    } as unknown as LiveViewModel;
+    const painted = render(
+      <AssistantMessage
+        turn={turnWith({ source: "answer = 42", result: 42 })}
+        liveActivities={[emptyActivity]}
+      />,
+    );
+
+    expect(painted.container.textContent).toContain("DONE · PYTHON · 29ms");
+    expect(painted.container.textContent).not.toContain("0 activities");
+    fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
+    expect(painted.container.textContent).not.toContain("ACTIVITY");
+  });
+});
+
 // Regression, issue td-cc41a1: Activity was appended after the entire assistant
 // row, so a multi-form iteration could not show which complete Python form owned it.
 describe("Activity owns the slot after its Python form and result", () => {
