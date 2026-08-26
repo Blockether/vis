@@ -1428,6 +1428,38 @@ const CardGrid = memo(function CardGrid({
   );
 });
 
+function pythonReceiptText(
+  form: TranscriptForm,
+  live: boolean,
+  activityState?: NonNullable<LiveViewModel["activity"]>["state"],
+  activityDurationMs?: number,
+): string {
+  const failed = form.error != null || activityState === "failed";
+  const placeholder = form.result_summary?.trim() === "Running…";
+  const settled =
+    activityState === "succeeded" ||
+    activityState === "cancelled" ||
+    failed ||
+    form.duration_ms != null ||
+    resultBody(form) !== "" ||
+    form.result != null ||
+    form.result_render != null ||
+    Boolean(form.result_summary?.trim() && !placeholder);
+  const state = failed
+    ? "FAILED"
+    : activityState === "cancelled"
+      ? "CANCELLED"
+      : activityState === "succeeded"
+        ? "DONE"
+        : live || !settled
+          ? "RUNNING"
+          : "DONE";
+  const duration = activityDurationMs ?? form.duration_ms;
+  return [state, "PYTHON", state === "RUNNING" ? "" : formatDuration(duration)]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 const FormTrace = memo(function FormTrace({
   form,
   live = false,
@@ -1448,70 +1480,26 @@ const FormTrace = memo(function FormTrace({
   const codeLabel = "PYTHON";
   const comment = showCode && form.comment?.trim();
 
-  if (activity || activityStatus) {
-    const activityElapsed =
-      activity?.created_at != null && activity?.ended_at != null
-        ? Math.max(0, activity.ended_at - activity.created_at)
-        : undefined;
-    const receipt = activity
-      ? activityReceiptText(activity.activity, activityElapsed)
-      : activityStatus === "failed"
-        ? "ACTIVITY · unavailable"
-        : "ACTIVITY · loading";
-    return (
-      <div className={live ? `min-w-0 ${transcriptRiseClass}` : "min-w-0"}>
-        {comment && (
-          <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui not-italic text-vis-message">
-            <Markdown compact>{comment}</Markdown>
-          </div>
-        )}
-        <section
-          className="min-w-0"
-          role={activity && !activity.is_settled ? "status" : undefined}
-          aria-live={activity && !activity.is_settled ? "polite" : undefined}
-          aria-label="Execution trace"
-        >
-          <Disclosure
-            isOpen={expanded}
-            tone="step"
-            className="w-full min-w-0"
-            aria-label={expanded ? "Collapse execution trace" : "Expand execution trace"}
-            onClick={() => setExpanded((open) => !open)}
-          >
-            <span className="min-w-0 flex-1 truncate font-mono text-chip font-bold text-code-result">
-              {receipt}
-            </span>
-          </Disclosure>
-          {expanded && (
-            <div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
-              {showCode && (
-                <CollapsibleFormCode
-                  value={code}
-                  label={codeLabel}
-                  language={formCodeLanguage(form)}
-                  bare
-                />
-              )}
-              <CardGrid cards={cards} bare />
-              {activity ? (
-                <LiveViewPanel
-                  view={activity}
-                  isSettled={activity.is_settled}
-                  activityInitiallyExpanded
-                />
-              ) : (
-                <p className="bg-result px-2.5 py-1.5 font-mono text-meta text-dialog-hint">
-                  {activityStatus === "failed"
-                    ? "Activity receipt could not be read."
-                    : "Loading Activity…"}
-                </p>
-              )}
-            </div>
-          )}
-        </section>
-      </div>
-    );
-  }
+  const activityElapsed =
+    activity?.created_at != null && activity?.ended_at != null
+      ? Math.max(0, activity.ended_at - activity.created_at)
+      : undefined;
+  const detectedActivity = Boolean(
+    activity?.activity &&
+      (activity.activity.rows.length > 0 ||
+        activity.activity.omitted.rows > 0 ||
+        Object.values(activity.activity.counts).some((count) => count > 0)),
+  );
+  const receipt = detectedActivity
+    ? activityReceiptText(activity?.activity, activityElapsed)
+    : activityStatus === "failed" && !activity
+      ? "ACTIVITY · unavailable"
+      : activityStatus && !activity
+        ? "ACTIVITY · loading"
+        : pythonReceiptText(form, live, activity?.activity?.state, activityElapsed);
+  const running = detectedActivity
+    ? !activity?.is_settled
+    : receipt.startsWith("RUNNING");
 
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : "min-w-0"}>
@@ -1520,30 +1508,51 @@ const FormTrace = memo(function FormTrace({
           <Markdown compact>{comment}</Markdown>
         </div>
       )}
-      {/* A program and the results IT produced are ONE frame, joined by the same
-          hairline `gap-px` rule that separates sibling cards inside `CardGrid`. */}
-      {showCode && cards.length > 0 ? (
-        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
-          <CollapsibleFormCode
-            value={code}
-            label={codeLabel}
-            language={formCodeLanguage(form)}
-            bare
-          />
-          <CardGrid cards={cards} bare />
-        </div>
-      ) : (
-        <>
-          {showCode && (
-            <CollapsibleFormCode
-              value={code}
-              label={codeLabel}
-              language={formCodeLanguage(form)}
-            />
-          )}
-          <CardGrid cards={cards} />
-        </>
-      )}
+      <section
+        className="min-w-0"
+        role={running ? "status" : undefined}
+        aria-live={running ? "polite" : undefined}
+        aria-label="Execution trace"
+      >
+        <Disclosure
+          isOpen={expanded}
+          tone="step"
+          className="w-full min-w-0"
+          aria-label={expanded ? "Collapse execution trace" : "Expand execution trace"}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          <span className="min-w-0 flex-1 truncate font-mono text-chip font-bold text-code-result">
+            {receipt}
+          </span>
+        </Disclosure>
+        {expanded && (
+          <div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
+            {showCode && (
+              <CollapsibleFormCode
+                value={code}
+                label={codeLabel}
+                language={formCodeLanguage(form)}
+                bare
+              />
+            )}
+            <CardGrid cards={cards} bare />
+            {detectedActivity && activity && (
+              <LiveViewPanel
+                view={activity}
+                isSettled={activity.is_settled}
+                activityInitiallyExpanded
+              />
+            )}
+            {!activity && activityStatus && (
+              <p className="bg-result px-2.5 py-1.5 font-mono text-meta text-dialog-hint">
+                {activityStatus === "failed"
+                  ? "Activity receipt could not be read."
+                  : "Loading Activity…"}
+              </p>
+            )}
+          </div>
+        )}
+      </section>
     </div>
   );
 });
