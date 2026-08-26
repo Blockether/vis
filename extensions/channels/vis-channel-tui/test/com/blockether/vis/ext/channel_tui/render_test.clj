@@ -4845,8 +4845,8 @@
                                                  {:vis.channel-tui/expand-all-details? true}))]
           (expect (every? #(<= (count %) width) lines)
                   (str "the unified receipt stays inside a " width "-column grid"))))))
-  ;; Regression, issue td-2abd04: terminal receipts used SUCCEEDED, said “activities run”,
-  ;; and omitted elapsed time when semantic Activity settlement arrived before close.
+  ;; Regression, issues td-2abd04 and td-e72bfd: terminal receipts omitted elapsed time
+  ;; before close and reduced distinct executions to the same state-plus-count summary.
   (it
     "renders compact terminal copy and elapsed time before close"
     (render/invalidate-cache!)
@@ -4859,7 +4859,7 @@
            :is-activity true
            :reason nil
            :elapsed-ms 4800
-           :status-text "DONE · 6 activities"
+           :status-text "DONE · RUN_TESTS and more · 6 activities"
            :status-tone :ok
            :activity-view {:classification :activity :nodes []}
            :activity-rows []
@@ -4881,8 +4881,9 @@
           (str/split-lines collapsed)
 
           collapsed-status-row
-          (first (keep-indexed #(when (str/includes? %2 "▸ DONE · 6 activities") %1)
-                               collapsed-lines))
+          (first (keep-indexed
+                   #(when (str/includes? %2 "▸ DONE · RUN_TESTS and more · 6 activities") %1)
+                   collapsed-lines))
 
           expanded
           (-> (render/format-answer-with-thinking-data
@@ -4903,10 +4904,11 @@
           (str/split-lines expanded)
 
           status-row
-          (first (keep-indexed #(when (str/includes? %2 "▾ DONE · 6 activities") %1)
-                               expanded-lines))]
+          (first (keep-indexed
+                   #(when (str/includes? %2 "▾ DONE · RUN_TESTS and more · 6 activities") %1)
+                   expanded-lines))]
 
-      (expect (str/includes? collapsed "▸ DONE · 6 activities · 4.8s"))
+      (expect (str/includes? collapsed "▸ DONE · RUN_TESTS and more · 6 activities · 4.8s"))
       (expect (not (str/includes? collapsed "ACTIVITY")))
       (expect (some? collapsed-status-row))
       (expect (str/blank? (nth collapsed-lines (dec collapsed-status-row)))
@@ -5020,7 +5022,7 @@ h = 8"
           {:view-id "activity-shells"
            :is-activity true
            :is-reopened true
-           :status-text "DONE · 3 activities"
+           :status-text "DONE · SHELL and more · 3 activities"
            :status-tone :ok
            :activity-view {:nodes []}
            :activity-rows [{:id "shell-1"
@@ -5103,7 +5105,7 @@ h = 8"
             (first (keep-indexed #(when (str/includes? %2 needle) [%1 %2]) lines)))
 
           [status-row _]
-          (row-with "DONE · 3 activities")
+          (row-with "DONE · SHELL and more · 3 activities")
 
           [python-row python-line]
           (row-with "PYTHON")
@@ -5115,7 +5117,11 @@ h = 8"
           (row-with "RESULT")
 
           [first-row first-line]
-          (row-with "SHELL")
+          (first (filter (fn [[row line]]
+                           (and (> (long row) (long activity-row)) (str/includes? line "SHELL")))
+                         (keep-indexed (fn [row line]
+                                         (when (str/includes? line "SHELL") [row line]))
+                                       lines)))
 
           [second-row second-line]
           (first (filter (fn [[row line]]

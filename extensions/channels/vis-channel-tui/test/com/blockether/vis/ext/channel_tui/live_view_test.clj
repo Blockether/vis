@@ -1203,8 +1203,29 @@
         row
         (lv/run-row (assoc-in pane [:view :activity] terminal-activity))]
 
-    (is (= "DONE · 6 activities" (:status-text row)))
+    (is (= "DONE · RUN TESTS and more · 6 activities" (:status-text row)))
     (is (= :ok (:status-tone row)))))
+
+;; Regression, issue td-e72bfd: settled receipts omitted the primary operation, so
+;; one test run and a mixed execution collapsed to indistinguishable activity counts.
+(deftest activity-terminal-summary-names-primary-operation-test
+  (let [status-text (fn [step-count]
+                      (let [pane (lv/opened (activity-view "activity-terminal-summary" step-count))
+                            activity
+                            (-> (get-in pane [:view :activity])
+                                (assoc :state "succeeded"
+                                       :counts
+                                       {:running 0 :succeeded step-count :failed 0 :cancelled 0})
+                                (update :rows
+                                        #(mapv (fn [row]
+                                                 (assoc row
+                                                   :operation "run_tests"
+                                                   :state "succeeded"))
+                                               %)))]
+
+                        (:status-text (lv/run-row (assoc-in pane [:view :activity] activity)))))]
+    (is (= "DONE · RUN_TESTS · 1 activity" (status-text 1)))
+    (is (= "DONE · RUN_TESTS and more · 2 activities" (status-text 2)))))
 
 ;; Regression, issue td-20b238: a presenter fallback repeated `run_tests` as both
 ;; the operation and its detail, adding no information to the live summary.
@@ -1241,8 +1262,9 @@
       (is (= "RUNNING · INSPECT SOURCE · operation 6 · and others" (:status-text row)))
       (is (= :activity (get-in p [:view :classification])))))
   (testing "settlement reports only the actual number of activities"
-    (is (= ["DONE · 6 activities" "FAILED · INSPECT SOURCE · operation 6 · 6 activities"
-            "CANCELLED · 6 activities"]
+    (is (= ["DONE · RUN TESTS and more · 6 activities"
+            "FAILED · INSPECT SOURCE and more · 6 activities"
+            "CANCELLED · RUN TESTS and more · 6 activities"]
            (mapv (comp :status-text lv/run-row settled-activity) [:succeeded :failed :cancelled]))))
   (testing "explicit disclosure expands only its transcript receipt"
     (let [p

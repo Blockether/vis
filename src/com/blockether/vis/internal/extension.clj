@@ -1637,11 +1637,11 @@
     (str sym)))
 
 (defn- tool-start-label
-  "Short one-line human label for the PRIMARY argument of a tool call, so a
-   long-running tool's live ticker can read `Vis is running: <op> <label>`
-   instead of just the bare op. Best-effort: the first string positional arg,
-   or a common key (cmd/path/query/code/name/id) of a leading map arg. First
-   line only, trimmed, truncated to 64 chars. nil when nothing sensible."
+  "One-line human label for the PRIMARY argument of a tool call, so Activity can
+   adapt the evidence to the channel width instead of inheriting a premature visual
+   truncation. Best-effort: the first string positional arg, or a common key
+   (cmd/path/query/code/name/id) of a leading map arg. The Activity event boundary
+   performs the canonical byte bound. nil when nothing sensible."
   [args]
   (let [primary
         (first args)
@@ -1661,8 +1661,7 @@
                 first
                 str/trim)]
 
-    (when-not (str/blank? (or line ""))
-      (if (> (count line) 64) (str (subs line 0 61) "\u2026") line))))
+    (when-not (str/blank? (or line "")) line)))
 
 (defn- tool-start-phrase
   "The tool's OWN live-ticker phrase for this call, completing `Vis is …`. A tool

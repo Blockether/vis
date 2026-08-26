@@ -375,9 +375,11 @@
                (not= (str/lower-case operation) (str/lower-case summary)))
       summary)))
 
+(defn- activity-row-operation-label [row] (str/upper-case (flat-text (:operation row))))
+
 (defn- activity-row-label
-  [{:keys [operation] :as row}]
-  (str (str/upper-case (flat-text operation))
+  [row]
+  (str (activity-row-operation-label row)
        (when-let [summary (activity-row-summary row)]
          (str " · " summary))))
 
@@ -475,6 +477,12 @@
         state
         (activity-state pane activity)
 
+        primary
+        (or (when (= "FAILED" state) failed) (first rows))
+
+        primary-copy
+        (when primary (activity-row-operation-label primary))
+
         total-copy
         (str finished " " (if (= 1 finished) "activity" "activities"))]
 
@@ -484,7 +492,8 @@
            (if active (activity-row-label active) "running activity")
            (when (or (> (count rows) 1) (pos? omitted)) " · and others"))
       (str state
-           (when (and (= "FAILED" state) failed) (str " · " (activity-row-label failed)))
+           (when primary-copy
+             (str " · " primary-copy (when (or (> finished 1) (pos? omitted)) " and more")))
            " · "
            total-copy))))
 

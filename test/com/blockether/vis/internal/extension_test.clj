@@ -715,84 +715,103 @@
                                  :diff "@@ -1 +1 @@\n-before\n+after"
                                  :lines {"added" 0 "removed" 0 "modified" 1}}}))
 
-(defdescribe invocation-lifecycle-event-test
-             (it "emits exactly one start and public-success terminal"
-                 (let [events
-                       (atom [])
+(defdescribe
+  invocation-lifecycle-event-test
+  (it "emits exactly one start and public-success terminal"
+      (let [events
+            (atom [])
 
-                       sym
-                       (extension/symbol #'activity-success-probe
-                                         {:tag :observation :presenter :tests})
+            sym
+            (extension/symbol #'activity-success-probe {:tag :observation :presenter :tests})
 
-                       ext
-                       {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
+            ext
+            {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
 
-                       result
-                       (binding [extension/*tool-event-sink* #(swap! events conj %)]
-                         (extension/invoke-symbol-wrapper ext sym [{}] {}))]
+            result
+            (binding [extension/*tool-event-sink* #(swap! events conj %)]
+              (extension/invoke-symbol-wrapper ext sym [{}] {}))]
 
-                   (expect (true? (:ok result)))
-                   (expect (= [:start :terminal] (mapv :phase @events)))
-                   (expect (= [:tests :tests] (mapv :presenter @events)))
-                   (expect (= [:observation :observation] (mapv :classification @events)))
-                   (expect (= 1 (count (set (map :invocation-id @events)))))
-                   (expect (true? (:succeeded (second @events))))))
-             (it "emits one failed terminal while preserving the thrown exception"
-                 (let [events
-                       (atom [])
+        (expect (true? (:ok result)))
+        (expect (= [:start :terminal] (mapv :phase @events)))
+        (expect (= [:tests :tests] (mapv :presenter @events)))
+        (expect (= [:observation :observation] (mapv :classification @events)))
+        (expect (= 1 (count (set (map :invocation-id @events)))))
+        (expect (true? (:succeeded (second @events))))))
+  (it "emits one failed terminal while preserving the thrown exception"
+      (let [events
+            (atom [])
 
-                       sym
-                       (extension/symbol #'activity-failure-probe {:tag :observation})
+            sym
+            (extension/symbol #'activity-failure-probe {:tag :observation})
 
-                       ext
-                       {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
+            ext
+            {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
 
-                       message
-                       (try (binding [extension/*tool-event-sink* #(swap! events conj %)]
-                              (extension/invoke-symbol-wrapper ext sym [{}] {}))
-                            nil
-                            (catch Throwable t (ex-message t)))]
+            message
+            (try (binding [extension/*tool-event-sink* #(swap! events conj %)]
+                   (extension/invoke-symbol-wrapper ext sym [{}] {}))
+                 nil
+                 (catch Throwable t (ex-message t)))]
 
-                   (expect (= "probe failed" message))
-                   (expect (= [:start :terminal] (mapv :phase @events)))
-                   (expect (true? (:failed (second @events))))))
-             (it "classifies interruption as cancellation rather than failure"
-                 (let [events
-                       (atom [])
+        (expect (= "probe failed" message))
+        (expect (= [:start :terminal] (mapv :phase @events)))
+        (expect (true? (:failed (second @events))))))
+  (it "classifies interruption as cancellation rather than failure"
+      (let [events
+            (atom [])
 
-                       sym
-                       (extension/symbol #'activity-cancel-probe {:tag :observation})
+            sym
+            (extension/symbol #'activity-cancel-probe {:tag :observation})
 
-                       ext
-                       {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}]
+            ext
+            {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}]
 
-                   (try (binding [extension/*tool-event-sink* #(swap! events conj %)]
-                          (extension/invoke-symbol-wrapper ext sym [{}] {}))
-                        (catch Throwable _ nil))
-                   (expect (= 2 (count @events)))
-                   (expect (true? (:cancelled (second @events))))
-                   (expect (nil? (:failed (second @events))))))
-             (it "captures patch metadata before returning only the public value"
-                 (let [events
-                       (atom [])
+        (try (binding [extension/*tool-event-sink* #(swap! events conj %)]
+               (extension/invoke-symbol-wrapper ext sym [{}] {}))
+             (catch Throwable _ nil))
+        (expect (= 2 (count @events)))
+        (expect (true? (:cancelled (second @events))))
+        (expect (nil? (:failed (second @events))))))
+  ;; Regression, issue td-e72bfd: the generic live ticker truncated a path at 64
+  ;; characters before the width-aware Activity row could use available columns.
+  (it "preserves the primary path until the bounded Activity event boundary"
+      (let [events
+            (atom [])
 
-                       sym
-                       (extension/symbol #'activity-patch-probe {:tag :mutation :presenter :patch})
+            path
+            (str "/Users/example/workspace/vis/extensions/channels/vis-channel-tui/"
+                 "src/com/example/a_long_but_visible_file.clj")
 
-                       ext
-                       {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
+            sym
+            (extension/symbol #'activity-success-probe {:tag :mutation :presenter :patch})
 
-                       result
-                       (binding [extension/*tool-event-sink* #(swap! events conj %)]
-                         (extension/invoke-symbol-wrapper ext sym [{}] {}))
+            ext
+            {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}]
 
-                       evidence
-                       (:diff-evidence (second @events))]
+        (binding [extension/*tool-event-sink* #(swap! events conj %)]
+          (extension/invoke-symbol-wrapper ext sym [path] {}))
+        (expect (= path (:label (first @events))))))
+  (it "captures patch metadata before returning only the public value"
+      (let [events
+            (atom [])
 
-                   (expect (= "patched fixture.clj" result))
-                   (expect (= :diff (:kind evidence)))
-                   (expect (= "fixture.clj" (:text evidence)))
-                   (expect (= [:hunk :deletion :addition] (mapv :kind (:lines evidence)))))))
+            sym
+            (extension/symbol #'activity-patch-probe {:tag :mutation :presenter :patch})
+
+            ext
+            {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}
+
+            result
+            (binding [extension/*tool-event-sink* #(swap! events conj %)]
+              (extension/invoke-symbol-wrapper ext sym [{}] {}))
+
+            evidence
+            (:diff-evidence (second @events))]
+
+        (expect (= "patched fixture.clj" result))
+        (expect (= :diff (:kind evidence)))
+        (expect (= "fixture.clj" (:text evidence)))
+        (expect (= [:hunk :deletion :addition] (mapv :kind (:lines evidence)))))))
 
 (defdescribe extension-registry-order-test
              (it "installs extensions in the one explicit registry order"
