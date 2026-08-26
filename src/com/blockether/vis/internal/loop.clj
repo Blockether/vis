@@ -10836,14 +10836,29 @@
 (def ^:private env-max-turns-per-ctx
   "Turns a single session's GraalPy Context serves before the reaper recycles it
    between turns. Override with `VIS_ENV_MAX_TURNS_PER_CTX`; <= 0 disables.
-   Default 25.
+   Default 5.
+
+   Lowered from 25 because the recycle is far cheaper than it looks and the thing
+   it bounds is the largest single consumer of this process's heap. A live
+   gateway's heap dump was 2 GB of live objects, of which roughly a third was
+   Python string data alone — 2.55M `TruffleString` against 2.87M `byte[]` — plus
+   ~495k `PDict`. That is a session's ephemeral Python working set, and nothing
+   caps it except this number.
+
+   The recycle itself measures at ~300ms, and effectively all of it is the eager
+   `re` + `json` imports (~198ms + ~108ms); a fresh Engine and Context are ~1ms
+   together once the JVM is warm. Amortized that is 60ms per turn at 5, against
+   turns that run for minutes. What a recycle actually costs is the model's
+   ephemeral globals, which is the POINT of it — `persist-session-defs!` carries
+   the module aliases, scalar constants and function sources across, so what is
+   lost is data the model can rebuild, not code it would have to rewrite.
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
    BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
   (delay (or (some-> (System/getenv "VIS_ENV_MAX_TURNS_PER_CTX")
                      str/trim
                      parse-long)
-             25)))
+             5)))
 
 (def ^:private env-heap-watermark-pct
   "JVM heap-usage percent (used/max) at or above which the reaper treats the
