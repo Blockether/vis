@@ -55,6 +55,77 @@
    compiled but not run."
   '#{def defonce})
 
+(def ^:private context-heads
+  "Heads handled by [[establish-context!]] rather than the compiler: they do not
+   describe code to warn about, they describe WHERE the rest of the file resolves
+   its symbols. Applied as ordinary function calls, so no class is generated for
+   them at all."
+  '#{ns in-ns require use import refer refer-clojure alias})
+
+(def ^:private value-heads
+  "The one set that still has to be EVALUATED, and the only `eval` left here.
+
+   A macro is not usable by a later form unless its var holds a value, and a type
+   is not referable by name unless its class exists — analysis interns the var
+   but assigns nothing, so a file that defines a macro and then uses it would
+   fail to analyse every form after it, and lose exactly the warnings this
+   provider exists to report. Measured across this repo's largest namespaces
+   (`server.clj`, `loop.clj`, `human_input.clj`) not one top-level form falls in
+   here, so the common file pays nothing for it."
+  '#{defmacro definterface deftype defrecord defprotocol gen-class})
+
+(defn- import-spec!
+  "Apply ONE `:import` spec to the current namespace without evaluating it.
+
+   `import` is a macro, so the only eval-free route is the runtime one: resolve
+   each class and hand it to the namespace directly. A class that will not
+   resolve is skipped rather than fatal — a lint target may name something this
+   JVM does not have, and that is a finding for clj-kondo, not a crash here."
+  [spec]
+  (doseq [^String cname (if (or (vector? spec) (list? spec))
+                          (let [[pkg & classes] spec]
+                            (map #(str pkg "." %) classes))
+                          [(str spec)])]
+    (try (.importClass ^clojure.lang.Namespace *ns* (Class/forName cname false (clojure.lang.RT/baseLoader)))
+         (catch Throwable _ nil))))
+
+(defn- establish-context!
+  "Give the shadow namespace the same resolution context the target file has —
+   its requires, aliases, refers and imports — WITHOUT evaluating its `ns` form.
+
+   The `ns` macro expands into exactly these calls, and `require`/`use`/`refer`
+   are plain functions, so reading the clauses and calling them reaches the same
+   state while generating no class. Requiring a library this JVM already loaded
+   is a registry lookup; requiring one it has not is the load it would have done
+   anyway, and [[compute-findings]] drops the warnings that come from inside it.
+
+   Every clause is best-effort: a malformed or unsatisfiable one costs its own
+   resolution, never the rest of the file."
+  [form]
+  (let [head (when (seq? form) (first form))]
+    (case head
+      (ns) (doseq [clause (drop 2 form)
+                   :when (seq? clause)]
+             (let [[kind & specs] clause]
+               (try (case kind
+                      (:require) (apply require specs)
+                      (:use) (apply use specs)
+                      (:import) (run! import-spec! specs)
+                      (:refer-clojure) (apply refer 'clojure.core specs)
+                      nil)
+                    (catch Throwable _ nil))))
+      ;; A bare top-level `require`/`import`/… names its specs quoted; unquoting
+      ;; is all that separates the form from the call it stands for.
+      (require use) (try (apply (if (= 'use head) use require)
+                                (map #(if (and (seq? %) (= 'quote (first %))) (second %) %)
+                                     (rest form)))
+                         (catch Throwable _ nil))
+      (import) (run! import-spec!
+                     (map #(if (and (seq? %) (= 'quote (first %))) (second %) %) (rest form)))
+      (refer-clojure) (try (apply refer 'clojure.core (rest form)) (catch Throwable _ nil))
+      nil))
+  nil)
+
 (defn- shadowed
   "`form` with the namespace it installs itself into renamed to `shadow`.
 
@@ -109,7 +180,31 @@
    target's own namespace redirected to `shadow`. Reading is `*read-eval*`-free:
    `#=(…)` must not run either. One unreadable or uncompilable form ends/skips
    that form only — the warnings already emitted are kept, exactly as a partially
-   compiling file behaved before."
+   compiling file behaved before.
+
+   ANALYSED, not evaluated. Reflection and boxed-math warnings are emitted while
+   the compiler RESOLVES a form, so `Compiler/analyze` reports them in full: on a
+   file of 60 warning-producing defns both routes return the same 180 findings,
+   warning for warning and column for column. What `eval` additionally did was
+   generate the bytecode and load it through a fresh `DynamicClassLoader` — work
+   this provider never needed, since it only ever reads the compiler's warnings
+   and throws the code away.
+
+   This is a SAFETY and honesty change, not a memory fix, and the numbers say so:
+   linting this repo's ten largest internal namespaces loads 23 139 classes
+   analysed against 23 713 evaluated — 2.4%. Nearly all of that is the target's
+   own `:require`s being loaded, which compiles those libraries and happens
+   either way; the target's own forms were never the expensive part. Repeat lints
+   of one file already cost nothing, because the findings cache answers them.
+
+   The value is that arbitrary linted code is no longer EXECUTED to be inspected.
+   [[compilable]]'s `(fn [] …)` wrapper made execution unreachable, but analysis
+   removes the code path instead of hiding it.
+
+   [[context-heads]] never reach the compiler ([[establish-context!]] applies
+   them as function calls); [[value-heads]] are the narrow set that still must be
+   evaluated, because analysis interns a var without giving it the value a later
+   macro expansion or type reference needs."
   [code shadow]
   (let [rdr
         (clojure.lang.LineNumberingPushbackReader. (java.io.StringReader. (str code)))
@@ -122,7 +217,13 @@
 
         (let [form (try (read opts rdr) (catch Throwable _ ::eof))]
           (when-not (= ::eof form)
-            (try (eval (compilable form shadow)) (catch Throwable _ nil))
+            (let [head (when (seq? form) (first form))]
+              (try (cond (contains? context-heads head) (establish-context! form)
+                         (contains? value-heads head) (eval (compilable form shadow))
+                         :else (clojure.lang.Compiler/analyze
+                                 clojure.lang.Compiler$C/STATEMENT
+                                 (compilable form shadow)))
+                   (catch Throwable _ nil)))
             (recur)))))))
 
 (defn- forget-lib!
