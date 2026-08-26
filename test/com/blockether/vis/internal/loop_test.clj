@@ -41,15 +41,21 @@
                      (assoc provider :network network))
                    %))))
 
+(def ^:private helper-provider-network
+  "Streaming policy the default helper router's provider carries.
+
+   A local runtime prefills for minutes before its first token, so its own
+   policy is deliberately wider than Vis' cloud-shaped runtime defaults — which
+   is exactly the precedence these tests pin."
+  {:timeout-ms 1800000
+   :first-byte-timeout-ms 600000
+   :idle-timeout-ms 600000
+   :semantic-timeout-ms 600000})
+
 (defn- captured-svar-ask-code-opts
   "Opts a global-router helper hands to `svar/ask-code!`, with no network call."
   ([invoke!]
-   (captured-svar-ask-code-opts (helper-router :lmstudio
-                                               {:timeout-ms 1800000
-                                                :first-byte-timeout-ms 600000
-                                                :idle-timeout-ms 600000
-                                                :semantic-timeout-ms 600000})
-                                invoke!))
+   (captured-svar-ask-code-opts (helper-router :lmstudio helper-provider-network) invoke!))
   ([router invoke!]
    (let [seen (atom nil)]
      (with-redefs-fn {#'lp/get-router (fn []
@@ -3096,20 +3102,31 @@
 
 (defdescribe
   ask-code-idle-timeout-test
-  (it "gives the first token 200s and the idle watchdog its own 300s by default"
+  (it "leaves a provider with no policy on Vis' own 200s/300s/240s defaults"
       ;; 200s, not svar's two minutes: under Vis' pinned provider+model route
       ;; svar's router has no second candidate to cross to, and the first header
       ;; is the ONE wait Vis can retry for free — `pre-output-stream-retryable?`
       ;; does, so a slow queue gets three visible tries instead of one verdict.
       (expect (= 200000 rt/ASK_CODE_TTFT_TIMEOUT_MS))
       (expect (= 300000 rt/ASK_CODE_IDLE_TIMEOUT_MS))
-      (let [{:keys [router opts]} (captured-ask-code-opts {:lang "clojure" :messages []})]
-        (expect (= ::router router))
+      ;; A live transport without model progress is bounded independently.
+      (expect (= 240000 rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
+      (let [opts (:opts (captured-svar-ask-code-opts (helper-router :cloud nil)
+                                                     #(lp/ask-code! {:lang "clojure"
+                                                                     :messages []})))]
         (expect (= rt/ASK_CODE_TTFT_TIMEOUT_MS (:ttft-timeout-ms opts)))
         (expect (= rt/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts)))
-        ;; A live transport without model progress is bounded independently.
-        (expect (= 240000 rt/ASK_CODE_SEMANTIC_TIMEOUT_MS))
         (expect (= rt/ASK_CODE_SEMANTIC_TIMEOUT_MS (:semantic-timeout-ms opts)))))
+  (it "hands the routed provider's own policy the stream bounds instead"
+      ;; Provider policy sits BETWEEN the call's explicit opts and those
+      ;; defaults, so a local runtime's wide prefill window is what bounds this
+      ;; stream — Vis' cloud-shaped numbers would call it dead mid-prefill.
+      (let [opts (:opts (captured-ask-code-opts {:lang "clojure" :messages []}))]
+        (expect (= (:first-byte-timeout-ms helper-provider-network) (:first-byte-timeout-ms opts)))
+        (expect (= (:idle-timeout-ms helper-provider-network) (:idle-timeout-ms opts)))
+        (expect (= (:semantic-timeout-ms helper-provider-network) (:semantic-timeout-ms opts)))
+        ;; the policy names no TTFT, so that one still comes from Vis
+        (expect (= rt/ASK_CODE_TTFT_TIMEOUT_MS (:ttft-timeout-ms opts)))))
   (it "preserves explicit ask-code TTFT and idle timeout overrides"
       (expect (= 77 (:ttft-timeout-ms (:opts (captured-ask-code-opts {:ttft-timeout-ms 77})))))
       (expect (contains? (:opts (captured-ask-code-opts {:ttft-timeout-ms nil})) :ttft-timeout-ms))
@@ -3120,7 +3137,8 @@
   (it "accepts explicit semantic watchdog opt-in and opt-out"
       (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms 180000}))]
         (expect (= 180000 (:semantic-timeout-ms opts)))
-        (expect (= rt/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))
+        ;; the override names ONE watchdog; the provider's idle bound stays put
+        (expect (= (:idle-timeout-ms helper-provider-network) (:idle-timeout-ms opts))))
       (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms nil}))]
         (expect (contains? opts :semantic-timeout-ms))
         (expect (nil? (:semantic-timeout-ms opts))))))
