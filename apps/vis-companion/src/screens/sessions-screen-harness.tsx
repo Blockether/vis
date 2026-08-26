@@ -11,6 +11,7 @@ import { render } from "@testing-library/react";
 import { projectPath, sessionIsLive } from "../lib/fleet";
 import { SessionsScreen } from "./SessionsScreen";
 import type { GatewayConn, ProjectOverview, Session } from "../lib/types";
+import type { SessionSubscriptionHub } from "../lib/subscriptions";
 import type { SharedPayload } from "../lib/share-intake";
 
 export interface MachineFixture {
@@ -232,6 +233,7 @@ export function renderSessionsScreen({
   at,
   share = null,
   onDiscardShare,
+  subscriptions = null,
 }: {
   machines?: MachineFixture[];
   query?: string;
@@ -251,6 +253,11 @@ export function renderSessionsScreen({
   /** A payload the share sheet parked, waiting for the human to pick a session. */
   share?: SharedPayload | null;
   onDiscardShare?: () => void;
+  /**
+   * The hub whose fleet stream this list runs on. `null` is a list with no push
+   * channel at all — the cadence every other test here was written against.
+   */
+  subscriptions?: SessionSubscriptionHub | null;
 } = {}) {
   const requests: FleetRequest[] = [];
   const conns: GatewayConn[] =
@@ -409,7 +416,7 @@ export function renderSessionsScreen({
       isVisible={visible}
       query={next}
       onQuery={onQuery}
-      subscriptions={null}
+      subscriptions={subscriptions}
       onOpen={onOpen}
       onUnreachable={onUnreachable}
       onSearch={onSearch}

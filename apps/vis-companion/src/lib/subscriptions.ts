@@ -4,6 +4,7 @@ import type { SseEvent } from './types';
 
 type SessionListener = (event: SseEvent) => void;
 type FleetListener = (event: SseEvent) => void;
+type FleetStateListener = (streaming: boolean) => void;
 type ConnectionListener = (connected: boolean) => void;
 
 const MAX_BUFFERED_EVENTS = 2_048;
@@ -45,6 +46,9 @@ export class SessionSubscriptionHub {
   private readonly cursors = new Map<string, number>();
   private readonly sessionListeners = new Map<string, Set<SessionListener>>();
   private readonly fleetListeners = new Set<FleetListener>();
+  private readonly fleetStateListeners = new Set<FleetStateListener>();
+  private stopFleetStream: (() => void) | null = null;
+  private fleetStreaming = false;
   private readonly connectionListeners = new Set<ConnectionListener>();
   private readonly buffers = new Map<string, SseEvent[]>();
   // Sessions whose last seen lifecycle frame ENDED a turn. Absence means
@@ -67,7 +71,10 @@ export class SessionSubscriptionHub {
     this.stopWake = onWake(() => this.resync());
     // Second safety net, for the case wake events cannot cover: the app stays
     // in the foreground on one session and the stream dies anyway.
-    this.supervisor = setInterval(() => this.ensureStream(), SUPERVISOR_INTERVAL_MS);
+    this.supervisor = setInterval(() => {
+      this.ensureStream();
+      this.ensureFleetStream();
+    }, SUPERVISOR_INTERVAL_MS);
   }
 
   watchSessions(sessionIds: Iterable<string>): void {
@@ -129,9 +136,36 @@ export class SessionSubscriptionHub {
     };
   }
 
+  /**
+   * EVERY session's lifecycle on this machine, not only the visited ones.
+   *
+   * A list used to learn about a run it had never opened by re-reading its whole
+   * window on a timer; the gateway's `?scope=fleet` stream carries those
+   * transitions as small frames instead (`GatewayClient.streamFleetStatus`). The
+   * stream runs only while somebody is listening — behind an open transcript the
+   * list is off the glass, and a machine must not stream to nobody.
+   *
+   * Frames from the multiplexed SESSION stream still arrive here too: that is the
+   * older, narrower channel, and it reaches only what this device has visited.
+   */
   subscribeFleet(listener: FleetListener): () => void {
     this.fleetListeners.add(listener);
-    return () => this.fleetListeners.delete(listener);
+    this.ensureFleetStream();
+    return () => {
+      this.fleetListeners.delete(listener);
+      if (this.fleetListeners.size === 0) this.stopFleet();
+    };
+  }
+
+  /**
+   * Is the fleet stream delivering right now? A list keeps a poll as its safety
+   * net, and this is what tells it whether that net is the only thing holding it
+   * up: a live stream earns the slow cadence, a dead one does not.
+   */
+  subscribeFleetState(listener: FleetStateListener): () => void {
+    this.fleetStateListeners.add(listener);
+    listener(this.fleetStreaming);
+    return () => this.fleetStateListeners.delete(listener);
   }
 
   subscribeConnection(listener: ConnectionListener): () => void {
@@ -147,10 +181,15 @@ export class SessionSubscriptionHub {
    * visibility/online/pageshow handler calls this to guarantee catch-up.
    */
   resync(): void {
-    if (this.disposed || this.cursors.size === 0) return;
+    if (this.disposed) return;
     const now = Date.now();
     if (now - this.lastResyncAt < RESYNC_MIN_INTERVAL_MS) return;
     this.lastResyncAt = now;
+    // The fleet stream parks on a backgrounded webview exactly as the session one
+    // does, and it has no cursor to catch up with: replace it and let the list read
+    // its window once.
+    this.restartFleet();
+    if (this.cursors.size === 0) return;
     // Graceful: this is a precaution, not an observed failure — do not paint one.
     this.restart({ graceful: true });
   }
@@ -164,7 +203,9 @@ export class SessionSubscriptionHub {
     this.stopStream = null;
     this.setConnected(false);
     this.sessionListeners.clear();
+    this.stopFleet();
     this.fleetListeners.clear();
+    this.fleetStateListeners.clear();
     this.connectionListeners.clear();
     this.buffers.clear();
     this.ended.clear();
@@ -211,6 +252,50 @@ export class SessionSubscriptionHub {
       },
     );
     this.stopStream = stop;
+  }
+
+  /**
+   * Start the fleet stream when it is NOT running and somebody is listening. The
+   * hub owns its liveness the same way it owns the session stream's: the handle is
+   * nulled the moment the retry loop exits, so a dead stream is detectable instead
+   * of looking connected.
+   */
+  private ensureFleetStream(): void {
+    if (this.disposed || this.stopFleetStream || this.fleetListeners.size === 0) return;
+    const stop = this.client.streamFleetStatus(
+      (event) => {
+        for (const listener of [...this.fleetListeners]) listener(event);
+      },
+      {
+        onOpen: () => this.setFleetStreaming(true),
+        onError: () => this.setFleetStreaming(false),
+        onClosed: () => {
+          // Only clear the handle when it is still OURS (see `restart`).
+          if (this.stopFleetStream !== stop) return;
+          this.stopFleetStream = null;
+          this.setFleetStreaming(false);
+        },
+      },
+    );
+    this.stopFleetStream = stop;
+  }
+
+  private stopFleet(): void {
+    this.stopFleetStream?.();
+    this.stopFleetStream = null;
+    this.setFleetStreaming(false);
+  }
+
+  private restartFleet(): void {
+    if (this.fleetListeners.size === 0) return;
+    this.stopFleet();
+    this.ensureFleetStream();
+  }
+
+  private setFleetStreaming(streaming: boolean): void {
+    if (this.fleetStreaming === streaming) return;
+    this.fleetStreaming = streaming;
+    for (const listener of [...this.fleetStateListeners]) listener(streaming);
   }
 
   private ingest(event: SseEvent): void {

@@ -4021,6 +4021,94 @@ export class GatewayClient {
     return () => controller.abort();
   }
 
+  /**
+   * Watch the WHOLE machine's session status over ONE connection.
+   *
+   * A list learns that a run started, parked on a human or ended by RE-READING its
+   * window on a timer, and every active session invalidates that window's ETag — so
+   * a phone paid the whole payload every few seconds to discover one boolean. This
+   * stream carries the boolean instead: one small `session.status` frame per real
+   * transition, for every session on the machine, visited or not.
+   *
+   * It has no cursor and no replay by design — the gateway holds no fleet ring — so
+   * a gap is repaired by one cold windowed read. `onOpen` is where that read goes.
+   */
+  streamFleetStatus(
+    onEvent: (event: SseEvent) => void,
+    opts: {
+      signal?: AbortSignal;
+      onOpen?: () => void;
+      onError?: (error: unknown) => void;
+      /** Fired once the retry loop has ENDED — the stream is no longer running. */
+      onClosed?: () => void;
+    } = {},
+  ): () => void {
+    const controller = new AbortController();
+    const signal = opts.signal
+      ? anySignal([opts.signal, controller.signal])
+      : controller.signal;
+
+    void (async () => {
+      let retryMs = 400;
+      while (!signal.aborted) {
+        // Per-attempt controller, exactly as the multiplexed stream: the stall
+        // watchdog aborts only THIS attempt and the outer loop reconnects.
+        const attempt = new AbortController();
+        const attemptSignal = anySignal([signal, attempt.signal]);
+        let stallTimer: ReturnType<typeof setTimeout> | null = null;
+        const armStall = (ms: number) => {
+          if (stallTimer) clearTimeout(stallTimer);
+          stallTimer = setTimeout(() => attempt.abort(), ms);
+        };
+        try {
+          armStall(SSE_CONNECT_TIMEOUT_MS);
+          const response = await fetch(`${this.base}/v1/events?scope=fleet`, {
+            headers: this.headers({ Accept: "text/event-stream" }),
+            signal: attemptSignal,
+          });
+          if (!response.ok || !response.body) {
+            throw new GatewayError(
+              response.status,
+              `SSE HTTP ${response.status}`,
+            );
+          }
+
+          opts.onOpen?.();
+          retryMs = 400;
+          armStall(SSE_STALL_TIMEOUT_MS);
+
+          await readSseFrames(
+            response.body,
+            (json, frameName) => {
+              // A transcription's progress rides its own job stream and is not a
+              // fact about any session's status.
+              if (frameName === VOICE_JOB_EVENT) return;
+              try {
+                onEvent(JSON.parse(json) as SseEvent);
+              } catch {
+                // One malformed frame must not end the list's only push channel.
+              }
+            },
+            () => armStall(SSE_STALL_TIMEOUT_MS),
+          );
+          if (!signal.aborted) throw new GatewayError(0, "fleet stream closed");
+        } catch (error) {
+          if (signal.aborted) break;
+          opts.onError?.(error);
+          // No status ends this loop: the alternative to a retry is a list that
+          // goes back to re-reading its window forever.
+          await abortableDelay(retryMs, signal);
+          retryMs = Math.min(retryMs * 2, 5_000);
+        } finally {
+          if (stallTimer) clearTimeout(stallTimer);
+          attempt.abort();
+        }
+      }
+      opts.onClosed?.();
+    })();
+
+    return () => controller.abort();
+  }
   streamEvents(
     sid: string,
     onEvent: (event: SseEvent) => void,

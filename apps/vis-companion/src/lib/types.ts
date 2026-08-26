@@ -1017,15 +1017,20 @@ export interface SseEvent {
   /** Gateway epoch sampled when this event was emitted. */
   ts?: number;
   /**
-   * `subscription.ready` only: the turn the daemon is running for this session at
-   * the moment it accepted the (re)subscribe, and an explicit liveness flag so an
-   * idle session is distinguishable from an older daemon that omits both. Lets a
-   * reconnecting screen decide whether the turn it paints is still real without a
-   * round trip — its own cursor cannot answer that (the replay ring is process
-   * memory and dies with the daemon).
+   * The turn the daemon is running for this session, and an explicit liveness flag so
+   * an idle session is distinguishable from an older daemon that omits both.
+   *
+   * On `subscription.ready` this is the verdict at the moment the daemon accepted the
+   * (re)subscribe, before any replay: it lets a reconnecting screen decide whether the
+   * turn it paints is still real without a round trip — its own cursor cannot answer
+   * that (the replay ring is process memory and dies with the daemon). On a fleet
+   * `session.status` frame it is the same verdict for a session NOBODY has opened,
+   * which is what lets a list repaint a row instead of re-reading its window.
    */
   current_turn_id?: string | null;
   is_live?: boolean;
+  /** `session.status` only: the run is PARKED on an unanswered human-input request. */
+  is_awaiting_input?: boolean;
   /**
    * `subscription.ready` only: newest 1-based iteration in the replay that
    * follows this control frame. The UI paints this head before backfilling.

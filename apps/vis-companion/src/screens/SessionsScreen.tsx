@@ -40,7 +40,7 @@ import {
 } from '../components/Menu';
 import { GatewayClient, type ProjectWindows, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
-import type { ForkPoint, GatewayConn, Session, SessionUsage } from '../lib/types';
+import type { ForkPoint, GatewayConn, Session, SessionUsage, SseEvent } from '../lib/types';
 import { compactProjectPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
@@ -135,12 +135,23 @@ const SESSION_LIST_EVENTS = new Set([
   'human_input.close',
 ]);
 
+// The frames the FLEET stream sends (`GET /v1/events?scope=fleet`): each one is the
+// whole truth about one row — the status the next window read would have carried —
+// so a list that already holds that row repaints it and reads nothing at all.
+// `session.title_updated` arrives on both streams and is the same fact on either.
+const FLEET_ROW_EVENTS = new Set(['session.status', 'session.title_updated']);
+
 // A background poll issued right before the OS suspended the webview can never
 // settle: it neither resolves nor rejects after the resume. A plain in-flight
 // boolean would then stay latched forever and every later refresh would be
 // skipped — the list froze until the app was restarted. Anything older than
 // this is treated as lost.
 const STALE_POLL_MS = 20_000;
+
+// What the reachability poll costs while the fleet stream carries the news instead.
+// It stays a net — a stream can stop without saying so — just a slack one, and a
+// stream that drops puts the five-second cadence back on the very next tick.
+const STREAMED_POLL_MS = 30_000;
 
 /** How many just-created sessions stay admitted past the held order at once. */
 const MINTED_KEEP = 8;
@@ -448,6 +459,11 @@ export function SessionsScreen({
   } | null>(null);
   const forkAnchorEl = useRef<HTMLElement | null>(null);
   const pollStartedAt = useRef<number | null>(null);
+  // Is the gateway pushing this list its fleet status, and when did the window last
+  // cost a read? Refs, not state: the poll reads them on its own tick, and a cadence
+  // must not re-run the effect that owns the timer.
+  const fleetStreamingRef = useRef(false);
+  const lastWindowReadAt = useRef(0);
   // The row action belongs to one session on one machine. Renaming needs an input
   // dialog; deleting asks through `ConfirmRow` exactly where that session row stood.
   // FORKING one session, from that row's own slide. The order is one value like
@@ -912,10 +928,18 @@ export function SessionsScreen({
     if (!isVisible) return;
     const controller = new AbortController();
     const refreshLiveStates = () => {
+      // This tick is a REACHABILITY probe, and the fleet stream is a better one:
+      // while it delivers, every transition arrives as a frame and this read is only
+      // the net under a stream that stopped. So keep the tick, slow the READ.
+      const now = Date.now();
+      if (fleetStreamingRef.current && now - lastWindowReadAt.current < STREAMED_POLL_MS)
+        return;
+      lastWindowReadAt.current = now;
       void load(controller.signal, true);
     };
 
     void load(controller.signal);
+    lastWindowReadAt.current = Date.now();
     // The session-list head is already the reachability check and carries live/idle
     // totals, so do not add a second health request. Five seconds bounds how long a
     // machine can still look active after it stops answering. Cheap on BOTH ends — an
@@ -942,23 +966,86 @@ export function SessionsScreen({
     // A connection identity change should preserve the existing frame until its data arrives.
   }, [fleetKey, isVisible, load]);
 
+  // A FLEET frame carries the whole answer for one row: `?scope=fleet` sends the very
+  // status the next window read would have carried, so a row this device already holds
+  // is repainted from the frame and NOTHING is read. Answering false means no machine
+  // holds that session — that is news about MEMBERSHIP, and where a row belongs is the
+  // gateway's arithmetic, never this device's.
+  const applyFleetFrame = useCallback(
+    (event: SseEvent): boolean => {
+      const sid =
+        typeof event.session_id === 'string'
+          ? event.session_id
+          : typeof event.sid === 'string'
+            ? event.sid
+            : '';
+      if (!sid) return false;
+      let update: Partial<Session>;
+      if (event.type === 'session.status') {
+        if (typeof event.is_live !== 'boolean') return false;
+        update = {
+          live: event.is_live,
+          is_awaiting_input: event.is_awaiting_input === true,
+          current_turn_id:
+            typeof event.current_turn_id === 'string' ? event.current_turn_id : null,
+        };
+      } else if (typeof event.title === 'string' && event.title.length > 0) {
+        update = { title: event.title };
+      } else {
+        return false;
+      }
+      const holders = machinesRef.current.filter((machine) =>
+        machine.sessions?.some((row) => row.id === sid),
+      );
+      for (const machine of holders)
+        patchMachine(machineKey(machine.conn), (current) =>
+          current.sessions
+            ? {
+                ...current,
+                sessions: current.sessions.map((row) =>
+                  row.id === sid ? { ...row, ...update } : row,
+                ),
+              }
+            : current,
+        );
+      return holders.length > 0;
+    },
+    [patchMachine],
+  );
+
   useEffect(() => {
     // Same rule as the poll above: a lifecycle event cannot move a list nobody is
     // looking at, and the load on becoming visible answers with the gateway's
     // canonical order anyway.
     if (!subscriptions || !isVisible) return;
     let refreshTimer: number | null = null;
-    const unsubscribe = subscriptions.subscribeFleet((event) => {
-      if (!SESSION_LIST_EVENTS.has(event.type)) return;
+    const readWindow = () => {
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
       // Coalesce lifecycle bursts, then ask the gateway for its canonical order.
       refreshTimer = window.setTimeout(() => void load(undefined, true), 120);
+    };
+    const stopState = subscriptions.subscribeFleetState((streaming) => {
+      fleetStreamingRef.current = streaming;
+    });
+    const unsubscribe = subscriptions.subscribeFleet((event) => {
+      if (FLEET_ROW_EVENTS.has(event.type)) {
+        if (!applyFleetFrame(event)) readWindow();
+        return;
+      }
+      // The multiplexed SESSION stream reaches only what this device has VISITED, and
+      // it is what this list ran on before the fleet stream existed. While that stream
+      // delivers it is the authority and these frames are its echo.
+      if (fleetStreamingRef.current) return;
+      if (!SESSION_LIST_EVENTS.has(event.type)) return;
+      readWindow();
     });
     return () => {
       unsubscribe();
+      stopState();
+      fleetStreamingRef.current = false;
       if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     };
-  }, [isVisible, load, subscriptions]);
+  }, [applyFleetFrame, isVisible, load, subscriptions]);
 
   useLayoutEffect(() => {
     const anchor = refreshAnchorRef.current;
