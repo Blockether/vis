@@ -24,15 +24,12 @@
   :debt/production
   #{
     com.blockether.vis.internal.attachments com.blockether.vis.internal.cancellation
-    com.blockether.vis.internal.config com.blockether.vis.internal.config-spec
-    com.blockether.vis.internal.extension com.blockether.vis.internal.external-opener
+    com.blockether.vis.internal.config com.blockether.vis.internal.extension com.blockether.vis.internal.external-opener
     com.blockether.vis.internal.file-picker com.blockether.vis.internal.format
     com.blockether.vis.internal.foundation.editing.parse
     com.blockether.vis.internal.foundation.environment.languages
-    com.blockether.vis.internal.foundation.environment.repositories
     com.blockether.vis.internal.foundation.surface-contract
-    com.blockether.vis.internal.gateway.wire com.blockether.vis.internal.git
-    com.blockether.vis.internal.header com.blockether.vis.internal.human-input
+    com.blockether.vis.internal.gateway.wire com.blockether.vis.internal.header com.blockether.vis.internal.human-input
     com.blockether.vis.internal.human-input.live
     com.blockether.vis.internal.human-input.spec com.blockether.vis.internal.iteration
     com.blockether.vis.internal.limits-format com.blockether.vis.internal.oauth
@@ -55,10 +52,8 @@
     com.blockether.vis.internal.foundation.gif com.blockether.vis.internal.foundation.shell
     com.blockether.vis.internal.foundation.shim-pytest
     com.blockether.vis.internal.foundation.surface-contract
-    com.blockether.vis.internal.foundation.workspace-slashes
     com.blockether.vis.internal.gateway.human-input com.blockether.vis.internal.gateway.state
-    com.blockether.vis.internal.gateway.wire com.blockether.vis.internal.git
-    com.blockether.vis.internal.header com.blockether.vis.internal.human-input
+    com.blockether.vis.internal.gateway.wire com.blockether.vis.internal.header com.blockether.vis.internal.human-input
     com.blockether.vis.internal.human-input.live
     com.blockether.vis.internal.human-input.spec com.blockether.vis.internal.iteration
     com.blockether.vis.internal.loop com.blockether.vis.internal.persistance
