@@ -10891,14 +10891,24 @@
 (def ^:private env-rss-budget-mb
   "Resident-set ceiling in MB. JVM heap alone misses GraalPy/native allocations,
    so this gate also forces idle-env eviction when process RSS is high. Override
-   with `VIS_ENV_RSS_BUDGET_MB`; <= 0 disables. Default 3072 (3 GB).
+   with `VIS_ENV_RSS_BUDGET_MB`; <= 0 disables.
+
+   RUNTIME-DEPENDENT, because the two runtimes do not carry the same floor. The
+   native image keeps 3072; the JVM gets 5120, because a `-Xmx5g` gateway sits
+   ABOVE 3 GB resident as a matter of course — heap committed plus metaspace plus
+   GraalPy native is already past it before any session is busy. A gate below the
+   idle floor is not a gate: measured on a working gateway it read `pressure=true`
+   on every single reaper sweep for hours, which drives `effective-ttl` to 0 and
+   force-evicts every idle env on every sweep. The reaper was permanently in its
+   emergency mode, and the flag carried no information because it never varied.
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
-   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer — and the
+   runtime split below would answer for the BUILDER's runtime, not this one."
   (delay (or (some-> (System/getenv "VIS_ENV_RSS_BUDGET_MB")
                      str/trim
                      parse-long)
-             3072)))
+             (if (env/native-image?) 3072 5120))))
 
 (defn- process-rss-bytes
   "Best-effort process resident set in bytes. Reads procfs on Linux and `ps` on

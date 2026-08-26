@@ -575,8 +575,13 @@
 ;; version so an engine upgrade cannot load an incompatible image. Disable with
 ;; VIS_ENGINE_CACHE=0 (shares the falsey-token convention with VIS_MEM_LOG).
 
-(defn- native-image?
-  "True inside the compiled GraalVM binary (never on the JVM dev/gateway)."
+(defn native-image?
+  "True inside the compiled GraalVM binary (never on the JVM dev/gateway).
+
+   Public because the two runtimes differ in more than the engine cache: the JVM
+   carries a multi-gigabyte Java heap the native image does not, so a resident-set
+   budget tuned for one is wrong for the other (`internal.loop/env-rss-budget-mb`).
+   One reader of the property, not a copy per caller."
   []
   (some? (System/getProperty "org.graalvm.nativeimage.imagecode")))
 
