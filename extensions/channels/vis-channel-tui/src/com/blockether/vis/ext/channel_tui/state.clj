@@ -5766,7 +5766,7 @@
                       terminal-trace (when-let [turn-id (and (not (get result "slash"))
                                                              (get result "session_turn_id"))]
                                        (try (chat/iteration-rows->trace
-                                              (vis/gateway-turn-trace turn-id)
+                                              (vis/gateway-turn-trace sid turn-id)
                                               (boolean (seq (get result "content"))))
                                             (catch Throwable _ nil)))]
 

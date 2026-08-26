@@ -2408,7 +2408,8 @@
                     (fn [& _])
 
                     vis/gateway-turn-trace
-                    (fn [turn-id]
+                    (fn [session-id turn-id]
+                      (expect (= "session-1" session-id))
                       (expect (= "turn-1" turn-id))
                       [{"id" "iteration-1"
                         "position" 1
