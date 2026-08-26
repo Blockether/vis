@@ -3590,6 +3590,24 @@
                    (let [base {:thinking "planning" :forms []}]
                      (expect (not= (fp base) (fp (assoc base :content-stream "live text"))))))))
 
+;; Regression, issue td-75dad4: terminal hydration added durable attachments to an
+;; otherwise identical trace, but the render cache continued serving the empty receipt.
+(defdescribe iteration-attachment-fingerprint-test
+             (it "invalidates when canonical attachment identity arrives"
+                 (let [fp
+                       @#'render/iteration-fingerprint
+
+                       base
+                       {:forms [{:code "attach(page)" :success? true}]}
+
+                       hydrated
+                       (assoc base
+                         :iteration-id "iteration-1"
+                         :attachments [{"filename" "report.html"}])]
+
+                   (expect (not= (fp base) (fp hydrated)))
+                   (expect (not= (fp hydrated)
+                                 (fp (assoc hydrated :iteration-id "iteration-2")))))))
 (defdescribe form-fingerprint-pending-display-test
              ;; Regression: the live progress body is memoized by `form-fingerprint`.
              ;; A RUNNING block paints its formatted band (`:display-code` /
@@ -4504,6 +4522,77 @@
                    ;; every painted row of the card is clickable, blanks included: a card
                    ;; whose middle row does nothing is a card that swallows a click.
                    (expect (= (count (filter :doc (:line-meta data))) (dec (count lines)))))))
+
+;; Regression, issue td-75dad4: a produced document was hidden behind an unnamed
+;; RESULT disclosure and its pending transport descriptor leaked when expanded.
+(defdescribe
+  produced-attachment-receipt-test
+  (let [entry
+        {:iteration-id "iteration-1"
+         :attachments [{:source "tool"
+                        :tool-call-id "call-1"
+                        :position 0
+                        :kind "doc"
+                        :media-type "text/html"
+                        :filename "report.html"
+                        :size 2048}]
+         :forms [{:code "attach(page, filename=\"report.html\")"
+                  :svar-tool-call-id "call-1"
+                  :stdout (str "````vis-doc\n[Document: report.html HTML, 2 KB]\n"
+                               "/tmp/report.html\ntext/html\nreport.html\n2 KB\n````\n"
+                               "{'is_pending': True, 'filename': 'report.html'}\n")
+                  :success? true
+                  :duration-ms 25}]}
+
+        collapsed
+        (format-iteration-entry-entries entry
+                                        80
+                                        1
+                                        {:session-id "session-1" :session-turn-id "turn-1"})
+
+        expanded
+        (format-iteration-entry-entries entry
+                                        80
+                                        1
+                                        {:session-id "session-1"
+                                         :session-turn-id "turn-1"
+                                         :detail-expansions
+                                         {:vis.channel-tui/expand-execution-details? true}})
+
+        collapsed-text
+        (str/join "\n" (map :line collapsed))
+
+        expanded-text
+        (str/join "\n" (map :line expanded))]
+
+    (it "names the durable artifact in the collapsed execution receipt"
+        (expect (str/includes? collapsed-text "report.html"))
+        (expect (not (str/includes? collapsed-text "RESULT"))))
+    (it "makes the expanded artifact openable without transport output"
+        (expect (some #(= {:filename "report.html"
+                           :media-type "text/html"
+                           :size 2048
+                           :iteration-id "iteration-1"
+                           :index 0}
+                          (get-in % [:meta :artifact]))
+                      expanded))
+        (expect (str/includes? expanded-text "click to open in the system viewer"))
+        (expect (not (str/includes? expanded-text "is_pending")))
+        (expect (not (str/includes? expanded-text "vis-doc"))))))
+
+(defdescribe
+  produced-attachment-inline-dedup-test
+  (it "keeps inline images out of the durable document card without shifting indexes"
+      (let [rows (@#'render/iteration-artifact-rows
+                  "iteration-1"
+                  [{:source "tool" :kind "image" :media-type "image/png" :filename "preview.png"}
+                   {:source "tool" :kind "doc" :media-type "text/html" :filename "report.html"}])]
+        (expect (= [{:filename "report.html"
+                     :media-type "text/html"
+                     :size nil
+                     :iteration-id "iteration-1"
+                     :index 1}]
+                   rows)))))
 
 ;; ── A failed turn is a CARD, in the terminal too ──
 ;;

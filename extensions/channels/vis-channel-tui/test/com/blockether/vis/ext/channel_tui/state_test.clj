@@ -2380,6 +2380,57 @@
           (expect (= {"provider" "p2" "model" "m2"} (:llm-actual metadata)))
           (expect (true? (:llm-fallback? metadata)))
           (expect (= trace (:llm-routing-trace metadata)))))))
+  ;; Regression, issue td-75dad4: the settled live trace retained streamed stdout
+  ;; but never refreshed the iteration’s durable attachment descriptors.
+  (it
+    "refreshes a completed live turn with its canonical attachment trace"
+    (let [session-turn-fx
+          (get @@#'state/fx-registry :session-turn)
+
+          received
+          (atom [])
+
+          attachment
+          {"source" "tool"
+           "tool_call_id" "call-1"
+           "position" 0
+           "kind" "doc"
+           "media_type" "text/html"
+           "filename" "report.html"
+           "size" 2048}]
+
+      (with-redefs [vis/worker-future
+                    (fn [_ thunk]
+                      (thunk)
+                      :future)
+
+                    vis/cancellation-set-future!
+                    (fn [& _])
+
+                    vis/gateway-turn-trace
+                    (fn [turn-id]
+                      (expect (= "turn-1" turn-id))
+                      [{"id" "iteration-1"
+                        "position" 1
+                        "forms"
+                        [{"src" "attach(page)" "svar_tool_call_id" "call-1" "duration_ms" 25}]
+                        "attachments" [attachment]}])
+
+                    state/dispatch
+                    #(swap! received conj %)
+
+                    chat/turn!
+                    (fn [& _]
+                      {"content" [{"id" "b1" "type" "prose" "markdown" "done"}]
+                       "session_turn_id" "turn-1"})]
+
+        (session-turn-fx :main {:id "session-1"} "make report" :token nil nil {} {} "client-1")
+        (let [metadata (-> @received
+                           (->> (filter #(= :message-received (first %))))
+                           last
+                           (nth 3))]
+          (expect (= "report.html"
+                     (get-in metadata [:terminal-trace 0 :attachments 0 "filename"])))))))
   (it
     "restores a cancelled prompt to the input instead of rendering a cancelled answer"
     (let [send-message-fn

@@ -2229,6 +2229,14 @@
                     (cr/register! {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
                                    :kind :doc
                                    :url (:path doc)}))
+                  ;; Canonical iteration artifacts carry durable identity, not a
+                  ;; cache path. The click resolves bytes through the same policy
+                  ;; as the session-wide attachment inspector.
+                  (when-let [artifact (:artifact meta)]
+                    (cr/register! {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                   :kind :artifact
+                                   :session-id (:session-id meta)
+                                   :artifact artifact}))
                   (cond
                     ;; ── Iteration header - right-aligned, subtle ──
                     (str/starts-with? line iteration-hdr-marker)
@@ -3580,7 +3588,7 @@
    `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
    progress chunk."
   [{:keys [thinking assistant-prose content-stream forms recaps provider-fallbacks error
-           repeat-count]}]
+           repeat-count attachments iteration-id]}]
   [(text-fingerprint thinking) (mapv form-fingerprint forms) recaps provider-fallbacks
    ;; `:error` is USUALLY a map, but some paths (e.g. CONSULT failures) carry a
    ;; plain String. `select-keys` only works on associatives and throws on a
@@ -3595,7 +3603,10 @@
    ;; The loop emits `:assistant-prose` while `:forms` is still empty, so without
    ;; it here the fingerprint is unchanged and the cache returns the stale,
    ;; prose-less render — the commentary block silently vanished.
-   (text-fingerprint assistant-prose) (text-fingerprint content-stream)])
+   (text-fingerprint assistant-prose) (text-fingerprint content-stream)
+   ;; A settled terminal refresh can add only durable attachment metadata; it must
+   ;; replace the cached stdout-only receipt immediately.
+   iteration-id attachments])
 
 (defn- short-id-fragment
   ^String [id]
@@ -4702,6 +4713,55 @@
     (mapv #(assoc-in % [:meta :doc] doc)
           (layout/ast->entries [:ast {} [:code {} (str/join "\n" lines)]] content-w {}))))
 
+(defn- iteration-artifact-rows
+  "Normalize durable produced attachments in byte-endpoint index order."
+  [iteration-id attachments]
+  (let [field (fn [m k]
+                (or (get m k) (get m (keyword k)) (get m (keyword (str/replace k "_" "-")))))]
+    (->> attachments
+         (filter #(and (= "tool" (str (field % "source")))
+                       (not= "activity" (str (field % "classification")))))
+         (keep-indexed (fn [index artifact]
+                         (let [kind (str (field artifact "kind"))
+                               media-type (str (or (field artifact "media_type")
+                                                   "application/octet-stream"))]
+
+                           (when-not (or (#{"image" "table"} kind)
+                                         (str/starts-with? media-type "image/")
+                                         (str/starts-with? media-type "video/"))
+                             {:filename (str (or (field artifact "filename") "artifact"))
+                              :media-type media-type
+                              :size (field artifact "size")
+                              :iteration-id (str iteration-id)
+                              :index index}))))
+         vec)))
+
+(defn- strip-produced-artifact-transport
+  "Remove attach’s internal document fence and pending descriptor once the
+   canonical iteration attachment owns presentation and durable opening."
+  [stdout]
+  (some-> stdout
+          str
+          (str/replace #"(?s)````vis-doc\n.*?\n````\n?" "")
+          (str/replace #"(?m)^\{[^\n]*is_pending[^\n]*\}\s*$" "")
+          str/trim
+          not-empty))
+
+(defn- artifact-preview
+  [artifacts]
+  (when-let [filename (:filename (first artifacts))]
+    (str filename (when (< 1 (count artifacts)) " and more"))))
+
+(defn- artifact-disclosure-entries
+  [artifacts session-id]
+  (into []
+        (mapcat (fn [{:keys [filename media-type] :as artifact}]
+                  (let [meta {:artifact artifact :session-id session-id}]
+                    [{:line (str result-marker filename " · " media-type) :meta meta}
+                     {:line (str result-marker "↗ click to open in the system viewer")
+                      :meta meta}])))
+        artifacts))
+
 (defn- paste-aware-ast->entries
   "`layout/ast->entries`, but each top-level `vis-paste` code block becomes
    a collapsible paste disclosure instead of an inline code chip. Falls
@@ -5245,8 +5305,11 @@
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
   (let [{:keys [thinking content-stream assistant-prose forms recaps provider-fallbacks error
-                repeat-count]}
+                repeat-count attachments iteration-id]}
         entry
+
+        iteration-artifacts
+        (iteration-artifact-rows iteration-id attachments)
 
         ;; `:content-stream` is the LIVE prose accumulation streamed alongside
         ;; reasoning (dropped after parse). `:assistant-prose` is the SAME markdown
@@ -5467,6 +5530,9 @@
           (let [{:keys [code display-code display-language comment error success? duration-ms runs]}
                 form
 
+                form-artifacts
+                (when (= (long block-number) (long (count forms))) iteration-artifacts)
+
                 is-error?
                 (and (some? success?) (not success?))
 
@@ -5679,9 +5745,15 @@
                 ;; form that also carries a semantic return value (images included) or
                 ;; reviving the intentionally hidden bare-value surface. Long results
                 ;; mirror thinking and collapse only the surplus.
+                display-form
+                (cond-> form
+                  (seq form-artifacts)
+                  (update :stdout strip-produced-artifact-transport))
+
                 card
-                (vis/result-card (cond-> form
-                                   (and (some? (:stdout form)) (nil? (:result form)))
+                (vis/result-card (cond-> display-form
+                                   (and (some? (:stdout display-form))
+                                        (nil? (:result display-form)))
                                    vis/form-with-display))
 
                 ;; The card HEADLINE — the tally the printed value itself carried
@@ -5725,7 +5797,10 @@
                 ;; head and the `+N more` disclosure already wear it,
                 ;; and a FAILED call rides its error headline (below): never both.
                 duration-stamp
-                (when-let [d (and (nil? card) (nil? error) (vis/format-duration duration-ms))]
+                (when-let [d (and (nil? card)
+                                  (nil? error)
+                                  (empty? form-artifacts)
+                                  (vis/format-duration duration-ms))]
                   {:line (str result-marker
                               " "
                               (format-detail-summary-line "" d (max 1 (dec (long fill-w)))))
@@ -5886,13 +5961,16 @@
                 result-block
                 (vec result-lines)
 
+                artifact-block
+                (artifact-disclosure-entries form-artifacts session-id)
+
                 ;; Python and Result share the compact execution surface. Activity follows as
                 ;; a timeline surface, while the verdict remains transcript text above both.
                 generic-run-entries
                 (run-row-entries (vec (remove :is-activity runs)) fill-w session-id false)
 
                 execution-body
-                (vec (concat code-block result-block generic-run-entries))
+                (vec (concat code-block result-block artifact-block generic-run-entries))
 
                 activity-surface
                 (when activity-run (activity-detail-entries activity-run fill-w session-id))]
@@ -5900,7 +5978,10 @@
             (if-not execution-status
               execution-body
               (let [summary-text
-                    (activity-status-display execution-status)
+                    (activity-status-display (cond-> execution-status
+                                               (seq form-artifacts)
+                                               (update :status-text str
+                                                       " · " (artifact-preview form-artifacts))))
 
                     summary-line
                     (ellipsize-cols (str "  " (if execution-expanded? "▾" "▸") " " summary-text)

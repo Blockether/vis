@@ -5756,11 +5756,22 @@
                                           :turn-features turn-features
                                           :workspace workspace
                                           :display-text display-text
-                                          :attachments inline-attachments})]
+                                          :attachments inline-attachments})
+                      ;; The progress stream carries stdout but not durable attachment
+                      ;; descriptors. Refresh this one completed turn so the live receipt
+                      ;; and a later restored receipt render from the same canonical rows.
+                      terminal-trace (when-let [turn-id (and (not (get result "slash"))
+                                                             (get result "session_turn_id"))]
+                                       (try (chat/iteration-rows->trace
+                                              (vis/gateway-turn-trace turn-id)
+                                              (boolean (seq (get result "content"))))
+                                            (catch Throwable _ nil)))]
 
                   (if (get result "error")
                     (dispatch [:message-received workspace-id (chat/error-content result)
-                               {:client-turn-id client-turn-id :status :failed}])
+                               {:client-turn-id client-turn-id
+                                :status :failed
+                                :terminal-trace terminal-trace}])
                     (do (dispatch
                           [:message-received workspace-id (get result "content")
                            ;; Field-by-field pick from the canonical string-keyed
@@ -5788,7 +5799,8 @@
                                       nil)
                             :utilization (get result "utilization")
                             :slash (get result "slash")
-                            :client-turn-id client-turn-id}])
+                            :client-turn-id client-turn-id
+                            :terminal-trace terminal-trace}])
                         ;; A turn may have changed the session's workspace (`/cd <path>`,
                         ;; or a future model-managed isolation action).
                         ;; Re-sync so header/footer reflect it. The gateway ws

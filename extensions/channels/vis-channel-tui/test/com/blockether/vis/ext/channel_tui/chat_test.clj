@@ -844,6 +844,19 @@
                                                        :transcription "spoken answer"}]))]
                      (expect (not (str/includes? out "vis-transcript")))))))
 
+;; User-submitted attachments are conversation content, not composer-only state.
+(defdescribe user-submitted-attachment-history-test
+             (it "keeps a user-submitted document visible by filename"
+                 (let [render
+                       @#'chat/user-request-with-images
+
+                       out
+                       (render "review this"
+                               (wire/canonical [{:filename "brief.html"
+                                                 :media-type "text/html"
+                                                 :source "user"}]))]
+
+                   (expect (str/includes? out "[Attachment #1: brief.html]")))))
 (defdescribe explicit-turn-attachment-test
              (it "passes explicit inline attachments to the canonical gateway request"
                  (let [sent

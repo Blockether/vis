@@ -6703,6 +6703,9 @@
                                  :activity-evidence
                                  (activate-live-region! db hit)
 
+                                 :artifact
+                                 (open-produced-artifact! (:session-id hit) (:artifact hit))
+
                                  (open-click-target! screen hit))
                                (let [point (selection/point mx my)
                                      disclosure-hit
@@ -6857,6 +6860,9 @@
 
                                  :activity-evidence
                                  (activate-live-region! db hit)
+
+                                 :artifact
+                                 (open-produced-artifact! (:session-id hit) (:artifact hit))
 
                                  ;; Default: hand any direct-open hit to
                                  ;; the OS opener on a side thread - a

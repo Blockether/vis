@@ -317,7 +317,23 @@
                                          (dec (long p)))
                              :thinking (visible-thinking (get it "thinking"))
                              :provider-fallbacks (get it "llm_routing_trace")
+                             :iteration-id (get it "id")
+                             :attachments (vec (or (get it "attachments") []))
                              :forms forms})))
+
+(defn iteration-rows->trace
+  "Project canonical gateway iteration rows into the TUI trace shape. Used both
+   by restored transcript history and by the terminal refresh of a live turn."
+  [turn-iterations produced-answer?]
+  (let [rows
+        (vec (or turn-iterations []))
+
+        last-iteration-id
+        (get (last rows) "id")]
+
+    (mapv (partial it->iteration-entry
+                   {:produced-answer? produced-answer? :last-iteration-id last-iteration-id})
+          rows)))
 
 (defn user-message
   "Create a canonical user message."
@@ -655,7 +671,6 @@
                   ;; `(done "...")` call as code above it.
                   turn-iterations (vec (get q "iterations"))
                   last-it (last turn-iterations)
-                  last-iteration-id (get last-it "id")
                   llm-routing (cond-> {}
                                 (get last-it "llm_selected")
                                 (assoc :selected (get last-it "llm_selected"))
@@ -679,13 +694,7 @@
                                       (some #(#{"user-slash" "user-shell"} (str (get % "tag")))
                                             (get it "forms")))
                                     turn-iterations)
-                  trace (if slash-turn?
-                          []
-                          (into []
-                                (map (partial it->iteration-entry
-                                              {:produced-answer? produced-answer?
-                                               :last-iteration-id last-iteration-id}))
-                                turn-iterations))
+                  trace (if slash-turn? [] (iteration-rows->trace turn-iterations produced-answer?))
                   assistant-message (cond-> (assistant-message content-blocks
                                                                (or (some-> (get q "created_at")
                                                                            long
