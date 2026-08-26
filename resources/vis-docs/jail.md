@@ -1,694 +1,260 @@
 # Process jail & egress
 
-Vis treats model-started processes as untrusted. On macOS, every managed shell,
-nested shell, Python `subprocess`, managed Clojure/Python/Bun REPL, and project
-test runner inherits one Seatbelt profile. The profile confines files and makes
-the gateway's loopback proxy the only outbound network endpoint.
+The process jail confines code started for a session. It limits filesystem access,
+scrubs the child environment, and routes outbound connections through the gateway's
+policy. The boundary covers managed child processes; the in-process GraalPy sandbox
+uses its own filesystem and socket guards.
 
-This page describes the security boundary, its configuration, and its explicit
-exceptions. See [Configuration](configuration.md) for all other `vis.yml` keys.
+## Enable the boundary
 
-## One master switch
-
-**The jail is OFF by default.** It is opt-in via one boolean. There is no shell
-toggle and no independent network-enabled toggle.
+The jail is off unless the merged `vis.yml` contains:
 
 ```yaml
 jail:
   enabled: true
 ```
 
-> **Strongly recommended.** When the jail is off, every model-started shell,
-> subprocess, and managed REPL runs with the gateway user's **full host
-> permissions** — it can read your SSH keys, exfiltrate secrets, and reach any
-> network host. Set `jail.enabled: true` on any project where the model runs
-> untrusted code. Leave it off only when you deliberately want that unrestricted
-> access (e.g. a fully trusted local workflow).
+Run `/reload` after changing security configuration. The next message in each active
+session rebuilds that session's immutable policy snapshot. `session["access"]` shows
+the effective snapshot, including `is_jailed`, filesystem modes, network policy, and
+`changes_require`.
 
-With `jail.enabled: true` the OS process jail and forced gateway egress path are
-active for managed child processes on:
+Shell availability is separate. `toggles.shell: false` removes `shell(...)`; it does
+not change the policy for other managed processes.
 
-- **macOS** — Seatbelt via the system `sandbox-exec` (ships with the OS, zero install).
-- **Linux** (incl. WSL2) — bubblewrap (`bwrap`) mount + network namespaces; install
-  `bubblewrap` (e.g. `apt-get install bubblewrap`). Filesystem confinement and
-  network-off are kernel-enforced. Per-host/verb *filtered* egress through the proxy
-  uses **pasta** (from `passt`; `apt-get install passt`): the child gets a private
-  network namespace reaching ONLY the gateway proxy port — exact parity with the
-  macOS "only the proxy port" rule. Without `passt`, filtered egress degrades to
-  no egress at all (safe) with a loud warning. An explicitly-open network (a managed
-  nREPL) shares the host namespace. **WSL2** runs a real Linux kernel and works like
-  any Linux host; **WSL1** has no real namespaces and is reported unenforceable.
+## What is confined
 
-If the host cannot enforce a jail (e.g. Linux without `bwrap`), a
-requested `jail.enabled: true` **fails loud** — a one-time stderr WARNING that
-children run unconfined — instead of silently pretending safety. A missing policy,
-failed policy function, unknown session, or disposed session does **not** silently
-disable confinement; managed process launch fails closed.
+| execution path | boundary |
+|---|---|
+| `shell(...)`, nested shells, and Python `subprocess` reached through the sandbox | OS process jail plus gateway egress policy |
+| REPLs started by `repl_start` and project test runners | same session policy as `shell(...)` |
+| `python_execution` | GraalPy filesystem and socket guards; HTTP uses the gateway policy while the jail is enabled |
+| `repl_connect` | not confined; it attaches to a process Vis did not start |
+| Python extension code and its ordinary `subprocess` calls | trusted host code, outside the session jail |
 
-Omitting `jail.enabled` (or setting it `false`) leaves confinement off. Setting it
-`true` and running `/reload` enables it with no restart.
+A trusted extension can opt into confinement with `vis.jailed_shell(...)` or use the
+invoking session's snapshot with `vis.jailed_shell_session(...)`. Project extension
+files are executable plugins and require the same review as build scripts.
 
-`jail.enabled: false` does not turn the in-process GraalPy context into a trusted
-context. `python_execution` still has its Truffle filesystem and host/socket
-restrictions.
+## Filesystem admission
 
-## Installing the jail dependencies
-
-**macOS** — nothing to install. `sandbox-exec` ships with the OS.
-
-**Linux (incl. WSL2)** — two packages:
-
-```bash
-# Debian / Ubuntu
-sudo apt-get install -y bubblewrap passt
-# Fedora / RHEL
-sudo dnf install -y bubblewrap passt
-# Arch
-sudo pacman -S bubblewrap passt
-```
-
-- `bubblewrap` (`bwrap`) — required for **any** Linux jail (filesystem confinement +
-  network-off). Without it, `jail.enabled: true` fails loud and children run unconfined.
-- `passt` (provides `pasta`) — required only for *filtered* egress through the proxy.
-  Without it, a policy that would allow filtered egress instead denies all egress
-  (safe) and warns once.
-
-Verify:
-
-```bash
-bwrap --version
-pasta --version
-```
-
-Unprivileged user namespaces must be enabled — the default on modern kernels. If
-`bwrap` fails with `setting up uid map: Permission denied`, enable them:
-
-```bash
-sudo sysctl -w kernel.unprivileged_userns_clone=1   # older Debian/Ubuntu kernels
-```
-
-**WSL2** runs a real Linux kernel and works like any Linux host. **WSL1** has no
-namespaces and is reported unenforceable (the jail fails loud).
-
-## Running the gateway on a VPS (dedicated user)
-
-Run the gateway under its **own unprivileged user**. The jail is the second layer;
-the OS user is the first — a jail escape is then confined to a low-privilege account
-that owns nothing but the workspace. Keep this user distinct from your login user,
-so `deny-read` and the workspace roots protect something real (a jail rooted at the
-operator's `$HOME` protects less).
-
-1. Create the user and workspace:
-
-```bash
-sudo adduser --disabled-password --gecos "" visgw
-sudo -u visgw mkdir -p /home/visgw/workspace /home/visgw/.vis
-```
-
-2. Install the jail dependencies once, as root:
-
-```bash
-sudo apt-get install -y bubblewrap passt
-```
-
-3. Install the `vis-agent` wrapper for that user (for example under
-   `/usr/local/bin`), select either its native or JVM runtime, and write a project
-   config with the jail **on**:
-
-```bash
-sudo -u visgw tee /home/visgw/workspace/vis.yml >/dev/null <<'YAML'
-jail:
-  enabled: true
-  network:
-    allowed_domains: ["api.github.com", "*.pypi.org"]
-YAML
-```
-
-4. Run the gateway as a systemd service under that user:
-
-```ini
-# /etc/systemd/system/vis-gateway.service
-[Unit]
-Description=vis-agent gateway
-After=network.target
-
-[Service]
-User=visgw
-Group=visgw
-WorkingDirectory=/home/visgw/workspace
-ExecStart=/usr/local/bin/vis-agent gateway start --host 0.0.0.0 --port 7890 --require-token
-Restart=on-failure
-# The gateway itself stays UNCONFINED; it applies the jail to its CHILDREN.
-# Do NOT wrap this unit in its own bwrap/seccomp/NoNewPrivileges sandbox —
-# that would break the per-child bwrap + pasta invocation.
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now vis-gateway
-```
-
-5. Expose it safely. The control plane on port 7890 is bearer-token authenticated
-   (`--require-token`), but it is your management surface — keep it behind TLS + a
-   firewall or a VPN, not raw on the public internet. For pairing a phone/remote
-   client and the token model, see [Gateway](gateway.md). A jailed child can **never**
-   dial this port: the gateway's own port is always subtracted from what a child may
-   reach, even under `allow-loopback`.
-
-Notes:
-
-- The egress proxy and its MITM CA live **inside** the gateway process. Nothing is
-  written to the host trust store; each session gets an ephemeral CA.
-- `bwrap` and `pasta` are invoked per child spawn — they run no daemon of their own.
-- Leave the systemd unit itself unconfined; the jail is applied downward to model
-  children, not to the gateway.
-
-## Filesystem policy
-
-The session's active workspace roots are readable and writable, and temporary
-locations needed by ordinary programs are available. Every other filesystem root
-is declared ONCE in the `workspace.filesystem` catalog and admitted into the jail
-by id.
-
-Each catalog entry has an `id`, a `path` (absolute `/…` or home-relative `~`/`~/…`
-— a bare-relative path is rejected when the config is read), an optional
-`description` (shown in the session access view), an `access` of `read-write`
-(default) or `read-only`, a `search` flag (default `true`; `search: false` keeps the
-root out of the default `grep` sweep while explicit paths still reach it), a
-`draft` policy (default `shared`), and the mount conditions `when` and `optional`
-described below.
-
-`draft` decides what an engine-isolated session may do with the root: `shared`
-writes through to the real root, `copy-only` forks a private copy that never lands
-back, `copy-and-apply` lands that copy only when the engine applies the workspace,
-and `not-allowed` withholds the root from the isolated session on read and write.
-This check is enforced by the engine's own path guard, so it holds with
-`jail.enabled: false` as well; a copy policy whose fork fails withholds the root
-rather than writing through.
-
-`jail.filesystem.allow` then lists the ids that enter the OS jail
-(deny-by-omission — a catalog root NOT listed is not confined-granted); RW vs
-read-only comes from the catalog entry.
+Declare additional roots once under `workspace.filesystem`, then admit them by id
+under `jail.filesystem.allow`:
 
 ```yaml
 workspace:
   filesystem:
-    - id: shared
-      path: ~/shared-repository
-      description: shared code the agent may edit
-      draft: copy-and-apply    # copied if the engine isolates this session
+    - id: sibling
+      path: ~/sibling-repository
+      description: repository used by this project
+      access: read-write
+      draft: copy-and-apply
     - id: reference
       path: ~/reference-data
       access: read-only
     - id: m2
       path: ~/.m2
-      description: Maven/Clojure dependency cache
-      search: false          # granted, but kept out of the default search sweep
+      access: read-only
+      search: false
 
 jail:
+  enabled: true
   filesystem:
-    allow: [shared, reference, m2]
+    allow: [sibling, reference, m2]
 ```
 
-Managed language dependency caches (`~/.m2`, `~/.clojure`, `~/.npm`, …) are **not**
-implicit — grant them as catalog entries (typically `search: false`) and list
-their ids under `jail.filesystem.allow`.
+The active workspace and temporary directories are writable. An admitted catalog
+root uses its declared `access`; a catalog root omitted from `allow` is absent from a
+confined child. Dependency caches are not granted automatically.
 
-### One catalog, several machines
+Every path must be absolute or home-relative. `when.os`, `when.exists`, and
+`optional: true` let one catalog cover hosts where a root is unavailable. An id may
+remain in `allow` when its conditional catalog entry does not apply. An unknown id is
+a configuration error.
 
-The same `vis.yml` usually has to serve a laptop, a workstation and CI, where some
-roots simply do not exist. Two keys make an entry conditional instead of a hard
-requirement:
-
-- `when.os` mounts the root only on the named platforms — `macos`, `linux`, `wsl`
-  (Linux under WSL) or `windows`.
-- `when.exists` mounts it only when that path is present on this host.
-- `optional: true` mounts it when its own `path` exists and stays quiet when it
-  does not.
-
-```yaml
-workspace:
-  filesystem:
-    - id: xcode
-      path: ~/Library/Developer/Xcode
-      when:
-        os: [macos]
-    - id: cuda
-      path: /usr/local/cuda
-      when:
-        exists: /usr/local/cuda
-    - id: scratch
-      path: ~/scratch
-      optional: true
-
-jail:
-  filesystem:
-    allow: [xcode, cuda, scratch]
-```
-
-An entry that does not apply is dropped before the jail is built, and keeping its
-id in `jail.filesystem.allow` stays legal — the allow list is written once for
-every machine. An id that is in no catalog entry at all is still a hard config
-error.
-
-A root that IS admitted but whose path is missing is reported, never silently
-dropped: `vis-agent doctor` and the startup hint carry one line per root that did not
-mount as written — `warn` for a missing required root, `info` for one skipped by
-`when` or by `optional: true`.
-
-The ONE implicit root is Vis's own session folder, `~/.vis` (config, `state.yml`,
-the session database, gateway event journals, drafts and logs). The engine always
-grants it read/write — with an empty catalog and inside a live jail alike — and
-always keeps it out of the default search sweep. Declare it explicitly only to
-override that (e.g. `access: read-only`).
-
-`/cd` changes the active workspace root. To add filesystem locations, edit the
-`workspace.filesystem` catalog in `vis.yml` and run `/reload`; `jail.filesystem.allow`
-independently controls which catalog entries a confined child may access.
-
-## macOS Keychain and Mach services
-
-Seatbelt denies Mach lookups by default, so a confined `security`, `gh auth token`
-or `git credential-osxkeychain get` fails with an opaque Security-framework
-message (`SecKeychainSearchCreateFromAttributes: … parameters … not valid`) that
-never mentions the sandbox. `jail.mach_services` grants those lookups explicitly:
-
-```yaml
-jail:
-  mach_services:
-    keychain: true               # credential helpers may read the Keychain
-    allow: [com.example.agent]   # any other global-name Mach service
-```
-
-`keychain: true` allows `com.apple.SecurityServer`, `com.apple.ocspd` and
-`com.apple.trustd.agent`, and grants read access to `~/Library/Keychains` and
-`/Library/Keychains` (kept out of the default search sweep). `allow` names any
-further service by global name. The default is deny — an unlisted service stays
-unreachable — and both keys are macOS-only, ignored on other hosts.
-
-When a command fails this way inside a jail that did not grant it, the shell
-result's `note` names the denial and the setting that lifts it, instead of leaving
-the opaque Security message as the only evidence.
+`search: false` keeps a granted root out of default `grep` searches without blocking
+an explicit path. `draft` controls isolated workspace copies independently of the OS
+jail. Vis also grants `~/.vis` read/write and excludes it from default searches;
+declare it explicitly only to change that access.
 
 ## Environment scrubbing
 
-A confined child does **not** inherit the operator's environment. It gets exactly three things:
+With the jail enabled, a child receives:
 
-1. **An allowlist of non-secret variables** — `PATH`, `HOME`, `USER`, `SHELL`, `LANG`/`LC_*`, `TERM`, `TZ`, `TMPDIR`, `PWD`, ….
-2. **The project's own environment** — the workspace's `.env`/`.env.local` plus the `environment:` declarations, see [Configuration](configuration.md).
-3. **This session's proxy and CA variables.**
+1. basic non-secret variables such as `PATH`, `HOME`, `LANG`, `TERM`, `TZ`, and
+   `TMPDIR`;
+2. values resolved from the project's `.env`, `.env.local`, and top-level
+   `environment:` block;
+3. the session's proxy and CA variables.
 
-Every other `*_KEY` / `*_TOKEN` / `*_SECRET` / `*_PASSWORD` and operator credential is dropped before the process starts. This covers the sandbox's `shell(...)` call (every stage), trusted extension `subprocess`, and every managed language REPL and test runner.
-
-The project's `.env` is *not* withheld from a confined child on purpose: the
-child was granted the workspace and can read that file itself, so dropping the
-values would confine nothing. What the jail draws a line around is the
-environment of the operator who started Vis.
-
-To give a confined child something the project files do not contain — an ambient
-variable, a keychain item, a helper command — **declare it in `environment:`**:
+The operator's remaining environment is omitted. Declare a needed ambient value at
+the top level instead of copying it into the jail block:
 
 ```yaml
 environment:
-  CI: {env: CI}                        # re-admit an ambient variable
-  MY_BUILD_TOKEN: {keychain: vis-build}   # …or one only the keychain knows
+  CI: {env: CI}
+  BUILD_TOKEN: {keychain: vis-build}
 ```
 
-Everything else of the operator's environment stays dropped, and `LD_*`,
-`DYLD_*`, `PERL*`, `BASH_ENV` and friends are refused from either source: they
-run code in the unconfined hops that install the jail, so they never reach the
-child anyway.
+`jail.environment: inherit` passes the operator's ambient environment to confined
+children, including exported credentials. Filesystem and network rules still apply.
+Pre-exec injection variables such as `LD_*`, `DYLD_*`, `BASH_ENV`, and `PERL*` are
+refused in both modes because they could run before the jail is installed.
 
-### `jail.environment` — the one knob over the ambient environment
+When the jail is disabled, child processes inherit the host environment with project
+values layered on top.
 
-```yaml
-jail:
-  enabled: true
-  environment: declared   # default — see above
-  # environment: inherit  # …or hand the child the whole ambient environment
-```
+## Network egress
 
-`declared` is the default and needs no key. `inherit` gives the confined child
-the operator's environment **whole, secrets included** — filesystem, network,
-exec and Mach confinement are untouched, but ambient secrecy is given up. It
-exists for a toolchain that needs a pile of host variables (`JAVA_HOME`,
-`ANDROID_HOME`, `SSH_AUTH_SOCK`, …) and is worth replacing with a handful of
-`environment:` declarations as soon as you know which ones. `LD_*`, `DYLD_*`,
-`PERL*` and friends are still refused under `inherit`: that scrub protects the
-jail's own installation, not the child.
+A confined process cannot dial the network directly. HTTP, HTTPS, and proxy-aware raw
+TCP clients reach a session-authenticated gateway proxy. The proxy resolves the
+requested host, applies the session policy, and dials the validated address.
 
-The mode is inert with `jail.enabled: false` — nothing is confined, so nothing
-is withheld: children inherit the host environment with the project's own
-layered on top.
+Without a `jail.network` block, public destinations are allowed. These protections
+still apply:
 
-File **metadata** (existence, size, mtime) is likewise scoped: a child may stat
-its granted roots and the directory ancestors it needs to resolve paths, but not
-read the size/mtime of files beneath `$HOME` such as `~/.ssh/id_ed25519`.
+- link-local, cloud metadata, wildcard, and multicast addresses are blocked;
+- private IPv4 ranges, CGNAT, and IPv6 ULA require `allow_private: true`;
+- loopback services are allowed except the gateway's control and proxy ports.
 
-## Network policy
-
-Every confined child is denied direct sockets except the gateway proxy and any
-explicit inbound listener ports. The proxy attributes each connection to its
-session, blocks SSRF destinations, and applies one policy to shell HTTP clients,
-managed language processes, and GraalPy HTTP clients.
+Use `allowed_domains` for an allowlist and `denied_domains` for explicit blocks.
+Denies win. A concrete denied hostname is also blocked by its resolved addresses;
+wildcard entries match names. `exclude_domains` disables TLS inspection for clients
+that pin certificates, but it does not bypass host, port, or SSRF checks.
 
 ```yaml
 jail:
   enabled: true
   network:
     allowed_domains:
-      - "*"
+      - api.github.com
+      - "*.pypi.org"
     denied_domains:
-      - evil.example
-    exclude_domains:
-      - pinned.example
+      - blocked.example
     allow_private: false
+```
+
+### Method, path, and port rules
+
+Rules narrow a host by HTTP method, path, and destination port:
+
+```yaml
+jail:
+  enabled: true
+  network:
     rules:
       - host: api.example.com
         access: read-only
         allow:
           - method: POST
             path: /v1/issues/**
-      - host: "*"
-        access: read-only
-      - host: db.internal
-        ports: [5432]           # only Postgres; every other port on this host is denied
-    inbound_ports:
-      - 5273
+      - host: db.example.com
+        access: full
+        ports: [5432]
 ```
 
-Host denies win over allows. `read-only` means `GET`, `HEAD`, and `OPTIONS`;
-`full` allows every method; `none` denies every method. `allow` entries add
-method/path exceptions. Paths use glob matching. A rule's optional `ports` list
-restricts which destination ports reach that host for EVERY protocol (HTTP(S)
-CONNECT and the SOCKS5 lane) — e.g. `ports: [22, 443]` allows only ssh + https
-to a host, `ports: [5432]` only Postgres. A rule with no `ports` allows any port
-(the default); a rule that lists only `ports` leaves verbs unrestricted.
+`read-only` permits `GET`, `HEAD`, and `OPTIONS`; `full` permits all methods; `none`
+permits none. `methods` can name an explicit method set, and `allow` adds method/path
+exceptions. `ports` applies to HTTP CONNECT and SOCKS as well as ordinary HTTP.
 
-`denied_domains` blocks a host by BOTH its name and its resolved IP:
+The gateway terminates inspected HTTPS with an ephemeral session CA. Common HTTP
+clients receive CA environment variables, and managed JVMs receive a temporary trust
+store. Raw TCP uses a SOCKS5 lane on the same proxy port and therefore has host and
+port checks but no HTTP method or path. A program that ignores proxy variables, such
+as `ssh`, needs an explicit proxy command.
 
-- A concrete denied name (not a `*.` glob) is resolved to its addresses, and any dial whose destination resolves to one of those addresses is refused at the connect chokepoint — so a child cannot bypass the denylist by resolving the name itself and dialing the raw IP literal.
-- Glob entries (`*.evil.com`) still match by name only: a wildcard has no single IP to resolve.
+### Inbound development ports
 
-For the hardest boundary, use a strict `allowed_domains` allowlist — it is enforced against IP-literal targets too, so a non-listed IP is denied — and combine it with the always-on SSRF floor, which validates every *resolved* address (loopback reserved ports, link-local/metadata, private ranges) and cannot be bypassed by an IP literal or by DNS rebinding.
-
-All of it applies identically to HTTP(S) and the SOCKS5 lane: both share one host gate.
-
-HTTPS verb and path enforcement uses a gateway-owned ephemeral CA and TLS
-termination. Common clients receive CA environment variables, and managed JVMs
-receive a temporary PKCS12 truststore. Hosts in `exclude_domains` are opaque TLS
-tunnels for certificate-pinned or otherwise incompatible clients; host policy
-still applies, but methods, paths, and plaintext network filters cannot be
-inspected there.
-
-Non-HTTP TCP (ssh, git-over-ssh, databases, arbitrary raw TCP) traverses a SOCKS5
-lane on the SAME loopback port — the proxy multiplexes it by the first byte, so
-the jail needs no extra opening. `ALL_PROXY` points non-HTTP clients at
-`socks5h://…` while `http_proxy`/`https_proxy` keep the HTTP proxy so web verb and
-path policy still apply. The SOCKS lane carries the session token in the RFC 1929
-username and enforces the same host allow/deny and SSRF floor, but no method or
-path (those protocols carry none). Tools that read no proxy environment (`ssh`
-itself) still need an explicit `ProxyCommand`.
-
-Loopback development services are reachable except Vis's reserved gateway and
-proxy ports. Link-local, cloud metadata, wildcard, and multicast destinations
-are always denied. RFC1918, CGNAT, and IPv6 ULA destinations require
-`allow_private: true`. The proxy resolves and validates addresses before dialing
-the validated address, preventing DNS-rebinding pivots.
-
-`jail.network.inbound_ports` permits a confined development server to accept on those
-ports. Managed nREPL receives only its preselected loopback port and does not
-inherit this general server list.
-
-## Programmable network filters
-
-A trusted Python extension may add one phase-aware gateway filter:
-
-```python
-import vis
-
-
-def policy(ctx):
-    if ctx["phase"] == "http-request" and ctx["method"] == "POST":
-        return vis.block("POST is not permitted")
-    if ctx["phase"] == "http-response" and ctx["status"] >= 500:
-        return vis.block("upstream failure hidden")
-    return None
-
-
-vis.extension(
-    name="network-policy",
-    description="Project network policy",
-    network_filters=[vis.network_filter(policy)],
-)
-```
-
-Filters run in the gateway at the decrypted request/response boundary and fail
-closed on an exception. HTTP and MITM'd HTTPS pass method, host, path, and headers
-(response phases also include status). The **SOCKS5 lane runs the same filters** at
-connect time with `phase="socks"` plus host and port (no method/path — raw TCP
-carries no verb), so one guard covers both HTTP and SOCKS. Tunnelled hosts are
-intentionally opaque.
-
-### Debugging filters with `/net-probe`
-
-A filter runs in the gateway's trusted context, so a bug shows up only as "traffic
- denied" — never a stack trace at the call site (a filter that throws **fails
-closed**). Use `/net-probe` to see, without touching the network, exactly what the
-host gate and every registered filter decide for a synthetic request:
-
-```text
-/net-probe POST https://api.github.com/repos    # HTTP: method + path visible
-/net-probe github.com:22                         # bare host:port -> SOCKS phase
-```
-
-It reports the Tier-1 host/port/SSRF verdict, then **each** filter individually
-(never collapsing on the first deny) with its allow/deny reason — and, when a
-filter crashed, the fail-closed marker plus the Python **traceback**. The dev loop
-is: edit the extension `.py`, `/reload`, `/net-probe …`.
-
-### Authoring + probing a filter inside `python_execution`
-
-The same loop is available **without an extension file or `/reload`**, right in the
-Python sandbox, via two baseline builtins:
-
-```python
-def block_writes(ctx):
-    # ctx = {phase, method, host, path, port, headers}
-    if ctx.get('method') in ('POST', 'PUT', 'DELETE', 'PATCH'):
-        return 'mutations blocked'          # a str reason (or {'reason': ...}) DENIES
-    return None                             # None ALLOWS; a raise FAILS CLOSED
-
-network_filter(block_writes)                # register a local (session-scoped) guard
-network_probe(method='POST', url='https://api.github.com/repos')  # http: verb + path
-network_probe(url='db.host:5432')                    # bare host[:port] -> SOCKS phase
-```
-
-`network_probe` is **guard-only** — it runs the gateway's Tier-1 host/port/SSRF gate
-**+ every registered gateway filter + your local `network_filter`s** against a
-*synthetic* request and prints each verdict (with the Python traceback for a crash).
-It **never opens a socket and never sends anything** — it exercises only the
-decision. Two honest limits: a `network_filter` registered here is **local to the
-session probe** (it does not affect live egress — author a `.py` extension for that),
-and these are bare names in the sandbox (there is no `vis.` module inside
-`python_execution`).
-
-
-## Denying a command, then re-allowing it through a trusted extension
-
-A common policy is "the model's shell and its agent tools must never run `aws`,
-but a reviewed extension may proxy specific AWS calls." The sandbox supports this
-because confinement is applied **per spawn**, not ambiently, and the two callers
-take different code paths to the OS.
-
-**Block a command with `jail.deny_exec`.** There is no argv denylist; a command
-is blocked by forbidding EXECUTION of its binary. List the command names and Vis
-resolves each on `PATH` at config-read, then the jail emits a kernel exec-block for
-**every** matching executable — a Seatbelt `(deny process-exec*)` on macOS, and on
-Linux a `/dev/null` mask over the binary at every bin-dir alias (`/usr/bin`, `/bin`,
-…) so the PATH lookup finds no runnable copy. Kernel-enforced on both, no leaky argv parsing:
+A confined server may accept only ports listed in
+`jail.network.inbound_ports`. Managed nREPL uses its own preselected loopback port and
+does not inherit this list.
 
 ```yaml
 jail:
-  deny_exec: [curl, wget, ssh]
+  enabled: true
+  network:
+    inbound_ports: [5273]
 ```
 
-An absolute or `~`-rooted entry (e.g. `/opt/homebrew/bin/aws`) is denied
-verbatim; an unresolvable name is a no-op. Every process spawned through the jail
-— the managed `shell` tool (foreground and background), agent tool commands, managed
-REPLs, and project test runners — inherits the profile, so `curl …` fails to
-exec (`Operation not permitted` on macOS, exit 126 on Linux).
+### Project network filters
 
-This overrides the jail's blanket exec allow. Note that denying **read** on a
-binary would not stop its execution on macOS (the kernel maps an allowed binary
-without a file-read check) — `deny_exec` is what actually blocks the command.
+A trusted Python extension can register a gateway `network_filter`. Filters see HTTP
+request and response phases plus SOCKS connection attempts; an exception denies the
+request. Use `/net-probe` to test the host gate and every registered filter without
+opening a socket. Inside `python_execution`, `network_filter(...)` and
+`network_probe(...)` test session-local filters, but those local filters do not alter
+live egress.
 
-**`deny_exec` is convenience, not containment.** It blocks a *named* binary and
-its symlinks — not the *capability*. An interpreter already on the allow-list
-substitutes trivially: with `curl` denied, `python3 -c "import urllib.request; …"`
-or `bash`'s `/dev/tcp` do the same job, and a script the child writes into a
-writable root and runs is never on your list. Treat `deny_exec` as a guardrail
-that stops the obvious/lazy invocation and trims the tool surface — the real
-egress boundary is the **network** layer (net-off, or proxy-filtered
-allow-domains + verb rules), which contains *whatever* binary tries to reach out.
-Never rely on `deny_exec` alone to keep a capability away from the child.
+See [Extending Vis](extending.md) for the extension API.
 
-**Re-allow it inside a trusted extension.** A Python extension runs in its own
-context with real process creation, and its subprocesses are **not** routed
-through `wrap-argv`, so they are never `sandbox-exec`-wrapped. A reviewed
-extension can therefore shell out to the same denied binary and expose it as a
-narrow, audited tool. The whole thing is one file dropped into
-`~/.vis/extensions/` (global) or `<project>/.vis/extensions/` (project-local) —
-no rebuild, `/reload`-live. See [Extending Vis](extending.md#python-extensions) for
-the full authoring surface; here is a complete, buildable proxy:
+## Platform enforcement
 
-```python
-# ~/.vis/extensions/aws_proxy.py
-"""aws-proxy — audited, read-only AWS access that bypasses the jail's aws deny."""
-import subprocess
+| host | enforcer | requirement |
+|---|---|---|
+| macOS | Seatbelt through `/usr/bin/sandbox-exec` | included with macOS |
+| Linux and WSL2 | bubblewrap mount and network namespaces | `bubblewrap`; `passt` for filtered egress |
+| WSL1 and other systems | no supported OS process jail | use a supported host for kernel confinement |
 
-import vis
-
-# Scope the hole as tightly as the policy it re-opens: an allowlist, read-only
-# verbs, no shell string, an explicit timeout. This tool IS the audit surface.
-_ALLOWED_BUCKETS = {"acme-public-assets", "acme-reports"}
-
-
-def aws_s3_ls(bucket):
-    """await aws_s3_ls(bucket) -> {"listing"} — list one allowlisted S3 bucket."""
-    if bucket not in _ALLOWED_BUCKETS:
-        # Raising is the failure path — the message surfaces to the model.
-        raise ValueError(f"bucket {bucket!r} not in allowlist {sorted(_ALLOWED_BUCKETS)}")
-    # Runs UNCONFINED: this subprocess is not routed through wrap-argv, so it is
-    # never sandbox-exec-wrapped and the jail's deny_exec on the aws binary
-    # never applies here. argv form (no shell) — the model never shapes a string.
-    out = subprocess.run(
-        ["aws", "s3", "ls", f"s3://{bucket}"],
-        capture_output=True, text=True, check=True, timeout=30,
-    )
-    vis.log("info", f"aws-proxy: s3 ls {bucket}")
-    return {"listing": out.stdout}
-
-
-vis.extension(
-    name="aws-proxy",
-    description="Audited, read-only AWS access.",
-    kind="integration",
-    alias="aws",
-    symbols=[vis.symbol(aws_s3_ls, tag="observation")],
-)
-```
-
-The model calls `await aws_s3_ls("acme-reports")`. The sandbox name is
-`f"{alias}_{name}"`, but a leading `"{alias}_"` on the function name is stripped
-first, so `alias="aws"` + `def aws_s3_ls` lands as `aws_s3_ls`, not doubled. Raw
-`aws` from the model's shell stays denied.
-
-The result: the *capability* to exec the binary stays open at the OS layer, while
-*authorization* moves to the tool layer. Raw `aws` from the model is denied; the
-extension's `aws_s3_ls` tool — which you wrote, reviewed, and scoped — is the
-only way that binary runs. Treat such an extension as privileged: it is a
-deliberate hole in the jail, so review it like an executable build file and keep
-its surface as narrow as the policy it bypasses.
-
-**Caveat — an inherited kernel Seatbelt closes the hole.** This asymmetry exists
-only when Vis's own JVM is not itself launched under an ambient Seatbelt profile.
-When it is (`VIS_SEATBELT_ACTIVE=1`, as in a jailed harness session), the
-kernel enforces the parent profile on the **entire** process tree; Seatbelt
-inheritance is one-way, so children — extension subprocesses included — can only
-tighten it, never loosen it. In that mode no extension can escape, because the
-kernel owns the JVM, and `wrap-argv` deliberately skips re-wrapping
-(`inherited-jail?`) since a nested `sandbox-exec` is rejected.
-
-## Trust boundaries and exceptions
-
-- `python_execution` is in-process GraalPy. It cannot receive a per-thread
-  Seatbelt profile, but its filesystem is confined and HTTP is routed through
-  the same gateway policy. Its raw-socket host guard remains a separate floor.
-- Managed REPLs started by `repl_start` and managed project test processes are
-  child processes and are jailed.
-- `repl_connect` attaches to an already-running, user-owned external process.
-  Vis did not spawn it and cannot retroactively apply Seatbelt. Stopping the
-  resource detaches; it never kills that process.
-- Python extension files are intentionally trusted plugins. Their separate
-  contexts have real filesystem, network, threads, and process creation; their
-  environment is the DECLARED one (`vis.extension(env=[...])` plus the project's
-  own `environment:` and `.env`), not a copy of the host's. `env=` reaches that
-  context ONLY: it never adds a name to a confined child's environment, so a
-  variable an extension declares but `environment:`/`.env` do not is unreachable
-  from `vis.jailed_shell` and from the model's `shell(...)`. They have no arbitrary Java/native/polyglot interop. Review
-  project `.vis/extensions/` with the same care as executable build files.
-- The OS enforcer is implemented on macOS (Seatbelt) and Linux/WSL2 (bubblewrap +
-  pasta); WSL1 has none. There the gateway policy remains useful but
-  is not a kernel boundary, and a requested `jail.enabled: true` fails loud rather
-  than pretending to confine. On Linux, filtered egress is kernel-enforced via pasta
-  when `passt` is installed (only the gateway proxy port reachable); without it,
-  a proxy-restricted network is denied entirely (safe).
-
-## Reload and model context
-
-Security configuration is resolved and snapshotted when a session environment
-is built. Relative paths become absolute and symlinks are resolved at that boundary.
-The environment never rereads `vis.yml`. Editing a model-writable configuration file
-therefore cannot widen a running session. `/reload` bumps one process-wide policy epoch that
-invalidates **every** active session, not only the one you typed it in. The
-rebuild is lazy and per session: each session recycles its environment and
-re-snapshots from the current `vis.yml` on its **next** message, so an idle
-session keeps its old snapshot until you send it something.
-
-The same effective snapshot is exposed read-only as `session["access"]`. It includes
-a SHA-256 generation id, `is_jailed` (whether `jail.enabled` confines this
-session), filesystem modes, network policy, inbound ports, and
-`changes_require: "reload"`. Live workspace roots are a controlled overlay and
-appear as context deltas. Paths beneath the user's home are displayed as `~` paths
-(for example `~/vis` and `~/spel`); enforcement always uses the resolved absolute
-paths.
-
-## Verification (macOS + Linux CI)
-
-Pure compiler/policy tests run on every OS. Socket and Seatbelt enforcement tests
-run only in an unconfined test JVM: a managed JVM that already has
-`VIS_SEATBELT_ACTIVE=1` cannot apply a second profile or bind arbitrary fixture
-ports, so those local cases report a conditional skip.
-
-The repository CI is deliberately stricter. Its Ubuntu job installs `bubblewrap`
-and `passt`, sets `VIS_REQUIRE_LINUX_SANDBOX_E2E=1`, and fails before the suite
-continues unless `bwrap` can actually create its required namespace and `pasta`
-is executable. The macOS job similarly sets `VIS_REQUIRE_MACOS_SANDBOX_E2E=1`.
-Therefore real OS enforcement is mandatory in CI, not best-effort coverage hidden
-behind a conditional test.
-
-For self-hosted Linux runners, provision the same prerequisites before invoking
-the suite:
+On Debian or Ubuntu:
 
 ```bash
-sudo apt-get update
 sudo apt-get install -y bubblewrap passt
-sudo sysctl -w kernel.unprivileged_userns_clone=1  # only where the distro disables it
-VIS_REQUIRE_LINUX_SANDBOX_E2E=1 clojure -M:test
 ```
 
-The focused suites cover:
+On Linux, `bwrap` is required for filesystem confinement. `pasta`, supplied by
+`passt`, creates a private network namespace that can reach only the gateway proxy
+port. If `pasta` is missing, filtered egress becomes no egress and Vis prints one
+warning.
 
-- Seatbelt read/write/deny rules and nested-process inheritance;
-- direct-network denial and proxy-only egress;
-- HTTP and HTTPS MITM method/path policy, and the SOCKS5 lane for raw TCP;
-- session token attribution, network filters, and SSRF denial;
-- PTY/background input and attach bridge behavior;
-- managed process launch, fail-closed session lookup, CA/truststore injection;
-- config validation and `jail.enabled: true` opt-in / omitted-or-`false` as the off default;
-- Linux bubblewrap argv compilation (every OS), WSL1/WSL2 detection, and real bwrap filesystem containment + `deny_exec` exec-block + pasta filtered egress (only the proxy port reachable; control-plane and internet blocked) on required Linux CI;
-- fail-loud passthrough + reason when a jail is requested on a host that cannot enforce it.
+If an enabled jail cannot be enforced, Vis prints one warning and starts the child
+unconfined. This is not a security boundary. A missing or failed session policy is a
+different case: managed process launch is denied because Vis cannot determine which
+policy to apply.
 
-Run the relevant namespaces through the Clojure language pack or the full CI job.
-A test JVM already started by a jailed session validates its inherited profile
-but cannot substitute for the unconfined enforcement run.
+## Executables and macOS services
+
+`jail.deny_exec` blocks named executables inside confined children:
+
+```yaml
+jail:
+  enabled: true
+  deny_exec: [curl, wget]
+```
+
+This is a command guardrail, not capability containment. Another interpreter or a
+new script can perform the same operation. Use filesystem and network policy for the
+actual boundary.
+
+Seatbelt denies Mach service lookups by default. Permit macOS Keychain helpers with:
+
+```yaml
+jail:
+  enabled: true
+  mach_services:
+    keychain: true
+    allow: [com.example.agent]
+```
+
+`keychain: true` grants the Security, trust, and revocation services plus read access
+to the system and user keychain databases. `allow` grants other global Mach service
+names. These settings are ignored outside macOS.
+
+## Diagnose the effective policy
+
+1. Inspect `session["access"]`; do not infer access from the YAML file alone.
+2. Run `/reload` after a config edit, then send a message in each session that must
+   adopt it.
+3. Use `/net-probe METHOD URL` or `/net-probe host:port` for egress decisions.
+4. On Linux, verify `bwrap --version` and `pasta --version` when the startup warning
+   reports a missing enforcer.
+5. Treat a child started after an unenforceable-jail warning as unconfined.
+
+The policy snapshot resolves paths and symlinks when the session environment is
+built. Live workspace roots can change within that snapshot, but editing `vis.yml`
+cannot widen an existing environment until `/reload` invalidates it.
 
 ## See also
 
-- [Configuration → Jail, filesystem, and network](configuration.md#jail-filesystem-and-network) — every key this page's policy is written with.
-- [Gateway, pairing & remote access](gateway.md) — the daemon whose egress proxy enforces the network half.
-- [GraalPython sandbox](graalpython.md) — what the confined process is actually running.
+- [Configuration](configuration.md): complete `workspace`, `jail`, `environment`, and toggle key reference.
+- [GraalPython sandbox](graalpython.md): the in-process Python boundary.
+- [Gateway, pairing & remote access](gateway.md): the daemon that owns the egress proxy.
