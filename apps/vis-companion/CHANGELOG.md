@@ -2,6 +2,24 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (4906) — 2026-08-26
+<!-- commit: 23004b18d4e24221350a5e41628ec86229bd85ae -->
+
+- Clarify sharing and skip empty image saves
+- Record TestFlight builds 4834-4861
+- Unify execution traces
+- Transcribe a staged recording before the turn
+- Keep voice mic over artifact reader
+- Preserve voice playback across transcript handoff
+- Add recommended native iOS voices
+- Stop shipping the touch clock nobody reads
+- Drop the per-session SSE route for the fleet feed
+- Follow the fleet stream instead of re-reading the list
+- Keep the newest turn under a reader who stayed
+- Read twenty session rows per window
+- Align CI with active machine scope
+- Separate voice controls and groups
+
 ## 0.1.41 (4861) — 2026-08-25
 <!-- commit: 184d0988c67e4e5da9dd0bce354aad54dc4a13f5 -->
 
