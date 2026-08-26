@@ -65,14 +65,14 @@ describe('VisBadge plugin', () => {
   // Capacitor only loads a plugin named in `packageClassList`; without this the
   // bridge answers "not implemented" and the app half silently does nothing.
   it('is registered with the Capacitor bridge', () => {
-    expect(prepare).toContain("packageClassList = [...(capConfigJson.packageClassList ?? []), 'VisBadgePlugin']");
-    expect(prepare).toContain("(capConfigJson.packageClassList ?? []).includes('VisBadgePlugin')");
+    expect(prepare).toContain("const appPluginClasses = ['VisBadgePlugin', 'NativeSpeechPlugin'];");
+    expect(prepare).toContain("packageClassList.includes('VisBadgePlugin')");
   });
 
   // `--check` is what CI runs; a host missing the badge pieces must fail it,
   // exactly as a host missing the share extension does.
   it('is part of what --check refuses to pass without', () => {
     expect(prepare).toContain('delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk');
-    expect(prepare).toContain('const badgeOk = notifyFilesOk && notifyProjectOk && capConfigOk;');
+    expect(prepare).toContain('const badgeOk = notifyFilesOk && notifyProjectOk && badgeConfigOk;');
   });
 });

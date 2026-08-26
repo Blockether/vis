@@ -1,14 +1,14 @@
 import { Capacitor } from "@capacitor/core";
-import { androidSpeech } from "./speech";
+import { nativeSpeech, usesNativeSpeech } from "./speech";
 
 /** ONE voice this device can speak in, in the shape the picker renders. */
 export interface DeviceVoice {
-  /** What `speech.ts` stores and speaks with: a `voiceURI` on the web, a name on Android. */
+  /** What `speech.ts` stores and speaks with: an OS voice identifier or Web URI. */
   id: string;
   label: string;
   language?: string;
   isDefault?: boolean;
-  /** Android's 100–500 quality verdict. Web voices are ranked from their URI markers. */
+  /** The native OS's 100–500 quality verdict. Web voices use identifier markers. */
   quality?: number;
   /** `false` means the OS needs a network connection for this voice. */
   isLocal?: boolean;
@@ -51,19 +51,48 @@ function preferredDeviceLanguages(): string[] {
     .filter(Boolean);
 }
 
+const IOS_RECOMMENDED_APPLE_VOICES = [
+  { name: "zoe", quality: 500 },
+  { name: "ava", quality: 500 },
+  { name: "samantha", quality: 450 },
+] as const;
+
+function publicAppleVoiceName(voice: DeviceVoice): string {
+  const label = voice.label
+    .replace(/\s+\((?:premium|enhanced)\)\s*$/i, "")
+    .trim();
+  if (label) return label.toLowerCase();
+  return (voice.id.split(".").pop() ?? "").toLowerCase();
+}
+
+function recommendedIosVoices(voices: DeviceVoice[]): DeviceVoice[] {
+  return IOS_RECOMMENDED_APPLE_VOICES.map(({ name, quality }) =>
+    voices.find(
+      (voice) =>
+        normalizedLanguage(voice.language) === "en-us" &&
+        publicAppleVoiceName(voice) === name &&
+        voiceQuality(voice) === quality,
+    ),
+  ).filter((voice): voice is DeviceVoice => voice !== undefined);
+}
+
 /**
- * Up to three premium-ranked INSTALLED voices for this device: relevant language first,
- * then the OS's quality, local availability and default verdict. A stored choice remains
- * reachable after preferences or installed voice packs change, without making the list grow.
+ * The installed voices worth putting in front of a person. iOS is intentionally a closed
+ * shortlist of the exact public Apple names and tiers Vis recommends; it never promotes an
+ * unrelated stored choice back into the picker. Other platforms keep the three best voices
+ * for the device language and preserve a stored installed choice.
  */
 export function bestDeviceVoices(
   voices: DeviceVoice[],
   selectedId: string | null = null,
   preferredLanguages: readonly string[] = preferredDeviceLanguages(),
+  platform: string = Capacitor.getPlatform(),
 ): DeviceVoice[] {
   const unique = Array.from(
     new Map(voices.filter((voice) => voice.id).map((voice) => [voice.id, voice])).values(),
   );
+  if (platform === "ios") return recommendedIosVoices(unique);
+
   const preferred = Array.from(
     new Set(preferredLanguages.map(normalizedLanguage).filter(Boolean)),
   );
@@ -112,16 +141,16 @@ function fromWeb(synthesis: SpeechSynthesis): DeviceVoice[] {
 }
 
 /**
- * Every voice THIS DEVICE can speak in: the phone's own engine on Android, and the
- * Web Speech list everywhere else - which on iOS is the Siri voices already installed,
- * because the app runs in WKWebView.
+ * Every voice THIS DEVICE can speak in. Native iOS exposes Apple's public
+ * `AVSpeechSynthesizer` catalogue (not Siri's private numbered voices), native Android
+ * exposes the active TTS engine, and browsers use Web Speech.
  *
  * An empty list is an answer, not a failure: a Linux desktop with no speech engine
  * installed has no voices, and the picker says so instead of pretending.
  */
 export async function deviceVoices(): Promise<DeviceVoice[]> {
-  if (Capacitor.getPlatform() === "android") {
-    const answer = await androidSpeech.getVoices();
+  if (usesNativeSpeech()) {
+    const answer = await nativeSpeech.getVoices();
     return (answer?.voices ?? []).map((voice) => ({
       id: voice.id,
       label: voice.label || voice.id,

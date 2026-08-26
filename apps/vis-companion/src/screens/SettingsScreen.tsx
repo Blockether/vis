@@ -1880,12 +1880,12 @@ export function SpeechEnginesPanel({
                             Asking this device what it can speak in…
                           </p>
                         )}
-                        {voices !== null && deviceList.length === 0 && (
+                        {voices !== null && voices.length === 0 && (
                           <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
                             This device has no system TTS engine installed.
                           </p>
                         )}
-                        {deviceList.length > 0 && (
+                        {voices !== null && voices.length > 0 && (
                           <SettingsChoiceGroup label="Voices" isNested>
                             <div className="grid grid-cols-1 gap-px bg-dialog-edge">
                               <ChoiceCell

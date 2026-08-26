@@ -715,6 +715,7 @@ const notifyDir = join(root, 'ios', 'App', 'VisNotify');
 const notifyService = join(notifyDir, 'NotificationService.swift');
 const notifyPlist = join(notifyDir, 'Info.plist');
 const badgeSwift = join(appDir, 'VisBadge.swift');
+const speechSwift = join(appDir, 'NativeSpeech.swift');
 const capConfig = join(appDir, 'capacitor.config.json');
 
 const notifyServiceSource = `import UserNotifications
@@ -821,7 +822,121 @@ public class VisBadgePlugin: CAPPlugin, CAPBridgedPlugin {
   }
 }
 `;
+const speechSource = `import AVFAudio
+import Capacitor
 
+@objc(NativeSpeechPlugin)
+public class NativeSpeechPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDelegate {
+  public let identifier = "NativeSpeechPlugin"
+  public let jsName = "NativeSpeech"
+  public let pluginMethods: [CAPPluginMethod] = [
+    CAPPluginMethod(name: "getVoices", returnType: CAPPluginReturnPromise),
+    CAPPluginMethod(name: "speak", returnType: CAPPluginReturnPromise),
+    CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise)
+  ]
+
+  private let synthesizer = AVSpeechSynthesizer()
+  private var pending: (utterance: AVSpeechUtterance, call: CAPPluginCall)?
+
+  public override func load() {
+    synthesizer.delegate = self
+  }
+
+  private func qualityTier(for voice: AVSpeechSynthesisVoice) -> (score: Int, suffix: String?) {
+    if #available(iOS 16.0, *), voice.quality == .premium { return (500, "Premium") }
+    if voice.quality == .enhanced { return (450, "Enhanced") }
+    return (300, nil)
+  }
+
+  private func label(for voice: AVSpeechSynthesisVoice) -> String {
+    guard let suffix = qualityTier(for: voice).suffix else { return voice.name }
+    let marker = " (" + suffix + ")"
+    return voice.name.hasSuffix(marker) ? voice.name : voice.name + marker
+  }
+
+  @objc public func getVoices(_ call: CAPPluginCall) {
+    DispatchQueue.main.async {
+      let voices: [[String: Any]] = AVSpeechSynthesisVoice.speechVoices().map { voice in
+        [
+          "id": voice.identifier,
+          "label": self.label(for: voice),
+          "language": voice.language,
+          "is_default": AVSpeechSynthesisVoice(language: voice.language)?.identifier == voice.identifier,
+          "quality": self.qualityTier(for: voice).score,
+          "is_network_required": false
+        ]
+      }
+      call.resolve(["voices": voices])
+    }
+  }
+
+  @objc public func speak(_ call: CAPPluginCall) {
+    guard let text = call.getString("text"), !text.isEmpty else {
+      call.reject("Speech text is required.")
+      return
+    }
+
+    DispatchQueue.main.async {
+      self.finishPending()
+      if self.synthesizer.isSpeaking || self.synthesizer.isPaused {
+        self.synthesizer.stopSpeaking(at: .immediate)
+      }
+
+      let utterance = AVSpeechUtterance(string: text)
+      let multiplier = Float(max(0.5, min(2.0, call.getDouble("rate") ?? 1.0)))
+      utterance.rate = max(
+        AVSpeechUtteranceMinimumSpeechRate,
+        min(AVSpeechUtteranceMaximumSpeechRate, AVSpeechUtteranceDefaultSpeechRate * multiplier)
+      )
+      if let requestedVoice = call.getString("voice"),
+         let voice = AVSpeechSynthesisVoice.speechVoices().first(where: { voice in
+           voice.identifier == requestedVoice
+         }) {
+        utterance.voice = voice
+      }
+
+      self.pending = (utterance, call)
+      self.synthesizer.speak(utterance)
+    }
+  }
+
+  @objc public func stop(_ call: CAPPluginCall) {
+    DispatchQueue.main.async {
+      self.finishPending()
+      if self.synthesizer.isSpeaking || self.synthesizer.isPaused {
+        self.synthesizer.stopSpeaking(at: .immediate)
+      }
+      call.resolve()
+    }
+  }
+
+  private func finishPending() {
+    guard let active = pending else { return }
+    pending = nil
+    active.call.resolve()
+  }
+
+  private func finish(_ utterance: AVSpeechUtterance) {
+    guard let active = pending, active.utterance === utterance else { return }
+    pending = nil
+    active.call.resolve()
+  }
+
+  public func speechSynthesizer(
+    _ synthesizer: AVSpeechSynthesizer,
+    didFinish utterance: AVSpeechUtterance
+  ) {
+    finish(utterance)
+  }
+
+  public func speechSynthesizer(
+    _ synthesizer: AVSpeechSynthesizer,
+    didCancel utterance: AVSpeechUtterance
+  ) {
+    finish(utterance)
+  }
+}
+`;
 const fileOk = (path, contents) => existsSync(path) && readFileSync(path, 'utf8') === contents;
 const shareFilesOk =
   fileOk(shareController, shareControllerSource)
@@ -832,12 +947,17 @@ const notifyFilesOk =
   fileOk(notifyService, notifyServiceSource)
   && fileOk(notifyPlist, notifyPlistSource)
   && fileOk(badgeSwift, badgeSource);
+const speechFileOk = fileOk(speechSwift, speechSource);
 
-// `cap sync` rewrites this file from the INSTALLED packages, so a plugin class
-// that lives in the app target is dropped from it every time. Putting it back
+// `cap sync` rewrites this file from the INSTALLED packages, so plugin classes
+// that live in the app target are dropped from it every time. Putting them back
 // is exactly what this hook is for — it runs as `postsync`.
+const appPluginClasses = ['VisBadgePlugin', 'NativeSpeechPlugin'];
 const capConfigJson = existsSync(capConfig) ? JSON.parse(readFileSync(capConfig, 'utf8')) : null;
-const capConfigOk = !capConfigJson || (capConfigJson.packageClassList ?? []).includes('VisBadgePlugin');
+const packageClassList = capConfigJson?.packageClassList ?? [];
+const badgeConfigOk = !capConfigJson || packageClassList.includes('VisBadgePlugin');
+const speechConfigOk = !capConfigJson || packageClassList.includes('NativeSpeechPlugin');
+const capConfigOk = badgeConfigOk && speechConfigOk;
 
 let project = existsSync(pbxprojPath) ? readFileSync(pbxprojPath, 'utf8') : '';
 if (!project) die('no ios/App/App.xcodeproj/project.pbxproj — run `npm run add:ios` first');
@@ -886,9 +1006,14 @@ const notifyIds = {
   badgeRef: objectId(34),
   badgeBuild: objectId(35),
 };
+const speechIds = {
+  swiftRef: objectId(36),
+  swiftBuild: objectId(37),
+};
 
 const projectOk = project.includes(ids.target) && project.includes(ids.shortcutsRef);
 const notifyProjectOk = project.includes(notifyIds.target) && project.includes(notifyIds.badgeRef);
+const speechProjectOk = project.includes(speechIds.swiftRef) && project.includes(speechIds.swiftBuild);
 
 const after = (pattern, addition, what) => {
   const match = pattern.exec(project);
@@ -1284,12 +1409,35 @@ if (!notifyProjectOk) {
   );
 }
 
+// NativeSpeech is an app plugin, independent of either extension target. Add it even when
+// this checkout was already prepared by an older version of the hook.
+if (!speechProjectOk) {
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift in Sources [*]/,'),
+    `\n\t\t\t\t${speechIds.swiftBuild} /* NativeSpeech.swift in Sources */,`,
+    'App Sources phase',
+  );
+  after(
+    new RegExp('[0-9A-Fa-f]{24} /[*] AppDelegate[.]swift [*]/,'),
+    `\n\t\t\t\t${speechIds.swiftRef} /* NativeSpeech.swift */,`,
+    'App group',
+  );
+  before(
+    '/* End PBXBuildFile section */',
+    `\t\t${speechIds.swiftBuild} /* NativeSpeech.swift in Sources */ = {isa = PBXBuildFile; fileRef = ${speechIds.swiftRef} /* NativeSpeech.swift */; };\n`,
+  );
+  before(
+    '/* End PBXFileReference section */',
+    `\t\t${speechIds.swiftRef} /* NativeSpeech.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSpeech.swift; sourceTree = "<group>"; };\n`,
+  );
+}
 const shareOk = shareFilesOk && projectOk;
-const badgeOk = notifyFilesOk && notifyProjectOk && capConfigOk;
+const badgeOk = notifyFilesOk && notifyProjectOk && badgeConfigOk;
+const speechOk = speechFileOk && speechProjectOk && speechConfigOk;
 
 if (check) {
-  if (delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk && splashOk) {
-    console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon and launch screen, share extension, Shortcuts and the badge extension');
+  if (delegateOk && boardOk && plistOk && appIconOk && shareOk && badgeOk && speechOk && splashOk) {
+    console.log('· ios: prepared stock Capacitor host with required app capabilities, branded icon and launch screen, share extension, Shortcuts, badge extension and public speech bridge');
     process.exit(0);
   }
   const missing = missingPlistEntries.map(([key]) => key).join(', ');
@@ -1304,9 +1452,11 @@ if (check) {
             ? 'ios: no share extension / Shortcuts target — run `node scripts/ios-prepare.mjs`'
             : !badgeOk
               ? 'ios: no VisNotify badge extension / VisBadge plugin — run `node scripts/ios-prepare.mjs`'
-              : !splashOk
-                ? 'ios: launch screen still shows Capacitor\'s splash — run `node scripts/ios-prepare.mjs`'
-              : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
+              : !speechOk
+                ? 'ios: no NativeSpeech public TTS plugin — run `node scripts/ios-prepare.mjs`'
+                : !splashOk
+                  ? 'ios: launch screen still shows Capacitor\'s splash — run `node scripts/ios-prepare.mjs`'
+                  : `ios: Info.plist is missing ${missing} — run \`node scripts/ios-prepare.mjs\``,
   );
 }
 
@@ -1349,8 +1499,11 @@ if (!notifyFilesOk) {
   writeFileSync(notifyPlist, notifyPlistSource);
   writeFileSync(badgeSwift, badgeSource);
 }
+if (!speechFileOk) writeFileSync(speechSwift, speechSource);
 if (!capConfigOk && capConfigJson) {
-  capConfigJson.packageClassList = [...(capConfigJson.packageClassList ?? []), 'VisBadgePlugin'];
+  capConfigJson.packageClassList = Array.from(
+    new Set([...(capConfigJson.packageClassList ?? []), ...appPluginClasses]),
+  );
   writeFileSync(capConfig, `${JSON.stringify(capConfigJson, null, '\t')}\n`);
 }
 // The app has to be entitled to the SAME group as the extension, or it cannot read
@@ -1382,6 +1535,6 @@ console.log(
   }; ${appIconOk ? 'branded icon already present' : 'stamped branded app icon'}; ${
     shareOk ? 'share extension + Shortcuts already present' : 'stamped VisShare extension + App Intents'
   }; ${badgeOk ? 'badge extension already present' : 'stamped VisNotify extension + VisBadge plugin'}; ${
-    splashOk ? 'branded launch screen already present' : 'stamped the Vis launch screen'
-  }`,
+    speechOk ? 'public speech bridge already present' : 'stamped NativeSpeech public TTS plugin'
+  }; ${splashOk ? 'branded launch screen already present' : 'stamped the Vis launch screen'}`,
 );

@@ -60,4 +60,27 @@ describe("best device voices", () => {
     ]);
     expect(chosen.some((voice) => voice.id.includes("compact"))).toBe(false);
   });
+
+  it("offers only the three recommended public Apple voices on iOS", () => {
+    const chosen = bestDeviceVoices(
+      [
+        { id: "com.apple.voice.premium.en-US.Zoe", label: "Zoe (Premium)", language: "en-US", quality: 500 },
+        { id: "com.apple.voice.premium.en-US.Ava", label: "Ava (Premium)", language: "en-US", quality: 500 },
+        { id: "com.apple.voice.enhanced.en-US.Samantha", label: "Samantha (Enhanced)", language: "en-US", quality: 450 },
+        { id: "com.apple.voice.premium.en-GB.Serena", label: "Serena (Premium)", language: "en-GB", quality: 500 },
+        { id: "com.apple.voice.enhanced.en-IE.Moira", label: "Moira (Enhanced)", language: "en-IE", quality: 450 },
+        { id: "com.apple.voice.premium.en-US.Samantha", label: "Samantha (Premium)", language: "en-US", quality: 500 },
+        { id: "com.apple.voice.enhanced.en-US.Evan", label: "Evan (Enhanced)", language: "en-US", quality: 450 },
+      ],
+      "com.apple.voice.premium.en-GB.Serena",
+      ["en-US"],
+      "ios",
+    );
+
+    expect(chosen.map((voice) => voice.id)).toEqual([
+      "com.apple.voice.premium.en-US.Zoe",
+      "com.apple.voice.premium.en-US.Ava",
+      "com.apple.voice.enhanced.en-US.Samantha",
+    ]);
+  });
 });

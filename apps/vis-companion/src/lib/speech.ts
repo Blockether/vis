@@ -3,10 +3,10 @@ import { getSpeechPrefs } from "./storage";
 import { wavePeaks } from "./waveform";
 import type { SpeechPrefs } from "./types";
 
-interface AndroidSpeechPlugin {
+interface NativeSpeechPlugin {
   speak(options: { text: string; voice?: string; rate?: number }): Promise<void>;
   stop(): Promise<void>;
-  /** Every voice this phone's engine has installed, with the OS quality verdict. */
+  /** Every voice this phone can expose to applications, with the OS quality verdict. */
   getVoices(): Promise<{
     voices: {
       id: string;
@@ -20,18 +20,24 @@ interface AndroidSpeechPlugin {
 }
 
 /** ONE registration of the native plugin; `speech-voices.ts` asks it for the list. */
-export const androidSpeech = registerPlugin<AndroidSpeechPlugin>("NativeSpeech");
+export const nativeSpeech = registerPlugin<NativeSpeechPlugin>("NativeSpeech");
 
-/** Device-local speech output: native Android TTS, Web Speech elsewhere. */
+/** Both mobile platforms expose a fuller, deterministic catalogue through the app bridge. */
+export function usesNativeSpeech(): boolean {
+  const platform = Capacitor.getPlatform();
+  return platform === "android" || platform === "ios";
+}
+
+/** Device-local speech output: native TTS on iOS and Android, Web Speech elsewhere. */
 class DeviceSpeechOutput {
   private active: object | null = null;
 
   speak(text: string, voiceId: string | null, rate: number): Promise<void> {
     this.stop();
-    if (Capacitor.getPlatform() === "android") {
+    if (usesNativeSpeech()) {
       const active = {};
       this.active = active;
-      return androidSpeech
+      return nativeSpeech
         .speak({ text, voice: voiceId ?? undefined, rate })
         .finally(() => {
           if (this.active === active) this.active = null;
@@ -71,10 +77,9 @@ class DeviceSpeechOutput {
   }
 
   stop(): void {
-    if (Capacitor.getPlatform() === "android") {
-      void androidSpeech.stop().catch(() => undefined);
-    }
-    if (typeof window !== "undefined" && window.speechSynthesis) {
+    if (usesNativeSpeech()) {
+      void nativeSpeech.stop().catch(() => undefined);
+    } else if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
     }
     this.active = null;
@@ -94,7 +99,7 @@ export interface GatewaySpeaker {
 /**
  * WHAT THE SCREEN LEARNS WHILE THE MACHINE SPEAKS.
  *
- * The device route can say nothing at all - Web Speech and Android TTS hand out no
+ * The device route can say nothing at all - native TTS and Web Speech hand out no
  * buffer - so this is optional on purpose: a listener that hears nothing keeps its
  * own estimate, and the block draws no shape it cannot prove.
  */
