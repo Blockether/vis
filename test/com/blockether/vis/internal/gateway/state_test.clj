@@ -723,6 +723,63 @@
                (expect (= 2 (get (first turns) "iteration_count")))))
            (finally (reset! registry saved))))))
 
+;; Regression, issue td-75dad4: the settled TUI asked for a trace with the
+;; gateway queue id, so the persisted execution receipt resolved to no iterations.
+(defdescribe
+  gateway-turn-trace-id-resolution-test
+  (it
+    "resolves a completed gateway row to its matching persisted turn trace"
+    (let [sid
+          (java.util.UUID/randomUUID)
+
+          gateway-id
+          (str (java.util.UUID/randomUUID))
+
+          engine-id
+          (java.util.UUID/randomUUID)
+
+          started
+          1000
+
+          registry
+          @#'state/registry
+
+          saved
+          @registry]
+
+      (try (reset! registry {(str sid) {:turns {gateway-id {:turn_id gateway-id
+                                                            :session_id (str sid)
+                                                            :status "completed"
+                                                            :request "make report"
+                                                            :content [{"id" "gateway-block"
+                                                                       "type" "prose"
+                                                                       "markdown" "attached"}]
+                                                            :started_at started}}}})
+           (with-redefs [lp/db-info
+                         (constantly :db)
+
+                         persistance/db-list-session-turns
+                         (fn [_ s]
+                           (expect (= sid s))
+                           [{:id engine-id
+                             :status :success
+                             :user-request "make report"
+                             :content [{"id" "engine-block" "type" "prose" "markdown" "attached"}]
+                             :created-at (java.util.Date. (+ started 10))}])
+
+                         persistance/db-list-session-turn-iterations
+                         (fn [_ turn-id]
+                           (if (= engine-id turn-id)
+                             [{:id (java.util.UUID/randomUUID) :forms [{:src "attach(page)"}]}]
+                             []))
+
+                         persistance/db-list-iterations-attachments
+                         (constantly {})]
+
+             (expect (= "attach(page)"
+                        (get-in (state/turn-trace sid gateway-id) [0 "forms" 0 "src"]))))
+           (finally (reset! registry saved))))))
+
 (defdescribe
   list-queued-turns-test
   "`GET /turns?status=queued` is a poll: a tray asks it every few seconds only to

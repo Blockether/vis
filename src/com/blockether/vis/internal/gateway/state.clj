@@ -1640,6 +1640,12 @@
 
 (defn- date->ms [d] (when (instance? java.util.Date d) (.getTime ^java.util.Date d)))
 
+(defn- content-without-block-ids
+  "Content identity for gateway/persisted reconciliation. Block ids are transport
+   identities minted independently by those two records; their semantic fields decide."
+  [content]
+  (mapv #(if (map? %) (dissoc % :id "id") %) (or content [])))
+
 (defn- persisted-duplicate-of-live?
   "True when persisted engine row `row` is the durable copy of gateway live row
   `live`. Prefer the persisted row on hydration: it owns the DB iteration trace,
@@ -1662,7 +1668,9 @@
         (and (contains? terminal-turn-statuses status)
              (str/blank? (str engine-id))
              (= (str (:request live)) (str (:user-request row)))
-             (or (= (:content live) (:content row)) (empty? (:content live)))
+             (or (= (content-without-block-ids (:content live))
+                    (content-without-block-ids (:content row)))
+                 (empty? (:content live)))
              (if-let [created (date->ms (:created-at row))]
                (>= (long created) (long (or (:started_at live) 0)))
                true)))))
@@ -2237,34 +2245,67 @@
          (tel/log! :warn ["gateway: session artifacts read failed" (str sid) (ex-message t)])
          [])))
 
+(defn- hydrated-turn-trace
+  "Canonical persisted iteration rows for `turn-id`."
+  [db turn-id]
+  (let [iters
+        (->> (persistance/db-list-session-turn-iterations db turn-id)
+             (mapv with-display-iteration))
+
+        atts-by-iter
+        (when (seq iters)
+          (try (into {}
+                     (map (fn [[iter-id rows]]
+                            [(str iter-id) (attachment-storage/hydrate-all rows)]))
+                     (persistance/db-list-iterations-attachments db (keep :id iters)))
+               (catch Throwable _ {})))]
+
+    (wire/canonical (mapv (fn [it]
+                            (if-let [atts (seq (get atts-by-iter (str (:id it))))]
+                              (assoc it :attachments (vec atts))
+                              it))
+                          iters))))
+
+(defn- live-turn
+  "The gateway turn record for `sid` and `tid`, if still retained."
+  [sid tid]
+  (let [turns (:turns (session-entry sid))]
+    (or (get turns tid)
+        (some (fn [[turn-id turn]]
+                (when (= (str tid) (str turn-id)) turn))
+              turns))))
+
 (defn turn-trace
-  "THE canonical wire trace of ONE persisted turn: its iteration rows (each
-  with hydrated `:attachments` re-read from the attachment store) through
-  `wire/canonical`, same as [[transcript]] — canonicalizing AT THE SOURCE
-   keeps the HTTP hop an identity, so an in-process client and a remote
-  client (TUI / mobile) render from the SAME maps. Returns a (possibly empty)
-  vector for a valid turn id, nil for an unparsable id or a read failure —
-  callers use nil to fall back / retry."
-  [tid]
+  "THE canonical wire trace of ONE turn: its persisted iteration rows (each
+   with hydrated `:attachments` re-read from the attachment store) through
+   `wire/canonical`, same as [[transcript]]. `tid` may be either the persisted
+   engine turn id or the gateway queue id returned to a channel at settlement;
+   the latter resolves through the completed gateway row. Returns a (possibly
+   empty) vector for a valid turn id, nil for an unparsable id or a read failure."
+  [sid tid]
   (try (when-let [turn-id (some-> tid
                                   str
                                   parse-uuid)]
          (let [db (lp/db-info)
-               iters (->> (persistance/db-list-session-turn-iterations db turn-id)
-                          (mapv with-display-iteration))
-               atts-by-iter
-               (when (seq iters)
-                 (try (into {}
-                            (map (fn [[iter-id rows]]
-                                   [(str iter-id) (attachment-storage/hydrate-all rows)]))
-                            (persistance/db-list-iterations-attachments db (keep :id iters)))
-                      (catch Throwable _ {})))]
+               direct (hydrated-turn-trace db turn-id)]
 
-           (wire/canonical (mapv (fn [it]
-                                   (if-let [atts (seq (get atts-by-iter (str (:id it))))]
-                                     (assoc it :attachments (vec atts))
-                                     it))
-                                 iters))))
+           (if (seq direct)
+             direct
+             (if-let [live (live-turn sid tid)]
+               (let [engine-id (some-> (:engine_turn_id live)
+                                       str
+                                       not-empty
+                                       parse-uuid)
+                     matched-id (when-not engine-id
+                                  (some (fn [row]
+                                          (when (persisted-duplicate-of-live? live row) (:id row)))
+                                        (reverse (persistance/db-list-session-turns db sid))))
+                     persisted-id (or engine-id matched-id)]
+
+                 (if (and persisted-id (not= turn-id persisted-id))
+                   (hydrated-turn-trace db persisted-id)
+                   direct))
+               direct))))
        (catch Throwable t
          (tel/log! :warn ["gateway: turn-trace hydration failed" tid (ex-message t)])
          nil)))

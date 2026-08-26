@@ -2720,7 +2720,8 @@
 (defn- turn-trace-handler
   [request]
   (if (path-sid request)
-    (json-response {:iterations (state/turn-trace (get-in request [:path-params :tid]))})
+    (json-response {:iterations (state/turn-trace (path-sid request)
+                                                  (get-in request [:path-params :tid]))})
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- req-rid
