@@ -5473,8 +5473,23 @@
                 activity-run
                 (first (filter :is-activity runs))
 
+                ;; The Python evaluation is the execution even when it produced no
+                ;; detectable host activities. Activity enriches this receipt; it does
+                ;; not decide whether the receipt exists.
+                execution-status
+                (or activity-run
+                    (when (and session-id (empty? runs) (or session-turn-id live-preview?))
+                      {:status-text (str (cond (or is-error? error) "FAILED"
+                                               (nil? success?) "RUNNING"
+                                               :else "DONE")
+                                         " · PYTHON")
+                       :status-tone (cond (or is-error? error) :error
+                                          (nil? success?) :running
+                                          :else :ok)
+                       :elapsed-ms duration-ms}))
+
                 execution-node-id
-                (when (and activity-run session-id)
+                (when (and execution-status session-id)
                   (detail-node-id {:session-turn-id session-turn-id
                                    :iteration-number iteration-number
                                    :block-number block-number
@@ -5484,6 +5499,7 @@
                 execution-expanded?
                 (and execution-node-id
                      (or (:is-reopened activity-run)
+                         (get detail-expansions :vis.channel-tui/expand-execution-details?)
                          (detail-expanded? detail-expansions session-id execution-node-id false)))
 
                 ;; BLOCK N header removed per user directive (also gated
@@ -5881,10 +5897,10 @@
                 activity-surface
                 (when activity-run (activity-detail-entries activity-run fill-w session-id))]
 
-            (if-not activity-run
+            (if-not execution-status
               execution-body
               (let [summary-text
-                    (activity-status-display activity-run)
+                    (activity-status-display execution-status)
 
                     summary-line
                     (ellipsize-cols (str "  " (if execution-expanded? "▾" "▸") " " summary-text)
@@ -5893,7 +5909,7 @@
                     summary
                     {:line (str execution-summary-marker summary-line)
                      :meta {:kind :toggle-details
-                            :status-tone (:status-tone activity-run)
+                            :status-tone (:status-tone execution-status)
                             :session-id session-id
                             :node-id execution-node-id
                             :collapsed? (not execution-expanded?)}}]
@@ -5901,7 +5917,8 @@
                 (vec (concat [(line-entry "") summary]
                              (when execution-expanded? [(line-entry "")])
                              (when execution-expanded? execution-body)
-                             (when execution-expanded? activity-surface)))))))
+                             (when (and execution-expanded? activity-surface)
+                               activity-surface)))))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result
