@@ -69,27 +69,49 @@
                        (expect (false? (:is-authenticated report)))
                        (expect (not (contains? report :api-key-preview))))))))
 
-(defdescribe persistence-test
-             (it "keeps one plan's key when the sibling logs out, and deletes an emptied file"
-                 (let [f
-                       (java.io.File/createTempFile "vis-key-store" ".json")
+(def ^:private flat-book
+  "A vendor with ONE credential and therefore no plan vocabulary: the key lives
+   at the file ROOT, which is where its users' keys already are."
+  {:vendor "Solo"
+   :file "solo-auth-test.json"
+   :file-shape :flat
+   :key-hint "<your-solo-api-key>"
+   :error-type :vis/solo-not-authenticated
+   :plans {:solo {:provider-id :solo
+                  :label "Solo"
+                  :base-url "https://solo.test/v1"
+                  :default-models ["solo-1"]
+                  :env-keys ["SOLO_API_KEY"]}}})
 
-                       path
-                       (.getAbsolutePath f)]
-
-                   (.delete f)
-                   (with-redefs-fn {#'store/auth-file (constantly path)}
-                     (fn []
-                       (try (store/update-plan! book :coding {:api-key "coding-key"})
-                            (store/update-plan! book :token {:api-key "token-key"})
-                            (store/logout-plan! book :coding)
-                            (expect (nil? (:coding (store/load-auth book))))
-                            (expect (= "token-key" (:api-key (:token (store/load-auth book)))))
-                            (store/logout-plan! book :token)
-                            ;; An empty file must not linger: its mere existence reads as
-                            ;; "authenticated" to a detect-fn.
-                            (expect (not (.exists (java.io.File. path))))
-                            (finally (.delete (java.io.File. path)))))))))
+(defdescribe
+  persistence-test
+  ;; ONE `it`: both shapes share the `auth-file` redef, and `with-redefs` mutates
+  ;; a global Var, so splitting them would let the two cases race over it.
+  (it "keeps sibling plans apart in a by-plan file and a lone key at a flat file's root"
+      (let [dir (java.io.File.
+                  (str (System/getProperty "java.io.tmpdir") "/vis-key-store-" (System/nanoTime)))]
+        (.mkdirs dir)
+        (with-redefs-fn {#'store/auth-file (fn [b]
+                                             (str dir "/" (:file b)))}
+          (fn []
+            (try (store/update-plan! book :coding {:api-key "coding-key"})
+                 (store/update-plan! book :token {:api-key "token-key"})
+                 (store/logout-plan! book :coding)
+                 (expect (nil? (:coding (store/load-auth book))))
+                 (expect (= "token-key" (:api-key (:token (store/load-auth book)))))
+                 (store/logout-plan! book :token)
+                 ;; An empty file must not linger: its mere existence reads as
+                 ;; "authenticated" to a detect-fn.
+                 (expect (not (.exists (java.io.File. ^String (store/auth-file book)))))
+                 ;; The flat book's plan tag never reaches disk, so a key an
+                 ;; earlier build wrote at the root keeps resolving.
+                 (store/update-plan! flat-book :solo {:api-key "solo-key" :saved-at 1})
+                 (expect (= "solo-key" (:api-key (store/load-auth flat-book))))
+                 (expect (nil? (:solo (store/load-auth flat-book))))
+                 (expect (= "solo-key" (#'store/file-key flat-book :solo)))
+                 (store/logout-plan! flat-book :solo)
+                 (expect (not (.exists (java.io.File. ^String (store/auth-file flat-book)))))
+                 (finally (run! #(.delete ^java.io.File %) (.listFiles dir)) (.delete dir))))))))
 
 (defdescribe auth-prompt-test
              (it "prints the book's own notes, env var and endpoint"
@@ -99,3 +121,18 @@
                    (expect (some #(= "         export ACME_CODING_API_KEY=<your-acme-api-key>" %)
                                  lines))
                    (expect (some #(= "  Endpoint: https://coding.acme.test/v1" %) lines)))))
+
+(defdescribe
+  single-credential-message-test
+  ;; Nothing is redefined here: neither book's env var, config entry or file
+  ;; exists, so the real lookup runs and really fails.
+  (it "names no plan in the message a single-credential user sees"
+      (let [thrown
+            (try (store/token-envelope flat-book :solo) nil (catch clojure.lang.ExceptionInfo e e))]
+        (expect (= :vis/solo-not-authenticated (:type (ex-data thrown))))
+        (expect (re-find #"No Solo API key\. Run" (ex-message thrown)))
+        (expect (nil? (re-find #"for plan" (ex-message thrown))))))
+  (it "still says WHICH plan when the user has two of them"
+      (let [thrown
+            (try (store/token-envelope book :coding) nil (catch clojure.lang.ExceptionInfo e e))]
+        (expect (re-find #"No Acme API key for plan :coding\." (ex-message thrown))))))

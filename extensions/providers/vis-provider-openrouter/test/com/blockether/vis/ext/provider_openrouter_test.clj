@@ -35,50 +35,38 @@
         (expect (some #(= (str "  Endpoint: " (svar/provider-base-url :openrouter)) %) lines)))))
 
 (defdescribe
-  auth-detection-test
-  (it "prefers the TUI/config API key used by runtime model calls"
+  key-store-book-test
+  ;; The lookup ORDER, the file layout and the token envelope belong to the
+  ;; shared key store (`provider-key-store-test`); what this pack owns is the
+  ;; book it declares.
+  (it "keeps the one key at the ROOT of ~/.vis/openrouter-auth.json"
+      (let [book @#'openrouter/BOOK]
+        (expect (= "openrouter-auth.json" (:file book)))
+        (expect (= :flat (:file-shape book)))
+        (expect (= :vis/openrouter-not-authenticated (:error-type book)))
+        (expect (= ["OPENROUTER_API_KEY"] (get-in book [:plans :openrouter :env-keys])))))
+  (it "detects the TUI/config API key used by runtime model calls"
       (require 'com.blockether.vis.ext.provider-openrouter :reload)
-      (with-redefs-fn {#'openrouter/load-auth-file (constantly nil)
-                       #'openrouter/env-key (constantly nil)
-                       #'vis/current-config (constantly {:providers [{:id :openrouter
+      (with-redefs-fn {#'vis/current-config (constantly {:providers [{:id :openrouter
                                                                       :api-key "config-key"}]})}
         (fn []
-          (expect (= {:api-key "config-key" :source :config} (#'openrouter/detect-key))))))
-  (it "falls back to the env var, then the persisted auth file"
-      (require 'com.blockether.vis.ext.provider-openrouter :reload)
-      (with-redefs-fn {#'openrouter/configured-key (constantly nil)
-                       #'openrouter/load-auth-file (constantly {:api-key "file-key"})
-                       #'openrouter/env-key (constantly "env-key")}
-        (fn []
-          (expect (= {:api-key "env-key" :source :env-var} (#'openrouter/detect-key)))))
-      (with-redefs-fn {#'openrouter/configured-key (constantly nil)
-                       #'openrouter/env-key (constantly nil)
-                       #'openrouter/load-auth-file (constantly {:api-key "file-key"})}
-        (fn []
-          (expect (= {:api-key "file-key" :source :auth-file} (#'openrouter/detect-key)))))))
+          (expect (= {:api-key "config-key" :source :config}
+                     ((:provider/detect-fn (vis/provider-by-id :openrouter)))))))))
 
 (defdescribe get-token-test
-             (it "returns the router token envelope when a key exists"
+             (it "answers the router token envelope from the resolved key"
                  (require 'com.blockether.vis.ext.provider-openrouter :reload)
-                 (with-redefs-fn {#'openrouter/detect-key (constantly {:api-key "k"
-                                                                       :source :env-var})}
+                 (with-redefs-fn {#'vis/current-config (constantly {:providers [{:id :openrouter
+                                                                                 :api-key "k"}]})}
                    (fn []
                      (expect (= {:token "k" :api-url (svar/provider-base-url :openrouter)}
-                                ((:provider/get-token-fn (vis/provider-by-id :openrouter))))))))
-             (it "throws a pointer at `vis-agent providers auth openrouter` when unauthenticated"
-                 (require 'com.blockether.vis.ext.provider-openrouter :reload)
-                 (with-redefs-fn {#'openrouter/detect-key (constantly nil)}
-                   (fn []
-                     (expect (= :vis/openrouter-not-authenticated
-                                (try ((:provider/get-token-fn (vis/provider-by-id :openrouter)))
-                                     nil
-                                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+                                ((:provider/get-token-fn (vis/provider-by-id :openrouter)))))))))
 
 (defdescribe
   limits-test
   (it "reports capped-key credit usage from /api/v1/key"
       (require 'com.blockether.vis.ext.provider-openrouter :reload)
-      (with-redefs-fn {#'openrouter/detect-key (constantly {:api-key "k" :source :auth-file})
+      (with-redefs-fn {#'vis/provider-key-detect (constantly {:api-key "k" :source :auth-file})
                        #'openrouter/fetch-key-info!
                        (fn [api-key]
                          (expect (= "k" api-key))
@@ -110,7 +98,7 @@
         (expect (= :credits (:kind row)))))
   (it "reports :unauthenticated when no key is available"
       (require 'com.blockether.vis.ext.provider-openrouter :reload)
-      (with-redefs-fn {#'openrouter/detect-key (constantly nil)}
+      (with-redefs-fn {#'vis/provider-key-detect (constantly nil)}
         (fn []
           (let [report ((:provider/limits-fn (vis/provider-by-id :openrouter)))]
             (expect (= :openrouter (:provider-id report)))

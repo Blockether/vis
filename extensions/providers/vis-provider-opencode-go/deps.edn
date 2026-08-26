@@ -14,10 +14,9 @@
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         ;; vis owns the extension/provider registries.
         com.blockether/vis {:local/root "../../.."}
-        ;; JSON for the persisted auth file (charred is already on the runtime
-        ;; classpath via vis itself).
+        ;; JSON for the live `/usage` quota response (charred is already on the
+        ;; runtime classpath via vis itself).
         com.cnuernber/charred {:mvn/version "1.041"}
-        com.taoensso/telemere {:mvn/version "1.2.1"}
         ;; HTTP client for the live `/usage` quota endpoint (see limits.clj).
         org.babashka/http-client {:mvn/version "0.4.24"}}
  :aliases {:test {:extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}

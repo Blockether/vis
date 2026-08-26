@@ -11,6 +11,7 @@
 
      {:vendor     \"Alibaba\"                      ; how a message names it
       :file       \"alibaba-auth.json\"            ; lives under ~/.vis
+      :file-shape :flat                          ; or :by-plan (the default)
       :key-hint   \"<your-alibaba-api-key>\"       ; the export line's value
       :error-type :vis/alibaba-not-authenticated ; ex-info :type when no key
       :auth-notes [\"  The key is plan-scoped …\"]  ; extra prompt lines, optional
@@ -23,6 +24,14 @@
    The plan TAG (`:coding`) is local to the file and the `:provider-id` is the
    catalog id; the two never merge and no lookup ever falls back to a sibling
    plan, because a key issued for one plan is rejected by the other's endpoint.
+
+   `:file-shape` decides where a slice LIVES. `:by-plan` (the default) nests each
+   plan under its tag, because those keys are separate credentials. `:flat` hands
+   the whole file to a book with ONE credential: the key sits at the root
+   (`{\"api_key\" …}`), the plan tag never reaches disk, and no message shows a
+   plan vocabulary the user has nothing to choose between. Declared, never
+   inferred - growing a second plan is a deliberate change of file shape, not a
+   silent one that orphans every key already stored.
 
    What a provider still owns: its plan table, its `:provider/limits-fn` (a
    quota endpoint is vendor-specific) and its own namespace docstring."
@@ -40,6 +49,22 @@
   (str (System/getProperty "user.home") "/.vis/" (:file book)))
 
 (defn- plan-of [book plan-tag] (get (:plans book) plan-tag))
+
+(defn- flat-file?
+  "True when the book hands its whole file to a single credential."
+  [book]
+  (= :flat (:file-shape book)))
+
+(defn- plan-clause
+  "How a message names the plan - nothing at all for a flat book, whose user has
+   no plan vocabulary to recognise."
+  [book plan-tag]
+  (if (flat-file? book) "" (str " for plan " plan-tag)))
+
+(defn- plan-slice
+  "This plan's slice of the persisted map: the file itself when the book is flat."
+  [book auth plan-tag]
+  (if (flat-file? book) auth (get auth plan-tag)))
 
 (defn- auth-json-key
   "JSON key -> engine keyword. What we write is snake_case (`api_key`); the
@@ -65,15 +90,18 @@
     (spit (auth-file book) (wire/json-str auth-state))))
 
 (defn update-plan!
-  "Merge `slice` into the file under `plan-tag`; a nil `slice` REMOVES that
-   plan. An emptied file is deleted so its mere existence keeps reading as
-   'authenticated' for `detect-fn` semantics. Returns the new map."
+  "Merge `slice` into the file under `plan-tag` - or make it the WHOLE file when
+   the book is flat. A nil `slice` REMOVES that plan. An emptied file is deleted
+   so its mere existence keeps reading as 'authenticated' for `detect-fn`
+   semantics. Returns the new map."
   [book plan-tag slice]
   (let [current
         (or (load-auth book) {})
 
         next-state
-        (if (nil? slice) (dissoc current plan-tag) (assoc current plan-tag slice))]
+        (cond (flat-file? book) (or slice {})
+              (nil? slice) (dissoc current plan-tag)
+              :else (assoc current plan-tag slice))]
 
     (if (seq next-state)
       (save-auth! book next-state)
@@ -105,7 +133,7 @@
 
 (defn- file-key
   [book plan-tag]
-  (when-let [from-file (get (load-auth book) plan-tag)]
+  (when-let [from-file (plan-slice book (load-auth book) plan-tag)]
     (when-let [k (:api-key from-file)]
       (when-not (str/blank? k) k))))
 
@@ -144,8 +172,8 @@
       {:token api-key :api-url base-url}
       (throw (ex-info (str "No "
                            (:vendor book)
-                           " API key for plan "
-                           plan-tag
+                           " API key"
+                           (plan-clause book plan-tag)
                            ". Run `vis-agent providers auth "
                            (name provider-id)
                            "` to authenticate, or set "
@@ -175,7 +203,7 @@
   (tel/log! {:level :info
              :id ::logout
              :data {:vendor (:vendor book) :plan plan-tag}
-             :msg (str "Cleared persisted " (:vendor book) " key for plan " plan-tag)})
+             :msg (str "Cleared persisted " (:vendor book) " key" (plan-clause book plan-tag))})
   :logged-out)
 
 (defn auth-instruction-lines
