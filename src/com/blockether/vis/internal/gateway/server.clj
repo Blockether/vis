@@ -2010,17 +2010,28 @@
         (comp (map str/trim) (remove str/blank?))
         (str/split (str (get-in request [:query-params k])) #",")))
 
-(defn- list-sessions-handler
-  "GET /v1/sessions[?limit=&after=&root=] — sessions in navigator order, WINDOWED on
-   request, with a validator so a poller can revalidate instead of re-downloading.
+(def ^:private default-session-window
+  "Rows a list read is answered with when it named neither a window nor a cut. Nothing
+   paints a thousand rows at once, and building them cost ~825KB and ~450ms of gateway
+   time per ask; a client that wants more walks `next_cursor`."
+  20)
 
-   Without `limit` this is still the whole fleet, so every existing client keeps
-   working. With it, the reply carries `total` / `limit` / `next_cursor` /
-   `has_more` and the gateway only decorates the rows it returns: the ordering is
-   derived from cheap facts (see `state/list-sessions-page`), so a 100-row first
-   page of a 448-session store costs roughly a fifth of the ~257ms full build and
-   a fifth of its ~300KB — the app paints its first screen without waiting for
-   the tail.
+(defn- list-sessions-handler
+  "GET /v1/sessions[?limit=&after=&root=&project_id=&id_prefix=&ids=] — sessions in
+   navigator order, WINDOWED, with a validator so a poller can revalidate instead of
+   re-downloading.
+
+   A read that names NO window and NO cut is answered with the head window
+   (`default-session-window`), never the fleet: that answer was ~825KB built in ~450ms
+   and no surface paints a thousand rows. A caller that wants the tail walks
+   `next_cursor`; a caller that wants a NARROW answer names its cut (`project_id` for
+   one project's tab set, `id_prefix` for the session a short id names, `ids` for the
+   rows a picker's window does not hold) and is bounded by its own question. The reply
+   carries `total` / `limit` / `next_cursor` / `has_more` and the gateway only decorates
+   the rows it returns: the ordering is derived from cheap facts (see
+   `state/list-sessions-page`), so a 100-row first page of a 448-session store costs
+   roughly a fifth of the ~257ms full build and a fifth of its ~300KB — the app paints
+   its first screen without waiting for the tail.
 
    The HEAD also carries `overview`: every project's stable counts from the same
    gateway snapshot. Rows and totals therefore land in one response and one React
@@ -2084,7 +2095,21 @@
                 not-empty)
 
         dirty
-        (query-session-ids request "dirty")]
+        (query-session-ids request "dirty")
+
+        ;; The rows a SET of ids names. Session search is ranked over the whole store, so
+        ;; a hit can sit outside the window a picker holds; it asks for those rows here
+        ;; instead of downloading the fleet to find one of them.
+        ids
+        (query-session-ids request "ids")
+
+        ;; A read that named neither a window nor a cut asked for every session in the
+        ;; store. The head window is what it gets, and `next_cursor` carries anyone who
+        ;; wants the rest.
+        window-limit
+        (if (or (given? "limit") (seq root) (seq project-id) (seq id-prefix) (seq ids))
+          limit
+          default-session-window)]
 
     (if (or (and (given? "limit") (nil? limit))
             (and (some? after) (nil? (state/parse-session-cursor after))))
@@ -2093,11 +2118,12 @@
                       "limit must be an integer and after must be a <band>:<key>:<id> cursor")
       (let [page
             (state/list-sessions-page :all
-                                      {:limit limit
+                                      {:limit window-limit
                                        :after after
                                        :root root
                                        :project-id project-id
                                        :id-prefix id-prefix
+                                       :ids ids
                                        :dirty dirty})
 
             payload

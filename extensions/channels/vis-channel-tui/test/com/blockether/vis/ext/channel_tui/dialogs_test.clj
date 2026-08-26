@@ -1285,6 +1285,33 @@
 
         (expect (= ["s1" "s2" "s3"] (mapv (comp str :id :target) rows))))))
 
+;; Regression, this Vis session (paraphrased: "why do we download every session just to
+;; open the picker"): C-g read the whole fleet, because the dialog was handed the list
+;; once and had no way to ask for more of it.
+(defdescribe
+  navigator-window-walk-test
+  (it "pulls the next page only when an unfiltered list runs out under the reader"
+      (let [page-in? (var-get #'dlg/navigator-page-in?)]
+        (expect (true? (page-in? {:query "" :selected 42 :total 50 :next-cursor "2:-1:a"})))
+        ;; Room left: the reader is nowhere near the end of what the picker holds.
+        (expect (false? (page-in? {:query "" :selected 10 :total 50 :next-cursor "2:-1:a"})))
+        ;; No cursor left: the walk is over.
+        (expect (false? (page-in? {:query "" :selected 49 :total 50 :next-cursor nil})))
+        ;; A query is answered by the SERVER's search over the whole store, never by
+        ;; loading more rows into the list it filters.
+        (expect (false? (page-in? {:query "pager" :selected 49 :total 50 :next-cursor "2:-1:a"})))))
+  (it "paints a session once when a page and a search hit name the same row"
+      (let [merge-sessions
+            (var-get #'dlg/navigator-merge-sessions)
+
+            held
+            [{"id" "a" "title" "A"} {"id" "b" "title" "B"}]
+
+            incoming
+            [{"id" "b" "title" "B"} {"id" "c" "title" "C"}]]
+
+        (expect (= ["a" "b" "c"] (mapv #(get % "id") (merge-sessions held incoming)))))))
+
 (def ^:private wide-hints
   "A hint bar too wide for a narrow dialog — the fixture `fit-hint-pairs` clips."
   [["↑/↓" "move"] ["n/p" "section"] ["TAB" "fold"] ["RET" "visit"] ["s/u" "select"] ["S/U" "all"]

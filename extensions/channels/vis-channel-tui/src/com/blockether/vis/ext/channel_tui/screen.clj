@@ -4725,16 +4725,15 @@
            sessions))
 
 (defn- tui-session-summaries
-  "Session rows this channel paints, newest-first. `opts` is the gateway's own
-   window (`:limit`, `:project-id`, `:id-prefix`); the no-arg call asks for the whole
-   fleet and the session PICKER is the only surface here that may."
-  ([] (tui-session-summaries {}))
-  ([opts]
-   (try (->> (vis/gateway-list-sessions opts)
-             (map session-summary)
-             latest-modified-first
-             vec)
-        (catch Throwable _ []))))
+  "Session rows this channel paints, newest-first. `opts` is the gateway's own window
+   (`:limit`, `:after`, `:project-id`, `:id-prefix`, `:ids`): there is no fleet-wide call
+   left here - every surface names the rows it needs and pays for those."
+  [opts]
+  (try (->> (vis/gateway-list-sessions opts)
+            (map session-summary)
+            latest-modified-first
+            vec)
+       (catch Throwable _ [])))
 
 (defn- session-db-title
   [session-id]
@@ -4773,6 +4772,23 @@
   [s]
   (let [ws (or (get s "workspace") (session-workspace (get s "id")))]
     (assoc s :work-dir (short-dir (or (get ws "repo_root") (get ws "root"))))))
+
+(def ^:private picker-page-size
+  "Rows the session PICKER opens on, and pulls at a time as the reader nears the end of
+   what it holds. The whole fleet was ~825KB built in ~450ms on every C-g; a screen is
+   fifty rows."
+  50)
+
+(defn- tui-session-page
+  "One WINDOW of the picker's list: its rows, enriched for the navigator, and the cursor
+   naming the page after them (`nil` when the walk is over). The gateway owns the order,
+   so the page is painted as it arrives."
+  [opts]
+  (try (let [page (vis/gateway-list-sessions-page opts)]
+         {:sessions (mapv enrich-session-row
+                          (latest-modified-first (map session-summary (:sessions page))))
+          :next-cursor (:next-cursor page)})
+       (catch Throwable _ {:sessions [] :next-cursor nil})))
 
 (def ^:private startup-session-window
   "How many newest rows a STARTUP lookup reads from the gateway. The gateway owns the
@@ -5794,19 +5810,34 @@
                  show-sessions!
                  (fn show-sessions! []
                    (when-not (:dialog-open? @state/app-db)
-                     (let [sessions (mapv enrich-session-row (tui-session-summaries))]
+                     (let [page (tui-session-page {:limit picker-page-size})]
                        (when-let [choice
                                   (with-dialog-lock
                                     #(dlg/navigator-dialog!
                                        screen
-                                       {:sessions sessions
+                                       {:sessions (:sessions page)
+                                        ;; The picker opens on ONE window and walks the
+                                        ;; gateway's cursor from there: a thousand-session
+                                        ;; store is read a screen at a time instead of
+                                        ;; downloaded whole to paint one dialog.
+                                        :next-cursor (:next-cursor page)
+                                        :load-more (fn [cursor]
+                                                     (tui-session-page {:limit picker-page-size
+                                                                        :after cursor}))
+                                        ;; Search is ranked over the WHOLE store, so a hit
+                                        ;; can name a session this window does not hold.
+                                        ;; Those rows come back by id, not by a fleet read.
+                                        :fetch-sessions (fn [ids]
+                                                          (:sessions (tui-session-page
+                                                                       {:ids (vec ids)})))
                                         :active-session-id (current-session-id)
                                         :db @state/app-db
                                         :search-transcript-ids
                                         (fn [q]
                                           (try (into {}
-                                                     (map
-                                                       (fn [{:keys [id rank in-title? in-request?
+                                                     (map-indexed
+                                                       (fn [idx
+                                                            {:keys [id rank in-title? in-request?
                                                                     in-reply? in-thinking?
                                                                     request-snippet reply-snippet
                                                                     hits]}]
@@ -5815,6 +5846,11 @@
                                                            ;; 3 thinking) — the picker paints that order and never
                                                            ;; invents one of its own.
                                                            :rank rank
+                                                           ;; Where the SERVER put this hit in
+                                                           ;; its own answer, so a picker that
+                                                           ;; must fetch missing rows fetches
+                                                           ;; the freshest ones first.
+                                                           :order idx
                                                            :kind (cond in-title? :title
                                                                        (and in-request? in-reply?)
                                                                        :both

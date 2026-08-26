@@ -3039,10 +3039,15 @@
               body (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
-          (is (=
-                [:all
-                 {:limit 20 :after "2:-4000:a" :root nil :project-id nil :id-prefix nil :dirty #{}}]
-                @seen))
+          (is (= [:all
+                  {:limit 20
+                   :after "2:-4000:a"
+                   :root nil
+                   :project-id nil
+                   :id-prefix nil
+                   :ids #{}
+                   :dirty #{}}]
+                 @seen))
           (is (= "2:-3000:b" (get body "next_cursor")))
           (is (true? (get body "has_more")))
           ;; The offset is gone from the wire, not renamed.
@@ -3078,6 +3083,33 @@
       (testing "and so is the session a short id names"
         ((rv 'list-sessions-handler) {:query-params {"id_prefix" "aa11" "limit" "2"}})
         (is (= ["aa11" 2] [(:id-prefix (second @seen)) (:limit (second @seen))]))))))
+
+;; Regression, this Vis session (paraphrased: "why does opening the picker download every
+;; session"): a list read that named no window built and shipped the whole store - ~825KB
+;; in ~450ms - and a picker holding one window had no way to paint a search hit outside it.
+(deftest sessions-read-without-a-window-answers-the-head-not-the-fleet
+  (let [seen (atom nil)]
+    (with-redefs [state/list-sessions-page (fn [channel opts]
+                                             (reset! seen [channel opts])
+                                             {:sessions []
+                                              :awaiting []
+                                              :total 0
+                                              :limit 20
+                                              :next-cursor nil
+                                              :has-more false})]
+      (testing "no window and no cut is the HEAD window, never every session in the store"
+        ((rv 'list-sessions-handler) {:query-params {}})
+        (is (= 20 (:limit (second @seen)))))
+      (testing "a read that named its own limit keeps it"
+        ((rv 'list-sessions-handler) {:query-params {"limit" "5"}})
+        (is (= 5 (:limit (second @seen)))))
+      (testing "the rows a set of ids names are a CUT, so the question bounds the answer"
+        ((rv 'list-sessions-handler) {:query-params {"ids" "aa11,bb33"}})
+        (is (= #{"aa11" "bb33"} (:ids (second @seen))))
+        (is (nil? (:limit (second @seen)))))
+      (testing "and so is a project, which is bounded by the project"
+        ((rv 'list-sessions-handler) {:query-params {"project_id" "p1"}})
+        (is (nil? (:limit (second @seen))))))))
 ;; Regression, issue #146: `wrap-errors` answered EVERY throwable with a generic
 ;; `engine-error` 500, so a request that failed only because no AI provider was
 ;; configured reached the TUI as an ordinary crash — `vis-agent tui` printed a

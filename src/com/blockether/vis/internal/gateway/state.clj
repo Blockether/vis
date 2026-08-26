@@ -4892,18 +4892,25 @@
    client pins them above the list instead of the ordering lifting them into it
    (see `session-ranking`).
 
-   `nil` limit means \"the rest\", so `(list-sessions-page channel nil)` is the whole
-   list and callers that want a picker in one answer keep it.
+   `nil` limit means \"the rest\". No ROUTE leaves it nil any more: a read that names
+   no cut is answered with the head window (`list-sessions-handler`), so a whole-list
+   build is a deliberate in-process call and no client can ask for one.
 
    `:root` narrows the listing to ONE project before the window is cut, so a client
    paging a project asks the gateway for that project's page instead of downloading
    the fleet and slicing it locally. `total`/`has-more` then describe that project,
    which is what a pager prints.
 
-   `:project-id` and `:id-prefix` answer the two questions a channel used to answer by
-   downloading the fleet and filtering it locally: ONE project's tab set, and the
-   session a short id names. Both cut the ORDERING - before `total`, before the window
-   - so each answer costs the rows it returns.
+   `:project-id`, `:id-prefix` and `:ids` answer the questions a channel used to answer
+   by downloading the fleet and filtering it locally: ONE project's tab set, the session
+   a short id names, and the ROWS a set of ids names. All three cut the ORDERING - before
+   `total`, before the window - so each answer costs the rows it returns. `:ids` is how a
+   picker that holds a WINDOW paints a search hit: the store ranks the query across every
+   session, and only the matched rows the window does not already hold cross the wire.
+
+   CROSS-CHANNEL by default (`channel` = `:all`): a conversation started in one channel
+   is visible in the others and vice-versa. Pass a specific channel keyword only when a
+   caller genuinely needs a single-channel slice (e.g. resolving a chat by external-id).
 
    The window is cut BEFORE decoration: the ranking is built from cheap facts, and
    only the ids that survive the cut pay for `soul` + workspace resolution. A 100-row
@@ -4911,7 +4918,7 @@
    (~257ms) and a fifth of its ~300KB, which is what makes a polled session list
    affordable."
   ([opts] (list-sessions-page :all opts))
-  ([channel {:keys [limit after root project-id id-prefix dirty]}]
+  ([channel {:keys [limit after root project-id id-prefix ids dirty]}]
    (let [db
          (try (lp/db-info) (catch Throwable _ nil))
 
@@ -4939,7 +4946,12 @@
 
            (seq (str id-prefix))
            (filterv (fn [row]
-                      (str/starts-with? (:id row) (str id-prefix)))))
+                      (str/starts-with? (:id row) (str id-prefix))))
+
+           (seq ids)
+           (filterv (let [wanted (into #{} (comp (map str) (remove str/blank?)) ids)]
+                      (fn [row]
+                        (contains? wanted (:id row))))))
 
          total
          (count ranked)
@@ -4983,25 +4995,6 @@
       ;; Absent when there is nothing left, so a walk ends on the answer itself.
       :next-cursor (when (< (count window) (count tail)) (->session-cursor (peek window)))
       :has-more (< (count window) (count tail))})))
-
-(defn list-sessions
-  "Wire souls for every session the NAVIGATOR paints, each decorated with the bulk
-   summary facts (`turn_count`, `modified_at`, lean `workspace`) so ONE
-   `GET /v1/sessions` is enough to paint a session picker. Unwindowed —
-   `list-sessions-page` serves clients that page.
-
-   The gateway owns the list: the bands and the filter are `session-ranking`'s, and
-   clients paint what they are sent rather than re-deriving one. An abandoned \"New
-   session\" tap is therefore NOT here (`session-listed?`) - `session-ids` is the
-   answer for a lookup that must see one. Liveness and a run parked on a human are
-   FIELDS on the row (`live`, `is_awaiting_input`), never a lift.
-
-   CROSS-CHANNEL by default (`channel` = `:all`): a conversation started
-   in one channel is visible in the others and vice-versa. Pass a specific
-   channel keyword only when a caller genuinely needs a single-channel
-   slice (e.g. resolving a chat by external-id)."
-  ([] (list-sessions :all))
-  ([channel] (:sessions (list-sessions-page channel nil))))
 
 (defn session-ids
   "Every persisted session id of `channel` as STRINGS, unfiltered and undecorated.

@@ -100,6 +100,7 @@
              [gateway-session-slashes gateway-client/session-slashes]
              [gateway-soul gateway-client/soul]
              [gateway-list-sessions gateway-client/list-sessions]
+             [gateway-list-sessions-page gateway-client/list-sessions-page]
              [gateway-search-session-ids gateway-client/search-session-ids]
              [gateway-search-session-matches gateway-client/search-session-matches]
              [gateway-close-session! gateway-client/close-session!]

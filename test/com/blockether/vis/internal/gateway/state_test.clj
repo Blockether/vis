@@ -2356,6 +2356,11 @@
                  (let [got (three-session-window {:id-prefix "aa" :limit 2})]
                    (expect (= ["aa11" "aa22"] (mapv #(get % "id") (:sessions got))))
                    (expect (= 2 (:total got)))))
+             (it "answers the rows a set of ids names, in its OWN order"
+                 ;; What a picker holding ONE window paints a search hit outside it with.
+                 (let [got (three-session-window {:ids ["bb33" "aa22"]})]
+                   (expect (= ["aa22" "bb33"] (mapv #(get % "id") (:sessions got))))
+                   (expect (= 2 (:total got)))))
              (it "leaves the list whole when the window asks nothing of it"
                  (expect (= 3 (:total (three-session-window {}))))))
 ;; Regression, user report (paraphrased: "clicking a session suddenly makes it the

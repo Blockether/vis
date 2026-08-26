@@ -4825,6 +4825,38 @@
 
     (group-rows-by-dir (mapv #(navigator-session-row active-session-id %) focused-first))))
 
+(def ^:private navigator-page-slack
+  "How near the end of the rows it holds the reader may come before the picker asks the
+   gateway for its next page. Wide enough that the page lands before the list runs out
+   under a held arrow key."
+  8)
+
+(def ^:private navigator-search-rows
+  "How many rows the picker fetches for search hits sitting OUTSIDE the window it holds,
+   freshest match first. Session search is ranked across the whole store, so a query can
+   name more sessions than a reader will ever scroll; this bounds what that costs."
+  60)
+
+(defn- navigator-page-in?
+  "Whether the picker should pull its next page. A QUERY is answered by the server's search
+   across the whole store, not by loading more rows, so paging only ever walks an unfiltered
+   list: a cursor left to continue, and a selection within `navigator-page-slack` of the
+   last row held."
+  [{:keys [query selected total next-cursor]}]
+  (boolean (and (str/blank? (str query))
+                (seq (str next-cursor))
+                (>= (+ (long selected) (long navigator-page-slack)) (long total)))))
+
+(defn- navigator-merge-sessions
+  "`held` plus the rows it does not already carry, in the order they arrived. A page and a
+   search hydration can name the same session, and the picker paints it once."
+  [held incoming]
+  (first (reduce (fn [[rows seen] row]
+                   (let [id (str (get row "id"))]
+                     (if (contains? seen id) [rows seen] [(conj rows row) (conj seen id)])))
+                 [[] #{}]
+                 (concat held incoming))))
+
 (defn- navigator-row-matches?
   [row query]
   (let [needle (str/lower-case (str/trim (or query "")))]
@@ -5200,8 +5232,42 @@
         show-empty-untitled?
         (atom (boolean (:show-empty-untitled? opts)))
 
+        ;; The rows the picker HOLDS. It opens on ONE gateway window and grows from
+        ;; there: a page as the reader nears the end (`page-in!`), and the rows a
+        ;; server-ranked search named that this window does not have.
+        loaded-sessions
+        (atom (vec (:sessions opts)))
+
+        page-cursor
+        (atom (:next-cursor opts))
+
+        load-more
+        (:load-more opts)
+
+        fetch-sessions
+        (:fetch-sessions opts)
+
         search-transcript-ids
         (:search-transcript-ids opts)
+
+        ;; ONE search: the gateway's matches, plus - on the search's own thread, before the
+        ;; result is painted - the rows for the hits outside the window.
+        search-fn
+        (when search-transcript-ids
+          (fn [q]
+            (let [matches (or (search-transcript-ids q) {})]
+              (when (and fetch-sessions (seq matches))
+                (let [held (into #{} (map #(str (get % "id"))) @loaded-sessions)
+                      missing (->> matches
+                                   (remove #(contains? held (str (key %))))
+                                   (sort-by #(long (or (:order (val %)) Long/MAX_VALUE)))
+                                   (take navigator-search-rows)
+                                   (mapv key))]
+
+                  (when (seq missing)
+                    (when-let [rows (seq (try (fetch-sessions missing) (catch Throwable _ nil)))]
+                      (swap! loaded-sessions navigator-merge-sessions rows)))))
+              matches)))
 
         transcript-ids
         (atom {})
@@ -5229,12 +5295,17 @@
                    (future-cancel running))
                  (reset! search-task nil)
                  (reset! search-result nil))
-             (schedule-navigator-search! search-task
-                                         search-generation
-                                         search-result
-                                         q
-                                         search-transcript-ids))))
-       (reset-list! [search?] (reset! selected 0) (reset! scroll 0) (when search? (start-search!)))]
+             (schedule-navigator-search! search-task search-generation search-result q search-fn))))
+       (reset-list! [search?] (reset! selected 0) (reset! scroll 0) (when search? (start-search!)))
+       (page-in! [total]
+         (when (and load-more
+                    (navigator-page-in?
+                      {:query @query :selected @selected :total total :next-cursor @page-cursor}))
+           ;; A page that answers nothing ends the walk: the same cursor is never asked twice.
+           (let [page (try (load-more @page-cursor) (catch Throwable _ nil))]
+             (reset! page-cursor (:next-cursor page))
+             (when (seq (:sessions page))
+               (swap! loaded-sessions navigator-merge-sessions (:sessions page))))))]
       (try
         (loop []
 
@@ -5245,7 +5316,9 @@
               (reset! transcript-ids matches)
               (reset! search-task nil)))
           (let [rows
-                (navigator-all-rows (assoc opts :show-empty-untitled? @show-empty-untitled?))
+                (navigator-all-rows (assoc opts
+                                      :sessions @loaded-sessions
+                                      :show-empty-untitled? @show-empty-untitled?))
 
                 visible-rows
                 (navigator-visible-rows rows @query @transcript-ids)
@@ -5312,6 +5385,9 @@
                 _
                 (swap! selected #(p/clamp % 0 (max 0 (dec total))))
 
+                _
+                (page-in! total)
+
                 block-heights
                 (navigator-block-heights visible-rows)
 
@@ -5335,7 +5411,7 @@
               (p/set-colors! g t/dialog-border t/dialog-bg)
               (p/draw-separator! g left right (inc (long content-top)))
               (if (zero? total)
-                (let [hidden-count (count (filter empty-untitled-session? (:sessions opts)))
+                (let [hidden-count (count (filter empty-untitled-session? @loaded-sessions))
                       message (cond (not (str/blank? @query)) "No matches"
                                     (and (pos? hidden-count) (not @show-empty-untitled?))
                                     "Only empty untitled sessions hidden"

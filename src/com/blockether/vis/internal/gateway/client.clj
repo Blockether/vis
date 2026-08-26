@@ -1112,30 +1112,47 @@
        (catch clojure.lang.ExceptionInfo e
          (when-not (= 404 (:http-status (ex-data e))) (throw e)))))
 
+(defn- session-window-path
+  "The path of ONE window of the session list.
+
+   `opts` names the cut: `:limit` rows, `:after` the cursor of the last row already held,
+   `:root` one project's column, `:project-id` one project's tab set, `:id-prefix` the
+   session a short id names, `:ids` exactly the rows those ids name. The gateway owns the
+   ordering, so a caller that wants ten rows asks for ten instead of downloading the fleet
+   to slice it locally - and a read that names no cut and no limit is answered with the
+   head window, never the fleet."
+  [{:keys [limit after root project-id id-prefix ids]}]
+  (let [qs (->> [(when limit (str "limit=" (enc limit)))
+                 (when (seq (str after)) (str "after=" (enc after)))
+                 (when (seq (str root)) (str "root=" (enc root)))
+                 (when (seq (str project-id)) (str "project_id=" (enc project-id)))
+                 (when (seq (str id-prefix)) (str "id_prefix=" (enc id-prefix)))
+                 (when (seq ids) (str "ids=" (enc (str/join "," (map str ids)))))]
+                (remove nil?)
+                (str/join "&"))]
+    (cond-> "/v1/sessions"
+      (seq qs)
+      (str "?" qs))))
+
 (defn list-sessions
-  "GET one WINDOW of the session list - its rows, in the gateway's own order.
+  "The ROWS of one window of the session list, in the gateway's own order. `opts` names
+   the cut - see `session-window-path`."
+  [opts]
+  (get (send-json! "GET" (session-window-path opts)) "sessions"))
 
-   `opts` names the cut: `:limit` rows (nil is the whole list, which only a PICKER
-   should ask for), `:after` the cursor of the last row already held, `:root` one
-   project's column, `:project-id` one project's tab set, `:id-prefix` the session a
-   short id names. The gateway owns the ordering, so a caller that wants ten rows asks
-   for ten instead of downloading the fleet to slice it locally."
-  [{:keys [limit after root project-id id-prefix]}]
-  (let [qs
-        (->> [(when limit (str "limit=" (enc limit)))
-              (when (seq (str after)) (str "after=" (enc after)))
-              (when (seq (str root)) (str "root=" (enc root)))
-              (when (seq (str project-id)) (str "project_id=" (enc project-id)))
-              (when (seq (str id-prefix)) (str "id_prefix=" (enc id-prefix)))]
-             (remove nil?)
-             (str/join "&"))
+(defn list-sessions-page
+  "One window of the session list WITH the walk that continues it:
+   `{:sessions rows :next-cursor str-or-nil :has-more bool :total n}`.
 
-        path
-        (cond-> "/v1/sessions"
-          (seq qs)
-          (str "?" qs))]
-
-    (get (send-json! "GET" path) "sessions")))
+   `opts` names the cut (`session-window-path`). A surface that pages - the session picker
+   - holds this window and asks for the next one with `:after` `:next-cursor`, so a list of
+   a thousand sessions is read a screen at a time instead of downloaded whole."
+  [opts]
+  (let [body (send-json! "GET" (session-window-path opts))]
+    {:sessions (vec (get body "sessions"))
+     :next-cursor (get body "next_cursor")
+     :has-more (boolean (get body "has_more"))
+     :total (get body "total")}))
 
 (defn search-session-ids
   "GET /v1/sessions/actions/search?q= — soul-id STRINGS whose transcript (user request +
