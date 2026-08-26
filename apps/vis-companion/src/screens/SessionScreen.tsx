@@ -5463,6 +5463,69 @@ export function SessionScreen({
     await toggleVoice();
   };
 
+  const renderVoiceControl = (surface: "strip" | "overlay" = "strip") =>
+    voiceSupported ? (
+    <ComposerButton
+      tone={
+        voicePhase === "recording" || voiceSpeaking
+          ? "recording"
+          : voiceConversation
+            ? "voice"
+            : "quiet"
+      }
+      surface={surface}
+      isHolding={voiceModeHolding}
+      onMouseDown={keepKeyboard}
+      onPointerDown={beginVoiceModeHold}
+      onPointerUp={cancelVoiceModeHold}
+      onPointerLeave={cancelVoiceModeHold}
+      onPointerCancel={cancelVoiceModeHold}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        cancelVoiceModeHold();
+        void switchVoiceMode();
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && event.shiftKey) {
+          event.preventDefault();
+          void switchVoiceMode();
+        }
+      }}
+      onClick={() => {
+        // iOS still delivers the click that ended a long press, and acting on it
+        // would speak the moment the mode changed.
+        if (voiceModeSwitchedRef.current) {
+          voiceModeSwitchedRef.current = false;
+          return;
+        }
+        void (voiceConversation ? speakVoiceTurn() : toggleVoice());
+      }}
+      disabled={
+        voicePhase === "transcribing" ||
+        voiceModel?.status === "downloading" ||
+        (voiceConversation && running && !voiceSpeaking)
+      }
+      label={
+        voiceSpeaking
+          ? "Stop speaking — hold to switch to dictation"
+          : voicePhase === "recording"
+            ? voiceConversation
+              ? "Finish voice utterance — hold to switch to dictation"
+              : "Finish dictation — hold to switch to voice conversation"
+            : voiceConversation
+              ? "Start voice utterance — hold to switch to dictation"
+              : "Dictate message — hold to switch to voice conversation"
+      }
+      title={
+        voiceConversation
+          ? "Voice conversation — hold to switch to dictation"
+          : "Dictate message — hold to switch to voice conversation"
+      }
+    >
+      {voiceConversation ? <VoiceLoopIcon /> : <MicIcon />}
+    </ComposerButton>
+  ) : null;
+
   return (
     <AttachImageContext.Provider value={attachCapturedImage}>
       <section className="relative flex h-full min-h-0 flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
@@ -5551,6 +5614,9 @@ export function SessionScreen({
               sid={sid}
               artifacts={artifacts}
               initialArtifact={linkedArtifact}
+              voiceControl={
+                voiceConversation ? renderVoiceControl("overlay") : undefined
+              }
               onClose={closeArtifacts}
             />
           )}
@@ -6137,66 +6203,7 @@ export function SessionScreen({
                 strip. A gesture nobody can see needs the name to say it, so the
                 accessible label carries the act AND the switch, and a pointer that
                 cannot hold gets the same switch from a right-click or Shift+Enter. */}
-              {voiceSupported && (
-                <ComposerButton
-                  tone={
-                    voicePhase === "recording" || voiceSpeaking
-                      ? "recording"
-                      : voiceConversation
-                        ? "voice"
-                        : "quiet"
-                  }
-                  isHolding={voiceModeHolding}
-                  onMouseDown={keepKeyboard}
-                  onPointerDown={beginVoiceModeHold}
-                  onPointerUp={cancelVoiceModeHold}
-                  onPointerLeave={cancelVoiceModeHold}
-                  onPointerCancel={cancelVoiceModeHold}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    cancelVoiceModeHold();
-                    void switchVoiceMode();
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && event.shiftKey) {
-                      event.preventDefault();
-                      void switchVoiceMode();
-                    }
-                  }}
-                  onClick={() => {
-                    // iOS still delivers the click that ended a long press, and
-                    // acting on it would speak the moment the mode changed.
-                    if (voiceModeSwitchedRef.current) {
-                      voiceModeSwitchedRef.current = false;
-                      return;
-                    }
-                    void (voiceConversation ? speakVoiceTurn() : toggleVoice());
-                  }}
-                  disabled={
-                    voicePhase === "transcribing" ||
-                    voiceModel?.status === "downloading" ||
-                    (voiceConversation && running && !voiceSpeaking)
-                  }
-                  label={
-                    voiceSpeaking
-                      ? "Stop speaking — hold to switch to dictation"
-                      : voicePhase === "recording"
-                        ? voiceConversation
-                          ? "Finish voice utterance — hold to switch to dictation"
-                          : "Finish dictation — hold to switch to voice conversation"
-                        : voiceConversation
-                          ? "Start voice utterance — hold to switch to dictation"
-                          : "Dictate message — hold to switch to voice conversation"
-                  }
-                  title={
-                    voiceConversation
-                      ? "Voice conversation — hold to switch to dictation"
-                      : "Dictate message — hold to switch to voice conversation"
-                  }
-                >
-                  {voiceConversation ? <VoiceLoopIcon /> : <MicIcon />}
-                </ComposerButton>
-              )}
+              {renderVoiceControl()}
 
               <textarea
                 ref={composerRef}

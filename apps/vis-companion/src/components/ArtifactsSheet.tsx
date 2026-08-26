@@ -1082,6 +1082,7 @@ export function ArtifactsSheet({
   sid,
   artifacts,
   initialArtifact = null,
+  voiceControl,
   onClose,
 }: {
   client: GatewayClient;
@@ -1089,6 +1090,8 @@ export function ArtifactsSheet({
   artifacts: SessionArtifact[];
   /** Artifact requested by an inline answer link; the grid remains underneath it. */
   initialArtifact?: SessionArtifact | null;
+  /** The armed voice conversation stays actionable while this surface covers the composer. */
+  voiceControl?: ReactNode;
   onClose: () => void;
 }) {
   const [filter, setFilter] = useState("All");
@@ -1203,6 +1206,11 @@ export function ArtifactsSheet({
           artifact={opened}
           onClose={() => setOpened(null)}
         />
+      )}
+      {voiceControl && (
+        <div className="absolute right-[max(0.75rem,env(safe-area-inset-right))] bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-50">
+          {voiceControl}
+        </div>
       )}
     </div>
   );

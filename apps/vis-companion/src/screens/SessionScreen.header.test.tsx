@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
@@ -40,6 +40,61 @@ describe("the composer under an open artifacts sheet", () => {
 
     await user.click(screen.getByRole("button", { name: /close/i }));
     expect(composer).not.toHaveClass("hidden");
+  });
+
+  // Regression, user report: opening an artifact hid the whole composer, including
+  // the microphone that an armed voice conversation still needs while its document
+  // is being read. The only way to comment was to close the document first.
+  it("keeps the voice microphone on the artifact surface", async () => {
+    const user = userEvent.setup();
+    const capabilities = {
+      version: 1,
+      features: {
+        voice: { enabled: true, model: { status: "ready" } },
+        attachments: { max_files: 8, media_types: ["image/*"] },
+      },
+    };
+    renderSessionScreen({
+      client: {
+        cachedCapabilities: () => capabilities,
+        capabilities: () => Promise.resolve(capabilities),
+        sessionArtifacts: () =>
+          Promise.resolve([
+            {
+              index: 0,
+              turn: 1,
+              iteration_id: "i1",
+              kind: "document",
+              media_type: "text/markdown",
+              filename: "notes.md",
+              version: 1,
+              size: 128,
+            },
+          ]),
+      },
+    });
+
+    fireEvent.contextMenu(
+      screen.getByRole("button", { name: /dictate message/i }),
+    );
+    const voiceMic = await screen.findByRole("button", {
+      name: /start voice utterance/i,
+    });
+    expect(voiceMic).toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: /artifact/i }));
+    const surface = screen.getByRole("region", {
+      name: "Artifacts produced by the model",
+    });
+    await user.click(
+      within(surface).getByRole("button", { name: /^open notes\.md/i }),
+    );
+    expect(await screen.findByRole("dialog", { name: "notes.md" })).toBeVisible();
+    const overlayMic = within(surface).getByRole("button", {
+      name: /start voice utterance/i,
+    });
+    expect(overlayMic).toBeVisible();
+    expect(overlayMic).toHaveClass("size-11");
   });
 });
 
