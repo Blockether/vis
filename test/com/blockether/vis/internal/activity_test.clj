@@ -1,7 +1,6 @@
 (ns com.blockether.vis.internal.activity-test
   (:require [com.blockether.vis.internal.activity :as activity]
             [com.blockether.vis.internal.activity.event :as event]
-            [com.blockether.vis.internal.gateway.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- event-pair
@@ -182,41 +181,27 @@
         (expect (<= (count (:rows snapshot)) activity/max-rows))
         (expect (<= (activity/byte-size snapshot) activity/max-receipt-bytes))
         (expect (= 150 (get-in snapshot [:counts :succeeded])))))
-  (it
-    "serializes the receipt only at settlement at the 128-row ceiling"
-    (let [ctx
-          (event/context {})
+  ;; Regression, issue td-1e6086: Activity was projected both as semantic data and as
+  ;; generic status/stat/steps nodes, so every channel had two sources of truth.
+  (it "keeps one bounded semantic presentation at the 128-row ceiling"
+      (let [ctx
+            (event/context {})
 
-          starts
-          (mapv (fn [n]
-                  (first (event-pair ctx (keyword (str "operation_" n)) :succeeded {:ok true})))
-                (range activity/max-rows))
+            starts
+            (mapv (fn [n]
+                    (first (event-pair ctx (keyword (str "operation_" n)) :succeeded {:ok true})))
+                  (range activity/max-rows))
 
-          states
-          (vec (rest (reductions activity/reduce-event
-                                 (activity/empty-state {:evaluation-id (:evaluation-id ctx)})
-                                 starts)))
+            state
+            (last (rest (reductions activity/reduce-event
+                                    (activity/empty-state {:evaluation-id (:evaluation-id ctx)})
+                                    starts)))
 
-          json-str
-          wire/json-str
+            presentation
+            (activity/presentation state)]
 
-          serializations
-          (atom 0)
-
-          state
-          (with-redefs [wire/json-str (fn [value]
-                                        (swap! serializations inc)
-                                        (json-str value))]
-            (doseq [current states]
-              (activity/live-nodes current))
-            (last states))]
-
-      (expect (= 0 @serializations))
-      (with-redefs [wire/json-str (fn [value]
-                                    (swap! serializations inc)
-                                    (json-str value))]
-        (activity/settled-live-nodes state))
-      (expect (<= 1 (long @serializations) (inc (long activity/max-rows))))))
+        (expect (= activity/max-rows (count (:rows presentation))))
+        (expect (nil? (activity/presentation-error presentation)))))
   ;; Regression, issue td-1ccd13: shell-handle groups replaced the command with a generic
   ;; operation count, so distinct invocations looked identical in Activity.
   (it
@@ -251,7 +236,8 @@
       (expect (= 1 (count (:rows snapshot))))
       (expect (= :shell (:operation group)))
       (expect (= "npm test" (:summary group)))
-      (expect (= "shell · npm test" (get-in (activity/live-nodes snapshot) [2 :steps 0 :label])))
+      (expect (= ["shell" "npm test"]
+                 ((juxt :operation :summary) (first (:rows (activity/presentation snapshot))))))
       (expect (= [:shell :_shell_logs :_shell_wait] (mapv :operation (:children group))))))
   (it "groups only adjacent observations with the same explicit token"
       (let [ctx

@@ -1024,9 +1024,8 @@
 ;; addressed the same way: `add-node :after` and `remove-node` name it by id.
 (s/def ::nodes
   (s/and (s/coll-of ::live-node :kind vector?)
-         non-empty?
          #(<= (count (live-tree %)) (long (:max-nodes view-defaults)))
-         #(apply distinct? (map :id (live-tree %)))))
+         #(or (empty? %) (apply distinct? (map :id (live-tree %))))))
 
 (s/def ::activity (s/and map? #(nil? (activity/presentation-error %))))
 
@@ -1034,11 +1033,17 @@
   [{:keys [classification activity]}]
   (if (= :activity classification) (map? activity) (nil? activity)))
 
+(defn- nodes-match-classification?
+  "Only host Activity is data without generic Live View nodes; extension views still paint one."
+  [{:keys [classification nodes]}]
+  (or (= :activity classification) (seq nodes)))
+
 (s/def ::live-view
   (s/and #(closed? live-view-keys %)
          (s/keys :req-un [::id ::title ::channel-ids ::nodes ::timeout-ms ::seq ::created-at]
                  :opt-un [::description ::source ::session-id ::classification ::activity])
-         activity-payload-matches-classification?))
+         activity-payload-matches-classification?
+         nodes-match-classification?))
 
 ;; One patch. `:seq` is monotonic PER VIEW, so a surface that sees a gap re-reads
 ;; the snapshot instead of painting a torn view.

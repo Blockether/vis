@@ -1020,14 +1020,11 @@
         fixture
         (some-> file
                 slurp
-                wire/parse-json)
-
-        expected-nodes
-        (wire/parse-json (wire/json-str (activity/live-nodes state)))]
+                wire/parse-json)]
 
     (is (some? file))
     (when fixture
       (is (= "activity" (get fixture "classification")))
-      (is (= expected-nodes (get fixture "nodes")))
+      (is (= [] (get fixture "nodes")))
       (is (= (wire/parse-json (wire/json-str (activity/presentation state)))
              (get fixture "activity"))))))

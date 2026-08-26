@@ -4916,9 +4916,8 @@
                      (when-not (seq body-rows) [{:line (str result-marker "") :meta nil}])))))))
 
 (defn- activity-detail-entries
-  "Operation rows for one expanded Activity receipt. Identity, progress, and state live on
-   the receipt itself, so status and stat nodes never repeat inside the disclosure."
-  [{:keys [view-id activity-view activity-focused activity-evidence]} max-w session-id]
+  "Operation rows for one expanded Activity receipt, read from the sole semantic projection."
+  [{:keys [view-id activity-rows activity-focused activity-evidence]} max-w session-id]
   (let [evidence
         (set activity-evidence)
 
@@ -4930,27 +4929,23 @@
           {:line (p/ellipsize (str "   ▎ " text) (max 1 (long max-w)))
            :meta (merge meta-base meta)})]
 
-    (vec
-      (mapcat (fn [node]
-                (case (:type node)
-                  :status
-                  []
+    (vec (mapcat (fn [{:keys [id operation summary result-summary error-summary duration-ms]}]
+                   (let [label
+                         (str operation (when-not (str/blank? (str summary)) (str " · " summary)))
 
-                  :stat
-                  []
+                         detail
+                         (or error-summary
+                             result-summary
+                             (when duration-ms (vis/format-duration duration-ms)))
 
-                  :steps
-                  (mapcat (fn [{:keys [id label detail]}]
-                            (let [head (row (str (if (= activity-focused id) "› " "  ") label)
-                                            {:kind :activity-focus :item-id id})]
-                              (if (and (contains? evidence id) (not (str/blank? (str detail))))
-                                [head
-                                 (row (str "  ↳ " detail) {:kind :activity-evidence :item-id id})]
-                                [head])))
-                          (:steps node))
+                         head
+                         (row (str (if (= activity-focused id) "› " "  ") label)
+                              {:kind :activity-focus :item-id id})]
 
-                  [(row (or (:label node) (name (:type node))) nil)]))
-              (:nodes activity-view)))))
+                     (if (and (contains? evidence id) (not (str/blank? (str detail))))
+                       [head (row (str "  ↳ " detail) {:kind :activity-evidence :item-id id})]
+                       [head])))
+                 activity-rows))))
 
 (defn- run-row-entries
   "Transcript-native run disclosures. Activity is present from its first host call;
@@ -5267,6 +5262,21 @@
                 running?
                 (and (some? started-at-ms) (nil? success?))
 
+                activity-run
+                (first (filter :is-activity runs))
+
+                execution-node-id
+                (when (and activity-run session-id)
+                  (detail-node-id {:session-turn-id session-turn-id
+                                   :iteration-number iteration-number
+                                   :block-number block-number
+                                   :section :iteration
+                                   :kind :execution}))
+
+                execution-expanded?
+                (and execution-node-id
+                     (detail-expanded? detail-expansions session-id execution-node-id false))
+
                 ;; BLOCK N header removed per user directive (also gated
                 ;; on `show-header?` which is now always false). Keep
                 ;; `expr-hdr` defined as empty so the existing `(when
@@ -5382,7 +5392,11 @@
 
                 c-lines
                 (if-not python-code-collapsible?
-                  c-lines-full
+                  (if (and activity-run execution-expanded?)
+                    (vec (concat [(line-entry (str c-marker " " (band-label "PYTHON")))
+                                  (line-entry (str c-pad ""))]
+                                 c-lines-full))
+                    c-lines-full)
                   (let [expanded?
                         ;; Python rests collapsed on success AND failure. A failed call
                         ;; still exposes the source preview and concise error; opening
@@ -5637,7 +5651,17 @@
                 ;; results begin immediately after that edge rather than adding a
                 ;; second visually blank row from the result band.
                 result-block
-                (vec result-lines)]
+                (vec result-lines)
+
+                execution-body
+                (vec (concat (if (and running? (seq result-block))
+                               (concat result-block code-block)
+                               (concat code-block result-block))
+                             (run-row-entries
+                               (mapv #(cond-> % (:is-activity %) (assoc :is-reopened true)) runs)
+                               fill-w
+                               session-id
+                               false)))]
 
             ;; A RUNNING native call wears its op-card HEADLINE FIRST — exactly where
             ;; the finished card's headline sits — with the submitted command band
@@ -5645,10 +5669,15 @@
             ;; band while it ran and only grew its badge once it finished: the same
             ;; call reading as two different components. A COMPLETED call keeps code
             ;; above its result — the reading order of a program and its output.
-            (vec (concat (if (and running? (seq result-block))
-                           (concat result-block code-block)
-                           (concat code-block result-block))
-                         (run-row-entries runs fill-w session-id false)))))
+            (if-not activity-run
+              execution-body
+              (let [summary (detail-summary-entries {:marker ""
+                                                     :max-w fill-w
+                                                     :summary (:status-text activity-run)
+                                                     :collapsed? (not execution-expanded?)
+                                                     :session-id session-id
+                                                     :node-id execution-node-id})]
+                (vec (concat summary (when execution-expanded? execution-body)))))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result

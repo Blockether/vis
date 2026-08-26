@@ -13,8 +13,8 @@ import {
 import Prism from "prismjs";
 import { DataTable } from "./DataTable";
 import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
-import { LiveRunRow } from "./LiveArtifact";
-import { LiveViewPanel } from "./LiveView";
+import { ActivityRecord, LiveRunRow } from "./LiveArtifact";
+import { activityReceiptText, LiveViewPanel } from "./LiveView";
 import type { LiveView as LiveViewModel } from "../lib/live-view";
 import { AlertIcon, ArrowOutIcon, ChevronIcon, PauseIcon, PlayIcon } from "./icons";
 import {
@@ -1432,30 +1432,92 @@ const FormTrace = memo(function FormTrace({
   form,
   live = false,
   activity,
+  activityStatus,
 }: {
   form: TranscriptForm;
   live?: boolean;
-  activity?: ReactNode;
+  activity?: LiveViewModel;
+  activityStatus?: "loading" | "failed" | "ready";
 }) {
+  const [expanded, setExpanded] = useState(false);
   if (hiddenForm(form)) return null;
   const code = formCode(form);
   const showCode = showFormCode(form, code);
   const cards = toolCards(form);
   if (!showCode && !cards.length) return null;
   const codeLabel = "PYTHON";
+  const comment = showCode && form.comment?.trim();
+
+  if (activity || activityStatus) {
+    const receipt = activity
+      ? activityReceiptText(activity.activity)
+      : activityStatus === "failed"
+        ? "ACTIVITY · unavailable"
+        : "ACTIVITY · loading";
+    return (
+      <div className={live ? `min-w-0 ${transcriptRiseClass}` : "min-w-0"}>
+        {comment && (
+          <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui not-italic text-vis-message">
+            <Markdown compact>{comment}</Markdown>
+          </div>
+        )}
+        <section
+          className="min-w-0"
+          role={activity && !activity.is_settled ? "status" : undefined}
+          aria-live={activity && !activity.is_settled ? "polite" : undefined}
+          aria-label="Execution trace"
+        >
+          <Disclosure
+            isOpen={expanded}
+            tone="step"
+            className="w-full min-w-0"
+            aria-label={expanded ? "Collapse execution trace" : "Expand execution trace"}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            <span className="min-w-0 flex-1 truncate font-mono text-chip font-bold text-code-result">
+              {receipt}
+            </span>
+          </Disclosure>
+          {expanded && (
+            <div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
+              {showCode && (
+                <CollapsibleFormCode
+                  value={code}
+                  label={codeLabel}
+                  language={formCodeLanguage(form)}
+                  bare
+                />
+              )}
+              <CardGrid cards={cards} bare />
+              {activity ? (
+                <LiveViewPanel
+                  view={activity}
+                  isSettled={activity.is_settled}
+                  activityInitiallyExpanded
+                />
+              ) : (
+                <p className="bg-result px-2.5 py-1.5 font-mono text-meta text-dialog-hint">
+                  {activityStatus === "failed"
+                    ? "Activity receipt could not be read."
+                    : "Loading Activity…"}
+                </p>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : "min-w-0"}>
-      {showCode && form.comment?.trim() && (
+      {comment && (
         <div className="mb-1 bg-thinking-surface px-3 py-1.5 text-ui not-italic text-vis-message">
-          <Markdown compact>{form.comment.trim()}</Markdown>
+          <Markdown compact>{comment}</Markdown>
         </div>
       )}
       {/* A program and the results IT produced are ONE frame, joined by the same
-          hairline `gap-px` rule that separates sibling cards inside `CardGrid`.
-          Whitespace only ever separates one CALL from the next (see the chunk
-          gap in `IterationTrace`); a gap here made a result read as if it
-          belonged to the program printed BELOW it. */}
+          hairline `gap-px` rule that separates sibling cards inside `CardGrid`. */}
       {showCode && cards.length > 0 ? (
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
           <CollapsibleFormCode
@@ -1465,7 +1527,6 @@ const FormTrace = memo(function FormTrace({
             bare
           />
           <CardGrid cards={cards} bare />
-          {activity}
         </div>
       ) : (
         <>
@@ -1477,7 +1538,6 @@ const FormTrace = memo(function FormTrace({
             />
           )}
           <CardGrid cards={cards} />
-          {activity}
         </>
       )}
     </div>
@@ -2450,26 +2510,36 @@ const TraceSegment = memo(function TraceSegment({
                 chunk.iterationPosition,
                 chunk.formIndex,
               );
-              const activity = liveActivity ? (
-                <LiveViewPanel
-                  view={liveActivity}
-                  isSettled={liveActivity.is_settled}
-                />
-              ) : client && sid && chunk.attachment ? (
-                <LiveRunRow
-                  client={client}
-                  sid={sid}
-                  attachment={chunk.attachment}
-                />
-              ) : undefined;
-              return (
-                <FormTrace
-                  key={chunk.key}
-                  form={chunk.form}
-                  live={live}
-                  activity={activity}
-                />
-              );
+              if (liveActivity) {
+                return (
+                  <FormTrace
+                    key={chunk.key}
+                    form={chunk.form}
+                    live={live}
+                    activity={liveActivity}
+                  />
+                );
+              }
+              if (client && sid && chunk.attachment) {
+                return (
+                  <ActivityRecord
+                    key={chunk.key}
+                    client={client}
+                    sid={sid}
+                    attachment={chunk.attachment}
+                  >
+                    {({ view, status }) => (
+                      <FormTrace
+                        form={chunk.form}
+                        live={live}
+                        activity={view}
+                        activityStatus={status}
+                      />
+                    )}
+                  </ActivityRecord>
+                );
+              }
+              return <FormTrace key={chunk.key} form={chunk.form} live={live} />;
             }
             return (
               <CardGrid key={chunk.key} cards={chunk.cards} live={live} />

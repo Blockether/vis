@@ -705,18 +705,14 @@ describe("Activity owns the slot after its Python form and result", () => {
       schema_version: 1,
       anchor: { iteration: 41, form_index: 1 },
       state: "running",
-      counts: { running: 1, succeeded: 0, failed: 0, cancelled: 0 },
-      rows: [],
+      counts: { running: 1, succeeded: 1, failed: 0, cancelled: 0 },
+      rows: [
+        { id: "call-1", sequence: 1, operation: "grep", presenter: "observation", signal: "observation", state: "succeeded", summary: "18 matches", resources: [], evidence: [] },
+        { id: "call-2", sequence: 2, operation: "run_tests", presenter: "tests", signal: "verification", state: "running", summary: "companion suite", resources: [], evidence: [] },
+      ],
       omitted: { rows: 0, by_classification: {} },
     },
-    nodes: [
-      {
-        id: "status",
-        type: "status",
-        text: "one operation",
-        tone: "running",
-      },
-    ],
+    nodes: [],
   };
   const turn: TranscriptTurn = {
     id: "activity-turn",
@@ -738,27 +734,20 @@ describe("Activity owns the slot after its Python form and result", () => {
   };
 
   it("puts a historical receipt under only its anchored form", () => {
-    const rendered = text(
-      renderToStaticMarkup(
-        <AssistantMessage turn={turn} client={client} sid="s1" />,
-      ),
-    );
-    expect(rendered.indexOf("first_form()")).toBeLessThan(
-      rendered.indexOf("first result"),
-    );
-    expect(rendered.indexOf("first result")).toBeLessThan(
-      rendered.indexOf("Loading Activity…"),
-    );
-    expect(rendered.indexOf("Loading Activity…")).toBeLessThan(
-      rendered.indexOf("second_form()"),
-    );
-    expect(rendered.indexOf("second_form()")).toBeLessThan(
-      rendered.indexOf("RESULT"),
-    );
-    expect(rendered.indexOf("RESULT")).toBeLessThan(
-      rendered.lastIndexOf("Loading Activity…"),
-    );
-    expect(rendered.match(/Loading Activity/g)).toHaveLength(2);
+    const painted = render(<AssistantMessage turn={turn} client={client} sid="s1" />);
+    const receipts = painted.getAllByRole("button", { name: "Expand execution trace" });
+
+    expect(receipts).toHaveLength(2);
+    expect(painted.container.textContent).not.toContain("first_form()");
+    fireEvent.click(receipts[0]);
+    expect(painted.container.textContent).toContain("first_form()");
+    expect(painted.container.textContent).toContain("first result");
+    expect(painted.container.textContent).not.toContain("second_form()");
+    fireEvent.click(receipts[1]);
+    expect(painted.container.textContent).toContain("second_form()");
+    expect(painted.container.textContent).toContain("RESULT");
+    expect(painted.container.textContent).not.toContain("second result");
+    expect(painted.container.textContent?.match(/Loading Activity/g)).toHaveLength(2);
   });
 
   // Regression, issue td-65cdf6: a production 1-based iteration anchor was
@@ -775,8 +764,72 @@ describe("Activity owns the slot after its Python form and result", () => {
       ),
     );
     expect(rendered.match(/ACTIVITY/g)).toHaveLength(1);
-    expect(rendered).toContain("Running");
-    expect(rendered.match(/Loading Activity/g)).toHaveLength(1);
+    expect(rendered).toContain("RUNNING");
+    expect(rendered.match(/Loading Activity/g) ?? []).toHaveLength(0);
+  });
+
+  // Regression, issue td-f9035e: Python, Result, and Activity each painted an
+  // independent receipt, while the live Activity headline claimed an unknowable total.
+  it.each([320, 390, 768, 1440])(
+    "collapses one honest execution receipt and opens its three evidence bands at %ipx",
+    (width) => {
+    const focused = { ...runningActivity, activity: { ...runningActivity.activity!, anchor: { iteration: 41, form_index: 0 } } };
+    const focusedTurn: TranscriptTurn = {
+      ...turn,
+      iterations: [{
+        ...turn.iterations![0],
+        forms: [{ source: "line_1()\nline_2()\nline_3()\nline_4()\nline_5()\nline_6()", result_render: "```\nresult body\n```" }],
+        attachments: [],
+      }],
+    };
+    const painted = render(
+      <div style={{ width }}>
+        <AssistantMessage turn={focusedTurn} liveActivities={[focused]} />
+      </div>,
+    );
+    expect(painted.container.firstElementChild).toHaveStyle({ width: `${width}px` });
+
+    expect(painted.getByRole("button", { name: "Expand execution trace" })).toBeTruthy();
+    expect(painted.container.textContent).toContain("RUNNING · run_tests · companion suite · and others");
+    expect(painted.container.textContent).not.toContain("line_1()");
+    expect(painted.container.textContent).not.toContain("RESULT");
+    expect(painted.container.textContent).not.toContain("18 matches");
+    fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
+    expect(painted.container.textContent).toContain("PYTHON +1 more");
+    expect(painted.container.textContent).toContain("line_5()");
+    expect(painted.container.textContent).not.toContain("line_6()");
+    expect(painted.container.textContent).toContain("RESULT");
+    expect(painted.container.textContent).toContain("ACTIVITY");
+    expect(painted.container.textContent).toContain("18 matches");
+  });
+
+  it("uses only the actual terminal Activity count after settlement", () => {
+    const settled = {
+      ...runningActivity,
+      is_settled: true,
+      activity: {
+        ...runningActivity.activity!,
+        anchor: { iteration: 41, form_index: 0 },
+        state: "failed" as const,
+        counts: { running: 0, succeeded: 5, failed: 1, cancelled: 0 },
+        rows: [],
+        omitted: { rows: 6, by_classification: { observation: 6 } },
+      },
+    };
+    const settledTurn: TranscriptTurn = {
+      ...turn,
+      iterations: [{
+        ...turn.iterations![0],
+        forms: [{ source: "work()", result_summary: "done" }],
+        attachments: [],
+      }],
+    };
+    const rendered = text(renderToStaticMarkup(
+      <AssistantMessage turn={settledTurn} liveActivities={[settled]} />,
+    ));
+
+    expect(rendered).toContain("FAILED · 6 activities run");
+    expect(rendered).not.toContain("finished 6/");
   });
 
   it("does not attach Activity to a print-only form", () => {

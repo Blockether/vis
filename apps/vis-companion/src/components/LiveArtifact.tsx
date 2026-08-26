@@ -182,14 +182,19 @@ export function liveRunName(filename?: string): string {
   return name.replace(/\.live\.ndjson$/i, "") || "run";
 }
 
-function ActivityReceipt({
+export function ActivityRecord({
   client,
   sid,
   attachment,
+  children,
 }: {
   client: GatewayClient;
   sid: string;
   attachment: IterationAttachment;
+  children: (state: {
+    view?: LiveRecord["view"];
+    status: "loading" | "failed" | "ready";
+  }) => ReactNode;
 }) {
   const iterationId = attachment.iteration_id ?? '';
   const index = attachment.index ?? 0;
@@ -216,13 +221,29 @@ function ActivityReceipt({
     };
   }, [client, sid, iterationId, index]);
 
-  if (record?.view.classification === 'activity') {
-    return <LiveViewPanel view={record.view} isSettled />;
-  }
+  const view = record?.view.classification === 'activity' ? record.view : undefined;
+  return <>{children({ view, status: view ? 'ready' : failed ? 'failed' : 'loading' })}</>;
+}
+
+function ActivityReceipt({
+  client,
+  sid,
+  attachment,
+}: {
+  client: GatewayClient;
+  sid: string;
+  attachment: IterationAttachment;
+}) {
   return (
-    <p className="border border-dialog-edge bg-panel px-3 py-2 font-mono text-chip text-dialog-hint">
-      {failed ? 'Activity receipt could not be read.' : 'Loading Activity…'}
-    </p>
+    <ActivityRecord client={client} sid={sid} attachment={attachment}>
+      {({ view, status }) => view ? (
+        <LiveViewPanel view={view} isSettled />
+      ) : (
+        <p className="border border-dialog-edge bg-panel px-3 py-2 font-mono text-chip text-dialog-hint">
+          {status === 'failed' ? 'Activity receipt could not be read.' : 'Loading Activity…'}
+        </p>
+      )}
+    </ActivityRecord>
   );
 }
 

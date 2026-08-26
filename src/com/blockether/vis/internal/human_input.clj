@@ -1155,10 +1155,14 @@
         (mapv #(live-node invalid-live-view! %) raw-nodes)
 
         _
-        (when (empty? nodes) (invalid-live-view! ":nodes must not be empty"))
+        (when (and (empty? nodes)
+                   (not= "activity"
+                         (some-> (trimmed (pick* view :classification))
+                                 str/lower-case)))
+          (invalid-live-view! ":nodes must not be empty"))
 
         _
-        (when-not (apply distinct? (mapv :id nodes))
+        (when-not (or (empty? nodes) (apply distinct? (mapv :id nodes)))
           (invalid-live-view! (str "node ids must be distinct — got "
                                    (str/join ", " (sort (mapv :id nodes))))))
 
@@ -1819,7 +1823,7 @@
     (open-live! (cond-> {:title "Activity"
                          :classification "activity"
                          :activity (activity/presentation state)
-                         :nodes (activity/live-nodes state)}
+                         :nodes []}
                   session-id
                   (assoc :session-id session-id)))))
 
@@ -1856,17 +1860,10 @@
         patched))))
 
 (defn patch-activity!
-  "Replace a running Activity's bounded status, counters, and chronological rows."
+  "Replace a running Activity's sole bounded semantic projection."
   ([view-id state] (patch-activity! view-id state false))
-  ([view-id state settled?]
-   (let [[status counts rows] ((if settled? activity/settled-live-nodes activity/live-nodes) state)]
-     (patch-live!
-       view-id
-       {:ops
-        [{:op "set" :node-id "activity-status" :text (:text status) :tone (name (:tone status))}
-         {:op "set" :node-id "activity-counts" :stats (:stats counts)}
-         {:op "set" :node-id "activity-rows" :steps (:steps rows)}
-         {:op "set-activity" :activity (activity/presentation state)}]}))))
+  ([view-id state _settled?]
+   (patch-live! view-id {:ops [{:op "set-activity" :activity (activity/presentation state)}]})))
 
 (defn focus-live!
   "Focus `item-ids` in focusable table `node-id` of open view `view-id`.

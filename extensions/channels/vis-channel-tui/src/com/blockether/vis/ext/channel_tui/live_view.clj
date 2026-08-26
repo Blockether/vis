@@ -344,19 +344,37 @@
         (assoc :is-following true
                :offset 0))))
 
-(defn- activity-count
-  "The non-negative count for one host Activity stat id. Activity's wire projection stays
-   unchanged; this is presentation-only interpretation for the terminal receipt."
-  [view stat-id]
-  (let [value (some (fn [node]
-                      (when (= :stat (:type node))
-                        (some (fn [stat]
-                                (when (= stat-id (name (:id stat))) (:value-text stat)))
-                              (:stats node))))
-                    (:nodes view))]
-    (max 0
-         (long (try (Long/parseLong (str/trim (flat-text value)))
-                    (catch NumberFormatException _ 0))))))
+(defn- activity-row-tone
+  [state]
+  (case (some-> state
+                name)
+    "failed"
+    :error
+
+    "cancelled"
+    :warn
+
+    "succeeded"
+    :ok
+
+    "running"
+    :running
+
+    :idle))
+
+(defn- activity-row-label
+  [{:keys [operation summary]}]
+  (str (flat-text operation)
+       (when-not (str/blank? (flat-text summary)) (str " · " (flat-text summary)))))
+
+(defn- activity-row-detail
+  [{:keys [error-summary result-summary duration-ms]}]
+  (or (not-empty (flat-text error-summary))
+      (not-empty (flat-text result-summary))
+      (when duration-ms (vis/format-duration duration-ms))
+      ""))
+
+(defn- activity-count [activity state] (max 0 (long (get-in activity [:counts state] 0))))
 
 (defn- activity-state
   "The concise user-facing state for one Activity receipt. Internal settlement vocabulary
@@ -384,20 +402,40 @@
     "finished"))
 
 (defn- activity-status-text
-  "Option A's single Activity progress summary: one finished fraction and one state."
+  "One honest Activity sentence: the active invocation while live, the actual total after settlement."
   [pane]
-  (let [view
-        (:view pane)
+  (let [activity
+        (get-in pane [:view :activity])
 
         finished
-        (+ (long (activity-count view "succeeded"))
-           (long (activity-count view "failed"))
-           (long (activity-count view "cancelled")))
+        (long (+ (long (activity-count activity :succeeded))
+                 (long (activity-count activity :failed))
+                 (long (activity-count activity :cancelled))))
+
+        running
+        (long (activity-count activity :running))
 
         total
-        (+ (long finished) (long (activity-count view "running")))]
+        (long (+ (long finished) (long running)))
 
-    (str "finished " finished "/" total " · " (activity-state pane))))
+        active
+        (some (fn [row]
+                (when (= "running"
+                         (some-> (:state row)
+                                 name))
+                  (activity-row-label row)))
+              (:rows activity))]
+
+    (if (nil? (get-in pane [:settled :reason]))
+      (str "running · "
+           (or active "waiting for first activity")
+           (when (> (long total) 1) " · and others"))
+      (str (activity-state pane)
+           " · "
+           finished
+           " "
+           (if (= 1 finished) "activity" "activities")
+           " run"))))
 
 (defn run-row
   "The transcript receipt for a run or host Activity, anchored at its form.
@@ -414,8 +452,8 @@
         activity
         (activity? pane)
 
-        status-node
-        (when activity (first (filter #(= :status (:type %)) (:nodes view))))
+        activity-data
+        (when activity (:activity view))
 
         lines
         (reduce + 0 (keep #(when (= :log (:type %)) (:total-lines %)) (:nodes view)))
@@ -433,8 +471,9 @@
       (assoc :is-activity
         true :status-text
         (activity-status-text pane) :status-tone
-        (:tone status-node) :activity-view
-        view :activity-focused
+        (activity-row-tone (:state activity-data)) :activity-view
+        view :activity-rows
+        (:rows activity-data) :activity-focused
         (:activity-focused pane) :activity-evidence
         (set (:activity-evidence pane)))
 
@@ -1552,88 +1591,53 @@
                 (let [ids (set ids)]
                   (if (contains? ids item-id) (disj ids item-id) (conj ids item-id)))))))
 
-(defn- activity-fallback-text
-  [node]
-  (let [label (flat-text (:label node))]
-    (case (:type node)
-      :progress
-      (str/join " · "
-                (remove str/blank?
-                  [label
-                   (when-let [value (:value node)]
-                     (str (long (Math/round (* 100.0 (double value)))) "%"))]))
-
-      :log
-      (str/join " · "
-                (remove str/blank?
-                  [label (str (long (or (:total-lines node) (count (:lines node)))) " lines")]))
-
-      :table
-      (str/join " · " (remove str/blank? [label (str (count (:rows node)) " rows")]))
-
-      :link
-      (str/join " · " (remove str/blank? [label (str (count (:links node)) " links")]))
-
-      (str/join " · " (remove str/blank? [label (name (:type node))])))))
-
 (defn- activity-plan
-  "PURE: the compact Activity presenter plan. It consumes the reducer's status/count/step
-   projection directly and deliberately never calls generic [[plan]] or [[node-rows]].
-   Unknown node kinds become one bounded fallback summary instead of generic body chrome."
+  "PURE: the compact Activity presenter plan. It consumes the one semantic Activity
+   projection directly; no generic Live View nodes mirror its status, counts, or rows."
   [pane _text-w]
-  (let [nodes
-        (get-in pane [:view :nodes])
+  (let [activity
+        (get-in pane [:view :activity])
 
-        steps
-        (mapcat :steps (filter #(= :steps (:type %)) nodes))
+        rows
+        (:rows activity)
 
         focused
-        (or (:activity-focused pane) (:id (first steps)))
+        (or (:activity-focused pane) (:id (first rows)))
 
         evidence
-        (set (:activity-evidence pane))]
+        (set (:activity-evidence pane))
 
-    (vec
-      (mapcat
-        (fn [node]
-          (case (:type node)
-            :status
-            [{:kind :activity-status
-              :node-id (:id node)
-              :tone (:tone node)
-              :text (flat-text (:text node))}]
+        counts
+        (:counts activity)]
 
-            :stat
-            [{:kind :activity-counts
-              :node-id (:id node)
-              :text (str/join "   "
-                              (map (fn [{:keys [label value-text]}]
-                                     (str (flat-text label) " " (flat-text value-text)))
-                                   (:stats node)))}]
+    (into [{:kind :activity-status
+            :tone (activity-row-tone (:state activity))
+            :text (activity-status-text pane)}
+           {:kind :activity-counts
+            :text (str/join "   "
+                            (map (fn [[state label]]
+                                   (str label " " (max 0 (long (get counts state 0)))))
+                                 [[:running "Running"] [:succeeded "Succeeded"] [:failed "Failed"]
+                                  [:cancelled "Cancelled"]]))}]
+          (mapcat (fn [{:keys [id state] :as activity-row}]
+                    (let [detail
+                          (activity-row-detail activity-row)
 
-            :steps
-            (mapcat (fn [{:keys [id label detail tone]}]
-                      (let [row {:kind :activity-step
-                                 :node-id (:id node)
-                                 :item-id id
-                                 :tone tone
-                                 :text (flat-text label)
-                                 :detail (flat-text detail)
-                                 :is-focused (= focused id)}]
-                        (cond-> [row]
-                          (and (contains? evidence id) (seq (flat-text detail)))
-                          (conj {:kind :activity-evidence
-                                 :node-id (:id node)
-                                 :item-id id
-                                 :tone tone
-                                 :text (flat-text detail)}))))
-                    (:steps node))
+                          row
+                          {:kind :activity-step
+                           :item-id id
+                           :tone (activity-row-tone state)
+                           :text (activity-row-label activity-row)
+                           :detail detail
+                           :is-focused (= focused id)}]
 
-            [{:kind :activity-fallback
-              :node-id (:id node)
-              :tone (:tone node)
-              :text (activity-fallback-text node)}]))
-        nodes))))
+                      (cond-> [row]
+                        (and (contains? evidence id) (seq detail))
+                        (conj {:kind :activity-evidence
+                               :item-id id
+                               :tone (activity-row-tone state)
+                               :text detail}))))
+                  rows))))
 
 (defn- activity-shape
   "PURE: bounded transcript-native Activity geometry and rows. This intentionally does

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 import activityFixture from "../lib/activity.fixture.json";
@@ -318,6 +318,9 @@ describe("a running turn the session read cannot confirm", () => {
       },
     });
 
+    await screen.findByText(/run_tests · suite/);
+    expect(screen.getAllByRole("button", { name: "Expand execution trace" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Expand execution trace" }));
     const panelLabel = await screen.findByText("ACTIVITY");
     const python = screen.getAllByText("inspect_run()")[0]!;
     const result = screen.getAllByText("done")[0]!;
@@ -358,6 +361,9 @@ describe("a running turn the session read cannot confirm", () => {
       },
     });
 
+    await screen.findByText(/run_tests · suite/);
+    expect(screen.getAllByRole("button", { name: "Expand execution trace" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Expand execution trace" }));
     const filedPython = await screen.findByText("inspect_run()");
     const nextPython = await screen.findByText("next_step()");
     const panel = screen.getAllByText("ACTIVITY")[0]!;

@@ -2071,9 +2071,13 @@
               file
               (live-sink/view-file session-id (:id view))]
 
+          ;; Regression, issue td-1e6086: Activity duplicated its semantic projection as
+          ;; generic status/stat/steps nodes, leaving channels to reconcile two truths.
+          (expect (= [] (:nodes view)))
           (expect (= 1 (get-in view [:activity :schema-version])))
           (expect (= "idle" (get-in view [:activity :state])))
           (hi/patch-activity! (:id view) state)
+          (expect (= [] (:nodes (hi/live-view (:id view)))))
           (expect (= (activity/presentation state) (:activity (hi/live-view (:id view)))))
           (let [result
                 (binding [mpl/*attachment-sink* sink]

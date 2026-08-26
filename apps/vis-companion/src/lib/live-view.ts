@@ -720,12 +720,13 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
   const id = text(view.id);
   const title = text(view.title).trim();
   if (id === '' || title === '') return null;
-  const nodes = liveNodesFromWire(view.nodes);
-  if (nodes.length === 0) return null;
-
   const classification = optionalText(view.classification);
   const activity = classification === 'activity';
   if (classification !== undefined && !activity) return null;
+
+  const nodes = liveNodesFromWire(view.nodes);
+  if (nodes.length === 0 && !activity) return null;
+
   const activityProjection = activityProjectionFromWire(view.activity);
   if ((activity && !activityProjection) || (!activity && view.activity !== undefined)) return null;
 

@@ -1108,97 +1108,86 @@
   ([] (activity-view "activity-1" 6))
   ([id] (activity-view id 6))
   ([id step-count]
-   (-> (apply mounted
-              {:id id}
-              (hi/status "now" "Polling the run" {:label "Now" :tone :running})
-              (hi/stat "counts"
-                       [{:id "succeeded" :label "Succeeded" :value-text "2" :tone :ok}
-                        {:id "running" :label "Running" :value-text "1" :tone :running}
-                        {:id "failed" :label "Failed" :value-text "0" :tone :idle}
-                        {:id "cancelled" :label "Cancelled" :value-text "0" :tone :idle}])
-              [(hi/steps "operations"
-                         (mapv (fn [idx]
-                                 {:id (str "op-" idx)
-                                  :label (str (if (zero? (mod idx 3)) "Run tests" "Inspect source")
-                                              " · operation "
-                                              (inc idx))
-                                  :detail (str "Evidence for operation "
-                                               (inc idx)
-                                               ": bounded terminal-native detail")
-                                  :tone (if (= idx (dec step-count)) :running :ok)})
-                               (range step-count)))])
-       (assoc :title "Activity"
-              :classification :activity))))
+   (let [n
+         (long step-count)
+
+         rows
+         (mapv (fn [idx]
+                 (let [idx (long idx)]
+                   {:id (str "op-" idx)
+                    :sequence idx
+                    :operation (if (zero? (long (mod idx 3))) "Run tests" "Inspect source")
+                    :presenter "generic"
+                    :signal "generic"
+                    :state (if (= idx (long (dec n))) "running" "succeeded")
+                    :summary (str "operation " (long (inc idx)))
+                    :result-summary (str "Evidence for operation "
+                                         (long (inc idx))
+                                         ": bounded terminal-native detail")
+                    :resources []
+                    :evidence []}))
+               (range n))]
+
+     (-> (mounted {:id id} (hi/status "placeholder" "placeholder"))
+         (assoc :title "Activity"
+                :classification :activity
+                :nodes []
+                :activity {:schema-version 1
+                           :state "running"
+                           :counts {:running 1 :succeeded (dec step-count) :failed 0 :cancelled 0}
+                           :rows rows
+                           :omitted {:rows 0 :by-classification {}}})))))
 
 (defn- settled-activity
-  "A reopened Activity carrying the terminal projection the host seals into its receipt."
+  "A reopened Activity carrying the terminal semantic projection the host seals."
   [outcome]
-  (let [{:keys [reason status tone counts final-tone final-detail]}
+  (let [{:keys [reason state counts final-state final-detail]}
         (case outcome
           :succeeded
           {:reason :completed
-           :status "succeeded · 6 settled · 0 running"
-           :tone :ok
-           :counts {"running" "0" "succeeded" "6" "failed" "0" "cancelled" "0"}
-           :final-tone :ok
+           :state "succeeded"
+           :counts {:running 0 :succeeded 6 :failed 0 :cancelled 0}
+           :final-state "succeeded"
            :final-detail "18 ms"}
 
           :failed
           {:reason :failed
-           :status "failed · 6 settled · 0 running"
-           :tone :error
-           :counts {"running" "0" "succeeded" "5" "failed" "1" "cancelled" "0"}
-           :final-tone :error
+           :state "failed"
+           :counts {:running 0 :succeeded 5 :failed 1 :cancelled 0}
+           :final-state "failed"
            :final-detail "Command failed"}
 
           :cancelled
           {:reason :interrupted
-           :status "cancelled · 6 settled · 0 running"
-           :tone :warn
-           :counts {"running" "0" "succeeded" "5" "failed" "0" "cancelled" "1"}
-           :final-tone :warn
+           :state "cancelled"
+           :counts {:running 0 :succeeded 5 :failed 0 :cancelled 1}
+           :final-state "cancelled"
            :final-detail "Cancelled"})
 
         pane
         (lv/opened (activity-view (str "activity-" (name outcome))))
 
-        nodes
-        (mapv (fn [node]
-                (case (:type node)
-                  :status
-                  (assoc node
-                    :text status
-                    :tone tone)
+        activity
+        (-> (get-in pane [:view :activity])
+            (assoc :state state
+                   :counts counts)
+            (update :rows
+                    (fn [rows]
+                      (mapv (fn [idx row]
+                              (if (= idx (dec (count rows)))
+                                (assoc row
+                                  :state final-state
+                                  :result-summary final-detail)
+                                (assoc row :state "succeeded")))
+                            (range)
+                            rows))))]
 
-                  :stat
-                  (update node
-                          :stats
-                          (fn [stats]
-                            (mapv (fn [stat]
-                                    (assoc stat :value-text (get counts (:id stat))))
-                                  stats)))
-
-                  :steps
-                  (update node
-                          :steps
-                          (fn [steps]
-                            (mapv (fn [idx step]
-                                    (if (= idx (dec (count steps)))
-                                      (assoc step
-                                        :tone final-tone
-                                        :detail final-detail)
-                                      (assoc step :tone :ok)))
-                                  (range)
-                                  steps)))
-
-                  node))
-              (get-in pane [:view :nodes]))]
-
-    (-> (ended pane {:reason reason :view {:nodes nodes}})
+    (-> (ended pane {:reason reason :view {:nodes [] :activity activity}})
         lv/reopened)))
 
 ;; Regression, issue td-1a38ec: Activity repeated its status sentence and four separate
 ;; counters across the receipt and expanded disclosure.
+  ;; Regression, issue td-7bb5f7: the live receipt claimed a predicted Activity denominator.
 (deftest activity-transcript-receipt-test
   (testing "Activity starts as one transcript receipt and never becomes an independent stop target"
     (let [p
@@ -1211,10 +1200,11 @@
       (is (lv/dormant? p) "the default receipt gives no rows to the live band")
       (is (nil? (lv/interruptible [p])) "turn cancellation remains the only stop action")
       (is (:is-activity row))
-      (is (= "finished 2/3 · running" (:status-text row)))
+      (is (= "running · Inspect source · operation 6 · and others" (:status-text row)))
       (is (= :activity (get-in p [:view :classification])))))
-  (testing "settlement becomes one finished fraction plus one visible outcome"
-    (is (= ["finished 6/6 · succeeded" "finished 6/6 · failed" "finished 6/6 · cancelled"]
+  (testing "settlement reports only the actual number of activities run"
+    (is (= ["succeeded · 6 activities run" "failed · 6 activities run"
+            "cancelled · 6 activities run"]
            (mapv (comp :status-text lv/run-row settled-activity) [:succeeded :failed :cancelled]))))
   (testing "explicit disclosure expands only its transcript receipt"
     (let [p
@@ -1273,13 +1263,15 @@
           (let [pane (first (:live-views @state/app-db))]
             (is (= "op-2" (:activity-focused pane)))
             (is (= #{"op-2"} (:activity-evidence pane))))
-          (state/dispatch
-            [:live-view-patch
-             (engine/normalize-patch
-               view
-               [{:op :set :node-id "now" :text "1 settled · 1 running" :tone :running}])])
-          (is (= "finished 2/3 · running" (get-in @state/app-db [:messages 1 :runs 0 :status-text]))
-              "shared status prose does not leak into the TUI summary")
+          (state/dispatch [:live-view-patch
+                           (engine/normalize-patch view
+                                                   [{:op :set-activity
+                                                     :activity (assoc-in (:activity view)
+                                                                 [:rows 5 :summary]
+                                                                 "updated operation")}])])
+          (is (= "running · Inspect source · updated operation · and others"
+                 (get-in @state/app-db [:messages 1 :runs 0 :status-text]))
+              "the semantic Activity patch replaces the same transcript receipt")
           (state/dispatch [:live-view-close "activity-1" {:reason :completed}])
           (is (= 1 (count (get-in @state/app-db [:messages 1 :runs]))))
           (is (= :completed (get-in @state/app-db [:messages 1 :runs 0 :reason]))))))))

@@ -1,200 +1,61 @@
-# PLAN — Let the gateway own the list, so a page is a page
+# PLAN — One execution, one quiet receipt
 
-*A pager over a list the client re-filters and re-orders is arithmetic on a lie: the page must be cut by whoever owns the order.*
+*Python, Result, and Activity are evidence from one execution; the interface should reveal them as one thing.*
 
 ## Context
 
-**State before.**
+**State before.** Companion already joins Python and Result in `apps/vis-companion/src/components/ChatContent.tsx:1431-1485`, then appends an independently collapsed Activity panel from `apps/vis-companion/src/components/LiveView.tsx:526-607`. The TUI similarly places Activity after the anchored form in `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj:4955-5005`, but its live receipt derives `finished N/N` while calls are still being discovered in `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/live_view.clj:386-400`. The stable Activity v1 projection already carries anchor, state, counts, chronological rows, omitted totals, presenter, signal, resources, and evidence (`apps/vis-companion/src/lib/live-view.ts:280-306`).
 
-- The companion downloads EVERY session of every machine before it paints a page. `listSessions`
-  asks for `SESSIONS_PAGE = 100` rows (`apps/vis-companion/src/lib/gateway.ts:509`), hands the first
-  window to the screen, and then `drain` walks every remaining window into one array
-  (`apps/vis-companion/src/lib/gateway.ts:2406-2420`). On a 1192-session store that is 12 serial
-  requests per machine per poll.
-- The pager then slices that array LOCALLY: `projectPage(sessions, page, pageSize)`
-  (`apps/vis-companion/src/lib/fleet.ts:759-768`), called at
-  `apps/vis-companion/src/screens/SessionsScreen.tsx:1887`.
-- The gateway can already serve a project's page: `GET /v1/sessions?limit=&after=&root=` cuts one
-  project's window by a KEYSET cursor and answers `total`/`next_cursor`/`has_more`
-  (`src/com/blockether/vis/internal/gateway/server.clj:1824-1912`,
-  `src/com/blockether/vis/internal/gateway/state.clj:4584-4673`). Project headers already come from
-  one gateway tally (`state.clj:4693-4797`), not from counting rows.
-- It is not used for paging because the list the reader SEES is not the gateway's list. The client
-  re-filters it — `sessionIsListed` hides empty, draft-less, unstarred sessions
-  (`apps/vis-companion/src/lib/fleet.ts:452-457`) — and re-orders it — `sessionOrder` lifts starred
-  rows, then rows holding unsent text, above the gateway's ranking
-  (`apps/vis-companion/src/lib/fleet.ts:417-443`), both applied at
-  `apps/vis-companion/src/screens/SessionsScreen.tsx:1239-1268`.
-- Measured consequence, recorded in the code that gave up on server paging
-  (`apps/vis-companion/src/lib/fleet.ts:740-758`): on one machine the gateway counted 1034 sessions
-  in a project this list painted 763 of, putting the gateway's last page 27 pages beyond the
-  pager's; the last page painted 3 real rows (239px) and swapped them 119ms later for an unrelated
-  ten-row window (582px).
-- Of the three rules the client adds, TWO are already the gateway's own facts. A star is
-  `Session.favorite_rank`, allocated and stored by the gateway — the device holds no copy
-  (`apps/vis-companion/src/lib/favorites.ts:1-20`) — and it rides the cheap record
-  `session-ranking` already reads (`src/com/blockether/vis/internal/loop.clj:11420`). Emptiness is
-  title + `turn_count` + liveness, all of which the ranking holds
-  (`state.clj:4481-4515`). Exactly ONE fact is the device's alone: unsent words parked in this
-  phone's composer (`apps/vis-companion/src/lib/draft-messages.ts`).
-- The page SIZE is already measured off the device rather than configured
-  (`apps/vis-companion/src/screens/SessionsScreen.tsx:328-340`, commit `be2e8f22e`), so the client
-  has a number to ask the gateway for.
+**Root problem.** Three visual disclosures describe one execution, and the Activity receipt claims a live total the runtime cannot know. Opening the trace therefore requires several taps and still does not establish which evidence belongs together.
 
-**Root problem.** Two processes each hold a partial definition of one list. The gateway owns the
-rows and their ranking; the client owns the filter and the bands. Neither can cut a page, because a
-page is only meaningful to whoever owns the whole order — so the client compensates by holding
-EVERYTHING in memory, and the header counts, the page count and the last page disagree with each
-other by construction.
+**Alternatives considered.** Keeping three sibling blocks loses because grouping remains implicit. Adding an Activity lifecycle update event loses for phase one because visual unification needs no wire change and current producers cannot truthfully report arbitrary intermediate progress. Scraping shell output loses because prose is not a semantic progress contract. Making every nested section open loses because large Results would restore the DOM and first-paint cost that lazy mounting removed.
 
-**What we solve.** The gateway becomes the single owner of the navigator list: which sessions are in
-it, in what order. The one fact it cannot know is SENT to it. A project's page is then cut by the
-gateway, at a size the device measures, and header counts, `total`, page count and the painted rows
-are the same arithmetic.
+## Phase 1 — Unify the Companion receipt
 
-**What we do not solve.** Search keeps its own contract: `GET /v1/sessions/actions/search` answers a
-COMPLETE match set in the gateway's own order, so slicing it locally is honest. Favourite ranks stay
-where they are (gateway-allocated). Nothing here changes how a session is opened, deleted or forked.
+**Rationale.** The phone is the narrowest surface and currently pays the most interaction cost for three separate blocks.
 
-**Alternatives considered.**
+**Data.** No wire changes. Derive the headline from `ActivityProjection`: first running row plus `and others` while live; terminal state plus the sum of terminal counts after settlement.
 
-- *Leave paging local and just cache better.* Loses: the counts still disagree — a header from the
-  gateway's tally over a list the client re-filters can only agree by accident, which is the report.
-- *Move the star and the composer draft into device storage and keep all ordering client-side.* Loses:
-  the star was device-local once and produced two truths for one fact — one screen starred, another
-  plain (`apps/vis-companion/src/lib/favorites.ts:3-9`). Reverting that trades a fixed bug for a
-  worse one, and still requires the whole fleet in memory.
-- *Send the device's whole overlay (stars + drafts) on every request.* Loses to sending drafts only:
-  stars are ALREADY the gateway's, so the URL would carry a copy of the server's own state, and a
-  disagreement between the two copies would silently reorder the list.
-- *Band the list by liveness / parked-on-a-human as well.* Loses: rejected before and for the same
-  reason — a band that flips mid-turn moves rows under the reader's finger and pushes another row
-  out of the window (`state.clj:4486-4496`); those states travel as FIELDS and, for parked runs, as
-  the `awaiting` answer beside the window.
-- *Replace the pager with an infinite scroller.* Not decided here. It is a different question — how
-  a reader travels a long list — and it needs the same server-owned order first. This plan makes
-  either possible.
+**Acceptance criteria.** One outer disclosure owns the anchored Python form, Result, and Activity. Its collapsed state is frameless and has no live denominator. First open shows the PYTHON header and five-line preview, keeps RESULT closed and lazily unmounted, and opens ACTIVITY. Live, settled, restored, failed, and cancelled behavior is tested.
 
-## Phase 1 — Make the gateway the owner of the navigator list
+**Unknowns.** Whether mutation signal belongs in the collapsed sentence; defer until the hierarchy is proven.
 
-**Rationale.** Without it every page number, page count and header count in the app is derived from
-two disagreeing definitions of the same list, and no client can page anything.
+## Phase 2 — Unify the TUI receipt
 
-**Data.** The wire contract of `GET /v1/sessions` changes: a new request key, and a cursor that
-names a row in a BANDED order.
+**Rationale.** The terminal must express the same ownership and truthful progress with keyboard disclosure semantics.
 
-```clojure
-(s/def :vis.sessions/dirty
-  ;; Comma-separated session ids holding unsent words in THIS device's composer.
-  ;; The only part of the navigator list the gateway cannot know. Absent = none.
-  (s/nilable string?))
+**Data.** Reuse the existing Activity projection and trace anchor; do not add a second presentation payload.
 
-(s/def :vis.sessions/cursor
-  ;; "<band>:<sort-key>:<id>" — band 0 starred, 1 dirty, 2 the rest; sort-key is the
-  ;; favourite rank inside band 0 and the NEGATED recency in every other band, so one
-  ;; ascending [band sort-key id] compare walks the whole list. Replaces
-  ;; "<recency-ms>:<id>", which could only address a single-band order.
-  (s/and string? #(re-matches #"\d+:-?\d+:.+" %)))
+**Acceptance criteria.** One transcript-native disclosure owns Python, Result, and Activity; nested defaults match Companion; virtual-terminal tests cover narrow and wide grids and every terminal state without a live denominator.
 
-(s/def :vis.sessions/window
-  (s/keys :req-un [:vis.sessions/sessions :vis.sessions/awaiting :vis.sessions/total
-                   :vis.sessions/limit :vis.sessions/next-cursor :vis.sessions/has-more]))
-```
+**Unknowns.** Which existing detail-expansion key should own the outer receipt without colliding with nested Result and Activity keys.
 
-**Acceptance criteria.**
+## Phase 3 — Remove duplicate projection
 
-- `src/com/blockether/vis/internal/gateway/state.clj` — `session-ranking` answers ROWS
-  (`{:id :band :sort-key :recency-ms}`), drops sessions no navigator paints (no title, no turns, not
-  live, not starred, not named by `:dirty`) and bands starred / dirty / rest; the cursor helpers
-  read the three-part cursor; `list-sessions-page` takes `:dirty` and keeps the ranking's order
-  through decoration; `projects-overview` tallies the same rows.
-- `src/com/blockether/vis/internal/gateway/server.clj` — `list-sessions-handler` and
-  `projects-overview-handler` parse `dirty`; the 400 names the new cursor shape.
-- `src/com/blockether/vis/internal/main.clj` — CLI session-prefix resolution reads ids from a new
-  `state/session-ids` instead of the navigator list, so hiding an empty session cannot hide it from
-  `--session <prefix>`.
-- Tests in `test/com/blockether/vis/internal/gateway/state_test.clj` and `server_test.clj`: an empty
-  draft-less session is not listed; a star or a `dirty` id lists it; the bands order; a cursor walk
-  crosses a band boundary without duplicating or dropping a row; and `projects-overview`'s
-  `session_count` for a root equals `(:total (list-sessions-page :all {:root root}))` — the 1034 vs
-  763 report.
+**Rationale.** Once both channels consume the semantic Activity projection, retaining generic status/stat/steps nodes creates two authorities that can drift.
 
-**Unknowns.** None.
+**Data.** Remove the obsolete node projection and its patch stream; Activity v1 remains the sole lifecycle payload.
 
-## Phase 2 — Tell the gateway the one fact it cannot know
+**Acceptance criteria.** No channel reads the duplicate Activity nodes, while host lifecycle, persistence, redaction, bounded-receipt, and cross-channel tests remain green.
 
-**Rationale.** Without it the gateway's list is right for every device and wrong for the one holding
-unsent words, and the client must keep its own filter as a safety net — which is the disagreement
-this plan removes.
+**Unknowns.** Whether transcript HTML or model introspection still consumes any generic Activity node; trace before deletion.
 
-**Data.** None. Phase 1 declared `dirty`; this phase only fills it.
+## Phase 4 — Prove the complete design
 
-**Acceptance criteria.**
+**Rationale.** Disclosure hierarchy, anchoring, persistence, and narrow layouts cross component and language boundaries that unit snapshots alone do not prove.
 
-- `apps/vis-companion/src/lib/draft-messages.ts` — expose the ids currently holding unsent words.
-- `apps/vis-companion/src/lib/gateway.ts` — `listSessions` sends them as `dirty=`; the value is part
-  of the snapshot pin key so a changed overlay cannot be answered from a stale window.
-- `apps/vis-companion/src/lib/fleet.ts` / `SessionsScreen.tsx` — `sessionIsListed` and `sessionOrder`
-  leave the paint path; `sessionOrder` survives only where the answer is complete (search).
-- Test: a fixture with an unsent draft in an empty session paints that row in the dirty band with no
-  client-side reordering at all.
+**Data.** None beyond existing fixtures and persisted Activity records.
 
-**Unknowns.** Does any surface other than the sessions list depend on `sessionIsListed` (the group
-delete fan-out reads ALL sessions of a group on purpose — `fleet.ts:459-484`)?
+**Acceptance criteria.** Companion is verified at 320, 390, 768, and 1440 CSS pixels; TUI at narrow and wide grids. Tests cover chronology, omitted totals, mutation semantics, restored identity, keyboard/screen-reader disclosure state, lazy Result mounting, and no horizontal overflow. Relevant tests, lint, formatting, and builds pass.
 
-## Phase 3 — Cut a project's page on the gateway, at the size the screen measured
-
-**Rationale.** Without it the app still slices a local array, so a project's page count is the
-client's arithmetic and the reader still pays for the whole fleet to see ten rows.
-
-**Data.** None. `limit`/`after`/`root` are Phase 1's contract.
-
-**Acceptance criteria.**
-
-- `apps/vis-companion/src/lib/gateway.ts` — a per-project window read: `(root, limit, after)` in,
-  rows + `total` + `next_cursor` out, revalidated by ETag like every other window.
-- `apps/vis-companion/src/screens/SessionsScreen.tsx` — `ProjectGroup` reads its page from that,
-  passing the measured `useSessionsPerPage()` as `limit`; `first`/`goToPage` become cursor moves.
-- `apps/vis-companion/src/lib/fleet.ts` — `projectPage` deleted.
-- Test: paging a project issues ONE request per page, and the last page paints the rows the header
-  counted — no second paint.
-
-**Unknowns.** How does a page interact with `lib/order-epoch` (the hold that keeps rows still while
-a reader looks at them) once arrivals no longer land in a local array?
-
-## Phase 4 — Stop draining the fleet
-
-**Rationale.** Without it every poll still downloads every session of every machine, and the paging
-above is a nicer arithmetic over the same download.
-
-**Data.** The device's session snapshot stops being "every row" and becomes the windows this device
-has actually read; the snapshot store is on disk, so the shape is declared before the code.
-
-**Acceptance criteria.**
-
-- `apps/vis-companion/src/lib/gateway.ts` — `drain` is deleted; the poll reads the head window and
-  the windows a screen asked for.
-- `apps/vis-companion/src/screens/SessionsScreen.tsx` — project groups are built from
-  `overview.projects` (which already carries every project and its counts), not from the rows held.
-- Test: with a fleet of 1200 sessions the sessions screen issues one request per machine per poll,
-  and every project header still paints its true count.
-
-**Unknowns.** Which non-list surfaces read `machine.sessions` as if it were the whole fleet
-(`Machines.tsx`, `machineProject`, the drafts picker, notifications)?
+**Unknowns.** None once the phase-specific questions are resolved.
 
 ## State of the plan
 
-DONE.
+COMPLETE.
 
-- Phase 1 — DONE, `4fc1553fc`: the gateway owns the list, `?root=&limit=&after=` is the list a
-  client paints, and the cursor is `<band>:<sort-key>:<id>`.
-- Phase 2 — DONE, `49d39d5fc`: the device sends `dirty=` and stops filtering and banding for
-  itself.
-- Phase 3 — DONE, `509950bfc`: a project's page is the gateway's own window —
-  `GatewayClient.listProjectPage` asks `?root=&limit=&after=` at the size the screen measured,
-  `first`/`goToPage` are cursor moves, and `projectPage` is gone from `src/lib/fleet.ts`.
-- Phase 4 — DONE: the drain is deleted — `listSessions` reads the head window alone, project
-  groups are built from `overview.projects` so a project exists and counts truthfully before any
-  row of it lands, and each group reads its own page (and the next two ahead, so a page turn is a
-  paint rather than a wait) into a store it owns. A 1200-session fleet costs one list read per
-  machine (`SessionsScreen.projectCounts.test.tsx`).
+- Phase 1 — COMPLETE (`td-f9035e`): Companion owns the unified disclosure and its honest lifecycle sentence.
+- Phase 2 — COMPLETE (`td-7bb5f7`): TUI matches the hierarchy and width-bounded behavior.
+- Phase 3 — COMPLETE (`td-1e6086`): Activity v1 is the sole projection; duplicate generic nodes are gone.
+- Phase 4 — COMPLETE (`td-2d3dbe`): viewport, grid, lifecycle, accessibility, lazy-mount, test, lint, format, and build gates pass.
+- Epic — `td-dc8d7d`.

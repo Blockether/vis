@@ -523,6 +523,26 @@ const ACTIVITY_FACE = {
 } as const;
 
 
+/** The one honest sentence a unified execution trace can state at this moment. */
+export function activityReceiptText(activity?: ActivityProjection): string {
+  const state = activity?.state ?? 'idle';
+  const counts = activity?.counts;
+  if (state === 'running' || state === 'idle') {
+    const row = activity?.rows.find((candidate) => candidate.state === 'running');
+    const total = counts
+      ? counts.running + counts.succeeded + counts.failed + counts.cancelled
+      : activity?.rows.length ?? 0;
+    const focus = row
+      ? [row.operation, row.summary].filter(Boolean).join(' · ')
+      : 'waiting for first activity';
+    return ['RUNNING', focus, total > 1 ? 'and others' : ''].filter(Boolean).join(' · ');
+  }
+  const terminal = counts
+    ? counts.succeeded + counts.failed + counts.cancelled
+    : activity?.rows.length ?? 0;
+  return `${state.toUpperCase()} · ${terminal} ${terminal === 1 ? 'activity' : 'activities'} run`;
+}
+
 function activityPreview(activity?: ActivityProjection): string {
   const row = activity?.rows.find((candidate) => candidate.state === 'running');
   if (!row) return 'No operation in progress';
@@ -563,11 +583,13 @@ function ActivityRail({ activity }: { activity?: ActivityProjection }) {
 function ActivityViewPanel({
   view,
   isSettled,
+  initiallyExpanded = false,
 }: {
   view: LiveViewModel;
   isSettled: boolean;
+  initiallyExpanded?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const activity = view.activity;
   const state = activity?.state ?? 'idle';
   const face = ACTIVITY_FACE[state];
@@ -618,6 +640,7 @@ export function LiveViewPanel({
   error,
   load,
   isSettled = false,
+  activityInitiallyExpanded = false,
 }: {
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
@@ -633,6 +656,8 @@ export function LiveViewPanel({
    * itself to a screen reader as one that can.
    */
   isSettled?: boolean;
+  /** Activity is already inside an opened execution receipt, so expose its rail. */
+  activityInitiallyExpanded?: boolean;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
@@ -648,7 +673,13 @@ export function LiveViewPanel({
     send(typed.trim() === '' ? null : typed.trim());
   };
   if (view.classification === 'activity') {
-    return <ActivityViewPanel view={view} isSettled={isSettled} />;
+    return (
+      <ActivityViewPanel
+        view={view}
+        isSettled={isSettled}
+        initiallyExpanded={activityInitiallyExpanded}
+      />
+    );
   }
 
   return (

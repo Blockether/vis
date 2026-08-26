@@ -636,14 +636,20 @@ describe('the current Activity wire contract', () => {
   const raw = {
     id: 'activity-1',
     title: 'Activity',
-      classification: 'activity',
-      activity: activityProjection(),
-      nodes: [{ id: 'activity-status', type: 'status', text: 'running', tone: 'running' }],
+    classification: 'activity',
+    activity: activityProjection(),
+    nodes: [],
   };
 
-  it('keeps the host Activity classification', () => {
+  // Regression, issue td-1e6086: the Companion rejected Activity after the host
+  // removed its duplicate status/stat/steps nodes.
+  it('keeps host Activity as the sole paintable projection', () => {
     const view = liveViewFromWire(raw);
-    expect(view).toMatchObject({ classification: 'activity', activity: { schema_version: 1 } });
+    expect(view).toMatchObject({
+      classification: 'activity',
+      activity: { schema_version: 1 },
+      nodes: [],
+    });
   });
 
   it('reads structured diff evidence and rejects incomplete lines', () => {
@@ -693,11 +699,12 @@ describe('the current Activity wire contract', () => {
     expect(liveViewFromWire({ ...raw, activity: { ...activityProjection(), rows: [{ id: 'broken' }] } })).toBeNull();
   });
 
-  it('replaces semantic Activity data atomically with its ordinary node patch', () => {
+  it('replaces semantic Activity data atomically', () => {
     const running = liveViewFromWire(raw)!;
     const settled = activityProjection('succeeded');
     const next = applyLivePatch(running, frame(running, 1, [{ op: 'set-activity', activity: settled }]));
     expect(next.activity).toMatchObject({ state: 'succeeded', counts: { running: 0, succeeded: 1 } });
+    expect(next.nodes).toEqual([]);
   });
 
   it('rejects unknown classifications', () => {
