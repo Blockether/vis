@@ -1094,9 +1094,21 @@
          (.putMember g "__vis_seed_json__" nil)
          (catch Throwable _ nil))))
 
+(defn- registered-sandbox-shims
+  "The Python sandbox shims contributed by the extension registry."
+  []
+  (extension/sandbox-shims))
+
+
 (defn- sandbox-corpus
   "Merge live sandbox callables with the ordered document corpus. Live contracts
-   win name collisions; static and dynamic documents retain corpus order."
+   win name collisions; static and dynamic documents retain corpus order.
+
+   A shim's prose is PULLED here, never pushed into the context: its harvested
+   `__doc__` comes from the corpus and the `:shim/docs` page from its declaration,
+   composed on the `apropos`/`doc` that asks. Building a context therefore reads no
+   documents at all — the sessions that never ask pay nothing — and a page edited
+   mid-session is answered fresh instead of from an hour-old copy."
   [^Value g names-fn]
   (let [docs
         (value->str-map (.getMember g "__vis_docs__"))
@@ -1125,6 +1137,27 @@
         documents
         (into {} (map (juxt :name identity)) document-entries)
 
+        shims
+        (registered-sandbox-shims)
+
+        shim-names
+        (into #{}
+              (comp (mapcat #(concat (:shim/imports %) (:shim/globals %)))
+                    (filter string?)
+                    (remove str/blank?))
+              shims)
+
+        shim-pages
+        (reduce (fn [m s]
+                  (let [page (str (:shim/docs s))]
+                    (if (str/blank? page)
+                      m
+                      (reduce #(assoc %1 %2 page)
+                              m
+                              (filter string? (concat (:shim/imports s) (:shim/globals s)))))))
+                {}
+                shims)
+
         ordered-names
         (distinct (concat (names-fn) (sort (keys docs)) (map :name document-entries)))]
 
@@ -1135,9 +1168,25 @@
                     (get documents nm)
 
                     text
-                    (let [registered (str (get docs nm ""))]
-                      (cond (seq registered) registered
-                            (seq (str (:text document))) (str (:text document))
+                    (let [registered
+                          (str (get docs nm ""))
+
+                          own
+                          (if (seq registered) registered (str (:text document)))
+
+                          page
+                          (str (get shim-pages nm ""))
+
+                          whole
+                          (if (and (seq page) (not (str/includes? own page)))
+                            (str/join "\n\n" (remove str/blank? [own page]))
+                            own)]
+
+                      (cond (seq whole) whole
+                            ;; A shim the generated apropos resources never saw — an
+                            ;; extension declares its own — keeps its NAME searchable;
+                            ;; `doc()` reads the live module instead of printing this.
+                            (contains? shim-names nm) unharvested-shim-page
                             :else (str (get def-docs nm ""))))
 
                     call
@@ -1151,6 +1200,7 @@
                          :text text
                          :kind (or (get kinds nm)
                                    (:kind document)
+                                   (when (contains? shim-names nm) "module")
                                    (if (and (str/blank? (str (get docs nm))) (nil? document))
                                      "local"
                                      "tool"))}
@@ -1461,11 +1511,6 @@
            (.putMember g "__vis_process_surface_json__" nil)
            (.eval ctx "python" ^String src))
          (catch Throwable _ nil))))
-
-(defn- registered-sandbox-shims
-  "The Python sandbox shims contributed by the extension registry."
-  []
-  (extension/sandbox-shims))
 
 (def ^:private lazy-shim-runtime-python
   "Central LAZY-SHIM runtime installed once per Context, BEFORE the shims.
@@ -2247,76 +2292,23 @@
     ;; Eval'd BEFORE the snapshot so each shim's `__vis_*`/published-module
     ;; names are baseline (filtered out of the model-visible live-vars view).
     (install-sandbox-shims! ctx g)
-    ;; Advertise the exact import names and globals contributed by sandbox shims.
-    ;; Their Python docstrings were harvested into the flat apropos resource, so
-    ;; this context seeds those same records into `doc()` without importing modules.
-    ;; A dynamic shim absent from the static distribution may still supply `:shim/docs`.
-    (try
-      (let [shims
-            (registered-sandbox-shims)
-
-            names
-            (->> shims
-                 (mapcat #(concat (:shim/imports %) (:shim/globals %)))
-                 (filter #(and (string? %) (not (str/blank? %))))
-                 distinct
-                 vec)
-
-            corpus-by-name
-            (into {} (map (juxt :name identity)) (doc-corpus/entries))
-
-            docs
-            (reduce (fn [m s]
-                      (let [page (when-not (str/blank? (:shim/docs s)) (:shim/docs s))]
-                        (reduce (fn [acc nm]
-                                  (let [harvested (:text (get corpus-by-name nm))
-                                        solo (->> [harvested page]
-                                                  (remove str/blank?)
-                                                  (str/join "\n\n"))]
-
-                                    (assoc acc
-                                      nm (cond-> {"solo"
-                                                  (if (str/blank? solo) unharvested-shim-page solo)}
-                                           page
-                                           (assoc "page" page)))))
-                                m
-                                (concat (:shim/imports s) (:shim/globals s)))))
-                    {}
-                    shims)
-
-            calls
-            (into {}
-                  (keep (fn [nm]
-                          (when-let [sig (:call (get corpus-by-name nm))]
-                            [nm sig])))
-                  names)
-
-            kinds
-            (into {}
-                  (map (fn [nm]
-                         [nm (or (:kind (get corpus-by-name nm)) "module")]))
-                  names)]
-
-        (when (seq names)
-          (.putMember g "__vis_shims_json__" (json/write-json-str names))
-          (.eval ctx "python" "globals()['__vis_shims__'] = json.loads(__vis_shims_json__)")
-          (.putMember g "__vis_shims_json__" nil))
-        (when (seq docs)
-          (.putMember g "__vis_docs_json__" (json/write-json-str docs))
-          (.eval ctx
-                 "python"
-                 (str "_vis_docs = globals().setdefault('__vis_docs__', {})\n"
-                      "for _k, _v in json.loads(__vis_docs_json__).items():\n"
-                      "    _own = _vis_docs.get(_k)\n"
-                      "    _page = _v.get('page')\n" "    if not _own:\n"
-                      "        _vis_docs[_k] = _v['solo']\n"
-                      "    elif _page and _page not in _own:\n"
-                      "        _vis_docs[_k] = _own + '\\n\\n' + _page\n"
-                      "del _vis_docs, _k, _v, _own, _page"))
-          (.putMember g "__vis_docs_json__" nil))
-        (seed-py-map! ctx g "__vis_calls__" calls)
-        (seed-py-map! ctx g "__vis_kinds__" kinds))
-      (catch Throwable _ nil))
+    ;; Advertise the exact import names and globals contributed by sandbox shims —
+    ;; the NAMES and nothing else. Everything else about a shim is PULLED by
+    ;; `sandbox-corpus` on the `apropos`/`doc` that asks: its harvested `__doc__`,
+    ;; its call form and its kind come from the corpus, its `:shim/docs` page from
+    ;; the declaration. Reading documents HERE would charge every session for a
+    ;; corpus the great majority never open, and would freeze a copy into a context
+    ;; that outlives every `/reload`.
+    (try (let [names (->> (registered-sandbox-shims)
+                          (mapcat #(concat (:shim/imports %) (:shim/globals %)))
+                          (filter #(and (string? %) (not (str/blank? %))))
+                          distinct
+                          vec)]
+           (when (seq names)
+             (.putMember g "__vis_shims_json__" (json/write-json-str names))
+             (.eval ctx "python" "globals()['__vis_shims__'] = json.loads(__vis_shims_json__)")
+             (.putMember g "__vis_shims_json__" nil)))
+         (catch Throwable _ nil))
     ;; DOCUMENTS — every skill, every documentation page, every MCP tool — are NOT
     ;; seeded here: `sandbox-corpus` reads them LIVE off `doc-corpus/entries` on
     ;; every `doc`/`apropos`. This context outlives every `/reload`, so a copy taken

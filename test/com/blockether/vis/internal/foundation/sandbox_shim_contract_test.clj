@@ -173,8 +173,7 @@
             (first (concat (:shim/imports shim) (:shim/globals shim)))
 
             doc
-            (:stdout
-              (ep/run-python-block ctx (str "print(__vis_docs__[" (pr-str name) "])") "t1/i1"))]
+            (:stdout (ep/run-python-block ctx (str "print(doc(" (pr-str name) "))") "t1/i1"))]
 
         (expect (some? shim) "no shim declares :shim/docs — the pull path is untested")
         (expect (str/includes? doc (subs (:shim/docs shim) 0 60))
@@ -188,7 +187,7 @@
   shim-globals-name-their-call-test
   "A prebound global is typed straight into a block — `ls(...)`, `nippy_decode(...)` — with
    no import and no signature to inspect first, so something has to state its arguments.
-   The canonical home is STRUCTURE: `__vis_calls__[name]`, which `doc(name)` prints above
+   The canonical home is STRUCTURE: the harvested `:call`, which `doc(name)` prints above
    the document, exactly where a tool's `:call` line goes — a page that opens with its own
    signature previews as a signature and stops matching the words its prose is written in.
    A shim that has not moved yet may still carry the call form inside its text; naming it
@@ -207,10 +206,7 @@
 
             code
             (str "_names = [" (str/join ", " (map pr-str names))
-                 "]\n" "_docs = globals().get('__vis_docs__', {})\n"
-                 "_calls = globals().get('__vis_calls__', {})\n" "print([n for n in _names\n"
-                 "       if (n + '(') not in str(_calls.get(n, ''))\n"
-                 "       and (n + '(') not in str(_docs.get(n, ''))])")
+                 "]\n" "print([n for n in _names if (n + '(') not in doc(n)])")
 
             undocumented
             (try (:stdout (ep/run-python-block ctx code "t1/i1")) (finally (.close ctx)))]

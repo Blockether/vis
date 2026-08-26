@@ -1088,6 +1088,29 @@ Follow every fixture step without truncation."}]))
                                       (expect (str/includes? out "ls"))))
                       (finally (doc-corpus/register-source! ::collision (constantly []))))))
 
+;; A context that reads documents charges every session for a corpus the great
+;; majority never open, and freezes a copy into a context that outlives every
+;; `/reload`. So a shim's text, its call form and its kind are PULLED on the
+;; `apropos`/`doc` that asks, and building the context must read nothing at all.
+(defdescribe building-a-context-reads-no-documents-test
+             (it "reads the corpus on the first ask, never while building the context"
+                 (let [reads
+                       (atom 0)
+
+                       whole
+                       doc-corpus/entries]
+
+                   (with-redefs [doc-corpus/entries (fn []
+                                                      (swap! reads inc)
+                                                      (whole))]
+                     (tpc/with-own
+                       [ctx
+                        (ext/builtin-sandbox-bindings (fn []
+                                                        nil))]
+                       (expect (zero? @reads) "building a context read the document corpus")
+                       (let [out (str (:stdout (ep/run-python-block ctx "print(doc('ls'))")))]
+                         (expect (pos? @reads))
+                         (expect (str/includes? out "ls("))))))))
 (comment
  ;; Dynamic skill and MCP sources are read at call time because the Python
  ;; context outlives reloads of those sources.
