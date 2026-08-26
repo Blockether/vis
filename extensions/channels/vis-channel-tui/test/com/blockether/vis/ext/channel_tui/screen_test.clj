@@ -2311,8 +2311,8 @@ therapy line 2"
                         nil
                         {:input recalled :slash-command-index 0 :slash-command-hidden? true}))))))
 
-;; Regression, td-2d89a0 and td-20b238: the expanded execution surface detached from
-;; its transcript receipt during history scroll and lost the separating blank row.
+;; Regression, td-2d89a0, td-20b238, and td-794deb: the expanded execution surface
+;; detached during history scroll and lost its outer margin or tinted top padding.
 (defdescribe
   activity-transcript-anchor-scroll-paint-test
   (it
@@ -2445,9 +2445,9 @@ therapy line 2"
           (expect (= :at (get-in @state/app-db [:scroll :mode]))
                   "the history gesture went through the real scroll event")
           (expect (< (long (:eff-scroll after-layout)) (long (:eff-scroll before-layout))))
-          (expect (= (+ 2 (long before-receipt)) (long before-surface))
-                  "the first full frame keeps one blank row before the execution surface")
-          (expect (= (+ 2 (long after-receipt)) (long after-surface))
+          (expect (= (+ 3 (long before-receipt)) (long before-surface))
+                  "the first full frame keeps an outer margin and tinted pad before PYTHON")
+          (expect (= (+ 3 (long after-receipt)) (long after-surface))
                   "the scrolled frame preserves the same receipt-to-surface rhythm")
           (expect (= (- (long after-receipt) (long before-receipt))
                      (- (long after-surface) (long before-surface)))

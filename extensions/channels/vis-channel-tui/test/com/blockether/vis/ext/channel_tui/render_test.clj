@@ -4877,6 +4877,13 @@
               strip-ansi
               strip-sentinels)
 
+          collapsed-lines
+          (str/split-lines collapsed)
+
+          collapsed-status-row
+          (first (keep-indexed #(when (str/includes? %2 "▸ DONE · 6 activities") %1)
+                               collapsed-lines))
+
           expanded
           (-> (render/format-answer-with-thinking-data
                 "Done."
@@ -4901,6 +4908,9 @@
 
       (expect (str/includes? collapsed "▸ DONE · 6 activities · 4.8s"))
       (expect (not (str/includes? collapsed "ACTIVITY")))
+      (expect (some? collapsed-status-row))
+      (expect (str/blank? (nth collapsed-lines (dec collapsed-status-row)))
+              "collapsed and expanded receipts keep the same leading margin")
       (expect (some? status-row))
       (expect (str/blank? (nth expanded-lines (dec status-row))))
       (expect (str/blank? (nth expanded-lines (inc status-row))))
@@ -5030,6 +5040,25 @@ h = 8"
                             :duration-ms 1400}]
            :anchor {:iteration-index 0 :form-index 0}}
 
+          collapsed-rendered
+          (render/format-answer-with-thinking-data* "Done."
+                                                    trace
+                                                    52
+                                                    {:show-thinking true :show-iterations true}
+                                                    nil
+                                                    false
+                                                    {:session-id "s1" :runs [run]})
+
+          collapsed-text
+          (-> (:text collapsed-rendered)
+              strip-ansi
+              strip-sentinels)
+
+          result-toggle-meta
+          (some (fn [[line meta]]
+                  (when (str/includes? (strip-sentinels (str line)) "RESULT") meta))
+                (map vector (:lines collapsed-rendered) (:line-meta collapsed-rendered)))
+
           rendered
           (render/format-answer-with-thinking-data* "Done."
                                                     trace
@@ -5041,6 +5070,11 @@ h = 8"
                                                      :runs [run]
                                                      :detail-expansions
                                                      {:vis.channel-tui/expand-all-details? true}})
+
+          expanded-text
+          (-> (:text rendered)
+              strip-ansi
+              strip-sentinels)
 
           message
           {:role :assistant
@@ -5093,6 +5127,23 @@ h = 8"
           [tests-row tests-line]
           (row-with "RUN_TESTS")]
 
+      ;; Regression, issue td-794deb: Activity forced RESULT open, removed its toggle,
+      ;; lost its top surface pad, and painted the timeline outside the execution box.
+      (expect (str/includes? collapsed-text "▸ RESULT"))
+      (expect (= :toggle-details (:kind result-toggle-meta))
+              "the collapsed RESULT row remains an interactive disclosure")
+      (expect (not (str/includes? collapsed-text "result-value")) "RESULT is collapsed by default")
+      (expect (str/includes? expanded-text "▾ RESULT"))
+      (expect (str/includes? expanded-text "result-value")
+              "RESULT remains independently expandable")
+      (expect (= (get-in frame [(dec python-row) 1 :bg]) (get-in frame [python-row 1 :bg]))
+              "the execution box has one tinted padding row above PYTHON")
+      (expect (= (get-in frame [activity-row 1 :bg])
+                 (get-in frame [python-row 1 :bg])
+                 (get-in frame [first-row 1 :bg])
+                 (get-in frame [tests-row 1 :bg])
+                 (get-in frame [(inc tests-row) 1 :bg]))
+              "Activity and its bottom padding stay inside the execution box")
       (expect (= (.indexOf ^String activity-line "ACTIVITY")
                  (.indexOf ^String python-line "PYTHON")
                  (.indexOf ^String result-line "RESULT"))
