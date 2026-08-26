@@ -4981,8 +4981,9 @@
         (expect (not (str/includes? (strip-ansi (:text payload)) "RUN")))
         (expect (not-any? #(= :live-reopen (:kind %)) (:line-meta payload))))))
 
-;; Regression, issues td-1ccd13, td-c0bd16, and td-7d7211: shell invocations collapsed
-;; to one count, the heading drifted right, and Activity escaped the execution background.
+;; Regression, issues td-1ccd13, td-c0bd16, td-7d7211, and td-5cfb8f: shell invocations
+;; collapsed to one count, the heading drifted right or outside the band, and Activity escaped
+;; the execution background after restoring a session.
 (defdescribe
   activity-shell-command-grid-test
   (it
@@ -5056,6 +5057,9 @@ h = 8"
           (fn [needle]
             (first (keep-indexed #(when (str/includes? %2 needle) [%1 %2]) lines)))
 
+          [status-row _]
+          (row-with "SUCCEEDED · 2 activities run")
+
           [activity-row activity-line]
           (row-with "ACTIVITY")
 
@@ -5072,12 +5076,13 @@ h = 8"
       (expect (= (.indexOf ^String activity-line "ACTIVITY")
                  (.indexOf ^String (second (row-with "PYTHON")) "PYTHON")
                  (.indexOf ^String (second (row-with "RESULT")) "RESULT")))
-      (expect (= (get-in frame [result-row 1 :bg])
+      (expect (= (get-in frame [status-row 1 :bg])
+                 (get-in frame [result-row 1 :bg])
                  (get-in frame [activity-row 1 :bg])
                  (get-in frame [first-row 1 :bg])
                  (get-in frame [second-row 1 :bg])
                  (get-in frame [(inc second-row) 1 :bg]))
-              "Activity receipt, evidence, and bottom padding stay inside the execution background")
+              "The restored outer heading, evidence, and padding share one execution background")
       (expect (< (long first-row) (long second-row))
               "commands keep invocation order on separate rows")
       (expect (= 1 (count (filter #(str/includes? % "shell · npm test") lines))))

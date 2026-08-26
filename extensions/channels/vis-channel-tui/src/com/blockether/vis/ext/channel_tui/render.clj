@@ -5695,13 +5695,14 @@
                                  (concat code-block result-block))
                                activity-band)))]
 
-            ;; The unified execution status is its own quiet transcript row. When open,
-            ;; one neutral row above and below keeps it from touching the preceding
-            ;; reasoning band or the PYTHON band it introduces. A collapsed receipt
-            ;; stays compact.
+            ;; The collapsed execution status stays a quiet transcript row. Opening it
+            ;; turns that SAME row into the top edge of the execution surface: its
+            ;; heading, inside spacing, Python, Result, Activity, and trailing padding
+            ;; are one continuous band in both live and restored sessions.
             (if-not activity-run
               execution-body
-              (let [summary (detail-summary-entries {:marker ""
+              (let [summary (detail-summary-entries {:marker
+                                                     (if execution-expanded? result-marker "")
                                                      :max-w fill-w
                                                      :summary (activity-status-display activity-run)
                                                      :collapsed? (not execution-expanded?)
@@ -5709,7 +5710,7 @@
                                                      :node-id execution-node-id})]
                 (vec (concat (when execution-expanded? [(line-entry "")])
                              summary
-                             (when execution-expanded? [(line-entry "")])
+                             (when execution-expanded? [(line-entry (str result-marker ""))])
                              (when execution-expanded? execution-body)))))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
