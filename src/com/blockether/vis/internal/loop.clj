@@ -653,7 +653,9 @@
 
           bounded
           (fn [phase-ms]
-            (or (when (and whole-ms phase-ms) (min whole-ms phase-ms)) phase-ms whole-ms))]
+            (or (when (and whole-ms phase-ms) (min (long whole-ms) (long phase-ms)))
+                phase-ms
+                whole-ms))]
 
       {:first-output-timeout-ms (bounded first-output-ms) :stall-timeout-ms (bounded stream-ms)})))
 
