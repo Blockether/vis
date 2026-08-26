@@ -4981,8 +4981,8 @@
         (expect (not (str/includes? (strip-ansi (:text payload)) "RUN")))
         (expect (not-any? #(= :live-reopen (:kind %)) (:line-meta payload))))))
 
-;; Regression, issues td-1ccd13 and td-c0bd16: shell invocations collapsed to identical
-;; operation counts, while the mixed-case Activity heading sat one column inside PYTHON/RESULT.
+;; Regression, issues td-1ccd13, td-c0bd16, and td-7d7211: shell invocations collapsed
+;; to one count, the heading drifted right, and Activity escaped the execution background.
 (defdescribe
   activity-shell-command-grid-test
   (it
@@ -5056,8 +5056,11 @@ h = 8"
           (fn [needle]
             (first (keep-indexed #(when (str/includes? %2 needle) [%1 %2]) lines)))
 
-          [_ activity-line]
+          [activity-row activity-line]
           (row-with "ACTIVITY")
+
+          [result-row _]
+          (row-with "RESULT")
 
           [first-row _]
           (row-with "shell · npm test")
@@ -5069,6 +5072,12 @@ h = 8"
       (expect (= (.indexOf ^String activity-line "ACTIVITY")
                  (.indexOf ^String (second (row-with "PYTHON")) "PYTHON")
                  (.indexOf ^String (second (row-with "RESULT")) "RESULT")))
+      (expect (= (get-in frame [result-row 1 :bg])
+                 (get-in frame [activity-row 1 :bg])
+                 (get-in frame [first-row 1 :bg])
+                 (get-in frame [second-row 1 :bg])
+                 (get-in frame [(inc second-row) 1 :bg]))
+              "Activity receipt, evidence, and bottom padding stay inside the execution background")
       (expect (< (long first-row) (long second-row))
               "commands keep invocation order on separate rows")
       (expect (= 1 (count (filter #(str/includes? % "shell · npm test") lines))))

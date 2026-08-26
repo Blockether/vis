@@ -2177,6 +2177,7 @@
                       ;; margin, so paint it flush against the band's left edge.
                       code-text-inset? (and (not user?)
                                             (contains? code-text-inset-markers marker)
+                                            (not (:band-flush? meta))
                                             (not= :result-headline (:kind meta)))
                       x (cond-> x
                           output-indented?
@@ -5669,14 +5670,30 @@
                 (vec result-lines)
 
                 execution-body
-                (vec (concat (if (and running? (seq result-block))
-                               (concat result-block code-block)
-                               (concat code-block result-block))
-                             (run-row-entries
-                               (mapv #(cond-> % (:is-activity %) (assoc :is-reopened true)) runs)
-                               fill-w
-                               session-id
-                               false)))]
+                (let [activity-entries
+                      (run-row-entries (mapv #(cond-> % (:is-activity %) (assoc :is-reopened true))
+                                             runs)
+                                       fill-w
+                                       session-id
+                                       false)
+
+                      ;; An expanded Activity receipt is part of the execution surface, not
+                      ;; detached transcript text. Continue the RESULT band through its
+                      ;; invocation evidence and close it with one inside padding row.
+                      activity-band
+                      (when (seq activity-entries)
+                        (conj (mapv #(-> %
+                                         (update :line
+                                                 (fn [line]
+                                                   (str result-marker line)))
+                                         (assoc-in [:meta :band-flush?] true))
+                                    activity-entries)
+                              (line-entry (str result-marker ""))))]
+
+                  (vec (concat (if (and running? (seq result-block))
+                                 (concat result-block code-block)
+                                 (concat code-block result-block))
+                               activity-band)))]
 
             ;; The unified execution status is its own quiet transcript row. When open,
             ;; one neutral row above and below keeps it from touching the preceding
