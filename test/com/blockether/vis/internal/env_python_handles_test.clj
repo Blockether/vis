@@ -2,7 +2,7 @@
   "The sandbox's ONE registry for host handles (`resources/vis-python/async_runtime.py`).
 
    A shim hands the block a small Python wrapper around a HOST id — a PIL raster
-   (an int[], 4 bytes per pixel), an SSH session, an SQLite connection — while the
+   (an int[], 4 bytes per pixel), an SQLite connection — while the
    resource itself lives in a per-JVM registry keyed by that id. GraalPy does not
    refcount, so dropping the wrapper frees NOTHING: no `__del__` runs, and the
    host cannot see that the last Python reference died. Every shim used to invent
@@ -146,7 +146,7 @@
   sandbox-handle-registry-is-shared-test
   ;; Regression, report 5075808e (the iOS screenshot session): PIL leaked every
   ;; raster a block dropped because reclamation was the SHIM's business, and each
-  ;; shim reinvented it — so `sqlite3` had a weaker copy and `paramiko` had none
+  ;; shim reinvented it — so `sqlite3` had a weaker copy and the rest had none
   ;; at all. There is one registry now, and this proves both shims are in it.
   (it "holds the handles of every shim, not one shim's"
       (let [r (ep/run-python-block

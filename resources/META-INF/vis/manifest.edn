@@ -34,8 +34,6 @@
    :apropos "META-INF/vis/apropos/shim-httpx.edn"}
   {:register com.blockether.vis.internal.foundation.shim-urllib3/register!
    :apropos "META-INF/vis/apropos/shim-urllib3.edn"}
-  {:register com.blockether.vis.internal.foundation.shim-paramiko/register!
-   :apropos "META-INF/vis/apropos/shim-paramiko.edn"}
   {:register com.blockether.vis.internal.foundation.shim-xlsxwriter/register!
    :apropos "META-INF/vis/apropos/shim-xlsxwriter.edn"}
   {:register com.blockether.vis.internal.foundation.shim-pptx/register!

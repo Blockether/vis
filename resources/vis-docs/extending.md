@@ -1276,7 +1276,7 @@ first import:
   it as citations — see below), `PIL`, `matplotlib`, `mpl_toolkits`, `pptx`,
   `xlsxwriter`, `fontTools`.
 - Time — `zoneinfo` (604+ zones from `java.time`), `dateutil`, `pytz`, `tzdata` (the same JVM zone store).
-- Ops / testing — `paramiko`, `pytest` (the same shim the test runner installs), `ruff` (in-process lint and format).
+- Ops / testing — `pytest` (the same shim the test runner installs), `ruff` (in-process lint and format).
 - Globals, no import needed — `attach`, `list_attachments`, `get_attachment`, `read_attachment`, `show_attachment`, plus `nippy_encode` / `nippy_decode`.
   - `attach(...)` hands back the descriptor of what it just stored, and `list_attachments()` / `get_attachment(...)` answer the same shape: id, filename, version, media type, kind, size, audience, and the `turn_id` it belongs to — a tool artifact adds `iteration_id` / `tool_call_id`. `read_attachment(...)` returns the raw bytes and nothing else.
   - What the RUNNING block attached is addressable inside that block: pass the returned descriptor — or its filename — straight to `show_attachment`, `read_attachment` or `get_attachment`, where it carries `is_pending` until the iteration is stored.

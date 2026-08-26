@@ -62,8 +62,6 @@
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
   com.cnuernber/charred {:mvn/version "1.041"}
-  ;; Pure-Java SSH2 (mwiede fork of JSch) backing the sandbox `paramiko` shim.
-  com.github.mwiede/jsch {:mvn/version "2.28.5"}
   com.google.zxing/core {:mvn/version "3.5.4"}
   ;; JVM codecs backing the lazy sandbox nippy_encode/nippy_decode helpers.
   com.taoensso/nippy {:mvn/version "3.8.0"}
@@ -90,9 +88,6 @@
   ;; first Nippy encode/decode call.
   net.mikera/core.matrix {:mvn/version "0.63.0"}
   net.mikera/vectorz-clj {:mvn/version "0.48.0"}
-  ;; Apache MINA SSHD server backing the paramiko shim's `Transport.start_server`
-  ;; (reverse port-forwarding); JSch above is client-only.
-  org.apache.sshd/sshd-core {:mvn/version "2.15.0"}
   org.babashka/http-client {:mvn/version "0.4.24"}
   ;; Pure-Java X.509 minting for the egress-proxy MITM CA (ephemeral, per-session) —
   ;; HTTPS verb/path enforcement for jailed shell children. No system provider is

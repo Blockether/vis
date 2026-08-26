@@ -11,7 +11,6 @@
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.env-python :as ep]
             [clojure.string :as str]
-            [com.blockether.vis.internal.foundation.shim-paramiko]
             [com.blockether.vis.internal.foundation.shim-pil]
             [com.blockether.vis.internal.foundation.shim-sqlite3]
             [com.blockether.vis.internal.sandbox-resources :as res]
@@ -199,14 +198,11 @@
                      (str/join ", " offenders))))))
 
 (defdescribe shipped-shims-declare-releases-test
-             ;; The three shims that actually lend host objects, checked as VALUES rather
+             ;; The two shims that actually lend host objects, checked as VALUES rather
              ;; than as source text, so a rename cannot quietly drop one.
              (it "the shipped resource kinds are declared with a release"
                  (doseq [k [:com.blockether.vis.internal.foundation.shim-pil/images
-                            :com.blockether.vis.internal.foundation.shim-sqlite3/conns
-                            :com.blockether.vis.internal.foundation.shim-paramiko/sessions
-                            :com.blockether.vis.internal.foundation.shim-paramiko/sftp
-                            :com.blockether.vis.internal.foundation.shim-paramiko/servers]]
+                            :com.blockether.vis.internal.foundation.shim-sqlite3/conns]]
                    (expect (res/declared? k) (str k " is not declared — nothing would free it")))))
 
 ;; ── the canonical teardown ────────────────────────────────────────────────

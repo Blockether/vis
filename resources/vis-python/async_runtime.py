@@ -331,7 +331,7 @@ def __vis_fd_admit__():
 # ── HOST-HANDLE OWNERSHIP: the same non-refcounting fact, one level out from
 # descriptors. A shim hands the block a small Python wrapper around a HOST id —
 # a PIL raster (an int[], 4 bytes per pixel, ~12 MB for one phone screenshot),
-# an SSH session, an SQLite connection — while the resource itself lives in a
+# an SQLite connection — while the resource itself lives in a
 # per-JVM registry keyed by that id. Dropping the wrapper frees NOTHING: no
 # `__del__` runs, the id is a plain int that outlives its owner, and the host
 # cannot see that the last Python reference died (measured: 20 dropped

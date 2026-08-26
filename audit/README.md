@@ -44,8 +44,8 @@ vulnerable, and what does it do with data.*
 
 - **Source repository:** <https://github.com/Blockether/vis> — issues, releases, CI and the Security tab.
 - **Primary language:** Clojure 1.12 on the JVM (Java 25 / GraalVM), compiled to a native image.
-- **Direct dependency coordinates:** 65 unique, across 16 `deps.edn` modules (root + extensions).
-- **Declared jar footprint (direct coords):** ~145 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
+- **Direct dependency coordinates:** 63 unique, across 16 `deps.edn` modules (root + extensions).
+- **Declared jar footprint (direct coords):** ~144 MB; concentrated in the embedded GraalPy runtime and the optional voice/ONNX stack (§8).
 - **License posture:** permissive throughout (EPL, MIT, Apache-2.0, BSD, UPL) — **copyleft exception(s) flagged in §6.**
 - **Vulnerability posture:** continuous [clj-watson](https://github.com/clj-holmes/clj-watson) SCA on every dependency change, weekly, and on demand — findings publish to the GitHub **Security** tab (§7).
 
@@ -195,12 +195,11 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `com.blockether/parinferish` | `0.1.2` | MIT | 34 KB | Blockether (in-house) |
 | `com.blockether/rift` | `0.0.10-11` | MIT | 11 KB | Blockether (in-house) |
 | `com.blockether/ruff` | `0.3.5` | MIT | 10 KB | Blockether (in-house) |
-| `com.blockether/svar` | `0.7.144` | Apache-2.0 | 547 KB | Blockether (in-house) |
+| `com.blockether/svar` | `0.7.145` | Apache-2.0 | 548 KB | Blockether (in-house) |
 | `com.blockether/tree-sitter-language-pack` | `1.12.3-blockether.39` | MIT | 175 KB | Blockether (in-house) |
 | `com.cnuernber/charred` | `1.041` | MIT | 49 KB | 3rd-party |
 | `com.github.clj-easy/graal-build-time` | `1.0.6` | MIT | 27 KB | 3rd-party |
 | `com.github.liquidz/antq` | `RELEASE` | (floating) | — | 3rd-party |
-| `com.github.mwiede/jsch` | `2.28.5` | BSD | 696 KB | 3rd-party |
 | `com.google.zxing/core` | `3.5.4` | Apache-2.0 | 596 KB | 3rd-party |
 | `com.taoensso/nippy` | `3.8.0` | EPL-1.0 | 52 KB | 3rd-party |
 | `com.taoensso/telemere` | `1.2.1` | EPL-1.0 | 59 KB | 3rd-party |
@@ -216,7 +215,6 @@ _Core runtime — the `vis-agent` CLI, agent loop, HTTP gateway, sandbox._
 | `net.mikera/core.matrix` | `0.63.0` | EPL-1.0 | 130 KB | 3rd-party |
 | `net.mikera/vectorz-clj` | `0.48.0` | LGPL-3.0 | 23 KB | 3rd-party |
 | `org.apache.commons/commons-compress` | `1.28.0` | Apache-2.0 | 1.1 MB | 3rd-party |
-| `org.apache.sshd/sshd-core` | `2.15.0` | Apache-2.0 | 934 KB | 3rd-party |
 | `org.babashka/http-client` | `0.4.24` | MIT | 16 KB | 3rd-party |
 | `org.bouncycastle/bcpkix-jdk18on` | `1.85` | Bouncy Castle Licence | 1.3 MB | 3rd-party |
 | `org.bouncycastle/bcprov-jdk18on` | `1.85` | Bouncy Castle Licence | 9.8 MB | 3rd-party |
@@ -289,7 +287,7 @@ _Durable session store (SQLite + Flyway migrations)._
 | License | Count |
 |---|---|
 | EPL-1.0 | 21 |
-| Apache-2.0 | 14 |
+| Apache-2.0 | 13 |
 | MIT | 13 |
 | BSD-2-Clause | 3 |
 | EPL-2.0 | 3 |
@@ -297,8 +295,8 @@ _Durable session store (SQLite + Flyway migrations)._
 | UPL-1.0 + MIT + PSF | 2 |
 | Bouncy Castle Licence | 2 |
 | LGPL-3.0 | 2 |
-| BSD | 2 |
 | (floating) | 1 |
+| BSD | 1 |
 
 All licenses in the graph are **permissive / OSI-approved** (EPL-1.0/2.0, MIT,
 Apache-2.0, BSD, UPL-1.0, PSF, Public Domain) and compatible with shipping vis
