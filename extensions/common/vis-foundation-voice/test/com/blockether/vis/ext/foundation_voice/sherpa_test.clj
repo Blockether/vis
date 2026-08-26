@@ -83,14 +83,6 @@
 ;; state is real - what was missing is a refusal that says so instead of a stack trace.
 (defdescribe
   a-linker-failure-is-advice-test
-  (it "recognises the JVM refusing to link at any depth in the cause chain"
-      (expect (sherpa/native-error? (UnsatisfiedLinkError.
-                                      "no sherpa-onnx-jni in java.library.path")))
-      (expect (sherpa/native-error? (ex-info "transcribe failed"
-                                             {}
-                                             (ExceptionInInitializerError. (UnsatisfiedLinkError.
-                                                                             "no onnxruntime")))))
-      (expect (not (sherpa/native-error? (ex-info "the disk is full" {})))))
   (it "asks for a restart only when the process really cannot recover"
       (let [linker
             (sherpa/native-failure (NoClassDefFoundError. "com/k2fsa/sherpa/onnx/OfflineTts"))

@@ -40,6 +40,7 @@
   (:refer-clojure :exclude [symbol])
   (:gen-class)
   (:require [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.capability :as capability]
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
@@ -214,6 +215,11 @@
              [worker-runtime cancellation/worker-runtime]
              [worker-future cancellation/worker-future])
 
+;; What THIS machine can run, as opposed to what this distribution registered.
+(import-vars [capability-ensure! capability/ensure!]
+             [capability-verdict capability/verdict]
+             [capability-fail! capability/fail!]
+             [capability-terminal-error? capability/terminal-error?])
 ;; Feature toggles (channels + extensions read this; TUI settings flips it)
 (import-vars [register-toggle! toggles/register-toggle!]
              [register-toggles! toggles/register-toggles!]

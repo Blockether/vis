@@ -215,34 +215,20 @@
                   (System/setProperty native-path-property dir)
                   {:source :downloaded :platform token :dir dir}))))
 
-(defonce ^:private provisioned (atom nil))
-
 (defn ensure-native!
   "Make sherpa's JNI loadable, ONCE, and return how: `{:source :property
    |:embedded|:downloaded :platform <token> :dir <path?>}`. Every entry point
    that touches a `com.k2fsa.sherpa.onnx` class calls this first, because the
    class's static initializer is what runs sherpa's loader — after that first
    touch, a missing library is an `UnsatisfiedLinkError` no property can undo.
-   A failure is NOT cached: the next call retries the download."
-  []
-  (or @provisioned
-      (locking provisioned (or @provisioned (reset! provisioned (provision! (platform-token)))))))
 
-(defn native-error?
-  "True when `t` is the JVM refusing to LINK sherpa, at any depth: the library is
-   missing, or a class that already met a missing library is permanently
-   unusable. The walk STOPS at the end of the cause chain - a shallow failure must
-   not become a NullPointerException out of the very code that explains it."
-  [t]
-  (boolean (some (fn [^Throwable x]
-                   (or (instance? UnsatisfiedLinkError x)
-                       (instance? NoClassDefFoundError x)
-                       (instance? ExceptionInInitializerError x)))
-                 (take 8
-                       (take-while some?
-                                   (iterate (fn [^Throwable x]
-                                              (.getCause x))
-                                            t))))))
+   Whether an answer is worth keeping is the HOST's rule, not this pack's: a
+   download that failed is retried on the next call, while a library this JVM has
+   already refused to link is answered from memory instead of fetched again."
+  []
+  (let [{:keys [status detail cause]} (vis/capability-ensure! ::native
+                                                              #(provision! (platform-token)))]
+    (if (= :ready status) detail (throw cause))))
 
 (defn native-failure
   "Turn a linker failure into an ex-info a HUMAN can act on.
@@ -254,7 +240,7 @@
    Vis\", so in that state the message SAYS to restart instead of repeating a
    linker error nobody can act on."
   [^Throwable t]
-  (let [restart? (native-error? t)]
+  (let [restart? (vis/capability-terminal-error? t)]
     (ex-info (if restart?
                (str "The voice runtime could not be linked into this running process"
                     " - restart Vis and try again ("
@@ -275,7 +261,15 @@
   "Run `f` with the native runtime provisioned, reporting a linker failure -
    here or inside sherpa's own loader - as [[native-failure]] rather than as a
    stack trace. Every engine entry point goes through this, so no surface has to
-   know what a JNI is to tell a human what to do."
+   know what a JNI is to tell a human what to do.
+
+   A linker failure met HERE is also handed to the host, because this is where it
+   is normally met: sherpa loads its library from the static initializer of the
+   first class a call touches, long after provisioning answered. Recording it is
+   what stops every later call from fetching 13 MB to meet the same wall."
   [f]
   (try (ensure-native!) (catch Throwable t (throw (native-failure t))))
-  (try (f) (catch Throwable t (throw (if (native-error? t) (native-failure t) t)))))
+  (try (f)
+       (catch Throwable t
+         (vis/capability-fail! ::native t)
+         (throw (if (vis/capability-terminal-error? t) (native-failure t) t)))))
