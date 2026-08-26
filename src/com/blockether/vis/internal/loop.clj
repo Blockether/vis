@@ -10876,17 +10876,29 @@
              85)))
 
 (def ^:private env-heap-budget-mb
-  "Absolute JVM heap-used ceiling in MB. At or above it, the reaper force-evicts
-   every idle session env. Override with `VIS_ENV_HEAP_BUDGET_MB`; <= 0 disables.
-   Default 2048 (2 GB), low enough to react before allocation bursts reach the
-   multi-gigabyte resident-set spikes seen under concurrent GraalPy turns.
+  "Absolute heap-used ceiling in MB. At or above it, the reaper force-evicts every
+   idle session env. Override with `VIS_ENV_HEAP_BUDGET_MB`; <= 0 disables.
+
+   RUNTIME-DEPENDENT for the same reason as [[env-rss-budget-mb]]: 2048 is a
+   ceiling on the native image and ordinary working memory on a `-Xmx5g` JVM.
+   Sampled across 482 reaper sweeps from four gateway runs, a JVM gateway's heap
+   ran at a median of 1638 MB and a p90 of 2458 MB, so the 2 GB gate stood at
+   16.8% of sweeps — a gate that open is not reporting pressure, it is reporting
+   the workload. 4096 stands at 2.3%, just ahead of [[env-heap-watermark-pct]]'s
+   85% (1.2% of the same sweeps) so it still fires FIRST, which is the point of
+   having an absolute gate beside a proportional one.
+
+   Why an absolute gate at all when a percentage exists: the percentage is only
+   meaningful where `maxMemory` is, and it says nothing about how much a peer
+   process may need. This one is a flat ceiling a deployment can state outright.
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
-   BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
+   BUILD time, so a top-level `getenv` would ship the BUILDER's answer — and the
+   runtime split below would answer for the BUILDER's runtime, not this one."
   (delay (or (some-> (System/getenv "VIS_ENV_HEAP_BUDGET_MB")
                      str/trim
                      parse-long)
-             2048)))
+             (if (env/native-image?) 2048 4096))))
 
 (def ^:private env-rss-budget-mb
   "Resident-set ceiling in MB. JVM heap alone misses GraalPy/native allocations,
