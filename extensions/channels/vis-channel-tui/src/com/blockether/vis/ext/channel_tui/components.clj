@@ -714,29 +714,6 @@
              :copy-id
              {:extra {:text full-uuid} :register? (boolean (and register? full-uuid))})))
 
-(defn header-badge!
-  "Paint a clickable header chip `glyph` at (col,row) and register a click
-   region of `kind` (e.g. :toggle-tasks / :toggle-help). Brightens on hover.
-   Returns the consumed width. A terminal-safe, always-visible stand-in for
-   the F1/F2 accelerators."
-  [g col row glyph kind register?]
-  (let [hovered
-        (cr/hovered)
-
-        hovered?
-        (= kind (:kind hovered))
-
-        w
-        (p/display-width glyph)]
-
-    (p/clear-styles! g)
-    (p/set-colors! g (if hovered? t/header-hover-fg t/text-fg) t/terminal-bg)
-    (when hovered? (p/enable! g p/BOLD))
-    (p/put-str! g col row glyph)
-    (p/clear-styles! g)
-    (when register? (cr/register! {:bounds {:row row :col col :width w} :kind kind :enabled? true}))
-    w))
-
 ;; ── help overlay ────────────────────────────────────────────────────────────
 (defn- pad-right
   ^String [^String s ^long w]

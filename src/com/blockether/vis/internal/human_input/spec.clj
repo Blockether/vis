@@ -150,12 +150,6 @@
    "table" :table       ; rows upserted and removed by row id, in a DECLARED order
    "link" :link})       ; labeled pointers the human OPENS
 
-(def keyed-node-types
-  "Live node types holding a KEYED collection: every item is addressed by its own
-   id, so the same three mutations (upsert, remove, clear) are total for all of
-   them and each is bounded by REFUSAL rather than by eviction."
-  #{:stat :steps :table :link})
-
 (def link-targets
   "The three things a surface knows how to open. CLOSED."
   {"attachment" :attachment "path" :path "url" :url})
@@ -226,8 +220,6 @@
 (def step-defaults "A checklist, not a second log." {:max-steps 200})
 (def link-defaults "Pointers a human scans, not a bookmark file." {:max-links 32})
 (def view-defaults "200 devices are 200 ROWS, not 200 panes." {:max-nodes 32})
-(def progress-defaults "A nil value is INDETERMINATE, not zero." {:value nil})
-
 (def item-bounds
   "The keyed collection each live node type holds: which key carries it, and how
    many items it may hold before a patch is REFUSED. One table, so the

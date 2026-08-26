@@ -231,11 +231,6 @@
   []
   (mapcat resolve-source agent-sources))
 
-(defn skill-dirs
-  "Ordered `[tool ^File dir]` pairs for skills (existing dirs only)."
-  []
-  (mapcat resolve-source skill-sources))
-
 (defn command-dirs
   "Ordered `[tool ^File dir]` pairs for commands (existing dirs only)."
   []
@@ -527,10 +522,5 @@
 
 (defn skills [] (:skills (ensure!)))
 
-(defn agent-by-name [nm] (first (filter #(= nm (:name %)) (agents))))
-
-(defn skill-by-name [nm] (first (filter #(= nm (:name %)) (skills))))
-
 (defn commands [] (:commands (ensure!)))
 
-(defn command-by-name [nm] (first (filter #(= nm (:name %)) (commands))))

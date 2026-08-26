@@ -31,8 +31,6 @@
 
 (defn- idle-status! [] (publish! {:op :status/clear :id :voice/output}))
 
-(defn speaking? "Whether an answer is being played right now." [] (some? (:line @state*)))
-
 (defn stop!
   "Silence whatever is playing; true when there WAS something to silence.
 

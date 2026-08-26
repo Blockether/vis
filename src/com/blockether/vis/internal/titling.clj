@@ -56,12 +56,6 @@
   (swap! global-title-listeners conj listener-fn)
   listener-fn)
 
-(defn remove-global-title-listener!
-  "Deregister a previously added global title listener. Idempotent."
-  [listener-fn]
-  (swap! global-title-listeners disj listener-fn)
-  nil)
-
 (defn- broadcast-title-change!
   "Fire every registered listener for `session-id` with `title`, then
    every GLOBAL listener with `(session-id title)`. Listeners that throw

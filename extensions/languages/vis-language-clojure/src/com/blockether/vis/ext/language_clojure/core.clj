@@ -342,30 +342,6 @@
              "repl_stop(\"clojure\")"]}))))))
 
 
-(defn available-aliases
-  "Alias names declared in the workspace `deps.edn` — surfaced to the UI so the
-   user picks REAL aliases (`:dev`, `:test`, …) instead of guessing. Returns a
-   sorted vec of strings WITHOUT the leading colon; empty on any read/parse
-   failure or a non-deps project."
-  [env]
-  (try (let [root
-             (env-root env)
-
-             dir
-             (resolve-repl-dir root nil)
-
-             f
-             (io/file dir "deps.edn")]
-
-         (if (.isFile f)
-           (->> (:aliases (edn/read-string (slurp f)))
-                keys
-                (map name)
-                sort
-                vec)
-           []))
-       (catch Throwable _ [])))
-
 (defn- coerce-eval-arg
   "Accept the call shapes the model is most likely to type:
      clj_eval(\"(+ 1 1)\")

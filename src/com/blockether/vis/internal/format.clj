@@ -59,24 +59,11 @@
   [v & _ignored]
   (str/trimr (with-out-str (pprint/pprint v))))
 
-(defn safe-zprint-file-str
-  "Source-formatting seam. Vis no longer reformats code — source is shown
-   as written — so this returns the input verbatim. Retained so callers
-   (e.g. the Clojure language extension) keep a stable entry point."
-  [source & _ignored]
-  (str source))
-
 (defn format-clojure
   "Source is shown as written — no reformatting. Returns `code-str`
    trimmed of trailing whitespace (or unchanged when not a string)."
   [code-str _width]
   (if (string? code-str) (str/trimr code-str) code-str))
-
-(defn format-clojure-ansi
-  "Source is shown as written — no reformatting or syntax coloring.
-   Returns `code-str` trimmed of trailing whitespace."
-  [code-str _width]
-  (if (string? code-str) (str/trimr code-str) (str code-str)))
 
 (defn format-duration
   "Human-readable millisecond duration. e.g. `2.3s`, `1m 15s`. Always

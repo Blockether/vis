@@ -265,10 +265,3 @@
   [ctx]
   (if (:recorder @state) (stop-and-transcribe! ctx) (start-recording! ctx)))
 
-(defn tui-commands
-  [_ctx]
-  [{:id :voice/toggle-recording
-    :label "Voice: Toggle Recording (C-x v)"
-    :palette? false
-    :run-fn toggle-recording!}])
-

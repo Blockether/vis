@@ -777,12 +777,6 @@
            (catch Throwable _ nil)))
     python-context))
 
-(def ^:dynamic *lru-atom* nil)
-
-(def ^:dynamic *current-turn-position* nil)
-
-(defn fresh-lru-atom [] (atom {}))
-
 ;; =============================================================================
 ;; Block validation (Python: top-level statement count + banned constructs)
 ;; =============================================================================
@@ -801,15 +795,6 @@
         (.getMember (.getBindings ctx "python") "__vis_count_forms__")]
 
     (long (.asLong (.execute f (object-array [(str code)]))))))
-
-(defn validate-non-empty-block!
-  "Throws `:vis/empty-block` when `code` parses to zero top-level statements
-   (comment-only blocks). Iterations that produce no evidence are rejected at
-   the model boundary."
-  [python-context code]
-  (when (zero? (long (count-top-level-forms python-context code)))
-    (throw (ex-info "Block is empty (only comments). Iteration produces no evidence."
-                    {:type :vis/empty-block :form-count 0}))))
 
 (def BANNED_DEF_HEADS
   "Python constructs refused pre-eval — belt-and-suspenders against the obvious
@@ -999,26 +984,6 @@
   [env sym val]
   (set-python-binding! (:python-context env) sym val))
 
-
-(defn bind-and-bump-with-doc!
-  "Like `bind-and-bump!` but also records `doc` in the side `__vis_docs__` dict
-   so a future live-vars view can surface name + doc (Python has no var
-   metadata channel for doc text)."
-  [env sym doc val]
-  (let [python-context
-        (:python-context env)
-
-        g
-        (python-globals python-context)]
-
-    (set-python-binding! python-context sym val)
-    ;; Stash name -> doc text in a Python dict global that `doc(name)` reads.
-    (.putMember g "__vis_meta_sym__" (str sym))
-    (.putMember g "__vis_meta_txt__" (str (or doc "vis-managed engine binding")))
-    (.eval ^Context python-context
-           "python"
-           "globals().setdefault('__vis_docs__', {})[__vis_meta_sym__] = __vis_meta_txt__")
-    nil))
 
 
 ;; =============================================================================
@@ -2516,14 +2481,6 @@
 ;; Eval — the loop's hook (a thin entry point so the spike + Python loop share
 ;; a single eval surface).
 ;; =============================================================================
-
-(defn eval-block
-  "Evaluate a whole Python `code` block in `python-context`. Returns
-   `{:source code :result <clj>}` on success; throws the PolyglotException on
-   failure (caller maps it to the engine error shape). Globals (defs/imports/
-   state) persist across calls in the same context."
-  [python-context code]
-  {:source code :result (->clj (.eval ^Context python-context "python" (str code)))})
 
 (def ^:private gil-budget-ms
   "How long best-effort guest work may wait for the Python GIL before giving up.

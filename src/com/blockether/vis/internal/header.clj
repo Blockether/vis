@@ -173,8 +173,6 @@
 
 (def workspace-ellipsis "Glyph appended when a workspace label has to be truncated." "…")
 
-(def copy-icon "Glyph used by the right-slot `copy session id` affordance." "⧉")
-
 ;;; ── Defaults ───────────────────────────────────────────────────────────
 
 (def untitled-session-label

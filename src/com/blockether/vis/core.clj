@@ -769,23 +769,11 @@
 
 (def cancel-human-input! (requiring-resolve 'com.blockether.vis.internal.human-input/cancel!))
 
-(def cancel-all-human-input!
-  (requiring-resolve 'com.blockether.vis.internal.human-input/cancel-all!))
-
-(def pending-human-input
-  (requiring-resolve 'com.blockether.vis.internal.human-input/pending-requests))
-
 (def pending-human-input-request
   (requiring-resolve 'com.blockether.vis.internal.human-input/pending-request))
 
-(def human-input-secret-handle?
-  (requiring-resolve 'com.blockether.vis.internal.human-input.spec/secret-handle?))
-
 (def reveal-human-input-secret
   (requiring-resolve 'com.blockether.vis.internal.human-input/reveal-secret))
-
-(def forget-human-input-secret!
-  (requiring-resolve 'com.blockether.vis.internal.human-input/forget-secret!))
 
 ;; Live views — the picture the human WATCHES while an extension works
 ;;
@@ -800,8 +788,6 @@
 (def open-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/open-live!))
 
 (def patch-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/patch-live!))
-
-(def close-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/close-live!))
 
 (def focus-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/focus-live!))
 

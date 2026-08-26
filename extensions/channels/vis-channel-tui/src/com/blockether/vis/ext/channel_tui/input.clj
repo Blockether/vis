@@ -124,12 +124,6 @@
   [^KeyStroke key]
   (.isCtrlDown key))
 
-(defn alt-char?
-  "True for Alt/Option + character `c`, case-insensitive."
-  [^KeyStroke key c]
-  (and (alt-modifier? key)
-       (= (Character/toLowerCase (char (.getCharacter key))) (Character/toLowerCase (char c)))))
-
 (defn ctrl-char?
   "True for Ctrl + character `c`, case-insensitive. The reliable, cross-platform
    modifier for in-modal toggles (Alt/Option is eaten by stock macOS terminals).
@@ -148,11 +142,6 @@
    Alt+arrow, and Option+arrow is reserved for word motion."
   [^KeyStroke key]
   (or (alt-modifier? key) (shift-modifier? key)))
-
-(def ^:const reorder-modifier-label
-  "Hint label for the list-reorder keys. Plain `K`/`J` always reach the app
-   (Shift/Alt+↑/↓ also work where the terminal sends the xterm sequence)."
-  "K/J")
 
 (def ^:private arrow-final->keytype
   {\A KeyType/ArrowUp \B KeyType/ArrowDown \C KeyType/ArrowRight \D KeyType/ArrowLeft})
@@ -1088,12 +1077,6 @@
 
 (defn delete-word-backward [st] (buf-> st (.deleteWordBackward (->buf st))))
 
-(defn delete-line-backward [st] (buf-> st (.killToLineStart (->buf st))))
-
-(defn kill-line [st] (buf-> st (.killLine (->buf st))))
-
-(defn transpose-chars [st] (buf-> st (.transposeCharacters (->buf st))))
-
 (defn move-left [st] (buf-> st (.moveLeft (->buf st))))
 
 (defn move-right [st] (buf-> st (.moveRight (->buf st))))
@@ -1144,10 +1127,6 @@
         (when-not (or (#{keymap/palette-meta-key \> \< \v \b \f} lower)
                       (and (Character/isDigit c) (not= \0 c)))
           c)))))
-
-(defn move-up [st] (buf-> st (.moveUp (->buf st))))
-
-(defn move-down [st] (buf-> st (.moveDown (->buf st))))
 
 ;; ── Paste placeholders  ─────────────────────────────────────────────────
 ;;

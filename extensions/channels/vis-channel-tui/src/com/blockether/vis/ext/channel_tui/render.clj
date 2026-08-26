@@ -403,11 +403,6 @@
   [text max-width]
   (cached* [::wrap (System/identityHashCode text) (long max-width)] #(wrap-text* text max-width)))
 
-(defn wrap-messages
-  "Wrap a vec of display lines to fit within max-width. Returns flat vec of wrapped lines."
-  [messages max-width]
-  (into [] (mapcat #(wrap-text % max-width)) messages))
-
 (def ^:private ^:const phi 1.618)
 
 (def ^:private dialog-chrome-w 4)
@@ -575,39 +570,6 @@
     (.setForegroundColor g t/box-fg)
     (.setBackgroundColor g t/box-bg)
     (.fillRectangle g (TerminalPosition. 1 text-top) (TerminalSize. inner-w rows) \space)))
-
-(defn draw-messages-box!
-  "Draw bordered message area with top-anchored scrollable messages."
-  [^TextGraphics g messages box-top box-bottom cols scroll]
-  (let [inner-rows
-        (- (long box-bottom) (long box-top) 1)
-
-        text-top
-        (inc (long box-top))
-
-        text-w
-        (- (long cols) 4)
-
-        total
-        (count messages)
-
-        offset
-        (min (long scroll) (max 0 (- (long total) (long inner-rows))))
-
-        visible
-        (subvec messages offset (min (long total) (+ (long offset) (long inner-rows))))]
-
-    (draw-box-border! g box-top box-bottom cols "")
-    (fill-box-interior! g box-top box-bottom cols)
-    (doseq [[i message] (map-indexed vector visible)]
-      (.setForegroundColor g t/box-fg)
-      (.setBackgroundColor g t/box-bg)
-      ;; truncate-cols handles "shorter than width" (returns input verbatim)
-      ;; and column-aware truncation in one call. No min-clamp needed.
-      (p/put-str! g
-                  (inc (long t/pad-x))
-                  (+ (long text-top) (long i))
-                  (p/truncate-cols message text-w)))))
 
 ;;; ── Input box ──────────────────────────────────────────────────────────────
 (def input-pad-y
@@ -3275,11 +3237,6 @@
             (boolean turn-separator?) iteration-count duration-ms tokens cost status llm-selected
             llm-actual llm-fallback? llm-routing-trace (long max-w)]
            #(bubble-height* message max-w)))
-
-(defn total-messages-height
-  "Calculate total row height for a vec of structured messages."
-  [messages max-w]
-  (reduce + 0 (map #(bubble-height % max-w) messages)))
 
 ;;; ── Progress timeline formatting ───────────────────────────────────────────
 (defn- label-text
@@ -6823,10 +6780,6 @@
           (into [{:line "" :meta nil}] raw-entries))]
 
     (entries->payload entries)))
-
-(defn format-answer-markdown*
-  [answer bubble-w]
-  (:text (format-answer-markdown-data* answer bubble-w nil)))
 
 (defn format-answer-markdown-data
   ([answer bubble-w] (format-answer-markdown-data answer bubble-w nil))

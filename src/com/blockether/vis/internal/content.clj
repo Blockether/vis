@@ -16,8 +16,6 @@
 
 (def reasoning-visibilities #{"private" "visible"})
 
-(def block-types #{"prose" "speech" "code" "tool" "reasoning" "error" "attachment" "notice"})
-
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 
 (defn- json-ready?

@@ -51,10 +51,6 @@
 
 (def REVERSE SGR/REVERSE)
 
-(def CROSSED-OUT SGR/CROSSED_OUT)
-
-(def BLINK SGR/BLINK)
-
 (def BORDERED SGR/BORDERED)
 
 (defn enable!
@@ -131,13 +127,6 @@
     (proxy [java.util.LinkedHashMap] [1024 0.75 true]
       (removeEldestEntry [_] (> (.size ^java.util.LinkedHashMap this) (long line-cell-cap))))))
 
-(defn invalidate-line-cells!
-  "Drop every cached segmented line. Safe to call anytime (pure-function cache —
-   worst case is recompute). Wired to the same settings/theme busts as the other
-   caches so a color/width change can't paint a stale array."
-  []
-  (.clear line-cell-cache))
-
 (def ^:private ^java.util.EnumSet no-mods (java.util.EnumSet/noneOf SGR))
 
 (defn blit-line!
@@ -207,30 +196,6 @@
                         (.withForegroundColor fg)
                         (.withModifier SGR/UNDERLINE))))
    g))
-
-(defn dot-cell!
-  "Overlay a bottom-flush `▁` mark in `fg` colour onto the SINGLE cell at
-   (col,row), keeping its existing background, but ONLY when that cell is
-   currently a blank space OR an existing `▁` mark. `▁` (LOWER ONE EIGHTH
-   BLOCK) sits flush on the cell's bottom edge — the SAME row as an
-   `underline-cell!` border — so the
-   running tab's marching marks line up with the ready tab's underline instead
-   of floating one line high like a baseline `.` did (which read as flicker).
-   Only blank padding cells are touched, so the number, ` | ` separator,
-   label, and close ✕ (non-blank) are never clobbered — but a prior `▁` may be
-   RE-COLOURED, which lets a running tab paint a dim base line then overlay a
-   bright marching band on top. No-op off-screen or over
-   any non-blank glyph."
-  [^TextGraphics g col row fg]
-  (when-let [tc (.getCharacter g (int col) (int row))]
-    (when (#{" " "▁"} (.getCharacterString tc))
-      (.setCharacter g
-                     (int col)
-                     (int row)
-                     (-> tc
-                         (.withCharacter \▁)
-                         (.withForegroundColor fg)))))
-  g)
 
 ;;; ── Rectangles ─────────────────────────────────────────────────────────────
 
@@ -339,13 +304,6 @@
 (def ^:const MARK_VALUE "◆") ;; a value you can cycle (enum / choice)
 
 (def ^:const MARK_ACTION "▸") ;; an action you can run
-
-;; Footer chip icons — replace the literal words "resources"/"dir" in the
-;; status footer. Bare BMP glyphs (display-width 1, NOT VS-16 emoji) so
-;; `(count text)` matches the rendered cell count — same grid rule as above.
-(def ^:const GLYPH_RESOURCES "⚙") ;; managed resources (nREPLs, daemons…)
-
-(def ^:const GLYPH_DIR "⌂") ;; filesystem-root directories
 
 (def ^:const STATUS_WIDTH 2) ;; glyph (1) + trailing gap (1)
 
@@ -868,13 +826,6 @@
   ^String [items w]
   (TerminalTextUtils/spaceAround (mapv str items) (int w)))
 
-(defn v-center-offset
-  "Compute vertical offset to center `content-h` rows within `container-h` rows.
-   Backed by the lanterna fork's `TerminalTextUtils/verticalCenterOffset`
-   (>= 3.1.5-vis.25)."
-  ^long [content-h container-h]
-  (TerminalTextUtils/verticalCenterOffset (int content-h) (int container-h)))
-
 ;;; ── Word-wrap & justification ──────────────────────────────────────────────
 ;; Backed by the native, grapheme/EAW-aware `TerminalTextUtils` methods in the
 ;; lanterna fork, so wrap points and justified widths match what the screen
@@ -931,16 +882,6 @@
   "Draw text centered at row within [left, left+width)."
   [g left row width text]
   (put-str! g left row (center-text text width)))
-
-(defn draw-space-between!
-  "Draw items spread across row within [left, left+width) with space-between."
-  [g left row width items]
-  (put-str! g left row (space-between items width)))
-
-(defn draw-space-around!
-  "Draw items spread across row within [left, left+width) with space-around."
-  [g left row width items]
-  (put-str! g left row (space-around items width)))
 
 ;;; ── Tabs ───────────────────────────────────────────────────────────────────
 
@@ -1062,34 +1003,6 @@
           tab))
       layout)))
 
-(defn draw-tabs!
-  "Draw a tab strip and return its geometry.
-
-   Required opts: `:left`, `:row`, `:width`, `:active-id`, `:fg`, `:bg`,
-   `:active-fg`, `:active-bg`, `:inactive-fg`, `:inactive-bg`.
-   Optional: `:gap`, `:bordered?`.
-
-   This primitive knows layout and drawing only. Callers own domain actions and
-   click-region registration."
-  [g tabs
-   {:keys [left row width active-id gap fg bg active-fg active-bg inactive-fg inactive-bg
-           bordered?]}]
-  (let [layout (tab-layout tabs left width active-id {:gap gap})]
-    (set-colors! g (or fg inactive-fg active-fg) (or bg inactive-bg active-bg))
-    (fill-rect! g left row width 1)
-    (doseq [{:keys [left width active? text]} layout
-            :when (pos? (long width))]
-
-      (clear-styles! g)
-      (if active?
-        (do (set-colors! g active-fg active-bg) (enable! g BOLD))
-        (do (set-colors! g inactive-fg inactive-bg) (enable! g ITALIC)))
-      (when bordered? (enable! g BORDERED))
-      (fill-rect! g left row width 1)
-      (draw-centered! g left row width text))
-    (clear-styles! g)
-    layout))
-
 (defn cursor-pos
   "Create a TerminalPosition for cursor placement."
   [col row]
@@ -1162,8 +1075,6 @@
 (def MARKER_MD_HR "\uE00B") ;; markdown horizontal rule (answer)
 
 (def MARKER_MD_SUMMARY "\uE00C") ;; markdown <summary> disclosure label (answer)
-
-(def MARKER_OP_ROW "\uE00F") ;; BLOCK op row -> black-on-white badge (answer-fg/bg), \u25B6/\u25BC disclosure
 
 (def MARKER_HINT "\uE010") ;; affordance hint (e.g. "↑ to edit") -> accent fg on regular terminal bg, NOT the queue band
 

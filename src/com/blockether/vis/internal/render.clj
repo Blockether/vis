@@ -10,7 +10,6 @@
    projections; none of their intermediate trees are canonical message data."
   (:require [clojure.string :as str]
             [clojure+.walk :as cwalk]
-            [com.blockether.ruff :as ruff]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.strutil :as strutil])
   (:import [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
@@ -1648,37 +1647,6 @@
 ;;
 ;; Channels render the model's raw `:code` directly and unconditionally (the
 ;; canonical contract — TUI and web's `block-code` paint identical source).
-
-;; Display wrap width for ruff (chat bubbles are narrow; ruff's default is 88).
-(def ^:private prettify-line-length 84)
-
-;; BOUNDED LRU cache (access-order, capped) keyed by the raw source. Beautifying
-;; identical code on every re-render is wasteful; an UNBOUNDED memo would grow
-;; forever (a leak) across a long session — this LinkedHashMap evicts the eldest
-;; past the cap, so the cache is cached-but-leak-free. ruff's own cdylib + FFM
-;; buffers are already leak-free (clj-ruff frees every returned string).
-(def ^:private prettify-cache
-  (java.util.Collections/synchronizedMap (proxy [java.util.LinkedHashMap] [256 0.75 true]
-                                           (removeEldestEntry [_entry]
-                                             (> (.size ^java.util.LinkedHashMap this) 512)))))
-
-(defn prettify-python
-  "Beautify Python `src` via ruff (long calls/collections wrapped multiline,
-   black-style) for DISPLAY at a CHANNEL boundary. NOT applied to the canonical
-   `:code` IR (which stays VERBATIM — the executed/stored source, and the
-   model's exact bytes), so channels opt in when painting. Cached (bounded LRU)
-   and verbatim-safe: `format-or` returns `src` unchanged when ruff is
-   unavailable or the snippet isn't valid Python (partial streams, prose), so it
-   never changes meaning and never throws. ruff runs in-process via clj-ruff —
-   ONE process-wide cdylib, leak-free (confined arena + `ruff_free_string` per call)."
-  ^String [^String src]
-  (if (str/blank? (str src))
-    (str src)
-    (if-let [hit (.get ^java.util.Map prettify-cache src)]
-      hit
-      (let [out (ruff/format-or src {:line-length prettify-line-length})]
-        (.put ^java.util.Map prettify-cache src out)
-        out))))
 
 (defn parse-block-display
   "Return the model's authored source as ONE verbatim `:code` segment.

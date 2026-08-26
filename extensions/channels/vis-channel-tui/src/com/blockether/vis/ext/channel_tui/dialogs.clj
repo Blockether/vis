@@ -95,23 +95,6 @@
     (p/fill-rect! g 0 0 cols rows)
     (.refresh screen Screen$RefreshType/DELTA)))
 
-(defn open-nested!
-  "Run `f` with the screen cleared before AND after it, for a dialog opened
-   from inside another dialog.
-
-   Modals float over the CHAT on purpose, but a modal opened over another modal
-   paints a SMALLER box on top of the parent's, so the parent's border, ✕ and
-   hint bar keep framing it and the user sees two stacked popups. Erasing on the
-   way in gives the nested flow a clean surface; erasing on the way out lets the
-   caller repaint its own frame from scratch."
-  [^TerminalScreen screen f]
-  ;; `screen` is nil in unit tests that redefine every dialog away.
-  (some-> screen
-          clear-screen!)
-  (try (f)
-       (finally (some-> screen
-                        clear-screen!))))
-
 (defn frame-restorer
   "Snapshot the screen's back buffer NOW and return `(fn [] …)` / `(fn [from to])`
    that puts those rows back exactly as they look at this moment.
@@ -154,21 +137,6 @@
                                                                         ^TextCharacter
                                                                         (get-in snapshot
                                                                                 [row col])))))))))
-
-(defn with-frame-restored!
-  "Run `f` — typically a nested dialog or a full-screen prompt — and put THIS
-   frame back exactly as it was.
-
-   `open-nested!` erases the screen on the way OUT, which is right when the
-   caller repaints itself afterwards and catastrophic in the middle of a transient
-   band flow: the next band lands on blank paper and everything above it is
-   gone. Snapshotting the back buffer and writing it back costs one delta
-   refresh and keeps the host frame on screen across the detour."
-  [^TerminalScreen screen f]
-  ;; `screen` is nil in unit tests that redefine every dialog away.
-  (if-let [restore! (frame-restorer screen)]
-    (try (f) (finally (restore!) (.refresh screen Screen$RefreshType/DELTA)))
-    (f)))
 
 (defn ellipsize
   "Right-truncate `s` to `max-w` columns with a trailing `…`.
@@ -6159,97 +6127,3 @@
                 KeyType/Character (recur)
                 (recur)))))))))
 
-;;; ── Copy dialog ─────────────────────────────────────────────────────────────
-(defn- role-label [role] (name (or role :assistant)))
-
-(defn- message-preview
-  [{:keys [role text]}]
-  (str (role-label role)
-       ": "
-       (-> (or text "")
-           (str/replace #"\r?\n+" " ")
-           str/trim)))
-
-(defn- format-selected-messages
-  [messages selected]
-  (->> (range (count messages))
-       (filter #(contains? selected %))
-       (map (fn [idx]
-              (let [{:keys [role text]} (nth messages idx)]
-                (str (role-label role) ": " (or text "")))))
-       (str/join "\n\n")))
-
-(defn copy-dialog!
-  "Show copy dialog for chat messages.
-   Space toggles, A toggles all, Enter copies selected, Esc cancels."
-  [^TerminalScreen screen messages]
-  (let [items
-        (vec messages)
-
-        selected
-        (atom 0)
-
-        scroll
-        (atom 0)
-
-        checked
-        (atom #{})
-
-        ch
-        (count items)]
-
-    (loop [status [["Space" "toggle"] ["A" "all"] ["Enter" "copy"] ["Esc" "cancel"]]]
-      (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-            cols (.getColumns size)
-            rows (.getRows size)
-            g (.newTextGraphics screen)
-            bounds (draw-dialog-chrome! g cols rows "Copy Messages" ch)
-            {:keys [left inner-w]} bounds
-            total (count items)
-            {:keys [content-top content-h hint-row]} (dialog-layout bounds total)
-            visible (min total (long content-h))
-            _ (swap! selected #(p/clamp % 0 (max 0 (dec total))))
-            _ (swap! scroll #(visible-window-start @selected % content-h total))]
-
-        (dotimes [i visible]
-          (let [idx (+ (long @scroll) i)
-                row (+ (long content-top) i)]
-
-            (when (< idx total)
-              (draw-checkbox-item! g
-                                   left
-                                   row
-                                   inner-w
-                                   (= idx @selected)
-                                   (contains? @checked idx)
-                                   (message-preview (nth items idx))))))
-        (draw-hint-bar! g left hint-row inner-w status)
-        (.setCursorPosition screen (p/cursor-pos 0 0))
-        (.refresh screen Screen$RefreshType/DELTA)
-        (let [key (read-modal-key! screen)]
-          (when key
-            (let [ktype (key-type key)]
-              (condp = ktype
-                KeyType/Escape nil
-                KeyType/ArrowUp (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total))))
-                                    (recur status))
-                KeyType/ArrowDown
-                (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur status))
-                KeyType/Character
-                (let [c (lower-key-character key)]
-                  (cond (= c \space) (do (when (pos? total)
-                                           (swap! checked (fn [s]
-                                                            (if (contains? s @selected)
-                                                              (disj s @selected)
-                                                              (conj s @selected)))))
-                                         (recur status))
-                        (= c \a)
-                        (do (swap! checked (fn [s]
-                                             (if (= (count s) total) #{} (set (range total)))))
-                            (recur status))
-                        :else (recur status)))
-                KeyType/Enter (let [payload (format-selected-messages items @checked)]
-                                (if (seq payload)
-                                  (do (input/clipboard-copy! payload) true)
-                                  (recur "No messages selected")))
-                (recur status)))))))))

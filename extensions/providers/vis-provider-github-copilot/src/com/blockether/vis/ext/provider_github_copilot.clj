@@ -344,12 +344,6 @@
 
 #_{:clj-kondo/ignore [:unused-private-var]}
 
-(defn- proxy-endpoint
-  [response]
-  (or (response-field response :proxy-ep)
-      (response-field response :proxy_ep)
-      (response-field response :proxyEndpoint)))
-
 #_{:clj-kondo/ignore [:unused-private-var]}
 
 (defn- copilot-base-url-from-token

@@ -146,26 +146,6 @@
       :duration-ms (entry-duration-ms entry)
       :error (entry-error entry))))
 
-(def canonical-keys
-  "The keys that define the SHARED iteration-entry. The parity invariant
-   compares entries projected to exactly these keys, so transient per-path
-   bookkeeping (live `:activity` / `:content-stream` / `:elided-form-idxs`;
-   resume `:recaps`) never spuriously fails parity. `:forms` is included as
-   proof-granular state; the parity fixture feeds identical forms to both
-   paths, so the projection must match field-for-field."
-  [:position :scope :thinking :code :forms :status :duration-ms :error])
-
-(defn canonical-entry
-  "Project any iteration entry (live or resume, pre- or post-`canonicalize`)
-   down to the canonical shared shape. Running `canonicalize` first so the
-   block-level fields are always present, then `select-keys` to drop
-   path-specific bookkeeping. This is the value the parity invariant test
-   asserts equal across the live and resume paths."
-  [entry]
-  (-> entry
-      canonicalize
-      (select-keys canonical-keys)))
-
 (def parity-keys
   "The DISPLAY-relevant subset of the canonical entry the parity invariant
    compares. `:forms` is intentionally EXCLUDED: form envelopes are

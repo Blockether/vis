@@ -95,16 +95,6 @@
    it fetches an OPTION's value and is the caller's, not the popup's."
   #{:title :groups :read-option})
 
-(def region-keys
-  "Every coordinate the component reads off a region. Documentation, not a
-   closed set: a region is assembled by a surface and may carry its own extras."
-  #{:left :inner-w :text-w :hint-row :min-row :cols :is-sideless :restore!})
-
-(def host-keys
-  "Everything the component asks of a terminal. Same story as [[region-keys]]:
-   an adapter may carry more."
-  #{:g :hint-bar! :refresh! :read-key!})
-
 (def state-keys
   "The whole run state: which flags are armed, and what the options hold."
   #{:switches :options})

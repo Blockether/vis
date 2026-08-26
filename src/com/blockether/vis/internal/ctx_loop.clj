@@ -107,12 +107,6 @@
 
 ;; Per-iter helpers used by the loop
 
-(defn drain-warnings!
-  "Compatibility shim for the former warning drain. Always returns [] so the
-   renderer's between-iters call site stays valid."
-  [_env]
-  [])
-
 (defn finalize-turn!
   "Side-effecting turn finalizer; compaction is the standalone `fold_session` verb.
 

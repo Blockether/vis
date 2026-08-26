@@ -127,8 +127,6 @@
 
     (update bounded :is-truncated #(or % is-truncated))))
 
-(defn safe-summary [value] (:text (bounded-summary value max-summary-bytes)))
-
 (defn context
   "Create one concurrency-safe event context for an evaluation/form anchor."
   [{:keys [evaluation-id form-index] :or {evaluation-id (str (random-uuid)) form-index 0}}]

@@ -580,12 +580,6 @@
   ([conn tool-name arguments timeout-ms]
    ((:request-fn conn) "tools/call" {"name" tool-name "arguments" (or arguments {})} timeout-ms)))
 
-(defn invalidate-tools!
-  "Clear the cached tools list so the next `list-tools` re-fetches — called by
-   the HTTP listen loop on `notifications/tools/list_changed`."
-  [conn]
-  (reset! (:tools conn) nil))
-
 (defn alive? [conn] (boolean (try ((:alive-fn conn)) (catch Throwable _ false))))
 
 (defn close [conn] (try ((:close-fn conn)) (catch Throwable _ nil)) (reset! (:tools conn) nil) nil)

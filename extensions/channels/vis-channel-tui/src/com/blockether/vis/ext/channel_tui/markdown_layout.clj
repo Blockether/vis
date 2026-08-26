@@ -1379,18 +1379,6 @@
 
      (if (>= start have) [] (vec (subvec lines start (min have (+ start num))))))))
 
-(defn lines->plain
-  "Concatenate the text of every run in `lines`. Useful for tests +
-   clipboard fallback (preferred clipboard path: `ir/render :markdown`)."
-  ^String [lines]
-  (str/join "\n"
-            (map (fn [l]
-                   (apply str
-                     (map (fn [r]
-                            (or (:text r) ""))
-                          (:runs l))))
-                 lines)))
-
 ;; Sentinel-string adapter — bridge to the existing bubble painter
 ;;
 ;; The pre-IR bubble painter consumes vectors of strings, where each

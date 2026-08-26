@@ -1606,29 +1606,6 @@
         (fire-hook! :on-apply ws {:changed changes})
         {:status :ok :changed changes :landed (count changes) :workspace ws}))))
 
-(defn abandon-lineage!
-  "Discard `workspace-id` and each draft ancestor up to (but never including)
-   trunk. Used when an operator applies or abandons the session draft. A plain
-   draft's parent is its trunk, so this normally abandons the single draft."
-  [db-info {:keys [workspace-id reason]}]
-  (loop [ws
-         (get db-info workspace-id)
-
-         discarded
-         []]
-
-    (if-not (draft? ws)
-      {:status :discarded :workspace-ids discarded}
-      (let [parent-id
-            (:parent-workspace-id ws)
-
-            done
-            (abandon! db-info {:workspace-id (:id ws) :reason reason})]
-
-        (recur (some->> parent-id
-                        (get db-info))
-               (conj discarded (:id done)))))))
-
 (defn abandon!
   "Transition a workspace to :discarded and release the backend-owned clones it
    holds: its primary clone plus every private per-root draft clone."

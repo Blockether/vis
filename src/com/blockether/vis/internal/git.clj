@@ -324,14 +324,6 @@
                                            (str/trim (or (:out candidate-result) ""))
                                            opts)))))))))
 
-(defn run-command
-  "Run literal Git argv, routing `commit` through `commit!` after normalizing
-   Git-global options. Other commands remain a direct `run-git` proxy."
-  [^File dir args opts]
-  (if (= "commit" (:command (parse-invocation args)))
-    (commit! dir args opts)
-    (run-git dir args opts)))
-
 ;; repository discovery
 
 (defn repo-work-tree
@@ -552,38 +544,6 @@
 
 ;; porcelain-like status entries + snapshot
 
-(defn- entry-code
-  "Compact status code for one parsed entry (`M`/`A`/`D`/`??`/`UU`)."
-  [{:keys [type x y]}]
-  (case type
-    :untracked
-    "??"
-
-    :unmerged
-    "UU"
-
-    :changed
-    (cond (or (= x \D) (= y \D)) "D"
-          (= x \A) "A"
-          :else "M")
-
-    nil))
-
-(defn status-snapshot
-  "Read branch, head and porcelain-like entries for `start` via git."
-  [^File start]
-  (let [dir (if (and start (.isFile ^File start)) (.getParentFile ^File start) start)]
-    (when-let [p (porcelain-tokens (or dir (cwd-file)) nil)]
-      {:branch (branch-label p)
-       :head (:head p)
-       :clean? (empty? (:entries p))
-       :entries (->> (:entries p)
-                     (keep (fn [e]
-                             (when-let [c (entry-code e)]
-                               {:status c :file (:path e)})))
-                     distinct
-                     vec)})))
-
 (defn file-dirty?
   "True when `f` is a TRACKED file carrying UNCOMMITTED changes — modified in
    the worktree, staged, deleted/missing, or conflicting. An UNTRACKED
@@ -691,50 +651,3 @@
 
 ;; file-picker helper: per-path status + ignore snapshot
 
-(defn git-status-snapshot
-  "One-shot status + ignore snapshot for the repo containing `top` (a
-   work-tree File). Returns a map the file picker indexes into:
-
-     {:repo-root <File>
-      :path-status {<repo-rel-path> <kw ∈ #{:conflict :deleted :modified
-                                            :added :untracked}>}
-      :ignored-exact #{<repo-rel-path> …}
-      :ignored-prefixes [\"dir/\" …]}"
-  [^File top]
-  (let [p
-        (porcelain-tokens top {:ignored? true :untracked-all? true})
-
-        entries
-        (:entries p)
-
-        status-of
-        (fn [{:keys [type x y]}]
-          (case type
-            :unmerged
-            :conflict
-
-            :untracked
-            :untracked
-
-            :changed
-            (cond (or (= x \D) (= y \D)) :deleted
-                  (= x \A) :added
-                  :else :modified)
-
-            nil))
-
-        path-status
-        (reduce (fn [m e]
-                  (if-let [s (status-of e)]
-                    (assoc m (:path e) s)
-                    m))
-                {}
-                (remove #(= :ignored (:type %)) entries))
-
-        ignored
-        (filter #(= :ignored (:type %)) entries)]
-
-    {:repo-root top
-     :path-status path-status
-     :ignored-exact (into #{} (comp (remove :dir?) (map :path)) ignored)
-     :ignored-prefixes (into [] (comp (filter :dir?) (map :path)) ignored)}))

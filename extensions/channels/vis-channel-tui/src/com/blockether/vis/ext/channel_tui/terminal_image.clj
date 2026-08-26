@@ -124,11 +124,6 @@
                                   (when max-rows (Integer/valueOf (int max-rows))))]
     {:cols (aget ^ints r 0) :rows (aget ^ints r 1)}))
 
-(defn cell-pixels
-  "The terminal's current CELL size in pixels, `{:w :h}`."
-  []
-  {:w (TerminalImage/cellWidth) :h (TerminalImage/cellHeight)})
-
 (defn box-pixels
   "Long-edge PIXEL ceiling of a `cols`×`rows` cell box — what to ask a decoder
    for when the result will be drawn into that box.

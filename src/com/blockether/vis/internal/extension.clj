@@ -983,8 +983,6 @@
           :opt-un [::alias ::description ::kind ::version ::author ::owner ::license
                    ::registry-id]))
 
-(defn ext-engine [ext] (or (:ext/engine ext) {}))
-
 (defn ext-symbols [ext] (vec (or (get-in ext [:ext/engine :ext.engine/symbols]) [])))
 
 (defn ext-sandbox-shims [ext] (vec (or (:ext/sandbox-shims ext) [])))
@@ -998,10 +996,6 @@
     (boolean (try (af env) (catch Throwable _ false)))
     true))
 
-(defn ext-classes [ext] (or (get-in ext [:ext/engine :ext.engine/classes]) {}))
-
-(defn ext-imports [ext] (or (get-in ext [:ext/engine :ext.engine/imports]) {}))
-
 (defn ext-alias-symbol [ext] (get-in ext [:ext/engine :ext.engine/alias]))
 
 (defn ext-builtin?
@@ -1011,20 +1005,7 @@
   [ext]
   (boolean (get-in ext [:ext/engine :ext.engine/builtin?])))
 
-(defn ext-engine-ns
-  [ext]
-  (or (get-in ext [:ext/engine :ext.engine/ns])
-      (when-let [alias (ext-alias-symbol ext)]
-        (clojure.core/symbol (str "vis.ext." (name alias))))))
-
-(defn ext-alias
-  [ext]
-  (when-let [alias (ext-alias-symbol ext)]
-    {:ns (ext-engine-ns ext) :alias alias}))
-
 (defn ext-source-nses [ext] (vec (or (:ext/source-nses ext) [])))
-
-(defn ext-display-name [ext] (:ext/name ext))
 
 (defn- ns-alias-required-when-symbols?
   "Symbols need a home: an `:ext.engine/alias` (third-party → aliased ns) OR
@@ -1795,8 +1776,6 @@
 (def ^:dynamic *current-environment*
   "Live session environment for the extension callback currently executing."
   nil)
-
-(defn current-extension [] *current-extension*)
 
 (defn current-extension-id
   []
@@ -3184,13 +3163,6 @@
   ;; reload-surviving side effect, so a plain `def` would wipe it on every
   ;; `:reload`. (`defonce` takes no docstring — hence the `;;` comment.)
   (atom {}))
-
-(defn op-batch-hint-threshold
-  "The per-tool high-fan-out batch-hint threshold for `op-keyword`, or nil
-   when the tool declared no override (callers fall back to the default).
-   Never throws on unknown ops — the hint is advisory, not load-bearing."
-  [op-keyword]
-  (get @op-keyword->batch-hint op-keyword))
 
 (defn op-presentation
   "Engine-owned presentation metadata for a tool's `:op` keyword:

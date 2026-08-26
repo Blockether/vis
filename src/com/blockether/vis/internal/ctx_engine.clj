@@ -17,41 +17,6 @@
 ;; Scope parsing — deterministic, regex-driven
 ;; Iteration scope is `tN/iM`. The legacy per-form `/fK` tail is OPTIONAL (and no
 ;; longer emitted — one record = one tool call, keyed by `:svar/tool-call-id`).
-(def ^:private scope-form-re #"^t([1-9][0-9]*)/i([1-9][0-9]*)(?:/f([1-9][0-9]*))?$")
-
-(defn parse-scope-form
-  "Parse a `tN/iM` (or legacy `tN/iM/fK`) scope into `{:turn :iter :form}` or nil
-   if malformed. `:form` is nil for an iteration-level scope. Pure value-or-nil."
-  [s]
-  (when (string? s)
-    (when-let [[_ t i f] (re-matches scope-form-re s)]
-      {:turn (parse-long t) :iter (parse-long i) :form (when f (parse-long f))})))
-
-(defn malformed-scope?
-  "True if `s` is a string but does not parse as `::cs/scope-form`."
-  [s]
-  (and (string? s) (nil? (parse-scope-form s))))
-
-(defn scope-compare
-  "Total order on form-scope strings by (turn, iter, form). Returns int.
-   Compares parsed segments; malformed scopes sort before all valid ones to
-   make their presence obvious in render."
-  [a b]
-  (let [pa
-        (parse-scope-form a)
-
-        pb
-        (parse-scope-form b)]
-
-    (cond (and (nil? pa) (nil? pb)) (compare (str a) (str b))
-          (nil? pa) -1
-          (nil? pb) 1
-          :else (let [c1 (compare (:turn pa) (:turn pb))]
-                  (if (zero? c1)
-                    (let [c2 (compare (:iter pa) (:iter pb))]
-                      (if (zero? c2) (compare (:form pa) (:form pb)) c2))
-                    c1)))))
-
 (defn- model-error
   "Collapse a host failure envelope to what the MODEL can act on — ONE
    message, its type/reason, one actionable hint. The raw envelope
