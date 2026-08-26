@@ -1378,6 +1378,10 @@
 
 (def ^:private queue-border-marker p/MARKER_QUEUE_BORDER)
 
+(def ^:private execution-summary-marker p/MARKER_EXECUTION_SUMMARY)
+
+(def ^:private activity-marker p/MARKER_ACTIVITY)
+
 (def ^:private md-h1-marker p/MARKER_MD_H1)
 
 (def ^:private md-h2-marker p/MARKER_MD_H2)
@@ -2401,6 +2405,76 @@
                     (do (p/set-colors! g t/header-active-tab-accent bg-color)
                         (p/fill-rect! g fbx y iw 1)
                         (p/put-str! g x y (str "└" (repeat-str "─" (max 0 (dec (long iw)))))))
+                    ;; Execution summary stays on transcript paper; only its semantic state colors it.
+                    (str/starts-with? line execution-summary-marker)
+                    (let [raw (subs line 1)
+                          tone-fg (case (:status-tone meta)
+                                    :running
+                                    t/warning-fg
+
+                                    :error
+                                    t/status-bad
+
+                                    :ok
+                                    t/status-ok
+
+                                    t/text-fg)
+                          abs-row (+ (long viewport-top) (long y))]
+
+                      (p/set-colors! g tone-fg bg-color)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g [p/BOLD] (p/put-str! g x y raw))
+                      (when (= :toggle-details (:kind meta))
+                        (cr/register!
+                          {:bounds {:row abs-row :col x :width (long (or (:click-width meta) iw))}
+                           :kind :toggle-details
+                           :session-id (:session-id meta)
+                           :node-id (:node-id meta)
+                           :collapsed? (:collapsed? meta)})))
+                    ;; Activity is a compact timeline grid on its own quiet surface.
+                    (str/starts-with? line activity-marker)
+                    (let [raw (subs line 1)
+                          tone-fg (case (:status-tone meta)
+                                    :running
+                                    t/warning-fg
+
+                                    :error
+                                    t/status-bad
+
+                                    :ok
+                                    t/status-ok
+
+                                    t/code-duration-fg)]
+
+                      (p/set-colors! g t/code-result-fg t/box-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/paint-styled-line! g
+                                            x
+                                            y
+                                            raw
+                                            t/code-result-fg
+                                            t/box-bg
+                                            t/code-block-fg
+                                            t/code-block-bg)
+                      (case (:kind meta)
+                        :activity-header
+                        (do (p/set-colors! g t/text-fg t/box-bg)
+                            (p/styled g [p/BOLD] (p/put-str! g (+ (long x) 4) y "ACTIVITY")))
+
+                        :activity-row
+                        (do (p/set-colors! g tone-fg t/box-bg)
+                            (p/styled g
+                                      [p/BOLD]
+                                      (p/put-str! g (+ (long x) 4) y (str (:status-glyph meta))))
+                            (p/set-colors! g t/result-highlight-fg t/box-bg)
+                            (p/styled g
+                                      [p/BOLD]
+                                      (p/put-str! g
+                                                  (+ (long x) (long (:operation-col meta)))
+                                                  y
+                                                  (str (:operation-label meta)))))
+
+                        nil))
                     (str/starts-with? line thinking-marker)
                     (let [raw (subs line 1)]
                       (p/set-colors! g t/dialog-hint t/iteration-header-bg)
@@ -4916,59 +4990,175 @@
                      body-rows
                      (when-not (seq body-rows) [{:line (str result-marker "") :meta nil}])))))))
 
+(defn- activity-row-summary
+  "Keep invocation detail only when it adds information beyond the operation name."
+  [{:keys [operation summary]}]
+  (let [operation
+        (str/trim (str operation))
+
+        summary
+        (str/trim (str summary))]
+
+    (when (and (not (str/blank? summary))
+               (not= (str/lower-case operation) (str/lower-case summary)))
+      summary)))
+
+(defn- activity-row-state
+  [{:keys [state]}]
+  (keyword (or (some-> state
+                       name)
+               "idle")))
+
+(defn- activity-row-tone
+  [row]
+  (case (activity-row-state row)
+    :running
+    :running
+
+    :failed
+    :error
+
+    :succeeded
+    :ok
+
+    :cancelled
+    :idle
+
+    :idle))
+
+(defn- activity-row-glyph
+  [row]
+  (case (activity-row-state row)
+    :running
+    "●"
+
+    :failed
+    "×"
+
+    :succeeded
+    "✓"
+
+    :cancelled
+    "○"
+
+    "○"))
+
+(defn- activity-row-tail
+  [{:keys [duration-ms] :as row}]
+  (if (= :running (activity-row-state row))
+    "live"
+    (when (pos? (long (or duration-ms 0))) (vis/format-duration duration-ms))))
+
 (defn- activity-detail-entries
-  "Operation rows for one expanded Activity receipt, read from the sole semantic projection."
+  "Compact timeline rows for one expanded Activity receipt. The semantic summary is
+   invocation evidence, not invented prose; default summaries equal to the operation vanish."
   [{:keys [view-id activity-rows activity-focused activity-evidence]} max-w session-id]
-  (let [evidence
+  (let [rows
+        (vec activity-rows)
+
+        running-row
+        (first (filter #(= :running (activity-row-state %)) rows))
+
+        focused-id
+        (or activity-focused (:id running-row) (:id (first rows)))
+
+        focused-row
+        (some #(when (= focused-id (:id %)) %) rows)
+
+        evidence
         (set activity-evidence)
+
+        operation-w
+        (min 18
+             (max
+               5
+               (reduce max 0 (map #(p/display-width (str/upper-case (str (:operation %)))) rows))))
+
+        failures
+        (count (filter #(= :failed (activity-row-state %)) rows))
+
+        count-copy
+        (str (count rows) " " (if (= 1 (count rows)) "operation" "operations"))
+
+        header-detail
+        (if running-row
+          (str "focused"
+               (when-let [detail (activity-row-summary focused-row)]
+                 (str " · " detail)))
+          (str count-copy (when (pos? failures) (str " · " failures " failed"))))
 
         meta-base
         {:view-id (str view-id) :session-id (str session-id)}
 
-        row
-        (fn [text meta]
-          {:line (p/ellipsize (str "   ▎ " text) (max 1 (long max-w)))
-           :meta (merge meta-base meta)})]
+        header
+        {:line (str activity-marker
+                    (ellipsize-cols (str "    " (band-label "ACTIVITY") "   " header-detail)
+                                    (max 1 (long max-w))))
+         :meta (merge meta-base {:kind :activity-header})}
 
-    (vec (mapcat (fn [{:keys [id operation summary result-summary error-summary duration-ms]}]
-                   (let [label
-                         (str operation (when-not (str/blank? (str summary)) (str " · " summary)))
+        blank
+        {:line (str activity-marker "") :meta nil}
 
-                         detail
-                         (or error-summary
-                             result-summary
-                             (when duration-ms (vis/format-duration duration-ms)))
+        row-entry
+        (fn [{:keys [id operation error-summary result-summary] :as row}]
+          (let [operation-label
+                (ellipsize-cols (str/upper-case (str operation)) operation-w)
 
-                         head
-                         (row (str (if (= activity-focused id) "› " "  ") label)
-                              {:kind :activity-focus :item-id id})]
+                operation-cell
+                (p/pad-right operation-label operation-w)
 
-                     (if (and (contains? evidence id) (not (str/blank? (str detail))))
-                       [head (row (str "  ↳ " detail) {:kind :activity-evidence :item-id id})]
-                       [head])))
-                 activity-rows))))
+                summary
+                (activity-row-summary row)
+
+                prefix
+                (str "    "
+                     (activity-row-glyph row)
+                     "  "
+                     operation-cell
+                     (when summary (str "  " summary)))
+
+                line
+                (first (with-right-suffix [prefix] (activity-row-tail row) (max 1 (long max-w))))
+
+                detail
+                (or (not-empty (str/trim (str error-summary)))
+                    (not-empty (str/trim (str result-summary))))
+
+                show-detail?
+                (and detail
+                     (or (contains? evidence id)
+                         (and (= id focused-id) (= :running (activity-row-state row)))))
+
+                head
+                {:line (str activity-marker line)
+                 :meta (merge meta-base
+                              {:kind :activity-row
+                               :item-id id
+                               :status-tone (activity-row-tone row)
+                               :status-glyph (activity-row-glyph row)
+                               :operation-col 7
+                               :operation-label operation-label})}
+
+                detail-row
+                {:line (str activity-marker
+                            (ellipsize-cols (str (repeat-str \space (+ 7 operation-w 2)) detail)
+                                            (max 1 (long max-w))))
+                 :meta (merge meta-base {:kind :activity-evidence :item-id id})}]
+
+            (cond-> [head]
+              show-detail?
+              (conj detail-row))))]
+
+    (vec (concat [header blank] (mapcat row-entry rows) [blank]))))
 
 (defn- activity-status-display
-  "Direction A’s uppercase state word is bold (and red on failure); stable duration joins
-   only after close. The rest stays quiet transcript ink, never a framed Activity card."
-  [{:keys [reason elapsed-ms status-text status-tone]}]
-  (let [[state detail]
-        (str/split (str status-text) #" · " 2)
-
-        state
-        (band-label state)
-
-        state
-        (if (= :error status-tone) (str p/INLINE_ERR_ON state p/INLINE_ERR_OFF) state)
-
-        sentence
-        (str state (when-not (str/blank? detail) (str " · " detail)))]
-
-    (str/join " · "
-              (remove str/blank?
-                [sentence
-                 (when (and reason (pos? (long (or elapsed-ms 0))))
-                   (vis/format-duration elapsed-ms))]))))
+  "The stable semantic execution sentence. Paint owns emphasis and state color."
+  [{:keys [reason elapsed-ms status-text]}]
+  (str/join " · "
+            (remove str/blank?
+              [(str status-text)
+               (when (and reason (pos? (long (or elapsed-ms 0))))
+                 (vis/format-duration elapsed-ms))])))
 
 (defn- run-row-entries
   "Transcript-native run disclosures. Activity is present from its first host call;
@@ -5268,15 +5458,11 @@
 
         form-lines
         (fn [form block-number]
-          (let [{:keys [code display-code display-language comment error success? started-at-ms
-                        duration-ms runs]}
+          (let [{:keys [code display-code display-language comment error success? duration-ms runs]}
                 form
 
                 is-error?
                 (and (some? success?) (not success?))
-
-                running?
-                (and (some? started-at-ms) (nil? success?))
 
                 activity-run
                 (first (filter :is-activity runs))
@@ -5291,7 +5477,8 @@
 
                 execution-expanded?
                 (and execution-node-id
-                     (detail-expanded? detail-expansions session-id execution-node-id false))
+                     (or (:is-reopened activity-run)
+                         (detail-expanded? detail-expansions session-id execution-node-id false)))
 
                 ;; BLOCK N header removed per user directive (also gated
                 ;; on `show-header?` which is now always false). Keep
@@ -5409,9 +5596,17 @@
                 c-lines
                 (if-not python-code-collapsible?
                   (if (and activity-run execution-expanded?)
-                    (vec (concat [(line-entry (str c-marker " " (band-label "PYTHON")))
-                                  (line-entry (str c-pad ""))]
-                                 c-lines-full))
+                    (let [line-copy
+                          (str python-program-row-count
+                               (if (= 1 python-program-row-count) " line" " lines")
+                               (when (>= (long fill-w) 64) " shown"))
+
+                          header
+                          (first
+                            (with-right-suffix [(str " " (band-label "PYTHON"))] line-copy fill-w))]
+
+                      (vec (concat [(line-entry (str c-marker header)) (line-entry (str c-pad ""))]
+                                   c-lines-full)))
                     c-lines-full)
                   (let [expanded?
                         ;; Python rests collapsed on success AND failure. A failed call
@@ -5521,89 +5716,95 @@
                 ;; python block that printed several values still paints its whole
                 ;; stdout as a single result.
                 result-lines
-                (cond (or result-text head-summary)
-                      (let [entries
-                            (when result-text
-                              (tag-copy-block-body (vec (paste-aware-ast->entries
-                                                          (vis/markdown->ast result-text)
-                                                          fill-w
-                                                          {:mode :channel
-                                                           :session-id session-id
-                                                           :session-turn-id session-turn-id
-                                                           :detail-expansions detail-expansions
-                                                           :image-section :iteration}))
-                                                   result-node-id
-                                                   result-text))
+                (cond
+                  (or result-text head-summary)
+                  (let [entries
+                        (when result-text
+                          (tag-copy-block-body (vec (paste-aware-ast->entries
+                                                      (vis/markdown->ast result-text)
+                                                      fill-w
+                                                      {:mode :channel
+                                                       :session-id session-id
+                                                       :session-turn-id session-turn-id
+                                                       :detail-expansions detail-expansions
+                                                       :image-section :iteration}))
+                                               result-node-id
+                                               result-text))
 
-                            entries
-                            (vec entries)
+                        entries
+                        (vec entries)
 
-                            preview-n
-                            (image-safe-split-n entries reasoning-auto-collapse-line-threshold)
+                        preview-n
+                        (image-safe-split-n entries reasoning-auto-collapse-line-threshold)
 
-                            hidden
-                            (vec (drop preview-n entries))
+                        hidden
+                        (vec (drop preview-n entries))
 
-                            ;; Re-mark every body line into the RESULT zone (strip
-                            ;; its md/prose marker, prepend the result marker) so the
-                            ;; WHOLE op-card paints on one `result-bg` band — code AND
-                            ;; prose/eval output alike. Embedded ANSI (diff +/-)
-                            ;; survives via `paint-ansi-line!` in that paint branch.
-                            _->result
-                            (fn [e]
-                              (let [l
-                                    (str (:line e))
+                        ;; Re-mark every body line into the RESULT zone (strip
+                        ;; its md/prose marker, prepend the result marker) so the
+                        ;; WHOLE op-card paints on one `result-bg` band — code AND
+                        ;; prose/eval output alike. Embedded ANSI (diff +/-)
+                        ;; survives via `paint-ansi-line!` in that paint branch.
+                        _->result
+                        (fn [e]
+                          (let [l
+                                (str (:line e))
 
-                                    stripped
-                                    (or (second (split-structural-line-marker l)) l)]
+                                stripped
+                                (or (second (split-structural-line-marker l)) l)]
 
-                                (assoc e :line (str result-marker stripped))))]
+                            (assoc e :line (str result-marker stripped))))]
 
-                        (cond
-                          ;; The value's own headline rides on a neutral row; the whole
-                          ;; `:result-render` body nests under it (collapsible). A
-                          ;; headline-only result renders a plain row with no expand
-                          ;; triangle because there is nothing beneath it.
-                          card (tool-card-entries card
-                                                  {:fill-w fill-w
-                                                   :session-id session-id
-                                                   :detail-expansions detail-expansions
-                                                   :node-id result-node-id
-                                                   :duration-ms duration-ms})
-                          ;; Non-tool, long result: keep the first rows visible and
-                          ;; collapse only the surplus behind the band's own name.
-                          (and result-node-id (seq hidden))
-                          (let [expanded?
-                                (detail-expanded? detail-expansions session-id result-node-id false)
+                    (cond
+                      ;; The value's own headline rides on a neutral row; the whole
+                      ;; `:result-render` body nests under it (collapsible). A
+                      ;; headline-only result renders a plain row with no expand
+                      ;; triangle because there is nothing beneath it.
+                      card (tool-card-entries card
+                                              {:fill-w fill-w
+                                               :session-id session-id
+                                               :detail-expansions
+                                               (cond-> detail-expansions
+                                                 activity-run
+                                                 (assoc :vis.channel-tui/expand-all-details? true))
+                                               :node-id result-node-id
+                                               :duration-ms duration-ms})
+                      ;; Non-tool, long result: keep the first rows visible and
+                      ;; collapse only the surplus behind the band's own name.
+                      (and result-node-id (seq hidden))
+                      (let [expanded?
+                            (or
+                              activity-run
+                              (detail-expanded? detail-expansions session-id result-node-id false))
 
-                                visible
-                                (vec (take preview-n entries))
+                            visible
+                            (vec (take preview-n entries))
 
-                                summary
-                                (detail-summary-entries
-                                  {:marker result-marker
-                                   :max-w fill-w
-                                   ;; Collapsed used to read `+N more result lines` with no
-                                   ;; name at all - the one band whose control never said what
-                                   ;; it folds. It wears `RESULT` in both states now, exactly
-                                   ;; like the code band above it.
-                                   :summary
-                                   (if expanded?
-                                     (band-label "RESULT")
-                                     (str (band-label "RESULT") " +" (count hidden) " more lines"))
-                                   :hidden-entries hidden
-                                   :collapsed? (not expanded?)
-                                   :session-id session-id
-                                   :node-id result-node-id
-                                   :duration-ms duration-ms})]
+                            summary
+                            (detail-summary-entries
+                              {:marker result-marker
+                               :max-w fill-w
+                               ;; Collapsed used to read `+N more result lines` with no
+                               ;; name at all - the one band whose control never said what
+                               ;; it folds. It wears `RESULT` in both states now, exactly
+                               ;; like the code band above it.
+                               :summary
+                               (if expanded?
+                                 (band-label "RESULT")
+                                 (str (band-label "RESULT") " +" (count hidden) " more lines"))
+                               :hidden-entries hidden
+                               :collapsed? (not expanded?)
+                               :session-id session-id
+                               :node-id result-node-id
+                               :duration-ms duration-ms})]
 
-                            (vec (concat visible summary (when expanded? hidden))))
-                          :else (cond-> entries
-                                  duration-stamp
-                                  (conj duration-stamp))))
-                      ;; A call that returned nothing at all still took time. Its band is
-                      ;; the figure and nothing else — the companion's empty-summary card.
-                      duration-stamp [duration-stamp])
+                        (vec (concat visible summary (when expanded? hidden))))
+                      :else (cond-> entries
+                              duration-stamp
+                              (conj duration-stamp))))
+                  ;; A call that returned nothing at all still took time. Its band is
+                  ;; the figure and nothing else — the companion's empty-summary card.
+                  duration-stamp [duration-stamp])
 
                 ;; The FAILURE row of a call. Code bands stay status-neutral, so this line
                 ;; is the only place a failed tool can read as failed: it wears the error
@@ -5656,7 +5857,8 @@
                                   (concat [(line-entry (str thinking-marker ""))]
                                           comment-lines
                                           [(line-entry (str thinking-marker ""))]))
-                                [(line-entry (str c-pad ""))]
+                                (when-not (and activity-run execution-expanded?)
+                                  [(line-entry (str c-pad ""))])
                                 c-lines
                                 (when (seq inline-error-message-lines) inline-error-message-lines)
                                 ;; Bottom band edge. No per-form status
@@ -5667,51 +5869,53 @@
                 ;; results begin immediately after that edge rather than adding a
                 ;; second visually blank row from the result band.
                 result-block
-                (vec result-lines)
+                (if-not activity-run
+                  (vec result-lines)
+                  (mapv (fn [{:keys [line meta] :as entry}]
+                          (if (and (= :toggle-details (:kind meta))
+                                   (str/starts-with? (str line) result-marker))
+                            (let [label (-> (subs (str line) 1)
+                                            str/triml
+                                            (str/replace #"^[▾▸]\s+" ""))]
+                              (assoc entry
+                                :line (str result-marker "    " label)
+                                :meta (assoc meta :kind :result-headline)))
+                            entry))
+                        result-lines))
+
+                ;; Python and Result share the compact execution surface. Activity follows as
+                ;; a timeline surface, while the verdict remains transcript text above both.
+                generic-run-entries
+                (run-row-entries (vec (remove :is-activity runs)) fill-w session-id false)
 
                 execution-body
-                (let [activity-entries
-                      (run-row-entries (mapv #(cond-> % (:is-activity %) (assoc :is-reopened true))
-                                             runs)
-                                       fill-w
-                                       session-id
-                                       false)
+                (vec (concat code-block result-block generic-run-entries))
 
-                      ;; An expanded Activity receipt is part of the execution surface, not
-                      ;; detached transcript text. Continue the RESULT band through its
-                      ;; invocation evidence and close it with one inside padding row.
-                      activity-band
-                      (when (seq activity-entries)
-                        (conj (mapv #(-> %
-                                         (update :line
-                                                 (fn [line]
-                                                   (str result-marker line)))
-                                         (assoc-in [:meta :band-flush?] true))
-                                    activity-entries)
-                              (line-entry (str result-marker ""))))]
+                activity-surface
+                (when activity-run (activity-detail-entries activity-run fill-w session-id))]
 
-                  (vec (concat (if (and running? (seq result-block))
-                                 (concat result-block code-block)
-                                 (concat code-block result-block))
-                               activity-band)))]
-
-            ;; The collapsed execution status stays a quiet transcript row. Opening it
-            ;; turns that SAME row into the top edge of the execution surface: its
-            ;; heading, inside spacing, Python, Result, Activity, and trailing padding
-            ;; are one continuous band in both live and restored sessions.
             (if-not activity-run
               execution-body
-              (let [summary (detail-summary-entries {:marker
-                                                     (if execution-expanded? result-marker "")
-                                                     :max-w fill-w
-                                                     :summary (activity-status-display activity-run)
-                                                     :collapsed? (not execution-expanded?)
-                                                     :session-id session-id
-                                                     :node-id execution-node-id})]
+              (let [summary-text
+                    (activity-status-display activity-run)
+
+                    summary-line
+                    (ellipsize-cols (str "  " (if execution-expanded? "▾" "▸") " " summary-text)
+                                    (max 1 (long fill-w)))
+
+                    summary
+                    {:line (str execution-summary-marker summary-line)
+                     :meta {:kind :toggle-details
+                            :status-tone (:status-tone activity-run)
+                            :session-id session-id
+                            :node-id execution-node-id
+                            :collapsed? (not execution-expanded?)}}]
+
                 (vec (concat (when execution-expanded? [(line-entry "")])
-                             summary
-                             (when execution-expanded? [(line-entry (str result-marker ""))])
-                             (when execution-expanded? execution-body)))))))
+                             [summary]
+                             (when execution-expanded? [(line-entry "")])
+                             (when execution-expanded? execution-body)
+                             (when execution-expanded? activity-surface)))))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result

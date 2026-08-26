@@ -4838,7 +4838,7 @@
                  (.indexOf ^String expanded "grep({...})")
                  (.indexOf ^String expanded "18 matches")
                  (.indexOf ^String expanded "ACTIVITY")
-                 (.indexOf ^String expanded "test evidence · companion suite")
+                 (.indexOf ^String expanded "TEST EVIDENCE  companion suite")
                  (.indexOf ^String expanded "Done.")))
       (doseq [width [40 52 80 120]]
         (let [lines (str/split-lines (render-row width
@@ -4981,13 +4981,13 @@
         (expect (not (str/includes? (strip-ansi (:text payload)) "RUN")))
         (expect (not-any? #(= :live-reopen (:kind %)) (:line-meta payload))))))
 
-;; Regression, issues td-1ccd13, td-c0bd16, td-7d7211, and td-5cfb8f: shell invocations
-;; collapsed to one count, the heading drifted right or outside the band, and Activity escaped
-;; the execution background after restoring a session.
+;; Regression, issues td-1ccd13, td-c0bd16, td-7d7211, td-5cfb8f, and td-20b238:
+;; restored execution receipts drifted into one padded slab, repeated their verdict in Activity,
+;; and rendered presenter prose/default operation names instead of compact invocation evidence.
 (defdescribe
   activity-shell-command-grid-test
   (it
-    "paints one ellipsized command per row under an aligned ACTIVITY heading"
+    "paints the canonical command grid and omits duplicate default detail"
     (render/invalidate-cache!)
     (let [long-command
           (str "clojure -M:test " (str/join " " (repeat 12 "very-long-target")))
@@ -5011,12 +5011,24 @@ h = 8"
           {:view-id "activity-shells"
            :is-activity true
            :is-reopened true
-           :status-text "SUCCEEDED · 2 activities run"
+           :status-text "SUCCEEDED · 3 activities run"
            :status-tone :ok
            :activity-view {:nodes []}
-           :activity-rows
-           [{:id "shell-1" :operation "shell" :summary "npm test" :state "succeeded"}
-            {:id "shell-2" :operation "shell" :summary long-command :state "succeeded"}]
+           :activity-rows [{:id "shell-1"
+                            :operation "shell"
+                            :summary "cmd: npm test"
+                            :state "succeeded"
+                            :duration-ms 120}
+                           {:id "shell-2"
+                            :operation "shell"
+                            :summary (str "cmd: " long-command)
+                            :state "succeeded"
+                            :duration-ms 230}
+                           {:id "tests"
+                            :operation "run_tests"
+                            :summary "run_tests"
+                            :state "succeeded"
+                            :duration-ms 1400}]
            :anchor {:iteration-index 0 :form-index 0}}
 
           rendered
@@ -5058,32 +5070,52 @@ h = 8"
             (first (keep-indexed #(when (str/includes? %2 needle) [%1 %2]) lines)))
 
           [status-row _]
-          (row-with "SUCCEEDED · 2 activities run")
+          (row-with "SUCCEEDED · 3 activities run")
+
+          [python-row python-line]
+          (row-with "PYTHON")
 
           [activity-row activity-line]
           (row-with "ACTIVITY")
 
-          [result-row _]
+          [result-row result-line]
           (row-with "RESULT")
 
-          [first-row _]
-          (row-with "shell · npm test")
+          [first-row first-line]
+          (row-with "SHELL")
 
           [second-row second-line]
-          (row-with "shell · clojure -M:test")]
+          (first (filter (fn [[row line]]
+                           (and (> (long row) (long first-row)) (str/includes? line "SHELL")))
+                         (keep-indexed (fn [row line]
+                                         (when (str/includes? line "SHELL") [row line]))
+                                       lines)))
 
-      (expect (not (str/includes? activity-line "Activity")))
+          [tests-row tests-line]
+          (row-with "RUN_TESTS")]
+
       (expect (= (.indexOf ^String activity-line "ACTIVITY")
-                 (.indexOf ^String (second (row-with "PYTHON")) "PYTHON")
-                 (.indexOf ^String (second (row-with "RESULT")) "RESULT")))
-      (expect (= (get-in frame [status-row 1 :bg])
-                 (get-in frame [result-row 1 :bg])
-                 (get-in frame [activity-row 1 :bg])
+                 (.indexOf ^String python-line "PYTHON")
+                 (.indexOf ^String result-line "RESULT"))
+              "section labels share one visual column")
+      (expect (< (long status-row)
+                 (long python-row)
+                 (long result-row)
+                 (long activity-row)
+                 (long first-row)
+                 (long second-row)
+                 (long tests-row))
+              "summary, execution surface, timeline, and commands retain canonical order")
+      (expect (not= (get-in frame [status-row 1 :bg]) (get-in frame [result-row 1 :bg]))
+              "the outer verdict remains outside the execution surface")
+      (expect (= (get-in frame [activity-row 1 :bg])
                  (get-in frame [first-row 1 :bg])
                  (get-in frame [second-row 1 :bg])
-                 (get-in frame [(inc second-row) 1 :bg]))
-              "The restored outer heading, evidence, and padding share one execution background")
-      (expect (< (long first-row) (long second-row))
-              "commands keep invocation order on separate rows")
-      (expect (= 1 (count (filter #(str/includes? % "shell · npm test") lines))))
-      (expect (str/ends-with? second-line "…") "the terminal-width preview ends in an ellipsis"))))
+                 (get-in frame [tests-row 1 :bg]))
+              "Activity owns one quiet timeline surface")
+      (expect (str/includes? first-line "cmd: npm test"))
+      (expect (= 1 (count (filter #(str/includes? % "cmd: npm test") lines))))
+      (expect (str/includes? second-line "...") "the terminal-width command is ellipsized")
+      (expect (not (str/includes? tests-line "run_tests  run_tests"))
+              "a default detail equal to its operation is omitted")
+      (expect (str/ends-with? tests-line "1.4s") "durations align at the right edge"))))

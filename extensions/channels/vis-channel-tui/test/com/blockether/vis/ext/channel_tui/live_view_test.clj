@@ -1206,6 +1206,23 @@
     (is (= "SUCCEEDED · 6 activities run" (:status-text row)))
     (is (= :ok (:status-tone row)))))
 
+;; Regression, issue td-20b238: a presenter fallback repeated `run_tests` as both
+;; the operation and its detail, adding no information to the live summary.
+(deftest activity-default-detail-is-not-repeated-test
+  (let [pane
+        (lv/opened (activity-view "activity-default" 2))
+
+        activity
+        (-> (get-in pane [:view :activity])
+            (assoc-in [:rows 1 :operation] "run_tests")
+            (assoc-in [:rows 1 :summary] "run_tests"))
+
+        row
+        (lv/run-row (assoc-in pane [:view :activity] activity))]
+
+    (is (= "RUNNING · RUN_TESTS · and others" (:status-text row)))
+    (is (not (str/includes? (:status-text row) "RUN_TESTS · run_tests")))))
+
 ;; Regression, issue td-1a38ec: Activity repeated its status sentence and four separate
 ;; counters across the receipt and expanded disclosure.
   ;; Regression, issue td-7bb5f7: the live receipt claimed a predicted Activity denominator.

@@ -362,10 +362,24 @@
 
     :idle))
 
-(defn- activity-row-label
+(defn- activity-row-summary
+  "Return only semantic detail that adds information beyond the operation name."
   [{:keys [operation summary]}]
+  (let [operation
+        (flat-text operation)
+
+        summary
+        (flat-text summary)]
+
+    (when (and (not (str/blank? summary))
+               (not= (str/lower-case operation) (str/lower-case summary)))
+      summary)))
+
+(defn- activity-row-label
+  [{:keys [operation] :as row}]
   (str (str/upper-case (flat-text operation))
-       (when-not (str/blank? (flat-text summary)) (str " · " (flat-text summary)))))
+       (when-let [summary (activity-row-summary row)]
+         (str " · " summary))))
 
 (defn- activity-row-detail
   [{:keys [error-summary result-summary duration-ms]}]

@@ -1084,6 +1084,10 @@
 
 (def MARKER_QUEUE_BORDER "\uE013") ;; queue bottom border -> accent corner + horizontal rule that caps the left rail, above the edit hint
 
+(def MARKER_EXECUTION_SUMMARY "\uE014") ;; execution verdict on transcript background
+
+(def MARKER_ACTIVITY "\uE015") ;; compact Activity timeline surface
+
 (def MARKER_TH_MD_H1 "\uE021") ;; markdown heading 1 (thinking)
 
 (def MARKER_TH_MD_H2 "\uE022") ;; markdown heading 2 (thinking)

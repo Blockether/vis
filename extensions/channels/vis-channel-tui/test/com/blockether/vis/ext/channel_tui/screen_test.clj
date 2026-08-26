@@ -2311,8 +2311,8 @@ therapy line 2"
                         nil
                         {:input recalled :slash-command-index 0 :slash-command-hidden? true}))))))
 
-;; Regression, td-2d89a0: the expanded Activity surface stayed docked above the
-;; composer while its collapsed transcript receipt moved during history scroll.
+;; Regression, td-2d89a0 and td-20b238: the expanded execution surface detached from
+;; its transcript receipt during history scroll and lost the separating blank row.
 (defdescribe
   activity-transcript-anchor-scroll-paint-test
   (it
@@ -2425,16 +2425,16 @@ therapy line 2"
               (:layout @state/app-db)
 
               before-receipt
-              (row-containing @before-grid "▾ ACTIVITY · finished 0/1 · running")
+              (row-containing @before-grid "▾ finished 0/1 · running")
 
               after-receipt
-              (row-containing @after-grid "▾ ACTIVITY · finished 0/1 · running")
+              (row-containing @after-grid "▾ finished 0/1 · running")
 
               before-surface
-              (row-containing @before-grid "Inspect source")
+              (row-containing @before-grid "PYTHON")
 
               after-surface
-              (row-containing @after-grid "Inspect source")]
+              (row-containing @after-grid "PYTHON")]
 
           (expect (str/ends-with? before-png "vis-activity-anchor-before-scroll.png"))
           (expect (str/ends-with? after-png "vis-activity-anchor-after-scroll.png"))
@@ -2445,10 +2445,10 @@ therapy line 2"
           (expect (= :at (get-in @state/app-db [:scroll :mode]))
                   "the history gesture went through the real scroll event")
           (expect (< (long (:eff-scroll after-layout)) (long (:eff-scroll before-layout))))
-          (expect (= (inc (long before-receipt)) (long before-surface))
-                  "the first full frame opens immediately under the transcript receipt")
-          (expect (= (inc (long after-receipt)) (long after-surface))
-                  "anchor lookup keeps the next full frame attached after scroll")
+          (expect (= (+ 2 (long before-receipt)) (long before-surface))
+                  "the first full frame keeps one blank row before the execution surface")
+          (expect (= (+ 2 (long after-receipt)) (long after-surface))
+                  "the scrolled frame preserves the same receipt-to-surface rhythm")
           (expect (= (- (long after-receipt) (long before-receipt))
                      (- (long after-surface) (long before-surface)))
                   "receipt and expanded surface move by the same terminal rows"))
