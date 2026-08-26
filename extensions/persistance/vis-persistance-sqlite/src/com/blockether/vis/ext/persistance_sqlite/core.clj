@@ -1677,8 +1677,7 @@
   (mapv :id (db-search-session-matches db-info channel query)))
 
 (defn db-session-turn-stats
-  "Per-session turn aggregates: `{:turn-count n :latest-turn-at Date
-   :first-request str-or-absent}`.
+  "Per-session turn aggregates: `{:turn-count n :latest-turn-at Date}`.
 
    1-arity: the WHOLE store in ONE grouped query, keyed by soul-id string —
    `{soul-id-str stats}`. Powers the session picker summaries (`turn_count` +
@@ -1690,44 +1689,27 @@
    as much as the list does — without them a client cannot tell that a session
    moved — and a detail poll must not scan every session to learn them.
 
-   `:first-request` is the RAW `user_request` of the session's EARLIEST turn —
-   what the session opened with, so a picker row can show the actual ask beside
-   a generated title. It rides a second grouped query that leans on SQLite's
-   bare-column/`min()` pairing (exactly ONE aggregate per row, so the pairing is
-   well defined). Callers bound/clean it for display; it is stored text, not a
-   preview.
+   COUNTS AND CLOCKS ONLY, never turn TEXT. This runs on EVERY list read, and a
+   second grouped query for each session's opening `user_request` pulled half a
+   megabyte of prose (1041 rows, 32ms measured) out of the store to decorate a
+   20-row window — where it was a quarter of the bytes on the wire and no client
+   painted it. Turn text is a session-scoped read.
 
    Counts every turn soul across ALL of a session's states (forks included) — an
    upper bound of the chain view, but exact for `has any turns?` and for
    latest-activity ordering."
   ([db-info]
    (if (ds db-info)
-     (let [firsts (into {}
-                        (map (fn [row]
-                               [(str (:sid row))
-                                (some-> (:req row)
-                                        str
-                                        not-empty)]))
-                        (query! db-info
-                                {:select [[:ss.session_soul_id :sid] [:ts.user_request :req]
-                                          [[:min :ts.created_at] :first_at]]
-                                 :from [[:session_turn_soul :ts]]
-                                 :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
-                                 :group-by [:ss.session_soul_id]}))]
-       (into {}
-             (map (fn [row]
-                    (let [sid (str (:sid row))]
-                      [sid
-                       (cond-> {:turn-count (long (or (:n row) 0))
-                                :latest-turn-at (->date (:latest row))}
-                         (get firsts sid)
-                         (assoc :first-request (get firsts sid)))])))
-             (query! db-info
-                     {:select [[:ss.session_soul_id :sid] [[:count :ts.id] :n]
-                               [[:max :ts.created_at] :latest]]
-                      :from [[:session_turn_soul :ts]]
-                      :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
-                      :group-by [:ss.session_soul_id]})))
+     (into {}
+           (map (fn [row]
+                  [(str (:sid row))
+                   {:turn-count (long (or (:n row) 0)) :latest-turn-at (->date (:latest row))}]))
+           (query! db-info
+                   {:select [[:ss.session_soul_id :sid] [[:count :ts.id] :n]
+                             [[:max :ts.created_at] :latest]]
+                    :from [[:session_turn_soul :ts]]
+                    :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
+                    :group-by [:ss.session_soul_id]}))
      {}))
   ([db-info session-id]
    (when (and (ds db-info) session-id)
@@ -1737,19 +1719,7 @@
                                    :from [[:session_turn_soul :ts]]
                                    :join [[:session_state :ss] [:= :ss.id :ts.session_state_id]]
                                    :where [:= :ss.session_soul_id soul-id-s]})]
-         (let [first-request (some-> (query-one! db-info
-                                                 {:select [[:ts.user_request :req]
-                                                           [[:min :ts.created_at] :first_at]]
-                                                  :from [[:session_turn_soul :ts]]
-                                                  :join [[:session_state :ss]
-                                                         [:= :ss.id :ts.session_state_id]]
-                                                  :where [:= :ss.session_soul_id soul-id-s]})
-                                     :req
-                                     str
-                                     not-empty)]
-           (cond-> {:turn-count (long (or (:n row) 0)) :latest-turn-at (->date (:latest row))}
-             first-request
-             (assoc :first-request first-request))))))))
+         {:turn-count (long (or (:n row) 0)) :latest-turn-at (->date (:latest row))})))))
 
 (defn- session-usage-scope
   "Honeysql `[from join where]` fragments selecting the CURRENT chain of the

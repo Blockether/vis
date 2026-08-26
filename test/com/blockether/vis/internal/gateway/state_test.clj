@@ -2242,6 +2242,61 @@
                      (expect (= ["typed" "used"] (mapv #(get % "id") (:sessions second-page))))
                      (expect (= "2:-3000:used" (:next-cursor second-page)))))))
 
+;; Regression, reported in this Vis session ("po co my w ogóle wysyłamy wiersze ... to
+;; powinny być najpotrzebniejsze rzeczy"): every listed session carried the prose it
+;; opened with (`first_request` - 228 bytes a row, a QUARTER of a 20-row window) plus
+;; `external_id` and `owner_id`, which no client paints. The prose was not free either:
+;; finding it grouped `user_request` over EVERY turn in the store on every list read.
+(defdescribe
+  session-row-is-what-a-picker-paints-test
+  (it "keeps the store's opening prose out of a listed row"
+      (let [stats
+            {"used" {:turn-count 2
+                     :latest-turn-at (java.util.Date. 3000)
+                     :first-request "Refactor the pager so it stops draining the fleet"}}
+
+            page
+            (with-redefs-fn {#'lp/db-info (constantly :db)
+                             #'persistance/db-session-turn-stats (constantly stats)
+                             #'lp/by-channel (constantly [{:id "used"
+                                                           :title "Refactor the pager"
+                                                           :created-at 3000}])
+                             #'bus/live-turns (constantly {})
+                             #'bus/waiting-requests (constantly {})
+                             #'state/soul (fn [sid]
+                                            {"id" (str sid)})}
+              (fn []
+                (state/list-sessions-page :all {})))
+
+            row
+            (first (:sessions page))]
+
+        (expect (= "used" (get row "id")))
+        (expect (= 2 (get row "turn_count")))
+        (expect (not (contains? row "first_request")))))
+  (it "carries neither the owner nor the channel's own id"
+      (let [row (with-redefs-fn {#'lp/by-id (constantly {:id "used"
+                                                         :channel :cli
+                                                         :title "Refactor the pager"
+                                                         :created-at 3000
+                                                         :external-id "chat-42"
+                                                         :owner-id "local"})
+                                 #'lp/db-info (constantly :db)
+                                 #'persistance/db-session-turn-stats
+                                 (constantly {:turn-count 2
+                                              :latest-turn-at (java.util.Date. 3000)
+                                              :first-request
+                                              "Refactor the pager so it stops draining"})
+                                 #'bus/live-turn-id (constantly nil)
+                                 #'bus/session-waiting? (constantly false)
+                                 #'smodel/pending-pref (constantly [false nil])}
+                  (fn []
+                    (state/soul "used")))]
+        (expect (= "used" (get row "id")))
+        (expect (= 2 (get row "turn_count")))
+        (expect (not (contains? row "first_request")))
+        (expect (not (contains? row "external_id")))
+        (expect (not (contains? row "owner_id"))))))
 ;; Regression, same report: a project header carried the GATEWAY's tally while the rows
 ;; under it were the client's own filtered list, so the header said 1034 over pages that
 ;; held 763 - the two numbers could only agree by accident.

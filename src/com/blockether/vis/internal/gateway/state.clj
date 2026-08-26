@@ -1447,26 +1447,6 @@
   (try (attachments/text->chip-preview request)
        (catch Throwable _ (not-empty (str/trim (str (or request "")))))))
 
-(def ^:private session-opening-line-max
-  "Character cap for the `first_request` decoration. Long enough for a real
-   opening sentence, short enough that a session LIST never ships a transcript."
-  240)
-
-(defn- session-opening-line
-  "One bounded, path-free, single-line rendering of a session's FIRST user
-   request - what the session opened with. Session pickers show it beside the
-   generated title, so a row says what was actually asked instead of only how
-   the titler named it. nil when there is nothing to show."
-  [request]
-  (some-> (request-preview-text request nil)
-          str
-          (str/replace #"\s+" " ")
-          str/trim
-          not-empty
-          (as-> s (if (> (count s) (long session-opening-line-max))
-                    (str (subs s 0 (long session-opening-line-max)) "\u2026")
-                    s))))
-
 (defn- wire-turn
   [turn]
   (when turn
@@ -4346,9 +4326,7 @@
                                   name)
                  :title (:title session)
                  :model (:model session) ; the state's ROOT model, NOT the pin below
-                 :external_id (:external-id session)
                  :created_at (:created-at session)
-                 :owner_id (:owner-id session)
                  :project_id (some-> (:project-id session)
                                      str)
                  :project_name (:project-name session)
@@ -4385,9 +4363,6 @@
 
           (:latest-turn-at stats)
           (assoc :modified_at (:latest-turn-at stats))
-
-          (session-opening-line (:first-request stats))
-          (assoc :first_request (session-opening-line (:first-request stats)))
 
           (and current-turn-id (:request current-turn))
           (assoc :running_request (:request current-turn))
@@ -4503,9 +4478,6 @@
             (cond-> (assoc s "turn_count" (long (or (:turn-count st) 0)))
               (:latest-turn-at st)
               (assoc "modified_at" (:latest-turn-at st))
-
-              (session-opening-line (:first-request st))
-              (assoc "first_request" (session-opening-line (:first-request st)))
 
               ws
               (assoc "workspace" ws))))

@@ -4367,23 +4367,6 @@
       (pos? fork-count)
       (str " [forks:" fork-count "]"))))
 
-(def ^:private navigator-opening-max 140)
-
-(defn- navigator-opening
-  "First SENTENCE of what a session opened with (`first_request` from the
-   gateway summary), collapsed to one line and bounded. Titles are generated
-   and often vague; this is the actual ask, painted dim after the title."
-  [text]
-  (some-> text
-          str
-          (str/replace #"\s+" " ")
-          str/trim
-          not-empty
-          (as-> s (let [s (or (not-empty (str (re-find #"^.*?[.!?\u2026](?=\s|$)" s))) s)]
-                    (if (> (count s) (long navigator-opening-max))
-                      (str (subs s 0 (long navigator-opening-max)) "\u2026")
-                      s)))))
-
 (def ^:private session-dialog-content-w 96)
 
 (defn- date->millis
@@ -4784,7 +4767,6 @@
      :focused? active?
      :awaiting-input? awaiting-input?
      :title (session-title session)
-     :opening (navigator-opening (get session "first_request"))
      :session (short-session-id session)
      :group (not-empty (get session "project_name"))
      :position (get session "project_position")
@@ -5136,22 +5118,6 @@
         title
         (p/ellipsize (:title entry) title-w)
 
-        title-shown-w
-        (p/display-width title)
-
-        ;; `title - opening ask`: a generated title rarely says what the session
-        ;; actually opened with, so the first sentence of its first request rides
-        ;; the SAME row, dimmed, in whatever width the title left over.
-        opening-w
-        (- title-w title-shown-w 3)
-
-        opening
-        (when (>= opening-w 8)
-          (some-> (:opening entry)
-                  str
-                  not-empty
-                  (p/ellipsize opening-w)))
-
         status-x
         (+ (long x) (max 2 (- (long width) status-w)))
 
@@ -5167,9 +5133,6 @@
     (if (or selected? focused?)
       (p/styled g [p/BOLD] (p/put-str! g content-x row title))
       (p/put-str! g content-x row title))
-    (when opening
-      (p/set-colors! g t/dialog-hint t/dialog-bg)
-      (p/put-str! g (+ (long content-x) title-shown-w) row (str " - " opening)))
     (p/set-colors! g
                    (cond (:awaiting-input? entry) t/warning-fg
                          focused? t/dialog-hint-key
