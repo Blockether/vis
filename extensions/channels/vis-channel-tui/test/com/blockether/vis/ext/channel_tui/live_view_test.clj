@@ -1203,7 +1203,7 @@
         row
         (lv/run-row (assoc-in pane [:view :activity] terminal-activity))]
 
-    (is (= "SUCCEEDED · 6 activities run" (:status-text row)))
+    (is (= "DONE · 6 activities" (:status-text row)))
     (is (= :ok (:status-tone row)))))
 
 ;; Regression, issue td-20b238: a presenter fallback repeated `run_tests` as both
@@ -1240,10 +1240,9 @@
       (is (:is-activity row))
       (is (= "RUNNING · INSPECT SOURCE · operation 6 · and others" (:status-text row)))
       (is (= :activity (get-in p [:view :classification])))))
-  (testing "settlement reports only the actual number of activities run"
-    (is (= ["SUCCEEDED · 6 activities run"
-            "FAILED · INSPECT SOURCE · operation 6 · 6 activities run"
-            "CANCELLED · 6 activities run"]
+  (testing "settlement reports only the actual number of activities"
+    (is (= ["DONE · 6 activities" "FAILED · INSPECT SOURCE · operation 6 · 6 activities"
+            "CANCELLED · 6 activities"]
            (mapv (comp :status-text lv/run-row settled-activity) [:succeeded :failed :cancelled]))))
   (testing "explicit disclosure expands only its transcript receipt"
     (let [p

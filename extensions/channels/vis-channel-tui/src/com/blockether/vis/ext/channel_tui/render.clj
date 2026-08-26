@@ -5153,11 +5153,11 @@
 
 (defn- activity-status-display
   "The stable semantic execution sentence. Paint owns emphasis and state color."
-  [{:keys [reason elapsed-ms status-text]}]
+  [{:keys [elapsed-ms status-text status-tone]}]
   (str/join " · "
             (remove str/blank?
               [(str status-text)
-               (when (and reason (pos? (long (or elapsed-ms 0))))
+               (when (and (not= :running status-tone) (pos? (long (or elapsed-ms 0))))
                  (vis/format-duration elapsed-ms))])))
 
 (defn- run-row-entries

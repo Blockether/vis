@@ -400,7 +400,7 @@
       (case (some-> (:state activity)
                     name)
         "succeeded"
-        "succeeded"
+        "done"
 
         "failed"
         "failed"
@@ -414,7 +414,7 @@
         "finished")
 
       :completed
-      "succeeded"
+      "done"
 
       :failed
       "failed"
@@ -476,7 +476,7 @@
         (activity-state pane activity)
 
         total-copy
-        (str finished " " (if (= 1 finished) "activity" "activities") " run")]
+        (str finished " " (if (= 1 finished) "activity" "activities"))]
 
     (if-not terminal?
       (str state

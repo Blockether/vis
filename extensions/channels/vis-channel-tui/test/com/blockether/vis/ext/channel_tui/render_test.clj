@@ -4845,11 +4845,10 @@
                                                  {:vis.channel-tui/expand-all-details? true}))]
           (expect (every? #(<= (count %) width) lines)
                   (str "the unified receipt stays inside a " width "-column grid"))))))
-  ;; Regression, issues td-b98c1b and td-574cf3: the shipped terminal receipt omitted
-  ;; Direction A’s state hierarchy, crowded its status against adjacent bands, and
-  ;; silently dropped print-only stdout instead of showing RESULT.
+  ;; Regression, issue td-2abd04: terminal receipts used SUCCEEDED, said “activities run”,
+  ;; and omitted elapsed time when semantic Activity settlement arrived before close.
   (it
-    "renders the approved settled Direction A sentence"
+    "renders compact terminal copy and elapsed time before close"
     (render/invalidate-cache!)
     (let [trace
           [{:forms
@@ -4858,9 +4857,9 @@
           run
           {:view-id "activity-settled"
            :is-activity true
-           :reason :completed
+           :reason nil
            :elapsed-ms 4800
-           :status-text "SUCCEEDED · 6 activities run"
+           :status-text "DONE · 6 activities"
            :status-tone :ok
            :activity-view {:classification :activity :nodes []}
            :activity-rows []
@@ -4897,10 +4896,10 @@
           (str/split-lines expanded)
 
           status-row
-          (first (keep-indexed #(when (str/includes? %2 "▾ SUCCEEDED · 6 activities run") %1)
+          (first (keep-indexed #(when (str/includes? %2 "▾ DONE · 6 activities") %1)
                                expanded-lines))]
 
-      (expect (str/includes? collapsed "▸ SUCCEEDED · 6 activities run · 4.8s"))
+      (expect (str/includes? collapsed "▸ DONE · 6 activities · 4.8s"))
       (expect (not (str/includes? collapsed "ACTIVITY")))
       (expect (some? status-row))
       (expect (str/blank? (nth expanded-lines (dec status-row))))
@@ -5011,7 +5010,7 @@ h = 8"
           {:view-id "activity-shells"
            :is-activity true
            :is-reopened true
-           :status-text "SUCCEEDED · 3 activities run"
+           :status-text "DONE · 3 activities"
            :status-tone :ok
            :activity-view {:nodes []}
            :activity-rows [{:id "shell-1"
@@ -5070,7 +5069,7 @@ h = 8"
             (first (keep-indexed #(when (str/includes? %2 needle) [%1 %2]) lines)))
 
           [status-row _]
-          (row-with "SUCCEEDED · 3 activities run")
+          (row-with "DONE · 3 activities")
 
           [python-row python-line]
           (row-with "PYTHON")
