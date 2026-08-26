@@ -4991,13 +4991,19 @@
                      (when-not (seq body-rows) [{:line (str result-marker "") :meta nil}])))))))
 
 (defn- activity-row-summary
-  "Keep invocation detail only when it adds information beyond the operation name."
+  "Keep invocation detail only when it adds information beyond the operation name.
+   Legacy shell spawn summaries are command evidence, never a live-tense status."
   [{:keys [operation summary]}]
   (let [operation
         (str/trim (str operation))
 
         summary
-        (str/trim (str summary))]
+        (str/trim (str summary))
+
+        summary
+        (if (and (= "shell" (str/lower-case operation)) (str/starts-with? summary "running: "))
+          (str "cmd: " (subs summary (count "running: ")))
+          summary)]
 
     (when (and (not (str/blank? summary))
                (not= (str/lower-case operation) (str/lower-case summary)))

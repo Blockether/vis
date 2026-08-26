@@ -1449,8 +1449,12 @@ const FormTrace = memo(function FormTrace({
   const comment = showCode && form.comment?.trim();
 
   if (activity || activityStatus) {
+    const activityElapsed =
+      activity?.created_at != null && activity?.ended_at != null
+        ? Math.max(0, activity.ended_at - activity.created_at)
+        : undefined;
     const receipt = activity
-      ? activityReceiptText(activity.activity)
+      ? activityReceiptText(activity.activity, activityElapsed)
       : activityStatus === "failed"
         ? "ACTIVITY · unavailable"
         : "ACTIVITY · loading";

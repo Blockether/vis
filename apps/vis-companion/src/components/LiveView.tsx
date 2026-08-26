@@ -506,7 +506,7 @@ const ACTIVITY_FACE = {
     rail: 'border-ok',
     ink: 'text-ok',
     mark: '✓',
-    label: 'Completed',
+    label: 'Done',
   },
   failed: {
     rail: 'border-err',
@@ -522,31 +522,77 @@ const ACTIVITY_FACE = {
   },
 } as const;
 
+function formatActivityDuration(value?: number): string | null {
+  if (value == null || !Number.isFinite(value) || value <= 0) return null;
+  const milliseconds = Math.trunc(value);
+  if (milliseconds < 1_000) return `${milliseconds}ms`;
+  if (milliseconds < 60_000) return `${(milliseconds / 1_000).toFixed(1)}s`;
+  const minutes = Math.floor(milliseconds / 60_000);
+  return `${minutes}m ${Math.floor((milliseconds % 60_000) / 1_000)}s`;
+}
+
+function activityRowSummary(row: ActivityProjection['rows'][number]): string {
+  const summary = row.summary.trim();
+  const command =
+    (row.presenter === 'shell' || row.operation.toLowerCase() === 'shell') &&
+    summary.startsWith('running: ')
+      ? `cmd: ${summary.slice('running: '.length)}`
+      : summary;
+  return command.toLowerCase() === row.operation.trim().toLowerCase() ? '' : command;
+}
+
+function activityRowLabel(row: ActivityProjection['rows'][number]): string {
+  return [row.operation.toUpperCase(), activityRowSummary(row)].filter(Boolean).join(' · ');
+}
+
+function activityTotal(activity?: ActivityProjection): number {
+  const counts = activity?.counts;
+  return counts
+    ? counts.running + counts.succeeded + counts.failed + counts.cancelled
+    : activity?.rows.length ?? 0;
+}
 
 /** The one honest sentence a unified execution trace can state at this moment. */
-export function activityReceiptText(activity?: ActivityProjection): string {
+export function activityReceiptText(
+  activity?: ActivityProjection,
+  durationMs?: number,
+): string {
   const state = activity?.state ?? 'idle';
-  const counts = activity?.counts;
+  const total = activityTotal(activity);
   if (state === 'running' || state === 'idle') {
     const row = activity?.rows.find((candidate) => candidate.state === 'running');
-    const total = counts
-      ? counts.running + counts.succeeded + counts.failed + counts.cancelled
-      : activity?.rows.length ?? 0;
-    const focus = row
-      ? [row.operation, row.summary].filter(Boolean).join(' · ')
-      : 'waiting for first activity';
-    return ['RUNNING', focus, total > 1 ? 'and others' : ''].filter(Boolean).join(' · ');
+    const focus = row ? activityRowLabel(row) : 'running activity';
+    return ['RUNNING', focus, total > 1 || (activity?.omitted.rows ?? 0) > 0 ? 'and more' : '']
+      .filter(Boolean)
+      .join(' · ');
   }
-  const terminal = counts
-    ? counts.succeeded + counts.failed + counts.cancelled
+
+  const terminal = activity?.counts
+    ? activity.counts.succeeded + activity.counts.failed + activity.counts.cancelled
     : activity?.rows.length ?? 0;
-  return `${state.toUpperCase()} · ${terminal} ${terminal === 1 ? 'activity' : 'activities'} run`;
+  const primary =
+    (state === 'failed' && activity?.rows.find((candidate) => candidate.state === 'failed')) ||
+    activity?.rows[0];
+  const preview = primary
+    ? `${primary.operation.toUpperCase()}${terminal > 1 || (activity?.omitted.rows ?? 0) > 0 ? ' and more' : ''}`
+    : '';
+  const label = state === 'succeeded' ? 'DONE' : state.toUpperCase();
+  return [
+    label,
+    preview,
+    `${terminal} ${terminal === 1 ? 'activity' : 'activities'}`,
+    formatActivityDuration(durationMs),
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 function activityPreview(activity?: ActivityProjection): string {
-  const row = activity?.rows.find((candidate) => candidate.state === 'running');
-  if (!row) return 'No operation in progress';
-  return [row.operation, row.summary].filter(Boolean).join(' · ');
+  const running = activity?.rows.find((candidate) => candidate.state === 'running');
+  if (running) return activityRowLabel(running);
+  const primary = activity?.rows[0];
+  if (!primary) return 'No operation yet';
+  return `${primary.operation.toUpperCase()}${activityTotal(activity) > 1 ? ' and more' : ''}`;
 }
 
 function ActivityRail({ activity }: { activity?: ActivityProjection }) {
@@ -557,16 +603,19 @@ function ActivityRail({ activity }: { activity?: ActivityProjection }) {
       <ol aria-label="Invocation chronology">
         {rows.map((row) => {
           const face = ACTIVITY_FACE[row.state];
+          const summary = activityRowSummary(row);
+          const duration = formatActivityDuration(row.duration_ms);
           return (
             <li
               key={row.id}
               data-activity-row={row.id}
-              className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2 border-t border-code-edge bg-result px-2.5 py-1.5 first:border-t-0 font-mono text-meta"
+              className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-baseline gap-x-2 border-t border-code-edge bg-result px-2.5 py-1.5 first:border-t-0 font-mono text-meta"
             >
               <span aria-hidden="true" className={face.ink}>{face.mark}</span>
               <span className="min-w-0 break-words text-dialog-hint">
-                {[row.operation, row.summary].filter(Boolean).join(' · ')}
+                {[row.operation, summary].filter(Boolean).join(' · ')}
               </span>
+              {duration && <span className="text-code-duration">{duration}</span>}
             </li>
           );
         })}

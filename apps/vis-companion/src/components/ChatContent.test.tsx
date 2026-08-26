@@ -790,7 +790,7 @@ describe("Activity owns the slot after its Python form and result", () => {
     expect(painted.container.firstElementChild).toHaveStyle({ width: `${width}px` });
 
     expect(painted.getByRole("button", { name: "Expand execution trace" })).toBeTruthy();
-    expect(painted.container.textContent).toContain("RUNNING · run_tests · companion suite · and others");
+    expect(painted.container.textContent).toContain("RUNNING · RUN_TESTS · companion suite · and more");
     expect(painted.container.textContent).not.toContain("line_1()");
     expect(painted.container.textContent).not.toContain("RESULT");
     expect(painted.container.textContent).not.toContain("18 matches");
@@ -801,6 +801,38 @@ describe("Activity owns the slot after its Python form and result", () => {
     expect(painted.container.textContent).toContain("RESULT");
     expect(painted.container.textContent).toContain("ACTIVITY");
     expect(painted.container.textContent).toContain("18 matches");
+  });
+
+  // Regression, issue td-5b6b08: the filed Companion receipt omitted its
+  // primary operation and elapsed time and retained the old terminal copy.
+  it("keeps terminal Activity copy and elapsed time at the transcript boundary", () => {
+    const settled = {
+      ...runningActivity,
+      is_settled: true,
+      created_at: 1_000,
+      ended_at: 13_600,
+      activity: {
+        ...runningActivity.activity!,
+        anchor: { iteration: 41, form_index: 0 },
+        state: "succeeded" as const,
+        counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
+        rows: runningActivity.activity!.rows.map((row) => ({ ...row, state: "succeeded" as const })),
+      },
+    };
+    const settledTurn: TranscriptTurn = {
+      ...turn,
+      iterations: [{
+        ...turn.iterations![0],
+        forms: [{ source: "work()", result_summary: "done" }],
+        attachments: [],
+      }],
+    };
+
+    const rendered = text(renderToStaticMarkup(
+      <AssistantMessage turn={settledTurn} liveActivities={[settled]} />,
+    ));
+
+    expect(rendered).toContain("DONE · GREP and more · 2 activities · 12.6s");
   });
 
   it("uses only the actual terminal Activity count after settlement", () => {
@@ -828,7 +860,7 @@ describe("Activity owns the slot after its Python form and result", () => {
       <AssistantMessage turn={settledTurn} liveActivities={[settled]} />,
     ));
 
-    expect(rendered).toContain("FAILED · 6 activities run");
+    expect(rendered).toContain("FAILED · 6 activities");
     expect(rendered).not.toContain("finished 6/");
   });
 
