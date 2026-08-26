@@ -1436,9 +1436,9 @@
 
 (def ^:private auto-imports-python
   "Install tiny convenience imports as Python builtins so agents can use them
-   without repeating imports in every python_execution block. os/sys/json/re (plus the
-   builtins self-ref) are bound EAGERLY - they are cheap, load anyway via engine
-   internals, and are the hottest names. Every OTHER name is a `_LazyStd` proxy
+   without repeating imports in every python_execution block. os/sys (plus the
+   builtins self-ref) are bound EAGERLY - they are genuinely cheap, under 5ms
+   each. Every OTHER name is a `_LazyStd` proxy
    on builtins: the real stdlib module is imported on the FIRST bare touch
    (`hashlib.md5(...)`, `Counter(...)`, `Path(...)`, `socket.socket(...)`, ...) and then REPLACES
    the proxy, so a session that never touches base64/textwrap/socket/... never

@@ -1,10 +1,8 @@
 def __vis_auto_imports__():
     import builtins as _b
     import importlib as _il
-    import json as _json, re as _re, os as _os, sys as _sys, time as _time
+    import os as _os, sys as _sys, time as _time
 
-    _b.json = _json
-    _b.re = _re
     _b.os = _os
     _b.sys = _sys
     _b.time = _time
@@ -31,6 +29,15 @@ def __vis_auto_imports__():
             return _LazyStd._resolve(self)(*a, **k)
 
     for bind, mod, attr in (
+        # `re` and `json` are the hottest names here and were bound eagerly for
+        # that reason - but hot is not the same as free. Measured marginally in a
+        # warm context they cost ~198ms and ~108ms, together effectively the whole
+        # ~300ms a context build spends on imports, and neither is loaded by the
+        # engine on its own (only `sys` is). A session that never touches them
+        # used to pay for both anyway, once per context - and a context is now
+        # rebuilt every 5 turns.
+        ("re", "re", None),
+        ("json", "json", None),
         ("shlex", "shlex", None),
         ("hashlib", "hashlib", None),
         ("glob", "glob", None),
