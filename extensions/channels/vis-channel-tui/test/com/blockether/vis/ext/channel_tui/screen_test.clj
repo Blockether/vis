@@ -147,6 +147,8 @@
 
 (def ^:private disable-terminal-escape-modes! (deref #'screen/disable-terminal-escape-modes!))
 
+(def ^:private probe-terminal-cell-size! (deref #'screen/probe-terminal-cell-size!))
+
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag -
    the contract the channel entry point relies on to print a clean
@@ -204,6 +206,47 @@
       (expect (= [:enable-paste :enable-mouse :disable-iexten :disable-ixon :set-bg :disable-paste
                   :disable-mouse :reset-bg :restore-ixon :restore-iexten]
                  @calls)))))
+
+(defdescribe terminal-cell-size-probe-test
+             ;; Regression, issue td-03018d: cmux's trailing CSI 18 t reply was typed into the composer.
+             (it
+               "drains delayed terminal-size replies after finding the cell dimensions"
+               (with-open [terminal-in
+                           (java.io.PipedInputStream.)
+
+                           reply-out
+                           (java.io.PipedOutputStream. terminal-in)
+
+                           terminal-out
+                           (java.io.ByteArrayOutputStream.)]
+
+                 (let [dimensions
+                       (atom nil)
+
+                       reply-writer
+                       (future (.write reply-out (.getBytes "\u001b[6;20;10t" "UTF-8"))
+                               (.flush reply-out)
+                               (Thread/sleep 10)
+                               (.write reply-out (.getBytes "\u001b[8;76;132t" "UTF-8"))
+                               (.flush reply-out))]
+
+                   (with-redefs [vis/tty-in
+                                 (delay terminal-in)
+
+                                 vis/tty-out
+                                 (delay terminal-out)
+
+                                 timg/graphical-terminal?
+                                 (constantly true)
+
+                                 timg/set-cell-dimensions!
+                                 (fn [w h]
+                                   (reset! dimensions {:w w :h h}))]
+
+                     (probe-terminal-cell-size!))
+                   @reply-writer
+                   (expect (= {:w 10 :h 20} @dimensions))
+                   (expect (zero? (.available terminal-in)))))))
 
 (defdescribe
   render-heartbeat-test
