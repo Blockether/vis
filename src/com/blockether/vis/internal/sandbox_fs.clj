@@ -205,7 +205,14 @@
               (into-array java.nio.file.CopyOption
                           [StandardCopyOption/ATOMIC_MOVE StandardCopyOption/REPLACE_EXISTING])))
 
-(def ^:private max-reported-syntax-errors 20)
+(def ^:private max-reported-syntax-errors
+  "Parse locations a refusal names before the rest become a bare count. The
+   first error is usually the cause and the rest its wreckage, so five say what
+   twenty would.
+
+   Must equal `editing.parse/detail-budget`, which decides how many rows arrive
+   carrying the text and delimiter this renders."
+  5)
 
 (defn- syntax-diagnostic
   "Keep one bounded, model-facing tree-sitter location in source coordinates."

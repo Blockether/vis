@@ -105,6 +105,17 @@
    ERROR node. Keywords and identifiers are deliberately excluded."
   (into #{"(" ")" "[" "]" "{" "}"} quote-kinds))
 
+(def ^:private detail-budget
+  "How many error rows get the expensive fields: `fault-delimiter`, the source
+   line, the sliced text. Rows past it are still found, counted and positioned —
+   capping the WALK would make `(count errors)` lie, and that count is what says
+   whether one line broke or the file did.
+
+   Must equal `sandbox-fs/max-reported-syntax-errors`, which is how many a
+   refusal names. Below it, shown rows arrive undescribed; above it, we describe
+   rows nobody sees."
+  5)
+
 (defn- fault-delimiter
   "The most actionable unpaired delimiter directly inside ERROR node `n`, as
    {:line :byte-col :kind}, or nil.
@@ -115,7 +126,10 @@
    example, leaves both the class `{` and the actual unterminated string quote
    beneath one file-wide ERROR. Prefer the last quote (the lexical fault), then
    the last bracket (the closest structural fault), rather than blaming the
-   first innocent opener at the start of the file."
+   first innocent opener at the start of the file.
+
+   Walks every child, so a file-wide ERROR costs the whole token stream —
+   [[detail-budget]] is what bounds the number of calls."
   [^Node n]
   (loop [i
          0
@@ -187,32 +201,37 @@
         (let [^Node root (.rootNode tree)]
           (try
             (letfn
-              [(walk [^Node n]
+              [(described [^Node n ^Point sp row]
+                 (let [d (when (.isError n) (fault-delimiter n))
+                       line (long (or (:line d) (:line row)))
+                       byte-col (long (or (:byte-col d) (:byte-col row)))
+                       line-text (source-line source line)]
+
+                   (cond-> (assoc row
+                             :line line
+                             :byte-col byte-col
+                             :col (if line-text (character-column line-text byte-col) byte-col)
+                             :text (or (when d line-text)
+                                       (byte-slice src-bytes (.startByte n) (.endByte n))))
+                     d
+                     (assoc :delimiter (:kind d) :error-line (inc (.row sp))))))
+
+               (walk [^Node n]
                  (when (or (.isError n) (.isMissing n))
                    (let [^Point sp (.startPosition n)
                          ^Point ep (.endPosition n)
-                         d (when (.isError n) (fault-delimiter n))
-                         line (long (or (:line d) (inc (.row sp))))
-                         byte-col (long (or (:byte-col d) (.column sp)))
-                         line-text (source-line source line)
-                         col (if line-text (character-column line-text byte-col) byte-col)]
+                         row {:line (inc (.row sp))
+                              :col (.column sp)
+                              :byte-col (.column sp)
+                              :end-line (inc (.row ep))
+                              :end-col (.column ep)
+                              :start-byte (.startByte n)
+                              :end-byte (.endByte n)
+                              :kind (.kind n)
+                              :missing? (.isMissing n)}]
 
                      (conj! acc
-                            (cond-> {:line line
-                                     :col col
-                                     :byte-col byte-col
-                                     :end-line (inc (.row ep))
-                                     :end-col (.column ep)
-                                     :start-byte (.startByte n)
-                                     :end-byte (.endByte n)
-                                     :kind (.kind n)
-                                     :missing? (.isMissing n)
-                                     :text (or (when d line-text)
-                                               (byte-slice src-bytes (.startByte n) (.endByte n)))}
-                              d
-                              (assoc :delimiter
-                                (:kind d) :error-line
-                                (inc (.row sp)))))))
+                            (if (< (count acc) detail-budget) (described n sp row) row))))
                  (dotimes [i (.childCount n)]
                    (when-let [^Node c (.orElse (.child n (int i)) nil)]
                      (try (walk c) (finally (.close c))))))]
