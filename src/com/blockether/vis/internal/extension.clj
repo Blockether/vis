@@ -2711,15 +2711,10 @@
         {:source-paths paths :source-mtime-max mtime-max :source-hash-sha256 hash-hex}))))
 
 (defn resolve-markers-for-extension
-  "Resolve source markers from manifest `:nses` or extension `:ext/source-nses`."
-  [ext-or-manifest]
-  (let [ns-syms (or (some-> (:nses ext-or-manifest)
-                            seq
-                            vec)
-                    (some-> (:ext/source-nses ext-or-manifest)
-                            seq
-                            vec))]
-    (resolve-markers (or ns-syms []))))
+  "Resolve source markers from `:ext/source-nses` — the declaring namespace the
+   `vis/extension` macro stamps on every extension."
+  [ext]
+  (resolve-markers (vec (or (:ext/source-nses ext) []))))
 ;; Global Extension Registry
 (defonce ^:private extension-registry
   ;; Process-level atom holding all globally registered extensions.

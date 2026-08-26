@@ -1,6 +1,8 @@
 (ns com.blockether.vis.internal.foundation.core
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.doctor :as doctor]
             [com.blockether.vis.internal.foundation.editing.core :as editing]
             [com.blockether.vis.internal.foundation.environment.core :as environment]
@@ -113,3 +115,7 @@
      :ext/doctor-fn lazy-doctor-fn}))
 
 (defn register! [] (vis/register-extension! vis-extension))
+
+;; The documents this entry owns are read lazily and cached; `/reload` is what makes
+;; an edited page visible again in a development JVM.
+(extension/register-reload-hook! ::documents doc-corpus/forget-records!)

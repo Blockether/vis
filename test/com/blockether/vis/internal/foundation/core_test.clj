@@ -71,7 +71,7 @@
         (expect (not (str/includes? doc "file-link")))
         (expect (not (str/includes? doc "answer builders")))))
   (it "is the manifest's single initializer for core facilities"
-      (let [initialization (set (:initialization (manifest/read-manifest)))]
+      (let [initialization (set (manifest/initializers))]
         (expect (contains? initialization 'com.blockether.vis.internal.foundation.core/register!))
         (doseq [removed ['com.blockether.vis.internal.foundation.introspection/register!
                          'com.blockether.vis.internal.foundation.shell/register!

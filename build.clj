@@ -23,6 +23,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.build.api :as b]
+            [com.blockether.vis.internal.manifest :as manifest]
             [deps-deploy.deps-deploy :as dd]))
 
 (def version
@@ -735,19 +736,12 @@
          vec)))
 
 (defn- manifest-initialization-namespaces
-  "Namespace of every initializer in the one closed distribution manifest."
+  "Namespace of every initializer in the one closed distribution manifest, read
+   through the manifest's OWN parser so the image cannot be built from a shape the
+   runtime would refuse."
   [class-dir]
-  (let [path
-        (io/file class-dir "META-INF" "vis" "manifest.edn")
-
-        manifest
-        (edn/read-string (slurp path))]
-
-    (mapv (fn [initializer]
-            (or (namespace initializer)
-                (throw (ex-info "Manifest initializer must be a qualified symbol"
-                                {:initializer initializer :manifest (str path)}))))
-          (:initialization manifest))))
+  (let [path (io/file class-dir "META-INF" "vis" "manifest.edn")]
+    (mapv (comp namespace :register) (manifest/parse (str path) (slurp path)))))
 
 (defn- write-preload-namespaces!
   [class-dir basis]
@@ -1089,7 +1083,7 @@
 (defn- native-image-args
   "native-image CLI args. Config travels INSIDE the classpath jars
    (META-INF/native-image/…); here we add only classpath/main/output, the
-   vis-extension/edn/db resource includes, and the build-host voice native libs
+   manifest/docs/db resource includes, and the build-host voice native libs
    (sherpa-onnx's JNI plus the ONNX Runtime it links) so voice ASR works in the binary.
    The ~465 MB parakeet model is NEVER embedded — it ships separately."
   [basis jit?]

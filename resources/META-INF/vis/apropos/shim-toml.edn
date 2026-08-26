@@ -1,0 +1,8 @@
+;; GENERATED from sandbox Python docstrings; regenerate with apropos-resource-test.
+[
+ {:name "toml", :kind "module", :text "`toml`: spec-correct `loads`/`load` via stdlib tomllib, pure-Python `dumps`/`dump`. No comment preservation or exotic writer formatting.\n\nClasses:\n  TomlDecodeError(...) — Raised when TOML text cannot be parsed (toml.TomlDecodeError).\n\nFunctions:\n  dump(obj, f, **kw) — Write a mapping to an open text file as TOML (toml.dump).\n  dumps(obj, **kw) — Render a mapping as a TOML string (toml.dumps).\n  load(f, **kw) — Parse TOML from an open text file or a path into a dict (toml.load).\n  loads(s, **kw) — Parse a TOML string into a dict (toml.loads).\n\nRead one member: doc(\"toml.TomlDecodeError\")"}
+ {:name "toml.TomlDecodeError", :kind "class", :text "Raised when TOML text cannot be parsed (toml.TomlDecodeError).", :call "TomlDecodeError(...)"}
+ {:name "toml.dump", :kind "function", :text "Write a mapping to an open text file as TOML (toml.dump).", :call "dump(obj, f, **kw)"}
+ {:name "toml.dumps", :kind "function", :text "Render a mapping as a TOML string (toml.dumps).", :call "dumps(obj, **kw)"}
+ {:name "toml.load", :kind "function", :text "Parse TOML from an open text file or a path into a dict (toml.load).", :call "load(f, **kw)"}
+ {:name "toml.loads", :kind "function", :text "Parse a TOML string into a dict (toml.loads).", :call "loads(s, **kw)"}]

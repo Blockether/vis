@@ -4,7 +4,7 @@
    `META-INF/vis/manifest.edn` names every static EDN resource explicitly. Each
    resource is a vector of records shaped as `{:name :kind :text}` or, for a
    documentation page, `{:name :kind doc :resource ...}`; every one of them is
-   checked against `:vis.doc/record` and read WHOLE at load, once, into `records`
+   checked against `:vis.doc/record` and read WHOLE on the FIRST ask into `records`
    — the docs site renders that same value. Dynamic skills, MCP tools and live
    callable contracts append records through `register-source!`.
 
@@ -193,19 +193,38 @@
           (dissoc :resource)))
     record))
 
-(def records
+(defonce ^:private cached-records
+  ;; Only SUCCESS is cached, and NEVER at the top level: `graal-build-time` initializes
+  ;; this namespace inside the BUILDER, so a `def` bakes every parsed record into the
+  ;; image heap of every process. A bad resource throws naming itself on every ask
+  ;; instead of once, far away, at load.
+  (atom nil))
+
+(defn records
   "Every static record the manifest names, in manifest order and already whole:
    checked against `:vis.doc/record` and carrying its `:text`.
 
-   A `def`, not a `delay`: a distribution's documents cannot change while it runs,
-   a delay only moves the failure to whichever reader forces it first, and reading
-   at LOAD is what lets a native image bake this value at build time instead of
-   carrying the resources and parsing them again in every process."
-  (into []
-        (comp (mapcat (fn [[resource value]]
-                        (map #(checked-record resource %) value)))
-              (map resolved-record))
-        (map vector (manifest/apropos-resource-paths) (manifest/read-apropos-resources))))
+   Read on the FIRST ask, then cached: a distribution's documents cannot change under
+   a running process, so the resources stay resources and nothing is baked into a
+   native image. `forget-records!` is how an edited page becomes visible in a
+   development JVM."
+  []
+  (or @cached-records
+      (reset! cached-records (into []
+                                   (comp (mapcat (fn [[resource value]]
+                                                   (map #(checked-record resource %) value)))
+                                         (map resolved-record))
+                                   (map vector
+                                        (manifest/apropos-resource-paths)
+                                        (manifest/read-apropos-resources))))))
+
+(defn forget-records!
+  "Drop the cached read so the next ask reaches for the resources again — what
+   `/reload` calls. In a binary the resources are frozen and this costs one re-read;
+   in a development JVM it is what makes an edited page visible without a restart."
+  []
+  (reset! cached-records nil)
+  nil)
 
 (defn documents
   "Every documentation PAGE, in manifest order and whole: `:text` is the page's
@@ -213,7 +232,7 @@
    `:site`) travels with it. The docs site renders from THIS — one read, one
    validation, one order, and no second reader of the same resources."
   []
-  (filterv #(= "doc" (:kind %)) records))
+  (filterv #(= "doc" (:kind %)) (records)))
 
 (defn- skill-entries
   "Every discovered skill as an entry carrying its WHOLE `SKILL.md` body. The
@@ -235,9 +254,7 @@
 ")) body)})))
         (discovery/skills)))
 
-(register-source! :manifest-apropos
-                  (fn []
-                    records))
+(register-source! :manifest-apropos #'records)
 (register-source! :skills #'skill-entries)
 
 (defn- dedupe-by-name

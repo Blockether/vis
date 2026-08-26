@@ -1,0 +1,14 @@
+;; GENERATED from sandbox Python docstrings; regenerate with apropos-resource-test.
+[
+ {:name "pptx", :kind "module", :text "python-pptx-compatible create/open/edit/save backed by one Rust read and one Rust build, including charts, images, rich text, tables, notes, layouts and properties.\n\nClasses:\n  Presentation(pptx=None) — One presentation — slides, slide_layouts, slide_width/height, core_properties, save(path).\n\nModules:\n  api — The Presentation(path=None) entry point — open an existing .pptx or start an empty one.\n  chart — Charts: the chart shape, its data, plots, series, points, markers, axes and labels.\n  dml — Drawing-ML types: fills, lines and colors shared by shapes, text and charts.\n  enum — The enumerations python-pptx exposes for text, shapes, fills and charts.\n  exc — The errors this shim raises: PackageNotFoundError and its InvalidXmlError siblings.\n  presentation — The Presentation object: slides, slide_layouts, slide_width/height, core_properties, save.\n  shapes — Shapes on a slide and the collections that hold them.\n  table — Table, _Row, _Column and _Cell — a table shape and the cells you write into.\n  text — Rich text: a text frame, its paragraphs, their runs and the font on each.\n  util — Length units — Emu, Inches, Pt, Cm, Mm, Centipoints — and the Length base they share.\n\nRead one member: doc(\"pptx.Presentation\")"}
+ {:name "pptx.Presentation", :kind "class", :text "One presentation — slides, slide_layouts, slide_width/height, core_properties, save(path).", :call "Presentation(pptx=None)"}
+ {:name "pptx.api", :kind "module", :text "The Presentation(path=None) entry point — open an existing .pptx or start an empty one."}
+ {:name "pptx.chart", :kind "module", :text "Charts: the chart shape, its data, plots, series, points, markers, axes and labels."}
+ {:name "pptx.dml", :kind "module", :text "Drawing-ML types: fills, lines and colors shared by shapes, text and charts."}
+ {:name "pptx.enum", :kind "module", :text "The enumerations python-pptx exposes for text, shapes, fills and charts."}
+ {:name "pptx.exc", :kind "module", :text "The errors this shim raises: PackageNotFoundError and its InvalidXmlError siblings."}
+ {:name "pptx.presentation", :kind "module", :text "The Presentation object: slides, slide_layouts, slide_width/height, core_properties, save."}
+ {:name "pptx.shapes", :kind "module", :text "Shapes on a slide and the collections that hold them."}
+ {:name "pptx.table", :kind "module", :text "Table, _Row, _Column and _Cell — a table shape and the cells you write into."}
+ {:name "pptx.text", :kind "module", :text "Rich text: a text frame, its paragraphs, their runs and the font on each."}
+ {:name "pptx.util", :kind "module", :text "Length units — Emu, Inches, Pt, Cm, Mm, Centipoints — and the Length base they share."}]

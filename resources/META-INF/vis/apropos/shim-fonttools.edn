@@ -1,0 +1,6 @@
+;; GENERATED from sandbox Python docstrings; regenerate with apropos-resource-test.
+[
+ {:name "brotli", :kind "module", :text "`brotli.decompress(bytes) -> bytes`, the decompressor the WOFF2 path needs. `brotli.compress` is not supported. Part of the vis `fontTools` shim; see `doc(\"fonttools\")`.\n\nFunctions:\n  compress(*a, **k) — Refused: this shim only DECOMPRESSES Brotli. Use `brotli.decompress(bytes)`.\n\nRead one member: doc(\"brotli.compress\")"}
+ {:name "brotli.compress", :kind "function", :text "Refused: this shim only DECOMPRESSES Brotli. Use `brotli.decompress(bytes)`.", :call "compress(*a, **k)"}
+ {:name "fontTools", :kind "module", :text "WOFF2 to TTF: `fontTools.ttLib.woff2.decompress(input, output)` plus `brotli.decompress(bytes)`. Not supported: `brotli.compress`, WOFF1, `TTFont`, the wider fontTools API.\n\nModules:\n  ttLib — fontTools.ttLib: `woff2.decompress(input, output)` turns a WOFF2 web font into a TTF. TT…\n\nRead one member: doc(\"fontTools.ttLib\")"}
+ {:name "fontTools.ttLib", :kind "module", :text "fontTools.ttLib: `woff2.decompress(input, output)` turns a WOFF2 web font into a TTF. TTFont, TTCollection and newTable are present but refuse; see `doc(\"fontTools\")`."}]

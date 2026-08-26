@@ -62,7 +62,7 @@
 (defdescribe manifest-initialization-test
              (it "names the language extension's explicit initializer"
                  (expect (some #{'com.blockether.vis.ext.language-clojure.core/register!}
-                               (:initialization (manifest/read-manifest))))
+                               (manifest/initializers)))
                  (expect (ifn? core/register!))))
 
 (defdescribe surface-test

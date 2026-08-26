@@ -1,14 +1,17 @@
 (ns com.blockether.vis.internal.apropos-resource-test
-  "Harvest the Python shim surface into the static apropos resource.
+  "Harvest the Python shim surface into the static apropos resources.
 
    A shim documents itself in Python. Importing every shim is expensive, so this
    test performs that introspection once and pins the flat records consumed by
-   `apropos` and `doc`. Regenerate after changing a shim surface:
+   `apropos` and `doc`. Each pack keeps its OWN resource, named by its own manifest
+   entry, so deleting a pack takes its documents with it. Regenerate after changing
+   a shim surface:
 
      (require (quote com.blockether.vis.internal.apropos-resource-test) :reload)
      (com.blockether.vis.internal.apropos-resource-test/regenerate!)"
   (:require [charred.api :as json]
             [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
             [com.blockether.vis.internal.extension :as extension]
@@ -16,20 +19,37 @@
             [lazytest.core :refer [defdescribe expect it]])
   (:import [org.graalvm.polyglot Context]))
 
-(def ^:private resource-file "resources/META-INF/vis/apropos/shims.edn")
+(defn- resource-file [path] (str "resources/" path))
 
-(defn- shim-initializers
-  []
-  (->> (:initialization (manifest/read-manifest))
-       (filter #(str/starts-with? (namespace %) "com.blockether.vis.internal.foundation.shim-"))
-       vec))
+(defn- shim-entries
+  "Every manifest entry that lends sandbox shims, paired with what it lends.
 
-(defn- registered-shims
-  "Invoke exactly the shim initializers named by the distribution manifest."
+   Which entry owns a shim is a FACT of the registration, never the spelling of a
+   namespace: `vis/extension` stamps `:ext/source-nses` with the namespace that
+   declared the extension, so a shim registered from anywhere at all is still found,
+   and a pack that stops lending shims stops owning records."
   []
-  (doseq [initializer (shim-initializers)]
-    ((requiring-resolve initializer)))
-  (extension/sandbox-shims))
+  (manifest/initialize!)
+  (let [lends (into {}
+                    (for [ext (extension/registered-extensions)
+                          :let [shims (extension/ext-sandbox-shims ext)]
+                          :when (seq shims)
+                          ns-sym (extension/ext-source-nses ext)]
+
+                      [ns-sym shims]))]
+    (into []
+          (keep (fn [entry]
+                  (when-let [shims (get lends (symbol (namespace (:register entry))))]
+                    (assoc entry :shims (vec shims)))))
+          (manifest/entries))))
+
+(defn- shim-names
+  "Every module and global one pack's shims lend, in declaration order."
+  [shims]
+  (vec (distinct (concat (filter string? (mapcat :shim/imports shims))
+                         (filter string? (mapcat :shim/globals shims))))))
+
+(defn- registered-shims [] (mapcat :shims (shim-entries)))
 
 (def ^:private harvest-python
   "The harvester runs inside one throwaway sandbox context and answers JSON."
@@ -229,7 +249,13 @@ def __vis_harvest__(modules, names):
                     (cons root (keep #(member-entry nm %) (get entry "names"))))))
         harvest))
 
-(defn- stored-entries [] (edn/read-string (slurp resource-file)))
+(defn- pack-harvest
+  "The slice of one whole-distribution harvest that belongs to one pack, in the
+   sorted order the resource is written in."
+  [harvest shims]
+  (into (sorted-map) (select-keys harvest (shim-names shims))))
+
+(defn- stored-entries [path] (edn/read-string (slurp (resource-file path))))
 
 (defn- edn-text
   [entries]
@@ -239,17 +265,23 @@ def __vis_harvest__(modules, names):
        "]\n"))
 
 (defn regenerate!
-  "Re-harvest and write the flat shim apropos resource. Returns its record count."
+  "Re-harvest and rewrite one apropos resource per shim pack. Returns
+   `{resource record-count}`."
   []
-  (let [entries (apropos-entries (harvest!))]
-    (spit resource-file (edn-text entries))
-    (count entries)))
+  (let [harvest (harvest!)]
+    (into (sorted-map)
+          (for [{:keys [apropos shims]} (shim-entries)
+                :let [entries (apropos-entries (pack-harvest harvest shims))]]
+
+            (do (spit (resource-file apropos) (edn-text entries)) [apropos (count entries)])))))
 
 (defdescribe
   apropos-resource-test
-  (it "lists every shim initializer explicitly in the manifest"
+  (it "initializes every shim namespace the tree carries"
+      ;; A new `shim_*.clj` nobody listed is dead in the distribution, and nothing
+      ;; else would say so: absence is not a red test anywhere in the build.
       (let [listed
-            (set (map (comp symbol namespace) (shim-initializers)))
+            (set (map (comp symbol namespace :register) (shim-entries)))
 
             expected
             (->> (.listFiles (java.io.File. "src/com/blockether/vis/internal/foundation"))
@@ -261,25 +293,41 @@ def __vis_harvest__(modules, names):
 
         (expect (< 10 (count expected)))
         (expect (= expected listed))))
-  (it "declares the generated resource in the manifest"
-      (expect (some #{"META-INF/vis/apropos/shims.edn"} (:apropos (manifest/read-manifest)))))
+  (it "makes every pack that lends a shim name its own document resource"
+      (let [entries (shim-entries)]
+        (expect (< 20 (count entries)))
+        (doseq [{:keys [register apropos]} entries]
+          (expect (string? apropos) register)
+          (expect (some? (io/resource apropos)) apropos)
+          (expect (.exists (io/file (resource-file apropos))) apropos))
+        (expect (= (count entries) (count (set (map :apropos entries)))))))
   (it "stores one unique flat record for every documented name"
       (let [entries
-            (stored-entries)
+            (mapcat (comp stored-entries :apropos) (shim-entries))
 
             names
             (map :name entries)]
 
         (expect (< 20 (count (registered-shims))))
         (expect (< 500 (count entries)))
+        ;; Unique ACROSS packs, not merely within one: `apropos` answers the first
+        ;; record to claim a name, so two packs claiming one name would hide a symbol.
         (expect (= (count names) (count (distinct names))))
         (expect (every? #(and (string? (:name %))
                               (not (str/blank? (:name %)))
                               (string? (:kind %))
                               (not (str/blank? (:text %))))
                         entries))))
-  (it "contains roots and dotted members as flat document records"
-      (let [by-name (into {} (map (juxt :name identity)) (stored-entries))]
+  (it "keeps a pack's roots and dotted members in that pack's own resource"
+      (let [pandas
+            (->> (shim-entries)
+                 (some #(when (some #{"pandas"} (shim-names (:shims %))) %))
+                 :apropos
+                 stored-entries)
+
+            by-name
+            (into {} (map (juxt :name identity)) pandas)]
+
         (expect (contains? by-name "pandas"))
         (expect (contains? by-name "pandas.read_csv"))
         (expect (= "class" (:kind (get by-name "pandas.DataFrame"))))
@@ -287,9 +335,12 @@ def __vis_harvest__(modules, names):
                                     (set (keys %)))
                         (vals by-name)))))
   (it
-    "matches one live harvest"
+    "matches one live harvest, pack by pack"
     (let [live-harvest
           (harvest!)
+
+          entries
+          (shim-entries)
 
           failures
           (into {} (filter (comp #(contains? % "error") val)) live-harvest)
@@ -311,10 +362,15 @@ def __vis_harvest__(modules, names):
 
                 :when (and (not= "data" (get member "kind")) (str/blank? (str (get member "doc"))))]
 
-            (str root "." (get member "name")))]
+            (str root "." (get member "name")))
+
+          orphans
+          (remove (set (mapcat (comp shim-names :shims) entries)) (keys live-harvest))]
 
       (expect (empty? failures) (str "shim imports failed: " (pr-str failures)))
       (expect (empty? missing-docs) (str "shim roots without docstrings: " (pr-str missing-docs)))
       (expect (empty? bare-members) (str "shim members without docstrings: " (pr-str bare-members)))
-      (expect (= (apropos-entries live-harvest) (stored-entries))
-              "shims.edn is stale; run apropos-resource-test/regenerate!"))))
+      (expect (empty? orphans) (str "harvested names no pack claims: " (pr-str orphans)))
+      (doseq [{:keys [apropos shims]} entries]
+        (expect (= (apropos-entries (pack-harvest live-harvest shims)) (stored-entries apropos))
+                (str apropos " is stale; run apropos-resource-test/regenerate!"))))))

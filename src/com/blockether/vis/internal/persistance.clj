@@ -637,7 +637,7 @@
 
 (defn- backend-error-translators
   []
-  (try (manifest/initialize!) (catch Throwable _ nil))
+  (manifest/initialize!)
   (keep (fn [[_ {:keys [ns]}]]
           (some-> (ns-resolve ns 'db-error->user-message)
                   deref))

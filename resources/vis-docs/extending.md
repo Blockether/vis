@@ -1399,17 +1399,28 @@ resources/META-INF/vis/manifest.edn
 {:version 1
  :initialization
  [com.blockether.vis.internal.foundation.core/register!
-  com.acme.ext.weather.core/register!]
- :apropos
- ["META-INF/vis/apropos/docs.edn"
-  "META-INF/vis/apropos/weather.edn"]}
+  {:register com.acme.ext.weather.core/register!
+   :apropos  "META-INF/vis/apropos/weather.edn"}
+  {:register    com.acme.ext.onnx.core/register!
+   :is-optional true
+   :because     "the native runtime ships per platform and may be absent"}]}
 ```
 
-At startup Vis reads that one file, resolves each qualified symbol in
-`:initialization`, and calls it exactly once in vector order. There is no classpath
-scan: adding a jar does nothing until its `register!` symbol is named in the
-manifest. Keep `register!` cheap — it registers values and lazy handlers; it does
-not start services or load a heavy implementation.
+At startup Vis reads that one file, resolves each `:register` symbol and calls it
+exactly once in vector order. There is no classpath scan: adding a jar does nothing
+until its entry is named in the manifest. Keep `register!` cheap — it registers
+values and lazy handlers; it does not start services or load a heavy implementation.
+
+An entry is a **bare symbol** when it has nothing else to say. A **map** adds what
+that pack owns: `:apropos` names the one static EDN resource carrying its documents,
+so a resource is never declared far from the code that registers it and deleting a
+pack takes its documents with it.
+
+A required initializer that fails **throws** — a distribution that cannot build
+itself is a build defect, not a fact about this machine. `:is-optional true` says
+the opposite, that this pack may be missing from THIS machine, so its failure is
+logged, reported in `initialize!`'s `:failed` and stepped over; it must carry
+`:because`, because a weakness nobody explained cannot be told from a forgotten line.
 
 The same manifest is the native-image root. The build derives initializer
 namespaces from the symbols and includes the closed first-party source set, so no
@@ -1417,8 +1428,8 @@ second native namespace list can drift from runtime initialization.
 
 Getting on the classpath:
 
-- **JVM / source runs** — add the extension to `deps.edn`, then add its `register!`
-  symbol and apropos resource to the distribution manifest.
+- **JVM / source runs** — add the extension to `deps.edn`, then add an entry naming
+  its `register!` symbol, and the resource it owns, to the distribution manifest.
 - **Native binary** — add it to the custom distribution and rebuild with
   `vis-agent update --rebuild` (see [Runtime distributions](distributions.md)).
 
@@ -1801,9 +1812,9 @@ file named by the root manifest:
   :blurb "Current conditions extension."}]
 ```
 
-There is no resource scan. Append
-`"META-INF/vis/apropos/weather.edn"` to the distribution manifest's `:apropos`
-vector, and both the docs site and `doc("weather")` read the page.
+There is no resource scan. Name `"META-INF/vis/apropos/weather.edn"` as the
+`:apropos` of your own entry in the distribution manifest, and both the docs site
+and `doc("weather")` read the page.
 
 ### Complete minimal example
 
@@ -1845,9 +1856,9 @@ vector, and both the docs site and `doc("weather")` read the page.
   (vis/register-extension! vis-extension))
 ```
 
-Add `com.acme.ext.weather.core/register!` to the custom distribution manifest's
-`:initialization` vector. Add any static page or symbol records through one of the
-resources in `:apropos`, rebuild the distribution, and the model can call
+Add an entry for `com.acme.ext.weather.core/register!` to the custom distribution
+manifest's `:initialization` vector. Name your static page and symbol records as
+that entry's `:apropos` resource, rebuild the distribution, and the model can call
 `weather_lookup("Oslo")`.
 
 ### Native image rules

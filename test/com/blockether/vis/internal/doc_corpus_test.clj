@@ -203,9 +203,22 @@ Whole skill body."}
         (expect (throws? clojure.lang.ExceptionInfo #(#'dc/checked-record "test.edn" bad))
                 (pr-str bad))))
   (it "reads every declared record once, spending the resource it named"
-      (let [rs dc/records]
+      (let [rs (dc/records)]
         (expect (seq rs))
         (doseq [r rs]
           (expect (contains? dc/kinds (:kind r)) (str (:name r) " carries no kind"))
           (expect (not (contains? r :resource)) (str (:name r) " still points at a resource"))
-          (expect (not (str/blank? (:text r))) (str (:name r) " carries no text"))))))
+          (expect (not (str/blank? (:text r))) (str (:name r) " carries no text")))))
+  (it "reads the resources on the FIRST ask and never bakes them into the Var"
+      ;; A `def` here would be evaluated by `graal-build-time` inside the BUILDER, so
+      ;; every parsed record would ship in the image heap of every process.
+      (expect (fn? dc/records))
+      (let [before (dc/records)]
+        (expect (seq before))
+        ;; Read once, then answered from the cache.
+        (expect (identical? before (dc/records)))
+        (dc/forget-records!)
+        (let [after (dc/records)]
+          ;; Forgotten, so read from the resources AGAIN - same records, new value.
+          (expect (not (identical? before after)))
+          (expect (= before after))))))

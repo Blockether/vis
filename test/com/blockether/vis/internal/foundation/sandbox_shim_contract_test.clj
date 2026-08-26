@@ -25,11 +25,21 @@
    sandbox context, so it deliberately has no `shim_*.clj`."
   #{"vis-shims/posix.py"})
 
-(defn- shim-initializers
+(defn- shim-namespaces
+  "Every namespace the distribution initializes that lends sandbox shims. Role is
+   BEHAVIOUR — what a registration declares — never the spelling of a namespace:
+   `vis/extension` stamps `:ext/source-nses` with the namespace that declared it."
   []
-  (->> (:initialization (manifest/read-manifest))
-       (filter #(str/starts-with? (namespace %) "com.blockether.vis.internal.foundation.shim-"))
-       vec))
+  (manifest/initialize!)
+  (into #{}
+        (for [ext
+              (extension/registered-extensions)
+
+              :when (seq (extension/ext-sandbox-shims ext))
+              ns-sym
+              (extension/ext-source-nses ext)]
+
+          ns-sym)))
 
 (defn- shim-ns-files
   []
@@ -46,10 +56,9 @@
                    (str/replace "_" "-")))))
 
 (defn- registered-shims
-  "Invoke the shim initializers named by the distribution manifest."
+  "Every sandbox shim the initialized distribution lends."
   []
-  (doseq [initializer (shim-initializers)]
-    ((requiring-resolve initializer)))
+  (manifest/initialize!)
   (extension/sandbox-shims))
 
 (defdescribe shim-registration-test
@@ -58,7 +67,7 @@
                  (expect (< 10 (count (shim-ns-files)))))
              (it "lists every shim_*.clj in manifest initialization"
                  (let [listed
-                       (set (map (comp symbol namespace) (shim-initializers)))
+                       (shim-namespaces)
 
                        unlisted
                        (remove listed (map shim-ns-sym (shim-ns-files)))]
@@ -107,8 +116,8 @@
       ;; A shim reaches Python either as an importable module (`:shim/imports`) or as
       ;; prebound globals (`:shim/bindings`, how the `attach` shim publishes `attach`
       ;; and friends) — declaring NEITHER makes it unreachable. WHAT each name does is
-      ;; documented in the shim's own Python `__doc__`, harvested into the
-      ;; manifest's static `META-INF/vis/apropos/shims.edn` resource.
+      ;; documented in the shim's own Python `__doc__`, harvested into the resource
+      ;; that pack's own manifest entry names (`META-INF/vis/apropos/shim-<pack>.edn`).
       (doseq [{:shim/keys [name imports bindings]} (registered-shims)]
         (expect (not (str/blank? name)))
         (expect (or (seq imports) (some? bindings))

@@ -1,34 +1,60 @@
 {:version 1
  :initialization
- [com.blockether.vis.internal.foundation.core/register!
-  com.blockether.vis.internal.foundation.shim-yaml/register!
-  com.blockether.vis.internal.foundation.shim-matplotlib/register!
-  com.blockether.vis.internal.foundation.shim-requests/register!
-  com.blockether.vis.internal.foundation.shim-pytest/register!
-  com.blockether.vis.internal.foundation.shim-ruff/register!
-  com.blockether.vis.internal.foundation.shim-pil/register!
-  com.blockether.vis.internal.foundation.shim-numpy/register!
-  com.blockether.vis.internal.foundation.shim-bs4/register!
-  com.blockether.vis.internal.foundation.shim-pandas/register!
-  com.blockether.vis.internal.foundation.shim-tabulate/register!
-  com.blockether.vis.internal.foundation.shim-toml/register!
-  com.blockether.vis.internal.foundation.shim-tzdata/register!
-  com.blockether.vis.internal.foundation.shim-sqlite3/register!
-  com.blockether.vis.internal.foundation.shim-nippy/register!
-  com.blockether.vis.internal.foundation.shim-httpx/register!
-  com.blockether.vis.internal.foundation.shim-urllib3/register!
-  com.blockether.vis.internal.foundation.shim-paramiko/register!
-  com.blockether.vis.internal.foundation.shim-xlsxwriter/register!
-  com.blockether.vis.internal.foundation.shim-pptx/register!
-  com.blockether.vis.internal.foundation.shim-attach/register!
-  com.blockether.vis.internal.foundation.shim-ls/register!
-  com.blockether.vis.internal.foundation.shim-fonttools/register!
-  com.blockether.vis.internal.foundation.shim-anydoc/register!
+ [{:register com.blockether.vis.internal.foundation.core/register!
+   :apropos "META-INF/vis/apropos/docs.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-yaml/register!
+   :apropos "META-INF/vis/apropos/shim-yaml.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-matplotlib/register!
+   :apropos "META-INF/vis/apropos/shim-matplotlib.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-requests/register!
+   :apropos "META-INF/vis/apropos/shim-requests.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-pytest/register!
+   :apropos "META-INF/vis/apropos/shim-pytest.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-ruff/register!
+   :apropos "META-INF/vis/apropos/shim-ruff.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-pil/register!
+   :apropos "META-INF/vis/apropos/shim-pil.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-numpy/register!
+   :apropos "META-INF/vis/apropos/shim-numpy.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-bs4/register!
+   :apropos "META-INF/vis/apropos/shim-bs4.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-pandas/register!
+   :apropos "META-INF/vis/apropos/shim-pandas.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-tabulate/register!
+   :apropos "META-INF/vis/apropos/shim-tabulate.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-toml/register!
+   :apropos "META-INF/vis/apropos/shim-toml.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-tzdata/register!
+   :apropos "META-INF/vis/apropos/shim-tzdata.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-sqlite3/register!
+   :apropos "META-INF/vis/apropos/shim-sqlite3.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-nippy/register!
+   :apropos "META-INF/vis/apropos/shim-nippy.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-httpx/register!
+   :apropos "META-INF/vis/apropos/shim-httpx.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-urllib3/register!
+   :apropos "META-INF/vis/apropos/shim-urllib3.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-paramiko/register!
+   :apropos "META-INF/vis/apropos/shim-paramiko.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-xlsxwriter/register!
+   :apropos "META-INF/vis/apropos/shim-xlsxwriter.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-pptx/register!
+   :apropos "META-INF/vis/apropos/shim-pptx.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-attach/register!
+   :apropos "META-INF/vis/apropos/shim-attach.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-ls/register!
+   :apropos "META-INF/vis/apropos/shim-ls.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-fonttools/register!
+   :apropos "META-INF/vis/apropos/shim-fonttools.edn"}
+  {:register com.blockether.vis.internal.foundation.shim-anydoc/register!
+   :apropos "META-INF/vis/apropos/shim-anydoc.edn"}
   com.blockether.vis.internal.foundation.mcp.core/register!
   com.blockether.vis.internal.foundation.harness.core/register!
   com.blockether.vis.ext.channel-tui.core/register!
   com.blockether.vis.ext.foundation-search.core/register!
-  com.blockether.vis.ext.foundation-voice.core/register!
+  {:register com.blockether.vis.ext.foundation-voice.core/register!
+   :is-optional true
+   :because "sherpa-onnx ships one 8-13 MB native jar per platform and may be absent"}
   com.blockether.vis.ext.language-clojure.core/register!
   com.blockether.vis.ext.language-python.core/register!
   com.blockether.vis.ext.persistance-sqlite.registrar/register!
@@ -42,7 +68,4 @@
   com.blockether.vis.ext.provider-ollama/register!
   com.blockether.vis.ext.provider-lmstudio/register!
   com.blockether.vis.ext.provider-mistral/register!
-  com.blockether.vis.ext.provider-zai/register!]
- :apropos
- ["META-INF/vis/apropos/docs.edn"
-  "META-INF/vis/apropos/shims.edn"]}
+  com.blockether.vis.ext.provider-zai/register!]}

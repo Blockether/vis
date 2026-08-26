@@ -29,7 +29,7 @@ Each hit is `AproposItem(type, name, body)`: `type` says what the symbol is
 (`function` · `class` · `module` · `tool` · `doc` · `skill`), `name` is the exact
 handle `doc()` reads, and `body` is the first 100 characters of its text. The
 whole document remains behind `doc(name)`. Static records come only from the EDN
-resources listed under `:apropos` in `META-INF/vis/manifest.edn`; session skills
+resource each entry names in `META-INF/vis/manifest.edn`; session skills
 and live MCP contracts are explicit runtime additions. Helpers you define are
 listed by `defs()`, not `apropos()`.
 

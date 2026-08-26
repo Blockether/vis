@@ -1,0 +1,40 @@
+;; GENERATED from sandbox Python docstrings; regenerate with apropos-resource-test.
+[
+ {:name "matplotlib", :kind "module", :text "`matplotlib.pyplot` and OO subset with native PNG and ASCII renderers (line/scatter/bar/hist/fill/step/pie/box/image, `mpl_toolkits.mplot3d`); `show()` is inline PNG or ASCII, `savefig` writes PNG or ASCII text. Not supported: animation, full rcParams theming.\n\nFunctions:\n  get_backend() — Name the active backend, always the headless Agg renderer of this sandbox.\n  rc(*a, **k) — Set rc parameters (accepted; this renderer keeps its own defaults).\n  rcdefaults(*a, **k) — Restore default rc parameters (accepted; this renderer keeps its own defaults).\n  use(backend=None, *a, **k) — Select a backend (accepted and ignored: plots always render headless through Agg).\n\nModules:\n  animation — vis matplotlib.animation compat subset.\n  artist — vis matplotlib.artist compat subset.\n  axes — vis matplotlib.axes compat subset.\n  axis — vis matplotlib.axis compat subset.\n  backends — matplotlib.backends: the Agg backend this sandbox renders PNG through.\n  cm — matplotlib.cm: colormaps by name — cm.viridis, cm.plasma, get_cmap('coolwarm').\n  collections — vis matplotlib.collections compat subset.\n  colorbar — vis matplotlib.colorbar compat subset.\n  colormaps — matplotlib.cm: colormaps by name — cm.viridis, cm.plasma, get_cmap('coolwarm').\n  colors — vis matplotlib.colors compat subset.\n  container — vis matplotlib.container compat subset.\n  dates — vis matplotlib.dates compat subset.\n  figure — vis matplotlib.figure compat subset.\n  font_manager — vis matplotlib.font_manager compat subset.\n  gridspec — vis matplotlib.gridspec compat subset.\n  image — vis matplotlib.image compat subset.\n  legend — vis matplotlib.legend compat subset.\n  legend_handler — vis matplotlib.legend_handler compat subset.\n  lines — vis matplotlib.lines compat subset.\n  markers — vis matplotlib.markers compat subset.\n  offsetbox — vis matplotlib.offsetbox compat subset.\n  patches — vis matplotlib.patches compat subset.\n  path — vis matplotlib.path compat subset.\n  patheffects — vis matplotlib.patheffects compat subset.\n  pyplot — vis imaging-backed matplotlib.pyplot subset.\n  spines — vis matplotlib.spines compat subset.\n  style — matplotlib.style: style.use(name) — accepted and ignored by this sandbox renderer.\n  text — vis matplotlib.text compat subset.\n  ticker — vis matplotlib.ticker compat subset.\n  transforms — vis matplotlib.transforms compat subset.\n\nRead one member: doc(\"matplotlib.animation\")"}
+ {:name "matplotlib.animation", :kind "module", :text "vis matplotlib.animation compat subset."}
+ {:name "matplotlib.artist", :kind "module", :text "vis matplotlib.artist compat subset."}
+ {:name "matplotlib.axes", :kind "module", :text "vis matplotlib.axes compat subset."}
+ {:name "matplotlib.axis", :kind "module", :text "vis matplotlib.axis compat subset."}
+ {:name "matplotlib.backends", :kind "module", :text "matplotlib.backends: the Agg backend this sandbox renders PNG through."}
+ {:name "matplotlib.cm", :kind "module", :text "matplotlib.cm: colormaps by name — cm.viridis, cm.plasma, get_cmap('coolwarm')."}
+ {:name "matplotlib.collections", :kind "module", :text "vis matplotlib.collections compat subset."}
+ {:name "matplotlib.colorbar", :kind "module", :text "vis matplotlib.colorbar compat subset."}
+ {:name "matplotlib.colormaps", :kind "module", :text "matplotlib.cm: colormaps by name — cm.viridis, cm.plasma, get_cmap('coolwarm')."}
+ {:name "matplotlib.colors", :kind "module", :text "vis matplotlib.colors compat subset."}
+ {:name "matplotlib.container", :kind "module", :text "vis matplotlib.container compat subset."}
+ {:name "matplotlib.dates", :kind "module", :text "vis matplotlib.dates compat subset."}
+ {:name "matplotlib.figure", :kind "module", :text "vis matplotlib.figure compat subset."}
+ {:name "matplotlib.font_manager", :kind "module", :text "vis matplotlib.font_manager compat subset."}
+ {:name "matplotlib.get_backend", :kind "function", :text "Name the active backend, always the headless Agg renderer of this sandbox.", :call "get_backend()"}
+ {:name "matplotlib.gridspec", :kind "module", :text "vis matplotlib.gridspec compat subset."}
+ {:name "matplotlib.image", :kind "module", :text "vis matplotlib.image compat subset."}
+ {:name "matplotlib.legend", :kind "module", :text "vis matplotlib.legend compat subset."}
+ {:name "matplotlib.legend_handler", :kind "module", :text "vis matplotlib.legend_handler compat subset."}
+ {:name "matplotlib.lines", :kind "module", :text "vis matplotlib.lines compat subset."}
+ {:name "matplotlib.markers", :kind "module", :text "vis matplotlib.markers compat subset."}
+ {:name "matplotlib.offsetbox", :kind "module", :text "vis matplotlib.offsetbox compat subset."}
+ {:name "matplotlib.patches", :kind "module", :text "vis matplotlib.patches compat subset."}
+ {:name "matplotlib.path", :kind "module", :text "vis matplotlib.path compat subset."}
+ {:name "matplotlib.patheffects", :kind "module", :text "vis matplotlib.patheffects compat subset."}
+ {:name "matplotlib.pyplot", :kind "module", :text "vis imaging-backed matplotlib.pyplot subset."}
+ {:name "matplotlib.rc", :kind "function", :text "Set rc parameters (accepted; this renderer keeps its own defaults).", :call "rc(*a, **k)"}
+ {:name "matplotlib.rcdefaults", :kind "function", :text "Restore default rc parameters (accepted; this renderer keeps its own defaults).", :call "rcdefaults(*a, **k)"}
+ {:name "matplotlib.spines", :kind "module", :text "vis matplotlib.spines compat subset."}
+ {:name "matplotlib.style", :kind "module", :text "matplotlib.style: style.use(name) — accepted and ignored by this sandbox renderer."}
+ {:name "matplotlib.text", :kind "module", :text "vis matplotlib.text compat subset."}
+ {:name "matplotlib.ticker", :kind "module", :text "vis matplotlib.ticker compat subset."}
+ {:name "matplotlib.transforms", :kind "module", :text "vis matplotlib.transforms compat subset."}
+ {:name "matplotlib.use", :kind "function", :text "Select a backend (accepted and ignored: plots always render headless through Agg).", :call "use(backend=None, *a, **k)"}
+ {:name "mpl_toolkits", :kind "module", :text "The `mpl_toolkits` half of the vis `matplotlib` shim: `mplot3d` (`Axes3D`, `art3d`, `proj3d`) and `axes_grid1`, over the same native renderer. Same refusals as `matplotlib` — see `doc(\"matplotlib\")`.\n\nModules:\n  axes_grid1 — mpl_toolkits.axes_grid1: the axes-grid helpers this sandbox supports.\n  mplot3d — mpl_toolkits.mplot3d: 3-D axes — Axes3D, art3d and proj3d for surface, scatter and line …\n\nRead one member: doc(\"mpl_toolkits.axes_grid1\")"}
+ {:name "mpl_toolkits.axes_grid1", :kind "module", :text "mpl_toolkits.axes_grid1: the axes-grid helpers this sandbox supports."}
+ {:name "mpl_toolkits.mplot3d", :kind "module", :text "mpl_toolkits.mplot3d: 3-D axes — Axes3D, art3d and proj3d for surface, scatter and line plots."}]
