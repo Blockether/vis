@@ -396,7 +396,18 @@
       (when duration-ms (vis/format-duration duration-ms))
       ""))
 
-(defn- activity-count [activity state] (max 0 (long (get-in activity [:counts state] 0))))
+(defn- semantic-activity-count
+  "Count the operation rows the Activity disclosure can actually present. Host lifecycle
+   counts include infrastructure follow-ups and therefore are not user-visible operations."
+  [activity]
+  (count (:rows activity)))
+
+(defn- semantic-activity-state-count
+  [activity state]
+  (count (filter #(= (name state)
+                     (some-> (:state %)
+                             name))
+                 (:rows activity))))
 
 (defn- activity-state
   "The Direction A state word. A close verdict wins; before it arrives, the semantic
@@ -445,16 +456,14 @@
   (let [activity
         (get-in pane [:view :activity])
 
-        finished
-        (long (+ (long (activity-count activity :succeeded))
-                 (long (activity-count activity :failed))
-                 (long (activity-count activity :cancelled))))
-
-        running
-        (long (activity-count activity :running))
-
         rows
         (vec (:rows activity))
+
+        finished
+        (long (semantic-activity-count activity))
+
+        running
+        (long (semantic-activity-state-count activity :running))
 
         active
         (some #(when (= "running"
@@ -1674,7 +1683,10 @@
         (set (:activity-evidence pane))
 
         counts
-        (:counts activity)]
+        (into {}
+              (map (fn [state]
+                     [state (semantic-activity-state-count activity state)]))
+              [:running :succeeded :failed :cancelled])]
 
     (into [{:kind :activity-status
             :tone (activity-row-tone (:state activity))
