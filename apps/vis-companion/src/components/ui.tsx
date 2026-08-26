@@ -1279,8 +1279,8 @@ export function ChoiceCell({
   /** Hide the choice glyph when an adjacent action occupies its trailing place. */
   showSelectionMark?: boolean;
   /**
-   * An independent icon action that sits before the value's name, never after it. A real
-   * panel gutter keeps its square visibly separate from the choice surface beside it.
+   * An independent icon action that sits before the value's name, never after it. Its compact
+   * fixed-width cell ends at the grid's dark hairline; the choice owns the breathing room beyond it.
    */
   leadingAction?: {
     label: string;
@@ -1297,10 +1297,10 @@ export function ChoiceCell({
       className={`flex min-w-0 items-center gap-3 text-left transition-[background-color,color,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none ${
         isNested
           ? leadingAction
-            ? 'pl-0 pr-3'
+            ? 'pl-3 pr-3'
             : 'pl-6 pr-3'
           : leadingAction
-            ? 'pl-0 pr-3'
+            ? 'pl-3 pr-3'
             : 'px-3'
       } ${
         isLeaf ? 'min-h-9 mouse:min-h-8' : 'min-h-10 justify-between py-1.5 mouse:min-h-9'
@@ -1332,13 +1332,13 @@ export function ChoiceCell({
   if (!leadingAction) return choice;
 
   return (
-    <div className="grid min-w-0 grid-cols-[3rem_minmax(0,1fr)] gap-1 bg-panel">
+    <div className="grid min-w-0 grid-cols-[2.5rem_minmax(0,1fr)]">
       <button
         type="button"
         aria-label={leadingAction.label}
         disabled={leadingAction.disabled}
         onClick={leadingAction.onClick}
-        className={`grid min-h-9 w-12 place-items-center transition-[background-color,color,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none mouse:min-h-8 ${
+        className={`grid min-h-9 place-items-center border-r border-dialog-edge transition-[background-color,color,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent active:scale-[0.99] disabled:opacity-45 motion-reduce:transition-none mouse:min-h-8 ${
           isSelected ? 'bg-accent text-accent-foreground' : 'bg-input text-white hover:bg-hover'
         }`}
       >

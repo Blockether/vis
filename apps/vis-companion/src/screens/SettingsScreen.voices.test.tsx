@@ -163,6 +163,7 @@ describe("hearing a voice before choosing it", () => {
     expect(row?.children.item(1)).toBe(voice);
     expect(play.textContent).toBe("");
     expect(play.querySelector("svg")).not.toBeNull();
+    expect(play.querySelector("svg")?.getAttribute("class")?.split(" ")).toContain("size-3");
   });
 
   // Regression, user report: an active sample still looked like Play, so there was no way

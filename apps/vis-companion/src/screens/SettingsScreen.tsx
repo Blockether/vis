@@ -1244,7 +1244,7 @@ export function VoicesPanel({
                   : model?.status === "failed"
                     ? `Retry download ${name}`
                     : `Download ${name}`,
-                icon: <DownloadIcon className="size-3.5" />,
+                icon: <DownloadIcon className="size-3" />,
                 disabled: isDownloading || pending === `install:${voice.id}`,
                 onClick: () => {
                   cancelAudition();
@@ -1259,9 +1259,9 @@ export function VoicesPanel({
                     ? `Stop the sample of ${name}`
                     : `Play a sample of ${name}`,
                   icon: isPlaying ? (
-                    <StopIcon className="size-3.5" />
+                    <StopIcon className="size-3" />
                   ) : (
-                    <PlayIcon className="size-3.5" />
+                    <PlayIcon className="size-3" />
                   ),
                   onClick: () => {
                     if (isPlaying) cancelAudition();
@@ -1900,9 +1900,9 @@ export function SpeechEnginesPanel({
                                       : "Play a sample of System default",
                                   icon:
                                     playingDeviceVoice === null ? (
-                                      <StopIcon className="size-3.5" />
+                                      <StopIcon className="size-3" />
                                     ) : (
-                                      <PlayIcon className="size-3.5" />
+                                      <PlayIcon className="size-3" />
                                     ),
                                   onClick: () => {
                                     if (playingDeviceVoice === null) cancelDeviceAudition();
@@ -1932,9 +1932,9 @@ export function SpeechEnginesPanel({
                                         ? `Stop the sample of ${voice.label}`
                                         : `Play a sample of ${voice.label}`,
                                       icon: isPlaying ? (
-                                        <StopIcon className="size-3.5" />
+                                        <StopIcon className="size-3" />
                                       ) : (
-                                        <PlayIcon className="size-3.5" />
+                                        <PlayIcon className="size-3" />
                                       ),
                                       onClick: () => {
                                         if (isPlaying) cancelDeviceAudition();

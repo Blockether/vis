@@ -2886,9 +2886,9 @@ describe("a setting is picked and switched by one control each", () => {
     expect(classes(off)).not.toContain("border");
   });
 
-  // Regression, user report: a one-pixel rule still left the preview square visually
-  // attached to the choice beside it; these are two controls and need real air between them.
-  it("separates a leading action from the choice with a visible gap", () => {
+  // A pale gap reads as a missing strip of the selected fill. The preview is a compact cell
+  // divided by the grid's dark hairline, with breathing room on the content side.
+  it("divides and spaces a compact leading action from its choice", () => {
     const html = renderToStaticMarkup(
       <ChoiceCell
         title="Albert"
@@ -2899,10 +2899,15 @@ describe("a setting is picked and switched by one control each", () => {
       />,
     );
     const wrapper = /<div[^>]*class="([^"]*)"/.exec(html)?.[1].split(" ") ?? [];
+    const buttons = [...html.matchAll(/<button[^>]*class="([^"]*)"/g)].map(
+      (match) => match[1]?.split(" ") ?? [],
+    );
 
-    expect(html.match(/<button/g)).toHaveLength(2);
-    expect(wrapper).toEqual(expect.arrayContaining(["gap-1", "bg-panel"]));
-    expect(wrapper).not.toContain("gap-px");
+    expect(buttons).toHaveLength(2);
+    expect(wrapper).toContain("grid-cols-[2.5rem_minmax(0,1fr)]");
+    expect(wrapper).not.toContain("gap-1");
+    expect(buttons[0]).toEqual(expect.arrayContaining(["border-r", "border-dialog-edge"]));
+    expect(buttons[1]).toContain("pl-3");
   });
 
   // Regression, user report over the open TTS panel ("that full-width stack of things still
