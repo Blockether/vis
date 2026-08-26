@@ -5453,35 +5453,43 @@
          :filename "screen.png"
          :media-type "image/png"}]
 
-    (it "moves one attachment snapshot into a direct turn and clears the composer"
-        (with-redefs [vis/cancellation-token
-                      (constantly :token)
+    ;; Regression, issue td-75dad4: a submitted image disappeared with the composer rail,
+    ;; leaving its optimistic user message as text alone until the session was reloaded.
+    (it
+      "moves one visible attachment snapshot into a direct turn and clears the composer"
+      (with-redefs [vis/cancellation-token
+                    (constantly :token)
 
-                      input/expand-file-mentions
-                      identity]
+                    input/expand-file-mentions
+                    identity]
 
-          (let [db
-                {:active-tab-id :main
-                 :session {:id "s1"}
-                 :messages []
-                 :input-history []
-                 :pastes {}
-                 :attachments [attachment]
-                 :settings {}}
+        (let [db
+              {:active-tab-id :main
+               :session {:id "s1"}
+               :messages []
+               :input-history []
+               :pastes {}
+               :attachments [attachment]
+               :settings {}}
 
-                result
-                (send-message-fn db [:send-message "describe this" :main])
+              result
+              (send-message-fn db [:send-message "describe this" :main])
 
-                turn-fx
-                (first (:fx result))
+              turn-fx
+              (first (:fx result))
 
-                reset-db
-                (reset-input-fn (:db result) [:reset-input])]
+              user-text
+              (get-in result [:db :messages 0 :text])
 
-            (expect (= "describe this" (nth turn-fx 3)))
-            (expect (= [attachment] (last turn-fx)))
-            (expect (= [attachment] (get-in result [:db :submitted-input :attachments])))
-            (expect (= [] (:attachments reset-db))))))
+              reset-db
+              (reset-input-fn (:db result) [:reset-input])]
+
+          (expect (= "describe this" (nth turn-fx 3)))
+          (expect (= [attachment] (last turn-fx)))
+          (expect (str/includes? user-text "````vis-image"))
+          (expect (str/includes? user-text "screen.png"))
+          (expect (= [attachment] (get-in result [:db :submitted-input :attachments])))
+          (expect (= [] (:attachments reset-db))))))
     (it "keeps attachments with queued text and restores them for editing"
         (let [db
               {:active-tab-id :main

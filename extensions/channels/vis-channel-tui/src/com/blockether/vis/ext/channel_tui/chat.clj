@@ -583,6 +583,39 @@
                          (attachment-transcript-fence (inc (long i)) filename transcript))
                        transcripts))))))
 
+(defn user-request-with-staged-attachments
+  "Add composer attachments to the optimistic user message before the gateway reply.
+
+   Visual files retain their live source path in a `vis-image` fence; every other
+   file gets a filename chip. Persisted history later rebuilds the same content from
+   durable gateway descriptors via [[user-request-with-images]]."
+  [user-request attachments]
+  (let [visual?
+        (fn [{:keys [media-type]}]
+          (or (str/starts-with? (str media-type) "image/") (timg/video-mime? media-type)))
+
+        visuals
+        (->> attachments
+             (filter visual?)
+             (mapv (fn [{:keys [path media-type filename width height]}]
+                     {:path path :mime media-type :filename filename :width width :height height})))
+
+        files
+        (->> attachments
+             (remove visual?)
+             (map-indexed (fn [i {:keys [filename]}]
+                            (str "\n[Attachment #" (inc (long i)) ": " filename "]\n")))
+             (str/join ""))]
+
+    (if (and (empty? visuals) (str/blank? files))
+      (chip-image-paths user-request)
+      (str (str/trimr (chip-image-paths (strip-image-fences user-request)))
+           (str/join ""
+                     (map-indexed (fn [i d]
+                                    (attachment-image-fence (inc (long i)) d))
+                                  visuals))
+           files))))
+
 (defn- turns->messages
   "Wire transcript turns (oldest-first) -> the TUI's flat message vector.
    Returns a vec of {:role :user|:assistant :text str :timestamp #inst ...}.

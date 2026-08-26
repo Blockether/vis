@@ -4098,7 +4098,10 @@
               (when (reasoning-effort-configurable? db) (get-in db [:settings :reasoning-level]))
 
               client-turn-id
-              (str (java.util.UUID/randomUUID))]
+              (str (java.util.UUID/randomUUID))
+
+              visible-preview-text
+              (chat/user-request-with-staged-attachments preview-text attachments)]
 
           {:db (update-tab db
                            workspace-id
@@ -4106,7 +4109,7 @@
                              (-> w
                                  (update :messages
                                          conj
-                                         (assoc (chat/user-message preview-text)
+                                         (assoc (chat/user-message visible-preview-text)
                                            :client-turn-id client-turn-id))
                                  (update :messages
                                          conj
