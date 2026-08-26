@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
+- feat(zai): make GLM-5.3-Flash the default Coding Plan model through svar 0.7.146
 - fix(live): answer a live-view tap without waiting out the provider tick
 - feat(gateway): authenticate GitHub CLI through private human input
 - fix(companion): reveal live artifacts after an interrupt

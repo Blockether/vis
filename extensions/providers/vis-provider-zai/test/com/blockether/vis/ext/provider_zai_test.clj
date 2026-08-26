@@ -5,29 +5,32 @@
             [com.blockether.vis.ext.provider-zai :as zai]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe provider-registration-test
-             (it "registers both Z.ai plans as separate provider extension entries"
-                 (require 'com.blockether.vis.ext.provider-zai :reload)
-                 (let [coding
-                       (vis/provider-by-id :zai-coding-plan)
+(defdescribe
+  provider-registration-test
+  (it "registers both Z.ai plans as separate provider extension entries"
+      (require 'com.blockether.vis.ext.provider-zai :reload)
+      (zai/register!)
+      (let [coding
+            (vis/provider-by-id :zai-coding-plan)
 
-                       pass
-                       (vis/provider-by-id :zai)
+            pass
+            (vis/provider-by-id :zai)
 
-                       ext-nses
-                       (set (map :ext/name (vis/registered-extensions)))]
+            ext-nses
+            (set (map :ext/name (vis/registered-extensions)))]
 
-                   (expect (= :zai-coding-plan (:provider/id coding)))
-                   (expect (= :zai (:provider/id pass)))
-                   (expect (contains? ext-nses "provider-zai"))
-                   (expect (= (svar/provider-base-url :zai-coding-plan)
-                              (get-in coding [:provider/preset :base-url])))
-                   (expect (= (svar/provider-base-url :zai)
-                              (get-in pass [:provider/preset :base-url])))
-                   (expect (ifn? (:provider/limits-fn coding)))
-                   (expect (ifn? (:provider/limits-fn pass)))
-                   (expect (ifn? (:provider/auth-prompt-fn coding)))
-                   (expect (ifn? (:provider/auth-prompt-fn pass))))))
+        (expect (= :zai-coding-plan (:provider/id coding)))
+        (expect (= :zai (:provider/id pass)))
+        (expect (contains? ext-nses "provider-zai"))
+        (expect (= (svar/provider-base-url :zai-coding-plan)
+                   (get-in coding [:provider/preset :base-url])))
+        (expect (= (svar/provider-base-url :zai) (get-in pass [:provider/preset :base-url])))
+        (expect (= "glm-5.3-flash" (first (get-in coding [:provider/preset :default-models]))))
+        (expect (= "glm-5.3-flash" (first (get-in pass [:provider/preset :default-models]))))
+        (expect (ifn? (:provider/limits-fn coding)))
+        (expect (ifn? (:provider/limits-fn pass)))
+        (expect (ifn? (:provider/auth-prompt-fn coding)))
+        (expect (ifn? (:provider/auth-prompt-fn pass))))))
 
 (defdescribe
   auth-prompt-test

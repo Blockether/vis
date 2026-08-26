@@ -9,9 +9,9 @@
                    (https://api.z.ai/api/paas/v4).
                    Env var: `ZAI_API_KEY`.
 
-   Both endpoints serve the same GLM model family (`glm-5-turbo`,
-   `glm-5.1`, `glm-4.7`, `glm-4.6`, `glm-4.6v`, ...) with binary
-   thinking (`:zai-thinking` reasoning-style - handled by svar). They
+   Both endpoints serve the same GLM model family (`glm-5.3-flash`,
+   `glm-5.3`, `glm-5-turbo`, `glm-5.1`, ...) with effort-based reasoning
+   on GLM-5.3 models and binary thinking on older models (handled by svar). They
    share helper code, but the runtime extension registry sees one
    extension entry per provider id.
 
