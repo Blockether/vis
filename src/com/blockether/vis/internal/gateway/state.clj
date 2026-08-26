@@ -4533,11 +4533,6 @@
                  ;; gateway's own list all say INPUT NEEDED about the same session.
                  :is_awaiting_input (bus/session-waiting? sid)
                  :current_turn_id current-turn-id
-                 ;; A TOUCH clock, not a content clock: `append-event!` and
-                 ;; `set-session-model!` bump it, and it is PROCESS state that a daemon
-                 ;; start re-stamps for every session at once. Report it, never order by
-                 ;; it - see `session-recency-ms`.
-                 :last_active_at (:last-active entry)
                  :turn_count (long (or (:turn-count stats) 0))
                  :server_time_ms server-time-ms}
           model-pref
@@ -4678,11 +4673,11 @@
   "How fresh a DECORATED session is, for ORDERING only.
 
    Two clocks reach a client and only one of them is content: `modified_at` is the
-   last turn, `created_at` never moves. `last_active_at` is deliberately NOT here.
-   It is a TOUCH (`append-event!`, `set-session-model!`, a registry hydrated at
-   daemon start), so reading it would let merely opening a session - or restarting
-   the gateway, which re-stamps the whole fleet with one hydration time - reorder
-   the navigator under the reader's finger."
+   last turn, `created_at` never moves. The registry's `:last-active` stamp is a
+   TOUCH (`append-event!`, `set-session-model!`, a registry hydrated at daemon
+   start) and never leaves this process, because reading it would let merely
+   opening a session - or restarting the gateway, which re-stamps the whole fleet
+   with one hydration time - reorder the navigator under the reader's finger."
   [session]
   (->epoch-ms (or (get session "modified_at") (get session "created_at"))))
 

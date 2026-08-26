@@ -432,14 +432,13 @@ describe('withSearchHits', () => {
   });
 
   // Regression, user report (paraphrased: "opening a session suddenly makes it the
-  // freshest one and it jumps up"): ranking read `last_active_at`, the gateway's
-  // touch clock, so a session merely read outranked one that had actually changed.
+  // freshest one and it jumps up"): ranking read the gateway's touch clock, so a
+  // session merely read outranked one that had actually changed.
   it('ranks hydrated hits by content time, never by the last touch', () => {
     const loaded = [session('a', { modified_at: '2024-05-02T10:00:00Z' })];
     const hits = [
       session('touched', {
         created_at: '2024-01-01T10:00:00Z',
-        last_active_at: '2024-05-02T11:00:00Z',
       }),
       session('changed', { modified_at: '2024-03-01T10:00:00Z' }),
     ];

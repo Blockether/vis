@@ -4883,7 +4883,6 @@
   [sessions]
   (->> sessions
        (sort-by #(- (long (or (dlg/date->millis (get % "modified_at"))
-                              (dlg/date->millis (get % "last_active_at"))
                               (dlg/date->millis (get % "created_at"))
                               0))))
        (mapv #(str (get % "id")))))

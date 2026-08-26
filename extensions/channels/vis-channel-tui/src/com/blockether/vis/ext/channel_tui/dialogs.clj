@@ -4759,9 +4759,7 @@
                    active? "● focused"
                    :else (str (long (or (get session "turn_count") 0)) " turns"))
      :created (navigator-stamp (get session "created_at"))
-     :modified (navigator-stamp (or (get session "modified_at")
-                                    (get session "last_active_at")
-                                    (get session "created_at")))
+     :modified (navigator-stamp (or (get session "modified_at") (get session "created_at")))
      :target {:action :switch :id id}}))
 
 (defn- group-rows-by-dir

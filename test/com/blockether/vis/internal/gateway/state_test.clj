@@ -188,6 +188,22 @@
                     (constantly nil)]
 
         (expect (not (contains? (state/soul "s2") "model_pref")))))
+  ;; Regression, user report (paraphrased: "opening a session makes it the freshest
+  ;; thing on the list"): the row carried `last_active_at`, a stamp every appended
+  ;; event and every daemon start moves, so a client could rank a merely-read
+  ;; session above one that changed. The touch clock stays inside this process.
+  (it "keeps the registry TOUCH clock off the wire"
+      (with-redefs [lp/by-id
+                    (constantly {:id "s-touched" :channel :api :title "t"})
+
+                    lp/db-info
+                    (constantly nil)
+
+                    persistance/db-session-turn-stats
+                    (constantly nil)]
+
+        (#'state/put-session! "s-touched" {:next-seq 0 :last-active 9000})
+        (expect (not (contains? (state/soul "s-touched") "last_active_at")))))
   (it "an UNFLUSHED pick beats the persisted row during its debounce window"
       (with-redefs [lp/by-id
                     (constantly {:id "s3"
@@ -2446,12 +2462,12 @@
                  (expect (= 3 (:total (three-session-window {}))))))
 ;; Regression, user report (paraphrased: "clicking a session suddenly makes it the
 ;; freshest thing and it jumps to the top, and after the gateway restarts the empty
-;; sessions sit above the one I actually worked in"): the navigator key read
-;; `last_active_at` / the registry's `:last-active`, which is a TOUCH clock -
+;; report: the navigator key read the registry's `:last-active` TOUCH clock -
 ;; `append-event!` and `set-session-model!` bump it, and a daemon start stamps every
-;; session with one hydration time.
+;; session with one hydration time. It no longer reaches a client at all; the old
+;; spelling stays in the row below so the order is proven against ANY stray key.
 (defdescribe gateway-session-touch-order-test
-             (it "ignores last_active_at, so touching a row cannot move it"
+             (it "orders by content time alone, whatever else a row carries"
                  (let [ids
                        (fn [rows]
                          (mapv #(get % "id") (#'state/order-session-summaries rows)))
