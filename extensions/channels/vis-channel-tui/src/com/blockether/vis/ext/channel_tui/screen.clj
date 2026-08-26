@@ -4657,13 +4657,6 @@
     ;; finalization barrier that closes the mux without reconnecting.
     cleanup))
 
-(defn- date->millis
-  [v]
-  (cond (instance? java.util.Date v) (.getTime ^java.util.Date v)
-        (instance? java.time.Instant v) (.toEpochMilli ^java.time.Instant v)
-        (number? v) (long v)
-        :else nil))
-
 (defn- session-summary
   "Summary row for the session picker. The gateway folds `turn_count` + `modified_at`
    into every `list-sessions` soul server-side (ONE grouped SQL for the whole store), so
@@ -4697,7 +4690,7 @@
         (get s "created_at")]
 
     [(if (pos? (long (or turn-count 0))) 1 0)
-     (or (date->millis modified-at) (date->millis created-at) 0) (long (or turn-count 0))]))
+     (or (dlg/date->millis modified-at) (dlg/date->millis created-at) 0) (long (or turn-count 0))]))
 
 (defn- latest-modified-first
   [sessions]
@@ -4889,9 +4882,9 @@
    `project_position` (see `:order-project-tabs`)."
   [sessions]
   (->> sessions
-       (sort-by #(- (long (or (date->millis (get % "modified_at"))
-                              (date->millis (get % "last_active_at"))
-                              (date->millis (get % "created_at"))
+       (sort-by #(- (long (or (dlg/date->millis (get % "modified_at"))
+                              (dlg/date->millis (get % "last_active_at"))
+                              (dlg/date->millis (get % "created_at"))
                               0))))
        (mapv #(str (get % "id")))))
 

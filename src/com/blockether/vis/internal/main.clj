@@ -46,6 +46,7 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.format :as fmt]
+            [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
@@ -746,13 +747,6 @@
 
 (defn- trace-code [s] (ansi "36" s))
 
-(defn- envelope-duration-ms
-  [envelope]
-  (when (and (map? envelope)
-             (nat-int? (:started-at-ms envelope))
-             (nat-int? (:finished-at-ms envelope)))
-    (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
-
 (def ^:private ansi-sgr-re #"\u001B\[[0-9;]*m")
 
 (defn- strip-ansi [s] (str/replace (str s) ansi-sgr-re ""))
@@ -973,7 +967,7 @@
                     (inc (long (or (:form-idx chunk) 0)))
                     (when-let [of (:form-of chunk)]
                       (str "/" of))
-                    (when-let [ms (envelope-duration-ms (:envelope chunk))]
+                    (when-let [ms (form/envelope-duration-ms (:envelope chunk))]
                       (str " " (trace-dim (str ms "ms"))))
                     (when (:repaired? chunk) (str " " (trace-warn "repaired")))
                     (when (:timeout? chunk) (str " " (trace-bad "timeout")))
@@ -2309,22 +2303,6 @@
       (some-> provider-id
               name)))
 
-(defn- status-entry-label
-  [k]
-  (-> (name k)
-      (str/replace #"-" " ")
-      (str/capitalize)))
-
-(defn- format-status-value
-  [v]
-  (cond (keyword? v) (name v)
-        (map? v) (str/join ", "
-                           (map (fn [[k2 v2]]
-                                  (str (name k2) ": " (format-status-value v2)))
-                                (sort-by (comp str key) v)))
-        (sequential? v) (str/join ", " (map format-status-value v))
-        :else (str v)))
-
 (defn- format-limit-window
   [{:keys [kind unit size resets-at-ms]}]
   (when kind
@@ -2408,8 +2386,8 @@
     (stdout! (str "  Authenticated:  " (if (get status "is_authenticated") "yes" "no")))
     (doseq [[k v] rows]
       (stdout! (str "  "
-                    (commandline/pad-right (str (status-entry-label k) ":") 15)
-                    (format-status-value v))))
+                    (commandline/pad-right (str (providers/status-entry-label k) ":") 15)
+                    (providers/format-status-value v))))
     (doseq [line (provider-limit-lines provider-id)]
       (stdout! line))
     (stdout! "")))

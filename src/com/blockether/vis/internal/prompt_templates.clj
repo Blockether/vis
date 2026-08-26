@@ -27,6 +27,7 @@
    precedence pi uses."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
@@ -85,23 +86,14 @@
                     :data {:path (.getAbsolutePath f) :error (ex-message t)}})
          nil)))
 
-(defn dedup-by-name
-  "First occurrence of each `:name` wins (precedence = input order)."
-  [entries]
-  (->> entries
-       (reduce (fn [[seen out] e]
-                 (if (contains? seen (:name e)) [seen out] [(conj seen (:name e)) (conj out e)]))
-               [#{} []])
-       second))
-
 (defn- discover-project-dirs
   [project-dirs global-dir]
-  (dedup-by-name (vec (concat (mapcat (fn [project-dir]
-                                        (keep #(parse-template-file :project %)
-                                              (when project-dir (md-files project-dir))))
-                                      project-dirs)
-                              (keep #(parse-template-file :global %)
-                                    (when global-dir (md-files global-dir)))))))
+  (discovery/dedup-by-name (vec (concat (mapcat (fn [project-dir]
+                                                  (keep #(parse-template-file :project %)
+                                                        (when project-dir (md-files project-dir))))
+                                                project-dirs)
+                                        (keep #(parse-template-file :global %)
+                                              (when global-dir (md-files global-dir)))))))
 
 (defn discover-in
   "Parse every `*.md` template under `project-dir` then `global-dir`
@@ -197,7 +189,7 @@
   "All available templates: file templates first (they win name
    collisions), then provider-contributed dynamic templates."
   []
-  (dedup-by-name (into (file-templates) (provider-templates))))
+  (discovery/dedup-by-name (into (file-templates) (provider-templates))))
 
 ;; Expansion
 

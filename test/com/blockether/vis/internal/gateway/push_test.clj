@@ -8,6 +8,7 @@
             [clojure.string :as str]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.push :as push]
+            [com.blockether.vis.internal.gateway.keychain :as keychain]
             [com.blockether.vis.internal.gateway.web-push :as web-push]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire])
@@ -390,10 +391,10 @@
           hex
           (str/join (map #(format "%02x" (int %)) pem))]
 
-      (is (= pem (#'push/unhex hex)))
-      (is (= "ABCD123456" (#'push/unhex "ABCD123456")) "plain values pass through")))
+      (is (= pem (#'keychain/unhex hex)))
+      (is (= "ABCD123456" (#'keychain/unhex "ABCD123456")) "plain values pass through")))
   (testing "a redirected push home never reads the developer's real keychain"
     (with-push-home [home]
                     (is (some? home))
-                    (is (nil? (#'push/keychain "key")))
+                    (is (nil? (keychain/secret "vis-apns" "key")))
                     (is (contains? (set (:missing (push/config))) "key")))))

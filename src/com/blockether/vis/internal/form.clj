@@ -51,6 +51,19 @@
   "The canonical engine keys projected by `->display` and recovered by `<-wire`."
   (mapv first display-fields))
 
+(defn envelope-duration-ms
+  "Wall-clock ms an executed form took, derived from the timing keys its envelope
+   already carries — nil when the envelope carries no complete pair, so a caller
+   can tell \"took no measurable time\" from \"was never timed\".
+
+   The ONE derivation of a form's duration: the loop, the CLI trace, the progress
+   projection, the ctx envelope and a DB-restored transcript each used to carry a
+   private copy of this arithmetic."
+  [envelope]
+  (when (and (map? envelope)
+             (nat-int? (:started-at-ms envelope))
+             (nat-int? (:finished-at-ms envelope)))
+    (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
 (defn result-card
   "Canonical result CARD descriptor — the ONE place the card / collapse decision is
    made, so the TUI and web AGREE on summary/collapsible instead of each

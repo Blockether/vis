@@ -4337,7 +4337,10 @@
 
 (def ^:private session-dialog-content-w 96)
 
-(defn- date->millis
+(defn date->millis
+  "Epoch ms out of whatever a session row carries in a timestamp slot — a
+   `java.util.Date`, an `Instant`, or a number already — and nil when it carries
+   nothing. The picker and the tab strip sort on the SAME reading."
   [v]
   (cond (instance? java.util.Date v) (.getTime ^java.util.Date v)
         (instance? java.time.Instant v) (.toEpochMilli ^java.time.Instant v)

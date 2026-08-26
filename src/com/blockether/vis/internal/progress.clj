@@ -112,13 +112,6 @@
   (let [c (long (count forms))]
     (if (< c n) (into forms (repeat (- n c) {:position nil})) forms)))
 
-(defn- envelope-duration-ms
-  [envelope]
-  (when (and (map? envelope)
-             (nat-int? (:started-at-ms envelope))
-             (nat-int? (:finished-at-ms envelope)))
-    (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
-
 (defn- form-result-kind
   "Classify a form chunk for the channel's `show-result?` gate.
 
@@ -237,7 +230,7 @@
        :render-segments (:render-segments chunk)
        :scope (or (:scope chunk) (:scope prev-form))
        :started-at-ms (or (:started-at-ms chunk) (:started-at-ms prev-form))
-       :duration-ms (or (envelope-duration-ms (:envelope chunk)) 0)
+       :duration-ms (or (form/envelope-duration-ms (:envelope chunk)) 0)
        ;; The SINGLE display surface the channels paint (render.clj / web both read
        ;; `(:result form)`): the pre-rendered markdown the loop built — the
        ;; block's stdout plus a card per printed result.

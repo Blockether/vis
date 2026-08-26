@@ -156,3 +156,15 @@
                                                 :result {"ok" true}
                                                 :result-render "**SHELL**\nls"})]
                    (expect (= "**SHELL**\nls" (:result-render form))))))
+
+(defdescribe
+  envelope-duration-test
+  ;; The loop, the CLI trace, the progress projection, the ctx envelope and a
+  ;; DB-restored transcript each carried a private copy of this arithmetic.
+  (it "reads the pair the envelope already carries"
+      (expect (= 250 (form/envelope-duration-ms {:started-at-ms 1000 :finished-at-ms 1250}))))
+  (it "answers nil for an envelope that was never timed, not zero"
+      (expect (nil? (form/envelope-duration-ms {:started-at-ms 1000})))
+      (expect (nil? (form/envelope-duration-ms nil))))
+  (it "never answers a negative duration for a clock that went backwards"
+      (expect (= 0 (form/envelope-duration-ms {:started-at-ms 1250 :finished-at-ms 1000})))))

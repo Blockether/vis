@@ -531,13 +531,19 @@
 
 ;;; ── Status report text ──────────────────────────────────────────────────────
 
-(defn- status-entry-label
+(defn status-entry-label
+  "Human label for one provider-status key — the SAME spelling wherever a status
+   map is painted (CLI table, dialog, markdown card), so one map cannot read three
+   ways."
   [k]
   (-> (name k)
       (str/replace #"[-_]" " ")
       (str/capitalize)))
 
-(defn- format-status-value
+(defn format-status-value
+  "One provider-status VALUE as text: a keyword by name, a map or sequence
+   flattened to `k: v` in key order, anything else `str`. Recursive, so a nested
+   plan map renders inside its own row."
   [v]
   (cond (keyword? v) (name v)
         (map? v) (str/join ", "

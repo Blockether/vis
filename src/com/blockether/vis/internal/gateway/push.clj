@@ -32,9 +32,9 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [com.blockether.vis.internal.gateway.fcm :as fcm]
+            [com.blockether.vis.internal.gateway.keychain :as keychain]
             [com.blockether.vis.internal.gateway.web-push :as web-push]
             [com.blockether.vis.internal.gateway.relay :as relay]
-            [clojure.java.shell :as sh]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [taoensso.telemere :as tel])
@@ -80,31 +80,6 @@
   (let [v (System/getenv k)]
     (when-not (str/blank? v) (str/trim v))))
 
-(defn- unhex
-  "`security -w` prints hex, not text, whenever the stored password is not plain
-   printable ASCII — which a multi-line PEM never is. Decode that back."
-  [s]
-  (if (and (even? (count s)) (re-matches #"(?i)[0-9a-f]{32,}" s))
-    (String. (byte-array (map #(unchecked-byte (Integer/parseInt (apply str %) 16))
-                              (partition 2 s)))
-             StandardCharsets/UTF_8)
-    s))
-
-(defn- keychain
-  "Generic password stored under service `vis-apns`, account `account`, in the
-   macOS login keychain — or nil anywhere else. Read on demand rather than
-   cached, so locking the keychain revokes access immediately and the secret
-   never sits in a world-readable file."
-  [account]
-  (when (and (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "mac")
-             ;; A redirected push home means a test fixture: never let the
-             ;; developer's real keychain leak into it.
-             (nil? (System/getProperty "vis.push.home")))
-    (try (let [{:keys [exit out]}
-               (sh/sh "security" "find-generic-password" "-s" "vis-apns" "-a" account "-w")]
-           (when (and (= 0 (long exit)) (not (str/blank? out))) (unhex (str/trim out))))
-         (catch Throwable _ nil))))
-
 (defn- discovered-key
   "First `AuthKey_<kid>.p8` under `~/.vis/apns/`, as `{:key-path :key-id}`.
    Apple names the download that way, so the key id needs no extra config."
@@ -139,22 +114,28 @@
 
         ;; The key itself: keychain material beats any file on disk.
         kc-key
-        (some? (keychain "key"))
+        (some? (keychain/secret "vis-apns" "key"))
 
         key-path
         (or (env-val "VIS_APNS_KEY_PATH") (:key-path side) (:key-path disc))
 
         key-id
-        (or (env-val "VIS_APNS_KEY_ID") (keychain "key_id") (:key-id side) (:key-id disc))
+        (or (env-val "VIS_APNS_KEY_ID")
+            (keychain/secret "vis-apns" "key_id")
+            (:key-id side)
+            (:key-id disc))
 
         team-id
-        (or (env-val "VIS_APNS_TEAM_ID") (keychain "team_id") (:team-id side))
+        (or (env-val "VIS_APNS_TEAM_ID") (keychain/secret "vis-apns" "team_id") (:team-id side))
 
         topic
-        (or (env-val "VIS_APNS_TOPIC") (keychain "topic") (:topic side))
+        (or (env-val "VIS_APNS_TOPIC") (keychain/secret "vis-apns" "topic") (:topic side))
 
         default-env
-        (or (env-val "VIS_APNS_ENV") (keychain "environment") (:environment side) "production")
+        (or (env-val "VIS_APNS_ENV")
+            (keychain/secret "vis-apns" "environment")
+            (:environment side)
+            "production")
 
         missing
         (cond-> []
@@ -256,7 +237,9 @@
 
         sig
         (doto (Signature/getInstance "SHA256withECDSA")
-          (.initSign (private-key (if (= "keychain" key-source) (keychain "key") (slurp key-path))))
+          (.initSign (private-key (if (= "keychain" key-source)
+                                    (keychain/secret "vis-apns" "key")
+                                    (slurp key-path))))
           (.update (utf8 signing-input)))]
 
     (str signing-input "." (b64url (der->jose (.sign sig))))))

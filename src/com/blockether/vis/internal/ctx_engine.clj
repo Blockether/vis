@@ -1161,9 +1161,7 @@
          (realize-value raw-result)
 
          duration-ms
-         (when-let [envelope (:envelope block)]
-           (when (and (nat-int? (:started-at-ms envelope)) (nat-int? (:finished-at-ms envelope)))
-             (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
+         (form/envelope-duration-ms (:envelope block))
 
          form-envelope
          (cond-> {:scope scope :tag (classify-form-tag src head-tag-resolver) :src src}

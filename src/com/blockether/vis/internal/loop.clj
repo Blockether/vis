@@ -2533,14 +2533,7 @@
 
 (defn- envelope-has-no-derived-duration? [envelope] (not (contains? envelope :duration-ms)))
 
-(defn- envelope-duration-ms
-  [envelope]
-  (when (and (map? envelope)
-             (nat-int? (:started-at-ms envelope))
-             (nat-int? (:finished-at-ms envelope)))
-    (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
-
-(defn- block-duration-ms [block] (or (envelope-duration-ms (:envelope block)) 0))
+(defn- block-duration-ms [block] (or (form/envelope-duration-ms (:envelope block)) 0))
 
 (s/def ::id nat-int?)
 
@@ -8416,8 +8409,9 @@
                                      :forms forms-vec
                                      :attachments (attachment-storage/offload-attachments
                                                     iteration-attachments)
-                                     :duration-ms
-                                     (long (or (envelope-duration-ms (:envelope first-block)) 0))
+                                     :duration-ms (long (or (form/envelope-duration-ms
+                                                              (:envelope first-block))
+                                                            0))
                                      :llm-full-duration-ms (long (or (:duration-ms iteration-result)
                                                                      0))
                                      :thinking thinking

@@ -8,8 +8,8 @@
    `~/.vis/fcm/`. Key material is never returned, logged or sent over the wire."
   (:require [babashka.http-client :as http]
             [clojure.java.io :as io]
-            [clojure.java.shell :as sh]
             [clojure.string :as str]
+            [com.blockether.vis.internal.gateway.keychain :as keychain]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [taoensso.telemere :as tel])
   (:import [java.io File]
@@ -40,29 +40,6 @@
   (let [v (System/getenv k)]
     (when-not (str/blank? v) (str/trim v))))
 
-(defn- unhex
-  "`security -w` prints hex, not text, whenever the stored password is not plain
-   printable ASCII — which a service-account JSON with an embedded PEM never is."
-  [s]
-  (if (and (even? (count s)) (re-matches #"(?i)[0-9a-f]{32,}" s))
-    (String. (byte-array (map #(unchecked-byte (Integer/parseInt (apply str %) 16))
-                              (partition 2 s)))
-             StandardCharsets/UTF_8)
-    s))
-
-(defn- keychain
-  "Generic password under service `vis-fcm` in the macOS login keychain, read on
-   demand so locking the keychain revokes access immediately."
-  [account]
-  (when (and (str/includes? (str/lower-case (str (System/getProperty "os.name"))) "mac")
-             ;; A redirected push home means a test fixture: never let the
-             ;; developer's real keychain leak into it.
-             (nil? (System/getProperty "vis.push.home")))
-    (try (let [{:keys [exit out]}
-               (sh/sh "security" "find-generic-password" "-s" "vis-fcm" "-a" account "-w")]
-           (when (and (= 0 (long exit)) (not (str/blank? out))) (unhex (str/trim out))))
-         (catch Throwable _ nil))))
-
 (defn- discovered-file
   "First `*.json` under `~/.vis/fcm/` — where a downloaded service-account key
    naturally lands."
@@ -76,7 +53,7 @@
 (defn- service-account
   "The parsed service-account JSON, or nil. NEVER expose the result."
   []
-  (let [raw (or (keychain "service_account")
+  (let [raw (or (keychain/secret "vis-fcm" "service_account")
                 (env-val "VIS_FCM_SERVICE_ACCOUNT")
                 (some-> (env-val "VIS_FCM_SERVICE_ACCOUNT_PATH")
                         io/file
@@ -87,7 +64,7 @@
 
 (defn- source
   []
-  (cond (keychain "service_account") "keychain"
+  (cond (keychain/secret "vis-fcm" "service_account") "keychain"
         (env-val "VIS_FCM_SERVICE_ACCOUNT") "env"
         (env-val "VIS_FCM_SERVICE_ACCOUNT_PATH") "file"
         (discovered-file) "file"

@@ -854,3 +854,11 @@
       (is (= [:acme-byo] (mapv :id (providers/available-presets)))
           "and Add Provider only offers the provider a human can actually add")))
   (providers/invalidate-configured-providers!))
+
+(deftest status-label-reads-the-same-for-a-wire-key-and-an-engine-key
+  ;; The CLI table had its own copy of this label that replaced "-" only, so the
+  ;; SAME status map printed "Plan_name:" in `providers status` and "Plan name:"
+  ;; in the dialog and the markdown card.
+  (let [label @#'providers/status-entry-label]
+    (is (= "Plan name" (label "plan_name")))
+    (is (= "Plan name" (label :plan-name)))))

@@ -329,16 +329,9 @@
       ;; look like impossible turn numbers (`turn/75797678/...`).
       (str "t" (:position turn) "/i" (:position iteration) "/f" (inc (long (form-index block))))))
 
-(defn- envelope-duration-ms
-  [envelope]
-  (when (and (map? envelope)
-             (nat-int? (:started-at-ms envelope))
-             (nat-int? (:finished-at-ms envelope)))
-    (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
-
 (defn- block-duration-ms
   [block]
-  (or (envelope-duration-ms (:envelope block)) (:duration-ms block) 0))
+  (or (form/envelope-duration-ms (:envelope block)) (:duration-ms block) 0))
 
 (defn- tool-result-envelope?
   [value]
