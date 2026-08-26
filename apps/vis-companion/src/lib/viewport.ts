@@ -969,22 +969,40 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
       };
     }
 
+    // Native background: `appStateChange` reaches JS from
+    // `applicationWillResignActive`, the last moment UIKit's keyboard machinery
+    // still answers. A DOM editor left focused past it is what kills the app much
+    // LATER: at process teardown WebKit reports the focused element as
+    // programmatically cleared, UIKit turns that into a synchronous keyboard task,
+    // and the main thread waits on an `NSConditionLock` no keyboard thread is left
+    // to open — zero CPU, five seconds, `0x8BADF00D` (TestFlight build 4861). The
+    // AppDelegate's `endEditing(true)` releases UIKit's first responder only; the
+    // DOM never learns it lost first responder, so drop the DOM's own focus here
+    // and remember the editor, because the way back still owes it its keyboard.
+    let releasedForBackground: HTMLElement | null = null;
+    const onNativeBackground = () => {
+      const active = document.activeElement;
+      if (!isKeyboardInputElement(active)) return;
+      releasedForBackground = keyboardPinned || isSoftKeyboardUp() ? active : null;
+      active.blur();
+    };
+
     // Native resume: Capacitor fires this on iOS/Android even when the webview
-    // emits no viewport event at all. iOS's AppDelegate deliberately releases
-    // WebKit's editor before suspension so UIKit cannot deadlock its keyboard queue.
-    // The DOM does not learn that it lost first responder: clear its stale pin in
+    // emits no viewport event at all. Clear whatever pin survived the suspension in
     // the first foreground frame, then make one real focus change so the keyboard
     // returns instead of leaving a keyboard-sized empty band.
     const onNativeResume = () => {
       const active = document.activeElement;
       const staleNativeKeyboard = nativeKeyboard && (keyboardPinned || softKeyboardUp);
       const editor =
-        staleNativeKeyboard && isKeyboardInputElement(active) ? active : null;
+        releasedForBackground ??
+        (staleNativeKeyboard && isKeyboardInputElement(active) ? active : null);
       if (staleNativeKeyboard) reclaimViewportForExternalNavigation();
       resync();
       if (!editor) return;
       timers.push(
         window.setTimeout(() => {
+          releasedForBackground = null;
           if (!editor.isConnected) return;
           const focused = document.activeElement;
           if (focused !== document.body && focused !== document.documentElement) return;
@@ -994,11 +1012,23 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
     };
     let disposeNative = () => {};
     try {
-      void App.addListener('resume', onNativeResume)
-        .then((sub) => {
-          disposeNative = () => void sub.remove();
-        })
+      const handles: Array<{ remove: () => void }> = [];
+      let removed = false;
+      const track = (sub: { remove: () => void }) => {
+        if (removed) sub.remove();
+        else handles.push(sub);
+      };
+      void App.addListener('resume', onNativeResume).then(track).catch(() => undefined);
+      void App.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) onNativeResume();
+        else onNativeBackground();
+      })
+        .then(track)
         .catch(() => undefined);
+      disposeNative = () => {
+        removed = true;
+        for (const sub of handles.splice(0)) sub.remove();
+      };
     } catch {
       /* plugin unavailable */
     }

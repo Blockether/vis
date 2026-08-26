@@ -13,14 +13,19 @@ vi.mock('@capacitor/keyboard', () => ({ Keyboard: { show: () => Promise.resolve(
 
 interface Composer {
   element: HTMLTextAreaElement;
-  document: { activeElement: unknown };
+  document: { activeElement: unknown; visibilityState: string };
   log: string[];
 }
 
 /** A textarea reduced to what the hold touches: focus, blur, caret, owner document. */
-function composer(options: { focused?: boolean; caret?: [number, number] } = {}): Composer {
+function composer(
+  options: { focused?: boolean; caret?: [number, number]; hidden?: boolean } = {},
+): Composer {
   const log: string[] = [];
-  const document = { activeElement: null as unknown };
+  const document = {
+    activeElement: null as unknown,
+    visibilityState: options.hidden === true ? 'hidden' : 'visible',
+  };
   const [start, end] = options.caret ?? [4, 4];
   const element = {
     ownerDocument: document,
@@ -202,6 +207,24 @@ describe('holdKeyboardAcrossSheet', () => {
 
     expect(log).toEqual(['blur']);
     expect(showSoftKeyboard).not.toHaveBeenCalled();
+  });
+
+  // Regression, TestFlight build 4861: a retry that fired after the app had gone to
+  // the background blurred the composer inside a WebView UIKit could no longer
+  // answer for, and the keyboard queue then held the main thread until the watchdog
+  // killed Vis.
+  it('never touches focus while the app is in the background', () => {
+    const { element, log } = composer({ hidden: true });
+    const clock = stepper();
+
+    holdKeyboardAcrossSheet(element, {
+      schedule: clock.schedule,
+      showSoftKeyboard: () => undefined,
+      isKeyboardOpen: () => false,
+    })();
+    clock.drain();
+
+    expect(log).toEqual(['blur']);
   });
 });
 

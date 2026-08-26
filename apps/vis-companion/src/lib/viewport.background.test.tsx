@@ -7,7 +7,7 @@ import { useVisualViewportShell } from "./viewport";
 
 const native = vi.hoisted(() => ({
   keyboard: new Map<string, (info: { keyboardHeight: number }) => void>(),
-  app: new Map<string, () => void>(),
+  app: new Map<string, (state?: { isActive: boolean }) => void>(),
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -26,7 +26,7 @@ vi.mock("@capacitor/keyboard", () => ({
 
 vi.mock("@capacitor/app", () => ({
   App: {
-    addListener: (event: string, listener: () => void) => {
+    addListener: (event: string, listener: (state?: { isActive: boolean }) => void) => {
       native.app.set(event, listener);
       return Promise.resolve({ remove: () => void native.app.delete(event) });
     },
@@ -86,6 +86,26 @@ describe("the native shell after backgrounding", () => {
     expect(shell.style.height).toBe("");
     expect(document.activeElement).not.toBe(composer);
 
+    act(() => vi.advanceTimersByTime(200));
+    expect(document.activeElement).toBe(composer);
+  });
+
+  // Regression, TestFlight build 4861: the app went to the background with the
+  // composer still focused in the DOM. At process teardown WebKit reported that
+  // focused element as programmatically cleared, UIKit's keyboard queue never
+  // answered on the main thread, and the watchdog killed Vis with 0x8BADF00D.
+  it("releases the DOM editor when the app leaves the foreground", () => {
+    render(<ViewportProbe />);
+    const composer = screen.getByRole("textbox", { name: "Message" });
+    composer.focus();
+
+    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 300 }));
+    expect(document.activeElement).toBe(composer);
+
+    act(() => native.app.get("appStateChange")?.({ isActive: false }));
+    expect(document.activeElement).not.toBe(composer);
+
+    act(() => native.app.get("appStateChange")?.({ isActive: true }));
     act(() => vi.advanceTimersByTime(200));
     expect(document.activeElement).toBe(composer);
   });
