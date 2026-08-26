@@ -4845,38 +4845,70 @@
                                                  {:vis.channel-tui/expand-all-details? true}))]
           (expect (every? #(<= (count %) width) lines)
                   (str "the unified receipt stays inside a " width "-column grid"))))))
-  ;; Regression, issue td-b98c1b: the shipped terminal receipt omitted Direction A’s
-  ;; uppercase state hierarchy and stable settled duration.
-  (it "renders the approved settled Direction A sentence"
-      (render/invalidate-cache!)
-      (let [trace
-            [{:forms [{:code "print(1)" :result "1" :success? true}]}]
+  ;; Regression, issues td-b98c1b and td-574cf3: the shipped terminal receipt omitted
+  ;; Direction A’s state hierarchy, crowded its status against adjacent bands, and
+  ;; silently dropped print-only stdout instead of showing RESULT.
+  (it
+    "renders the approved settled Direction A sentence"
+    (render/invalidate-cache!)
+    (let [trace
+          [{:forms
+            [{:code "print(result[\"out\"])" :stdout "## main...origin/main" :success? true}]}]
 
-            run
-            {:view-id "activity-settled"
-             :is-activity true
-             :reason :completed
-             :elapsed-ms 4800
-             :status-text "SUCCEEDED · 6 activities run"
-             :status-tone :ok
-             :activity-view {:classification :activity :nodes []}
-             :activity-rows []
-             :anchor {:iteration-index 0 :form-index 0}}
+          run
+          {:view-id "activity-settled"
+           :is-activity true
+           :reason :completed
+           :elapsed-ms 4800
+           :status-text "SUCCEEDED · 6 activities run"
+           :status-tone :ok
+           :activity-view {:classification :activity :nodes []}
+           :activity-rows []
+           :anchor {:iteration-index 0 :form-index 0}}
 
-            collapsed
-            (-> (render/format-answer-with-thinking-data "Done."
-                                                         trace
-                                                         80
-                                                         nil
-                                                         nil
-                                                         false
-                                                         {:session-id "s1" :runs [run]})
-                :text
-                strip-ansi
-                strip-sentinels)]
+          collapsed
+          (-> (render/format-answer-with-thinking-data "Done."
+                                                       trace
+                                                       80
+                                                       nil
+                                                       nil
+                                                       false
+                                                       {:session-id "s1" :runs [run]})
+              :text
+              strip-ansi
+              strip-sentinels)
 
-        (expect (str/includes? collapsed "▸ SUCCEEDED · 6 activities run · 4.8s"))
-        (expect (not (str/includes? collapsed "ACTIVITY")))))
+          expanded
+          (-> (render/format-answer-with-thinking-data
+                "Done."
+                trace
+                80
+                nil
+                nil
+                false
+                {:session-id "s1"
+                 :runs [(assoc run :is-reopened true)]
+                 :detail-expansions {:vis.channel-tui/expand-all-details? true}})
+              :text
+              strip-ansi
+              strip-sentinels)
+
+          expanded-lines
+          (str/split-lines expanded)
+
+          status-row
+          (first (keep-indexed #(when (str/includes? %2 "▾ SUCCEEDED · 6 activities run") %1)
+                               expanded-lines))]
+
+      (expect (str/includes? collapsed "▸ SUCCEEDED · 6 activities run · 4.8s"))
+      (expect (not (str/includes? collapsed "ACTIVITY")))
+      (expect (some? status-row))
+      (expect (str/blank? (nth expanded-lines (dec status-row))))
+      (expect (str/blank? (nth expanded-lines (inc status-row))))
+      (expect (< (.indexOf ^String expanded "PYTHON")
+                 (.indexOf ^String expanded "RESULT")
+                 (.indexOf ^String expanded "## main...origin/main")
+                 (.indexOf ^String expanded "ACTIVITY")))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
   (it

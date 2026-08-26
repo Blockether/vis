@@ -5454,17 +5454,17 @@
                                  visible
                                  (when expanded? hidden)))))
 
-                ;; Human result surface: the form RETURN value as markdown. Stdout is
-                ;; model-context only and is not rendered in human channels.
-                ;; Long results mirror thinking: keep the first rows visible and
-                ;; collapse only the surplus behind a compact details row.
-                ;; Canonical card descriptor — the HEADLINE `:summary` and
-                ;; `:collapsible?` are decided ONCE in the gateway (`vis/result-card`)
-                ;; so the TUI card can't drift from the web one. It mints no NAME: the
-                ;; op-name badge is gone from the card.
-                ;; nil for a form that printed nothing (its body stays the EDN below).
+                ;; Human result surface: canonical returned-value cards stay as supplied,
+                ;; while print-only stdout is derived into a RESULT body here as well as
+                ;; at the gateway boundary. That keeps live, restored, and direct renderer
+                ;; inputs from silently dropping what `print` emitted without changing a
+                ;; form that also carries a semantic return value (images included) or
+                ;; reviving the intentionally hidden bare-value surface. Long results
+                ;; mirror thinking and collapse only the surplus.
                 card
-                (vis/result-card form)
+                (vis/result-card (cond-> form
+                                   (and (some? (:stdout form)) (nil? (:result form)))
+                                   vis/form-with-display))
 
                 ;; The card HEADLINE — the tally the printed value itself carried
                 ;; ("12 results"), never a first-line slice of the body.
@@ -5678,12 +5678,10 @@
                                session-id
                                false)))]
 
-            ;; A RUNNING native call wears its op-card HEADLINE FIRST — exactly where
-            ;; the finished card's headline sits — with the submitted command band
-            ;; beneath it as that card's body. Otherwise `shell` painted a naked code
-            ;; band while it ran and only grew its badge once it finished: the same
-            ;; call reading as two different components. A COMPLETED call keeps code
-            ;; above its result — the reading order of a program and its output.
+            ;; The unified execution status is its own quiet transcript row. When open,
+            ;; one neutral row above and below keeps it from touching the preceding
+            ;; reasoning band or the PYTHON band it introduces. A collapsed receipt
+            ;; stays compact.
             (if-not activity-run
               execution-body
               (let [summary (detail-summary-entries {:marker ""
@@ -5692,7 +5690,10 @@
                                                      :collapsed? (not execution-expanded?)
                                                      :session-id session-id
                                                      :node-id execution-node-id})]
-                (vec (concat summary (when execution-expanded? execution-body)))))))
+                (vec (concat (when execution-expanded? [(line-entry "")])
+                             summary
+                             (when execution-expanded? [(line-entry "")])
+                             (when execution-expanded? execution-body)))))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result

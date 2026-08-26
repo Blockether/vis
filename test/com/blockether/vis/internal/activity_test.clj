@@ -202,8 +202,9 @@
 
         (expect (= activity/max-rows (count (:rows presentation))))
         (expect (nil? (activity/presentation-error presentation)))))
-  ;; Regression, issue td-1ccd13: shell-handle groups replaced the command with a generic
-  ;; operation count, so distinct invocations looked identical in Activity.
+  ;; Regression, issues td-1ccd13 and td-574cf3: shell-handle groups replaced the
+  ;; command with a generic count or froze its transient `running` phrase into the
+  ;; settled Activity receipt.
   (it
     "coalesces one typed shell handle while preserving its command and child chronology"
     (let [ctx
@@ -214,7 +215,7 @@
                        :shell
                        :succeeded
                        {"id" "build-1" "status" "running"}
-                       {:args ["npm test"] :presenter :shell})
+                       {:args ["npm test"] :presenter :shell :phrase "running: npm test"})
            (event-pair ctx
                        :_shell_logs
                        :succeeded
@@ -235,8 +236,8 @@
 
       (expect (= 1 (count (:rows snapshot))))
       (expect (= :shell (:operation group)))
-      (expect (= "npm test" (:summary group)))
-      (expect (= ["shell" "npm test"]
+      (expect (= "cmd: npm test" (:summary group)))
+      (expect (= ["shell" "cmd: npm test"]
                  ((juxt :operation :summary) (first (:rows (activity/presentation snapshot))))))
       (expect (= [:shell :_shell_logs :_shell_wait] (mapv :operation (:children group))))))
   (it "groups only adjacent observations with the same explicit token"
