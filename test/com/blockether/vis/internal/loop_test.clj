@@ -3902,7 +3902,15 @@
              ;; router's normal provider choice instead of borrowing LM Studio
              ;; from an unrelated persisted pair.
              (expect (= :openai-codex (:root-provider ctx))) (expect (= "shared" (:root-model ctx)))
-             (expect (= {:model "shared"} (:routing ctx))))))))
+             (expect (= {:model "shared"} (:routing ctx))))))
+    ;; Regression, issue #154: a queued route snapshot lost its provider before engine dispatch.
+    (it "uses an explicit provider + model snapshot without consulting the current session pin"
+        (with-redefs-fn {#'session-model/model-of (fn [& _]
+                                                    (throw (ex-info "must not read changed pin"
+                                                                    {})))}
+          #(let [ctx (prepare env messages {:provider "lmstudio" :model "shared"})]
+             (expect (= :lmstudio (:root-provider ctx))) (expect (= "shared" (:root-model ctx)))
+             (expect (= {:provider :lmstudio :model "shared"} (:routing ctx))))))))
 
 (defdescribe
   context-overflow-terminal-breaker-test

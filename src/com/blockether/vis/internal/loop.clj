@@ -9418,7 +9418,7 @@
   "Validates inputs, resolves sandbox bindings, sets up atoms.
    Returns a map of all computed context needed for subsequent phases."
   [env messages opts]
-  (let [{:keys [spec model max-context-tokens system-prompt debug? hooks cancel-token
+  (let [{:keys [spec provider model max-context-tokens system-prompt debug? hooks cancel-token
                 eval-timeout-ms reasoning-default reasoning-effort routing extra-body]
          :or {debug? false}}
         opts]
@@ -9432,17 +9432,11 @@
       (anomaly/incorrect!
         ":eval-timeout-ms must be an integer (milliseconds)"
         {:type :vis/invalid-eval-timeout :got eval-timeout-ms :got-type (type eval-timeout-ms)}))
-    (let [;; Per-session model preference: when the caller passes no explicit
-          ;; `:model`, fall back to the persisted per-session choice (set by
-          ;; ANY channel — web picker or TUI — via `session-model/set-model!`).
-          ;; This is what unifies routing across channels: the engine, not the
-          ;; channel, applies the session's pick.
-          ;; The preference is {:provider :model}: the MODEL drives display/cost
-          ;; (router-for-model + resolve-effective-model below) AND, crucially,
-          ;; gets forced into svar's `:routing` (forced-routing-for-pref) so the
-          ;; pick actually binds — reordering the router vector alone does NOT
-          ;; (svar selects by provider :priority, not vector order).
-          session-pref (when (and (nil? model) (:session-id env))
+    (let [;; Per-session route preference is composer state. When the caller passes
+          ;; no explicit provider OR model, use the provider+model pair the gateway
+          ;; froze when this turn was submitted. A direct engine caller can still
+          ;; provide its own pair (or a model-only override) in `opts`.
+          session-pref (when (and (nil? provider) (nil? model) (:session-id env))
                          (session-model/model-of (:db-info env) (:session-id env)))
           ;; ONE canonical spelling of the pin from here on. `forced-routing-for-pref`
           ;; and `router-with-pinned-model` trim; `router-for-model` does NOT — so a
@@ -9454,16 +9448,13 @@
                         str
                         str/trim
                         not-empty)
-          ;; A persisted provider belongs only to the persisted model it was saved
-          ;; with. Never combine it with an explicit caller model: that creates a
-          ;; synthetic provider/model pair and can silently degrade to config order.
-          ;; Same canonical spelling for the provider half of the pin: padded here
-          ;; and `forced-routing-for-pref` matched NO provider, dropping `:provider`
-          ;; from the forced routing while the display root still named it — the two
-          ;; halves of the pin disagreeing is exactly what this binding prevents.
+          ;; A provider belongs only to the model it was supplied with. Never combine
+          ;; a persisted provider with an explicit caller model: that creates a
+          ;; synthetic pair and can silently degrade to config order. An explicitly
+          ;; supplied provider + model is already one immutable turn snapshot.
           ;; Keywords survive as their bare name (`:lmstudio` -> "lmstudio"), never
           ;; as `":lmstudio"`.
-          pref-provider (let [p (:provider session-pref)]
+          pref-provider (let [p (or provider (:provider session-pref))]
                           (some-> (if (keyword? p) (name p) p)
                                   str
                                   str/trim

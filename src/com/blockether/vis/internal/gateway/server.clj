@@ -2546,6 +2546,7 @@
       (let [result (state/submit-turn! sid
                                        {:request (get body "request")
                                         :idempotency-key (get body "idempotency_key")
+                                        :provider (get body "provider")
                                         :model (get body "model")
                                         :reasoning-default (or (get body "reasoning_default")
                                                                (configured-reasoning-level))

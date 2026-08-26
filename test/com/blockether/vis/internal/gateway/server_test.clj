@@ -136,6 +136,31 @@
               (is (= "not-managed"
                      (get-in (wire/parse-json (:body response)) ["error" "type"]))))))))))
 
+(deftest submit-turn-handler-forwards-provider-and-model
+  (let [sid
+        (random-uuid)
+
+        submitted
+        (atom nil)
+
+        body
+        {"request" "next"
+         "provider" "anthropic"
+         "model" "claude-opus-5"
+         "reasoning_default" "deep"}]
+
+    (with-redefs-fn {(rv 'body-json) (constantly body)
+                     #'state/submit-turn! (fn [actual opts]
+                                            (reset! submitted [actual opts])
+                                            {:turn {:turn_id "turn-1"}})}
+      #(let [response ((rv 'submit-turn-handler) {:path-params {:sid (str sid)}})] (is
+                                                                                     (=
+                                                                                       202
+                                                                                       (:status
+                                                                                         response)))
+         (is (= sid (first @submitted))) (is (= "anthropic" (get-in @submitted [1 :provider])))
+         (is (= "claude-opus-5" (get-in @submitted [1 :model])))))))
+
 (deftest list-turns-status-filter-routes-to-queued-overlay
   (let [sid
         (random-uuid)

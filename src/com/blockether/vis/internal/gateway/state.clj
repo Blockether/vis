@@ -871,11 +871,12 @@
         :else (not-empty (str v))))
 
 (defn set-session-model!
-  "Set (or clear, with blank model) the per-session PROVIDER + MODEL
-   preference. Every turn submitted for `sid` routes through it (the engine
-   reads it at turn start; `router-for-model` hoists the model, an unknown
-   name degrades to the default order). Channel-agnostic: web + TUI + embedded
-   callers all set it here, persisted in the DB and shared across channels.
+  "Set (or clear, with blank model) the per-session PROVIDER + MODEL preference
+   used by the next submitted turn. This is composer state, not a command for the
+   active request: submission snapshots the pair, so a later selector change
+   neither cancels a running turn nor rewrites work already queued. Channel-agnostic:
+   web + TUI + embedded callers all set it here, persisted in the DB and shared
+   across channels.
 
    A changed manual preference also receives a small durable audit sidecar for
    the `usage` section of `read_session()`; the live `session.model_updated`
@@ -2797,7 +2798,7 @@
   record + events. Never throws - a worker failure becomes a `failed`
   turn record and a `turn.failed` event."
   [sid tid request
-   {:keys [messages model reasoning-default cancel-token extra-body turn-features workspace
+   {:keys [messages provider model reasoning-default cancel-token extra-body turn-features workspace
            engine-opts attachments display-request stall]}]
   (let [caller-on-chunk
         (get-in engine-opts [:hooks :on-chunk])
@@ -2912,6 +2913,9 @@
             (cond-> (assoc (or engine-opts {})
                       :hooks {:on-chunk on-chunk}
                       :cancel-token cancel-token)
+              provider
+              (assoc :provider provider)
+
               model
               (assoc :model model)
 
@@ -3187,8 +3191,8 @@
 
 (defn- launch-turn-worker!
   [sid tid request
-   {:keys [messages model reasoning-default cancel-token queued? extra-body turn-features workspace
-           engine-opts attachments display-request]}]
+   {:keys [messages provider model reasoning-default cancel-token queued? extra-body turn-features
+           workspace engine-opts attachments display-request]}]
   ;; `turn.started` is the point of no return: from there on the turn is public
   ;; and `:current-turn` points at `tid`, while everything that could finish it is
   ;; still being wired up below. The announcement itself used to sit outside this
@@ -3254,6 +3258,7 @@
                                     tid
                                     request
                                     {:messages messages
+                                     :provider provider
                                      :model model
                                      :reasoning-default reasoning-default
                                      :cancel-token cancel-token
@@ -3379,23 +3384,16 @@
    overrides the gate."
   ([sid] (drain-next-queued! sid nil))
   ([sid {:keys [force?]}]
-   (let [decision
-         (volatile! nil)
-
-         ;; Read the session pin HERE, as the turn starts, to stamp the observable
-         ;; turn record. The worker still receives only the raw caller override;
-         ;; the engine resolves this persisted model together with its provider.
-         pinned-model
-         (:model (session-model sid))]
-
+   (let [decision (volatile! nil)]
      (update-session!
        sid
        (fn [entry]
          (if (or (nil? entry) (:current-turn entry))
            entry
            (if-let [[tid
-                     {:keys [request messages model reasoning-default cancel-token extra-body
-                             turn-features workspace engine-opts attachments display_request]}]
+                     {:keys [request messages provider model reasoning-default cancel-token
+                             extra-body turn-features workspace engine-opts attachments
+                             display_request]}]
                     (next-drainable-turn entry force?)]
              (let [token (or cancel-token (cancellation/cancellation-token))
                    started-at (System/currentTimeMillis)]
@@ -3405,6 +3403,7 @@
                          :request request
                          :display-request display_request
                          :messages messages
+                         :provider provider
                          :model model
                          :reasoning-default reasoning-default
                          :cancel-token token
@@ -3418,12 +3417,10 @@
                           :last-active started-at)
                    (update-in [:turns tid]
                               merge
-                              (cond-> {:status "running" :cancel-token token :started_at started-at}
-                                (or model pinned-model)
-                                (assoc :model (or model pinned-model))))))
+                              {:status "running" :cancel-token token :started_at started-at})))
              entry))))
-     (when-let [{:keys [tid request display-request messages model reasoning-default cancel-token
-                        extra-body turn-features workspace engine-opts attachments]}
+     (when-let [{:keys [tid request display-request messages provider model reasoning-default
+                        cancel-token extra-body turn-features workspace engine-opts attachments]}
                 @decision]
        ;; Queue-mirror signal: the queue head is no longer QUEUED. Every
        ;; attached channel drops its mirrored entry on this, and a replayed
@@ -3434,6 +3431,7 @@
                             tid
                             request
                             {:messages messages
+                             :provider provider
                              :model model
                              :reasoning-default reasoning-default
                              :cancel-token cancel-token
@@ -3606,7 +3604,7 @@
    replay) or `{:error :session-not-found | :invalid-request, ...}`. One engine
    turn still runs per session; busy submissions become visible queued records."
   [sid
-   {:keys [request messages idempotency-key model reasoning-default cancel-token extra-body
+   {:keys [request messages idempotency-key provider model reasoning-default cancel-token extra-body
            turn-features workspace engine-opts attachments display-request]}]
   (cond
     (or (not (string? request)) (str/blank? request))
@@ -3626,15 +3624,21 @@
           request-preview
           (request-preview-text request previews)
 
-          ;; The pin is resolved when a turn actually STARTS, never frozen here.
-          ;; A turn that waits in the queue must honour a model picked WHILE it
-          ;; waited (companion picker, TUI, another channel) — baking the pin into
-          ;; the queued record made every already-queued message run on the model
-          ;; that happened to be live at submit, so changing the model mid-session
-          ;; appeared to do nothing. Only an EXPLICIT caller model is carried on
-          ;; the queued record; `drain-next-queued!` re-reads the pin at drain.
+          ;; Route selection is composer state until SEND, then immutable turn state.
+          ;; Snapshot provider + model together exactly once here: an active turn keeps
+          ;; its old route, every queued message keeps the pair selected when it was
+          ;; submitted, and later picker changes affect only later submissions. An
+          ;; explicit model remains model-only unless its caller also supplies provider.
+          route-snapshot
+          (if (or (some? provider) (some? model))
+            {:provider provider :model model}
+            (session-model sid))
+
+          resolved-provider
+          (:provider route-snapshot)
+
           resolved-model
-          (or model (:model (session-model sid)))
+          (:model route-snapshot)
 
           decision
           (volatile! nil)]
@@ -3690,8 +3694,11 @@
                               engine-opts
                               (assoc :engine-opts engine-opts)
 
-                              model
-                              (assoc :model model)
+                              resolved-provider
+                              (assoc :provider resolved-provider)
+
+                              resolved-model
+                              (assoc :model resolved-model)
 
                               reasoning-default
                               (assoc :reasoning-default reasoning-default)
@@ -3711,44 +3718,48 @@
                           (cond->
                             idempotency-key
                             (assoc-in [:idempotency idempotency-key] tid)))))
-                  :else (do (vreset! decision [:accepted tid])
-                            (let [token (or cancel-token (cancellation/cancellation-token))
-                                  started-at (System/currentTimeMillis)]
+                  :else (do
+                          (vreset! decision [:accepted tid])
+                          (let [token (or cancel-token (cancellation/cancellation-token))
+                                started-at (System/currentTimeMillis)]
 
-                              (-> entry
-                                  (assoc :current-turn tid
-                                         :last-active started-at)
-                                  (assoc-in [:turns tid]
-                                            (cond-> {:turn_id tid
-                                                     :session_id (str sid)
-                                                     :status "running"
-                                                     :request request
-                                                     :cancel-token token
-                                                     :started_at started-at}
-                                              idempotency-key
-                                              (assoc :idempotency_key idempotency-key)
+                            (-> entry
+                                (assoc :current-turn tid
+                                       :last-active started-at)
+                                (assoc-in [:turns tid]
+                                          (cond-> {:turn_id tid
+                                                   :session_id (str sid)
+                                                   :status "running"
+                                                   :request request
+                                                   :cancel-token token
+                                                   :started_at started-at}
+                                            idempotency-key
+                                            (assoc :idempotency_key idempotency-key)
 
-                                              resolved-model
-                                              (assoc :model resolved-model)
+                                            resolved-provider
+                                            (assoc :provider resolved-provider)
 
-                                              reasoning-default
-                                              (assoc :reasoning-default reasoning-default)
+                                            resolved-model
+                                            (assoc :model resolved-model)
 
-                                              (seq attachments)
-                                              (assoc :attachments attachments)
+                                            reasoning-default
+                                            (assoc :reasoning-default reasoning-default)
 
-                                              (seq previews)
-                                              (assoc :attachment_previews previews)
+                                            (seq attachments)
+                                            (assoc :attachments attachments)
 
-                                              request-preview
-                                              (assoc :request_preview request-preview)
+                                            (seq previews)
+                                            (assoc :attachment_previews previews)
 
-                                              (not (str/blank? (str display-request)))
-                                              (assoc :display_request display-request)))
-                                  (update :turn-order (fnil conj []) tid)
-                                  (cond->
-                                    idempotency-key
-                                    (assoc-in [:idempotency idempotency-key] tid)))))))))
+                                            request-preview
+                                            (assoc :request_preview request-preview)
+
+                                            (not (str/blank? (str display-request)))
+                                            (assoc :display_request display-request)))
+                                (update :turn-order (fnil conj []) tid)
+                                (cond->
+                                  idempotency-key
+                                  (assoc-in [:idempotency idempotency-key] tid)))))))))
       (let [[kind v] @decision]
         (case kind
           :idempotent
@@ -3778,7 +3789,8 @@
                                  tid
                                  request
                                  {:messages messages
-                                  :model model
+                                  :provider resolved-provider
+                                  :model resolved-model
                                   :reasoning-default reasoning-default
                                   :cancel-token (:cancel-token (turn-record sid tid))
                                   :extra-body extra-body
@@ -4158,24 +4170,6 @@
                                                       cancel-waiting-turn!)
                      {:status "cancelling"})))))
 
-(defn- cancel-turn-on-manual-model-change!
-  "Stop the old-route turn when a human changes this session's model pin.
-
-   The engine snapshots the route at turn start, so persisting a new pin alone
-   cannot redirect an in-flight provider retry. A manual change is an explicit
-   takeover: cancel that running turn and let the next submission start from the
-   new pin. Engine-driven auth rescue carries a non-nil reason and already reroutes
-   the same turn, so it must not be cancelled here."
-  [sid {:keys [reason]}]
-  (when (nil? reason)
-    (when-let [tid (:current-turn (session-entry sid))]
-      (let [result (cancel-turn! sid tid :model-switch)]
-        (when-not (:error result) result)))))
-
-(defonce model-switch-cancel-listener
-  ;; A Var survives namespace reloads without leaving stale function objects in
-  ;; the listener set, matching `model-listener` above.
-  (smodel/add-model-listener! #'cancel-turn-on-manual-model-change!))
 (defn cancel-current-turn!
   "Tid-less twin of `cancel-turn!`: fire the cancellation token of the turn
    currently holding `sid`'s `:current-turn` slot, but ONLY when `owner-key` is

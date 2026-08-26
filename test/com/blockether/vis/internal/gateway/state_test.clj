@@ -123,50 +123,36 @@
             (expect (= after (state/set-session-model! "sess-1" "openai" "gpt-5")))
             (expect (= [:db "sess-1" nil after :gateway] @recorded)))))))
 
-;; Regression, issue #154: changing the session pin while a provider retry was active
-;; updated the chip but left the old-model turn running, so the new model could not take over.
+;; Regression, issue #154: changing the next-message selector cancelled the live turn.
 (defdescribe
   active-model-switch-test
-  (it
-    "cancels only the running turn behind a changed MANUAL model pick"
-    (let [manual-sid
-          (str "model-switch-manual-" (java.util.UUID/randomUUID))
+  (it "leaves the active turn untouched when a human changes the next-message route"
+      (let [sid
+            (str "model-switch-active-" (java.util.UUID/randomUUID))
 
-          rescue-sid
-          (str "model-switch-rescue-" (java.util.UUID/randomUUID))
+            token
+            (cancellation/cancellation-token)
 
-          manual-token
-          (cancellation/cancellation-token)
+            registry
+            (atom {sid {:current-turn "active-turn"
+                        :turns {"active-turn"
+                                {:turn_id "active-turn" :status "running" :cancel-token token}}}})
 
-          rescue-token
-          (cancellation/cancellation-token)
+            notify!
+            (fn [pick]
+              (doseq [listener @@#'smodel/model-listeners]
+                (listener sid pick)))]
 
-          registry
-          (atom {manual-sid {:current-turn "manual-turn"
-                             :turns {"manual-turn" {:turn_id "manual-turn"
-                                                    :status "running"
-                                                    :cancel-token manual-token}}}
-                 rescue-sid {:current-turn "rescue-turn"
-                             :turns {"rescue-turn" {:turn_id "rescue-turn"
-                                                    :status "running"
-                                                    :cancel-token rescue-token}}}})
-
-          notify!
-          (fn [sid pick]
-            (doseq [listener @@#'smodel/model-listeners]
-              (listener sid pick)))]
-
-      (with-redefs-fn {#'state/registry registry
-                       #'state/append-event! (fn [& _]
-                                               nil)
-                       #'state/start-cancel-terminal-backstop! (fn [& _]
-                                                                 nil)}
-        (fn []
-          (notify! manual-sid {:provider "openai-codex" :model "gpt-5.6" :reason nil})
-          (notify! rescue-sid
-                   {:provider "anthropic" :model "claude-opus-5" :reason :authentication-fallback})
-          (expect (= :model-switch (cancellation/cancel-reason manual-token)))
-          (expect (nil? (cancellation/cancel-reason rescue-token))))))))
+        (with-redefs-fn {#'state/registry registry
+                         #'state/append-event! (fn [& _]
+                                                 nil)
+                         #'state/start-cancel-terminal-backstop! (fn [& _]
+                                                                   nil)}
+          (fn []
+            (notify! {:provider "anthropic" :model "claude-opus-5" :reason nil})
+            (expect (nil? (cancellation/cancel-reason token)))
+            (expect (= "active-turn" (get-in @registry [sid :current-turn])))
+            (expect (= "running" (get-in @registry [sid :turns "active-turn" :status]))))))))
 (defdescribe
   soul-model-pin-test
   "The session's model PIN rides the soul, so ONE `GET /v1/sessions` already says
@@ -1299,17 +1285,16 @@
              (expect (= "queued" (get (state/get-turn sid "q1") "status")))
              (finally (swap! registry dissoc sid))))))
 
+;; Regression, issue #154: queued messages inherited whichever route was selected when they drained.
 (defdescribe
-  gateway-model-pin-forwarding-test
-  "The gateway may expose the current pin on its turn record, but must not
-   convert that pin into a model-only engine override. The engine owns resolving
-   the persisted provider+model pair at the instant a turn starts."
-  (it "an immediately accepted turn forwards only an explicit caller model"
+  gateway-turn-route-snapshot-test
+  "Each submission freezes provider + model together; later picker changes affect only later sends."
+  (it "forwards the selected route to an immediately accepted turn"
       (let [registry
             @#'state/registry
 
             sid
-            (str "model-pin-accepted-" (java.util.UUID/randomUUID))
+            (str "route-snapshot-accepted-" (java.util.UUID/randomUUID))
 
             launched
             (atom nil)]
@@ -1322,34 +1307,61 @@
                               #'state/launch-turn-worker! (fn [& args]
                                                             (reset! launched (vec args)))}
                #(state/submit-turn! sid {:request "hello"}))
-             (expect (nil? (get-in @launched [3 :model])))
+             (expect (= "lmstudio" (get-in @launched [3 :provider])))
+             (expect (= "ornith" (get-in @launched [3 :model])))
+             (expect (= "lmstudio" (get (state/get-turn sid (second @launched)) "provider")))
              (expect (= "ornith" (get (state/get-turn sid (second @launched)) "model")))
              (finally (swap! registry dissoc sid)))))
-  (it "a queued turn records the live pin at drain but forwards its raw override"
-      (let [registry
-            @#'state/registry
+  (it
+    "preserves distinct route snapshots for messages waiting in the same queue"
+    (let [registry
+          @#'state/registry
 
-            sid
-            (str "model-pin-queued-" (java.util.UUID/randomUUID))
+          sid
+          (str "route-snapshot-queued-" (java.util.UUID/randomUUID))
 
-            launched
-            (atom nil)]
+          pin
+          (atom {:provider "openai-codex" :model "gpt-5.6-sol"})
 
-        (try (swap! registry assoc
-               sid
-               {:next-seq 0
-                :turns
-                {"q1"
-                 {:turn_id "q1" :session_id sid :status "queued" :request "hello" :queued_at 1}}
-                :turn-order ["q1"]})
-             (with-redefs-fn {#'state/session-model (fn [_]
-                                                      {:provider "lmstudio" :model "ornith"})
-                              #'state/launch-turn-worker! (fn [& args]
-                                                            (reset! launched (vec args)))}
-               #(state/drain-idle! sid))
-             (expect (nil? (get-in @launched [3 :model])))
-             (expect (= "ornith" (get (state/get-turn sid "q1") "model")))
-             (finally (swap! registry dissoc sid))))))
+          launched
+          (atom [])]
+
+      (try (swap! registry assoc
+             sid
+             {:next-seq 0
+              :current-turn "r0"
+              :turns {"r0" {:turn_id "r0" :session_id sid :status "running" :request "run"}}
+              :turn-order ["r0"]})
+           (with-redefs-fn {#'lp/by-id (fn [_]
+                                         {:id sid})
+                            #'state/session-model (fn [_]
+                                                    @pin)
+                            #'state/append-event! (fn [& _]
+                                                    nil)
+                            #'state/launch-turn-worker! (fn [& args]
+                                                          (swap! launched conj (vec args)))}
+             (fn []
+               (state/submit-turn! sid {:request "first queued"})
+               (reset! pin {:provider "anthropic" :model "claude-opus-5"})
+               (state/submit-turn! sid {:request "second queued"})
+               (reset! pin {:provider "lmstudio" :model "ornith"})
+               (let [[q1 q2] (subvec (get-in @registry [sid :turn-order]) 1)]
+                 (expect (= ["openai-codex" "gpt-5.6-sol"]
+                            (mapv #(get-in @registry [sid :turns q1 %]) [:provider :model])))
+                 (expect (= ["anthropic" "claude-opus-5"]
+                            (mapv #(get-in @registry [sid :turns q2 %]) [:provider :model])))
+                 (swap! registry assoc-in [sid :current-turn] nil)
+                 (state/drain-idle! sid)
+                 (expect (= ["openai-codex" "gpt-5.6-sol"]
+                            (mapv #(get-in (first @launched) [3 %]) [:provider :model])))
+                 (swap! registry (fn [entries]
+                                   (-> entries
+                                       (assoc-in [sid :current-turn] nil)
+                                       (assoc-in [sid :turns q1 :status] "completed"))))
+                 (state/drain-idle! sid)
+                 (expect (= ["anthropic" "claude-opus-5"]
+                            (mapv #(get-in (second @launched) [3 %]) [:provider :model]))))))
+           (finally (swap! registry dissoc sid))))))
 
 (defdescribe turn-terminal-claim-once-test
              (it "allows exactly one terminal landing for a turn"
