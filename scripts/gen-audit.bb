@@ -235,6 +235,25 @@
                                                 (into-array Object [(/ bytes 1024.0 1024.0)]))
         :else (format "%d KB" (long (Math/round (/ bytes 1024.0))))))
 
+(defn- reported-size
+  "The exact string rendered in one inventory size cell."
+  [info]
+  (or (:size info) (fmt-size (:size-bytes info))))
+
+(defn- reported-size-bytes
+  "Numeric counterpart of `reported-size` for aggregates and thresholds.
+   Derive calculations from the rendered cell so a clean CI checkout that must
+   reuse a vetted size produces the same document as a populated Maven cache."
+  [info]
+  (when-let [[_ amount unit] (re-matches #"([0-9]+(?:\.[0-9]+)?) (KB|MB)" (reported-size info))]
+    (* (Double/parseDouble amount)
+       (case unit
+         "KB"
+         1024.0
+
+         "MB"
+         1048576.0))))
+
 (defn- in-house? [sym] (= "com.blockether" (namespace sym)))
 
 (defn- previous-rows
@@ -313,7 +332,7 @@
                               (str sym)
                               version
                               (:license info)
-                              (or (:size info) (fmt-size (:size-bytes info)))
+                              (reported-size info)
                               (if (in-house? sym) "Blockether (in-house)" "3rd-party")))
                     [""])))
 
@@ -368,12 +387,12 @@
         heavy
         (->> rows
              (keep (fn [[_ sym v info]]
-                     (when-let [b (:size-bytes info)]
+                     (when-let [b (reported-size-bytes info)]
                        (when (>= b (* 1024 1024)) [sym v b]))))
              (sort-by #(- (nth % 2))))
 
         total-b
-        (reduce + 0 (keep #(:size-bytes (nth % 3)) rows))
+        (reduce + 0 (keep #(reported-size-bytes (nth % 3)) rows))
 
         copyleft
         (filter #(re-find #"GPL" (str (:license (nth % 3)))) rows)

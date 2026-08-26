@@ -69,6 +69,67 @@
           (re-find #"\bmit\b" s) "MIT"
           :else raw)))
 
+(def ^:private generator-namespace
+  (delay
+    (let [source
+          (slurp (io/file "scripts" "gen-audit.bb"))
+
+          runner-offset
+          (str/index-of
+            source
+            ";; --------------------------------------------------------------------- runner")
+
+          source-without-shebang
+          (second (str/split (subs source 0 runner-offset) #"\n" 2))
+
+          namespace-symbol
+          (gensym "audit-generator-test-")
+
+          target-namespace
+          (create-ns namespace-symbol)]
+
+      (binding [*ns* target-namespace]
+        (clojure.core/refer 'clojure.core)
+        (load-string source-without-shebang))
+      target-namespace)))
+
+(defn- generator-var
+  [symbol]
+  (or (ns-resolve @generator-namespace symbol)
+      (throw (ex-info "Audit generator Var is missing" {:symbol symbol}))))
+
+(defn- rendered-audit
+  [optional-artifact-info]
+  (let [artifact-info-by-symbol {'fixture/base {:license "MIT" :size-bytes 150318280}
+                                 'fixture/optional optional-artifact-info}]
+    (with-redefs-fn {(generator-var 'discover-modules)
+                     (fn [_]
+                       [["core" "deps.edn" {'fixture/base "1.0.0" 'fixture/optional "1.0.0"}]])
+                     (generator-var 'previous-rows) (constantly {})
+                     (generator-var 'artifact-info) (fn [_ symbol _]
+                                                      (get artifact-info-by-symbol symbol))
+                     (generator-var 'stamp-date)
+                     (fn [_ body]
+                       (str/replace body "@@GENERATED-DATE@@" "2026-08-26"))}
+      #((var-get (generator-var 'gen)) "/unused"))))
+
+(defn- declared-footprint
+  [artifact-info]
+  (some->> (rendered-audit artifact-info)
+           (re-find #"\*\*Declared jar footprint \(direct coords\):\*\* ~(\d+) MB")
+           second))
+
+(defdescribe audit-footprint-total-test
+             (it "keeps the aggregate stable when a cached display value replaces exact bytes"
+                 (let [from-head
+                       (declared-footprint {:license "MIT" :size-bytes 187121})
+
+                       from-committed-cell
+                       (declared-footprint {:license "MIT" :size "183 KB"})]
+
+                   (expect (= "144" from-head))
+                   (expect (= from-head from-committed-cell)))))
+
 (defdescribe
   audit-inventory-test
   (it "states a resolved license and jar size for every in-house coordinate"
