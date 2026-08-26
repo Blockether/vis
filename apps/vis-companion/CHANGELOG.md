@@ -2,6 +2,46 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (4861) — 2026-08-25
+<!-- commit: 184d0988c67e4e5da9dd0bce354aad54dc4a13f5 -->
+
+- Close mobile machine rails
+- Make voice previews stoppable
+- Make voice preview handoffs quiet
+- Hide disclosure for empty projects
+
+## 0.1.41 (4855) — 2026-08-25
+<!-- commit: 557cafb08d3d0665753595edd229845f9fea1f90 -->
+
+- Restore keyboard after backgrounding
+- Make live activity compact and current
+
+## 0.1.41 (4852) — 2026-08-25
+<!-- commit: 976eb53adeab60c69838d4c37c44ff6aa609224f -->
+
+- Stabilize compatibility listener
+- Keep home project path visible
+- Respect small upward scroll gestures
+- Reveal empty projects in session list
+- Put voice sample icons before names
+- Keep large live updates from yanking scroll
+- Confirm project deletion in its row
+- Show a refused protocol instead of failing calls
+- Compress responses and slim the live close
+- Stop asking for the diff figure a refactor removed
+- Draw nesting with the panel's own ink
+
+## 0.1.41 (4837) — 2026-08-25
+<!-- commit: 44f44b81d529ca39cc632c039a5f839e5a12c89c -->
+
+- Keep page labels with their rows
+- Stabilize cancelled turn handover
+
+## 0.1.41 (4834) — 2026-08-24
+<!-- commit: 3c9e55fbb1db6e924399542f3c006e08704e5d71 -->
+
+- Rebuild current companion release
+
 ## 0.1.41 (4833) — 2026-08-24
 <!-- commit: 045d45b3d35d211d81c54eec36b86cdc2dc5a375 -->
 
