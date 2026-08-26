@@ -17,7 +17,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.imaging :as img]
-            [com.blockether.vis.internal.attachments :as attach])
+            [com.blockether.vis.internal.attachments :as attach]
+            [com.blockether.vis.internal.format :as fmt])
   (:import [com.googlecode.lanterna.terminal.image TerminalImage TerminalImage$Protocol]
            [java.util Base64]))
 
@@ -371,7 +372,7 @@
              :mime mime
              :filename (.getName f)
              :size (.length f)
-             :size-label (attach/size-label (.length f))
+             :size-label (fmt/format-bytes (.length f))
              :width w
              :height h}))))))
 
@@ -453,7 +454,7 @@
              :mime media
              :filename (or (not-empty (str (get att "filename"))) "image")
              :size size
-             :size-label (attach/size-label size)
+             :size-label (fmt/format-bytes size)
              :width w
              :height h}))))
     (catch Throwable _ nil)))

@@ -563,3 +563,27 @@
         (expect (nil? (note (running {"protocol" {"version" "0.1.40" "build" "aaaaaaaaaaaa"}}))))
         (expect (nil? (note (running {"protocol" {"version" "0.1.41" "build" "cccccccccccc"}}))))
         (expect (nil? (note (running {"protocol" {"version" "dev"}})))))))
+
+;; Regression: the CLI answered `Authenticated:  yes` from `is_authenticated`
+;; alone, so a key that was merely SAVED read as proven -- while the dialog
+;; beside it already said "saved, not verified".
+(defdescribe cli-provider-status-vocabulary-test
+             (it "speaks the daemon's verdict and hides the rows that line covers"
+                 (let [lines (atom [])]
+                   (with-redefs [main/stdout! (fn [s]
+                                                (swap! lines conj s))
+                                 main/configured-provider-status (constantly
+                                                                   {"is_authenticated" true
+                                                                    "auth_state" "unverified"
+                                                                    "is_loading" false
+                                                                    "plan_name" "pro"})
+                                 main/configured-provider-base-url (constantly nil)
+                                 main/provider-limit-lines (constantly [])]
+
+                     (#'main/print-provider-status! {:provider/id :acme :provider/label "Acme"}))
+                   (let [text (str/join "\n" @lines)]
+                     (expect (str/includes? text "Authenticated:  saved, not verified"))
+                     (expect (not (str/includes? text "Authenticated:  yes")))
+                     (expect (str/includes? text "pro"))
+                     (expect (not (str/includes? text "Auth state")))
+                     (expect (not (str/includes? text "Is loading")))))))

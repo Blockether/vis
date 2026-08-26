@@ -33,6 +33,7 @@
    one corrupt PNG that way is a permanent provider 400. Judged on the way OUT,
    the same row is simply dropped and the session keeps working."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.image-convert :as image-convert]
             [com.blockether.vis.internal.paths :as paths])
   (:import [java.io File RandomAccessFile]
@@ -478,16 +479,13 @@
 
 ;; Collection
 
-(defn size-label
-  [^long n]
-  (cond (>= n (* 1024 1024)) (format "%.1fMB" (/ (double n) (* 1024.0 1024.0)))
-        (>= n 1024) (format "%.0fKB" (/ (double n) 1024.0))
-        :else (str n "B")))
-
 (defn- oversize-skip
   [^File f ^long limit]
   {:path (.getAbsolutePath f)
-   :reason (str (size-label (.length f)) " exceeds the " (size-label limit) " attachment limit")})
+   :reason (str (fmt/format-bytes (.length f))
+                " exceeds the "
+                (fmt/format-bytes limit)
+                " attachment limit")})
 
 (defn- storable-limit
   "Byte ceiling for STORING one attachment of `media-type`. A still is allowed
@@ -531,13 +529,14 @@
         (storable-limit mime max-bytes)]
 
     (if (> size limit)
-      {:reason (str (size-label size) " exceeds the " (size-label limit) " attachment limit")}
+      {:reason
+       (str (fmt/format-bytes size) " exceeds the " (fmt/format-bytes limit) " attachment limit")}
       {:path (.getAbsolutePath f)
        :filename (.getName f)
        :media-type mime
        :base64 (.encodeToString (Base64/getEncoder) raw)
        :size size
-       :size-label (size-label size)})))
+       :size-label (fmt/format-bytes size)})))
 
 (defn- resolved-media-files
   "Ordered, de-duped `[canonical-path File]` pairs for every path-shaped
@@ -575,7 +574,7 @@
                           {:path (.getAbsolutePath f)
                            :media-type mime
                            :size (.length f)
-                           :size-label (size-label (.length f))
+                           :size-label (fmt/format-bytes (.length f))
                            :filename (.getName f)})
                         (catch Throwable _ nil))))
            (resolved-media-files text workspace-root)))))
@@ -677,9 +676,9 @@
                           ;; The EFFECTIVE ceiling, not the per-image cap: a clip
                           ;; answers to `max-video-bytes`, so quoting `max-bytes`
                           ;; here would tell the user 5 MB when 32 MB was allowed.
-                          :reason (str (size-label size)
+                          :reason (str (fmt/format-bytes size)
                                        " exceeds the "
-                                       (size-label (storable-limit mime (long max-bytes)))
+                                       (fmt/format-bytes (storable-limit mime (long max-bytes)))
                                        " attachment limit")})
                  (>= (count (:attached acc)) (long max-images))
                  (update acc
@@ -696,7 +695,7 @@
                                 :media-type mime
                                 :base64 payload
                                 :size size
-                                :size-label (size-label size)})))
+                                :size-label (fmt/format-bytes size)})))
          (catch Throwable _ acc)))
      {:attached [] :skipped []}
      (or attachments []))))
@@ -955,9 +954,9 @@
           (:reason gif) {:reason (:reason gif)}
           :else (let [fitted (image-convert/fit-within ^bytes (:bytes gif) budget)]
                   (if (> (alength ^bytes fitted) budget)
-                    {:reason (str (size-label (base64-length (alength ^bytes fitted)))
+                    {:reason (str (fmt/format-bytes (base64-length (alength ^bytes fitted)))
                                   " exceeds the "
-                                  (size-label max-bytes)
+                                  (fmt/format-bytes max-bytes)
                                   " attachment limit")}
                     {:media-type "image/gif"
                      :size (alength ^bytes fitted)
@@ -1012,9 +1011,9 @@
               {:reason (or (:reason safe) (unsupported-media-reason mt))}
               (:reason scaled) {:reason (:reason scaled)}
               (> (alength ^bytes fitted) budget)
-              {:reason (str (size-label (base64-length (alength ^bytes fitted)))
+              {:reason (str (fmt/format-bytes (base64-length (alength ^bytes fitted)))
                             " exceeds the "
-                            (size-label max-bytes)
+                            (fmt/format-bytes max-bytes)
                             " attachment limit")}
               ;; Byte-identical: the payload was already wire-safe AND decoded, so
               ;; the caller's base64 is reused rather than re-encoded.
@@ -1084,7 +1083,7 @@
                :media-type (:media-type verdict)
                :base64 (or (:base64 verdict) payload)
                :size size
-               :size-label (size-label size)))))))))
+               :size-label (fmt/format-bytes size)))))))))
 
 (defn image-label
   "How ONE image attachment is NAMED to the model: its path when it has one, else

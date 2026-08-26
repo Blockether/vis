@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna TerminalPosition]
@@ -1153,17 +1154,6 @@
    always the numeric id — the leading kind word is non-capturing."
   #"\[(?:Pasted|Image) #(\d+): [^\]]*?\]")
 
-(defn- format-bytes
-  "Human-readable byte count: 1234 -> 1.2KB, 12 -> 12B. Locale-safe
-   (US locale so a Polish JVM doesn't render a comma decimal)."
-  [^long n]
-  (cond (< n 1024) (str n "B")
-        (< n (* 1024 1024))
-        (String/format java.util.Locale/US "%.1fKB" (into-array Object [(double (/ n 1024.0))]))
-        :else (String/format java.util.Locale/US
-                             "%.1fMB"
-                             (into-array Object [(double (/ n 1024.0 1024.0))]))))
-
 (defn format-paste-placeholder
   "Produce the visible token text for `app-db :pastes` entry `entry`.
    Pure: same input -> same output, no allocation games. Used both
@@ -1176,8 +1166,9 @@
      [Pasted #1: 42 lines, 1.2KB]
      [Pasted #2: 1 line, 73B]
 
-   `lines` is correctly pluralised; size is locale-safe via
-   `format-bytes` so a Polish JVM doesn't render `1,2KB`."
+   `lines` is correctly pluralised; the byte weight is
+   [[com.blockether.vis.internal.format/format-bytes]], so a Polish JVM
+   cannot render `1,2KB` into a placeholder the renderer re-reads."
   [{:keys [id content image]}]
   (if image
     ;; Image drop: name the file + its intrinsic size instead of the
@@ -1207,7 +1198,7 @@
           line-word
           (if (= 1 line-count) "line" "lines")]
 
-      (str "[Pasted #" id ": " line-count " " line-word ", " (format-bytes char-count) "]"))))
+      (str "[Pasted #" id ": " line-count " " line-word ", " (fmt/format-bytes char-count) "]"))))
 
 (def ^:const PASTE_INLINE_MAX_CHARS
   "Threshold below which we DON'T use a placeholder - a short

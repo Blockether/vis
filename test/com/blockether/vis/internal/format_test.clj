@@ -1,7 +1,8 @@
 (ns com.blockether.vis.internal.format-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.format :as fmt]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]])
+  (:import [java.util Locale]))
 
 ;; strip-def-docstrings — channel-side rendering helper that removes the
 ;; mandatory docstring slot from `(def NAME "doc" …)` shapes so human
@@ -20,6 +21,30 @@
                  ;; only an EXACT turn_<digits> match humanizes — no partial/embedded match
                  (expect (= "Turn 1 i2 x" (fmt/humanize-fact-key "turn_1_i2_x")))
                  (expect (= "My turn 1" (fmt/humanize-fact-key "my_turn_1")))))
+
+;; Regression: the composer rail printed "150,0 KB" on a Polish JVM, because
+;; every copy of the byte label formatted under the default locale.
+(defdescribe format-bytes-test
+             (it "renders unit-scaled sizes, one decimal only under ten units"
+                 (expect (= "512B" (fmt/format-bytes 512)))
+                 (expect (= "1.2KB" (fmt/format-bytes 1234)))
+                 (expect (= "150KB" (fmt/format-bytes 153600)))
+                 (expect (= "1.0MB" (fmt/format-bytes (* 1024 1024))))
+                 (expect (= "2.5GB" (fmt/format-bytes (long (* 2.5 1024 1024 1024))))))
+             (it "puts `sep` between number and unit for rows that have the room"
+                 (expect (= "512 B" (fmt/format-bytes 512 " ")))
+                 (expect (= "1.0 KB" (fmt/format-bytes 1024 " ")))
+                 (expect (= "1.0 MB" (fmt/format-bytes (* 1024 1024) " ")))
+                 (expect (= "2.5 GB" (fmt/format-bytes (long (* 2.5 1024 1024 1024)) " "))))
+             ;; Regression: `clojure.core/format` follows the JVM default locale, so a
+             ;; Polish JVM painted `150,0 KB` into the composer rail and shipped a
+             ;; comma decimal in the `size_label` wire key.
+             (it "renders a dot decimal whatever the JVM default locale is"
+                 (let [previous (Locale/getDefault)]
+                   (try (Locale/setDefault (Locale/forLanguageTag "pl-PL"))
+                        (expect (= "1.5KB" (fmt/format-bytes 1536)))
+                        (expect (= "1.5 KB" (fmt/format-bytes 1536 " ")))
+                        (finally (Locale/setDefault previous))))))
 
 (defdescribe format-tokens-test
              (it "omits zero cached input tokens"

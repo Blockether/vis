@@ -6,7 +6,8 @@
    gateway advertised. No media vocabulary or byte/count fallback lives here."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.terminal-image :as terminal-image]
-            [com.blockether.vis.internal.attachments :as attachments])
+            [com.blockether.vis.internal.attachments :as attachments]
+            [com.blockether.vis.internal.format :as fmt])
   (:import [java.io File FileInputStream]
            [java.security MessageDigest]
            [java.util Base64]))
@@ -97,9 +98,9 @@
                           {:rejected (rejection file (str "gateway does not accept " media-type))}
                           (> size (long limit))
                           {:rejected (rejection file
-                                                (str (attachments/size-label size)
+                                                (str (fmt/format-bytes size)
                                                      " is larger than the gateway limit of "
-                                                     (attachments/size-label limit)))}
+                                                     (fmt/format-bytes limit)))}
                           :else (let [{:keys [w h]} (or (terminal-image/probe-dimensions
                                                           (.getAbsolutePath file)
                                                           media-type)

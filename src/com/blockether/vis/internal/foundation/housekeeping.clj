@@ -42,20 +42,6 @@
 
 (def ^:const day-ms 86400000)
 
-(defn format-bytes
-  "Human byte size. Locale-stable — explicit Locale.US so output is
-   deterministic across machines (no `253,1 MB` from a comma-decimal locale)."
-  [^long n]
-  (cond (< n 1024) (str n " B")
-        (< n (* 1024 1024))
-        (String/format java.util.Locale/US "%.1f KB" (object-array [(/ (double n) 1024.0)]))
-        (< n (* 1024 1024 1024)) (String/format java.util.Locale/US
-                                                "%.1f MB"
-                                                (object-array [(/ (double n) (* 1024.0 1024.0))]))
-        :else (String/format java.util.Locale/US
-                             "%.1f GB"
-                             (object-array [(/ (double n) (* 1024.0 1024.0 1024.0))]))))
-
 (defn- ms->days ^long [^long ms] (long (quot ms (long day-ms))))
 
 (def

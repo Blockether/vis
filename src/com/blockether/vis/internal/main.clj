@@ -2377,13 +2377,13 @@
         rows
         (->> status
              (remove (fn [[k _]]
-                       (= k "is_authenticated")))
+                       (contains? providers/summary-owned-status-keys k)))
              (sort-by (comp str key)))]
 
     (stdout! (str "\n  " (:provider/label provider) " Provider Status"))
     (stdout! "  ─────────────────────────────────")
     (when base-url (stdout! (str "  Base URL:       " base-url)))
-    (stdout! (str "  Authenticated:  " (if (get status "is_authenticated") "yes" "no")))
+    (stdout! (str "  Authenticated:  " (providers/auth-summary status false)))
     (doseq [[k v] rows]
       (stdout! (str "  "
                     (commandline/pad-right (str (providers/status-entry-label k) ":") 15)
@@ -2417,7 +2417,7 @@
 
              {:id (name (:provider/id provider))
               :label (:provider/label provider)
-              :auth (if (get status "is_authenticated") "yes" "no")
+              :auth (name (providers/auth-verdict status))
               :rpm (or (some-> report
                                :static
                                :rpm
@@ -2596,7 +2596,7 @@
 
          "?       ")
        (format "%-28s" (str (or label "?")))
-       (format "%9s" (housekeeping/format-bytes (long (or bytes 0))))
+       (format "%9s" (fmt/format-bytes (or bytes 0) " "))
        (when age-days (str "  " age-days "d"))
        (when (false? is-purged) "  (kept)")
        "\n      "
@@ -2637,8 +2637,7 @@
                    (str (if is-dry-run "Would reclaim " "Reclaimed ")
                         count
                         (if (= 1 (long count)) " item, " " items, ")
-                        (housekeeping/format-bytes (long (or (if is-dry-run bytes reclaimed-bytes)
-                                                             0)))
+                        (fmt/format-bytes (or (if is-dry-run bytes reclaimed-bytes) 0) " ")
                         " (untouched for over "
                         (:days report)
                         " days):\n"

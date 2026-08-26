@@ -1566,7 +1566,7 @@
       {:filename filename
        :media_type (or (pick "media_type" "media-type") "image")
        :size size
-       :size_label (attachments/size-label size)})))
+       :size_label (fmt/format-bytes size)})))
 
 (defn- attachment-previews
   "What a channel needs to PAINT one user message's images - filename, media

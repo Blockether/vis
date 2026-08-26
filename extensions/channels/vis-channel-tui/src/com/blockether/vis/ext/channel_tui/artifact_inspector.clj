@@ -6,7 +6,7 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.internal.attachments :as attachments])
+            [com.blockether.vis.internal.format :as fmt])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [java.io File FileOutputStream]))
@@ -67,7 +67,7 @@
               staged)
         (produced-rows artifacts)))
 
-(defn- size-label [size] (when (number? size) (attachments/size-label (long size))))
+(defn- size-label [size] (when (number? size) (fmt/format-bytes size)))
 
 (defn- row-label
   [{:keys [source filename media-type size version version-count]}]

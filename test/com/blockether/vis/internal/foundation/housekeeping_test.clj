@@ -207,13 +207,6 @@
           (housekeeping/purge! {:days 14}))
         (expect (.exists victim)))))
 
-(defdescribe format-bytes-test
-             (it "renders locale-stable, unit-scaled sizes"
-                 (expect (= "512 B" (housekeeping/format-bytes 512)))
-                 (expect (= "1.0 KB" (housekeeping/format-bytes 1024)))
-                 (expect (= "1.0 MB" (housekeeping/format-bytes (* 1024 1024))))
-                 (expect (= "2.5 GB" (housekeeping/format-bytes (long (* 2.5 1024 1024 1024)))))))
-
 ;; sweep-stale! — the self-deleting surface
 
 (defn- target

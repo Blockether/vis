@@ -582,7 +582,13 @@
          (when quota (str ": " quota))
          (when note (str " - " note)))))
 
-(defn- auth-verdict
+(def summary-owned-status-keys
+  "Status keys the `Authenticated:` line already speaks for. No channel repeats
+   them as a detail row -- the CLI, the TUI dialog and the web view hide the
+   same three."
+  #{"is_authenticated" "is_loading" "auth_state"})
+
+(defn auth-verdict
   "The daemon-classified authentication state. Missing evidence is neutral, never
    inferred as success or rejection from credential presence alone."
   [status]
@@ -590,7 +596,12 @@
                       keyword)]
     (if (contains? #{:verified :rejected :degraded :unverified} state) state :unverified)))
 
-(defn- auth-summary
+(defn auth-summary
+  "The one human reading of a provider's authentication state: `verified`,
+   `rejected`, `usable; live check unavailable`, or -- while nothing has proven
+   the credential -- `saved, not verified` / `not verified`. A key that is only
+   STORED is never reported as proven. `decorated?` appends the glyph the
+   dialogs paint; the CLI passes false."
   [status decorated?]
   (let [verdict
         (auth-verdict status)
@@ -644,7 +655,7 @@
          rows
          (->> status
               (remove (fn [[k _]]
-                        (contains? #{"is_authenticated" "is_loading" "auth_state"} k)))
+                        (contains? summary-owned-status-keys k)))
               (sort-by (comp str key))
               (map (fn [[k v]]
                      (str (status-entry-label k) ": " (format-status-value v)))))
@@ -689,7 +700,7 @@
   [status]
   (->> status
        (remove (fn [[k _]]
-                 (contains? #{"is_authenticated" "error" "is_loading" "auth_state"} k)))
+                 (contains? (conj summary-owned-status-keys "error") k)))
        (sort-by (comp str key))
        (map (fn [[k v]]
               (str "- **" (status-entry-label k) ":** " (format-status-value v))))))

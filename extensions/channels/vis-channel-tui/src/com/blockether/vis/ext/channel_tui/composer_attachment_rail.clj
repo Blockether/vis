@@ -8,7 +8,8 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.theme :as t])
+            [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.internal.format :as fmt])
   (:import [com.googlecode.lanterna SGR]
            [com.googlecode.lanterna.graphics TextGraphics]))
 
@@ -27,20 +28,13 @@
           (str/starts-with? media-type "text/") "TEXT"
           :else "FILE")))
 
-(defn- size-label
-  [size]
-  (let [n (long (or size 0))]
-    (cond (>= n 1048576) (format "%.1f MB" (/ (double n) 1048576.0))
-          (>= n 1024) (format "%.1f KB" (/ (double n) 1024.0))
-          :else (str n " B"))))
-
 (defn attachment-label
   "Readable terminal fallback for one staged attachment."
   [{:keys [filename media-type size width height]}]
-  (str (kind-label media-type)
-       "  " (or (not-empty filename) "unnamed attachment")
-       "  ·  "
-       (if (and width height) (str width "×" height "  ·  " (size-label size)) (size-label size))))
+  (let [size-label (fmt/format-bytes (or size 0) " ")]
+    (str (kind-label media-type)
+         "  " (or (not-empty filename) "unnamed attachment")
+         "  ·  " (if (and width height) (str width "×" height "  ·  " size-label) size-label))))
 
 (defn draw!
   "Paint all staged attachments at `top` and register per-row inspect/remove targets.

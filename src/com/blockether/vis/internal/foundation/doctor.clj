@@ -29,6 +29,7 @@
    NOT assume `:db-info` or other env keys are present."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config :as config]
+            [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.foundation.environment.agents :as agents]
             [com.blockether.vis.internal.foundation.housekeeping :as housekeeping]
             [com.blockether.vis.internal.image-convert :as image-convert])
@@ -46,12 +47,12 @@
         :message (if (> (count files) 1)
                    (str "Project guidance loaded from " (count files)
                         " stacked files (user-global → ancestors → workspace root), "
-                        (housekeeping/format-bytes (long (or bytes 0)))
+                        (fmt/format-bytes (or bytes 0) " ")
                         " total; innermost: " path)
                    (str "Project guidance loaded from "
                         path
                         " ("
-                        (housekeeping/format-bytes (long (or bytes 0)))
+                        (fmt/format-bytes (or bytes 0) " ")
                         ", source: "
                         (name source)
                         ")"))}]
@@ -111,7 +112,7 @@
                       " draft workspace(s) and "
                       (count (:reclaimable journals))
                       " session journal(s), "
-                      (housekeeping/format-bytes (long (or bytes 0)))
+                      (fmt/format-bytes (or bytes 0) " ")
                       " reclaimable.")
         :remediation
         "Review with `vis-agent doctor --purge --dry-run`, then reclaim with `vis-agent doctor --purge` (add `--days N` to change the 14-day cutoff)."

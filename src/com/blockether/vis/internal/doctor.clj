@@ -20,21 +20,10 @@
   (:require [clojure.string :as string]
             [com.blockether.vis.internal.config-spec :as config-spec]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.format :as fmt]
             [taoensso.telemere :as tel]))
 
 ;; Run.
-
-(defn- format-bytes
-  [^long n]
-  (cond (< n 1024) (str n " B")
-        (< n (* 1024 1024))
-        (String/format java.util.Locale/US "%.1f KB" (object-array [(/ (double n) 1024.0)]))
-        (< n (* 1024 1024 1024)) (String/format java.util.Locale/US
-                                                "%.1f MB"
-                                                (object-array [(/ (double n) (* 1024.0 1024.0))]))
-        :else (String/format java.util.Locale/US
-                             "%.1f GB"
-                             (object-array [(/ (double n) (* 1024.0 1024.0 1024.0))]))))
 
 (defn- host-system-messages
   [environment]
@@ -74,7 +63,9 @@
                           (let [vv (System/getProperty "java.vendor.version")]
                             (if (string/blank? vv) (System/getProperty "java.vendor") vv))
                           ")")} {:level :info :message (str "Clojure: " (clojure-version))}
-           {:level :info :message (str "Memory: " (format-bytes used) " / " (format-bytes max-mem))}
+           {:level :info
+            :message (str "Memory: " (fmt/format-bytes used " ")
+                          " / " (fmt/format-bytes max-mem " "))}
            {:level :info :message (str "DB path: " db-path)}])))
 
 ;; ::sandbox-deps - the Python sandbox's dependency surface actually RESOLVES
@@ -175,7 +166,7 @@
                          " Python sandbox dependencies resolve ("
                          bridges
                          " host bridges, "
-                         (format-bytes total-bytes)
+                         (fmt/format-bytes total-bytes " ")
                          " of shim source).")
            :data
            {:shims (count reports) :broken (count broken) :bridges bridges :bytes total-bytes}}]

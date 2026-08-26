@@ -8,6 +8,7 @@
      `format-date`      - `java.util.Date` to `dd-MM-yyyy HH:mm` (local TZ)
      `format-clojure`   - pass-through (code is shown as written, not reformatted)
      `format-duration`  - millisecond duration to `2.3s`, `1m 15s`, etc.
+     `format-bytes`     - byte count to `441B` / `1.2KB` / `150 KB`
      `format-tokens`    - `:input`/`:output` token counts to 'tok 11461→35'
      `format-cost`      - dollar cost to '~$0.006954'
      `format-iterations`- iteration count to '1 iter' / '3 iters'
@@ -64,6 +65,33 @@
    trimmed of trailing whitespace (or unchanged when not a string)."
   [code-str _width]
   (if (string? code-str) (str/trimr code-str) code-str))
+
+(defn format-bytes
+  "Human byte count in KiB steps -- `441B`, `1.2KB`, `150KB`, `1.5MB`, `2.4GB`.
+   One decimal only under ten units, so a label stays three digits wide. `sep`
+   goes between number and unit: a picker row, a wire label and a paste
+   placeholder stay compact, while `doctor` and the composer rail have room for
+   `150 KB`.
+
+   Locale-safe on purpose. `clojure.core/format` follows the JVM default locale,
+   so a Polish JVM rendered `150,0 KB` into a wire label and into placeholder
+   text the renderer re-reads."
+  (^String [n] (format-bytes n ""))
+  (^String [n ^String sep]
+   (let [n
+         (long n)
+
+         [amount unit]
+         (cond (>= n (* 1024 1024 1024)) [(/ (double n) (* 1024.0 1024.0 1024.0)) "GB"]
+               (>= n (* 1024 1024)) [(/ (double n) (* 1024.0 1024.0)) "MB"]
+               (>= n 1024) [(/ (double n) 1024.0) "KB"]
+               :else [nil "B"])]
+
+     (if amount
+       (String/format Locale/ROOT
+                      (if (< (double amount) 10.0) "%.1f%s%s" "%.0f%s%s")
+                      (object-array [amount sep unit]))
+       (str n sep "B")))))
 
 (defn format-duration
   "Human-readable millisecond duration. e.g. `2.3s`, `1m 15s`. Always

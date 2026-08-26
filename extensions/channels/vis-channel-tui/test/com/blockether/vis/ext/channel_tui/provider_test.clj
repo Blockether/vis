@@ -444,7 +444,13 @@
                                            :base-url "https://chatgpt.com/backend-api"
                                            :api-key "tok"})]
           (expect (str/includes? text "Base URL: https://chatgpt.com/backend-api"))
-          (expect (str/includes? text "Authenticated: yes"))
+          ;; The verdict depends on the classpath: with the provider pack
+          ;; registered, its live limits probe answers `:ok` and upgrades the
+          ;; reading to `verified`; alone in this pack nothing probes, so a
+          ;; saved key reads `saved, not verified`. The vocabulary itself is
+          ;; pinned by `internal.providers-test`.
+          (expect (contains? #{"verified" "saved, not verified"}
+                             (second (re-find #"Authenticated: (.+)" text))))
           (expect (str/includes? text (str "Config path: " (vis/state-path))))
           (expect (str/includes? text "Catalog RPM: 500"))
           (expect (str/includes? text "Catalog TPM: 2000000"))
@@ -466,8 +472,8 @@
                        {:id :slow}
                        {:is-authenticated nil :loading? true}
                        {:provider-id :slow :status :loading :static {} :dynamic {:limits []}})]
-            (expect (str/includes? text "Authenticated: checking…"))
-            (expect (not (str/includes? text "Authenticated: no")))
+            (expect (str/includes? text "Authenticated: not verified"))
+            (expect (not (str/includes? text "Authenticated: verified")))
             (expect (not (str/includes? text "Is loading:")))
             (expect (str/includes? text "Status: loading"))
             (expect (= false @limits-probed?)))))))

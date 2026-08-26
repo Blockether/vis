@@ -11,11 +11,11 @@
    ignore matcher or scoring heuristic left in here — reintroducing one means the
    picker and the search tools would rank and see different files."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.fff-index :as fff-index])
-  (:import [java.nio.file Path]
-           [java.util Locale]))
+  (:import [java.nio.file Path]))
 
 (def ^:const max-results 200)
 
@@ -23,14 +23,6 @@
   "Current explicit workspace cwd as a Path. Indirected for tests."
   ^Path []
   (.toPath (workspace/cwd)))
-
-(defn format-bytes
-  "Human-ish byte string for picker rows."
-  [^long n]
-  (cond (< n 1024) (str n "B")
-        (< n (* 1024 1024))
-        (String/format Locale/US "%.1fK" (into-array Object [(/ (double n) 1024.0)]))
-        :else (String/format Locale/US "%.1fM" (into-array Object [(/ (double n) 1048576.0)]))))
 
 (defn format-relative-age
   "Compact relative age for picker rows."
@@ -101,7 +93,7 @@
                     {:path relative-path
                      :label relative-path
                      :status-label (or status "clean")
-                     :size-label (format-bytes (or size 0))
+                     :size-label (fmt/format-bytes (or size 0))
                      ;; fff `:modified` is epoch SECONDS; the age helper wants ms.
                      :age-label (format-relative-age now-ms (* 1000 (long (or modified 0))))})))))))
 
