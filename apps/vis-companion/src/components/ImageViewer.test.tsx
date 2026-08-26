@@ -251,6 +251,32 @@ it("keeps the ink through one Save in the band, one cell from the way out", () =
   act(() => save.click());
   expect(named("Draw").getAttribute("aria-pressed")).toBe("false");
 });
+
+// Regression, user report: pressing Save on an untouched shared picture started a
+// full-resolution PNG encode. On a phone photo WebKit could stay in "Preparing image"
+// with the whole app unresponsive even though there were no edited pixels to keep.
+it("closes an untouched pending image without preparing a replacement", async () => {
+  const applied = vi.fn();
+  const closed = vi.fn();
+  act(() =>
+    root.render(
+      <ImageViewer
+        src="blob:shared-photo"
+        name="shared-photo.jpg"
+        onClose={closed}
+        onApply={applied}
+      />,
+    ),
+  );
+
+  await act(async () => named("Save").click());
+
+  expect(applied).not.toHaveBeenCalled();
+  expect(closed).toHaveBeenCalledOnce();
+  expect(document.querySelector('[aria-live="polite"]')?.textContent).not.toContain(
+    "Preparing image",
+  );
+});
 // Regression: the CSS transition meant for button/reset snaps also applied
 // while a finger was dragging the picture every frame, fighting the direct
 // pointer-driven transform and reading as pinch/pan stutter and lag.

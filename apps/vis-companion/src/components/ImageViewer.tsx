@@ -231,6 +231,7 @@ export function ImageViewer({
   const step = found < 0 ? (at ?? 0) : found;
   const untrimmed = (found < 0 ? undefined : gallery?.[found]) ?? { src, name };
   const shown = trimmed ?? untrimmed;
+  const hasEdits = strokeCount > 0 || trimmed !== null;
 
   // The transform is written to style rather than to state: a pinch that
   // re-rendered React on every frame would stutter on exactly the devices that
@@ -631,6 +632,13 @@ export function ImageViewer({
   async function applyEdit() {
     if (!onApply) return;
     setDrawing(false);
+    // Save on an untouched pending attachment means "keep this one and leave".
+    // Re-encoding a phone photo to a full-resolution PNG did no work for the
+    // human and could pin WebKit's main thread long enough to lock the app.
+    if (!hasEdits) {
+      onClose();
+      return;
+    }
     await run("apply", "Could not save this edit", async (blob) => {
       await onApply(blob);
       onClose();
@@ -666,7 +674,7 @@ export function ImageViewer({
               disabled={busy !== null}
               // Ink on the layer, or a trim taken: the cell wears the accent only
               // when the picture on screen is no longer the picture on the gateway.
-              isPrimary={strokeCount > 0 || trimmed !== null}
+              isPrimary={hasEdits}
             >
               {busy === "apply" ? "Saving…" : applyLabel}
             </BandButton>

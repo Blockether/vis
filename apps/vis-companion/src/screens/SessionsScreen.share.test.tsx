@@ -20,7 +20,10 @@ describe("the share the list is holding", () => {
     });
     restore = view.restore;
 
-    expect(await screen.findByText("Sharing")).toBeInTheDocument();
+    const label = await screen.findByText("Sharing");
+    const banner = label.closest('[role="status"]');
+    expect(banner?.className).toContain("border-warn-strong/60");
+    expect(banner?.className).toContain("bg-warn-surface");
     expect(
       screen.getByText(/memo\.m4a — pick a session, or start a new one/),
     ).toBeInTheDocument();
