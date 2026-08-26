@@ -2913,7 +2913,11 @@
               body (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
-          (is (= [:all {:limit 20 :after nil :root "/Users/dev/vis" :dirty #{}}] @seen))
+          (is (= :all (first @seen)))
+          ;; Only the keys this window is ABOUT: a cut the gateway learns later must not
+          ;; rewrite an assertion about `root`.
+          (is (= {:limit 20 :after nil :root "/Users/dev/vis" :dirty #{}}
+                 (select-keys (second @seen) [:limit :after :root :dirty])))
           (is (= "/Users/dev/vis" (get body "root")))))
       (testing "and a listing with no `root` is still the whole fleet"
         (with-redefs [state/list-sessions-page
@@ -3035,7 +3039,10 @@
               body (wire/parse-json (:body response))]
 
           (is (= 200 (:status response)))
-          (is (= [:all {:limit 20 :after "2:-4000:a" :root nil :dirty #{}}] @seen))
+          (is (=
+                [:all
+                 {:limit 20 :after "2:-4000:a" :root nil :project-id nil :id-prefix nil :dirty #{}}]
+                @seen))
           (is (= "2:-3000:b" (get body "next_cursor")))
           (is (true? (get body "has_more")))
           ;; The offset is gone from the wire, not renamed.
@@ -3055,6 +3062,22 @@
                                                 (assoc "after" after))})
                              [:headers "ETag"]))]
           (is (not= (etag nil) (etag "2:-4000:a"))))))))
+
+;; Regression, this Vis session (paraphrased: "the TUI should use the limit on the session
+;; list too"): the channel downloaded every session to answer two narrow questions - one
+;; project's tab set, and which session a short id names.
+(deftest sessions-window-cuts-to-a-project-or-to-a-short-id
+  (let [seen (atom nil)]
+    (with-redefs [state/list-sessions-page
+                  (fn [channel opts]
+                    (reset! seen [channel opts])
+                    {:sessions [] :awaiting [] :total 0 :limit 2 :next-cursor nil :has-more false})]
+      (testing "a project's tab set is a CUT of this ordering, not a client-side filter"
+        ((rv 'list-sessions-handler) {:query-params {"project_id" "p1"}})
+        (is (= "p1" (:project-id (second @seen)))))
+      (testing "and so is the session a short id names"
+        ((rv 'list-sessions-handler) {:query-params {"id_prefix" "aa11" "limit" "2"}})
+        (is (= ["aa11" 2] [(:id-prefix (second @seen)) (:limit (second @seen))]))))))
 ;; Regression, issue #146: `wrap-errors` answered EVERY throwable with a generic
 ;; `engine-error` 500, so a request that failed only because no AI provider was
 ;; configured reached the TUI as an ordinary crash — `vis-agent tui` printed a

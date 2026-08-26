@@ -1113,8 +1113,29 @@
          (when-not (= 404 (:http-status (ex-data e))) (throw e)))))
 
 (defn list-sessions
-  ([] (get (send-json! "GET" "/v1/sessions") "sessions"))
-  ([_channel] (list-sessions)))
+  "GET one WINDOW of the session list - its rows, in the gateway's own order.
+
+   `opts` names the cut: `:limit` rows (nil is the whole list, which only a PICKER
+   should ask for), `:after` the cursor of the last row already held, `:root` one
+   project's column, `:project-id` one project's tab set, `:id-prefix` the session a
+   short id names. The gateway owns the ordering, so a caller that wants ten rows asks
+   for ten instead of downloading the fleet to slice it locally."
+  [{:keys [limit after root project-id id-prefix]}]
+  (let [qs
+        (->> [(when limit (str "limit=" (enc limit)))
+              (when (seq (str after)) (str "after=" (enc after)))
+              (when (seq (str root)) (str "root=" (enc root)))
+              (when (seq (str project-id)) (str "project_id=" (enc project-id)))
+              (when (seq (str id-prefix)) (str "id_prefix=" (enc id-prefix)))]
+             (remove nil?)
+             (str/join "&"))
+
+        path
+        (cond-> "/v1/sessions"
+          (seq qs)
+          (str "?" qs))]
+
+    (get (send-json! "GET" path) "sessions")))
 
 (defn search-session-ids
   "GET /v1/sessions/actions/search?q= — soul-id STRINGS whose transcript (user request +

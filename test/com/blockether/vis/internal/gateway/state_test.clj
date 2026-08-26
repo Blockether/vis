@@ -2326,6 +2326,38 @@
               (expect (= 2 header))
               (expect (= header (:total (state/list-sessions-page :all {:root "/repo/a"}))))
               (expect (= 2 (:session_count overview)))))))))
+
+;; Regression, this Vis session (paraphrased: "the TUI should use the limit on the session
+;; list too"): a channel that wanted ONE project's tab set, or the session a short id
+;; names, downloaded the whole fleet and filtered the answer in its own process.
+(defn- three-session-window
+  "One `list-sessions-page` answer over a fixed three-session fleet."
+  [opts]
+  (with-redefs-fn {#'lp/db-info (constantly ::db)
+                   #'lp/projects (constantly [])
+                   #'persistance/db-session-turn-stats (constantly nil)
+                   #'lp/by-channel (constantly
+                                     [{:id "aa11" :title "One" :created-at 300 :project-id "p1"}
+                                      {:id "aa22" :title "Two" :created-at 200 :project-id "p2"}
+                                      {:id "bb33" :title "Three" :created-at 100 :project-id "p1"}])
+                   #'bus/live-turns (constantly {})
+                   #'bus/waiting-requests (constantly {})
+                   #'state/soul (fn [sid]
+                                  {"id" (str sid)})}
+    (fn []
+      (state/list-sessions-page :all opts))))
+
+(defdescribe gateway-cuts-the-window-to-the-question-test
+             (it "answers one project's tab set instead of the fleet"
+                 (let [got (three-session-window {:project-id "p1"})]
+                   (expect (= ["aa11" "bb33"] (mapv #(get % "id") (:sessions got))))
+                   (expect (= 2 (:total got)))))
+             (it "answers the session a short id names"
+                 (let [got (three-session-window {:id-prefix "aa" :limit 2})]
+                   (expect (= ["aa11" "aa22"] (mapv #(get % "id") (:sessions got))))
+                   (expect (= 2 (:total got)))))
+             (it "leaves the list whole when the window asks nothing of it"
+                 (expect (= 3 (:total (three-session-window {}))))))
 ;; Regression, user report (paraphrased: "clicking a session suddenly makes it the
 ;; freshest thing and it jumps to the top, and after the gateway restarts the empty
 ;; sessions sit above the one I actually worked in"): the navigator key read

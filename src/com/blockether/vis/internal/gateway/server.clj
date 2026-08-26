@@ -2070,6 +2070,19 @@
                 str
                 not-empty)
 
+        ;; The TUI asks this list two narrow questions - ONE project's tab set, and the
+        ;; session a short id names - so both are CUTS of the gateway's ordering here
+        ;; instead of a fleet download the channel filters afterwards.
+        project-id
+        (some-> (get-in request [:query-params "project_id"])
+                str
+                not-empty)
+
+        id-prefix
+        (some-> (get-in request [:query-params "id_prefix"])
+                str
+                not-empty)
+
         dirty
         (query-session-ids request "dirty")]
 
@@ -2079,7 +2092,13 @@
                       :invalid-window
                       "limit must be an integer and after must be a <band>:<key>:<id> cursor")
       (let [page
-            (state/list-sessions-page :all {:limit limit :after after :root root :dirty dirty})
+            (state/list-sessions-page :all
+                                      {:limit limit
+                                       :after after
+                                       :root root
+                                       :project-id project-id
+                                       :id-prefix id-prefix
+                                       :dirty dirty})
 
             payload
             (cond-> {:sessions (:sessions page)

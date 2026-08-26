@@ -4718,7 +4718,7 @@
 
 (defn- session-ranking
   "Sessions of `channel` a navigator paints, in ITS order, as
-   `[{:id :band :sort-key :recency-ms} ...]` - computed from CHEAP facts only: the
+   `[{:id :band :sort-key :recency-ms :project-id} ...]` - from CHEAP facts only: the
    persisted record, the one grouped turn-stats query, the cached live-turn scan and
    the `dirty` ids the asking device named.
 
@@ -4763,7 +4763,12 @@
                                     (contains? dirty id) dirty-band
                                     :else rest-band)
                         :sort-key (if (some? pin) (long pin) (unchecked-negate (long recency)))
-                        :recency-ms recency}))))))
+                        :recency-ms recency
+                        ;; A project's tab set is a QUESTION about this list, so the id
+                        ;; travels with the row and `list-sessions-page` cuts to one
+                        ;; project BEFORE the window instead of after it.
+                        :project-id (some-> (:project-id record)
+                                            str)}))))))
        (sort-by (juxt :band :sort-key :id))
        vec))
 
@@ -4895,13 +4900,18 @@
    the fleet and slicing it locally. `total`/`has-more` then describe that project,
    which is what a pager prints.
 
+   `:project-id` and `:id-prefix` answer the two questions a channel used to answer by
+   downloading the fleet and filtering it locally: ONE project's tab set, and the
+   session a short id names. Both cut the ORDERING - before `total`, before the window
+   - so each answer costs the rows it returns.
+
    The window is cut BEFORE decoration: the ranking is built from cheap facts, and
    only the ids that survive the cut pay for `soul` + workspace resolution. A 100-row
    page of a 448-session store therefore costs about a fifth of the full build
    (~257ms) and a fifth of its ~300KB, which is what makes a polled session list
    affordable."
   ([opts] (list-sessions-page :all opts))
-  ([channel {:keys [limit after root dirty]}]
+  ([channel {:keys [limit after root project-id id-prefix dirty]}]
    (let [db
          (try (lp/db-info) (catch Throwable _ nil))
 
@@ -4921,7 +4931,15 @@
          (cond->> (session-ranking channel stats live unsent)
            (and db (seq root))
            (filterv (fn [row]
-                      (= root (session-project-root db (:id row))))))
+                      (= root (session-project-root db (:id row)))))
+
+           (seq (str project-id))
+           (filterv (fn [row]
+                      (= (str project-id) (:project-id row))))
+
+           (seq (str id-prefix))
+           (filterv (fn [row]
+                      (str/starts-with? (:id row) (str id-prefix)))))
 
          total
          (count ranked)

@@ -4407,7 +4407,7 @@
    something to copy-paste."
   [cid]
   (let [available
-        (try (vec (take 10 (vis/gateway-list-sessions :all))) (catch Throwable _ []))
+        (try (vec (vis/gateway-list-sessions {:limit 10})) (catch Throwable _ []))
 
         line
         (fn [c]
@@ -4725,12 +4725,16 @@
            sessions))
 
 (defn- tui-session-summaries
-  []
-  (try (->> (vis/gateway-list-sessions :all)
-            (map session-summary)
-            latest-modified-first
-            vec)
-       (catch Throwable _ [])))
+  "Session rows this channel paints, newest-first. `opts` is the gateway's own
+   window (`:limit`, `:project-id`, `:id-prefix`); the no-arg call asks for the whole
+   fleet and the session PICKER is the only surface here that may."
+  ([] (tui-session-summaries {}))
+  ([opts]
+   (try (->> (vis/gateway-list-sessions opts)
+             (map session-summary)
+             latest-modified-first
+             vec)
+        (catch Throwable _ []))))
 
 (defn- session-db-title
   [session-id]
@@ -4770,10 +4774,11 @@
   (let [ws (or (get s "workspace") (session-workspace (get s "id")))]
     (assoc s :work-dir (short-dir (or (get ws "repo_root") (get ws "root"))))))
 
-(def ^:private project-session-probe-cap
-  "How many newest sessions the no-sidecar startup fallback probes for a
-   workspace match before giving up — bounds the per-session gateway
-   workspace lookups so a big cross-project history can't stall startup."
+(def ^:private startup-session-window
+  "How many newest rows a STARTUP lookup reads from the gateway. The gateway owns the
+   order, so `--continue` and the no-sidecar workspace probe ask for this head instead
+   of the fleet; it also bounds the per-session workspace lookups the probe pays when a
+   row arrives without its folded workspace map."
   15)
 
 (defn- latest-project-session-id
@@ -4782,7 +4787,7 @@
    (first launch here after the sidecar was lost, or every saved id is
    dead). Probes newest-first summaries, matching each session's pinned
    workspace root (`:root`, or isolated workspace `:repo-root`) against the
-   launch dir, capped at `project-session-probe-cap` probes. Reads the summary's
+   launch dir, across the `startup-session-window` newest rows. Reads the summary's
    folded `workspace` map first; only an older daemon costs a per-session
    workspace fetch."
   []
@@ -4792,9 +4797,8 @@
              place
              (canonical (System/getProperty "user.dir"))]
 
-         (->> (tui-session-summaries)
+         (->> (tui-session-summaries {:limit startup-session-window})
               (remove empty-untitled-session?)
-              (take project-session-probe-cap)
               (some (fn [s]
                       (let [sid
                             (get s "id")
@@ -4875,11 +4879,11 @@
 
 (defn- project-member-sessions
   "Souls belonging to `pid`, in manual (`project_position`) order — the
-   project's tab set, oldest-position first."
+   project's tab set, oldest-position first. The GATEWAY cuts the listing to the
+   project (`project_id=`), so a few tabs never cost a fleet download."
   [pid]
   (when pid
-    (->> (try (vis/gateway-list-sessions :all) (catch Throwable _ nil))
-         (filter #(= (str pid) (str (get % "project_id"))))
+    (->> (try (vis/gateway-list-sessions {:project-id (str pid)}) (catch Throwable _ nil))
          (sort-by #(or (get % "project_position") Long/MAX_VALUE))
          vec)))
 
@@ -5097,7 +5101,8 @@
   (cond (:session-id opts) (resolve-requested-session)
         ;; --continue: reopen the most-recent :tui session.
         (:continue opts) (if-let [latest (first (remove empty-untitled-session?
-                                                  (tui-session-summaries)))]
+                                                  (tui-session-summaries
+                                                    {:limit startup-session-window})))]
                            (or (chat/resume-session (:id latest)) (chat/make-session config))
                            (chat/make-session config))
         ;; --resume starts fresh; the session picker opens after this session binds.
@@ -5728,16 +5733,11 @@
                      ;; (movable tabs), persisted cross-channel via the gateway.
                      (= :reorder (:action choice))
                      (when-let [target-id (:id choice)]
-                       (let [summaries (tui-session-summaries)
-                             target (some #(when (= (str (get % "id")) (str target-id)) %)
-                                          summaries)
-                             pid (get target "project_id")
+                       (let [pid (some-> (try (vis/gateway-soul (str target-id))
+                                              (catch Throwable _ nil))
+                                         (get "project_id"))
                              ordered (when pid
-                                       (->> summaries
-                                            (filter #(= (str (get % "project_id")) (str pid)))
-                                            (sort-by #(or (get % "project_position")
-                                                          Long/MAX_VALUE))
-                                            (mapv #(str (get % "id")))))
+                                       (mapv #(str (get % "id")) (project-member-sessions pid)))
                              idx (when ordered (.indexOf ^java.util.List ordered (str target-id)))
                              swap-with (when (and idx (>= (long idx) 0))
                                          (case (:dir choice)

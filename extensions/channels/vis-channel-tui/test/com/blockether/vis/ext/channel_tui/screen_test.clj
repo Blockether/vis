@@ -1924,6 +1924,25 @@ therapy line 2"
                      ((deref #'screen/persist-tabs-order!) pid ids))
                    (expect (= [[:reorder pid ids]] @calls)))))
 
+;; Regression, this Vis session (paraphrased: "the TUI should use the limit on the session
+;; list too"): a project's tab set was found by downloading every session this gateway
+;; holds and filtering the rows in this process.
+(defdescribe project-tab-set-is-a-gateway-window-test
+             (it "asks the gateway for one project instead of the fleet"
+                 (let [pid
+                       (random-uuid)
+
+                       asked
+                       (atom nil)]
+
+                   (with-redefs [vis/gateway-list-sessions (fn [opts]
+                                                             (reset! asked opts)
+                                                             [{"id" "b" "project_position" 1}
+                                                              {"id" "a" "project_position" 0}])]
+                     (let [members ((deref #'screen/project-member-sessions) pid)]
+                       (expect (= {:project-id (str pid)} @asked))
+                       (expect (= ["a" "b"] (mapv #(get % "id") members))))))))
+
 (defdescribe fitting-image-placements-test
              ;; A picture whose reserved box runs past the BOTTOM of the transcript
              ;; band must shrink whole (aspect-preserving) into the rows that are

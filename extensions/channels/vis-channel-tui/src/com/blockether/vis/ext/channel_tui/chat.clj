@@ -1277,7 +1277,8 @@
 
 (defn- resolve-resume-id
   "Resolve a resume id to a full `java.util.UUID`, or nil. Accepts a
-   full UUID or an unambiguous prefix among gateway sessions (any channel)."
+   full UUID or an unambiguous prefix, which the GATEWAY resolves through an
+   `id_prefix` window instead of this channel scanning the fleet for it."
   [session-id]
   (let [cid (some-> session-id
                     str
@@ -1285,10 +1286,8 @@
     (when (seq cid)
       (or (when-let [session (vis/gateway-soul cid)]
             (java.util.UUID/fromString (get session "id")))
-          (let [matches (->> (vis/gateway-list-sessions :all)
-                             (map #(get % "id"))
-                             (filter #(str/starts-with? (str %) cid))
-                             vec)]
+          (let [matches (->> (vis/gateway-list-sessions {:id-prefix cid :limit 2})
+                             (mapv #(str (get % "id"))))]
             (when (= 1 (count matches)) (java.util.UUID/fromString (first matches))))))))
 
 (defn resume-session
