@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.main-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.commandline :as commandline]
+            [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.main :as main]
             [com.blockether.vis.internal.manifest :as manifest]
@@ -95,6 +96,27 @@
 
           (#'main/initialize-for-dispatch! false ["extension" "list"])
           (expect (= [:clojure :python] @calls))))))
+
+(defdescribe one-shot-router-boundary-test
+             (it "uses Vis's provider-enriching router builder for explicit overrides"
+                 (let [config {:providers [{:id :lmstudio :models [{:name "meta/muse-glimmer"}]}]}]
+                   (with-redefs [lp/build-router #(assoc % :enriched? true)
+                                 lp/get-router (fn []
+                                                 :shared)]
+
+                     (expect (= (assoc config :enriched? true) (#'main/router-for-run config true)))
+                     (expect (= :shared (#'main/router-for-run config false))))))
+             (it "reads a newly created gateway session id from canonical wire data"
+                 (let [submitted (atom nil)]
+                   (with-redefs [gateway-state/create-session! (fn [_]
+                                                                 {"id" "wire-session"})
+                                 gateway-state/submit-turn-sync! (fn [sid _]
+                                                                   (reset! submitted sid)
+                                                                   {"content" []})]
+
+                     (expect (= "wire-session" (:session-id (main/run! {} "hi" {:persist? true}))))
+                     (expect (= "wire-session" @submitted))))))
+
 (defdescribe
   fast-help-test
   (it "does not swallow unknown root commands that also ask for help"

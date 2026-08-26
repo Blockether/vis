@@ -366,9 +366,10 @@
 (defn- router-for-run
   [config use-local-router?]
   (if use-local-router?
-    ;; Honor `:router` block in caller's config (rate-limit/network/budget).
-    ;; Single-arity make-router would silently use svar defaults.
-    (svar/make-router (mapv config/->svar-provider (:providers config)) (config/router-opts config))
+    ;; Use the same provider enrichment and network-policy boundary as the
+    ;; shared router. LM Studio needs this to replace svar's conservative
+    ;; context fallback with the window reported by its native model endpoint.
+    (lp/build-router config)
     (lp/get-router)))
 
 (defn- run-error-result
@@ -570,7 +571,7 @@
               (gateway-state/create-session! {:channel :cli}))
 
             session-id
-            (or resolved-session-id (:id created-session))]
+            (or resolved-session-id (get created-session "id"))]
 
         (try (let [result (gateway-state/submit-turn-sync!
                             session-id

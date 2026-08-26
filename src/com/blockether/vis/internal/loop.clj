@@ -618,6 +618,51 @@
                             keyword)]
     (:network (some #(when (= provider-id (:id %)) %) (:providers router)))))
 
+(defn- provider-watchdog-timeouts
+  "Keep gateway backstops outside the provider-owned network deadlines."
+  [provider-network]
+  (when (seq provider-network)
+    (let [effective
+          (rt/with-default-ask-code-idle-timeout {} provider-network)
+
+          positive-ms
+          (fn [v]
+            (when (and (number? v) (pos? (long v))) (long v)))
+
+          ttft-ms
+          (positive-ms (:ttft-timeout-ms effective))
+
+          body-limits
+          (keep (comp positive-ms effective)
+                [:first-byte-timeout-ms :idle-timeout-ms :semantic-timeout-ms])
+
+          body-ms
+          (when (seq body-limits) (apply min body-limits))
+
+          stream-limits
+          (keep (comp positive-ms effective) [:idle-timeout-ms :semantic-timeout-ms])
+
+          stream-ms
+          (when (seq stream-limits) (apply max stream-limits))
+
+          whole-ms
+          (positive-ms (:timeout-ms effective))
+
+          first-output-ms
+          (when (and ttft-ms body-ms) (+ (long ttft-ms) (long body-ms)))
+
+          bounded
+          (fn [phase-ms]
+            (or (when (and whole-ms phase-ms) (min whole-ms phase-ms)) phase-ms whole-ms))]
+
+      {:first-output-timeout-ms (bounded first-output-ms) :stall-timeout-ms (bounded stream-ms)})))
+
+(defn- with-provider-network-defaults
+  [router opts]
+  (rt/with-default-ask-code-idle-timeout
+    opts
+    (provider-network-policy router (svar-router/resolve-effective-model router (:routing opts)))))
+
 (def ^:private casual-request-pattern
   #"(?iu)^\s*(hi|hey|hello|yo|sup|siema|cześć|czesc|hej|dzień dobry|dzie dobry|thanks|thank you|thx|ok|okay|👍|👋)[\s!.?,]*\s*$")
 
@@ -4479,15 +4524,18 @@
    It also names WHY the request is being made (`:reason`): a tool-result
    continuation that the loop decided on its own must not look like the human
    pressing enter again."
-  [iteration-position resolved-model started-at-ms]
-  {:phase :provider-call
-   :iteration iteration-position
-   :reason (provider-call-reason iteration-position)
-   :started-at-ms started-at-ms
-   :provider (some-> (:provider resolved-model)
-                     name)
-   :model (some-> (:name resolved-model)
-                  str)})
+  ([iteration-position resolved-model started-at-ms]
+   (provider-call-chunk iteration-position resolved-model started-at-ms nil))
+  ([iteration-position resolved-model started-at-ms watchdog-timeouts]
+   (merge {:phase :provider-call
+           :iteration iteration-position
+           :reason (provider-call-reason iteration-position)
+           :started-at-ms started-at-ms
+           :provider (some-> (:provider resolved-model)
+                             name)
+           :model (some-> (:name resolved-model)
+                          str)}
+          (into {} (remove (comp nil? val)) watchdog-timeouts))))
 
 (def ^:private FD_RECLAIM_THRESHOLD
   "Reclaim leaked file descriptors once open FDs cross this fraction of the
@@ -4777,10 +4825,14 @@
           copilot-initiator (copilot-initiator-for-iteration iteration)
           effective-llm-headers
           (not-empty (merge (copilot-llm-headers resolved-model copilot-initiator) llm-headers))
+          provider-network (provider-network-policy (:router environment) resolved-model)
+          provider-watchdog-timeouts (provider-watchdog-timeouts provider-network)
           provider-started-at-ms (System/currentTimeMillis)
           _ (when on-chunk
-              (on-chunk
-                (provider-call-chunk iteration-position resolved-model provider-started-at-ms)))
+              (on-chunk (provider-call-chunk iteration-position
+                                             resolved-model
+                                             provider-started-at-ms
+                                             provider-watchdog-timeouts)))
           provider-start-ns (System/nanoTime)
           ;; Phase C: per-session cache-key for OpenAI / Codex / Z.ai
           ;; sticky routing. svar 0.6.x auto-generates a key from the
@@ -4902,7 +4954,7 @@
                 (let [ca (:cancel-atom environment)]
                   (fn []
                     (boolean (deref ca))))))
-            (provider-network-policy (:router environment) resolved-model))
+            provider-network)
           ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
                                                             :session-turn-id (:environment-id
                                                                                environment)
@@ -5771,7 +5823,7 @@
                {:type :svar/no-providers :vis/user-error true :env-gaps gaps}
                t))))
 
-(defn- build-router
+(defn build-router
   "Build a router and retain Vis provider network policy after svar normalization."
   [config]
   (try (let [providers
@@ -6504,8 +6556,8 @@
    single string. `ask!` (JSON-spec) is gone; every Vis caller uses
    `ask-code!`."
   [opts]
-  (svar/ask-code! (get-router)
-                  (rt/with-agent-initiator (rt/with-default-ask-code-idle-timeout opts))))
+  (let [router (get-router)]
+    (svar/ask-code! router (with-provider-network-defaults router (rt/with-agent-initiator opts)))))
 
 (defn llm-text!
   "Fast helper LLM call for extensions.
@@ -6531,9 +6583,13 @@
               (seq prompt)
               (conj {:role "user" :content prompt})))
 
+        router
+        (get-router)
+
         resp
-        (svar/ask-code! (get-router)
-                        (rt/with-default-ask-code-idle-timeout
+        (svar/ask-code! router
+                        (with-provider-network-defaults
+                          router
                           (merge (dissoc opts :system :prompt :temperature)
                                  {:messages messages
                                   :lang "text"

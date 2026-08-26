@@ -2505,9 +2505,27 @@
         (or (not (contains? chunk :delta)) (seq (:delta chunk)) (:done? chunk))
 
         output?
-        (and meaningful? (not (contains? stall-lifecycle-phases (:phase chunk))))]
+        (and meaningful? (not (contains? stall-lifecycle-phases (:phase chunk))))
 
-    (cond-> (assoc state :phase (:phase chunk))
+        provider-call?
+        (= :provider-call (:phase chunk))
+
+        state
+        (cond-> (assoc state :phase (:phase chunk))
+          provider-call?
+          (-> (dissoc :first-output-timeout-ms :stall-timeout-ms)
+              (assoc :produced? false)))]
+
+    (cond-> state
+      ;; Provider calls may carry a wider provider-owned prefill envelope. Keep
+      ;; it with the lifecycle marker so the gateway backstop cannot undercut
+      ;; the request watchdog that actually owns the network phase.
+      (some? (:first-output-timeout-ms chunk))
+      (assoc :first-output-timeout-ms (long (:first-output-timeout-ms chunk)))
+
+      (some? (:stall-timeout-ms chunk))
+      (assoc :stall-timeout-ms (long (:stall-timeout-ms chunk)))
+
       ;; Attribution is stamped by the `:provider-call` marker and kept: the
       ;; streaming chunks that follow carry none of their own, and the failure
       ;; card must still be able to name the connection that went silent.
@@ -2665,6 +2683,21 @@
    cancelled. Entering the body takes microseconds, so a minute is pure slack."
   60000)
 
+(defn- turn-stall-decision
+  [{:keys [phase started? produced? first-output-timeout-ms stall-timeout-ms]} idle-ms]
+  (let [silent?
+        (and started? (not produced?) (not (contains? first-output-exempt-phases phase)))
+
+        ceiling-ms
+        (long (cond (not started?) TURN_LAUNCH_TIMEOUT_MS
+                    silent? (or first-output-timeout-ms TURN_FIRST_OUTPUT_TIMEOUT_MS)
+                    :else (or stall-timeout-ms TURN_STALL_TIMEOUT_MS)))]
+
+    {:silent? silent?
+     :ceiling-ms ceiling-ms
+     :tripped? (and (or (not started?) (not (contains? stall-exempt-phases phase)))
+                    (>= (long idle-ms) ceiling-ms))}))
+
 (defn- turn-watchdog-live?
   "True while THIS run of `tid` still owes the session a terminal.
 
@@ -2736,58 +2769,47 @@
                      (quot 8)
                      (max 25)
                      (min 20000))]
-    (doto
-      (Thread.
-        ^Runnable
-        (fn []
-          (try (loop []
+    (doto (Thread.
+            ^Runnable
+            (fn []
+              (try (loop []
 
-                 (Thread/sleep check-ms)
-                 (when (turn-watchdog-live? sid tid cancel-token)
-                   (let [{:keys [phase last-ms started? produced?]} @stall
-                         idle-ms (- (System/currentTimeMillis) (long (or last-ms 0)))
-                         ;; Nothing from the model yet — and not merely queueing
-                         ;; for the execution permit.
-                         silent? (and started?
-                                      (not produced?)
-                                      (not (contains? first-output-exempt-phases phase)))
-                         ceiling (long (cond (not started?) TURN_LAUNCH_TIMEOUT_MS
-                                             silent? TURN_FIRST_OUTPUT_TIMEOUT_MS
-                                             :else TURN_STALL_TIMEOUT_MS))
-                         tripped? (if started?
-                                    (and (not (contains? stall-exempt-phases phase))
-                                         (>= idle-ms ceiling))
-                                    (>= idle-ms ceiling))]
+                     (Thread/sleep check-ms)
+                     (when (turn-watchdog-live? sid tid cancel-token)
+                       (let [{:keys [phase last-ms started?] :as stall-state} @stall
+                             idle-ms (- (System/currentTimeMillis) (long (or last-ms 0)))
+                             {:keys [silent? tripped?]} (turn-stall-decision stall-state idle-ms)]
 
-                     (if tripped?
-                       (let [detail (cond (not started?)
-                                          (str "no worker activity for " idle-ms "ms")
-                                          silent? (str "no output at all for " idle-ms
-                                                       "ms since the turn started, in phase " phase)
-                                          :else (str "no output for " idle-ms "ms in phase " phase))
-                             _ (swap! stall assoc :stalled? true :stall-detail detail)
-                             reason (if started?
-                                      (stall-failure-text stall)
-                                      (str "turn never started running: " detail))]
+                         (if tripped?
+                           (let [detail
+                                 (cond (not started?) (str "no worker activity for " idle-ms "ms")
+                                       silent? (str "no output at all for " idle-ms
+                                                    "ms since the turn started, in phase " phase)
+                                       :else (str "no output for " idle-ms "ms in phase " phase))
+                                 _ (swap! stall assoc :stalled? true :stall-detail detail)
+                                 reason (if started?
+                                          (stall-failure-text stall)
+                                          (str "turn never started running: " detail))]
 
-                         (tel/log! :warn
-                                   ["gateway: turn made no progress — force-cancelling" tid reason])
-                         (cancellation/cancel! cancel-token
-                                               (if started? :stall-watchdog :launch-watchdog))
-                         ;; Last line of defence: the cancel normally makes the
-                         ;; worker (or the cancel hook) land the terminal. When
-                         ;; neither can, land it here — a `turn.started` with no
-                         ;; terminal is what wedges a session forever. A turn
-                         ;; that produced nothing has nothing to flush, so it
-                         ;; gets the short grace.
-                         (Thread/sleep (cancel-terminal-grace-ms stall))
-                         (when (turn-watchdog-live? sid tid cancel-token)
-                           (fail-orphaned-turn! sid tid cancel-token reason)))
-                       (recur)))))
-               (catch InterruptedException _ nil)
-               (catch Throwable t
-                 (tel/log! :error ["gateway: turn watchdog failed" tid (ex-message t)]))))
-        (str "gateway-turn-stall-watchdog-" tid))
+                             (tel/log! :warn
+                                       ["gateway: turn made no progress — force-cancelling" tid
+                                        reason])
+                             (cancellation/cancel! cancel-token
+                                                   (if started? :stall-watchdog :launch-watchdog))
+                             ;; Last line of defence: the cancel normally makes the
+                             ;; worker (or the cancel hook) land the terminal. When
+                             ;; neither can, land it here — a `turn.started` with no
+                             ;; terminal is what wedges a session forever. A turn
+                             ;; that produced nothing has nothing to flush, so it
+                             ;; gets the short grace.
+                             (Thread/sleep (cancel-terminal-grace-ms stall))
+                             (when (turn-watchdog-live? sid tid cancel-token)
+                               (fail-orphaned-turn! sid tid cancel-token reason)))
+                           (recur)))))
+                   (catch InterruptedException _ nil)
+                   (catch Throwable t
+                     (tel/log! :error ["gateway: turn watchdog failed" tid (ex-message t)]))))
+            (str "gateway-turn-stall-watchdog-" tid))
       (.setDaemon true)
       (.start))
     nil))

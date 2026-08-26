@@ -29,17 +29,36 @@
             [com.blockether.vis.internal.vision-describe :as vision-describe]
             [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
+(defn- helper-router
+  [provider-id network]
+  (cond-> (svar/make-router [{:id provider-id
+                              :api-key "test"
+                              :base-url "http://127.0.0.1:1234/v1"
+                              :models [{:name "model"}]}])
+    network
+    (update :providers
+            #(mapv (fn [provider]
+                     (assoc provider :network network))
+                   %))))
+
 (defn- captured-svar-ask-code-opts
   "Opts a global-router helper hands to `svar/ask-code!`, with no network call."
-  [invoke!]
-  (let [seen (atom nil)]
-    (with-redefs-fn {#'lp/get-router (fn []
-                                       ::router)
-                     #'svar/ask-code! (fn [router opts]
-                                        (reset! seen {:router router :opts opts})
-                                        {:blocks [] :raw ""})}
-      invoke!)
-    @seen))
+  ([invoke!]
+   (captured-svar-ask-code-opts (helper-router :lmstudio
+                                               {:timeout-ms 1800000
+                                                :first-byte-timeout-ms 600000
+                                                :idle-timeout-ms 600000
+                                                :semantic-timeout-ms 600000})
+                                invoke!))
+  ([router invoke!]
+   (let [seen (atom nil)]
+     (with-redefs-fn {#'lp/get-router (fn []
+                                        router)
+                      #'svar/ask-code! (fn [router opts]
+                                         (reset! seen {:router router :opts opts})
+                                         {:blocks [] :raw ""})}
+       invoke!)
+     @seen)))
 
 (defn- captured-ask-code-opts [opts] (captured-svar-ask-code-opts #(lp/ask-code! opts)))
 
@@ -6624,7 +6643,20 @@
   (it "still lets a caller pin the initiator explicitly"
       (expect (= "user"
                  (get-in (captured-ask-code-opts {:messages [] :llm-headers {"X-Initiator" "user"}})
-                         [:opts :llm-headers "X-Initiator"])))))
+                         [:opts :llm-headers "X-Initiator"]))))
+  (it "applies the routed provider policy to both one-shot helpers"
+      (expect (= 600000
+                 (get-in (captured-ask-code-opts {:messages []}) [:opts :first-byte-timeout-ms])))
+      (expect (= 600000
+                 (get-in (captured-llm-text-opts {:prompt "hi"}) [:opts :first-byte-timeout-ms]))))
+  (it "keeps explicit helper overrides above provider defaults"
+      (expect (= 700000
+                 (get-in (captured-ask-code-opts {:messages [] :first-byte-timeout-ms 700000})
+                         [:opts :first-byte-timeout-ms]))))
+  (it "leaves providers without policy on svar's first-byte default"
+      (expect (not (contains? (:opts (captured-svar-ask-code-opts (helper-router :cloud nil)
+                                                                  #(lp/ask-code! {:messages []})))
+                              :first-byte-timeout-ms)))))
 
 ;; Regression: Copilot Claude capped `:deep` to `:balanced`. The cap was written
 ;; for the OPENAI-compatible chat wire, where `reasoning_effort` mis-routed the
@@ -6674,7 +6706,21 @@
                              :started-at-ms 1
                              :provider nil
                              :model nil}
-                            (#'lp/provider-call-chunk 0 {} 1)))))
+                            (#'lp/provider-call-chunk 0 {} 1))))
+             (it "carries the provider's bounded pre-output envelope to the gateway"
+                 (expect (= {:first-output-timeout-ms 800000 :stall-timeout-ms 600000}
+                            (#'lp/provider-watchdog-timeouts
+                             {:timeout-ms 1800000
+                              :first-byte-timeout-ms 600000
+                              :idle-timeout-ms 600000
+                              :semantic-timeout-ms 600000})))
+                 (expect (= {:first-output-timeout-ms 700 :stall-timeout-ms 600}
+                            (select-keys (#'lp/provider-call-chunk
+                                          1
+                                          {:provider :lmstudio :name "dense"}
+                                          42
+                                          {:first-output-timeout-ms 700 :stall-timeout-ms 600})
+                                         [:first-output-timeout-ms :stall-timeout-ms])))))
 
 (defdescribe providers-router-rebuild-hook-wiring-test
              ;; The picker's config-affecting saves fire `providers/rebuild-shared-router!`,

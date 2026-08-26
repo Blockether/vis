@@ -1684,6 +1684,9 @@
         watchdog
         @#'state/start-turn-stall-watchdog!
 
+        decision
+        @#'state/turn-stall-decision
+
         registry
         @#'state/registry
 
@@ -1887,7 +1890,7 @@
         ;; turn the provider never answered therefore looked like a producing one
         ;; and kept both the full cancel grace and the full stall ceiling.
         (let [marker (advance {} {:phase :provider-call :iteration 0 :started-at-ms 1} 100)]
-          (expect (= {:phase :provider-call :last-ms 100} marker))
+          (expect (= {:phase :provider-call :produced? false :last-ms 100} marker))
           (expect (true? (:produced? (advance marker {:phase :content :delta "hi"} 200))))))
     (it "force-cancels a started turn the provider never answered at all"
         ;; Regression: a turn sat 3m47s with zero iterations, holding the whole
@@ -1919,6 +1922,72 @@
                (expect (true? (:stalled? @stall)))
                (expect (str/includes? (str (:stall-detail @stall)) "no output at all"))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    ;; Regression, issue td-e06f95: the gateway's fixed two-minute first-output
+    ;; watchdog cancelled LM Studio before its provider-scoped prefill budget elapsed.
+    (it "accepts delayed provider output past the former ceiling without wall-clock sleeps"
+        (with-redefs [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
+                      150
+
+                      state/TURN_STALL_TIMEOUT_MS
+                      300]
+
+          (let [marker
+                (advance {}
+                         {:phase :provider-call
+                          :provider "lmstudio"
+                          :first-output-timeout-ms 700
+                          :stall-timeout-ms 600}
+                         0)
+
+                delayed-output
+                (advance (assoc marker :started? true) {:phase :content :delta "ready"} 200)
+
+                completed
+                (advance delayed-output {:phase :content :done? true} 201)]
+
+            (expect (false? (:tripped? (decision (assoc marker :started? true) 151))))
+            (expect (true? (:produced? delayed-output)))
+            (expect (false? (:tripped? (decision completed 599))))
+            (expect (true? (:tripped? (decision completed 600)))))))
+    (it "honors a provider call's longer bounded first-output ceiling"
+        (let [sid
+              (str "stall-" (java.util.UUID/randomUUID))
+
+              tid
+              "t1"
+
+              token
+              (cancellation/cancellation-token)
+
+              marker
+              (advance {}
+                       {:phase :provider-call
+                        :provider "lmstudio"
+                        :first-output-timeout-ms 700
+                        :stall-timeout-ms 600}
+                       (System/currentTimeMillis))
+
+              stall
+              (atom (assoc marker :started? true))]
+
+          (try (swap! registry assoc sid {:next-seq 0 :current-turn tid})
+               (with-redefs [state/TURN_FIRST_OUTPUT_TIMEOUT_MS
+                             150
+
+                             state/TURN_STALL_TIMEOUT_MS
+                             300000]
+
+                 (watchdog sid tid token stall)
+                 (expect (false? (await-cancel token 350)))
+                 (expect (true? (await-cancel token 1200))))
+               (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
+    (it "resets per-call output state and provider ceilings at each provider call"
+        (let [answered (advance {:produced? true :first-output-timeout-ms 700 :stall-timeout-ms 600}
+                                {:phase :provider-call :provider "cloud"}
+                                42)]
+          (expect (false? (:produced? answered)))
+          (expect (not (contains? answered :first-output-timeout-ms)))
+          (expect (not (contains? answered :stall-timeout-ms)))))
     (it "holds a turn that already streamed output to the full stall ceiling"
         (let [sid
               (str "stall-" (java.util.UUID/randomUUID))
