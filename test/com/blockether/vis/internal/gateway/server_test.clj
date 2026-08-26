@@ -1506,6 +1506,94 @@
                   (is (= 3 (count (re-seq (re-pattern sid-a) s))))
                   (is (= 2 (count (re-seq (re-pattern sid-b) s)))))))))))))
 
+;; Regression, reported in this Vis session: the only way a session list could
+;; learn that a run had started or ended was to re-read its whole window on a
+;; timer, so a phone paid a full window per tick to discover that nothing had
+;; moved — and painted a stale row until the next tick.
+(deftest fleet-scope-streams-status-deltas-instead-of-a-window
+  (testing "?scope=fleet opens ONE stream whose frames are single session status changes"
+    (with-server-state!
+      {}
+      (fn []
+        (let [sid
+              (str (java.util.UUID/randomUUID))
+
+              snapshot
+              (atom {})
+
+              write-body
+              (requiring-resolve 'ring.core.protocols/write-body-to-stream)
+
+              handler
+              (rv 'multi-events-handler)]
+
+          (with-redefs-fn {#'server/stop! (fn []
+                                            nil)
+                           #'state/FLEET_POLL_MS 10
+                           #'state/fleet-snapshot (fn []
+                                                    @snapshot)}
+            (fn []
+              (let [response
+                    (handler {:query-params {"scope" "fleet"} :headers {}})
+
+                    baos
+                    (java.io.ByteArrayOutputStream.)
+
+                    text
+                    (fn []
+                      (String. (.toByteArray baos) "UTF-8"))
+
+                    frames
+                    ;; Parse only COMPLETE frames: the watcher writes while this
+                    ;; thread reads, and half a frame is not JSON.
+                    (fn []
+                      (let [written
+                            (text)
+
+                            end
+                            (str/last-index-of written "\n\n")]
+
+                        (if end (sse-jobs (subs written 0 (+ (long end) 2))) [])))
+
+                    mine
+                    ;; This machine may be running real sessions, and the watcher
+                    ;; reports the whole fleet — the test owns exactly one sid.
+                    (fn []
+                      (filterv #(= sid (get % "session_id")) (frames)))
+
+                    fut
+                    (future (try (write-body (:body response) {} baos) (catch Throwable _ nil)))]
+
+                (is (= 200 (:status response)))
+                (is (= "text/event-stream" (get-in response [:headers "Content-Type"])))
+                (is (wait-until-slow #(seq (frames))))
+                (testing
+                  "the ready frame names the scope, so a client knows to cold-read its window"
+                  (let [ready (first (frames))]
+                    (is (= "subscription.ready" (get ready "type")))
+                    (is (= "fleet" (get ready "scope")))))
+                (reset! snapshot {sid {"is_live" true
+                                       "is_awaiting_input" false
+                                       "current_turn_id" "t-1"}})
+                (is (wait-until-slow #(seq (mine))))
+                (reset! snapshot {})
+                (is (wait-until-slow #(some (fn [frame]
+                                              (false? (get frame "is_live")))
+                                            (mine))))
+                (future-cancel fut)
+                (let [status-frames (mine)]
+                  (testing "a frame is one session's state, not a row and not a window"
+                    (is (= ["session.status"] (distinct (map #(get % "type") status-frames))))
+                    (is (= [true false] (mapv #(get % "is_live") status-frames)))
+                    (is (= "t-1" (get (first status-frames) "current_turn_id")))
+                    (is (nil? (get (last status-frames) "current_turn_id")))
+                    (is (every? #(number? (get % "seq")) status-frames)))))))))))
+  (testing "without sids and without a scope the route still refuses"
+    (with-server-state!
+      {}
+      (fn []
+        (is (= 400 (:status ((rv 'multi-events-handler) {:query-params {} :headers {}}))))))))
+
 ;; ── `subscription.ready` states the daemon's OWN turn, so a reconnect needs no probe ──
 ;; A client that went dark cannot tell "nothing happened" from "I missed the
 ;; terminal event": its cursor is accepted either way and the replay ring is
@@ -3332,13 +3420,17 @@
 ;; to keep leaving this server — a client that never announced a protocol is the
 ;; oldest peer there is and still gets the copy.
 (deftest live-close-sheds-its-picture-only-for-clients-that-rebuild-it-test
-  (let [omits? (rv 'omits-settled-picture?)
-        slim (rv 'without-settled-picture)
-        close-frame {"type" "human_input.live.close"
-                     "seq" 7
-                     "result" {"view" {"id" "v1" "nodes" []}
-                               "reason" "completed"
-                               "is_completed" true}}]
+  (let [omits?
+        (rv 'omits-settled-picture?)
+
+        slim
+        (rv 'without-settled-picture)
+
+        close-frame
+        {"type" "human_input.live.close"
+         "seq" 7
+         "result" {"view" {"id" "v1" "nodes" []} "reason" "completed" "is_completed" true}}]
+
     (testing "the protocol header decides, and silence means the oldest peer"
       (is (true? (omits? {:headers {"x-vis-protocol" "3"}})))
       (is (true? (omits? {:headers {"x-vis-protocol" "4"}})))
@@ -3364,25 +3456,39 @@
 ;; reading the same session at once are each served their own shape from one
 ;; stored event.
 (deftest live-close-shape-is-per-connection-not-per-event-test
-  (with-redefs-fn {#'server/stop! (fn [] nil)}
+  (with-redefs-fn {#'server/stop! (fn []
+                                    nil)}
     (fn []
       (with-server-state!
         {}
         (fn []
-          (let [multi-sse-body (rv 'multi-sse-body)
-                write-body (requiring-resolve 'ring.core.protocols/write-body-to-stream)
-                sid (str (java.util.UUID/randomUUID))
-                legacy (java.io.ByteArrayOutputStream.)
-                modern (java.io.ByteArrayOutputStream.)
-                text (fn [^java.io.ByteArrayOutputStream o] (String. (.toByteArray o) "UTF-8"))
-                legacy-fut (future (try (write-body (multi-sse-body [[sid 0]] false nil false)
-                                                    {}
-                                                    legacy)
-                                        (catch Throwable _ nil)))
-                modern-fut (future (try (write-body (multi-sse-body [[sid 0]] false nil true)
-                                                    {}
-                                                    modern)
-                                        (catch Throwable _ nil)))]
+          (let [multi-sse-body
+                (rv 'multi-sse-body)
+
+                write-body
+                (requiring-resolve 'ring.core.protocols/write-body-to-stream)
+
+                sid
+                (str (java.util.UUID/randomUUID))
+
+                legacy
+                (java.io.ByteArrayOutputStream.)
+
+                modern
+                (java.io.ByteArrayOutputStream.)
+
+                text
+                (fn [^java.io.ByteArrayOutputStream o]
+                  (String. (.toByteArray o) "UTF-8"))
+
+                legacy-fut
+                (future (try (write-body (multi-sse-body [[sid 0]] false nil false) {} legacy)
+                             (catch Throwable _ nil)))
+
+                modern-fut
+                (future (try (write-body (multi-sse-body [[sid 0]] false nil true) {} modern)
+                             (catch Throwable _ nil)))]
+
             (is (wait-until #(and (re-find #"subscription.ready" (text legacy))
                                   (re-find #"subscription.ready" (text modern)))))
             (state/append-event! sid
@@ -3395,15 +3501,12 @@
                                   (re-find #"live.close" (text modern)))))
             (future-cancel legacy-fut)
             (future-cancel modern-fut)
-
             (testing "a protocol-2 reader still receives the finished picture"
               (is (re-find #"\"view\"" (text legacy)))
               (is (re-find #"Activity" (text legacy))))
-
             (testing "a protocol-3 reader receives the verdict and nothing else"
               (is (nil? (re-find #"\"view\"" (text modern))))
               (is (nil? (re-find #"Activity" (text modern)))))
-
             (testing "the verdict itself survives on both"
               (doseq [out [(text legacy) (text modern)]]
                 (is (re-find #"completed" out))

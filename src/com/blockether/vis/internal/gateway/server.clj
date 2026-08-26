@@ -588,6 +588,16 @@
   "Sentinel queued to unpark a pump parked in `.poll`; never written to a socket."
   ::sse-wake)
 
+(def ^:private sse-headers
+  "Response headers of EVERY SSE endpoint. `no-transform` + `X-Accel-Buffering`
+   are the point: intermediaries (Cloudflare tunnels, nginx) BUFFER a streaming
+   body unless told not to, and a buffered stream delivers nothing until
+   disconnect — which reads as \"streaming dead until refresh\" in any proxied
+   client."
+  {"Content-Type" "text/event-stream"
+   "Cache-Control" "no-cache, no-transform"
+   "X-Accel-Buffering" "no"})
+
 (defn- sse-closer
   "Zero-arg terminator for ONE SSE connection: mark it dead, unsubscribe, close
    the socket, and unpark the writer. The wake sentinel is the point - a pump
@@ -776,8 +786,7 @@
               write!
               (fn [event]
                 (when (> (long (get event "seq")) (long @last-seq))
-                  (.write out
-                          (.getBytes (wire/sse-frame (outbound event)) StandardCharsets/UTF_8))
+                  (.write out (.getBytes (wire/sse-frame (outbound event)) StandardCharsets/UTF_8))
                   (.flush out)
                   (reset! last-seq (long (get event "seq")))))]
 
@@ -803,13 +812,7 @@
   (let [sid (path-sid request)]
     (if (and sid (state/soul sid))
       {:status 200
-       ;; no-transform + X-Accel-Buffering: intermediaries (Cloudflare
-       ;; tunnels, nginx) BUFFER a streaming body unless told not to —
-       ;; buffered SSE delivers nothing until disconnect, which reads as
-       ;; "streaming dead until refresh" in any proxied client.
-       :headers {"Content-Type" "text/event-stream"
-                 "Cache-Control" "no-cache, no-transform"
-                 "X-Accel-Buffering" "no"}
+       :headers sse-headers
        :body (sse-body sid
                        (sse-cursor request)
                        ;; forwarding header = an edge proxy sits in the path —
@@ -938,24 +941,99 @@
                         (maybe-stop-when-idle!)
                         (try (.close out) (catch Throwable _ nil))))))))
 
+(defn- fleet-sse-body
+  "SSE body carrying the FLEET's status deltas down ONE connection: which
+   sessions started running, went idle, or parked on a human — never what
+   happens INSIDE a turn.
+
+   A session list used to learn all of that by re-reading its window on a timer,
+   paying a whole window per tick to discover that usually nothing moved. Here a
+   real change costs about a hundred bytes and arrives at once. The windowed read
+   stays as the COLD read — first paint, reconnect, foreground — and is also the
+   only resync: this stream has no replay and no cursor, so a gap heals with one
+   ordinary read instead of a rewind."
+  [proxied? owner-pid]
+  (reify
+    ring-protocols/StreamableResponseBody
+      (write-body-to-stream [_ _ output-stream]
+        (let [^OutputStream out
+              output-stream
+
+              sub-id
+              (str (java.util.UUID/randomUUID))
+
+              queue
+              (ArrayBlockingQueue. (int SSE_QUEUE_CAP))
+
+              dead?
+              (volatile! false)
+
+              close!
+              (sse-closer out
+                          queue
+                          dead?
+                          (fn []
+                            (state/unsubscribe-fleet! sub-id)))
+
+              sink
+              (sse-sink queue close!)
+
+              write!
+              (fn [event]
+                (.write out (.getBytes (wire/sse-frame event) StandardCharsets/UTF_8))
+                (.flush out))]
+
+          (swap! server-state (fn [st]
+                                (-> st
+                                    (assoc :saw-client? true)
+                                    (assoc-in [:sse-clients sub-id]
+                                              {:pid owner-pid :close! close!}))))
+          (try (when proxied? (sse-proxy-pad! out))
+               ;; Ready BEFORE the sink is attached: a client reads its cold
+               ;; window on this frame, so the read and the deltas that follow
+               ;; cannot cross and leave the list describing two different
+               ;; instants.
+               (write! {"schema" 1
+                        "type" "subscription.ready"
+                        "scope" "fleet"
+                        "seq" 0
+                        "ts" (System/currentTimeMillis)})
+               (state/subscribe-fleet! sub-id sink)
+               (pump-sse! out queue dead? write!)
+               (catch Throwable _ nil)
+               (finally (state/unsubscribe-fleet! sub-id)
+                        (swap! server-state update :sse-clients dissoc sub-id)
+                        (maybe-stop-when-idle!)
+                        (try (.close out) (catch Throwable _ nil))))))))
+
 (defn- multi-events-handler
   "GET /v1/events?sids=a:10,b,c:3 — ONE SSE stream carrying every listed
    session's events, so a client watching N sessions holds ONE connection +
    ONE server heartbeat thread instead of N. Demuxed client-side by each
-   event's `:session_id`."
+   event's `:session_id`.
+
+   GET /v1/events?scope=fleet — the same route asked the OTHER question: not what
+   happens inside a session but WHICH sessions changed state. That is the session
+   list's feed, and it lives here rather than on a route of its own because a
+   client already holds exactly one events connection and one heartbeat."
   [request]
-  (let [sid+cursors (parse-multi-sids request)]
-    (if (seq sid+cursors)
+  (let [proxied? (boolean (some #(get-in request [:headers %])
+                                ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))]
+    (if (= "fleet"
+           (some-> (get-in request [:query-params "scope"])
+                   str/trim))
       {:status 200
-       :headers {"Content-Type" "text/event-stream"
-                 "Cache-Control" "no-cache, no-transform"
-                 "X-Accel-Buffering" "no"}
-       :body (multi-sse-body sid+cursors
-                             (boolean (some #(get-in request [:headers %])
-                                            ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))
-                             (request-client-pid request)
-                             (omits-settled-picture? request))}
-      (error-response 400 :bad-request "no valid sids"))))
+       :headers sse-headers
+       :body (fleet-sse-body proxied? (request-client-pid request))}
+      (let [sid+cursors (parse-multi-sids request)]
+        (if (seq sid+cursors)
+          {:status 200
+           :headers sse-headers
+           :body (multi-sse-body sid+cursors
+                                 proxied?
+                                 (request-client-pid request)
+                                 (omits-settled-picture? request))}
+          (error-response 400 :bad-request "no valid sids"))))))
 
 ;; /metrics (§6.5)
 
@@ -3830,9 +3908,7 @@
           (not= (name direction) (:direction job))
           (json-response 404 {:error (str "unknown " (voice/direction-nouns direction) " job")})
           :else {:status 200
-                 :headers {"Content-Type" "text/event-stream"
-                           "Cache-Control" "no-cache, no-transform"
-                           "X-Accel-Buffering" "no"}
+                 :headers sse-headers
                  :body (job-events-body (job-event-names direction) job-id)})))
 
 (defn- voice-job-events-handler [request] (job-events-handler :transcribe request))

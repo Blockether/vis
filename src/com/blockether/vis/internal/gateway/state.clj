@@ -606,6 +606,172 @@
 
 (defn unsubscribe! [sid sub-id] (drop-subscriber! sid sub-id) nil)
 
+;; Fleet watch (§ the session list's delta feed)
+
+(def ^:private FLEET_POLL_MS
+  "Tick of the fleet watcher: how fast a status change ANYWHERE on this machine
+   reaches a list that is watching. One tick is two tiny directory listings
+   (`bus/live-turns`, `bus/waiting-requests`), both already cached for 200 ms —
+   far cheaper than the windowed list read a client used to repeat every 10 s to
+   learn the same fact, and it runs only while a stream is open."
+  1000)
+
+(defonce ^:private fleet-sinks
+  ;; sub-id -> (fn [event]). Same NON-BLOCKING contract as `fan-out!`:
+  ;; server.clj registers a bounded-queue enqueue, never a socket write.
+  (atom {}))
+
+(defonce ^:private fleet-seq
+  ;; Monotonic id of the fleet stream. It is the frame's SSE `id:` and nothing
+  ;; else: the stream has no replay, so no client resumes from it.
+  (atom 0))
+
+(defonce ^:private fleet-watcher (atom nil))
+
+(defn fleet-snapshot
+  "What the fleet is DOING right now: `{sid {\"is_live\" … \"is_awaiting_input\" …
+   \"current_turn_id\" …}}`, holding only sessions that are running or parked on a
+   human — its size is the busy fleet, never the store.
+
+   Read from the cross-process markers (`bus/live-turns`, `bus/waiting-requests`),
+   never from this registry: a sibling process's turn is mirrored here only once
+   somebody SUBSCRIBES to that session, so a registry answer would light up
+   exactly the sessions the asking client already watched."
+  []
+  (let [live
+        (bus/live-turns)
+
+        waiting
+        (bus/waiting-requests)]
+
+    (reduce (fn [acc sid]
+              (assoc acc
+                sid {"is_live" (contains? live sid)
+                     "is_awaiting_input" (boolean (seq (get waiting sid)))
+                     "current_turn_id" (get live sid)}))
+            {}
+            (into (set (keys live)) (keys waiting)))))
+
+(defn fleet-status-frames
+  "PURE diff of two [[fleet-snapshot]]s: one `session.status` frame per session
+   whose fleet-visible state changed. A session that left both indexes gets the
+   idle frame — that transition is exactly what a list needs to stop painting a
+   spinner, and it is the one a snapshot cannot carry by absence.
+
+   Carries no `seq`/`ts`: `publish-fleet!` stamps those, so this stays a function
+   of its arguments and a test can state the contract without a clock."
+  [before after]
+  (let [idle {"is_live" false "is_awaiting_input" false "current_turn_id" nil}]
+    (into []
+          (keep (fn [sid]
+                  (let [was (get before sid idle)
+                        now (get after sid idle)]
+
+                    (when (not= was now)
+                      (assoc now
+                        "schema" 1
+                        "type" "session.status"
+                        "session_id" sid)))))
+          (into (set (keys before)) (keys after)))))
+
+(defn- publish-fleet!
+  "Stamp each frame with the stream's monotonic id and the server clock, then
+   offer it to every open fleet sink. A sink that throws is dropped — one dead
+   socket must never kill the watcher for every other client."
+  [frames]
+  (doseq [frame frames]
+    (let [stamped (assoc frame
+                    "seq" (swap! fleet-seq inc)
+                    "ts" (System/currentTimeMillis))]
+      (doseq [[sub-id sink] @fleet-sinks]
+        (try (sink stamped)
+             (catch Throwable err
+               (swap! fleet-sinks dissoc sub-id)
+               (tel/log! :debug
+                         ["gateway: dropped dead fleet subscriber" sub-id (ex-message err)])))))))
+
+(defn- fleet-title-tap
+  "Forward a session's OWN rename to fleet watchers. `broadcast-title-event!` also
+   copies that event into every other session (the copy carries
+   `titled_session_id`), so forwarding only the original keeps ONE frame per
+   rename instead of one per session in the store.
+
+   Honest limit: this is a tap on LOCALLY appended events, so a rename in a
+   sibling process reaches a watcher on its next cold read, not as a frame."
+  [sid event]
+  (when (and (= "session.title_updated" (get event "type")) (nil? (get event "titled_session_id")))
+    (publish-fleet! [{"schema" 1
+                      "type" "session.title_updated"
+                      "session_id" (str sid)
+                      "title" (str (get event "title"))}])))
+
+(defn- spawn-fleet-watch-thread!
+  "Create, mark daemon and START the single fleet watcher. While no stream is
+   open it does NO directory work and holds no baseline, so the next subscriber
+   diffs against a fresh snapshot instead of receiving a backlog of transitions
+   nobody was listening for."
+  []
+  (let [t (Thread. ^Runnable
+                   (fn []
+                     (loop [before nil]
+                       (let [next-snapshot
+                             (try (cond (empty? @fleet-sinks) nil
+                                        (nil? before) (fleet-snapshot)
+                                        :else (let [after (fleet-snapshot)]
+                                                (publish-fleet! (fleet-status-frames before after))
+                                                after))
+                                  (catch Throwable err
+                                    (tel/log! :debug
+                                              ["gateway: fleet watch tick failed" (ex-message err)])
+                                    before))]
+                         (when-not (Thread/interrupted)
+                           (try (Thread/sleep (long FLEET_POLL_MS))
+                                (catch InterruptedException _ (.interrupt (Thread/currentThread))))
+                           (recur next-snapshot)))))
+                   "vis-gateway-fleet-watch")]
+    (.setDaemon t true)
+    (.start t)
+    t))
+
+(defn- ensure-fleet-watch!
+  "Start the watcher — or RESURRECT it. The loop exits on interrupt, and an atom
+   still holding that corpse would leave every later subscriber attached to a
+   connected, heartbeating socket that can never produce a frame: worse than no
+   stream at all, because the client stops asking. `::starting` gates a
+   concurrent spawn and must never outlive this block."
+  []
+  (let [cur @fleet-watcher]
+    (when (and (not= ::starting cur)
+               (or (nil? cur) (not (.isAlive ^Thread cur)))
+               (compare-and-set! fleet-watcher cur ::starting))
+      (try (reset! fleet-watcher (spawn-fleet-watch-thread!))
+           (catch Throwable err
+             (compare-and-set! fleet-watcher ::starting nil)
+             (tel/log! :debug ["gateway: fleet watch start failed" (ex-message err)])))))
+  nil)
+
+(defn subscribe-fleet!
+  "Attach `sink` to the FLEET stream: every session's status transitions, not one
+   session's events. The sink must be NON-BLOCKING for the same reason
+   [[subscribe!]]'s must be.
+
+   There is NO replay and no cursor. The stream is a delta feed layered on a cold
+   `/v1/sessions` read: a client resyncs by re-reading the window — one windowed
+   read, not a rewind — so a missed frame heals itself and a reconnect costs
+   nothing to arrange."
+  [sub-id sink]
+  (swap! fleet-sinks assoc sub-id sink)
+  (add-event-tap! ::fleet fleet-title-tap)
+  (ensure-fleet-watch!)
+  nil)
+
+(defn unsubscribe-fleet!
+  "Drop one fleet stream. The watcher stays parked — without sinks it scans
+   nothing — and the last subscriber out removes the title tap."
+  [sub-id]
+  (when (empty? (swap! fleet-sinks dissoc sub-id)) (remove-event-tap! ::fleet))
+  nil)
+
 (defn current-seq
   "Highest event `:seq` assigned for `sid` so far. Subscribing with this
    as the cursor yields a live-only stream (empty replay)."

@@ -4261,3 +4261,53 @@
           (let [overview (state/projects-overview)]
             (expect (= [] (:projects overview)))
             (expect (= 0 (:session_count overview))))))))
+
+;; Regression, reported in this Vis session: a session list learned that a run
+;; started, parked on a human or ended ONLY by re-reading its whole window on a
+;; timer — a full window per tick to discover that nothing had moved, and a stale
+;; row until the next one.
+(defdescribe
+  fleet-status-deltas-test
+  "The fleet feed's entire vocabulary: one frame per session whose state changed,
+   and nothing at all while the busy fleet stands still."
+  (it "reads the fleet from the machine's markers, never from this process's registry"
+      (with-redefs-fn {#'bus/live-turns (constantly {"s1" "t1"})
+                       #'bus/waiting-requests (constantly {"s2" [{"id" "r1"}]})}
+        (fn []
+          (let [snapshot (state/fleet-snapshot)]
+            (expect (= {"is_live" true "is_awaiting_input" false "current_turn_id" "t1"}
+                       (get snapshot "s1")))
+            (expect (= {"is_live" false "is_awaiting_input" true "current_turn_id" nil}
+                       (get snapshot "s2")))))))
+  (it "says nothing at all while no session changed"
+      (let [snapshot {"s1" {"is_live" true "is_awaiting_input" false "current_turn_id" "t1"}}]
+        (expect (= [] (state/fleet-status-frames snapshot snapshot)))))
+  (it "announces a session that started running"
+      (expect (= [{"schema" 1
+                   "type" "session.status"
+                   "session_id" "s1"
+                   "is_live" true
+                   "is_awaiting_input" false
+                   "current_turn_id" "t1"}]
+                 (state/fleet-status-frames
+                   {}
+                   {"s1" {"is_live" true "is_awaiting_input" false "current_turn_id" "t1"}}))))
+  (it "spells out the session that left both indexes, because absence cannot be painted"
+      (expect (= [{"schema" 1
+                   "type" "session.status"
+                   "session_id" "s1"
+                   "is_live" false
+                   "is_awaiting_input" false
+                   "current_turn_id" nil}]
+                 (state/fleet-status-frames
+                   {"s1" {"is_live" true "is_awaiting_input" false "current_turn_id" "t1"}}
+                   {}))))
+  (it "reports the run that parked on a human without repeating the sessions around it"
+      (let [frames (state/fleet-status-frames
+                     {"s1" {"is_live" true "is_awaiting_input" false "current_turn_id" "t1"}
+                      "s2" {"is_live" true "is_awaiting_input" false "current_turn_id" "t2"}}
+                     {"s1" {"is_live" true "is_awaiting_input" true "current_turn_id" "t1"}
+                      "s2" {"is_live" true "is_awaiting_input" false "current_turn_id" "t2"}})]
+        (expect (= 1 (count frames)))
+        (expect (= "s1" (get (first frames) "session_id")))
+        (expect (true? (get (first frames) "is_awaiting_input"))))))
