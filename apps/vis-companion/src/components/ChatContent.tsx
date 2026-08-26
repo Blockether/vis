@@ -2645,6 +2645,7 @@ export function SpeechBlock({ text }: { text: string }) {
   const [error, setError] = useState<string | null>(null);
   const positionRef = useRef(0);
   const runRef = useRef(0);
+  const playbackOwnerRef = useRef<object>({});
   const startedAtRef = useRef(0);
   const fromRef = useRef(0);
   const measuredRef = useRef(false);
@@ -2663,7 +2664,7 @@ export function SpeechBlock({ text }: { text: string }) {
 
   const stop = useCallback(() => {
     runRef.current += 1;
-    speechOutput.stop();
+    speechOutput.stop(playbackOwnerRef.current);
     setSpeaking(false);
   }, []);
 
@@ -2681,19 +2682,23 @@ export function SpeechBlock({ text }: { text: string }) {
       setError(null);
       setSpeaking(true);
       void speechOutput
-        .speak(spoken, {
-          // Only a run that speaks the WHOLE reply may draw the whole reply: audio for
-          // a tail is the shape of that tail, and the bars are a claim about samples.
-          onTrack: (measured) => {
-            if (runRef.current !== run || from > 0) return;
-            setTrack(measured);
+        .speak(
+          spoken,
+          {
+            // Only a run that speaks the WHOLE reply may draw the whole reply: audio for
+            // a tail is the shape of that tail, and the bars are a claim about samples.
+            onTrack: (measured) => {
+              if (runRef.current !== run || from > 0) return;
+              setTrack(measured);
+            },
+            onProgress: (seconds) => {
+              if (runRef.current !== run) return;
+              measuredRef.current = true;
+              rememberPosition(fromRef.current + seconds / durationRef.current);
+            },
           },
-          onProgress: (seconds) => {
-            if (runRef.current !== run) return;
-            measuredRef.current = true;
-            rememberPosition(fromRef.current + seconds / durationRef.current);
-          },
-        })
+          playbackOwnerRef.current,
+        )
         .then(() => {
           if (runRef.current === run) rememberPosition(1);
         })

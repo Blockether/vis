@@ -227,6 +227,24 @@ describe("spoken transcript", () => {
       stop.mockRestore();
     }
   });
+
+  // Regression, user report: the live speech block unmounted during the transcript
+  // handoff and its cleanup cancelled the separate voice-mode reading.
+  it("does not stop voice-mode speech when a transcript block unmounts", () => {
+    let voiceModeStopped = false;
+    const stop = vi
+      .spyOn(speechOutput, "stop")
+      .mockImplementation((owner?: object) => {
+        if (owner === undefined) voiceModeStopped = true;
+      });
+    const view = render(<SpeechBlock text="The same answer appears in the transcript." />);
+
+    view.unmount();
+
+    expect(stop).toHaveBeenCalledWith(expect.any(Object));
+    expect(voiceModeStopped).toBe(false);
+    stop.mockRestore();
+  });
 });
 
 describe("Markdown thinking breaks", () => {

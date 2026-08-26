@@ -220,4 +220,27 @@ describe("speaking on this device", () => {
 
     expect(cancel).toHaveBeenCalledOnce();
   });
+
+  it("ignores a scoped stop from a playback control that does not own the speech", async () => {
+    const { speechOutput } = await import("./speech");
+    const cancel = vi.fn();
+    let finish: (() => void) | null = null;
+    speechOutput.apply(prefs());
+    vi.stubGlobal("speechSynthesis", {
+      speak: (utterance: FakeUtterance) => {
+        finish = () => utterance.onend?.();
+      },
+      cancel,
+      getVoices: () => [],
+    });
+
+    const spoken = speechOutput.speak("The voice conversation owns this reading.");
+    await Promise.resolve();
+    cancel.mockClear();
+    speechOutput.stop({});
+
+    expect(cancel).not.toHaveBeenCalled();
+    finish!();
+    await spoken;
+  });
 });

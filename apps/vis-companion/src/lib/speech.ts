@@ -134,6 +134,7 @@ class SpeechOutput {
     element: HTMLAudioElement;
     interrupt: () => void;
   } | null = null;
+  private activeRun: { owner: object | null } | null = null;
 
   /** The screen with a live session hands the machine's voice in, and takes it back. */
   setGateway(
@@ -155,24 +156,42 @@ class SpeechOutput {
     return this.prefs;
   }
 
-  async speak(text: string, listener?: SpeechListener): Promise<void> {
-    const prefs = await this.settings();
-    if (prefs.ttsEngine && this.gateway) {
-      try {
-        const audio = await this.gateway.speak(
-          text,
-          prefs.gatewayVoice,
-          prefs.ttsEngine,
-        );
-        await this.play(audio, listener);
-        return;
-      } catch (cause) {
-        this.notice?.(
-          `That machine could not speak (${(cause as Error).message}) - this device did.`,
-        );
+  async speak(
+    text: string,
+    listener?: SpeechListener,
+    owner?: object,
+  ): Promise<void> {
+    // Starting a line is an explicit global handoff. Its owner only scopes later
+    // cleanup: a transcript block disappearing may stop its own replay, never a
+    // voice-mode line that happened to start on the same singleton afterward.
+    this.stop();
+    const run = { owner: owner ?? null };
+    this.activeRun = run;
+    try {
+      const prefs = await this.settings();
+      if (this.activeRun !== run) return;
+      if (prefs.ttsEngine && this.gateway) {
+        try {
+          const audio = await this.gateway.speak(
+            text,
+            prefs.gatewayVoice,
+            prefs.ttsEngine,
+          );
+          if (this.activeRun !== run) return;
+          await this.play(audio, listener);
+          return;
+        } catch (cause) {
+          if (this.activeRun !== run) return;
+          this.notice?.(
+            `That machine could not speak (${(cause as Error).message}) - this device did.`,
+          );
+        }
       }
+      if (this.activeRun !== run) return;
+      await this.device.speak(text, prefs.deviceVoice, prefs.rate);
+    } finally {
+      if (this.activeRun === run) this.activeRun = null;
     }
-    await this.device.speak(text, prefs.deviceVoice, prefs.rate);
   }
 
   /** Audition one exact system voice without changing the saved reply route. */
@@ -192,7 +211,9 @@ class SpeechOutput {
     await this.play(audio, listener);
   }
 
-  stop(): void {
+  stop(owner?: object): void {
+    if (owner !== undefined && this.activeRun?.owner !== owner) return;
+    this.activeRun = null;
     const playing = this.playing;
     if (playing) {
       // Settle and detach the old element before changing its source. WebKit reports that
