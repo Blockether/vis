@@ -2888,6 +2888,7 @@ function LiveProgress({
   terminal = false,
 }: {
   phase: string;
+  /** When the work in `phase` began. Without it the slot carries NO clock. */
   startedAt?: number;
   still?: boolean;
   /** A final phase keeps the same slot but has no activity punctuation. */
@@ -2897,13 +2898,18 @@ function LiveProgress({
 
   const ticking = !still && !terminal;
   useEffect(() => {
-    if (!ticking) return;
+    if (!ticking || startedAt === undefined) return;
     const timer = window.setInterval(() => setNow(Date.now()), 100);
     return () => window.clearInterval(timer);
-  }, [ticking]);
+  }, [ticking, startedAt]);
 
+  // A phase with no start is a WAIT, not a run. The slot that says a finished turn
+  // is being fetched used to print the whole turn's clock: "Loading latest
+  // changes... 137m 42s", over an answer that had been on the screen for hours.
   const elapsed =
-    formatDuration(Math.max(0, now - (startedAt ?? now))) ?? "0ms";
+    startedAt === undefined
+      ? null
+      : (formatDuration(Math.max(0, now - startedAt)) ?? "0ms");
 
   return (
     <>
@@ -2916,7 +2922,7 @@ function LiveProgress({
           {ticking ? <>&nbsp;&nbsp;</> : null}
           {phase}
           {terminal ? null : "..."}
-          {ticking ? <>&nbsp;&nbsp;{elapsed}</> : null}
+          {ticking && elapsed ? <>&nbsp;&nbsp;{elapsed}</> : null}
         </span>
       </div>
       <span className="sr-only" role="status">
@@ -3373,7 +3379,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         ) : cancelled ? (
           <LiveProgress phase="Cancelled by user." terminal />
         ) : pending ? (
-          <LiveProgress phase={pending} startedAt={startedAt} />
+          <LiveProgress phase={pending} />
         ) : turn.status === "running" ? (
           // A row this screen has stopped following still reads `running`, so it
           // still says so: the spinner and the elapsed clock go (they are what

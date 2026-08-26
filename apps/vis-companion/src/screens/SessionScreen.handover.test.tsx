@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 import type { SseEvent } from "../lib/types";
+import { HANDOVER_PATIENCE_MS } from "../lib/live-turn-handover";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -301,5 +302,78 @@ describe("a message whose POST is still on the wire", () => {
 
     // Still saying what it is doing. A rail that says only "Vis" is the bug.
     expect(live()).toMatch(/Vis is/);
+  });
+});
+
+// Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: the slot that says the
+// finished turn is being fetched printed the whole TURN's clock, so a session that had
+// been running for two hours read "Loading latest changes... 137m 42s" — and kept
+// reading it, because a bubble whose persisted row never satisfies the handover waits
+// for it forever.
+describe("the wait for a finished turn's persisted row", () => {
+  it("says what it is doing without a clock, and stops saying it", async () => {
+    vi.useFakeTimers();
+    const events = hub();
+    const bubble = {
+      id: "gw-slow",
+      request: "explain the failure",
+      answer: "",
+      iterations: [],
+      // Two hours and change of real work, exactly as the report had it.
+      startedAt: Date.now() - 137 * 60_000,
+      status: "running" as const,
+    };
+
+    try {
+      renderSessionScreen({
+        client: {
+          cachedLiveTurn: () => ({ turn: bubble, seq: 5 }),
+          cachedTranscript: () => [],
+          // The row this handover is waiting for never arrives.
+          transcript: () => Promise.resolve([]),
+        },
+        subscriptions: {
+          subscribeSession: events.subscribeSession,
+        },
+      });
+
+      // Everything runs on the fake clock: `findBy*` cannot see Vitest's fake timers
+      // and would sit on a `setInterval` that never fires.
+      const settle = async (ms: number) => {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(ms);
+        });
+      };
+
+      await settle(100);
+      expect(screen.getByText("explain the failure")).toBeInTheDocument();
+      events.emit({
+        type: "turn.completed",
+        turn_id: "gw-slow",
+        seq: 6,
+        status: "completed",
+        content: [{ id: "b1", type: "prose", markdown: "THE FINAL ANSWER" }],
+      } as unknown as SseEvent);
+      await settle(100);
+      expect(screen.getByText("THE FINAL ANSWER")).toBeInTheDocument();
+
+      // The slot names the wait and NOTHING ELSE: no number belongs in it, least of
+      // all one measured from the start of the turn.
+      const slot = () =>
+        document.querySelector('[data-live="true"] [aria-hidden="true"].mt-5')
+          ?.textContent ?? "";
+      expect(slot()).toContain("Loading latest changes");
+      expect(slot()).not.toMatch(/\d/);
+
+      // A wait nobody can end is not a wait worth painting: the answer is already
+      // whole on the screen, so the furniture goes and the answer stays.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(HANDOVER_PATIENCE_MS + 500);
+      });
+      expect(screen.queryByText("Loading latest changes")).toBeNull();
+      expect(screen.queryByText("THE FINAL ANSWER")).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -55,7 +55,10 @@ import { LiveView, useLiveViews } from "../components/LiveView";
 import type { LiveView as LiveViewModel } from "../lib/live-view";
 import { speechOutput } from "../lib/speech";
 import { markSessionId } from "../lib/session-id";
-import { settledTranscriptCoversLiveTurn } from "../lib/live-turn-handover";
+import {
+  HANDOVER_PATIENCE_MS,
+  settledTranscriptCoversLiveTurn,
+} from "../lib/live-turn-handover";
 import {
   VoiceTurnOwnership,
   type VoiceModeLease,
@@ -118,6 +121,7 @@ import {
   applyReadingPosition,
   arrivedAtEnd,
   followEnd,
+  FOLLOW_RESUME_QUIET_MS,
   growthFitsFollowWindow,
   forgetReadingPosition,
   heightSettler,
@@ -126,6 +130,7 @@ import {
   markReadingPosition,
   OPENING_QUIET_FRAMES,
   parkedReadingPosition,
+  readerRetreatedFrom,
   rememberReadingPosition,
   shouldOfferLatest,
 } from "../lib/reading-position";
@@ -1969,12 +1974,25 @@ export function SessionScreen({
   // Where `handleScroll` last SAW the scroller. A scroll event that finds it on
   // this pixel reports growth underneath a position this screen already owns.
   const seenTopRef = useRef(-1);
+  // ...and how TALL it was then. Content that SHRINKS — a card collapsed, a
+  // keyboard, a live bubble replaced by its shorter row — is clamped to the new end
+  // by the browser, and that arrives here as an upward move nobody made.
+  const seenHeightRef = useRef(-1);
   // The end the reader is REACHING FOR. Re-aimed on every scroll event that
   // finds them more than a screen away, and FROZEN once they are inside that
   // last screen: from there on, a live turn's growth is not distance they chose
   // to keep, and measuring it as such is what stopped a streaming session from
   // ever following its own newest turn again. Read by `arrivedAtEnd`.
   const aimedEndRef = useRef(0);
+  // The timer that gives back a follow surrendered to one large live batch. The
+  // reader's own hand is the only thing that keeps the held line (see
+  // `FOLLOW_RESUME_QUIET_MS`), so every gesture cancels this.
+  const followResumeRef = useRef<number | null>(null);
+  const cancelFollowResume = useCallback(() => {
+    if (followResumeRef.current === null) return;
+    window.clearTimeout(followResumeRef.current);
+    followResumeRef.current = null;
+  }, []);
 
   const scrollToEnd = useCallback((behavior: ScrollBehavior = "auto") => {
     const viewport = scrollRef.current;
@@ -2060,6 +2078,22 @@ export function SessionScreen({
     const handleViewportScroll = () => {
       if (frame === null) frame = window.requestAnimationFrame(recapture);
     };
+    // A batch too big to reveal is HELD, not refused: the reader who was following
+    // asked for the newest, so the hold expires unless a hand takes the scroller.
+    const armFollowResume = () => {
+      cancelFollowResume();
+      followResumeRef.current = window.setTimeout(() => {
+        followResumeRef.current = null;
+        if (busy() || readerOwnsScroll() || followingRef.current) return;
+        followingRef.current = true;
+        followEnd(viewport);
+        correctedTopRef.current = viewport.scrollTop;
+        seenTopRef.current = viewport.scrollTop;
+        seenHeightRef.current = viewport.scrollHeight;
+        captureScrollAnchor();
+        syncJump();
+      }, FOLLOW_RESUME_QUIET_MS);
+    };
     const observer = new ResizeObserver(() => {
       const before = previousHeight;
       previousHeight = viewport.scrollHeight;
@@ -2082,6 +2116,7 @@ export function SessionScreen({
             followingRef.current = false;
             scrollAnchorRef.current = scrollAnchorFor(viewport, transcript);
             syncJump();
+            armFollowResume();
             return;
           }
           followEnd(viewport);
@@ -2109,8 +2144,9 @@ export function SessionScreen({
       observer.disconnect();
       viewport.removeEventListener("scroll", handleViewportScroll);
       if (frame !== null) window.cancelAnimationFrame(frame);
+      cancelFollowResume();
     };
-  }, [captureScrollAnchor, loading, syncJump]);
+  }, [cancelFollowResume, captureScrollAnchor, loading, syncJump]);
 
   // Rotation is one transaction: snapshot before intermediate reflows, then wait
   // two paint frames after the final viewport measurement before restoring once.
@@ -4842,15 +4878,21 @@ export function SessionScreen({
       // Measured on a 46 373 px transcript, the session opened 6 917 px above its
       // newest turn with "↓ Latest" painted over the composer.
       const previousTop = seenTopRef.current;
+      const previousHeight = seenHeightRef.current;
       const settled = isCorrectionEcho(viewport, previousTop);
       seenTopRef.current = viewport.scrollTop;
+      seenHeightRef.current = viewport.scrollHeight;
       if (settled) return;
       // The bottom tolerance only helps a downward gesture ARRIVE at a live end.
       // An upward gesture means “hold this line”, even when it moved less than
       // that tolerance; leaving follow armed there lets the next stream flush
       // snap the scroller straight back after gesture ownership expires.
       const readerOwns = readerOwnsScroll();
-      const readerRetreated = readerOwns && viewport.scrollTop < previousTop;
+      // A hand on the scroller ANSWERS a held batch: whatever line it leaves them
+      // on is theirs, and nothing carries them off it.
+      if (readerOwns) cancelFollowResume();
+      const readerRetreated =
+        readerOwns && readerRetreatedFrom(viewport, previousTop, previousHeight);
       // Being at the end IS following; leaving it is only ever the reader's own
       // doing. `reader-gesture.ts` is the one place that knows the difference,
       // and a scroll event raised by growth, by a clamp or by one of this
@@ -5188,6 +5230,25 @@ export function SessionScreen({
     [liveViews, anchoredActivityIds],
   );
 
+  // A finished bubble waits for the persisted row that replaces it, and says so.
+  // That wait is not always winnable — an id from another namespace, a request the
+  // row spells differently — and a sentence that never ends reads as a hang over an
+  // answer that is already whole (see `HANDOVER_PATIENCE_MS`).
+  const liveTurnSettling =
+    liveTurn?.status === "completed" || liveTurn?.status === "failed";
+  const [handoverGaveUp, setHandoverGaveUp] = useState(false);
+  useEffect(() => {
+    if (!liveTurnSettling) {
+      setHandoverGaveUp(false);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setHandoverGaveUp(true),
+      HANDOVER_PATIENCE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [liveTurnId, liveTurnSettling]);
+
   const liveRow = useMemo(() => {
     if (!liveTurn) return null;
     // A screenshot just sent lives only in this device's memory until the turn
@@ -5228,7 +5289,7 @@ export function SessionScreen({
           }}
           streaming={liveTurn.status === "running"}
           pending={
-            liveTurn.status === "completed" || liveTurn.status === "failed"
+            liveTurnSettling && !handoverGaveUp
               ? "Loading latest changes"
               : undefined
           }
@@ -5255,6 +5316,8 @@ export function SessionScreen({
     );
   }, [
     liveTurn,
+    liveTurnSettling,
+    handoverGaveUp,
     turns.length,
     client,
     sid,

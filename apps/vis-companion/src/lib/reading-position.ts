@@ -91,6 +91,39 @@ export function growthFitsFollowWindow(
 }
 
 /**
+ * How long a reader who was FOLLOWING, and whose page was held still for one large
+ * live batch, is left above it before the end is carried to them.
+ *
+ * A batch that replaces the visible page is held (`growthFitsFollowWindow`) — but a
+ * reader parked at the end asked for the newest, and on a phone a quarter of the
+ * viewport is ~180 px, so every result card surrendered the follow and left them
+ * tapping "Latest" for the rest of the turn. The hand is the only signal that says
+ * otherwise: a reader who answers the batch by scrolling keeps the line they chose,
+ * and only a reader who touched nothing is carried on. Long enough to reach for the
+ * glass, short enough that "I should be at the bottom" is true again.
+ */
+export const FOLLOW_RESUME_QUIET_MS = 2_000;
+
+/**
+ * Whether a smaller `scrollTop` is the reader RETREATING, or the scroller being
+ * CLAMPED by content that shrank underneath it.
+ *
+ * A collapsing Activity card, a keyboard, a live bubble replaced by its shorter
+ * persisted row: each removes height, and the browser answers by pulling `scrollTop`
+ * down to the new end — no gesture involved. Measured against the previous top alone
+ * that reads as an upward gesture, which is what dropped follow on a tap.
+ */
+export function readerRetreatedFrom(
+  box: ScrollBox,
+  previousTop: number,
+  previousHeight: number,
+): boolean {
+  if (box.scrollTop >= previousTop) return false;
+  const shrink = Math.max(0, previousHeight - box.scrollHeight);
+  return previousTop - box.scrollTop > shrink;
+}
+
+/**
  * Whether the reader ARRIVED at the end — with `aimed` as the end they were
  * reaching for, not the one the transcript has now.
  *
