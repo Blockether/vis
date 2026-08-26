@@ -181,9 +181,40 @@ describe("MediaRecording", () => {
     expect(withWords).not.toContain("buy milk and call back");
   });
 
-  it("shows no band at all when nothing could read the recording", () => {
+  it("shows no band at all when nobody has asked for a transcript", () => {
     expect(html).not.toContain("TRANSCRIPTION");
     expect(html).not.toContain("aria-expanded");
+  });
+
+  // Regression, issue: a recording whose transcription failed looked exactly like one
+  // nobody had transcribed yet — an empty space under the player, and a model that was
+  // handed the filename alone.
+  it("says what the words are doing when there are none to show", () => {
+    const band = (status: string) =>
+      renderToStaticMarkup(
+        <MediaRecording name="memo.m4a" meta="M4A · 8B" transcriptionStatus={status}>
+          <audio controls />
+        </MediaRecording>,
+      );
+    expect(band("pending")).toContain("TRANSCRIBING…");
+    expect(band("unavailable")).toContain("NO TRANSCRIPTION");
+    expect(band("silent")).toContain("NO SPEECH");
+    // A status is a caption, never a control: there is nothing to open.
+    expect(band("pending")).not.toContain("aria-expanded");
+  });
+
+  it("prefers the words themselves to whatever the status still says", () => {
+    const settled = renderToStaticMarkup(
+      <MediaRecording
+        name="memo.m4a"
+        transcription="buy milk and call back"
+        transcriptionStatus="pending"
+      >
+        <audio controls />
+      </MediaRecording>,
+    );
+    expect(settled).toContain("TRANSCRIPTION");
+    expect(settled).not.toContain("TRANSCRIBING…");
   });
 
   // A mic glyph beside a player is the same claim twice: the control is already,

@@ -5,6 +5,7 @@
    file itself, then judges that metadata only against the attachment contract the
    gateway advertised. No media vocabulary or byte/count fallback lives here."
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.terminal-image :as terminal-image]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.format :as fmt])
@@ -126,23 +127,33 @@
   [capabilities current files]
   (let [current (vec (or current []))]
     (if-let [contract (attachment-contract capabilities)]
-      (reduce
-        (fn [{:keys [attachments] :as result} file]
-          (if (>= (long (count attachments)) (long (:max-files contract)))
-            (update result
-                    :rejected
-                    conj
-                    (rejection (if (instance? File file) file (File. (str file)))
-                               (str "limit of " (:max-files contract) " attachments reached")))
-            (let [{:keys [attachment rejected]} (stage-file contract file)]
-              (cond rejected (update result :rejected conj rejected)
-                    (some #(= (:id attachment) (:id %)) attachments)
-                    (update result :rejected conj (str (:filename attachment) ": already attached"))
-                    :else (-> result
-                              (update :attachments conj attachment)
-                              (update :added conj attachment))))))
-        {:attachments current :added [] :rejected []}
-        files)
+      (let [result (reduce (fn [{:keys [attachments] :as result} file]
+                             (if (>= (long (count attachments)) (long (:max-files contract)))
+                               (update result
+                                       :rejected
+                                       conj
+                                       (rejection (if (instance? File file) file (File. (str file)))
+                                                  (str "limit of "
+                                                       (:max-files contract)
+                                                       " attachments reached")))
+                               (let [{:keys [attachment rejected]} (stage-file contract file)]
+                                 (cond rejected (update result :rejected conj rejected)
+                                       (some #(= (:id attachment) (:id %)) attachments)
+                                       (update result
+                                               :rejected
+                                               conj
+                                               (str (:filename attachment) ": already attached"))
+                                       :else (-> result
+                                                 (update :attachments conj attachment)
+                                                 (update :added conj attachment))))))
+                           {:attachments current :added [] :rejected []}
+                           files)]
+        ;; A RECORDING starts becoming words the moment it is staged: local speech
+        ;; is slow and the human is about to spend a minute typing, so the transcript
+        ;; is normally in hand before the turn is sent — and the rail says "transcribing…"
+        ;; meanwhile instead of nothing.
+        (vis/audio-transcribe-request! (:added result))
+        result)
       {:attachments current
        :added []
        :rejected
@@ -153,14 +164,27 @@
 
    The filesystem path is an intake-only implementation detail and never crosses the
    submission boundary. Reading happens once per gateway attempt owner, so transport
-   retries reuse the same immutable base64 payload."
+   retries reuse the same immutable base64 payload.
+
+   A RECORDING carries the WORDS the composer already made for it. The staged row is
+   keyed by its path and the payload by its bytes, so the transcript would otherwise
+   be made twice — once here while the human typed, and again inside the turn they
+   send. Sending it is also what keeps it: the transcript is stored with the
+   attachment, not with this process."
   [staged]
-  (mapv (fn [{:keys [path filename media-type]}]
-          (let [^File file (File. ^String path)]
-            {:filename filename
-             :media-type media-type
-             :base64 (.encodeToString (Base64/getEncoder)
-                                      (java.nio.file.Files/readAllBytes (.toPath file)))}))
+  (mapv (fn [{:keys [path filename media-type] :as attachment}]
+          (let [^File file
+                (File. ^String path)
+
+                words
+                (:transcription (vis/audio-transcribe-outcome attachment))]
+
+            (cond-> {:filename filename
+                     :media-type media-type
+                     :base64 (.encodeToString (Base64/getEncoder)
+                                              (java.nio.file.Files/readAllBytes (.toPath file)))}
+              (not-empty (str words))
+              (assoc :transcription (str words)))))
         (or staged [])))
 
 (defn remove-attachment

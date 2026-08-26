@@ -6,6 +6,7 @@
    and a remove affordance are always text. `:attachment-focus?` highlights exactly
    one row; C-x i enters that keyboard surface without moving the text cursor."
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -28,13 +29,52 @@
           (str/starts-with? media-type "text/") "TEXT"
           :else "FILE")))
 
+(def transcription-notes
+  "The TUI's spelling of `com.blockether.vis.core/audio-transcribe-statuses` — ONE
+   table, read by the composer rail AND by chat history.
+
+   A memo whose transcript is still being made must not look like one nobody will
+   ever transcribe: that silence is exactly how a 47-minute recording reached a model
+   carrying nothing but its filename."
+  {"pending" "transcribing…" "unavailable" "no transcript" "silent" "no speech"})
+
+(defn- with-live-transcription
+  "The row plus whatever the transcription registry knows about it RIGHT NOW.
+
+   The rail ASKS on every frame instead of remembering an answer: the words are made
+   on a worker while the human types, so a row that says \"transcribing…\" has to be
+   able to stop saying it without anybody pressing a key."
+  [{:keys [media-type transcription] :as attachment}]
+  (if (or (not= "AUDIO" (kind-label media-type)) (not-empty (str transcription)))
+    attachment
+    (let [outcome (vis/audio-transcribe-outcome attachment)]
+      (cond-> attachment
+        (:transcription outcome)
+        (assoc :transcription (:transcription outcome))
+
+        (:status outcome)
+        (assoc :transcription-status (:status outcome))))))
+
 (defn attachment-label
-  "Readable terminal fallback for one staged attachment."
-  [{:keys [filename media-type size width height]}]
-  (let [size-label (fmt/format-bytes (or size 0) " ")]
+  "Readable terminal fallback for one staged attachment.
+
+   A recording also says what its transcript is doing, because the composer starts
+   making the words the moment the file is staged and the human deserves to see that
+   happening before the turn is sent."
+  [{:keys [filename media-type size width height transcription transcription-status]}]
+  (let [size-label
+        (fmt/format-bytes (or size 0) " ")
+
+        note
+        (or (get transcription-notes (str transcription-status))
+            (when (not-empty (str transcription)) "transcript ready"))]
+
     (str (kind-label media-type)
-         "  " (or (not-empty filename) "unnamed attachment")
-         "  ·  " (if (and width height) (str width "×" height "  ·  " size-label) size-label))))
+         "  "
+         (or (not-empty filename) "unnamed attachment")
+         "  ·  "
+         (if (and width height) (str width "×" height "  ·  " size-label) size-label)
+         (when note (str "  ·  " note)))))
 
 (defn draw!
   "Paint all staged attachments at `top` and register per-row inspect/remove targets.
@@ -52,7 +92,7 @@
         remove-w
         (long (p/display-width remove-label))]
 
-    (doseq [[idx attachment] (map-indexed vector attachments)]
+    (doseq [[idx attachment] (map-indexed vector (map with-live-transcription attachments))]
       (let [row (+ (long top) (long idx))
             focused-row? (and focused? (= (long (or focused-index 0)) (long idx)))
             body-w (max 0 (- cols remove-w))

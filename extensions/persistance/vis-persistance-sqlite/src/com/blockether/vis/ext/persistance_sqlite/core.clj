@@ -3450,6 +3450,35 @@
                                      (attachment-live-view-cols att)
                                      payload)]}))))))
 
+(defn db-set-turn-attachment-transcription!
+  "Write the words a recording turned out to hold onto the row that already holds
+   the recording, addressed by `(turn soul, position)` on the user rail
+   (`session_turn_iteration_id IS NULL`).
+
+   The transcript lands LATER than the row it belongs to: staging a recording only
+   STARTS the words, and the turn is written down without waiting for an hour of
+   speech. This is how they still reach the row - so a resumed session, the history
+   re-render and every player have them, instead of a column that stays NULL forever
+   because the pass that made the words ended.
+
+   `position` is the attachment's index in the vector [[db-store-session-turn!]] was
+   handed, which is exactly the `position` it stored. Blank words are refused rather
+   than written, because an empty string reads as a recording nobody found speech in.
+
+   Returns true when a row took the words."
+  [db-info session-turn-soul-id position transcription]
+  (boolean (when
+             (and (ds db-info) session-turn-soul-id position (not (str/blank? (str transcription))))
+             (sqlite-write-tx!
+               db-info
+               (fn [tx-info]
+                 (execute! tx-info
+                           {:update :session_attachment
+                            :set {:transcription (str transcription)}
+                            :where [:and [:= :session_turn_soul_id (->ref session-turn-soul-id)]
+                                    [:= :session_turn_iteration_id nil] [:= :position position]]})
+                 true)))))
+
 (defn db-append-iteration-attachment!
   "Append ONE artifact to an EXISTING iteration - a human's own revision of a
    document the model produced (a markdown note annotated in the companion).

@@ -54,6 +54,20 @@ export function MediaPlate({
 }
 
 /**
+ * What a recording's row says when it has NO words — the app's spelling of the
+ * gateway's `transcription_status`.
+ *
+ * A player with nothing under it is the one thing this must never mean twice: a memo
+ * still being transcribed, a memo nothing could read, and a memo nobody spoke into
+ * are three different facts, and the reader is owed which one it is.
+ */
+const TRANSCRIPTION_STATUS_LABEL: Record<string, string> = {
+  pending: "TRANSCRIBING…",
+  unavailable: "NO TRANSCRIPTION",
+  silent: "NO SPEECH",
+};
+
+/**
  * ONE recording as a ROW: the platform's own player, the file name under it, and —
  * when something could read the audio — its TRANSCRIPTION, folded away.
  *
@@ -80,6 +94,7 @@ export function MediaRecording({
   name,
   meta,
   transcription,
+  transcriptionStatus,
   children,
 }: {
   /** The caption's file name. Without one the row carries no caption at all. */
@@ -92,10 +107,19 @@ export function MediaRecording({
    * could not decode — and the row shows the player alone rather than an empty band.
    */
   transcription?: string;
+  /**
+   * WHY there are none, when there are none: `pending` while the speech engine is
+   * still working, `unavailable` when this machine could not read the recording,
+   * `silent` when it read the whole thing and nobody spoke.
+   */
+  transcriptionStatus?: string;
   children: ReactNode;
 }) {
   const [isTranscriptOpen, setIsTranscriptOpen] = useState(false);
   const transcript = transcription?.trim() ?? "";
+  const statusLabel = transcript
+    ? ""
+    : (TRANSCRIPTION_STATUS_LABEL[transcriptionStatus ?? ""] ?? "");
   return (
     <figure className="mt-2.5 min-w-0 first:mt-0">
       <div className="min-w-0 border border-code-edge bg-code p-2">
@@ -117,6 +141,10 @@ export function MediaRecording({
             </p>
           ) : null}
         </div>
+      ) : statusLabel ? (
+        <p className="min-w-0 truncate px-2 py-1 text-meta uppercase tracking-wider text-dialog-hint opacity-70">
+          {statusLabel}
+        </p>
       ) : null}
       {name ? (
         <figcaption className={mediaCaptionClass}>

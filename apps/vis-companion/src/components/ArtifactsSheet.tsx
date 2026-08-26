@@ -871,7 +871,10 @@ function ArtifactDetail({
         <div className="p-3">
           {/* The same row the transcript paints, so the words a memo carries are one
               press away here too rather than only in the message it arrived on. */}
-          <MediaRecording transcription={artifact.transcription}>
+          <MediaRecording
+            transcription={artifact.transcription}
+            transcriptionStatus={artifact.transcriptionStatus}
+          >
             <audio src={url} controls preload="metadata" className="h-11 w-full" />
           </MediaRecording>
         </div>

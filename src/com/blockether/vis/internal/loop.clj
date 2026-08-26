@@ -7368,8 +7368,9 @@
           ;; carried on the env — ride AHEAD of disk-scanned images; both feed
           ;; the same multimodal assemble seam.
           ;; A RECORDING carries no pixels and no wire takes it, so the local
-          ;; speech engine turns it into its own words here — once, content-keyed,
-          ;; and the manifest quotes them where the audio cannot go.
+          ;; speech engine turns it into its own words — once, content-keyed. This
+          ;; is the ONE place that waits for them, because this is where they are
+          ;; read: the manifest quotes them where the audio cannot go.
           {:attached (audio-transcribe/transcribe-attachments
                        (into (vec (:user/attachments environment)) (:attached disk)))
            :skipped (into (vec (:user/skipped-attachments environment)) (:skipped disk))})
@@ -8861,6 +8862,48 @@
        :slash slash-result
        :prior-outcome :complete})))
 
+(defn- store-transcripts!
+  "Fill in the words for every recording this turn was written down WITHOUT.
+
+   Staging a recording only STARTS its transcript, so the attachment rows land with
+   an empty `transcription` column; the prompt assembler waits for the words it
+   quotes, but those words would die with the pass that made them and the stored row
+   would stay empty for good. This joins that same content-keyed work OFF the turn
+   thread and writes each transcript onto the row it belongs to.
+
+   The index in `attachments` IS the stored `position`: the offload that produced the
+   rows is a 1:1 `mapv`, and the insert numbers positions from the same vector - so
+   this must be handed the attachments as the turn saw them, never the offloaded copy
+   (offload drops `:base64`, which is half of a recording's identity).
+
+   Best-effort: a transcript that never arrives simply leaves the column as it is."
+  [db-info session-turn-id attachments]
+  (when (and db-info
+             session-turn-id
+             (some #(attachments/audio-media-type? (:media-type %)) attachments))
+    (future
+      (try (doseq [[position before after]
+                   (map vector
+                        (range)
+                        attachments
+                        (audio-transcribe/transcribe-attachments attachments))
+
+                   :when (str/blank? (str (:transcription before)))
+                   :let [words
+                         (not-empty (str (:transcription after)))]
+                   :when words]
+
+             (persistance/db-set-turn-attachment-transcription! db-info
+                                                                session-turn-id
+                                                                position
+                                                                words))
+           (catch Throwable t
+             (tel/log! {:level :warn
+                        :id ::transcript-store-failed
+                        :data {:error (ex-message t)}
+                        :msg
+                        "transcribed an attached recording but could not store its words"}))))))
+
 (defn- run-normal-turn!
   "LLM round-trip path: store turn, run iteration-loop, persist
    the end-of-turn CTX snapshot, update the turn row with answer +
@@ -8884,10 +8927,13 @@
 
         ;; The transcript of a voice memo is persisted WITH the recording (the same
         ;; content-keyed pass the prompt reads), so the player in every surface can
-        ;; open its transcript and a resumed session still has the words.
+        ;; open its transcript and a resumed session still has the words. It is only
+        ;; REQUESTED here: the turn is being written down, not answered, so it stores
+        ;; what a composer already made and starts what nobody asked for yet. The
+        ;; waiting, if any is left to do, happens once — where the prompt is built.
         turn-attachments
-        (audio-transcribe/transcribe-attachments (into (vec (:user/attachments env))
-                                                       disk-attachments))
+        (audio-transcribe/request-attachments! (into (vec (:user/attachments env))
+                                                     disk-attachments))
 
         session-turn-id
         (persistance/db-store-session-turn!
@@ -8895,6 +8941,9 @@
           (cond-> {:parent-session-id (:session-id env) :user-request user-request :status :running}
             (seq turn-attachments)
             (assoc :attachments (attachment-storage/offload-attachments turn-attachments))))
+
+        _
+        (store-transcripts! (:db-info env) session-turn-id turn-attachments)
 
         turn-position
         (session-turn-position env session-turn-id)

@@ -1127,7 +1127,13 @@
                     ;; The recording's own WORDS, when something transcribed it
                     ;; ([[com.blockether.vis.internal.audio-transcribe]]). The manifest
                     ;; quotes them where the audio cannot go.
-                    :transcription (not-empty (str (:transcription att)))})
+                    :transcription (not-empty (str (:transcription att)))
+                    ;; …and WHY there are none, when there are none — `pending`,
+                    ;; `unavailable`, `silent`
+                    ;; ([[com.blockether.vis.internal.audio-transcribe/statuses]]).
+                    ;; A recording nothing could read and a recording with no speech
+                    ;; in it are different facts, and neither is a blank.
+                    :transcription-status (not-empty (str (:transcription-status att)))})
            (not vision?)
            (update acc :skipped conj {:path label :reason no-vision-reason :readable-blind? true})
            :else

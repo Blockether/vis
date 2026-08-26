@@ -39,7 +39,8 @@
    entry class via `:gen-class` for the GraalVM native-image build)."
   (:refer-clojure :exclude [symbol])
   (:gen-class)
-  (:require [com.blockether.vis.internal.cancellation :as cancellation]
+  (:require [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
+            [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.capability :as capability]
             [com.blockether.vis.internal.commandline :as commandline]
             [com.blockether.vis.internal.config :as config]
@@ -159,6 +160,12 @@
              [gateway-capabilities gateway-client/capabilities]
              [gateway-session-artifacts gateway-client/session-artifacts])
 
+;; A staged recording's WORDS. A channel calls the first the moment a file is
+;; attached and paints the second on every frame, so the transcript is made while
+;; the human types instead of inside the turn they send.
+(import-vars [audio-transcribe-request! audio-transcribe/request-attachments!]
+             [audio-transcribe-outcome audio-transcribe/outcome]
+             [audio-transcribe-statuses audio-transcribe/statuses])
 (import-vars [gateway-events-since gateway-client/events-since]
              [gateway-toggle-setting! gateway-client/toggle-setting!]
              [gateway-cycle-setting! gateway-client/cycle-setting!]
@@ -545,6 +552,8 @@
              [db-retry-session-turn! persistance/db-retry-session-turn!]
              [db-list-session-turn-states persistance/db-list-session-turn-states]
              [db-list-turn-attachments persistance/db-list-turn-attachments]
+             [db-set-turn-attachment-transcription!
+              persistance/db-set-turn-attachment-transcription!]
              [db-list-turns-attachments persistance/db-list-turns-attachments]
              [db-list-turn-all-attachments persistance/db-list-turn-all-attachments]
              [db-list-session-attachments persistance/db-list-session-attachments]

@@ -99,6 +99,54 @@
                    "⚠ this turn was INTERRUPTED before it finished — you produced NO answer. The work above is unfinished; continue it."))))))]
       (prompt-block "conversation-so-far" (str/join "\n\n" (keep-indexed render-turn turns))))))
 
+(def ^:private manifest-transcript-chars
+  "How much of ONE recording's transcript the manifest QUOTES.
+
+   The quote is not free and it is not temporary: it rides this message, and then
+   every later request of the session, so an hour of speech would spend the context
+   of every turn that follows it. The STORED transcript is whole — it is what the
+   human reads under the player — and this only bounds what is repeated into the
+   prompt, which is why the manifest also says how much it is not showing."
+  8000)
+
+(defn- transcript-lines
+  "The manifest's two lines about a recording's words: what was said, and — when
+   nobody could say — why there is nothing to read.
+
+   A status is NEVER rendered as a blank: turn 35's session had a recording whose
+   transcription silently failed, and neither the model nor the human could tell
+   that from a memo with no speech in it."
+  [transcription transcription-status]
+  (let [text
+        (str transcription)
+
+        total
+        (count text)]
+
+    (str
+      (when (pos? total)
+        (if (<= total (long manifest-transcript-chars))
+          (str "\n  transcript of the recording: \"" text "\"")
+          (str
+            "\n  transcript of the recording (the first "
+            manifest-transcript-chars
+            " of "
+            total
+            " characters; the whole transcript is stored with the file and is what the human reads): \""
+            (subs text 0 (long manifest-transcript-chars))
+            "\"")))
+      (case (str transcription-status)
+        "pending"
+        "\n  transcript: still being made — it is not in this message, so do not answer as if you had heard it"
+
+        "unavailable"
+        "\n  transcript: this machine could NOT transcribe the recording — treat its contents as unknown"
+
+        "silent"
+        "\n  transcript: the speech engine read the whole recording and found no words in it"
+
+        nil))))
+
 (defn- attached-images-block
   "Manifest for image attachments riding this user message. Lists each
    attached image (path/mime/size, in attachment order) so the model can
@@ -153,36 +201,35 @@
             (if (seq described)
               "A row below with NO description is one nothing has looked at. Those files are real\n   and on disk, so to inspect their CONTENT open them with PIL / an imaging library.\n\n"
               "The active model has NO vision — the image(s) below are NOT attached and you canNOT\n   see them. The files are real and on disk, so to inspect their CONTENT open them with\n   PIL / an imaging library and read what you need (that is the ONLY way to see them here).\n\n"))
-          (str/join
-            "\n"
-            (concat (map-indexed (fn [i {:keys [path media-type size-label]}]
-                                   (str "- image "
-                                        (inc (long i))
-                                        ": "
-                                        path
-                                        " ("
-                                        media-type
-                                        ", "
-                                        size-label
-                                        ") — attached to this message"))
-                                 attached)
-                    (map (fn [{:keys [path reason transcription] :as row}]
-                           (let [{:keys [text model]} (described-for row)]
-                             (str "- "
-                                  path
-                                  " — NOT attached: "
-                                  reason
-                                  ;; A RECORDING arrives with its own words
-                                  ;; already in hand: no wire carries audio, and
-                                  ;; the local speech engine transcribed it once
-                                  ;; when the human sent it. Quoted here, the
-                                  ;; model reads what was said instead of being
-                                  ;; told a file exists.
-                                  (when (not-empty (str transcription))
-                                    (str "\n  transcript of the recording: \"" transcription "\""))
-                                  (when text
-                                    (str "\n  " model " looked at it and reported: " text)))))
-                         skipped))))))))
+          (str/join "\n"
+                    (concat (map-indexed (fn [i {:keys [path media-type size-label]}]
+                                           (str "- image "
+                                                (inc (long i))
+                                                ": "
+                                                path
+                                                " ("
+                                                media-type
+                                                ", "
+                                                size-label
+                                                ") — attached to this message"))
+                                         attached)
+                            (map
+                              (fn [{:keys [path reason transcription transcription-status] :as row}]
+                                (let [{:keys [text model]} (described-for row)]
+                                  (str "- "
+                                       path
+                                       " — NOT attached: "
+                                       reason
+                                       ;; A RECORDING arrives with its own words already in
+                                       ;; hand: no wire carries audio, and the local speech
+                                       ;; engine transcribed it when the human staged it.
+                                       ;; Quoted here, the model reads what was said instead
+                                       ;; of being told a file exists — and when there are no
+                                       ;; words, it is told THAT rather than nothing.
+                                       (transcript-lines transcription transcription-status)
+                                       (when text
+                                         (str "\n  " model " looked at it and reported: " text)))))
+                              skipped))))))))
 
 (defn assemble-initial-messages
   "Initial provider messages for one turn.

@@ -6,6 +6,7 @@
    Session data is persisted in `~/.vis/vis.mdb` so you can come back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.composer-attachment-rail :as attachment-rail]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.internal.attachments :as attach]
             [com.blockether.vis.internal.iteration :as iteration]
@@ -511,13 +512,25 @@
                  (str (get att "media_type"))
 
                  transcript
-                 (str/trim (str (get att "transcription")))]
+                 (str/trim (str (get att "transcription")))
+
+                 ;; A recording with no words says WHY on the chip. Before this, a
+                 ;; memo nothing could read looked exactly like a document.
+                 note
+                 (when (str/starts-with? media "audio/")
+                   (get attachment-rail/transcription-notes
+                        (str (get att "transcription_status"))))]
 
              (when (and (= "user" (str (get att "source")))
                         (not (str/starts-with? media "image/"))
                         (not (timg/video-mime? media))
                         (not (and (str/starts-with? media "audio/") (seq transcript))))
-               (str "\n[Attachment #" (inc (long i)) ": " (get att "filename") "]\n")))))
+               (str "\n[Attachment #"
+                    (inc (long i))
+                    ": "
+                    (get att "filename")
+                    (when note (str " — " note))
+                    "]\n")))))
        (str/join "")))
 
 (defn- user-request-with-images

@@ -1725,6 +1725,7 @@ const AttachmentTile = memo(function AttachmentTile({
         name={name}
         meta={mediaMeta(attachment)}
         transcription={attachment.transcription}
+        transcriptionStatus={attachment.transcription_status}
       >
         {failed ? (
           <span className="flex min-w-0 items-center gap-1.5 font-mono text-chip text-footer-muted">
@@ -3533,6 +3534,7 @@ export const UserMessage = memo(function UserMessage({
               name={att.filename}
               meta={mediaMeta(att)}
               transcription={att.transcription}
+              transcriptionStatus={att.transcription_status}
             >
               <audio
                 src={attachmentSrc(att)}

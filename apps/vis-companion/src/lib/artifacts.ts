@@ -249,6 +249,12 @@ export interface SessionArtifact {
    */
   transcription?: string;
   /**
+   * WHY there are no words, when there are none — the gateway's own
+   * `transcription_status`. The sheet says "transcribing…" rather than showing a
+   * player with nothing under it.
+   */
+  transcriptionStatus?: string;
+  /**
    * Every cut of this artifact, NEWEST FIRST and including this one — present
    * only on a collapsed list (`collapseArtifactVersions`). The primary view is
    * always the head; the rest is the history behind it.
@@ -283,6 +289,7 @@ function toArtifact(
     index,
     version: attachment.version ?? 1,
     transcription: attachment.transcription,
+    transcriptionStatus: attachment.transcription_status,
   };
 }
 

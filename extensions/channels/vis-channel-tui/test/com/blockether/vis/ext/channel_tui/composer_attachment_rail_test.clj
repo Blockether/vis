@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.composer-attachment-rail-test
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.capture :as cap]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.composer-attachment-rail :as rail]
@@ -49,3 +50,27 @@
                               (mapv :attachment-id
                                     (filter #(= :attachment-remove (:kind %)) regions))))
                    (expect (= 3 (count (filter #(= :attachment-inspect (:kind %)) regions)))))))
+
+;; Regression, issue: a 47-minute recording rode a turn carrying nothing but its
+;; filename, and the composer looked exactly the same as one whose words were ready.
+(defdescribe
+  composer-attachment-rail-transcription
+  (it "says a staged recording is being transcribed while the human is still typing"
+      (with-redefs [vis/audio-transcribe-outcome (fn [attachment]
+                                                   (when (= "notes.wav" (:filename attachment))
+                                                     {:status "pending"}))]
+        (let [{:keys [capture]} (paint-rail 72 false)]
+          (expect (str/includes? (cap/frame-text capture)
+                                 "AUDIO  notes.wav  ·  441 B  ·  transcribing…")))))
+  (it "spells every outcome the transcription registry can answer"
+      (expect (= #{"pending" "unavailable" "silent"} (set (keys rail/transcription-notes))))
+      (expect (str/includes? (rail/attachment-label {:filename "memo.m4a"
+                                                     :media-type "audio/mp4"
+                                                     :size 441
+                                                     :transcription-status "unavailable"})
+                             "no transcript"))
+      (expect (str/includes? (rail/attachment-label {:filename "memo.m4a"
+                                                     :media-type "audio/mp4"
+                                                     :size 441
+                                                     :transcription "hello there"})
+                             "transcript ready"))))

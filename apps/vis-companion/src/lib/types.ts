@@ -426,6 +426,13 @@ export interface GatewayAttachment {
    * because no provider wire carries audio.
    */
   transcription?: string;
+  /**
+   * WHY there are no words, when there are none: `pending` while the speech engine
+   * is still working on it, `unavailable` when this machine could not read the
+   * recording at all, `silent` when it read the whole thing and nobody spoke. A row
+   * that says nothing and a recording nobody could transcribe must not look alike.
+   */
+  transcription_status?: string;
 }
 
 /**
@@ -453,6 +460,8 @@ export interface IterationAttachment {
   size?: number;
   /** {@link GatewayAttachment.transcription} for a PRODUCED recording. */
   transcription?: string;
+  /** {@link GatewayAttachment.transcription_status} for a PRODUCED recording. */
+  transcription_status?: string;
   /** Stable live-view identity used to replace the live Activity in place. */
   view_id?: string;
   classification?: "activity";

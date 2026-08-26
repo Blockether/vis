@@ -524,6 +524,9 @@
 
 (defdelegate db-list-turn-attachments [db-info session-turn-soul-id])
 
+(defdelegate db-set-turn-attachment-transcription!
+             [db-info session-turn-soul-id position transcription])
+
 (defdelegate db-list-turns-attachments [db-info session-turn-soul-ids])
 
 (defdelegate db-list-turn-all-attachments [db-info session-turn-soul-id])

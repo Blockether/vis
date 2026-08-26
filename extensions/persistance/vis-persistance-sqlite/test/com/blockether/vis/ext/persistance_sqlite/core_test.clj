@@ -3090,6 +3090,45 @@
         (expect (= "buy milk"
                    (:transcription (vis/db-read-attachment s (:id (get by-name "memo.m4a")))))))))
 (defdescribe
+  late-transcript-reaches-its-row-test
+  "The words a recording holds arrive AFTER the turn is written down - staging a
+   recording only starts them - so the row has to be able to take them later."
+  (it
+    "writes a transcript onto the stored recording, addressed by its position"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :cli})
+
+          b64
+          (.encodeToString (java.util.Base64/getEncoder) (byte-array (map unchecked-byte [1 2 3])))
+
+          tid
+          (vis/db-store-session-turn!
+            s
+            {:parent-session-id cid
+             :user-request "listen to this"
+             :attachments
+             [{:media-type "image/png" :base64 b64 :filename "shot.png" :size 3 :source :user}
+              {:media-type "audio/mp4" :base64 b64 :filename "memo.m4a" :size 3 :source :user}]})
+
+          words-at
+          (fn [filename]
+            (:transcription (first (filter #(= filename (:filename %))
+                                           (vis/db-list-turn-attachments s tid)))))]
+
+      ;; The turn stored the recording without waiting for an hour of speech.
+      (expect (nil? (words-at "memo.m4a")))
+      (expect (true? (vis/db-set-turn-attachment-transcription! s tid 1 "buy milk")))
+      (expect (= "buy milk" (words-at "memo.m4a")))
+      ;; Position addresses ONE row: the picture beside it is untouched.
+      (expect (nil? (words-at "shot.png")))
+      ;; Nothing to say is not something to store.
+      (expect (false? (vis/db-set-turn-attachment-transcription! s tid 1 "  ")))
+      (expect (= "buy milk" (words-at "memo.m4a"))))))
+
+(defdescribe
   session-model-pin-rides-the-session-row-test
   "`db-get-session` already selects the whole `session_soul` row, so the per-session
    model PIN comes back with it — a session list can name the model each row runs

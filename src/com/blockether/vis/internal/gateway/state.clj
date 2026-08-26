@@ -1255,7 +1255,7 @@
         (map-indexed
           (fn [idx
                {:keys [id tool-call-id kind media-type filename size audience version transcription
-                       view-id classification activity-anchor]}]
+                       transcription-status view-id classification activity-anchor]}]
             (cond-> {:index idx
                      :iteration_id (str iteration-id)
                      :tool_call_id tool-call-id
@@ -1285,7 +1285,14 @@
               ;; can offer "Transcription" under the player without fetching a
               ;; single audio byte.
               (not-empty (str transcription))
-              (assoc :transcription (str transcription)))))
+              (assoc :transcription (str transcription))
+
+              ;; …and WHY there are none when there are none, so a client can paint
+              ;; "transcribing…" under the player instead of a band that reads the
+              ;; same as a recording nobody ever spoke into
+              ;; ([[com.blockether.vis.internal.audio-transcribe/statuses]]).
+              (not-empty (str transcription-status))
+              (assoc :transcription_status (str transcription-status)))))
         rows))
 
 (defn- live-attachment-descriptors
