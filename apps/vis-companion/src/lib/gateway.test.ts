@@ -161,7 +161,13 @@ describe('GatewayClient session list', () => {
     // the window (`total`, `overview`, `awaiting`) or by the project's own page.
     expect(fetched).toHaveBeenCalledTimes(1);
     expect(String(fetched.mock.calls[0]![0])).not.toContain('after=');
-    expect(list).toHaveLength(100);
+    // ONE window is whatever limit the client asked for, and never the fleet: the
+    // size is the client's to choose, the "one page, not 1192 rows" is the contract.
+    const asked = Number(
+      new URL(String(fetched.mock.calls[0]![0]), 'http://gateway.example.com').searchParams.get('limit'),
+    );
+    expect(asked).toBeLessThan(rows.length);
+    expect(list).toHaveLength(asked);
     expect(list[0]?.id).toBe('session-0');
   });
 
@@ -196,7 +202,10 @@ describe('GatewayClient session list', () => {
 
     expect(second).not.toBe(first);
     expect(second[0]?.id).toBe('session-1191');
-    expect(second).toHaveLength(100);
+    const asked = Number(
+      new URL(String(fetched.mock.calls[1]![0]), 'http://gateway.example.com').searchParams.get('limit'),
+    );
+    expect(second).toHaveLength(asked);
     // Still one request per poll, and every row served once.
     expect(fetched).toHaveBeenCalledTimes(2);
     expect(new Set(second.map((row) => row.id)).size).toBe(second.length);

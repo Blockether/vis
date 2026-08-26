@@ -635,12 +635,15 @@ export type ProjectWindows = Map<string, { etag: string; page: ProjectPage }>;
  * How much of a machine's list this device holds: its newest window, and nothing
  * below it.
  *
- * Measured on a 448-session gateway: the whole list is ~326 ms / 315 KB to build
- * and send, one 100-row window ~71 ms / 69 KB. The window is more rows than any
- * screen shows, and every number that used to need the rest is answered beside it
- * (see `listSessions`).
+ * Measured on a 1043-session gateway: the whole list is 825 KB (152 KB gzip), a
+ * 100-row window 84.7 KB (16.2 KB gzip) in 446 ms, a 20-row window 19.2 KB
+ * (4.6 KB gzip) in 123 ms. A phone paints twelve rows, so twenty is the screen
+ * plus the scroll under it. Nothing deeper needs this window: a project's pages
+ * are cut by the gateway at the size the screen measured (`listProjectPage`),
+ * the projects and their counts arrive in the overview beside it, and the runs
+ * parked on a human arrive there too (see `listSessions`).
  */
-const SESSIONS_PAGE = 100;
+const SESSIONS_PAGE = 20;
 
 /** The first window of the list: the one page that is asked for with no cursor. */
 const HEAD_CURSOR = "";
