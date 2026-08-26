@@ -5027,7 +5027,7 @@ h = 8"
            :activity-view {:nodes []}
            :activity-rows [{:id "shell-1"
                             :operation "shell"
-                            :summary "cmd: npm test"
+                            :summary "running: npm test"
                             :state "succeeded"
                             :duration-ms 120}
                            {:id "shell-2"

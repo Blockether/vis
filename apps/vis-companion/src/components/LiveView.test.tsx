@@ -5,7 +5,7 @@
 // and reads the document that landed.
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LiveView as LiveViewList, LiveViewPanel, useLiveViews } from './LiveView';
+import { activityReceiptText, LiveView as LiveViewList, LiveViewPanel, useLiveViews } from './LiveView';
 import liveViewSource from './LiveView.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
 import activityFixture from '../lib/activity.fixture.json';
@@ -132,7 +132,7 @@ describe('a live view on the phone', () => {
 
     expect(screen.getByText('ACTIVITY')).toBeTruthy();
     expect(screen.getByText('Running')).toBeTruthy();
-    expect(screen.getByText('run_tests · suite')).toBeTruthy();
+    expect(screen.getByText('RUN_TESTS · suite')).toBeTruthy();
     expect(screen.queryByText(/2 operations|24 passed|truncated/)).toBeNull();
     expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
     expect(screen.queryByRole('list', { name: 'Invocation chronology' })).toBeNull();
@@ -165,24 +165,40 @@ describe('a live view on the phone', () => {
     expect(disclosure.className).toContain('motion-reduce:transition-none');
   });
 
-  it('keeps the lifecycle words without a status mark after settlement', () => {
+  // Regression, issue td-5b6b08: settled Companion receipts said SUCCEEDED,
+  // omitted the operation and elapsed time, and retained "activities run".
+  it('matches the settled TUI receipt grammar and durations', () => {
     const view = activityView();
-    paint({
-      view: {
-        ...view,
-        created_at: 1_000,
-        activity: {
-          ...view.activity!,
-          state: 'succeeded',
-          rows: view.activity!.rows.map((row) => ({ ...row, state: 'succeeded' })),
-        },
+    const settled = {
+      ...view,
+      created_at: 1_000,
+      ended_at: 13_600,
+      activity: {
+        ...view.activity!,
+        state: 'succeeded' as const,
+        counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
+        rows: view.activity!.rows.map((row, index) => ({
+          ...row,
+          state: 'succeeded' as const,
+          ...(index === 0
+            ? { operation: 'shell', summary: 'running: git status', duration_ms: 66 }
+            : { duration_ms: 12_500 }),
+        })),
       },
-      isSettled: true,
-    });
-    const header = screen.getByLabelText('Activity').querySelector('header');
-    expect(screen.getByText('Completed')).toBeTruthy();
-    expect(screen.getByText('No operation in progress')).toBeTruthy();
-    expect(header?.textContent).not.toContain('✓');
+    };
+
+    paint({ view: settled, isSettled: true });
+
+    expect(activityReceiptText(settled.activity, 12_600)).toBe(
+      'DONE · SHELL and more · 2 activities · 12.6s',
+    );
+    expect(screen.getByText('Done')).toBeTruthy();
+    expect(screen.getByText('SHELL and more')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
+    expect(screen.getByText('shell · cmd: git status')).toBeTruthy();
+    expect(screen.getByText('66ms')).toBeTruthy();
+    expect(screen.getByText('12.5s')).toBeTruthy();
+    expect(screen.getByLabelText('Activity').querySelector('header')?.textContent).not.toContain('✓');
     expect(screen.queryByRole('status')).toBeNull();
   });
 
@@ -190,7 +206,7 @@ describe('a live view on the phone', () => {
     const view = activityView();
     paint({ view: { ...view, activity: { ...view.activity!, state: 'idle', rows: [] } } });
     expect(screen.getByText('Idle')).toBeTruthy();
-    expect(screen.getByText('No operation in progress')).toBeTruthy();
+    expect(screen.getByText('No operation yet')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
     expect(screen.getByText('No operations yet')).toBeTruthy();
   });

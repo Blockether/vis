@@ -363,13 +363,19 @@
     :idle))
 
 (defn- activity-row-summary
-  "Return only semantic detail that adds information beyond the operation name."
+  "Return only semantic detail that adds information beyond the operation name.
+   Legacy shell spawn summaries are command evidence, never a live-tense status."
   [{:keys [operation summary]}]
   (let [operation
         (flat-text operation)
 
         summary
-        (flat-text summary)]
+        (flat-text summary)
+
+        summary
+        (if (and (= "shell" (str/lower-case operation)) (str/starts-with? summary "running: "))
+          (str "cmd: " (subs summary (count "running: ")))
+          summary)]
 
     (when (and (not (str/blank? summary))
                (not= (str/lower-case operation) (str/lower-case summary)))
