@@ -10,7 +10,7 @@ other channels drive — no separate backend.
 - **Pair with a gateway** by scanning the QR from `vis-agent gateway pair`, opening the
   `vis://gateway?url=…&token=…` deep link, or pasting the URL + bearer token.
 - **Sessions** — list, create, open, send turns, and watch replies stream live
-  over SSE (`GET /v1/sessions/:sid/events`).
+  over SSE (`GET /v1/events?sids=<sid>`).
 - **Voice dictation** — uploads the WAV, then follows that ONE transcription
   job's own SSE stream (`GET /v1/sessions/:sid/voice/jobs/:id/events`), whose every
   frame is named `voice.job`, so "Sending 42%" and "Transcribing 70%" are different

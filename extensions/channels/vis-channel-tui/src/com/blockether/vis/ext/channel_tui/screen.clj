@@ -4664,32 +4664,14 @@
         (number? v) (long v)
         :else nil))
 
-(defn- latest-turn-created-at
-  [turns]
-  (->> turns
-       (keep #(get % "created_at"))
-       (sort-by #(or (date->millis %) 0))
-       last))
-
 (defn- session-summary
-  "Summary row for the session picker. The gateway now folds `turn_count` +
-   `modified_at` into every `list-sessions` soul server-side (ONE grouped SQL
-   for the whole store), so the common path is a pure local default. The
-   per-session `gateway-list-turns` hydration survives ONLY as a fallback for
-   an older daemon that doesn't ship the summary fields — it was 1 HTTP
-   round-trip PER session (~7.5s at 54 sessions) and froze C-x b."
+  "Summary row for the session picker. The gateway folds `turn_count` + `modified_at`
+   into every `list-sessions` soul server-side (ONE grouped SQL for the whole store), so
+   a row is COMPLETE as it arrives and this only defaults the modified stamp for a
+   session nothing has touched yet. The picker never asks about sessions one at a time —
+   it reads a window, and what changes after that read arrives on the fleet stream."
   [session]
-  (if (contains? session "turn_count")
-    (assoc session "modified_at" (or (get session "modified_at") (get session "created_at")))
-    (let [turns
-          (try (vec (vis/gateway-list-turns (get session "id"))) (catch Throwable _ []))
-
-          modified-at
-          (or (latest-turn-created-at turns) (get session "created_at"))]
-
-      (assoc session
-        "turn_count" (count turns)
-        "modified_at" modified-at))))
+  (assoc session "modified_at" (or (get session "modified_at") (get session "created_at"))))
 
 (defn- empty-untitled-session?
   [s]
@@ -4766,11 +4748,10 @@
           (if (<= (count segs) 2) p (str "…/" (str/join "/" (take-last 2 segs)))))))))
 
 (defn- enrich-session-row
-  "Attach the compact project directory used by the session navigator.
-   Prefer the workspace metadata already folded into list-sessions and fall
-   back to the per-session workspace fetch for an older daemon."
+  "Attach the compact project directory the session navigator paints, read from the
+   workspace map the gateway folds into every list-sessions row."
   [s]
-  (let [ws (or (get s "workspace") (session-workspace (get s "id")))]
+  (let [ws (get s "workspace")]
     (assoc s :work-dir (short-dir (or (get ws "repo_root") (get ws "root"))))))
 
 (def ^:private picker-page-size
@@ -4793,8 +4774,7 @@
 (def ^:private startup-session-window
   "How many newest rows a STARTUP lookup reads from the gateway. The gateway owns the
    order, so `--continue` and the no-sidecar workspace probe ask for this head instead
-   of the fleet; it also bounds the per-session workspace lookups the probe pays when a
-   row arrives without its folded workspace map."
+   of the fleet."
   15)
 
 (defn- latest-project-session-id
@@ -4803,9 +4783,9 @@
    (first launch here after the sidecar was lost, or every saved id is
    dead). Probes newest-first summaries, matching each session's pinned
    workspace root (`:root`, or isolated workspace `:repo-root`) against the
-   launch dir, across the `startup-session-window` newest rows. Reads the summary's
-   folded `workspace` map first; only an older daemon costs a per-session
-   workspace fetch."
+   launch dir, across the `startup-session-window` newest rows. Every row carries its
+   own folded `workspace` map, so the probe costs ONE windowed read and nothing per
+   session."
   []
   (try (let [canonical
              #(try (.getCanonicalPath (java.io.File. (str %))) (catch Throwable _ (str %)))
@@ -4820,7 +4800,7 @@
                             (get s "id")
 
                             ws
-                            (or (get s "workspace") (session-workspace sid))
+                            (get s "workspace")
 
                             root
                             (or (get ws "repo_root") (get ws "root"))]
@@ -5830,6 +5810,14 @@
                                         :fetch-sessions (fn [ids]
                                                           (:sessions (tui-session-page
                                                                        {:ids (vec ids)})))
+                                        ;; The window is read ONCE. What happens after it
+                                        ;; — a session going live, parking on a human, or
+                                        ;; being renamed — arrives as fleet frames on one
+                                        ;; stream, so no row is ever asked about again.
+                                        :watch-fleet (fn [sink]
+                                                       (try (vis/gateway-fleet-subscribe! sink)
+                                                            (catch Throwable _
+                                                              (fn []))))
                                         :active-session-id (current-session-id)
                                         :db @state/app-db
                                         :search-transcript-ids

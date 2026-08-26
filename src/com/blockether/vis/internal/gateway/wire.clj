@@ -204,7 +204,7 @@
    discriminator that keeps a job's progress from being read as a session event.
 
    The gateway speaks SSE on two unrelated resources and a consumer must never
-   mistake one for the other. `GET /v1/sessions/:sid/events` is the session's
+   mistake one for the other. `GET /v1/events?sids=<sid>` is the session's
    ordered event LOG: every frame carries an `id:` cursor, its `event:` is the
    engine event TYPE, it replays from `Last-Event-ID`, and it stays open for the
    life of the session. `GET /v1/sessions/:sid/voice/jobs/:job-id/events` is ONE

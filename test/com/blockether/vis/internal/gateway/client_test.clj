@@ -949,6 +949,47 @@
             (is (= 2 @restarts) "only the last listener removal changes the remote session set")
             (is (empty? (:subs @@mux-var)))))))))
 
+(deftest fleet-subscribe!-rides-one-stream-instead-of-asking-per-session
+  (testing "a session LIST watches the fleet feed and opens no per-session route"
+    (let
+      [calls
+       (atom [])
+
+       seen
+       (atom [])
+
+       frames
+       (str
+         "data: {\"type\":\"session.status\",\"session_id\":\"a\",\"is_live\":true}\n\n"
+         "data: {\"type\":\"session.title_updated\",\"session_id\":\"a\",\"title\":\"named\"}\n\n")]
+
+      (with-redefs-fn {(rv 'ensure-gateway!) (fn []
+                                               fake-entry)
+                       (rv 'ensure-client!) (fn [_]
+                                              nil)
+                       (rv 'ensure-release-hook!) (fn []
+                                                    nil)
+                       (rv 'gw-send!)
+                       (fn [_ method path _]
+                         (swap! calls conj [method path])
+                         {:status 200
+                          :body (java.io.ByteArrayInputStream.
+                                  (.getBytes frames java.nio.charset.StandardCharsets/UTF_8))})}
+        (fn []
+          (let [stop! (client/fleet-subscribe! (fn [frame]
+                                                 (swap! seen conj frame)))]
+            (try (loop [waited 0]
+                   (when (and (< (count @seen) 2) (< waited 2000))
+                     (Thread/sleep 10)
+                     (recur (+ waited 10))))
+                 (finally (stop!)))
+            (is (= ["GET" "/v1/events?scope=fleet"] (first @calls)))
+            (is (= ["session.status" "session.title_updated"]
+                   (mapv #(get % "type") (take 2 @seen))))
+            (let [after-stop (count @calls)]
+              (Thread/sleep 400)
+              (is (= after-stop (count @calls))
+                  "stopping ends the watch instead of reconnecting"))))))))
 (deftest mux-finalization-barrier-forbids-new-subscriptions
   (let [mux-var
         (rv 'mux)

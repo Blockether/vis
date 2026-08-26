@@ -666,8 +666,8 @@
    resume in one place: the client learns the real cursor from the
    `subscription.ready` echo, so it recovers on the very next reconnect.
 
-   Shared by BOTH event endpoints so `/v1/events?sids=…` and
-   `/v1/sessions/:sid/events` resolve a cursor identically."
+   Shared by every session stream the daemon serves, so `/v1/events?sids=…` and the
+   fleet feed resolve a cursor identically."
   ^long [sid requested]
   (let [requested
         (long requested)
@@ -745,84 +745,6 @@
     (.write out (.getBytes (wire/sse-frame (wire/canonical payload)) StandardCharsets/UTF_8))
     (.flush out)))
 
-(defn- sse-body
-  "Ring streamable body for one SSE subscription. Replay-then-live without
-   gaps: `state/subscribe!` registers a non-blocking enqueue sink
-   ([[sse-sink]]) ATOMICALLY with the replay capture; this body thread is the
-   connection's ONLY socket writer — it writes the replay, then drains the
-   bounded queue ([[pump-sse!]]). No output-stream lock: single-writer by
-   construction. The per-connection `last-seq` guard drops duplicates (a live
-   event can land in both replay and the queue). A stalled client fills its
-   own queue and is dropped — it can never park the turn's appender or
-   sibling watchers."
-  [sid cursor proxied? owner-pid slim-close?]
-  (reify
-    ring-protocols/StreamableResponseBody
-      (write-body-to-stream [_ _ output-stream]
-        (let [^OutputStream out
-              output-stream
-
-              outbound
-              (if slim-close? without-settled-picture identity)
-
-              sub-id
-              (str (java.util.UUID/randomUUID))
-
-              last-seq
-              (atom (resolve-sse-cursor sid cursor))
-
-              queue
-              (ArrayBlockingQueue. (int SSE_QUEUE_CAP))
-
-              dead?
-              (volatile! false)
-
-              close!
-              (sse-closer out queue dead? #(state/unsubscribe! sid sub-id))
-
-              sink
-              (sse-sink queue close!)
-
-              write!
-              (fn [event]
-                (when (> (long (get event "seq")) (long @last-seq))
-                  (.write out (.getBytes (wire/sse-frame (outbound event)) StandardCharsets/UTF_8))
-                  (.flush out)
-                  (reset! last-seq (long (get event "seq")))))]
-
-          (swap! server-state (fn [st]
-                                (-> st
-                                    (assoc :saw-client? true)
-                                    (assoc-in [:sse-clients sub-id]
-                                              {:pid owner-pid :close! close!}))))
-          (try (when proxied? (sse-proxy-pad! out))
-               (let [replay (state/subscribe! sid sub-id sink @last-seq)]
-                 (sse-ready! out sid @last-seq replay)
-                 (doseq [event replay]
-                   (write! event)))
-               (pump-sse! out queue dead? write!)
-               (catch Throwable _ nil)
-               (finally (state/unsubscribe! sid sub-id)
-                        (swap! server-state update :sse-clients dissoc sub-id)
-                        (maybe-stop-when-idle!)
-                        (try (.close out) (catch Throwable _ nil))))))))
-
-(defn- events-handler
-  [request]
-  (let [sid (path-sid request)]
-    (if (and sid (state/soul sid))
-      {:status 200
-       :headers sse-headers
-       :body (sse-body sid
-                       (sse-cursor request)
-                       ;; forwarding header = an edge proxy sits in the path —
-                       ;; only then is the anti-buffering pad worth its bytes
-                       (boolean (some #(get-in request [:headers %])
-                                      ["cf-ray" "cf-connecting-ip" "x-forwarded-for" "via"]))
-                       (request-client-pid request)
-                       (omits-settled-picture? request))}
-      (session-404 (get-in request [:path-params :sid])))))
-
 (defn- parse-multi-sids
   "Parse the `sids` query param of the multiplexed events endpoint: a comma
    list of `sid` or `sid:cursor` tokens (cursor defaults to 0). Returns
@@ -838,8 +760,8 @@
    When the request carries a `Last-Event-ID` header AND resolves to exactly
    ONE sid, that header overrides the sole sid's cursor. This lets a NATIVE
    EventSource (browser / react-native-sse) whose reconnect carries only a
-   single `Last-Event-ID` resume losslessly against the multiplexed endpoint —
-   so `/v1/events?sids=<sid>` is a strict superset of `/v1/sessions/:sid/events`.
+   single `Last-Event-ID` resume losslessly — `sids=<sid>` IS the single-session
+   subscription, and there is no per-session route beside it.
    Multi-sid callers (the hand-rolled TUI mux) manage per-session cursors in the
    `sids=` param and never send `Last-Event-ID`, so they are unaffected: a single
    header cannot disambiguate N independent per-session seq counters."
@@ -4308,8 +4230,7 @@
         [(sid-route "/human-input/live/:view-id/log/:node-id") {:get live-view-log-handler}]
         [(sid-route "/human-input/live/:view-id/actions/focus") {:post focus-live-view-handler}]
         [(sid-route "/human-input/live/:view-id/actions/interrupt")
-         {:post interrupt-live-view-handler}] [(sid-route "/events") {:get events-handler}]
-        [(sid-route "/voice") {:post voice-handler}]
+         {:post interrupt-live-view-handler}] [(sid-route "/voice") {:post voice-handler}]
         [(sid-route "/voice/jobs/:job-id") {:get voice-job-handler :delete voice-job-handler}]
         [(sid-route "/voice/jobs/:job-id/events") {:get voice-job-events-handler}]
         [(sid-route "/speech") {:post speech-handler}]

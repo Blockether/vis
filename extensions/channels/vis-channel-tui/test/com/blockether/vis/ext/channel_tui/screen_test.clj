@@ -968,28 +968,29 @@
 
 (defdescribe
   session-switcher-data-test
-  (it "uses latest turn creation time as modification time and sorts newest first"
+  (it "reads the gateway's folded summary and never asks a session for its turns"
+      ;; The picker holds a WINDOW of rows the gateway already summarized; a per-session
+      ;; read here was one HTTP round trip per row and froze the switcher.
       (with-redefs [vis/gateway-list-turns
-                    (fn [session-id]
-                      (case session-id
-                        "old"
-                        [{"created_at" #inst "2024-01-04T00:00:00.000-00:00"}]
-
-                        "new"
-                        [{"created_at" #inst "2024-01-02T00:00:00.000-00:00"}
-                         {"created_at" #inst "2024-01-08T00:00:00.000-00:00"}]
-
-                        []))]
+                    (fn [_]
+                      (throw (ex-info "the picker must not read sessions one by one" {})))]
         (let [old-summary (session-summary {"id" "old"
-                                            "created_at" #inst "2024-01-01T00:00:00.000-00:00"})
+                                            "turn_count" 1
+                                            "created_at" #inst "2024-01-01T00:00:00.000-00:00"
+                                            "modified_at" #inst "2024-01-04T00:00:00.000-00:00"})
               new-summary (session-summary {"id" "new"
-                                            "created_at" #inst "2024-01-03T00:00:00.000-00:00"})]
+                                            "turn_count" 2
+                                            "created_at" #inst "2024-01-03T00:00:00.000-00:00"
+                                            "modified_at" #inst "2024-01-08T00:00:00.000-00:00"})]
 
           (expect (= 1 (get old-summary "turn_count")))
           (expect (= 2 (get new-summary "turn_count")))
           (expect (= #inst "2024-01-08T00:00:00.000-00:00" (get new-summary "modified_at")))
           (expect (= ["new" "old"]
-                     (mapv #(get % "id") (latest-modified-first [old-summary new-summary]))))))))
+                     (mapv #(get % "id") (latest-modified-first [old-summary new-summary])))))))
+  (it "stamps a session nothing has touched with its creation time"
+      (let [row (session-summary {"id" "fresh" "created_at" #inst "2024-02-01T00:00:00.000-00:00"})]
+        (expect (= #inst "2024-02-01T00:00:00.000-00:00" (get row "modified_at"))))))
 
 (defdescribe
   submit-input-test

@@ -2171,12 +2171,18 @@
 
 (defn- sse-response!
   "Open the gateway SSE stream for `sid` resuming at `cursor`. Returns the
-   babashka.http-client response map whose `:body` is a live `InputStream`."
+   babashka.http-client response map whose `:body` is a live `InputStream`.
+
+   ONE session is just the smallest set the multiplexed route serves. The daemon
+   has a SINGLE session-event endpoint (`/v1/events?sids=…`) and it emits the
+   same `subscription.ready` + replay-then-live frames for every session it
+   carries, so a blocking turn and the live mirror ask for `sids=<sid>:<cursor>`
+   instead of a per-session route of their own."
   [sid cursor]
   (let [entry (ensure-gateway!)]
     (gw-send! entry
               "GET"
-              (str "/v1/sessions/" (enc sid) "/events?cursor=" (long (or cursor 0)))
+              (str "/v1/events?sids=" (enc sid) ":" (long (or cursor 0)))
               {:as :stream})))
 
 (def ^:private sse-idle-timeout-ms
@@ -2238,52 +2244,62 @@
     (let [rest' (subs line 5)]
       (if (str/starts-with? rest' " ") (subs rest' 1) rest'))))
 
+(defn- read-sse-frames!
+  "Drive the raw `data:`-line/blank-line frame parser over `in` — the ONE place
+   this client parses an SSE stream. Every parsed event is handed to `handle`; a
+   truthy answer stops the read and IS the return value (a terminal signal).
+   `stop?` is consulted before every line and its truthy answer stops the read
+   the same way, so a reader whose subscription set changed under it bails
+   without waiting for a frame. An idle watchdog (see [[sse-idle-timeout-ms]])
+   closes the stream when NOTHING — not even a heartbeat — arrives for too long,
+   so a wedged daemon surfaces as a normal drop instead of an infinite park.
+   Returns `[:closed]` on EOF (or an idle/close-driven read failure)."
+  [^InputStream in handle stop?]
+  (with-open [rdr (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
+    (let [last-line-ns* (atom (System/nanoTime))
+          alive?* (atom true)
+          watchdog (start-sse-idle-watchdog! in last-line-ns* alive?*)]
+
+      (try (loop [data-lines []]
+             (or (when stop? (stop?))
+                 (if-let [line (.readLine rdr)]
+                   (do (reset! last-line-ns* (System/nanoTime))
+                       (if (str/blank? line)
+                         (let [data (str/join "\n" data-lines)
+                               event (when (seq data) (wire/parse-json data))]
+
+                           (if-not event (recur []) (or (handle event) (recur []))))
+                         (if-let [d (sse-data-line line)]
+                           (recur (conj data-lines d))
+                           (recur data-lines))))
+                   [:closed])))
+           (finally (reset! alive?* false)
+                    (some-> ^Thread watchdog
+                            .interrupt))))))
+
 (defn- open-sse-events!
-  "Open ONE SSE connection for `sid` from `cursor` and drive the raw
-   `data:`-line/blank-line frame parser. For each parsed event: advance `cursor*`
-   (highest `:seq` seen) then call `(handle event)`. When `handle` returns a
-   truthy value, stop and return it (a terminal signal); otherwise keep reading.
-   Resets `stream*` (when non-nil) to the live InputStream so `unsubscribe!` can
-   close it. An idle watchdog (see [[sse-idle-timeout-ms]]) closes the stream if
-   NO frame — not even a heartbeat — arrives for too long, so a wedged daemon
-   surfaces as a normal drop instead of an infinite park. Returns `[:closed]` on
-   EOF (or an idle/close-driven read failure); throws `ex-info` with
-   `:http-status` on a non-200 response. Shared by `read-sse-stream!` (blocking
-   turns) and `subscribe!` (the live mirror) so the frame parsing lives in ONE
-   place."
+  "Open ONE SSE connection for `sid` from `cursor` and read it with
+   [[read-sse-frames!]]. For each parsed event: advance `cursor*` (highest `:seq`
+   seen) then call `(handle event)`. When `handle` returns a truthy value, stop
+   and return it (a terminal signal); otherwise keep reading. Resets `stream*`
+   (when non-nil) to the live InputStream so `unsubscribe!` can close it. Returns
+   `[:closed]` on EOF; throws `ex-info` with `:http-status` on a non-200
+   response. Shared by `read-sse-stream!` (blocking turns) and `subscribe!` (the
+   live mirror)."
   [sid cursor cursor* stream* handle & [on-open]]
   (let [response (sse-response! sid cursor)]
     (when-not (= 200 (:status response))
       (throw (ex-info (str "gateway SSE HTTP " (:status response))
                       {:http-status (:status response)})))
-    (with-open [^InputStream in (:body response)
-                rdr (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
-
+    (with-open [^InputStream in (:body response)]
       (when stream* (reset! stream* in))
       (when on-open (on-open))
-      (let [last-line-ns* (atom (System/nanoTime))
-            alive?* (atom true)
-            watchdog (start-sse-idle-watchdog! in last-line-ns* alive?*)]
-
-        (try (loop [data-lines []]
-               (if-let [line (.readLine rdr)]
-                 (do (reset! last-line-ns* (System/nanoTime))
-                     (if (str/blank? line)
-                       (let [data (str/join "\n" data-lines)
-                             event (when (seq data) (wire/parse-json data))]
-
-                         (if-not event
-                           (recur [])
-                           (do (when-let [s (get event "seq")]
-                                 (swap! cursor* max (long s)))
-                               (or (handle event) (recur [])))))
-                       (if-let [d (sse-data-line line)]
-                         (recur (conj data-lines d))
-                         (recur data-lines))))
-                 [:closed]))
-             (finally (reset! alive?* false)
-                      (some-> ^Thread watchdog
-                              .interrupt)))))))
+      (read-sse-frames! in
+                        (fn [event]
+                          (when-let [s (get event "seq")]
+                            (swap! cursor* max (long s)))
+                          (handle event))
+                        nil))))
 
 (defn subscribe!
   "Remote equivalent of gateway.state/subscribe!: start a background SSE reader
@@ -2405,9 +2421,9 @@
     (try (sink {:type type}) (catch Throwable _ nil))))
 
 (defn- open-mux-events!
-  "Open ONE multiplexed SSE connection for the current session set and drive
-   the raw `data:`/blank-line frame parser. Each parsed event is demuxed by
-   `:session_id`: advance that session's cursor, then call its sink. Bails with
+  "Open ONE multiplexed SSE connection for the current session set and read it
+   with [[read-sse-frames!]]. Each parsed event is demuxed by `:session_id`:
+   advance that session's cursor, then call its sink. Bails with
    `[:epoch-changed]` the moment the session set is edited (so the caller
    reconnects with the new set) and `[:closed]` on EOF/drop. Throws with
    `:http-status` on a non-200."
@@ -2424,48 +2440,21 @@
     (when-not (= 200 (:status response))
       (throw (ex-info (str "gateway mux SSE HTTP " (:status response))
                       {:http-status (:status response)})))
-    (with-open [^InputStream in
-                (:body response)
-
-                rdr
-                (BufferedReader. (InputStreamReader. in StandardCharsets/UTF_8))]
-
+    (with-open [^InputStream in (:body response)]
       (swap! mux assoc :stream in)
       (mux-broadcast! "gateway.connected")
-      (let [last-line-ns*
-            (atom (System/nanoTime))
+      (read-sse-frames! in
+                        (fn [event]
+                          (let [esid (str (get event "session_id"))
+                                {:keys [sinks cursor-atom]} (get (:subs @mux) esid)]
 
-            alive?*
-            (atom true)
-
-            watchdog
-            (start-sse-idle-watchdog! in last-line-ns* alive?*)]
-
-        (try (loop [data-lines []]
-               (if (not= my-epoch (:epoch @mux))
-                 [:epoch-changed]
-                 (if-let [line (.readLine rdr)]
-                   (do (reset! last-line-ns* (System/nanoTime))
-                       (if (str/blank? line)
-                         (let [data (str/join "\n" data-lines)
-                               event (when (seq data) (wire/parse-json data))]
-
-                           (when event
-                             (let [esid (str (get event "session_id"))
-                                   {:keys [sinks cursor-atom]} (get (:subs @mux) esid)]
-
-                               (when (seq sinks)
-                                 (mux-advance-cursor! cursor-atom event)
-                                 (doseq [[_ sink] sinks]
-                                   (try (sink event) (catch Throwable _ nil))))))
-                           (recur []))
-                         (if-let [d (sse-data-line line)]
-                           (recur (conj data-lines d))
-                           (recur data-lines))))
-                   [:closed])))
-             (finally (reset! alive?* false)
-                      (some-> ^Thread watchdog
-                              .interrupt)))))))
+                            (when (seq sinks)
+                              (mux-advance-cursor! cursor-atom event)
+                              (doseq [[_ sink] sinks]
+                                (try (sink event) (catch Throwable _ nil)))))
+                          nil)
+                        (fn []
+                          (when (not= my-epoch (:epoch @mux)) [:epoch-changed]))))))
 
 (defn- mux-run!
   "Background reconnect loop owning epoch `my-epoch`. Reconnects (resuming from
@@ -2562,6 +2551,68 @@
           (fn []
             (mux-unsubscribe! sid sub-id))))))
 
+(defn fleet-subscribe!
+  "Watch the FLEET stream — `GET /v1/events?scope=fleet` — and hand every frame
+   to `sink`. One frame per session whose list-visible state changed
+   (`session.status`: `is_live` / `is_awaiting_input` / `current_turn_id`) or
+   that was renamed (`session.title_updated`). Returns a zero-arg stop fn.
+
+   This is what a session LIST subscribes to instead of asking about sessions one
+   by one: the fleet answers WHICH sessions changed, so a picker holding a
+   windowed read never polls a row again. There is no replay and no cursor — the
+   feed is a delta layered on a cold `/v1/sessions` window, so a reconnect costs
+   nothing to arrange and a missed frame heals on the next read. `sink` runs on
+   the reader thread and must not block it; drops reconnect with the multiplexed
+   mirror's backoff until the returned fn is called."
+  [sink]
+  (if @client-finalizing?
+    (fn [])
+    (let [_
+          (ensure-release-hook!)
+
+          running?
+          (atom true)
+
+          stream*
+          (atom nil)
+
+          fut
+          (future
+            (loop [attempt 0]
+              (when (and @running? (not @client-finalizing?))
+                (let [dropped?
+                      (try (let [entry (ensure-gateway!)
+                                 _ (ensure-client! entry)
+                                 response
+                                 (gw-send! entry "GET" "/v1/events?scope=fleet" {:as :stream})]
+
+                             (when-not (= 200 (:status response))
+                               (throw (ex-info (str "gateway fleet SSE HTTP " (:status response))
+                                               {:http-status (:status response)})))
+                             (with-open [^InputStream in (:body response)]
+                               (reset! stream* in)
+                               (read-sse-frames! in
+                                                 (fn [event]
+                                                   (try (sink event) (catch Throwable _ nil))
+                                                   nil)
+                                                 (fn []
+                                                   (when-not @running? [:stopped]))))
+                             true)
+                           (catch Throwable _ true))]
+                  (when (and dropped? @running? (not @client-finalizing?))
+                    (let [delay-ms
+                          (long (min 5000 (* (long sse-reconnect-backoff-ms) (inc (long attempt)))))
+                          interrupted?
+                          (try (Thread/sleep delay-ms) false (catch InterruptedException _ true))]
+
+                      (when-not interrupted? (recur (inc attempt)))))))))]
+
+      (fn []
+        (reset! running? false)
+        (when-let [in @stream*]
+          (try (.close ^java.io.Closeable in) (catch Throwable _ nil)))
+        (future-cancel fut)
+        nil))))
 (defn sse-event-action
   "Pure classifier for one parsed SSE event while blocking on `wanted-turn-id`.
    Returns `[action event']`:

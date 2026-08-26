@@ -143,7 +143,8 @@
              [gateway-unsubscribe! gateway-client/unsubscribe!]
              [gateway-current-seq gateway-client/current-seq]
              [gateway-mux-subscribe! gateway-client/mux-subscribe!]
-             [gateway-mux-unsubscribe! gateway-client/mux-unsubscribe!])
+             [gateway-mux-unsubscribe! gateway-client/mux-unsubscribe!]
+             [gateway-fleet-subscribe! gateway-client/fleet-subscribe!])
 
 (import-vars [gateway-list-resources gateway-client/list-resources]
              [gateway-list-resources-cached gateway-client/list-resources-cached]

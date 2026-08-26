@@ -1312,6 +1312,45 @@
 
         (expect (= ["a" "b" "c"] (mapv #(get % "id") (merge-sessions held incoming)))))))
 
+(defdescribe
+  navigator-fleet-frame-test
+  (it "folds a status frame onto the row it names and leaves every other row alone"
+      (let [apply-frame
+            (var-get #'dlg/navigator-apply-fleet-frame)
+
+            held
+            [{"id" "a" "title" "A" "is_awaiting_input" false}
+             {"id" "b" "title" "B" "is_awaiting_input" true}]
+
+            after
+            (apply-frame held
+                         {"type" "session.status"
+                          "session_id" "a"
+                          "is_live" true
+                          "is_awaiting_input" true
+                          "current_turn_id" "t-7"})]
+
+        (expect (true? (get (first after) "is_awaiting_input")))
+        (expect (true? (get (first after) "live")))
+        (expect (= "t-7" (get (first after) "current_turn_id")))
+        (expect (= (second held) (second after)))))
+  (it "renames the row a title frame names"
+      (let [apply-frame (var-get #'dlg/navigator-apply-fleet-frame)]
+        (expect (= ["fresh" "B"]
+                   (mapv #(get % "title")
+                         (apply-frame
+                           [{"id" "a" "title" "A"} {"id" "b" "title" "B"}]
+                           {"type" "session.title_updated" "session_id" "a" "title" "fresh"}))))))
+  (it "drops a frame naming a session outside the window it holds"
+      (let [apply-frame
+            (var-get #'dlg/navigator-apply-fleet-frame)
+
+            held
+            [{"id" "a" "title" "A"}]]
+
+        (expect (= held
+                   (apply-frame held {"type" "session.status" "session_id" "zz" "is_live" true})))
+        (expect (= held (apply-frame held {"type" "heartbeat" "session_id" "a"}))))))
 (def ^:private wide-hints
   "A hint bar too wide for a narrow dialog — the fixture `fit-hint-pairs` clips."
   [["↑/↓" "move"] ["n/p" "section"] ["TAB" "fold"] ["RET" "visit"] ["s/u" "select"] ["S/U" "all"]

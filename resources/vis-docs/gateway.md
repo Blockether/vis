@@ -578,7 +578,7 @@ model download reports its own `preparing` percentage instead of looking stuck.
 The gateway speaks SSE on two unrelated resources, so a client keys off the
 frame's `event:` name and never off the shape of the JSON inside it:
 
-| | `GET /v1/sessions/:sid/events` | `GET .../voice/jobs/:job-id/events` |
+| | `GET /v1/events?sids=<sid>` | `GET .../voice/jobs/:job-id/events` |
 | --- | --- | --- |
 | `event:` | the engine event type (`turn.delta`, ...) | always `voice.job` |
 | `id:` | the event `seq`; resumable with `Last-Event-ID` | none, a job has no log to replay |

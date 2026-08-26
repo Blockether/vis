@@ -3896,7 +3896,7 @@ export class GatewayClient {
 
   // ── SSE live stream ─────────────────────────────────────────────
   //
-  // GET /v1/sessions/:sid/events streams `data: {json}\n\n` frames. We read the
+  // GET /v1/events?sids=<sid> streams `data: {json}\n\n` frames. We read the
   // response body as a stream and parse SSE frames by hand so it works in every
   // Capacitor webview (native EventSource can't attach the bearer header).
 

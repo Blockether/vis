@@ -4721,18 +4721,30 @@
         (reset! task next-task)
         token))))
 
+(def ^:private navigator-live-poll-ms
+  "How often the picker looks for a keystroke while it is WATCHING the fleet stream.
+   Frames land on the reader thread, so the paint loop must not park on a blocking
+   read — a session would go live behind an unchanged screen. This is both the input
+   latency a reader could feel and the ceiling on how long a status change waits to be
+   painted."
+  60)
+
 (defn- read-navigator-key!
-  "Keep input responsive while a transcript lookup runs. Poll only during that
-   short async window so its completed result can repaint without waiting for
-   another keystroke; otherwise use Lanterna's blocking modal read."
-  [^TerminalScreen screen task result]
+  "Keep input responsive while something arrives in the BACKGROUND: a debounced
+   transcript lookup, or a fleet frame. Poll during either, so a completed search and a
+   changed row repaint without waiting for another keystroke; otherwise use Lanterna's
+   blocking modal read. `pending?` answers whether the fleet stream left something to
+   fold in, and is nil when the picker is not watching."
+  [^TerminalScreen screen task result pending?]
   (loop []
 
     (cond (some? @result) nil
-          (nil? @task) (read-modal-key! screen)
+          (and pending? (pending?)) nil
           (modal-input-pending? screen) (read-modal-key! screen)
-          (future-done? @task) (read-modal-key! screen)
-          :else (do (Thread/sleep 12) (recur)))))
+          (some? @task)
+          (if (future-done? @task) (read-modal-key! screen) (do (Thread/sleep 12) (recur)))
+          pending? (do (Thread/sleep (long navigator-live-poll-ms)) (recur))
+          :else (read-modal-key! screen))))
 
 (defn- navigator-stamp
   "Compact `MM-dd HH:mm` timestamp (year dropped — these are recent
@@ -4857,6 +4869,31 @@
                  [[] #{}]
                  (concat held incoming))))
 
+(defn- navigator-apply-fleet-frame
+  "PURE fold of ONE fleet frame into the rows the picker holds. `session.status`
+   re-stamps that row's fleet marks (the frame speaks the wire's `is_live`; a list row
+   spells the same fact `live`, so the row keeps ITS vocabulary), `session.title_updated`
+   its title. A frame naming a session outside the window is dropped: the picker paints
+   what it holds, and a row it has not walked to yet arrives already current."
+  [held frame]
+  (let [sid
+        (str (get frame "session_id"))
+
+        type
+        (str (get frame "type"))]
+
+    (if (or (str/blank? sid) (not (#{"session.status" "session.title_updated"} type)))
+      held
+      (mapv (fn [row]
+              (if-not (= sid (str (get row "id")))
+                row
+                (if (= "session.title_updated" type)
+                  (assoc row "title" (str (get frame "title")))
+                  (assoc row
+                    "live" (true? (get frame "is_live"))
+                    "is_awaiting_input" (true? (get frame "is_awaiting_input"))
+                    "current_turn_id" (get frame "current_turn_id")))))
+            held))))
 (defn- navigator-row-matches?
   [row query]
   (let [needle (str/lower-case (str/trim (or query "")))]
@@ -5282,7 +5319,19 @@
         (atom 0)
 
         search-result
-        (atom nil)]
+        (atom nil)
+
+        ;; What the FLEET stream said since the last paint. The picker holds a window and
+        ;; never re-reads a row, so this delta feed is how a session that went live, parked
+        ;; on a human or was renamed reaches the list at all.
+        fleet-frames
+        (atom [])
+
+        stop-fleet!
+        (when-let [watch (:watch-fleet opts)]
+          (try (watch (fn [frame]
+                        (swap! fleet-frames conj frame)))
+               (catch Throwable _ nil)))]
 
     (letfn
       [(start-search! []
@@ -5309,6 +5358,9 @@
       (try
         (loop []
 
+          (when (seq @fleet-frames)
+            (let [frames (first (swap-vals! fleet-frames empty))]
+              (swap! loaded-sessions #(reduce navigator-apply-fleet-frame % frames))))
           (when-let [{:keys [token query matches]} @search-result]
             (reset! search-result nil)
             (when (= token @search-generation)
@@ -5456,7 +5508,10 @@
                                ["Esc" "cancel"]])
               (.setCursorPosition screen cursor-pos)
               (.refresh screen Screen$RefreshType/DELTA))
-            (let [key (read-navigator-key! screen search-task search-result)]
+            (let [key (read-navigator-key! screen
+                                           search-task
+                                           search-result
+                                           (when stop-fleet! #(seq @fleet-frames)))]
               (if-not key
                 (recur)
                 (cond
@@ -5578,7 +5633,8 @@
                     (recur)))))))
         (finally (swap! search-generation inc)
                  (when-let [running @search-task]
-                   (future-cancel running)))))))
+                   (future-cancel running))
+                 (when stop-fleet! (stop-fleet!)))))))
 
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 
