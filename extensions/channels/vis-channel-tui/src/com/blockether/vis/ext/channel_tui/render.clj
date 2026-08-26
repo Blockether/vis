@@ -4947,6 +4947,28 @@
                        [head])))
                  activity-rows))))
 
+(defn- activity-status-display
+  "Direction A’s uppercase state word is bold (and red on failure); stable duration joins
+   only after close. The rest stays quiet transcript ink, never a framed Activity card."
+  [{:keys [reason elapsed-ms status-text status-tone]}]
+  (let [[state detail]
+        (str/split (str status-text) #" · " 2)
+
+        state
+        (band-label state)
+
+        state
+        (if (= :error status-tone) (str p/INLINE_ERR_ON state p/INLINE_ERR_OFF) state)
+
+        sentence
+        (str state (when-not (str/blank? detail) (str " · " detail)))]
+
+    (str/join " · "
+              (remove str/blank?
+                [sentence
+                 (when (and reason (pos? (long (or elapsed-ms 0))))
+                   (vis/format-duration elapsed-ms))]))))
+
 (defn- run-row-entries
   "Transcript-native run disclosures. Activity is present from its first host call;
    ordinary extension runs appear when finished. Anchored rows sit directly after
@@ -4958,9 +4980,7 @@
      (into
        (if leading-margin? [{:line "" :meta nil}] [])
        (mapcat
-         (fn [{:keys [view-id title reason lines elapsed-ms is-reopened is-activity status-text
-                      status-tone]
-               :as run}]
+         (fn [{:keys [view-id title reason lines elapsed-ms is-reopened is-activity] :as run}]
            (let [verdict
                  (some-> reason
                          name)
@@ -4970,15 +4990,10 @@
                    (str p/INLINE_ERR_ON verdict p/INLINE_ERR_OFF)
                    verdict)
 
-                 status
-                 (if (= :error status-tone)
-                   (str p/INLINE_ERR_ON status-text p/INLINE_ERR_OFF)
-                   status-text)
-
                  parts
                  (remove str/blank?
                    (if is-activity
-                     [status]
+                     [(activity-status-display run)]
                      [title verdict
                       (when (pos? (long (or lines 0)))
                         (str lines (if (= 1 (long lines)) " line" " lines")))
@@ -5673,7 +5688,7 @@
               execution-body
               (let [summary (detail-summary-entries {:marker ""
                                                      :max-w fill-w
-                                                     :summary (:status-text activity-run)
+                                                     :summary (activity-status-display activity-run)
                                                      :collapsed? (not execution-expanded?)
                                                      :session-id session-id
                                                      :node-id execution-node-id})]

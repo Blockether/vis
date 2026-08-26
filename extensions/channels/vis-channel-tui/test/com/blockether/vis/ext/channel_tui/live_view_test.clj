@@ -1185,6 +1185,27 @@
     (-> (ended pane {:reason reason :view {:nodes [] :activity activity}})
         lv/reopened)))
 
+;; Regression, issue td-b98c1b: a completed Python form could retain a live Activity
+;; receipt saying “running · waiting for first activity” after every invocation was terminal.
+(deftest activity-terminal-state-before-close-test
+  (let [pane
+        (lv/opened (activity-view))
+
+        terminal-activity
+        (-> (get-in pane [:view :activity])
+            (assoc :state "succeeded"
+                   :counts {:running 0 :succeeded 6 :failed 0 :cancelled 0})
+            (update :rows
+                    #(mapv (fn [row]
+                             (assoc row :state "succeeded"))
+                           %)))
+
+        row
+        (lv/run-row (assoc-in pane [:view :activity] terminal-activity))]
+
+    (is (= "SUCCEEDED · 6 activities run" (:status-text row)))
+    (is (= :ok (:status-tone row)))))
+
 ;; Regression, issue td-1a38ec: Activity repeated its status sentence and four separate
 ;; counters across the receipt and expanded disclosure.
   ;; Regression, issue td-7bb5f7: the live receipt claimed a predicted Activity denominator.
@@ -1200,11 +1221,12 @@
       (is (lv/dormant? p) "the default receipt gives no rows to the live band")
       (is (nil? (lv/interruptible [p])) "turn cancellation remains the only stop action")
       (is (:is-activity row))
-      (is (= "running · Inspect source · operation 6 · and others" (:status-text row)))
+      (is (= "RUNNING · INSPECT SOURCE · operation 6 · and others" (:status-text row)))
       (is (= :activity (get-in p [:view :classification])))))
   (testing "settlement reports only the actual number of activities run"
-    (is (= ["succeeded · 6 activities run" "failed · 6 activities run"
-            "cancelled · 6 activities run"]
+    (is (= ["SUCCEEDED · 6 activities run"
+            "FAILED · INSPECT SOURCE · operation 6 · 6 activities run"
+            "CANCELLED · 6 activities run"]
            (mapv (comp :status-text lv/run-row settled-activity) [:succeeded :failed :cancelled]))))
   (testing "explicit disclosure expands only its transcript receipt"
     (let [p
@@ -1269,7 +1291,7 @@
                                                      :activity (assoc-in (:activity view)
                                                                  [:rows 5 :summary]
                                                                  "updated operation")}])])
-          (is (= "running · Inspect source · updated operation · and others"
+          (is (= "RUNNING · INSPECT SOURCE · updated operation · and others"
                  (get-in @state/app-db [:messages 1 :runs 0 :status-text]))
               "the semantic Activity patch replaces the same transcript receipt")
           (state/dispatch [:live-view-close "activity-1" {:reason :completed}])

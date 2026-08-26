@@ -364,7 +364,7 @@
 
 (defn- activity-row-label
   [{:keys [operation summary]}]
-  (str (flat-text operation)
+  (str (str/upper-case (flat-text operation))
        (when-not (str/blank? (flat-text summary)) (str " · " (flat-text summary)))))
 
 (defn- activity-row-detail
@@ -377,32 +377,48 @@
 (defn- activity-count [activity state] (max 0 (long (get-in activity [:counts state] 0))))
 
 (defn- activity-state
-  "The concise user-facing state for one Activity receipt. Internal settlement vocabulary
-   remains untouched; only the terminal says finished/succeeded/failed/cancelled."
-  [pane]
-  (case (get-in pane [:settled :reason])
-    nil
-    "running"
+  "The Direction A state word. A close verdict wins; before it arrives, the semantic
+   Activity state prevents terminal invocations from being described as still running."
+  [pane activity]
+  (str/upper-case
+    (case (get-in pane [:settled :reason])
+      nil
+      (case (some-> (:state activity)
+                    name)
+        "succeeded"
+        "succeeded"
 
-    :completed
-    "succeeded"
+        "failed"
+        "failed"
 
-    :failed
-    "failed"
+        "cancelled"
+        "cancelled"
 
-    :timeout
-    "failed"
+        "running"
+        "running"
 
-    :interrupted
-    "cancelled"
+        "finished")
 
-    :cancelled
-    "cancelled"
+      :completed
+      "succeeded"
 
-    "finished"))
+      :failed
+      "failed"
+
+      :timeout
+      "failed"
+
+      :interrupted
+      "cancelled"
+
+      :cancelled
+      "cancelled"
+
+      "finished")))
 
 (defn- activity-status-text
-  "One honest Activity sentence: the active invocation while live, the actual total after settlement."
+  "Direction A’s honest sentence: first running invocation while live; terminal total
+   (and the failed invocation when present) as soon as Activity itself is terminal."
   [pane]
   (let [activity
         (get-in pane [:view :activity])
@@ -415,27 +431,48 @@
         running
         (long (activity-count activity :running))
 
-        total
-        (long (+ (long finished) (long running)))
+        rows
+        (vec (:rows activity))
 
         active
-        (some (fn [row]
-                (when (= "running"
-                         (some-> (:state row)
-                                 name))
-                  (activity-row-label row)))
-              (:rows activity))]
+        (some #(when (= "running"
+                        (some-> (:state %)
+                                name))
+                 %)
+              rows)
 
-    (if (nil? (get-in pane [:settled :reason]))
-      (str "running · "
-           (or active "waiting for first activity")
-           (when (> (long total) 1) " · and others"))
-      (str (activity-state pane)
+        failed
+        (some #(when (= "failed"
+                        (some-> (:state %)
+                                name))
+                 %)
+              rows)
+
+        omitted
+        (max 0 (long (get-in activity [:omitted :rows] 0)))
+
+        terminal?
+        (or (some? (get-in pane [:settled :reason]))
+            (and (zero? running)
+                 (contains? #{"succeeded" "failed" "cancelled"}
+                            (some-> (:state activity)
+                                    name))))
+
+        state
+        (activity-state pane activity)
+
+        total-copy
+        (str finished " " (if (= 1 finished) "activity" "activities") " run")]
+
+    (if-not terminal?
+      (str state
            " · "
-           finished
-           " "
-           (if (= 1 finished) "activity" "activities")
-           " run"))))
+           (if active (activity-row-label active) "running activity")
+           (when (or (> (count rows) 1) (pos? omitted)) " · and others"))
+      (str state
+           (when (and (= "FAILED" state) failed) (str " · " (activity-row-label failed)))
+           " · "
+           total-copy))))
 
 (defn run-row
   "The transcript receipt for a run or host Activity, anchored at its form.
