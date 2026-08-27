@@ -3374,13 +3374,24 @@ export class GatewayClient {
         return URL.createObjectURL(stored);
       }
       let response: Response;
-      try {
-        response = await fetch(endpoint, { headers: this.headers() });
-      } catch (error) {
-        throw new GatewayError(0, `network error: ${(error as Error).message}`);
+      // The live descriptor can beat the durable attachment row by a few hundred
+      // milliseconds. A 404 here means "not landed yet", not "this picture is
+      // broken"; leaving it rejected parked the tile until the whole session was
+      // remounted. Keep the one in-flight promise and bridge that persistence seam.
+      const landingDelays = [60, 140, 300, 600];
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          response = await fetch(endpoint, { headers: this.headers() });
+        } catch (error) {
+          throw new GatewayError(0, `network error: ${(error as Error).message}`);
+        }
+        if (response.ok) break;
+        if (response.status !== 404 || attempt >= landingDelays.length)
+          throw new GatewayError(response.status, `HTTP ${response.status}`);
+        await new Promise<void>((resolve) =>
+          window.setTimeout(resolve, landingDelays[attempt]),
+        );
       }
-      if (!response.ok)
-        throw new GatewayError(response.status, `HTTP ${response.status}`);
       const blob = await response.blob();
       this.attachmentSizes.set(key, blob.size);
       // Keeping it is best-effort and never blocks the picture it just produced.

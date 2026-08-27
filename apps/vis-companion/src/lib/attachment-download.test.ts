@@ -127,6 +127,23 @@ describe('downloading one produced artifact', () => {
     expect(asked).toHaveLength(2);
   });
 
+  it('waits for bytes whose descriptor arrived before its durable row', async () => {
+    let responses = 0;
+    globalThis.fetch = (async () => {
+      responses += 1;
+      return responses === 1
+        ? new Response(null, { status: 404 })
+        : new Response(new Uint8Array(14791), {
+            status: 200,
+            headers: { 'Content-Type': 'image/png' },
+          });
+    }) as typeof fetch;
+
+    const client = new GatewayClient(CONN);
+    await expect(client.attachmentUrl('s1', 'landing', 0)).resolves.toBeTruthy();
+    expect(responses).toBe(2);
+  });
+
   it('paints even when the device refuses to keep anything', async () => {
     // Private window, quota exceeded, no `caches` at all: the picture still
     // arrives, it is simply fetched again next time.
