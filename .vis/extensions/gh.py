@@ -408,6 +408,11 @@ def run_shape(payload, focus_ids=None, now=None):
     jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
     tones = [tone_of(job.get("status"), job.get("conclusion")) for job in jobs]
     groups = _job_groups(jobs)
+    # A branch NAMES itself and then qualifies itself, the way every label in this
+    # panel does: `Build native image · 3 variants`. The count belongs to the
+    # branch and not to a row, so it is added here and nowhere near `_job_display`,
+    # which still has to strip the bare parent name off each variant.
+    group_sizes = Counter(group for group in groups if group)
     indexed = [(_job_id(job, index), job) for index, job in enumerate(jobs)]
     by_id = dict(indexed)
     groups_by_id = {
@@ -511,7 +516,11 @@ def run_shape(payload, focus_ids=None, now=None):
                     _elapsed(job, now),
                 ],
                 "tone": job_tone,
-                **({"branch": group} if group else {}),
+                **(
+                    {"branch": f"{group} · {group_sizes[group]} variants"}
+                    if group
+                    else {}
+                ),
             }
             for index, (job, job_tone, group) in enumerate(
                 zip(jobs, tones, groups, strict=True)
@@ -553,7 +562,7 @@ def declared_nodes(shape):
             "jobs",
             columns=[
                 vis.table_column("job", "Job"),
-                vis.table_column("state", "Status"),
+                vis.table_column("state", "Now"),
                 vis.table_column("took", "Took"),
             ],
             rows=[

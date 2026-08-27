@@ -54,7 +54,7 @@
             {
               "id": "95742028721",
               "tone": "running",
-              "branch": "tests",
+              "branch": "tests · 3 variants",
               "cells": [
                 "macos-latest",
                 "in progress",
@@ -64,7 +64,7 @@
             {
               "id": "95742028770",
               "tone": "error",
-              "branch": "tests",
+              "branch": "tests · 3 variants",
               "cells": [
                 "vis-agent + vis-contract (PyPI packages)",
                 "failure",
@@ -74,7 +74,7 @@
             {
               "id": "95742028781",
               "tone": "running",
-              "branch": "tests",
+              "branch": "tests · 3 variants",
               "cells": [
                 "ubuntu-latest",
                 "in progress",
@@ -93,7 +93,7 @@
             {
               "id": "95742028943",
               "tone": "ok",
-              "branch": "classpath",
+              "branch": "classpath · 2 variants",
               "cells": [
                 ".",
                 "success",
@@ -103,7 +103,7 @@
             {
               "id": "95742029230",
               "tone": "ok",
-              "branch": "classpath",
+              "branch": "classpath · 2 variants",
               "cells": [
                 "extensions/channels/vis-channel-tui",
                 "success",
@@ -123,7 +123,7 @@
             },
             {
               "id": "state",
-              "label": "Status"
+              "label": "Now"
             },
             {
               "id": "took",
@@ -277,7 +277,7 @@
                 "28m 33s"
               ],
               "tone": "ok",
-              "branch": "tests"
+              "branch": "tests · 3 variants"
             },
             {
               "id": "95742028781",
@@ -287,7 +287,7 @@
                 "12m 54s"
               ],
               "tone": "ok",
-              "branch": "tests"
+              "branch": "tests · 3 variants"
             }
           ],
           "op": "append",

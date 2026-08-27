@@ -142,9 +142,10 @@ def test_a_poll_reads_as_the_seven_answers():
         "12s",
     ]
     assert shape["rows"][1]["tone"] == "error"
-    # Matrix variants share one semantic parent instead of repeating that parent as flat peers.
-    assert shape["rows"][0]["branch"] == "tests"
-    assert shape["rows"][1]["branch"] == "tests"
+    # Matrix variants share one semantic parent instead of repeating that parent as flat peers,
+    # and the parent says how many legs it has so the reader knows what the fold hides.
+    assert shape["rows"][0]["branch"] == "tests · 3 variants"
+    assert shape["rows"][1]["branch"] == "tests · 3 variants"
     assert "branch" not in next(
         row for row in shape["rows"] if row["cells"][0] == "lint / clj-kondo"
     )
