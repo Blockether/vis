@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { holdKeyboardAcrossSheet, isEnterSendPlatform } from './keyboard';
+import { HARDWARE_POINTER, holdKeyboardAcrossSheet, isEnterSendKeyboard } from './keyboard';
 
 let platform = 'web';
 
@@ -353,12 +353,20 @@ describe('holdKeyboardAcrossSheet on a phone that answers late', () => {
   });
 });
 
-// Regression: on iOS/Android a bare Return submitted the message, so a multi-line
-// message could not be typed at all — the on-screen keyboard has no Shift to hold.
-describe('isEnterSendPlatform', () => {
-  it('sends on Enter only where a hardware keyboard has a Shift to hold', () => {
-    expect(isEnterSendPlatform('web')).toBe(true);
-    expect(isEnterSendPlatform('ios')).toBe(false);
-    expect(isEnterSendPlatform('android')).toBe(false);
+// Regression, user report (paraphrased: in the app Enter should send and
+// Shift+Enter should make the new line): the answer was the PLATFORM, so every
+// native build typed a new line on Return even with a keyboard folded onto it —
+// while a phone still owes Return its new line, having no Shift to hold.
+describe('isEnterSendKeyboard', () => {
+  it('sends on Enter wherever a fine pointer says a keyboard came with it', () => {
+    expect(isEnterSendKeyboard(true)).toBe(true);
+    expect(isEnterSendKeyboard(false)).toBe(false);
+  });
+
+  // The query is the one `index.css` measures a Magic Keyboard's trackpad with,
+  // minus the width the `mouse:` variant carries: whether Return submits is not
+  // a question about room.
+  it('asks the pointer, in the spelling the stylesheet uses', () => {
+    expect(HARDWARE_POINTER).toBe('(pointer: fine)');
   });
 });

@@ -77,7 +77,7 @@ import {
 import { sheetDismissed } from "../lib/image-file";
 import { AttachImageContext } from "../lib/attach-image";
 import type { GatewayClient } from "../lib/gateway";
-import { holdKeyboardAcrossSheet, isEnterSendPlatform } from "../lib/keyboard";
+import { holdKeyboardAcrossSheet, isEnterSendKeyboard } from "../lib/keyboard";
 import {
   GatewayError,
   mergeQueueBacklog,
@@ -1502,9 +1502,6 @@ export function SessionScreen({
   // While the browser owns that smooth movement, the ordinary follow correctors must
   // stand down: one eager `auto` write cancels CSSOM smooth scrolling outright.
   const submitScrollActiveRef = useRef(false);
-  // A hardware keyboard has a Shift to hold for the new line; an on-screen one
-  // does not, so there Return simply types one.
-  const enterSends = isEnterSendPlatform();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recordingRef = useRef<WavRecording | null>(null);
   const pasteCounterRef = useRef(peekDraftMessage(draftMessageId).counter);
@@ -6269,6 +6266,9 @@ export function SessionScreen({
                   setFileDismissed(false);
                 }}
                 onKeyDown={(event) => {
+                  // Asked per keystroke, so a keyboard folded onto a tablet
+                  // mid-session changes the answer without a remount.
+                  const enterSends = isEnterSendKeyboard();
                   if (fileMatches.length) {
                     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                       event.preventDefault();
@@ -6322,9 +6322,9 @@ export function SessionScreen({
                     setSlashDismissed(true);
                     return;
                   }
-                  // On a phone or a tablet Return is the NEW LINE key: there is no
-                  // Shift to hold on an on-screen keyboard, so a submitting Enter
-                  // makes a paragraph impossible to type. Send is the send button.
+                  // On a phone Return is the NEW LINE key: there is no Shift to
+                  // hold on an on-screen keyboard, so a submitting Enter makes a
+                  // paragraph impossible to type. Send is the send button.
                   if (
                     enterSends &&
                     event.key === "Enter" &&

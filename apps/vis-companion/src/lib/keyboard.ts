@@ -152,15 +152,32 @@ export function holdKeyboardAcrossSheet(
 }
 
 /**
+ * The query that means A HARDWARE KEYBOARD IS PROBABLY THERE.
+ *
+ * There is no web API for "is a physical keyboard attached", and the software one
+ * delivers the same `Enter` a hardware one does. A FINE POINTER is the signal that
+ * exists: a mouse or a trackpad — `index.css` measures Magic Keyboard as one —
+ * arrives with a keyboard that has a Shift to hold, and a bare touch screen does
+ * not. It is spelled without the width the `mouse:` variant carries, because
+ * whether Return submits is not a question about room.
+ */
+export const HARDWARE_POINTER = '(pointer: fine)';
+
+/**
  * Does a bare Enter SEND the message?
  *
- * On a hardware keyboard it does, and Shift+Enter makes the new line. On a phone
- * or a tablet the Return key IS the new-line key: the on-screen keyboard has no
- * modifier to hold, so a bare Enter that submits makes a multi-line message
- * impossible to type and fires the turn on the first paragraph break.
+ * With a hardware keyboard it does, and Shift+Enter makes the new line. On a phone
+ * the Return key IS the new-line key: the on-screen keyboard has no modifier to
+ * hold, so a bare Enter that submits makes a multi-line message impossible to type
+ * and fires the turn on the first paragraph break.
+ *
+ * Read it PER KEYSTROKE, never once at mount: a keyboard is folded onto an iPad
+ * mid-session, and the answer has to change with it.
  */
-export function isEnterSendPlatform(
-  platform: string = Capacitor.getPlatform(),
+export function isEnterSendKeyboard(
+  matches: boolean = typeof window === 'undefined'
+    ? false
+    : (window.matchMedia?.(HARDWARE_POINTER).matches ?? false),
 ): boolean {
-  return platform === 'web';
+  return matches;
 }
