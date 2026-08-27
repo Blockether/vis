@@ -88,40 +88,40 @@ other's family is the fastest way to make our app look like a different app.
 - Sentence case for everything a human reads. ALL CAPS is reserved for chips of ≤ 10 characters
   (`LIVE`, `PDF`, `DRAFT`) and for nothing else — a shouted button label is slop, not emphasis.
 
-**Marks — one library, and it is Lucide.** `lucide-react`, **ISC**: 98.7M downloads a week (11x the
-next permissive set), no attribution in the UI, no NOTICE file, no share-alike, 1777 icons,
-tree-shaken one module per icon. `src/components/icons.tsx` stays the ONE wrapper and every mark
-inside it is a Lucide drawing carrying its Lucide name, unedited. Never a second family, never a
-bespoke `<path>` for one screen, and never a character borrowed from the terminal (`✓ ✗ ● ◇ ■ → ▾ ↗`)
-— a glyph is TYPE: it wears the font's weight instead of the control's, it cannot take a stroke, and
-on a phone it renders in whatever face the OS substituted.
+**Marks — one library, and it is Lucide, wrapped in one file.** `lucide-react` (ISC: no attribution in the UI,
+no NOTICE file, ~1 700 marks, one ES module per icon) DRAWS; `apps/vis-companion/src/components/icons.tsx` owns
+the VOCABULARY — the app's name for each mark (`ClipIcon`, not `Paperclip`), the size floor, and the states a
+mark has (a chevron that turns, a star that fills, a sort that points). A screen names the job, the library
+draws it. **Nothing else in `src/**` imports `lucide-react`, and nothing else draws an `<svg>`;
+`icons.test.tsx` reads the shipped source and fails.**
 
-- **Not SF Symbols.** It is the native look and it is licensed for Apple platforms only, unmodified,
-  so it cannot ship in the Android or the web build. One set that renders identically on every
-  surface beats a set we may use on one — and Lucide's rounded joins and single stroke sit beside SF
-  Pro without looking foreign, which is what makes it read as native on iOS and macOS.
-- **The box comes from the type step beside it, and the stroke stays `2`.** Lucide draws on a
-  24-unit grid; at these boxes the rendered stroke lands within 4% of the family's own stem — Inter
-  and JetBrains Mono both measure cap 0.72em and stem 0.0875em, so ONE table serves both:
+- **Not SF Symbols.** They are the native marks on Apple platforms and licensed for Apple platforms alone, so
+  the Android and web builds could never draw them — one set that renders identically on all three beats a set
+  that is legal on one. Never a second family either: a missing mark is ADDED to `icons.tsx` under an app name,
+  never imported at a call site.
+- **A glyph is TYPE, not an icon.** `✕ ▾ ▸ ▶ ↓ ↗ ✓ ● ◇` wear the font's weight instead of the control's, do not
+  align to the label beside them, cannot take a stroke, and on a phone render in whatever face the OS
+  substituted. The TUI is the one surface where a glyph IS the mark (a cell holds a character,
+  `HUMAN_INPUT_CHOICE_MARKS`) — which is exactly why the app never borrows from it.
+  - *Live defect, worth fixing in the next composer commit:* the send `ComposerButton` still paints the
+    character `↑` (`SessionScreen.tsx:6392`) although `ArrowUp` is already imported in `icons.tsx`.
+- **The box comes from the type step beside it, and Lucide's stroke `2` is never touched.** Inter and JetBrains
+  Mono both measure cap 0.719em, stem 0.0875em, so ONE table serves both families:
 
   | type step | icon box | stroke on screen | stem of the type beside it |
   |---|---|---|---|
   | `text-head` 17/24 | 18px | 1.50px | 1.49px |
   | `text-title` 13/20 | 14px (`size-3.5`) | 1.17px | 1.14px |
-  | `text-ui` 11/16 | 12px (`size-3`) | 1.00px | 0.96px |
-  | `text-meta` 10/16, `text-chip` 8/14 | none — the row's mark sits one step up, in the gutter | | |
+  | `text-ui` 11/16, `text-chip` | 12px (`size-3`) | 1.00px | 0.96px |
+  | `text-meta` 10/16 | none — the row's mark sits one step up, in the gutter | | |
 
-  Scale the BOX, never the stroke: re-drawing a Lucide path to "fix" its weight is how a set stops
-  being a set. The box is a `size-*` utility (rem), never a px literal: at 130% system text scaling
-  a rem mark grows with its row and a px one is left behind.
-- **One shape family per column.** A status column is `circle-check` / `circle-x` / `circle-dot` /
-  `circle-dashed` / `circle-slash` — the same 20-unit ring, only the interior changes, so fifty rows
-  keep one vertical rhythm. `check` (16x11 of ink) beside `circle-dashed` (20x20) is the optical-size
-  bug: same box, visibly different mark.
-- A mark inside a labelled control is `aria-hidden`; a mark that IS the label carries the label.
-- **The TUI gets no SVG.** A cell holds a character, so the terminal's marks are a closed character
-  set mirroring these names one for one (`HUMAN_INPUT_CHOICE_MARKS`). That is the one surface where a
-  glyph IS the mark, and the reason the app must never borrow from it.
+  Scale the BOX, never the path: a re-drawn `d` to "fix" a weight is a second family with one member. The box is
+  a `size-*` utility (rem), so at 130% system text scaling the mark grows with its row — and `size-3.5` is a
+  FLOOR applied unless the caller's own classes name a size, never a default parameter, which a caller silently
+  replaces (that is how a paste disclosure once shipped an `<svg>` with no width at all).
+- **One column, one shape.** Where marks stack — a status column — they are one 20-unit ring with a different
+  interior (`circle-check`, `circle-x`, `circle-dot`, `circle-dashed`, `circle-slash`, `circle-alert`). Ink is
+  what the eye measures, not the box: `check` is 16 × 11 of it beside `circle-dashed`'s 20 × 20.
 
 ## 2. Colour — measured, never eyeballed
 
@@ -231,6 +231,23 @@ the same place, at the same size, in the same token — or be labelled, in the a
 proposal with the reason it beats what ships. An invented control is worse than an ugly one: it
 reviews a product nobody can build, and it is why a "modernized" screen reads as a stock template.
 
+**The frames you draw at.** One canonical viewport per surface, and the frame is a plain rectangle: phone
+**393×852pt** (safe areas 59pt top, 34pt bottom), small phone 375×812, tablet 834×1194 (crosses the app's `sm:`
+40rem breakpoint, so density still follows the pointer), desktop window **1280×800**, TUI 120×40 cells.
+**Never hand-draw the device.** An island, a status bar, a home indicator, a bezel, traffic lights or a browser
+bar drawn by hand is fiction at the pixel level and is the fastest way to make real work read as a mockup —
+draw the viewport, hatch the safe areas, and let the caption carry the size.
+
+**Restyling changes paint, never behaviour.** A design pass may move a control inside its own screen and change
+its box, its token or its type step. It may NOT remove a fact, merge two controls, drop a state, re-order a
+flow, or "simplify" what a tool result shows — that is a product change wearing a design change's clothes, and
+it is the one thing a design review is never asked for. If the shape argues for a functional change, say it in
+one sentence and leave it out of the artifact.
+
+**Draw the components before the screens.** An artifact opens with a component sheet: every control drawn ONCE,
+at the size the code paints it, captioned with the file and line that owns it. The screens are then assembled
+from that sheet and from nothing else — two rows that disagree about the same control mean the sheet is wrong,
+not the screen.
 **Before drawing a control, `grep` it and read the docstring above it.** Those docstrings are the
 argument for the shape, usually written after a bug report; the standing ones:
 
@@ -334,7 +351,7 @@ Reject on sight, in a mockup or in a diff:
 14. A painted face inflated to the 44px target: fat strips, a search field taller than its bar.
 15. Two filled accents on one screen.
 16. Facts deleted to make a screen look calm.
-17. A mark drawn by hand where a Lucide name exists — a bespoke `<path>`, a terminal glyph
+17. A mark drawn by hand where a name in `icons.tsx` exists — a bespoke `<path>`, a terminal glyph
     (`✓ ✗ ● ◇ → ▾`), or two icon families in one app.
 
 ## 9. Review protocol
@@ -365,6 +382,14 @@ When asked to review, audit, critique or modernize a design — screenshot, mock
    vocabulary (`ListRow`, `Button variant=…`, a `text-*` step, a palette token — never a raw
    utility), and sequence the work: accessibility, then conventions, then polish.
 
+5. **Score it before you show it**, 1–5, honestly, and print the scores beside the artifact: **hierarchy**
+   (exactly one element leads each screen), **fidelity** (every control exists in `src/**`), **restraint**
+   (nothing grew because it could), **measurement** (every number checked, not felt), **variety** (two screens
+   differ where the product differs). Anything below 3 is a revision, not a caveat.
+6. **The tokens are locked.** No literal hex, no literal `font-family`, no literal px type size anywhere in an
+   artifact — every colour is a token from `themes.generated.css`, every size a step from `index.css`, every
+   mark a name from `icons.tsx`. A value invented mid-render is the most reliable tell of generated UI.
+
 ## 10. Done means
 
 - Contrast recomputed for both themes; no meaning carried by colour alone; one filled accent.
@@ -378,8 +403,11 @@ When asked to review, audit, critique or modernize a design — screenshot, mock
   `ui.test.tsx`. TUI: a capture PNG eyeballed and grid assertions added.
 - Any mockup or review PNG is set in the shipped families (§1), loaded from the repo's own files,
   and the render was CHECKED to have used them (§12).
-- Every mark is a Lucide name at the box its type step allows (§1): no hand-drawn path, no glyph,
-  stroke `2` untouched, and the light theme's mark measured on its own panel.
+- Every mark is an app name from `src/components/icons.tsx` over a Lucide drawing, at the box its type step
+  allows (§1): no second family, no hand-drawn path, no glyph, stroke `2` untouched, and the light theme's mark
+  measured on its own panel.
+- The frame is a viewport, not a drawn device, and no control or behaviour in it is invented (§5).
+- Self-critique scored and printed; nothing below 3 (§9).
 
 ## 11. Component recipes — the measured defaults
 
