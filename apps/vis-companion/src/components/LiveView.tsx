@@ -7,7 +7,6 @@ import {
   LoadMore,
   Meter,
   PROSE,
-  Spinner,
   TableFocusButton,
   TableFocusRow,
 } from './ui';
@@ -109,7 +108,7 @@ const LOG_PAGE = 200;
 function NodeLabel({ children }: { children: string }) {
   const [name, ...rest] = children.split(' · ');
   return (
-    <span className="block font-mono text-chip text-dialog-hint">
+    <span className="block font-mono text-meta text-dialog-hint">
       <span className="uppercase tracking-[0.08em]">{name}</span>
       {rest.length > 0 && <span> · {rest.join(' · ')}</span>}
     </span>
@@ -144,9 +143,50 @@ const TONE_MARK: Record<LiveTone, typeof CircleDotIcon> = {
   error: CircleXIcon,
 };
 
-function ToneMark({ tone }: { tone: LiveTone }) {
+function ToneMark({ tone, className = 'size-3' }: { tone: LiveTone; className?: string }) {
   const Drawn = TONE_MARK[tone];
-  return <Drawn className={`size-3 ${MARK_NUDGE} ${TONE_INK[tone]}`} />;
+  return <Drawn className={`${className} ${MARK_NUDGE} ${TONE_INK[tone]}`} />;
+}
+
+/**
+ * The MARK says the state; the sentence beside it keeps the panel's ordinary ink.
+ *
+ * Colouring every line by its tone painted a green row for every job that merely
+ * passed — five inks down one column, and the row actually doing something no
+ * longer stood out. Only a FAILURE speaks in colour, because it is why the reader
+ * opened the view.
+ */
+function rowInk(tone: LiveTone): string {
+  return tone === 'error' ? TONE_INK.error : '';
+}
+
+/** A phase that has not run yet is not part of the picture, so it steps back. */
+function stepInk(tone: LiveTone): string {
+  return tone === 'idle' ? 'text-dialog-hint' : rowInk(tone);
+}
+
+/**
+ * WHETHER THE PICTURE IS STILL BEING WRITTEN, in one word.
+ *
+ * A spinner says "something is happening" and goes on saying it for ninety
+ * minutes; what the reader wants from the head is whether this run is still live
+ * and, once it is not, how it ended. One word carries both, and it stops moving
+ * when the run does — which is also the motion the panel owes a phone.
+ */
+function ViewState({ view, isSettled }: { view: LiveViewModel; isSettled: boolean }) {
+  const failed = view.nodes.some((node) => node.type === 'status' && node.tone === 'error');
+  const [word, paint] = !isSettled
+    ? (['Live', 'bg-accent text-accent-foreground'] as const)
+    : failed
+      ? (['Failed', 'bg-err/15 text-err'] as const)
+      : (['Done', 'bg-hover text-dialog-hint'] as const);
+  return (
+    <span
+      className={`shrink-0 px-1.5 py-0.5 font-mono text-meta font-bold uppercase tracking-[0.08em] ${paint}`}
+    >
+      {word}
+    </span>
+  );
 }
 
 /**
@@ -156,13 +196,13 @@ function ToneMark({ tone }: { tone: LiveTone }) {
  */
 function StatusRow({ node }: { node: LiveStatusNode }) {
   return (
-    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2 gap-y-1 font-mono text-ui">
-      <ToneMark tone={node.tone} />
+    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-baseline gap-x-2 gap-y-1 font-mono text-title">
+      <ToneMark tone={node.tone} className="size-3.5" />
       <p className={`min-w-0 ${PROSE} ${TONE_INK[node.tone]}`}>
         <InlineMarkdown>{node.text}</InlineMarkdown>
       </p>
       {node.detail && (
-        <p className="col-start-2 min-w-0 text-chip text-dialog-hint">
+        <p className="col-start-2 min-w-0 text-meta text-dialog-hint">
           <InlineMarkdown>{node.detail}</InlineMarkdown>
         </p>
       )}
@@ -184,14 +224,14 @@ function ProgressRow({ node }: { node: LiveProgressNode }) {
       {fraction === null ? (
         <p className="font-mono text-ui text-dialog-hint">
           <span className="italic">working</span>
-          {counted && <span className="ml-2 text-chip">{counted}</span>}
+          {counted && <span className="ml-2 text-meta">{counted}</span>}
         </p>
       ) : (
         <>
           <Meter value={fraction} label={node.label ?? 'Progress'} />
-          <p className="mt-1.5 font-mono text-chip text-dialog-hint">
-            <span className="font-bold text-white">{livePercent(fraction)}%</span>
-            {counted && <span className="ml-2">{counted}</span>}
+          <p className="mt-1.5 flex items-baseline gap-2 font-mono text-meta text-dialog-hint">
+            <span className="text-ui font-bold tabular-nums text-white">{livePercent(fraction)}%</span>
+            {counted && <span className="tabular-nums">{counted}</span>}
           </p>
         </>
       )}
@@ -206,7 +246,7 @@ function StatRow({ node }: { node: LiveStatNode }) {
     <dl className="flex flex-wrap items-baseline gap-x-4 gap-y-1 font-mono">
       {node.stats.map((stat) => (
         <div key={stat.id} className="flex items-baseline gap-1.5">
-          <dt className="text-chip text-dialog-hint">
+          <dt className="text-meta text-dialog-hint">
             <InlineMarkdown>{stat.label}</InlineMarkdown>
           </dt>
           <dd className={`text-ui font-bold ${TONE_INK[stat.tone]}`}>{stat.value_text}</dd>
@@ -219,16 +259,16 @@ function StatRow({ node }: { node: LiveStatNode }) {
 function StepsRows({ node }: { node: LiveStepsNode }) {
   if (node.steps.length === 0) return <Empty>{EMPTY_LINE.steps}</Empty>;
   return (
-    <ul className="space-y-1 font-mono text-chip">
+    <ul className="space-y-1.5 font-mono text-ui">
       {node.steps.map((step) => (
         <li key={step.id} className="flex min-w-0 items-baseline gap-2">
           <ToneMark tone={step.tone} />
-          <span className={`min-w-0 flex-1 truncate ${TONE_INK[step.tone]}`}>
+          <span className={`min-w-0 flex-1 truncate ${stepInk(step.tone)}`}>
             <InlineMarkdown>{step.label}</InlineMarkdown>
           </span>
-          {step.value && <span className="shrink-0 font-bold text-white">{step.value}</span>}
+          {step.value && <span className="shrink-0 font-bold tabular-nums text-white">{step.value}</span>}
           {step.detail && (
-            <span className="shrink-0 text-dialog-hint">
+            <span className="shrink-0 text-meta text-dialog-hint">
               <InlineMarkdown>{step.detail}</InlineMarkdown>
             </span>
           )}
@@ -309,6 +349,68 @@ function LogRows({
  * under the thumb on every patch. The order is the extension's statement, and
  * it is the same one the terminal paints.
  */
+/**
+ * A ROW IS A SENTENCE, and its columns are the words after the first.
+ *
+ * A live table is read DOWN its first column and glanced at across the rest, so
+ * a phone stops scrolling sideways to see the rest: the row's own line carries
+ * the name and, at the right edge, the VALUE — the last column, when that column
+ * is right-aligned, because a number is what a row is measured by. Every column
+ * between them stacks under the name as one detail line. From `sm` there is
+ * width for the columns the run declared and they take their own cells back.
+ *
+ * No cell is fenced. A rule between rows is what the eye needs to keep a row
+ * together, and forty boxed cells at 8px were a grid to decode before a run
+ * could be read.
+ */
+function tableShape(node: LiveTableNode) {
+  const last = node.columns.length - 1;
+  const valueAt = last > 0 && node.columns[last]?.align === 'right' ? last : -1;
+  const detailAt = node.columns
+    .map((_, index) => index)
+    .filter((index) => index > 0 && index !== valueAt);
+  return { valueAt, detailAt };
+}
+
+/** The row as a phone reads it: the name, the value beside it, the rest beneath. */
+function RowFace({
+  node,
+  row,
+  isIndented,
+}: {
+  node: LiveTableNode;
+  row: LiveRow;
+  isIndented: boolean;
+}) {
+  const { valueAt, detailAt } = tableShape(node);
+  const value = valueAt >= 0 ? (row.cells[valueAt] ?? '') : '';
+  const detail = detailAt
+    .map((index) => row.cells[index] ?? '')
+    .filter((cell) => cell !== '')
+    .join(' · ');
+  const name =
+    row.branch && row.cells[0]?.startsWith(`${row.branch} / `)
+      ? row.cells[0].slice(row.branch.length + 3)
+      : (row.cells[0] ?? '');
+  return (
+    <span className={`block min-w-0 ${isIndented ? 'pl-3' : ''}`}>
+      <span className="flex min-w-0 items-baseline gap-2">
+        <span className="min-w-0 flex-1 truncate">
+          <InlineMarkdown>{name}</InlineMarkdown>
+        </span>
+        {value !== '' && (
+          <span className="shrink-0 tabular-nums text-meta text-dialog-hint sm:hidden">{value}</span>
+        )}
+      </span>
+      {detail !== '' && (
+        <span className="mt-0.5 block truncate text-meta text-dialog-hint sm:hidden">
+          <InlineMarkdown>{detail}</InlineMarkdown>
+        </span>
+      )}
+    </span>
+  );
+}
+
 function TableRows({
   node,
   onFocus,
@@ -317,6 +419,7 @@ function TableRows({
   onFocus?: (nodeId: string, itemIds: string[]) => void;
 }) {
   const rows = orderedRows(node);
+  const { valueAt, detailAt } = tableShape(node);
   const focused = useMemo(() => new Set(node.focused_ids), [node.focused_ids]);
   const grouped = useMemo(() => {
     const counts = new Map<string, number>();
@@ -348,16 +451,17 @@ function TableRows({
     if (!group || openGroups.has(group)) visible.push({ kind: 'row', row });
   }
 
+  const span = Math.max(1, node.columns.length);
   return (
-    <div className="-mx-1 overflow-x-auto">
-      <table className="w-full min-w-0 border-collapse border border-dialog-edge font-mono text-chip">
-        <thead>
+    <div className="-mx-3 overflow-x-auto">
+      <table className="w-full min-w-0 border-collapse font-mono text-ui">
+        <thead className="hidden sm:table-header-group">
           <tr>
             {node.columns.map((column) => (
               <th
                 key={column.id}
                 scope="col"
-                className={`border border-dialog-edge px-1.5 py-1 font-bold uppercase tracking-[0.08em] text-dialog-hint ${
+                className={`px-3 pb-1.5 font-normal uppercase tracking-[0.08em] text-meta text-dialog-hint ${
                   column.align === 'right' ? 'text-right' : 'text-left'
                 }`}
               >
@@ -366,10 +470,10 @@ function TableRows({
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody className="divide-y divide-dialog-edge">
           {rows.length === 0 && (
             <tr>
-              <td className="border border-dialog-edge px-1.5 py-1" colSpan={Math.max(1, node.columns.length)}>
+              <td className="px-3 py-2" colSpan={span}>
                 <Empty>{EMPTY_LINE.table}</Empty>
               </td>
             </tr>
@@ -377,12 +481,17 @@ function TableRows({
           {visible.map((item) => {
             if (item.kind === 'group') {
               const isOpen = openGroups.has(item.label);
+              // The branch NAMES itself and then qualifies itself, the way every
+              // label in this panel does: `Build native image · 3 variants`. The
+              // name leads the row; the qualifier steps back to the right edge.
+              const [name, ...rest] = item.label.split(' · ');
               return (
-                <tr key={`group:${item.label}`} className="bg-panel-2 text-dialog-hint">
-                  <td className="border border-dialog-edge px-1.5" colSpan={Math.max(1, node.columns.length)}>
+                <tr key={`group:${item.label}`}>
+                  <td className="px-3 py-1" colSpan={span}>
                     <Disclosure
                       isOpen={isOpen}
-                      aria-label={item.label}
+                      tone="branch"
+                      aria-label={name}
                       onClick={() =>
                         setOpenGroups((was) => {
                           const next = new Set(was);
@@ -392,7 +501,12 @@ function TableRows({
                         })
                       }
                     >
-                      <span className="truncate font-bold">{item.label}</span>
+                      <span className="min-w-0 flex-1 truncate">{name}</span>
+                      {rest.length > 0 && (
+                        <span className="shrink-0 font-normal text-meta text-dialog-hint">
+                          {rest.join(' · ')}
+                        </span>
+                      )}
                     </Disclosure>
                   </td>
                 </tr>
@@ -400,35 +514,42 @@ function TableRows({
             }
             const row = item.row;
             const isFocused = focused.has(row.id);
-            const firstCell =
-              row.branch && row.cells[0]?.startsWith(`${row.branch} / `)
-                ? row.cells[0].slice(row.branch.length + 3)
-                : (row.cells[0] ?? '');
             return (
               <TableFocusRow
                 key={row.id}
                 isFocused={isFocused}
-                className={`${TONE_INK[row.tone]} ${node.is_focusable ? 'cursor-pointer' : ''}`}
+                className={`${rowInk(row.tone)} ${node.is_focusable ? 'cursor-pointer' : ''}`}
                 onClick={node.is_focusable ? () => onFocus?.(node.id, [row.id]) : undefined}
               >
-                {node.columns.map((column, cell) => (
+                <td className="p-0 align-top">
+                  {node.is_focusable ? (
+                    <TableFocusButton
+                      isFocused={isFocused}
+                      mark={<ToneMark tone={row.tone} />}
+                      aria-label={`Focus ${row.cells[0] || row.id}`}
+                    >
+                      <RowFace node={node} row={row} isIndented={Boolean(row.branch)} />
+                    </TableFocusButton>
+                  ) : (
+                    <span className="flex min-w-0 items-start gap-2 px-3 py-2">
+                      <ToneMark tone={row.tone} />
+                      <RowFace node={node} row={row} isIndented={Boolean(row.branch)} />
+                    </span>
+                  )}
+                </td>
+                {detailAt.map((index) => (
                   <td
-                    key={column.id}
-                    className={`border border-dialog-edge align-top ${
-                      node.is_focusable && cell === 0 ? 'p-0' : 'px-1.5 py-1'
-                    } ${column.align === 'right' ? 'text-right tabular-nums' : 'text-left'}`}
+                    key={node.columns[index]?.id ?? index}
+                    className="hidden px-3 py-2 align-top text-meta text-dialog-hint sm:table-cell"
                   >
-                    {node.is_focusable && cell === 0 ? (
-                      <TableFocusButton isFocused={isFocused} aria-label={`Focus ${row.cells[cell] || row.id}`}>
-                        <span className={row.branch ? 'pl-3' : ''}>
-                          <InlineMarkdown>{firstCell}</InlineMarkdown>
-                        </span>
-                      </TableFocusButton>
-                    ) : (
-                      <InlineMarkdown>{row.cells[cell] ?? ''}</InlineMarkdown>
-                    )}
+                    <InlineMarkdown>{row.cells[index] ?? ''}</InlineMarkdown>
                   </td>
                 ))}
+                {valueAt >= 0 && (
+                  <td className="hidden py-2 pr-3 pl-2 text-right align-top tabular-nums text-meta text-dialog-hint sm:table-cell">
+                    <InlineMarkdown>{row.cells[valueAt] ?? ''}</InlineMarkdown>
+                  </td>
+                )}
               </TableFocusRow>
             );
           })}
@@ -446,7 +567,7 @@ function TableRows({
 function LinkRows({ node }: { node: LiveLinkNode }) {
   if (node.links.length === 0) return <Empty>{EMPTY_LINE.link}</Empty>;
   return (
-    <ul className="space-y-1 font-mono text-chip">
+    <ul className="space-y-1.5 font-mono text-ui">
       {node.links.map((link) => (
         <li key={link.id} className="flex min-w-0 items-baseline gap-2">
           <ArrowOutIcon className={`size-3 ${MARK_NUDGE} text-dialog-hint`} />
@@ -465,7 +586,7 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
             </span>
           )}
           {link.target_kind !== 'url' && (
-            <span className="min-w-0 shrink truncate text-dialog-hint">{link.target}</span>
+            <span className="min-w-0 shrink truncate text-meta text-dialog-hint">{link.target}</span>
           )}
         </li>
       ))}
@@ -777,18 +898,18 @@ export function LiveViewPanel({
       role={isSettled ? undefined : 'status'}
       aria-live={isSettled ? undefined : 'polite'}
     >
-      <header className="flex items-center gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
-        {!isSettled && <Spinner tone="accent" />}
+      <header className="flex items-start gap-2 border-b border-dialog-edge bg-panel-2 px-3 py-2.5">
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-mono text-body font-bold text-white">
+          <span className="block truncate font-mono text-title font-bold text-white">
             {view.title}
           </span>
           {view.description && (
-            <span className="block truncate font-mono text-chip text-dialog-hint">
+            <span className="block truncate font-mono text-meta text-dialog-hint">
               <InlineMarkdown>{view.description}</InlineMarkdown>
             </span>
           )}
         </span>
+        <ViewState view={view} isSettled={isSettled} />
         {onInterrupt && !isArmed && (
           <Button variant="secondary" onClick={() => setNote('')} disabled={isInterrupting}>
             {isInterrupting ? 'Stopping...' : 'Interrupt'}

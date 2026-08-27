@@ -357,7 +357,8 @@ export const Chip = forwardRef<
 
 /**
  * A selectable live-table row owns the selection wash across every cell. The
- * button in its first cell remains the control and the leading selection mark.
+ * button in its first cell stays the control; the mark it leads with is the
+ * row's STATE, which the caller owns.
  */
 export const TableFocusRow = forwardRef<
   HTMLTableRowElement,
@@ -379,17 +380,23 @@ export const TableFocusRow = forwardRef<
  * A live table row which CHANGES the detail below it. Selection is shared engine
  * state, not navigation: `aria-pressed` admits several concurrently running rows,
  * while the full-width 44px face gives a phone thumb the whole first cell.
+ *
+ * The leading MARK is the caller's, because what a row is doing is the run's
+ * statement and not the table's — and a row already says it is selected twice,
+ * with the accent edge this button wears and the wash `TableFocusRow` lays over
+ * every cell. The face starts at the TOP of its own box: a row whose second line
+ * says what it is doing now must not push its mark and its name into the middle.
  */
 export const TableFocusButton = forwardRef<
   HTMLButtonElement,
-  ButtonHTMLAttributes<HTMLButtonElement> & { isFocused?: boolean }
->(function TableFocusButton({ isFocused = false, className = '', children, ...props }, ref) {
+  ButtonHTMLAttributes<HTMLButtonElement> & { isFocused?: boolean; mark: ReactNode }
+>(function TableFocusButton({ isFocused = false, mark, className = '', children, ...props }, ref) {
   return (
     <button
       ref={ref}
       type="button"
       aria-pressed={isFocused}
-      className={`flex min-h-11 w-full min-w-0 items-center gap-1.5 border-l-2 px-1.5 py-1 text-left font-mono text-chip transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-8 ${
+      className={`flex min-h-11 w-full min-w-0 items-start gap-2 border-l-2 px-3 py-3.5 text-left font-mono text-ui transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-8 mouse:py-2 ${
         isFocused
           ? 'border-accent text-accent-ink'
           : 'border-transparent text-inherit hover:bg-hover'
@@ -397,7 +404,7 @@ export const TableFocusButton = forwardRef<
       {...props}
     >
       <span aria-hidden="true" className="shrink-0">
-        {isFocused ? '●' : '○'}
+        {mark}
       </span>
       <span className="min-w-0 flex-1">{children}</span>
     </button>
@@ -679,7 +686,7 @@ export function Disclosure({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   isOpen: boolean;
-  tone?: 'step' | 'thinking' | 'muted' | 'caption';
+  tone?: 'step' | 'thinking' | 'muted' | 'caption' | 'branch';
   /**
    * Gives the row's own gutter back: the chevron lines its ink up with the card's
    * leading edge while the press target keeps the padding a finger needs. It is
@@ -695,13 +702,15 @@ export function Disclosure({
         ? 'font-bold italic tracking-[0.07em] text-thinking hover:text-dialog-hint-key'
         : tone === 'caption'
           ? 'uppercase tracking-[0.08em] text-dialog-hint hover:text-accent-ink'
-          : 'text-footer-muted hover:bg-hover';
+          : tone === 'branch'
+            ? 'font-bold text-white hover:bg-hover'
+            : 'text-footer-muted hover:bg-hover';
   return (
     <button
       type="button"
       data-disclosure-toggle
       aria-expanded={isOpen}
-      className={`flex min-h-8 min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono text-chip transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-6 ${tone === 'caption' ? 'w-auto' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
+      className={`flex min-h-8 min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono ${tone === 'branch' ? 'text-ui' : 'text-chip'} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-6 ${tone === 'caption' ? 'w-auto' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
       {...props}
     >
       <ChevronIcon open={isOpen} className="size-3 shrink-0 opacity-70" />

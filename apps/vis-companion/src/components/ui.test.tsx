@@ -2359,7 +2359,7 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
   describe("TableFocusButton", () => {
     const html = (isFocused: boolean) =>
       renderToStaticMarkup(
-        <TableFocusButton isFocused={isFocused} aria-label="Focus tests / macos">
+        <TableFocusButton isFocused={isFocused} mark={<i data-mark="running" />} aria-label="Focus tests / macos">
           tests / macos
         </TableFocusButton>,
       );
@@ -2369,6 +2369,15 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(html(false)).toContain('aria-pressed="false"');
       expect(first(html(true))).toContain("min-h-11");
       expect(first(html(true))).toContain("mouse:min-h-8");
+    });
+
+    // The row's state is the RUN's statement, so the button draws the caller's mark
+    // and does not invent one; and the face starts at the TOP of its box, because a
+    // row whose second line says what it is doing now must not push its name into
+    // the middle of two lines.
+    it("leads with the mark it was handed, from the top of the row", () => {
+      expect(html(false)).toContain('data-mark="running"');
+      expect(first(html(false))).toContain("items-start");
     });
   });
 

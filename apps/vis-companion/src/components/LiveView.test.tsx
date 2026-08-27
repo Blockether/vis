@@ -258,7 +258,11 @@ describe('focusing a table row', () => {
     expect(onFocus).toHaveBeenCalledWith('hosts', ['db-2']);
 
     onFocus.mockClear();
-    fireEvent.click(screen.getByText('critical'));
+    // A middle column appears twice in the DOM on purpose — stacked under the name
+    // for a phone, and as its own cell from `sm` — and never both on one screen. The
+    // press has to reach the row from the cell that is NOT the button.
+    const spelled = screen.getAllByText('critical');
+    fireEvent.click(spelled[spelled.length - 1]);
     expect(onFocus).toHaveBeenCalledWith('hosts', ['db-2']);
   });
   // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: matrix jobs repeated
@@ -445,16 +449,51 @@ describe('what a run says about its own layout', () => {
     expect(alone.innerHTML).not.toContain('grid-flow-col');
   });
 
-  // A table is READ across, so every cell is fenced: the eye needs the rail to
-  // keep a row together, and the terminal paints the same box.
-  it('draws the table as a box with a rule between every pair of rows', () => {
+  // A phone reads a table DOWN its first column. The row's own line carries the
+  // name and, at the right edge, the value it is measured by; every column between
+  // them stacks under the name, and they take their cells back only when there is
+  // width for them. Forty fenced cells at 8px were a grid to decode before a run
+  // could be read — a rule between rows is all the eye needs to keep a row whole.
+  it('reads down a phone: no fenced cells, a rule between rows, columns only at sm', () => {
     paint();
     const table = screen.getByRole('table');
-    expect(table.className).toContain('border border-dialog-edge');
-    const cells = [...table.querySelectorAll('th, td')];
-    // Three columns over a header and two rows: nine cells, every one fenced.
-    expect(cells.length).toBe(9);
-    expect(cells.every((cell) => cell.className.includes('border border-dialog-edge'))).toBe(true);
+    expect(table.className).not.toContain('border border-dialog-edge');
+    expect(table.querySelector('tbody')?.className).toContain('divide-y');
+    const head = table.querySelector('thead') as HTMLElement;
+    expect(head.className).toContain('hidden');
+    expect(head.className).toContain('sm:table-header-group');
+    const cells = [...table.querySelectorAll('td')];
+    expect(cells.some((cell) => cell.className.includes('border border-dialog-edge'))).toBe(false);
+    const [name, ...rest] = [...(table.querySelector('tbody tr') as HTMLElement).children];
+    expect(name.className).not.toContain('hidden');
+    expect(
+      rest.every(
+        (cell) => cell.className.includes('hidden') && cell.className.includes('sm:table-cell'),
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps the name and its value on one line and stacks the rest beneath', () => {
+    const view = opened();
+    const hosts = view.nodes
+      .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
+      .find((node) => node.id === 'hosts');
+    if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
+    paint({
+      view: withNode(view, {
+        ...hosts,
+        columns: [
+          { id: 'job', label: 'Job', align: 'left' },
+          { id: 'now', label: 'Now', align: 'left' },
+          { id: 'took', label: 'Took', align: 'right' },
+        ],
+        rows: [{ ...hosts.rows[0], cells: ['macos-latest', 'Run native build', '44m46s'] }],
+      }),
+    });
+    const face = screen.getAllByRole('cell')[0] as HTMLElement;
+    expect(face.textContent).toContain('macos-latest');
+    expect(face.textContent).toContain('44m46s');
+    expect(face.textContent).toContain('Run native build');
   });
 
   it('paints the marks a human wrote, and nothing a block would bring', () => {
@@ -752,7 +791,10 @@ describe('the section is built from the closed vocabulary', () => {
     expect(liveViewSource).toContain('<Button');
     expect(liveViewSource).toContain('<Meter');
     expect(liveViewSource).toContain('<LoadMore');
-    expect(liveViewSource).toContain('<Spinner');
+    expect(liveViewSource).toContain('<Disclosure');
+    // And no spinner: a mark that turns for ninety minutes says only "still here",
+    // while one word says whether the run is live and, once it is not, how it ended.
+    expect(liveViewSource).not.toContain('<Spinner');
     expect(liveViewSource).not.toContain('<button');
     expect(liveViewSource).not.toContain('style={');
     expect(liveViewSource).not.toContain('style="');
