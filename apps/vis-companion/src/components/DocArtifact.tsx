@@ -26,7 +26,6 @@ import { readArtifactText, TextFrame } from "./TextArtifact";
 import { ChevronIcon } from "./icons";
 import {
   BandButton,
-  Button,
   ListRow,
   overlayLayer,
   OverlayScreen,
@@ -72,37 +71,29 @@ export type AnnotateContext = {
  * than inside it: `allow-top-navigation`, which would yank the user off the
  * companion, and `allow-popups`, which would open windows behind it.
  *
- * `allow-scripts` IS THE ONE CAPABILITY THE READER GRANTS, because a frame is a
- * DOCUMENT boundary and not a scheduling one. A sandboxed blob: frame is
- * same-site, so Chromium keeps it in the app's own renderer process, and
- * WKWebView paints every frame on a single web process: a page that loops takes
- * the transcript, the composer and the ✕ that would have closed it with it, and
- * no timer is left running to recover from the outside. Measured on an attached
- * design whose `MutationObserver` re-entered itself on the mutation its own
- * callback had just made — the app had to be killed. So a page is READ first and
- * RUN only when someone asks for it ({@link DocFrame}), one open at a time.
+ * `allow-scripts` IS GRANTED, to every document and with nothing to press
+ * first. The frame is the boundary; the capabilities withheld above are what
+ * that boundary means. A script with no origin, no top-level navigation and no
+ * popups can paint its own document and reach nothing else — and a page that
+ * only half renders is not the artifact the reader was handed. The cost is
+ * LIVENESS, not privilege: a sandboxed blob: frame is same-site, so a page that
+ * loops takes the app's web process with it and the app has to be relaunched.
  *
  * A PDF is the exception that is not one: `allow-scripts` there runs Chromium's
  * built-in viewer, which refuses to paint without it, never the artifact.
  */
-export function docSandbox(mime: string | undefined, scripts = false): string {
+export function docSandbox(mime: string | undefined): string {
   if (isPdfMedia(mime)) return "allow-scripts";
-  const capabilities =
-    "allow-forms allow-modals allow-pointer-lock allow-downloads";
-  return scripts ? `allow-scripts ${capabilities}` : capabilities;
+  return "allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads";
 }
 
 /**
  * The artifact itself, quarantined. `url` is an object URL for the attachment's
  * bytes, and an opened document always fills its box.
  *
- * It paints with the page's script withheld: markup and CSS are most of a
- * design, and a static read is the one reading no artifact can hang. The strip
- * above the frame is where that risk is taken deliberately — `Run scripts`
- * remounts the frame with `allow-scripts` (the `key` is what reloads the
- * document, since `sandbox` alone is only read at load), and the same remount
- * takes the capability back, so a page that turned out to loop can still be
- * stopped for as long as it leaves the thread.
+ * It paints LIVE — markup, CSS and script — because the sandbox already says
+ * what the page may touch ({@link docSandbox}), so there is nothing left for a
+ * strip above the frame to ask about.
  */
 export const DocFrame = memo(function DocFrame({
   url,
@@ -113,41 +104,15 @@ export const DocFrame = memo(function DocFrame({
   mime: string;
   name: string;
 }) {
-  const [runsScripts, setRunsScripts] = useState(false);
-  const frame = (
+  return (
     <iframe
-      key={runsScripts ? "scripts" : "static"}
       title={name}
       src={url}
-      sandbox={docSandbox(mime, runsScripts)}
+      sandbox={docSandbox(mime)}
       referrerPolicy="no-referrer"
       loading="lazy"
       className="min-h-0 w-full flex-1 border-0 bg-input"
     />
-  );
-  // A PDF frame carries no strip: what runs inside it is the browser's viewer,
-  // and the reader has nothing to decide about the artifact's own script.
-  if (isPdfMedia(mime)) return frame;
-  return (
-    <div className="flex min-h-0 w-full flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
-        <p className="min-w-0 flex-1 truncate font-mono text-chip text-footer-muted">
-          {runsScripts
-            ? "This page is running its own script."
-            : "This page is shown without running its script."}
-        </p>
-        <Button
-          type="button"
-          variant="quiet"
-          density="compact"
-          aria-pressed={runsScripts}
-          onClick={() => setRunsScripts((runs) => !runs)}
-        >
-          {runsScripts ? "Stop scripts" : "Run scripts"}
-        </Button>
-      </div>
-      {frame}
-    </div>
   );
 });
 

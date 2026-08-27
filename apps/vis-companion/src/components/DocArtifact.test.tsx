@@ -43,22 +43,20 @@ describe("sandboxing", () => {
     }
   });
 
-  // Reported: an attached design page did not render and froze the whole app —
-  // its script re-entered a `MutationObserver` on its own mutation, and a
-  // sandboxed blob: frame shares the app's thread, so nothing was left to
-  // recover with. A page runs only when the reader grants it.
-  it("withholds a page's own script until the reader asks", () => {
-    expect(docSandbox("text/html")).not.toContain("allow-scripts");
-    expect(docSandbox("application/xhtml+xml")).not.toContain("allow-scripts");
-    expect(docSandbox("text/html", true)).toContain("allow-scripts");
-    expect(docSandbox("application/xhtml+xml", true)).toContain("allow-scripts");
+  // Regression: an attached design page rendered as dead paper — the frame was
+  // mounted without `allow-scripts` until someone pressed a strip above it, so
+  // a document whose layout its own script builds arrived half-painted, and the
+  // reader had to know that a press existed. The sandbox is the boundary; there
+  // is nothing left to grant.
+  it("runs an attached page's own script", () => {
+    expect(docSandbox("text/html")).toContain("allow-scripts");
+    expect(docSandbox("application/xhtml+xml")).toContain("allow-scripts");
   });
 
   // Chromium's built-in viewer refuses to paint without it, and what runs there
   // is the viewer, never the artifact.
   it("allows the browser PDF viewer", () => {
     expect(docSandbox("application/pdf")).toBe("allow-scripts");
-    expect(docSandbox("application/pdf", true)).toBe("allow-scripts");
   });
 
   it("paints the artifact inside a sandboxed frame", () => {
@@ -66,35 +64,20 @@ describe("sandboxing", () => {
       <DocFrame url="blob:x" mime="text/html" name="page.html" />,
     );
     expect(html).toContain("<iframe");
-    expect(html).toContain('sandbox="allow-forms');
-    expect(html).not.toContain("allow-scripts");
+    expect(html).toContain('sandbox="allow-scripts allow-forms');
     expect(html).toContain('title="page.html"');
     expect(html).not.toContain("allow-same-origin");
   });
 
-  it("reads a page statically and runs it only on the reader's press", async () => {
-    const user = userEvent.setup();
-    const { container } = render(
-      <DocFrame url="blob:x" mime="text/html" name="page.html" />,
-    );
-    const sandboxOf = () =>
-      container.querySelector("iframe")?.getAttribute("sandbox") ?? "";
-    expect(sandboxOf()).not.toContain("allow-scripts");
-
-    await user.click(screen.getByRole("button", { name: "Run scripts" }));
-    expect(sandboxOf()).toContain("allow-scripts");
-
-    // The same remount takes the capability back, so a page that turned out to
-    // loop can still be stopped while it leaves the thread.
-    await user.click(screen.getByRole("button", { name: "Stop scripts" }));
-    expect(sandboxOf()).not.toContain("allow-scripts");
-  });
-
-  it("gives the browser PDF viewer no strip to press", () => {
-    const html = renderToStaticMarkup(
-      <DocFrame url="blob:x" mime="application/pdf" name="q3.pdf" />,
-    );
-    expect(html).not.toContain("Run scripts");
+  // The frame IS the component: no strip, no toggle, no remount key.
+  it("gives a document nothing to press", () => {
+    for (const mime of ["text/html", "application/pdf"]) {
+      const html = renderToStaticMarkup(
+        <DocFrame url="blob:x" mime={mime} name="page" />,
+      );
+      expect(html).not.toContain("<button");
+      expect(html).toContain("allow-scripts");
+    }
   });
 });
 
