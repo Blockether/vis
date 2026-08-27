@@ -218,10 +218,11 @@ describe("the artifacts chip", () => {
       <ArtifactsChip count={3} open onToggle={() => {}} />,
     );
     expect(html).not.toContain("▣");
-    // The composer's own icon grammar: 24-grid, currentColor, 1.8 stroke.
+    // The app's one icon grammar: the 24-unit grid, `currentColor`, and the
+    // library's own stroke of 2, which is the stem of the type beside it.
     expect(html).toContain('viewBox="0 0 24 24"');
     expect(html).toContain('stroke="currentColor"');
-    expect(html).toContain('stroke-width="1.8"');
+    expect(html).toContain('stroke-width="2"');
   });
 });
 

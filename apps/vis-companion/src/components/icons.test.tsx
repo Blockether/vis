@@ -8,6 +8,12 @@ import {
   CameraIcon,
   CheckIcon,
   ChevronIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleDotIcon,
+  CircleSlashIcon,
+  CircleXIcon,
   ClipIcon,
   CloseIcon,
   CopyIcon,
@@ -26,6 +32,20 @@ import {
   TrashIcon,
   VoiceLoopIcon,
 } from "./icons";
+
+/**
+ * THE STATUS COLUMN, and it is a SET: these six are chosen for each other rather
+ * than for the control they lead. They stack in the live view's first column, so
+ * they are measured against one another and not against the strip of controls.
+ */
+const STATUS_COLUMN = {
+  CircleCheckIcon: <CircleCheckIcon />,
+  CircleXIcon: <CircleXIcon />,
+  CircleDotIcon: <CircleDotIcon />,
+  CircleDashedIcon: <CircleDashedIcon />,
+  CircleSlashIcon: <CircleSlashIcon />,
+  CircleAlertIcon: <CircleAlertIcon />,
+};
 
 const ICONS = {
   AlertIcon: <AlertIcon />,
@@ -53,6 +73,7 @@ const ICONS = {
   StopIcon: <StopIcon />,
   TrashIcon: <TrashIcon />,
   VoiceLoopIcon: <VoiceLoopIcon />,
+  ...STATUS_COLUMN,
 };
 
 /**
@@ -120,13 +141,18 @@ function markBox(html: string) {
     }
   }
 
-  for (const tag of html.match(/<(circle|rect)[^>]*>/g) ?? []) {
+  for (const tag of html.match(/<(circle|rect|line)[^>]*>/g) ?? []) {
     const at = (key: string) =>
       Number(new RegExp(`${key}="(-?[\\d.]+)"`).exec(tag)?.[1] ?? Number.NaN);
     if (tag.startsWith("<circle")) {
       const [cx, cy, r] = [at("cx"), at("cy"), at("r")];
       add(cx - r, cy - r);
       add(cx + r, cy + r);
+    } else if (tag.startsWith("<line")) {
+      // The bang inside a ring and the stroke through it are `<line>`s, and a
+      // mark drawn only in lines measures nothing at all without this.
+      add(at("x1"), at("y1"));
+      add(at("x2"), at("y2"));
     } else {
       const [x, y, w, h] = [at("x"), at("y"), at("width"), at("height")];
       add(x, y);
@@ -166,7 +192,7 @@ describe("the icon set", () => {
       // like a set, not like five fonts.
       expect(html, name).toContain('viewBox="0 0 24 24"');
       expect(html, name).toContain('stroke="currentColor"');
-      expect(html, name).toContain('stroke-width="1.8"');
+      expect(html, name).toContain('stroke-width="2"');
       expect(html, name).toMatch(/class="[^"]*\bsize-3\.5\b/);
       // Decoration inside an already-labelled control.
       expect(html, name).toContain('aria-hidden="true"');
@@ -229,30 +255,53 @@ describe("the icon set", () => {
     );
   });
 
-  // Regression: every icon was drawn to its own extent inside the shared
-  // viewBox, so the paperclip (corner to corner) came out half again as big as
-  // the close cross (the middle third) at the very same `size-3.5`, and the
-  // gear and the star were bigger still.
-  it("draws every mark at the same optical size", () => {
-    const measured = Object.entries(ICONS).map(([name, icon]) => {
-      const box = markBox(renderToStaticMarkup(icon));
-      return { name, size: round(box.size) };
-    });
-    const off = measured.filter(({ size }) => size < 12.5 || size > 14.5);
+  // Regression, in the set this file used to draw by hand: every icon was drawn to
+  // its own extent inside the shared viewBox, so the paperclip (corner to corner)
+  // came out half again as big as the close cross (the middle third) at the very
+  // same `size-3.5`.
+  //
+  // The library answers this with a common PADDING rather than a common optical
+  // size — `arrow-up-right` covers 10 units of the grid and a ring covers 20 — and
+  // for a strip of unlike controls that is the right trade. For a COLUMN it is the
+  // wrong one: the same mark repeats down fifty rows there, and a difference in
+  // weight between two of them reads as a difference in meaning. So the column is
+  // ONE RING with five interiors, and this is the test that keeps it one.
+  it("keeps a column of marks to one ring", () => {
+    const measured = Object.entries(STATUS_COLUMN).map(([name, icon]) => ({
+      name,
+      size: round(markBox(renderToStaticMarkup(icon)).size),
+    }));
+    const sizes = measured.map(({ size }) => size);
+
+    expect(round(Math.max(...sizes) - Math.min(...sizes))).toBeLessThanOrEqual(0.5);
+    // And the ring is the full live area: 20 of the 24 grid.
+    expect(measured.filter(({ size }) => Math.abs(size - 20) > 0.5)).toEqual([]);
+  });
+
+  // The spread of the WHOLE set, pinned so a library bump that reshapes a mark has
+  // to be looked at: `arrow-up-right` is the smallest at 10 units and the rings are
+  // the largest at 20. Anything outside that was drawn to a different grid.
+  it("draws every mark to one grid", () => {
+    const off = Object.entries(ICONS)
+      .map(([name, icon]) => ({
+        name,
+        size: round(markBox(renderToStaticMarkup(icon)).size),
+      }))
+      .filter(({ size }) => size < 9.5 || size > 20.5);
 
     expect(off).toEqual([]);
   });
 
   it("keeps every mark inside one live area", () => {
-    // 4–20 of the 24 grid. The padding is what lets a control put an icon
-    // against a label without the icon deciding the row's height.
+    // 2–22 of the 24 grid: the library's own padding, and what lets a control put
+    // an icon against a label without the icon deciding the row's height.
     const off = Object.entries(ICONS)
       .map(([name, icon]) => ({
         name,
         box: markBox(renderToStaticMarkup(icon)),
       }))
       .filter(
-        ({ box }) => box.x0 < 4 || box.y0 < 4 || box.x1 > 20 || box.y1 > 20,
+        ({ box }) => box.x0 < 2 || box.y0 < 2 || box.x1 > 22 || box.y1 > 22,
       )
       .map(({ name, box }) => ({
         name,
@@ -263,7 +312,7 @@ describe("the icon set", () => {
   });
 
   it("centres every mark on the grid", () => {
-    const off = Object.entries(ICONS)
+    const centres = Object.entries(ICONS)
       .map(([name, icon]) => ({
         name,
         box: markBox(renderToStaticMarkup(icon)),
@@ -271,13 +320,26 @@ describe("the icon set", () => {
       .map(({ name, box }) => ({
         name,
         centre: [round((box.x0 + box.x1) / 2), round((box.y0 + box.y1) / 2)],
-      }))
-      .filter(
-        ({ centre }) =>
-          Math.abs(centre[0] - 12) > 0.5 || Math.abs(centre[1] - 12) > 0.5,
-      );
+      }));
 
+    // A bounding box is not what the eye centres. A solid triangle carries its
+    // mass behind its point, a paperclip hangs from its hook, and a microphone's
+    // stand is lighter than its capsule — all three are drawn off-centre ON
+    // PURPOSE so they look centred, and none is more than a unit and a quarter out.
+    const off = centres.filter(
+      ({ centre }) =>
+        Math.abs(centre[0] - 12) > 1.25 || Math.abs(centre[1] - 12) > 1.25,
+    );
     expect(off).toEqual([]);
+
+    // The column has no such licence: a ring is a ring, and fifty of them stack.
+    const column = centres.filter(({ name }) => name in STATUS_COLUMN);
+    expect(column).toHaveLength(6);
+    expect(
+      column.filter(
+        ({ centre }) => centre[0] !== 12 || centre[1] !== 12,
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -459,6 +521,22 @@ describe("the shipped screens", () => {
     const [[, wave]] = drawn;
     expect(wave.match(/<svg/g)).toHaveLength(1);
     expect(wave).not.toContain("<path");
+  });
+
+  // The library is a dependency of ONE module, not of the app. `icons.tsx` is the
+  // vocabulary — the app's own name for each mark, its size floor and its states —
+  // and `import { Check } from "lucide-react"` in a screen is that vocabulary
+  // going away one call site at a time: two screens then draw the same thing under
+  // two names, at two sizes, and nothing measures them together.
+  it("keep the library behind that module", () => {
+    const importers = Object.entries(sources)
+      .filter(
+        ([path, source]) =>
+          !path.includes(".test.") && source.includes("lucide-react"),
+      )
+      .map(([path]) => path);
+
+    expect(importers).toEqual(["./icons.tsx"]);
   });
 
   // Regression: the app's two-item tab bar was deleted, and its marks — a

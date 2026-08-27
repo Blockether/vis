@@ -12,7 +12,15 @@ import {
   TableFocusRow,
 } from './ui';
 import { InlineMarkdown } from './ChatContent';
-import { AlertIcon } from './icons';
+import {
+  ArrowOutIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleDotIcon,
+  CircleSlashIcon,
+  CircleXIcon,
+} from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent } from '../lib/types';
@@ -100,13 +108,33 @@ function Empty({ children }: { children: string }) {
   return <p className="font-mono text-meta italic text-dialog-hint">{children}</p>;
 }
 
-/** The tone as a mark, for the tone itself carries the meaning in colour alone. */
+/**
+ * A MARK sits ON the baseline, and its box is taller than the cap beside it: a
+ * 12px ring centres its ink 6px above the baseline, while 11px type centres its
+ * caps 3.9px above it. Two pixels down is the difference — measured, the same two
+ * at both steps this view sets (`text-ui` 11, `text-meta` 10), and the reason a
+ * mark that is geometrically right still reads a hair high until it is moved.
+ */
+const MARK_NUDGE = 'translate-y-[2px]';
+
+/**
+ * The tone, as a SHAPE. A tone arrives as a word and used to leave as colour
+ * alone — one dot, five inks — and colour alone is not a state: `ok` green
+ * measures 2.9:1 on the light theme's panel, under the 3:1 a mark owes, and the
+ * readers who cannot separate it from the amber beside it are a twentieth of
+ * everyone. One ring with five interiors says WHICH state; the colour agrees.
+ */
+const TONE_MARK: Record<LiveTone, typeof CircleDotIcon> = {
+  idle: CircleDashedIcon,
+  running: CircleDotIcon,
+  ok: CircleCheckIcon,
+  warn: CircleAlertIcon,
+  error: CircleXIcon,
+};
+
 function ToneMark({ tone }: { tone: LiveTone }) {
-  return (
-    <span aria-hidden="true" className={`shrink-0 ${TONE_INK[tone]}`}>
-      ●
-    </span>
-  );
+  const Drawn = TONE_MARK[tone];
+  return <Drawn className={`size-3 ${MARK_NUDGE} ${TONE_INK[tone]}`} />;
 }
 
 /**
@@ -409,9 +437,7 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
     <ul className="space-y-1 font-mono text-chip">
       {node.links.map((link) => (
         <li key={link.id} className="flex min-w-0 items-baseline gap-2">
-          <span aria-hidden="true" className="shrink-0 text-dialog-hint">
-            →
-          </span>
+          <ArrowOutIcon className={`size-3 ${MARK_NUDGE} text-dialog-hint`} />
           {link.target_kind === 'url' ? (
             <a
               href={link.target}
@@ -495,31 +521,31 @@ const ACTIVITY_FACE = {
   idle: {
     rail: 'border-dialog-hint',
     ink: 'text-dialog-hint',
-    mark: '◇',
+    mark: <CircleDashedIcon className={`size-3 ${MARK_NUDGE}`} />,
     label: 'Idle',
   },
   running: {
     rail: 'border-accent',
     ink: 'text-accent-ink',
-    mark: '●',
+    mark: <CircleDotIcon className={`size-3 ${MARK_NUDGE}`} />,
     label: 'Running',
   },
   succeeded: {
     rail: 'border-ok',
     ink: 'text-ok',
-    mark: '✓',
+    mark: <CircleCheckIcon className={`size-3 ${MARK_NUDGE}`} />,
     label: 'Done',
   },
   failed: {
     rail: 'border-err',
     ink: 'text-err-ink',
-    mark: <AlertIcon className="size-3" />,
+    mark: <CircleXIcon className={`size-3 ${MARK_NUDGE}`} />,
     label: 'Failed',
   },
   cancelled: {
     rail: 'border-dialog-hint',
     ink: 'text-dialog-hint',
-    mark: '■',
+    mark: <CircleSlashIcon className={`size-3 ${MARK_NUDGE}`} />,
     label: 'Cancelled',
   },
 } as const;
