@@ -1,16 +1,5 @@
 import type { TranscriptTurn } from "./types";
 
-/**
- * How long a finished live bubble waits for the persisted row that replaces it before
- * it stops SAYING so.
- *
- * The handover normally lands inside a second (`SETTLE_RETRY_MS`), and failing that on
- * the next reconcile tick. Past that the row is not coming: an id from another
- * namespace, a request the row spells differently, a bubble adopted mid-turn. The
- * answer is already whole on the screen, so what is left is furniture that reads as a
- * hang. Two reconcile ticks is the whole of the patience.
- */
-export const HANDOVER_PATIENCE_MS = 12_000;
 
 function rowId(turn: TranscriptTurn): string {
   return turn.id ?? turn.turn_id ?? "";

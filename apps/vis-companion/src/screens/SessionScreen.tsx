@@ -55,10 +55,7 @@ import { LiveView, useLiveViews } from "../components/LiveView";
 import type { LiveView as LiveViewModel } from "../lib/live-view";
 import { speechOutput } from "../lib/speech";
 import { markSessionId } from "../lib/session-id";
-import {
-  HANDOVER_PATIENCE_MS,
-  settledTranscriptCoversLiveTurn,
-} from "../lib/live-turn-handover";
+import { settledTranscriptCoversLiveTurn } from "../lib/live-turn-handover";
 import {
   VoiceTurnOwnership,
   type VoiceModeLease,
@@ -5298,24 +5295,9 @@ export function SessionScreen({
     [liveViews, anchoredActivityIds],
   );
 
-  // A finished bubble waits for the persisted row that replaces it, and says so.
-  // That wait is not always winnable — an id from another namespace, a request the
-  // row spells differently — and a sentence that never ends reads as a hang over an
-  // answer that is already whole (see `HANDOVER_PATIENCE_MS`).
-  const liveTurnSettling =
-    liveTurn?.status === "completed" || liveTurn?.status === "failed";
-  const [handoverGaveUp, setHandoverGaveUp] = useState(false);
-  useEffect(() => {
-    if (!liveTurnSettling) {
-      setHandoverGaveUp(false);
-      return;
-    }
-    const timer = window.setTimeout(
-      () => setHandoverGaveUp(true),
-      HANDOVER_PATIENCE_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [liveTurnId, liveTurnSettling]);
+  // A terminal frame already carries the complete answer. Waiting for its persisted
+  // replacement row is internal bookkeeping and must not look like another response
+  // phase; keep the settled bubble still while the handover runs in the background.
 
   const liveRow = useMemo(() => {
     if (!liveTurn) return null;
@@ -5356,11 +5338,6 @@ export function SessionScreen({
                 : []),
           }}
           streaming={liveTurn.status === "running"}
-          pending={
-            liveTurnSettling && !handoverGaveUp
-              ? "Loading latest changes"
-              : undefined
-          }
           activity={liveProgressPhase(
             liveTurn,
             connected,
@@ -5384,8 +5361,6 @@ export function SessionScreen({
     );
   }, [
     liveTurn,
-    liveTurnSettling,
-    handoverGaveUp,
     turns.length,
     client,
     sid,
