@@ -55,10 +55,12 @@
  * never travels the other way.
  */
 import {
+  AlignLeft,
   ArrowDown,
   ArrowUp,
   ArrowUpRight,
   Camera,
+  ChartNoAxesColumn,
   Check,
   ChevronRight,
   ChevronsUpDown,
@@ -90,6 +92,7 @@ import {
   Trash2,
   TriangleAlert,
   X,
+  Zap,
 } from "lucide-react";
 
 /** One class list from parts, so an absent one leaves no hole behind. */
@@ -123,6 +126,18 @@ function Mark({
   );
 }
 
+/**
+ * A MARK SITS ON THE BASELINE, and its box is taller than the cap beside it: a
+ * 12px ring centres its ink 6px above the baseline, while 11px type centres its
+ * caps 3.9px above it. Two pixels down is the difference — measured, and the same
+ * two at every step this app sets a mark inside (`text-meta` 10, `text-ui` 11,
+ * `text-body` 12); the reason a mark that is geometrically right still reads a
+ * hair high until it is moved.
+ *
+ * Only a mark sharing a line WITH TYPE takes it. A mark that is a control's whole
+ * face is centred by its own box and must never be nudged.
+ */
+export const MARK_NUDGE = "translate-y-[2px]";
 /** The mark of an ATTACHMENT. */
 export function ClipIcon({ className }: { className?: string }) {
   return <Mark icon={Paperclip} className={className} />;
@@ -326,6 +341,30 @@ export function ForkIcon({ className }: { className?: string }) {
 
 export function SettingsIcon({ className }: { className?: string }) {
   return <Mark icon={Settings} className={className} />;
+}
+
+/**
+ * REASONING EFFORT, as a LEVEL — three bars of growing height, because the fact
+ * behind this chip is a RANK and bars are the one shape that says a rank without
+ * a word. A brain, a diamond and a gauge were drawn and looked at first: at the
+ * 12px a `text-chip` line allows, each collapses into one grey blob; three bars
+ * keep their count.
+ */
+export function ReasoningIcon({ className }: { className?: string }) {
+  return <Mark icon={ChartNoAxesColumn} className={className} />;
+}
+
+/**
+ * VERBOSITY — lines of prose, ragged right: how MUCH the answer says. Bars stand
+ * up and lines lie down, so the two level chips never read as one mark repeated.
+ */
+export function VerbosityIcon({ className }: { className?: string }) {
+  return <Mark icon={AlignLeft} className={className} />;
+}
+
+/** FAST — the low-latency mode. The bolt is that word in every product. */
+export function FastIcon({ className }: { className?: string }) {
+  return <Mark icon={Zap} className={className} />;
 }
 
 /**

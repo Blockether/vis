@@ -1,6 +1,6 @@
 import { memo, useCallback, useId, useMemo, useRef, useState } from 'react';
 import { useFitRows, type ListGeometry } from '../lib/fit-rows';
-import { SortIcon } from './icons';
+import { CheckIcon, SortIcon } from './icons';
 import { Button } from './ui';
 
 // A CSV/TSV artifact is DATA, not a picture. `attach` emits it as a
@@ -565,9 +565,9 @@ export const DataTable = memo(function DataTable({
                         aria-pressed={picked}
                         aria-label={`Select row ${range.first + offset}`}
                         onClick={() => toggleRow(row.key)}
-                        className="h-full w-full px-2 text-right text-chip tabular-nums text-dialog-hint"
+                        className="flex h-full w-full items-center justify-end px-2 text-chip tabular-nums text-dialog-hint"
                       >
-                        {picked ? '✓' : range.first + offset}
+                        {picked ? <CheckIcon className="size-3" /> : range.first + offset}
                       </button>
                     </td>
                     {header.map((_, index) => {

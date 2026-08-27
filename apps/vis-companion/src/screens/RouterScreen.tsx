@@ -2,13 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { ModelPref, RouterProvider } from '../lib/types';
 import { BandButton, Banner, Button, DialogFrame, ListRow, Modal } from '../components/ui';
-import { ChevronIcon } from '../components/icons';
+import { ChevronIcon, MARK_NUDGE } from '../components/icons';
 import {
   defaultFirstProviders,
   isProviderAuthed,
   preferredModelFirst,
   providerLimitsLine,
-  providerStatusDot,
+  providerStatusMark,
   providerStatusLine,
   useProviderFleet,
 } from '../components/ProviderAuth';
@@ -137,7 +137,7 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
           )}
 
           {defaultFirstProviders(providers ?? []).map((provider) => {
-            const dot = providerStatusDot(provider);
+            const status = providerStatusMark(provider);
             const limits = providerLimitsLine(provider);
             const open = expanded === provider.id;
             const authed = isProviderAuthed(provider);
@@ -148,8 +148,8 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
                   onClick={() => setExpanded(open ? null : provider.id)}
                   aria-expanded={open}
                 >
-                  <span className={`font-mono text-body ${dot.tone}`} aria-label={dot.label}>
-                    {dot.glyph}
+                  <span className="shrink-0" aria-label={status.label} title={status.label}>
+                    <status.Mark className={`${MARK_NUDGE} ${status.tone}`} />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-mono text-body font-bold text-white">

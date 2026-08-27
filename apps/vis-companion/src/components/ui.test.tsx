@@ -1567,12 +1567,17 @@ describe("settings is ONE dialog with two columns", () => {
     expect(providerAuthSource).toContain('<div className="px-3 py-2">');
     expect(settings).toContain('<div className="px-3 py-2">');
     // And a dot centred in a two-line row sat between the name and its meta line,
-    // marking neither. Both lists give it the NAME's own type step — `text-body`
-    // is the 18px line box, so no hand-set `leading-*` is needed and the type
-    // scale keeps owning the rhythm (`scripts/touch-density.test.mjs`). The
-    // two-line provider row also pins it to the first line.
-    expect(machinesSource).toContain("shrink-0 font-mono text-body");
-    expect(providerAuthSource).toContain("shrink-0 self-start font-mono text-body");
+    // marking neither. Both lists now lead with the RING the live view paints
+    // rather than a character in the body face: the one-line machine row lets the
+    // row centre it, and the two-line provider row pins it to the first line with
+    // `self-start` plus the two pixels every mark takes inside a line of type,
+    // spelled once as `MARK_NUDGE` (`scripts/touch-density.test.mjs`).
+    expect(machinesSource).toContain("Mark: CircleCheckIcon");
+    expect(machinesSource).not.toContain("\\u25cf");
+    expect(providerAuthSource).toContain('className="shrink-0 self-start" title={status.label}');
+    expect(providerAuthSource).toContain(
+      "<status.Mark className={`${MARK_NUDGE} ${status.tone}`} />",
+    );
   });
 
   it("hides a machine's own verbs behind its row, and keeps no panel of them", () => {

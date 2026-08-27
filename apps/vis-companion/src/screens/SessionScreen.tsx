@@ -45,10 +45,13 @@ import {
   ArrowDownIcon,
   CameraIcon,
   ClipIcon,
+  FastIcon,
   ImageIcon,
   MicIcon,
   PlusIcon,
+  ReasoningIcon,
   SendIcon,
+  VerbosityIcon,
   VoiceLoopIcon,
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
@@ -6426,7 +6429,7 @@ export function SessionScreen({
                   aria-label={`${reasoning.label} — ${reasoningLevel}, tap for the next level`}
                   title={`${reasoning.label}: ${reasoningLevel} — tap to cycle`}
                 >
-                  <span aria-hidden="true">◇ </span>
+                  <ReasoningIcon className="size-3" />
                   <span
                     key={reasoningLevel}
                     className="inline-block animate-chip-swap motion-reduce:animate-none"
@@ -6450,7 +6453,7 @@ export function SessionScreen({
                   aria-label={`${verbosity.label} — ${verbosity.value}, tap for the next level`}
                   title={`${verbosity.label}: ${verbosity.value} — tap to cycle`}
                 >
-                  <span aria-hidden="true">≡ </span>
+                  <VerbosityIcon className="size-3" />
                   {verbosity.value}
                 </MetaButton>
               </>
@@ -6469,7 +6472,7 @@ export function SessionScreen({
                   aria-label={`Fast mode — ${codexFast.enabled ? "on" : "off"}`}
                   title={`Fast mode: ${codexFast.enabled ? "on" : "off"}`}
                 >
-                  <span aria-hidden="true">» </span>
+                  <FastIcon className="size-3" />
                   {codexFast.enabled ? "fast" : "standard"}
                 </MetaButton>
               </>

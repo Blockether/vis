@@ -23,6 +23,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { HumanInputSheet } from '../components/HumanInputPrompt';
+import { MARK_NUDGE, PauseIcon } from '../components/icons';
 import {
   initialHumanInputValues,
   type HumanInputField,
@@ -285,7 +286,10 @@ function ParkedTranscript() {
           I staged the version bump and mirrored it into the companion. Before I push the tag I need
           one thing from you.
         </p>
-        <p className="font-mono text-meta text-dialog-hint">⏸ waiting for human input · 0:14</p>
+        <p className="flex items-center gap-1.5 font-mono text-meta text-dialog-hint">
+          <PauseIcon className={`size-3 ${MARK_NUDGE}`} />
+          waiting for human input · 0:14
+        </p>
       </div>
     </section>
   );

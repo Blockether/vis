@@ -19,6 +19,7 @@ import {
   CircleDotIcon,
   CircleSlashIcon,
   CircleXIcon,
+  MARK_NUDGE,
 } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -118,15 +119,6 @@ function NodeLabel({ children }: { children: string }) {
 function Empty({ children }: { children: string }) {
   return <p className="font-mono text-meta italic text-dialog-hint">{children}</p>;
 }
-
-/**
- * A MARK sits ON the baseline, and its box is taller than the cap beside it: a
- * 12px ring centres its ink 6px above the baseline, while 11px type centres its
- * caps 3.9px above it. Two pixels down is the difference — measured, the same two
- * at both steps this view sets (`text-ui` 11, `text-meta` 10), and the reason a
- * mark that is geometrically right still reads a hair high until it is moved.
- */
-const MARK_NUDGE = 'translate-y-[2px]';
 
 /**
  * The tone, as a SHAPE. A tone arrives as a word and used to leave as colour

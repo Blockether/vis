@@ -2,7 +2,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { AuthFlow, ProviderAuthState, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
 import { Banner, Button, ConfirmRow, DialogFrame, Input, ListRow, Modal } from './ui';
-import { ChevronIcon, PlusIcon, SortIcon, StarIcon, TrashIcon } from './icons';
+import {
+  ChevronIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleXIcon,
+  MARK_NUDGE,
+  PlusIcon,
+  SortIcon,
+  StarIcon,
+  TrashIcon,
+} from './icons';
 import { MENU_WIDTH, Menu, MenuHeading, MenuItem } from './Menu';
 import { SwipeActions, type SwipeAction } from './SwipeActions';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
@@ -42,17 +53,26 @@ export function openProviderUrl(url: string): void {
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
-export function providerStatusDot(provider: RouterProvider) {
+/**
+ * THE VERDICT AS A SHAPE. Four states used to leave here as one dot in four inks
+ * — and two of them were the SAME dot: verified and rejected differed by colour
+ * alone, which is no difference at all for the twentieth of readers who cannot
+ * separate them, and `text-ok` measures 3.0:1 on the light theme's paper. One
+ * ring, four interiors: tick, cross, exclamation, dashed outline for a key that
+ * has never been checked. The colour agrees with the shape; it no longer carries
+ * the fact by itself.
+ */
+export function providerStatusMark(provider: RouterProvider) {
   switch (providerAuthState(provider)) {
     case 'verified':
-      return { glyph: '●', tone: 'text-ok', label: 'Authentication verified' };
+      return { Mark: CircleCheckIcon, tone: 'text-ok', label: 'Authentication verified' };
     case 'rejected':
-      return { glyph: '●', tone: 'text-err', label: 'Authentication rejected' };
+      return { Mark: CircleXIcon, tone: 'text-err', label: 'Authentication rejected' };
     case 'degraded':
-      return { glyph: '●', tone: 'text-warn', label: 'Live check unavailable' };
+      return { Mark: CircleAlertIcon, tone: 'text-warn', label: 'Live check unavailable' };
     case 'unverified':
       return {
-        glyph: '○',
+        Mark: CircleDashedIcon,
         tone: 'text-dialog-hint',
         label: provider.status?.is_authenticated ? 'Saved, not verified' : 'Not signed in',
       };
@@ -1137,7 +1157,7 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
   return (
     <div className="divide-y divide-dialog-edge">
       {rows.map((provider) => {
-        const dot = providerStatusDot(provider);
+        const status = providerStatusMark(provider);
         const authed = isProviderAuthed(provider);
         const isProbing = pending === `status:${provider.id}`;
         const mark = providerQuotaMark(provider);
@@ -1221,17 +1241,13 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                     if (!isOpen) void auth.recheck(provider.id);
                   }}
                 >
-                  {/* THE DOT BELONGS TO THE NAME, NOT TO THE ROW. Centred in a
+                  {/* THE MARK BELONGS TO THE NAME, NOT TO THE ROW. Centred in a
                       two-line row it floated 8px below the label it marks, between
                       the name and its meta line, marking neither. `self-start` plus
-                      the label's OWN type step — never a hand-set line-height —
-                      puts it on the name's 18px line. */}
-                  <span
-                    className={`shrink-0 self-start font-mono text-body ${dot.tone}`}
-                    aria-hidden="true"
-                    title={dot.label}
-                  >
-                    {dot.glyph}
+                      the two pixels every mark takes inside a line of type puts it
+                      on the name's own 18px line. */}
+                  <span className="shrink-0 self-start" title={status.label}>
+                    <status.Mark className={`${MARK_NUDGE} ${status.tone}`} />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-2">
@@ -1255,7 +1271,7 @@ export function ProviderRows({ auth }: { auth: ProviderAuth }) {
                   </span>
                   <span
                     className="shrink-0 font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint"
-                    title={providerLimitsLine(provider) ?? dot.label}
+                    title={providerLimitsLine(provider) ?? status.label}
                   >
                     {!authed ? 'Sign in' : (mark ?? '')}
                   </span>

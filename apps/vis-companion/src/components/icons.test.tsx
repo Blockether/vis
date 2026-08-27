@@ -348,9 +348,10 @@ describe("the icon set", () => {
  * for a CONTROL — close, disclose, play, load more, open elsewhere — drawn in
  * whatever face the platform picked, at whatever weight that face ships.
  *
- * `●`/`○`/`[✓]` are NOT here on purpose: they are the cross-channel choice
- * marks the TUI paints too, and the spinner's Braille cadence is deliberate as
- * well. Only marks that stand in for an icon are refused.
+ * `●`/`○` are NOT here on purpose: they are the cross-channel choice marks the
+ * TUI paints too, and the spinner's Braille cadence is deliberate as well. `✓`
+ * is refused only when it stands ALONE (see below), because `[✓]` is that same
+ * checkbox. Only marks that stand in for an icon are refused.
  */
 const GLYPHS_AS_ICONS = [
   "✕",
@@ -372,15 +373,26 @@ const GLYPHS_AS_ICONS = [
   "⋯",
   "›",
   "‹",
+  // Regression, reported as "ensure we are using the Lucide icons everywhere":
+  // the composer's three level chips kept painting `◇`, `≡` and `»` in the body
+  // face beside a real `PlusIcon`, a settings row led with `●`/`○`/`◆`, and the
+  // gallery said `⏸`. The list missed three of them and the scan below missed the
+  // fourth, so the rule read as kept while the most-pressed strip in the app broke
+  // it in three places at once.
+  "◇",
+  "◆",
+  "»",
+  "⏸",
 ];
 
 /**
- * Two of them have an honest job in TEXT: `×` multiplies (`retried 3×`, `3 rows
- * × 3 cols`) and `▸` names a menu path (`Settings ▸ Vis`). They are refused
- * only when one stands ALONE — a lone `×` in a button is a close icon nobody
- * drew.
+ * Three of them have an honest job in TEXT: `×` multiplies (`retried 3×`, `3 rows
+ * × 3 cols`), `▸` names a menu path (`Settings ▸ Vis`) and `✓` is one glyph of a
+ * checkbox the TUI paints the same way (`[✓]`). They are refused only when one
+ * stands ALONE — a lone `×` in a button is a close icon nobody drew, and a lone
+ * `✓` in a cell is a `CheckIcon` nobody drew.
  */
-const GLYPHS_ALONE = ["×", "▸"];
+const GLYPHS_ALONE = ["×", "▸", "✓"];
 
 /** Comments may NAME the glyph they replaced — that is how a regression is documented. */
 const withoutComments = (source: string) =>
@@ -405,6 +417,16 @@ const unescaped = (source: string) =>
 const STRING = /(['"`])(?:\\.|(?!\1)[^\\])*\1/g;
 
 /**
+ * AN ATTRIBUTE IS NOT ONE OF THOSE STRINGS, and leaving it to the pass above is
+ * how three shipped glyphs walked through this scan: `aria-hidden="true">◇ </span>`
+ * closes a quote, the NEXT attribute in the file opens one, and the pair the regex
+ * forms swallows everything between them — the mark included. Attributes carry
+ * labels, classes and ids, never a control mark, so they are blanked first and the
+ * string pass then sees only real string literals.
+ */
+const ATTRIBUTE = /\s[a-zA-Z-]+=(?:"[^"\n]*"|'[^'\n]*')/g;
+
+/**
  * A glyph inside a SENTENCE is prose a human reads — "enable it in Settings ▸
  * Vis" names a menu path, and no icon belongs in the middle of a message. A
  * glyph that is a whole string, or that sits in the markup rather than in a
@@ -423,11 +445,13 @@ const glyphsAsIcons = (source: string) => {
       if (run.trim() === glyph) marks.add(glyph);
     }
   };
-  const markup = withoutComments(source).replace(STRING, (raw) => {
-    const literal = unescaped(raw);
-    if (!isProse(literal)) collect(literal.slice(1, -1));
-    return " ";
-  });
+  const markup = withoutComments(source)
+    .replace(ATTRIBUTE, " ")
+    .replace(STRING, (raw) => {
+      const literal = unescaped(raw);
+      if (!isProse(literal)) collect(literal.slice(1, -1));
+      return " ";
+    });
   // What is left is markup: every run between the tags and the braces is either
   // the text a reader sees or code, and neither may carry a control mark.
   for (const run of markup.split(/[<>{}]/)) collect(run);
@@ -493,6 +517,18 @@ describe("the shipped screens", () => {
     expect(glyphsAsIcons("<span>{'\\u203a'}</span>")).toEqual(["›"]);
     expect(glyphsAsIcons("<span aria-hidden>‹</span>")).toEqual(["‹"]);
     expect(glyphsAsIcons("<span>Settings ›</span>")).toEqual(["›"]);
+    // Regression, reported as "ensure we are using the Lucide icons everywhere":
+    // the composer painted `◇`, `≡` and `»` for three turns after the migration and
+    // this scan stayed green. `aria-hidden="true">≡ </span>` ends a quoted value,
+    // the next attribute in the file starts one, and the string the regex built out
+    // of that pair ate the glyph between them.
+    expect(
+      glyphsAsIcons(
+        '<span aria-hidden="true">≡ </span><span aria-hidden="true">↑</span>',
+      ),
+    ).toEqual(["≡", "↑"]);
+    expect(glyphsAsIcons("<td>{picked ? '✓' : index}</td>")).toEqual(["✓"]);
+    expect(glyphsAsIcons("const box = '[✓]';")).toEqual([]);
   });
 
   it("never paint a glyph where an icon belongs", () => {
@@ -502,6 +538,11 @@ describe("the shipped screens", () => {
       // `main.tsx`, which reaches it behind `import.meta.env.DEV`).
       if (path.includes("/dev/") || path.includes(".test.")) continue;
       for (const glyph of glyphsAsIcons(source)) {
+        // A MARKDOWN DOCUMENT'S OWN BULLETS ARE CONTENT. The artifacts sheet paints
+        // a task list the way the file wrote it — `[x]` arrives as `✓`, `[ ]` as `○`
+        // — at the document's own size, beside its words. Nothing there is pressable,
+        // so no icon is missing; the glyph IS the text.
+        if (glyph === "✓" && path.endsWith("/ArtifactsSheet.tsx")) continue;
         offenders.push(`${path}: ${glyph}`);
       }
     }

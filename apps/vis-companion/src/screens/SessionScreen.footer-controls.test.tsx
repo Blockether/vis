@@ -73,9 +73,14 @@ describe("composer response controls", () => {
       name: /verbosity — low, tap for the next level/i,
     });
     const reasoningButton = screen.getByRole("button", { name: /reasoning effort — balanced/i });
-    expect(reasoningButton).toHaveTextContent("◇ balanced");
-    expect(verbosityButton).toHaveTextContent("≡ low");
-    expect(fastButton).toHaveTextContent("» standard");
+    // Each chip LEADS WITH A MARK: `◇`, `≡` and `»` used to stand in for
+    // one, in the body face, beside real icons.
+    expect(reasoningButton).toHaveTextContent("balanced");
+    expect(reasoningButton.querySelector("svg")).not.toBeNull();
+    expect(verbosityButton).toHaveTextContent("low");
+    expect(verbosityButton.querySelector("svg")).not.toBeNull();
+    expect(fastButton).toHaveTextContent("standard");
+    expect(fastButton.querySelector("svg")).not.toBeNull();
     expect(reasoningButton.compareDocumentPosition(verbosityButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(verbosityButton.compareDocumentPosition(fastButton) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(verbosityButton);

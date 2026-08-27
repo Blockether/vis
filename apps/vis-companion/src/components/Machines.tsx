@@ -24,7 +24,18 @@ import { onWake } from '../lib/wake';
 import { warm } from '../lib/warm';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
 import { Banner, Button, ConfirmRow, Input, LIST_FRAME, ListRow, Spinner } from './ui';
-import { AddressIcon, ChevronIcon, PencilIcon, SortIcon, StarIcon, TrashIcon } from './icons';
+import {
+  AddressIcon,
+  ChevronIcon,
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleXIcon,
+  PencilIcon,
+  SortIcon,
+  StarIcon,
+  TrashIcon,
+} from './icons';
 import { SwipeActions, type SwipeAction } from './SwipeActions';
 import { MENU_WIDTH, Menu, MenuHeading, MenuItem } from './Menu';
 
@@ -237,7 +248,8 @@ export function useFleetHealth(
 
 interface GwHealthView {
   state: GwState;
-  glyph: string;
+  /** The state AS A SHAPE — one ring, four interiors. The ink only agrees. */
+  Mark: typeof CircleCheckIcon;
   label: string;
   ms?: number;
   why?: string;
@@ -259,13 +271,13 @@ function healthView(h?: GwHealth): GwHealthView {
   const { ms, why } = fresh ?? {};
   switch (state) {
     case 'online':
-      return { state, glyph: '\u25cf', label: 'Online', ms, why, dotClass: 'text-ok', textClass: 'text-dialog-hint' };
+      return { state, Mark: CircleCheckIcon, label: 'Online', ms, why, dotClass: 'text-ok', textClass: 'text-dialog-hint' };
     case 'offline':
-      return { state, glyph: '\u25cf', label: 'Offline', ms, why, dotClass: 'text-err', textClass: 'text-err' };
+      return { state, Mark: CircleXIcon, label: 'Offline', ms, why, dotClass: 'text-err', textClass: 'text-err' };
     case 'auth':
-      return { state, glyph: '\u25cf', label: 'Unauthorized', ms, why, dotClass: 'text-warn-strong', textClass: 'text-warn-strong' };
+      return { state, Mark: CircleAlertIcon, label: 'Unauthorized', ms, why, dotClass: 'text-warn-strong', textClass: 'text-warn-strong' };
     default:
-      return { state, glyph: '\u25cc', label: 'Checking\u2026', ms, why, dotClass: 'text-dialog-hint', textClass: 'text-dialog-hint' };
+      return { state, Mark: CircleDashedIcon, label: 'Checking…', ms, why, dotClass: 'text-dialog-hint', textClass: 'text-dialog-hint' };
   }
 }
 
@@ -699,17 +711,15 @@ export function MachineRows({
                   aria-expanded={renderPanel ? isOpen : undefined}
                   aria-controls={renderPanel && isOpen ? panelId : undefined}
                 >
-                  {/* One rule with the provider rows: the dot wears the NAME's own
-                      type step, so it sits on the same 18px line box — a step and a
-                      hand-set line-height would put a 13px glyph on a 18px box and
-                      drift the rhythm. This row is one line, so it stays centred with
-                      it; measured on a 390px phone both centres land on 198. */}
+                  {/* One rule with the provider rows: the state is the RING's
+                      interior, never the ink alone, and this row is one line — so
+                      the row's own centring carries it and no nudge is needed.
+                      Measured on a 390px phone both centres land on 198. */}
                   <span
-                    className={`shrink-0 font-mono text-body ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
-                    aria-hidden="true"
+                    className={`shrink-0 ${hv.dotClass} ${hv.state === 'checking' ? 'animate-pulse' : ''}`}
                     title={hv.label}
                   >
-                    {hv.glyph}
+                    <hv.Mark />
                   </span>
                   <span className="flex min-w-0 flex-1 items-center gap-2">
                     <span className="truncate font-mono text-body font-bold text-white">

@@ -77,7 +77,15 @@ import {
   setThemePref,
 } from "../lib/storage";
 import { speechOutput } from "../lib/speech";
-import { DownloadIcon, PlayIcon, StopIcon } from "../components/icons";
+import {
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleDotIcon,
+  DownloadIcon,
+  MARK_NUDGE,
+  PlayIcon,
+  StopIcon,
+} from "../components/icons";
 import {
   bestDeviceVoices,
   deviceVoices,
@@ -335,25 +343,28 @@ function GatewayPanels({
             <div className="divide-y divide-dialog-edge">
               {group.toggles.map((toggle) => {
                 const busy = pending === toggle.id;
+                // THE STATE IS THE SHAPE, and the colour only agrees with it: the
+                // ticked ring is on, the dashed ring is off, and a setting that
+                // holds a VALUE rather than a switch carries the dot — one ring,
+                // three interiors, the same set the live view paints.
+                const StateMark =
+                  toggle.type !== "boolean"
+                    ? CircleDotIcon
+                    : toggle.enabled
+                      ? CircleCheckIcon
+                      : CircleDashedIcon;
                 return (
                   <div
                     key={toggle.id}
                     className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-3 transition-colors hover:bg-hover sm:px-4 sm:py-2.5"
                   >
-                    <span
-                      className={`pt-0.5 font-mono text-body ${
+                    <StateMark
+                      className={`${MARK_NUDGE} ${
                         toggle.type === "boolean" && toggle.enabled
                           ? "text-ok"
                           : "text-dialog-hint"
                       }`}
-                      aria-hidden="true"
-                    >
-                      {toggle.type === "boolean"
-                        ? toggle.enabled
-                          ? "●"
-                          : "○"
-                        : "◆"}
-                    </span>
+                    />
 
                     <div className="min-w-0">
                       <p className="break-words font-mono text-ui font-bold text-white">

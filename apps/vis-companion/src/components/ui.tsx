@@ -1181,6 +1181,9 @@ export function ComposerButton({
  * caps at the same size and they had two different hovers, so the strip read as
  * one label beside one button. `isPicker` is the only difference that survived —
  * the dotted rule under the word that OPENS something.
+ *
+ * A chip that reports a LEVEL leads with its mark, so the row lays its children
+ * out itself: `inline-flex` with one gap, and the caller passes a word.
  */
 export function MetaButton({
   isPicker = false,
@@ -1191,7 +1194,7 @@ export function MetaButton({
   return (
     <button
       type="button"
-      className={`px-1 py-1 text-left font-mono text-chip font-semibold uppercase tracking-[0.08em] transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none ${
+      className={`inline-flex items-center gap-1 px-1 py-1 text-left font-mono text-chip font-semibold uppercase tracking-[0.08em] transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none ${
         isPicker
           ? 'text-dialog-hint-key underline decoration-dialog-edge decoration-1 underline-offset-4 hover:decoration-accent'
           : 'text-dialog-hint'

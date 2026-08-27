@@ -126,7 +126,16 @@ draws it. **Nothing else in `src/**` imports `lucide-react`, and nothing else dr
 - **One column, one shape.** Where marks stack — a status column — they are one 20-unit ring with a different
   interior (`circle-check`, `circle-x`, `circle-dot`, `circle-dashed`, `circle-slash`, `circle-alert`). Ink is
   what the eye measures, not the box: `check` is 16 × 11 of it beside `circle-dashed`'s 20 × 20.
-
+- **A state is a SHAPE; the colour only repeats it.** Every status column in the app draws the ring set above —
+  settings rows, provider rows, machine health, the live view's node list — so `text-ok` green and `text-err` red are
+  the second telling, never the only one; a viewer with deuteranopia, a greyscale screenshot and a printed review all
+  still read the interior. Two states that differ ONLY in colour are one state drawn twice, which is what
+  `providerStatusDot` was before it became `providerStatusMark`.
+- **A mark leading a two-line row needs `MARK_NUDGE`, and nothing else does.** `icons.tsx` exports
+  `translate-y-[2px]`: a mark is centred on its own box, but the eye centres it on the CAP of the title beside it, and
+  in a title-over-subtitle row the flex box centres on the pair, so the mark floats. Two pixels is the measured
+  correction for `text-body` 12 through `text-title` 13 — a one-line row (a machine chip) centres correctly on its
+  own and must NOT carry it.
 ## 2. Colour — measured, never eyeballed
 
 Contrast minimums (HIG / WCAG AA): **4.5:1 for text under 18.66px or non-bold, 3:1 for larger or

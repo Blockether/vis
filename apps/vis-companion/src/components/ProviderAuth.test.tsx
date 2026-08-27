@@ -8,11 +8,17 @@ import {
   isProviderAuthed,
   ProviderNotice,
   ProviderRows,
-  providerStatusDot,
+  providerStatusMark,
   providerStatusLine,
   unscopedMessage,
   type ProviderAuth,
 } from './ProviderAuth';
+import {
+  CircleAlertIcon,
+  CircleCheckIcon,
+  CircleDashedIcon,
+  CircleXIcon,
+} from './icons';
 
 afterEach(cleanup);
 
@@ -212,8 +218,8 @@ describe('provider authentication verdict', () => {
     verified.limits = { status: 'ok', dynamic: { limits: [] } };
 
     expect(isProviderAuthed(verified)).toBe(true);
-    expect(providerStatusDot(verified)).toEqual({
-      glyph: '●',
+    expect(providerStatusMark(verified)).toEqual({
+      Mark: CircleCheckIcon,
       tone: 'text-ok',
       label: 'Authentication verified',
     });
@@ -233,8 +239,8 @@ describe('provider authentication verdict', () => {
     };
 
     expect(isProviderAuthed(rejected)).toBe(false);
-    expect(providerStatusDot(rejected)).toEqual({
-      glyph: '●',
+    expect(providerStatusMark(rejected)).toEqual({
+      Mark: CircleXIcon,
       tone: 'text-err',
       label: 'Authentication rejected',
     });
@@ -256,21 +262,21 @@ describe('provider authentication verdict', () => {
     };
 
     expect(isProviderAuthed(degraded)).toBe(true);
-    expect(providerStatusDot(degraded)).toEqual({
-      glyph: '●',
+    expect(providerStatusMark(degraded)).toEqual({
+      Mark: CircleAlertIcon,
       tone: 'text-warn',
       label: 'Live check unavailable',
     });
     expect(providerStatusLine(degraded)).toBe('Limits are temporarily unavailable.');
   });
 
-  it('paints a saved but unverified key as a neutral hollow dot', () => {
+  it('paints a saved but unverified key as a neutral dashed ring', () => {
     const unverified = provider('openai');
     unverified.status = { is_authenticated: true, auth_state: 'unverified', source: 'config' };
 
     expect(isProviderAuthed(unverified)).toBe(true);
-    expect(providerStatusDot(unverified)).toEqual({
-      glyph: '○',
+    expect(providerStatusMark(unverified)).toEqual({
+      Mark: CircleDashedIcon,
       tone: 'text-dialog-hint',
       label: 'Saved, not verified',
     });
