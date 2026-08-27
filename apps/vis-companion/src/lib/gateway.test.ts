@@ -40,8 +40,53 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+// Regression, issue vis_session_id#3d6dc388-a21c-4005-b498-87c02668cb34: after an
+// iPhone changed networks, WebKit ignored AbortSignal and one pending SSE fetch kept the
+// open session on "Reconnecting" until the whole app was killed.
+describe('GatewayClient event-stream hard deadline', () => {
+  it('starts a fresh attempt when a suspended fetch ignores abort', async () => {
+    vi.useFakeTimers();
+    const fetches = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    const stop = client.streamSessionEvents(new Map([['session-1', -1]]), () => {});
+    expect(fetches).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(10_400);
+    expect(fetches).toHaveBeenCalledTimes(2);
+
+    stop();
+  });
+
+  it('retires a suspended body reader that ignores abort', async () => {
+    vi.useFakeTimers();
+    const parkedBody = {
+      getReader: () => ({ read: () => new Promise<ReadableStreamReadResult<Uint8Array>>(() => {}) }),
+    } as unknown as ReadableStream<Uint8Array>;
+    const fetches = vi
+      .fn<() => Promise<Response>>()
+      .mockResolvedValueOnce({ ok: true, body: parkedBody } as Response)
+      .mockImplementation(() => new Promise<Response>(() => {}));
+    vi.stubGlobal('fetch', fetches);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    const stop = client.streamSessionEvents(new Map([['session-1', -1]]), () => {});
+    await Promise.resolve();
+    expect(fetches).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(45_400);
+    expect(fetches).toHaveBeenCalledTimes(2);
+
+    stop();
+  });
 });
 
 // Regression: a cold-start client used to re-download the complete session list.

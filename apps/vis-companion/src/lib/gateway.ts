@@ -283,12 +283,16 @@ async function readSseFrames(
   body: ReadableStream<Uint8Array>,
   onData: (json: string, event: string | null) => void,
   onChunk?: () => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   for (;;) {
     const { value, done } = await reader.read();
+    // A reader retired during a network handoff can wake after its replacement.
+    // Its bytes belong to the old attempt and must never enter the current cursor.
+    if (signal?.aborted) break;
     onChunk?.();
     if (done) break;
     buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
@@ -856,17 +860,20 @@ export class GatewayClient {
       );
       let res: Response;
       try {
-        res = await fetch(this.base + path, {
-          method,
-          headers,
-          body:
-            body === undefined
-              ? undefined
-              : isRaw
-                ? (body as Blob)
-                : JSON.stringify(body),
-          signal: attemptSignal,
-        });
+        res = await raceAbort(
+          fetch(this.base + path, {
+            method,
+            headers,
+            body:
+              body === undefined
+                ? undefined
+                : isRaw
+                  ? (body as Blob)
+                  : JSON.stringify(body),
+            signal: attemptSignal,
+          }),
+          attemptSignal,
+        );
       } catch (e) {
         throw stalled()
           ? new GatewayError(0, `gateway did not answer within ${seconds}s`)
@@ -881,7 +888,7 @@ export class GatewayClient {
         };
       let text: string;
       try {
-        text = await res.text();
+        text = await raceAbort(res.text(), attemptSignal);
       } catch (e) {
         throw stalled()
           ? new GatewayError(0, `gateway stopped sending after ${seconds}s`)
@@ -1554,6 +1561,7 @@ export class GatewayClient {
           onJob(job);
         },
         armStall,
+        streamSignal,
       );
     } catch (error) {
       if (stalled && !signal?.aborted) {
@@ -3983,12 +3991,15 @@ export class GatewayClient {
             cursors,
             ([sid, cursor]) => `${sid}:${cursor}`,
           ).join(",");
-          const response = await fetch(
-            `${this.base}/v1/events?sids=${encodeURIComponent(spec)}`,
-            {
-              headers: this.headers({ Accept: "text/event-stream" }),
-              signal: attemptSignal,
-            },
+          const response = await raceAbort(
+            fetch(
+              `${this.base}/v1/events?sids=${encodeURIComponent(spec)}`,
+              {
+                headers: this.headers({ Accept: "text/event-stream" }),
+                signal: attemptSignal,
+              },
+            ),
+            attemptSignal,
           );
           if (!response.ok || !response.body) {
             throw new GatewayError(
@@ -4005,38 +4016,42 @@ export class GatewayClient {
           // the outer loop reconnects with the up-to-date cursor.
           armStall(SSE_STALL_TIMEOUT_MS);
 
-          await readSseFrames(
-            response.body,
-            (json, frameName) => {
-              // The session's own event LOG lives here. A transcription's
-              // progress rides its own job stream under `VOICE_JOB_EVENT`, is
-              // not an engine event, and never enters this reducer.
-              if (frameName === VOICE_JOB_EVENT) return;
-              try {
-                const event = JSON.parse(json) as SseEvent;
-                const sid =
-                  typeof event.session_id === "string"
-                    ? event.session_id
-                    : typeof event.sid === "string"
-                      ? event.sid
-                      : "";
-                // Deliver FIRST, then advance the cursor: an event whose
-                // handler failed must replay on reconnect, never be skipped.
-                onEvent(event);
-                if (
-                  sid &&
-                  event.type === "subscription.ready" &&
-                  typeof event.cursor === "number"
-                ) {
-                  cursors.set(sid, event.cursor);
-                } else if (sid && typeof event.seq === "number") {
-                  cursors.set(sid, Math.max(cursors.get(sid) ?? -1, event.seq));
+          await raceAbort(
+            readSseFrames(
+              response.body,
+              (json, frameName) => {
+                // The session's own event LOG lives here. A transcription's
+                // progress rides its own job stream under `VOICE_JOB_EVENT`, is
+                // not an engine event, and never enters this reducer.
+                if (frameName === VOICE_JOB_EVENT) return;
+                try {
+                  const event = JSON.parse(json) as SseEvent;
+                  const sid =
+                    typeof event.session_id === "string"
+                      ? event.session_id
+                      : typeof event.sid === "string"
+                        ? event.sid
+                        : "";
+                  // Deliver FIRST, then advance the cursor: an event whose
+                  // handler failed must replay on reconnect, never be skipped.
+                  onEvent(event);
+                  if (
+                    sid &&
+                    event.type === "subscription.ready" &&
+                    typeof event.cursor === "number"
+                  ) {
+                    cursors.set(sid, event.cursor);
+                  } else if (sid && typeof event.seq === "number") {
+                    cursors.set(sid, Math.max(cursors.get(sid) ?? -1, event.seq));
+                  }
+                } catch {
+                  // Ignore one malformed frame without ending sibling sessions.
                 }
-              } catch {
-                // Ignore one malformed frame without ending sibling sessions.
-              }
-            },
-            () => armStall(SSE_STALL_TIMEOUT_MS),
+              },
+              () => armStall(SSE_STALL_TIMEOUT_MS),
+              attemptSignal,
+            ),
+            attemptSignal,
           );
           if (!signal.aborted) throw new GatewayError(0, "event stream closed");
         } catch (error) {
@@ -4103,10 +4118,13 @@ export class GatewayClient {
         };
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
-          const response = await fetch(`${this.base}/v1/events?scope=fleet`, {
-            headers: this.headers({ Accept: "text/event-stream" }),
-            signal: attemptSignal,
-          });
+          const response = await raceAbort(
+            fetch(`${this.base}/v1/events?scope=fleet`, {
+              headers: this.headers({ Accept: "text/event-stream" }),
+              signal: attemptSignal,
+            }),
+            attemptSignal,
+          );
           if (!response.ok || !response.body) {
             throw new GatewayError(
               response.status,
@@ -4118,19 +4136,23 @@ export class GatewayClient {
           retryMs = 400;
           armStall(SSE_STALL_TIMEOUT_MS);
 
-          await readSseFrames(
-            response.body,
-            (json, frameName) => {
-              // A transcription's progress rides its own job stream and is not a
-              // fact about any session's status.
-              if (frameName === VOICE_JOB_EVENT) return;
-              try {
-                onEvent(JSON.parse(json) as SseEvent);
-              } catch {
-                // One malformed frame must not end the list's only push channel.
-              }
-            },
-            () => armStall(SSE_STALL_TIMEOUT_MS),
+          await raceAbort(
+            readSseFrames(
+              response.body,
+              (json, frameName) => {
+                // A transcription's progress rides its own job stream and is not a
+                // fact about any session's status.
+                if (frameName === VOICE_JOB_EVENT) return;
+                try {
+                  onEvent(JSON.parse(json) as SseEvent);
+                } catch {
+                  // One malformed frame must not end the list's only push channel.
+                }
+              },
+              () => armStall(SSE_STALL_TIMEOUT_MS),
+              attemptSignal,
+            ),
+            attemptSignal,
           );
           if (!signal.aborted) throw new GatewayError(0, "fleet stream closed");
         } catch (error) {
@@ -4182,12 +4204,15 @@ export class GatewayClient {
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
           const query = cursor != null ? `?cursor=${cursor}` : "";
-          const response = await fetch(
-            `${this.base}/v1/sessions/${encodeURIComponent(sid)}/events${query}`,
-            {
-              headers: this.headers({ Accept: "text/event-stream" }),
-              signal: attemptSignal,
-            },
+          const response = await raceAbort(
+            fetch(
+              `${this.base}/v1/sessions/${encodeURIComponent(sid)}/events${query}`,
+              {
+                headers: this.headers({ Accept: "text/event-stream" }),
+                signal: attemptSignal,
+              },
+            ),
+            attemptSignal,
           );
           if (!response.ok || !response.body) {
             throw new GatewayError(
@@ -4201,23 +4226,27 @@ export class GatewayClient {
           // Stall watchdog — same heartbeat bound as the multiplexed variant.
           armStall(SSE_STALL_TIMEOUT_MS);
 
-          await readSseFrames(
-            response.body,
-            (json, frameName) => {
-              // Session log only: a `voice.job` frame belongs to its own stream.
-              if (frameName === VOICE_JOB_EVENT) return;
-              try {
-                const event = JSON.parse(json) as SseEvent;
-                // Deliver FIRST, then advance: an event whose handler
-                // failed must replay on reconnect, never be skipped.
-                onEvent(event);
-                if (typeof event.seq === "number")
-                  cursor = Math.max(cursor ?? 0, event.seq);
-              } catch {
-                // A malformed frame must not end an otherwise healthy stream.
-              }
-            },
-            () => armStall(SSE_STALL_TIMEOUT_MS),
+          await raceAbort(
+            readSseFrames(
+              response.body,
+              (json, frameName) => {
+                // Session log only: a `voice.job` frame belongs to its own stream.
+                if (frameName === VOICE_JOB_EVENT) return;
+                try {
+                  const event = JSON.parse(json) as SseEvent;
+                  // Deliver FIRST, then advance: an event whose handler
+                  // failed must replay on reconnect, never be skipped.
+                  onEvent(event);
+                  if (typeof event.seq === "number")
+                    cursor = Math.max(cursor ?? 0, event.seq);
+                } catch {
+                  // A malformed frame must not end an otherwise healthy stream.
+                }
+              },
+              () => armStall(SSE_STALL_TIMEOUT_MS),
+              attemptSignal,
+            ),
+            attemptSignal,
           );
           if (!signal.aborted) throw new GatewayError(0, "event stream closed");
         } catch (error) {
@@ -4241,6 +4270,44 @@ export class GatewayClient {
 
     return () => controller.abort();
   }
+}
+
+/**
+ * End an await when its signal aborts even if WebKit leaves the underlying promise pending.
+ *
+ * Safari normally rejects `fetch` and `reader.read()` on abort. After an iPhone changes
+ * network interfaces while suspended, however, either promise can remain pending forever.
+ * Racing the signal itself makes our deadline real; aborting the transport is then only the
+ * resource cleanup, not the mechanism on which reconnect liveness depends.
+ */
+function raceAbort<T>(work: PromiseLike<T> | T, signal: AbortSignal): Promise<T> {
+  if (signal.aborted)
+    return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve(work).then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      },
+    );
+  });
 }
 
 /** Combine several AbortSignals into one that aborts when any input aborts. */
