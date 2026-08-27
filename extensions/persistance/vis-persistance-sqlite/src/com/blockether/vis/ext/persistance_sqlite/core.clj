@@ -1877,8 +1877,9 @@
 
    `{:turn-count :iteration-count :duration-ms :input-tokens
      :input-regular-tokens :input-cache-write-tokens :input-cache-read-tokens
-     :output-tokens :output-reasoning-tokens :cost-usd :first-turn-at
-     :last-turn-at :provider :model :tool-call-count :fold-count}`
+     :prompt-cache-reusable-tokens :prompt-cache-reused-tokens :output-tokens
+     :output-reasoning-tokens :cost-usd :first-turn-at :last-turn-at :provider
+     :model :tool-call-count :fold-count}`
 
    Token/cost/iteration facts are SQL aggregates over the turn-state rollups
    (`session_turn_state`), which the turn writer already maintains — no
@@ -1915,7 +1916,19 @@
                                 [[:min :ts.created_at] :first_at] [[:max :ts.created_at] :last_at]]
                        :from from
                        :join join
-                       :where where})]
+                       :where where})
+
+          reuse
+          ;; One skinny aggregate over per-request denominators. It cannot live on
+          ;; session_turn_state: eligibility is decided independently for each LLM call.
+          (query-one!
+            db-info
+            {:select [[[:sum :qti.prompt_cache_reusable_tokens] :prompt_cache_reusable_tokens]
+                      [[:sum [:min :qti.prompt_cache_reusable_tokens :qti.input_cache_read_tokens]]
+                       :prompt_cache_reused_tokens]]
+             :from [[:session_turn_iteration :qti]]
+             :join (into [[:session_turn_state :sts] [:= :sts.id :qti.session_turn_state_id]] join)
+             :where (conj where [:<> :qti.prompt_cache_reusable_tokens nil])})]
 
       (when (pos? (long (or (:turns agg) 0)))
         (let [latest
@@ -1959,6 +1972,8 @@
                    :input-regular-tokens (long (or (:input_regular_tokens agg) 0))
                    :input-cache-write-tokens (long (or (:input_cache_write_tokens agg) 0))
                    :input-cache-read-tokens (long (or (:input_cache_read_tokens agg) 0))
+                   :prompt-cache-reusable-tokens (long (or (:prompt_cache_reusable_tokens reuse) 0))
+                   :prompt-cache-reused-tokens (long (or (:prompt_cache_reused_tokens reuse) 0))
                    :output-tokens (long (or (:output_tokens agg) 0))
                    :output-reasoning-tokens (long (or (:output_reasoning_tokens agg) 0))
                    :cost-usd (double (or (:cost_usd agg) 0))
@@ -3304,7 +3319,7 @@
    resumed bubbles don't render the synthetic source as success. The
    model-facing `:forms` envelopes keep the rejection text so context
    carry still teaches the next iter."
-  [{:keys [forms duration-ms] :as opts}]
+  [{:keys [forms duration-ms prompt-cache-reusable-tokens] :as opts}]
   (let [code
         (require-iteration-code! opts)
 
@@ -3325,7 +3340,10 @@
       (assoc :tool_calls (->blob (freeze-safe (vec forms))))
 
       (some? duration-ms)
-      (assoc :eval_duration_ms (long duration-ms)))))
+      (assoc :eval_duration_ms (long duration-ms))
+
+      (some? prompt-cache-reusable-tokens)
+      (assoc :prompt_cache_reusable_tokens (long prompt-cache-reusable-tokens)))))
 
 (defn- routing-summary-columns
   [routing]
@@ -4165,6 +4183,9 @@
 
       true
       (assoc :input-cache-read-tokens (long (or (:input_cache_read_tokens row) 0)))
+
+      (some? (:prompt_cache_reusable_tokens row))
+      (assoc :prompt-cache-reusable-tokens (long (:prompt_cache_reusable_tokens row)))
 
       true
       (assoc :output-tokens (long (or (:output_tokens row) 0)))

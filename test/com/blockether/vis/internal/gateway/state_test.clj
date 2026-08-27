@@ -16,6 +16,27 @@
             [com.blockether.vis.internal.session-model :as smodel]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe
+  session-usage-cache-metrics-test
+  "The gateway names both cache denominators and converts each to an integer percent once."
+  (it "distinguishes cached input share from reusable-prefix coverage"
+      (with-redefs [lp/db-info
+                    (constantly ::db)
+
+                    persistance/db-session-usage-stats
+                    (constantly {:input-tokens 259653
+                                 :input-cache-read-tokens 209408
+                                 :prompt-cache-reusable-tokens 212752
+                                 :prompt-cache-reused-tokens 209408})]
+
+        (expect (= {"cache_read_share_percent" 81
+                    "reusable_prefix_coverage_percent" 98
+                    "input_tokens" 259653
+                    "input_cache_read_tokens" 209408
+                    "prompt_cache_reusable_tokens" 212752
+                    "prompt_cache_reused_tokens" 209408}
+                   (state/session-usage-info "session"))))))
+
 (def ^:private tool-error
   {:message "rg spec has unknown keys: spec."
    :data {:phase :python/host :type :vis/tool-failure :symbol :rg}})

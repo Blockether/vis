@@ -143,8 +143,14 @@ export interface SessionUsage {
   input_cache_read_tokens?: number;
   output_tokens?: number;
   output_reasoning_tokens?: number;
-  /** Cached input over TOTAL input, derived gateway-side so every client agrees. */
-  cache_hit_rate?: number;
+  /** Provider cache reads over all logical input: the cost-facing denominator. */
+  cache_read_share_percent?: number;
+  /** Prior same-route input proven to be an exact reusable prefix. */
+  prompt_cache_reusable_tokens?: number;
+  /** Provider cache reads capped to those reusable prior prefixes. */
+  prompt_cache_reused_tokens?: number;
+  /** Reused prefix reads over reusable prior input: the architecture-facing denominator. */
+  reusable_prefix_coverage_percent?: number;
   cost_usd?: number;
   duration_ms?: number;
   first_turn_at?: number;

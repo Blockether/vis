@@ -4618,6 +4618,57 @@
 
     (when (and (<= n (count messages)) (= history (subvec messages 0 n))) (subvec messages n))))
 
+(def ^:private PROMPT_CACHE_REUSE_FRESH_MS
+  "Conservative eligibility window shared with Svar's fresh cache meter. A later
+   provider-reported read proves retention even after this window."
+  300000)
+
+(defn- note-prompt-cache-request!
+  "Replace one route's exact request baseline and return its prior logical input
+   when that baseline is a reusable prefix. New suffix tokens are deliberately
+   outside the denominator; rewrites, first calls, route changes, and expired
+   misses return nil."
+  [history-atom provider model messages input-tokens cache-read-tokens request-start-ms]
+  (when (and history-atom provider model)
+    (let [route
+          [provider (str model)]
+
+          messages
+          (vec messages)
+
+          input
+          (long (or input-tokens 0))
+
+          cached
+          (long (or cache-read-tokens 0))
+
+          at-ms
+          (long request-start-ms)
+
+          reusable
+          (volatile! nil)]
+
+      (swap! history-atom
+        (fn [routes]
+          (let [prior
+                (get routes route)
+
+                prior-input
+                (long (or (:input-tokens prior) 0))
+
+                age-ms
+                (max 0 (- at-ms (long (or (:at-ms prior) at-ms))))
+
+                exact-prefix?
+                (and prior (some? (session-message-suffix (:messages prior) messages)))
+
+                retained?
+                (or (<= age-ms (long PROMPT_CACHE_REUSE_FRESH_MS)) (pos? cached))]
+
+            (when (and (pos? prior-input) exact-prefix? retained?) (vreset! reusable prior-input))
+            (assoc routes route {:messages messages :input-tokens input :at-ms at-ms}))))
+      @reusable)))
+
 (defn- same-effective-router?
   "True when two hydrated routers carry the same values and reload generation."
   [left right]
@@ -5004,6 +5055,16 @@
                                 :thinking thinking}
                                code-observation))
           api-usage (ask-result->api-usage ask-result)
+          actual-provider (actual-llm-provider resolved-model ask-result)
+          actual-model (actual-llm-model resolved-model ask-result)
+          prompt-cache-reusable-tokens (note-prompt-cache-request!
+                                         (:prompt-cache-history-atom environment)
+                                         actual-provider
+                                         actual-model
+                                         messages
+                                         (:input-tokens api-usage)
+                                         (get-in api-usage [:input-tokens-details :cache-read])
+                                         provider-started-at-ms)
           reasoning-effort-resolution (:routed/reasoning-effort ask-result)
           ;; The model either CALLS `python_execution`
           ;; (`:stop-reason :tool-calls`) or, with NO tool call
@@ -5343,6 +5404,7 @@
              :final-result nil
              :api-usage api-usage
              :prompt-cache (:prompt-cache ask-result)
+             :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
              :duration-ms (or (:duration-ms ask-result) 0)
              :llm-messages messages
              :llm-provider provider
@@ -5361,6 +5423,7 @@
              :final-result {:final? true :answer value}
              :api-usage api-usage
              :prompt-cache (:prompt-cache ask-result)
+             :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
              :duration-ms (or (:duration-ms ask-result) 0)
              :llm-messages messages
              :llm-provider provider
@@ -5382,6 +5445,7 @@
          :final-result nil
          :api-usage api-usage
          :prompt-cache (:prompt-cache ask-result)
+         :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
          :duration-ms (or (:duration-ms ask-result) 0)
          :llm-messages messages
          :llm-provider (actual-llm-provider resolved-model ask-result)
@@ -8439,6 +8503,8 @@
                                                                  iteration-result)
                                      :llm-routing (llm-routing-summary pre-resolved-model
                                                                        iteration-result)
+                                     :prompt-cache-reusable-tokens (:prompt-cache-reusable-tokens
+                                                                     iteration-result)
                                      :cache-created-tokens (iteration-cache-created-tokens tc)}
                               tc
                               (assoc :tokens
@@ -10705,6 +10771,10 @@
                   ;; Codex owns one explicit Responses WebSocket/cursor per Vis environment.
                   ;; The socket opens lazily on the first Codex iteration and is closed with env.
                   :llm-session-atom (atom nil)
+                  ;; Exact full-request baselines per provider/model. The next successful
+                  ;; call can name how many PRIOR tokens were genuinely reusable instead
+                  ;; of dividing cache reads by new tool output that never had a chance.
+                  :prompt-cache-history-atom (atom {})
                   :session-title-atom session-title-atom
                   :extensions (atom [])
                   :active-extensions (atom []))]

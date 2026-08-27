@@ -3206,7 +3206,8 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
     return () => controller.abort();
   }, [conn, session.id]);
 
-  const cacheHit = usage?.cache_hit_rate;
+  const cacheReadShare = usage?.cache_read_share_percent;
+  const reuseCoverage = usage?.reusable_prefix_coverage_percent;
 
   return (
     <div className={`border-t border-dialog-edge bg-panel-2 py-2.5 ${LIST_EDGE} ${LIST_EDGE_END}`}>
@@ -3235,8 +3236,14 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
             <Stat label="In" value={compactCount(usage.input_tokens)} />
             <Stat label="Out" value={compactCount(usage.output_tokens)} />
             <Stat
-              label="Cache"
-              value={typeof cacheHit === 'number' ? `${Math.round(cacheHit * 100)}%` : '—'}
+              label="Cached input"
+              value={typeof cacheReadShare === 'number' ? `${Math.round(cacheReadShare)}%` : '—'}
+              title="Share of all logical input tokens served from provider cache"
+            />
+            <Stat
+              label="Reuse coverage"
+              value={typeof reuseCoverage === 'number' ? `${Math.round(reuseCoverage)}%` : '—'}
+              title="Cache reads over prior same-route input that was an exact reusable prefix"
             />
             <Stat label="Cost" value={formatUsd(usage.cost_usd)} />
           </dl>
@@ -3262,9 +3269,9 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div className="min-w-0">
+    <div className="min-w-0" title={title}>
       <dt className="truncate font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
         {label}
       </dt>

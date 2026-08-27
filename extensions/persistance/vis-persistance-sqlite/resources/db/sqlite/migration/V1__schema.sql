@@ -383,6 +383,12 @@ CREATE TABLE session_turn_iteration (
   input_cache_read_tokens         INTEGER CHECK (
                                     input_cache_read_tokens IS NULL OR input_cache_read_tokens >= 0
                                   ),
+  -- Prior same-route logical input only when its exact message vector is a fresh
+  -- prefix of this request. NULL means no reuse opportunity, not zero quality.
+  prompt_cache_reusable_tokens   INTEGER CHECK (
+                                    prompt_cache_reusable_tokens IS NULL OR
+                                    prompt_cache_reusable_tokens >= 0
+                                  ),
   output_tokens                   INTEGER CHECK (
                                     output_tokens IS NULL OR output_tokens >= 0
                                   ),

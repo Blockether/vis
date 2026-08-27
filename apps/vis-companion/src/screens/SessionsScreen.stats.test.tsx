@@ -21,7 +21,10 @@ describe("the expanded session card", () => {
     fold_count: 0,
     input_tokens: 85_000,
     output_tokens: 2_300,
-    cache_hit_rate: 0.77,
+    cache_read_share_percent: 77,
+    reusable_prefix_coverage_percent: 98,
+    prompt_cache_reusable_tokens: 81_000,
+    prompt_cache_reused_tokens: 79_400,
     cost_usd: 0.21,
     duration_ms: 47_000,
     provider: "anthropic-coding-plan",
@@ -65,7 +68,15 @@ describe("the expanded session card", () => {
     expect(screen.queryByText(/python_execution/)).toBeNull();
   });
 
-  it("uses the compact type step for usage values, including cache", async () => {
+  it("shows cost share and reusable-prefix coverage as separate cache metrics", async () => {
+    await open();
+    expect(await screen.findByText("Cached input")).toBeTruthy();
+    expect(screen.getByText("Reuse coverage")).toBeTruthy();
+    expect(screen.getByText("77%")).toBeTruthy();
+    expect(screen.getByText("98%")).toBeTruthy();
+  });
+
+  it("uses the compact type step for both cache values", async () => {
     await open();
     const cacheValue = await screen.findByText("77%");
     expect(cacheValue.classList.contains("text-chip")).toBe(true);

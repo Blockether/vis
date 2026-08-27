@@ -245,6 +245,67 @@
 (def ^:private prose-beyond-code (deref #'lp/prose-beyond-code))
 
 (defdescribe
+  prompt-cache-reusable-prefix-test
+  "A reuse denominator exists only when the exact prior same-route request is a
+   fresh prefix of the current request. New input must not make cache quality look
+   worse, while a rewritten history or another model must not invent eligibility."
+  (it "records the prior logical input only for an exact reusable prefix"
+      (let [history
+            (atom {})
+
+            sample!
+            @#'lp/note-prompt-cache-request!]
+
+        (expect
+          (nil?
+            (sample! history :openai-codex "gpt-5.6" [{:role "user" :content "one"}] 9463 0 1000)))
+        (expect (= 9463
+                   (sample! history
+                            :openai-codex
+                            "gpt-5.6"
+                            [{:role "user" :content "one"} {:role "assistant" :content "two"}]
+                            31867
+                            9728
+                            2000)))
+        (expect (nil? (sample! history
+                               :openai-codex
+                               "gpt-5.6"
+                               [{:role "user" :content "rewritten"}]
+                               12000
+                               0
+                               3000)))
+        (expect (nil? (sample! history
+                               :openai-codex
+                               "gpt-5.6-sol"
+                               [{:role "user" :content "rewritten"}]
+                               12000
+                               0
+                               4000)))))
+  (it "does not call an expired miss reusable but accepts retention proven by a cache read"
+      (let [history
+            (atom {})
+
+            sample!
+            @#'lp/note-prompt-cache-request!
+
+            one
+            [{:role "user" :content "one"}]
+
+            two
+            (conj one {:role "assistant" :content "two"})]
+
+        (sample! history :anthropic "opus" one 1000 0 0)
+        (expect (nil? (sample! history :anthropic "opus" two 1200 0 300001)))
+        (expect (= 1200
+                   (sample! history
+                            :anthropic
+                            "opus"
+                            (conj two {:role "user" :content "three"})
+                            1400
+                            1100
+                            600002))))))
+
+(defdescribe
   copilot-action-service-headers-test
   (it "marks Copilot Enterprise requests with X-Initiator for the action service"
       (expect (= {"X-Initiator" "agent"}

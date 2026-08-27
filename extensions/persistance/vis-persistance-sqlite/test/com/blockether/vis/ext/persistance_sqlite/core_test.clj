@@ -3190,6 +3190,57 @@
         ;; and the next star still lands last.
         (expect (= 3 (persistance/db-set-session-favorite! s (str a) true))))))
 (defdescribe
+  reusable-prefix-usage-rollup-test
+  "Whole-session usage keeps cost share separate from cache architecture quality."
+  (it
+    "reports 81 percent cached input while recovering 98 percent of reusable prefixes"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api :title "cache coverage"})
+
+          tid
+          (persistance/db-store-session-turn! s
+                                              {:parent-session-id (str sid)
+                                               :user-request "measure"})
+
+          inputs
+          [9463 9857 31867 38330 39868 40578 42789 46901]
+
+          cached
+          [0 8704 9728 31232 37376 39424 40448 42496]
+
+          reusable
+          [nil 9463 9857 31867 38330 39868 40578 42789]]
+
+      (doseq [[input read eligible] (map vector inputs cached reusable)]
+        (h/store-iteration! s
+                            (cond-> {:session-turn-id tid
+                                     :code ""
+                                     :tokens {"input" input "cached" read "output" 1}
+                                     :llm-routing {:actual {:provider :openai-codex
+                                                            :model "gpt-5.6-sol"}}}
+                              eligible
+                              (assoc :prompt-cache-reusable-tokens eligible))))
+      (persistance/db-update-session-turn! s
+                                           tid
+                                           {:status :done
+                                            :iteration-count 8
+                                            :tokens {"input" (reduce + inputs)
+                                                     "input_regular" (- (reduce + inputs)
+                                                                        (reduce + cached))
+                                                     "cached" (reduce + cached)
+                                                     "output" 8}})
+      (expect (= {:input-tokens 259653
+                  :input-cache-read-tokens 209408
+                  :prompt-cache-reusable-tokens 212752
+                  :prompt-cache-reused-tokens 209408}
+                 (select-keys (persistance/db-session-usage-stats s (str sid))
+                              [:input-tokens :input-cache-read-tokens :prompt-cache-reusable-tokens
+                               :prompt-cache-reused-tokens]))))))
+
+(defdescribe
   usage-model-survives-an-unstamped-turn-test
   "A turn row is stamped with provider/model only when the turn FINISHES, so the
    usage rollup names the newest turn that HAS one. Picking the newest turn flat

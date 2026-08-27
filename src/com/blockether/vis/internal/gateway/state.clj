@@ -988,28 +988,36 @@
                             :git (git/workspace-status (:root ws))})))
        (catch Throwable _ nil)))
 
-(defn session-usage-info
-  "Whole-session USAGE rollup for `sid` in THE canonical string-keyed wire shape
-   `{\"turn_count\" \"iteration_count\" \"tool_call_count\" \"fold_count\"
-   \"input_tokens\" \"input_regular_tokens\"
-   \"input_cache_write_tokens\" \"input_cache_read_tokens\" \"output_tokens\"
-   \"output_reasoning_tokens\" \"cache_hit_rate\" \"cost_usd\" \"duration_ms\"
-   \"first_turn_at\" \"last_turn_at\" \"provider\" \"model\"}`, or nil when the
-   session has no turns yet.
+(defn- usage-percent
+  ^long [part total]
+  (if (pos? (long total))
+    (min 100 (long (Math/round (* 100.0 (/ (double part) (double total))))))
+    0))
 
-   `cache_hit_rate` is derived HERE, once, so every channel reads the same
-   number instead of three clients each dividing differently: cached input over
-   TOTAL input (`input_tokens` is the total; the three detail columns are its
-   subsets). Never throws."
+(defn session-usage-info
+  "Whole-session USAGE rollup for `sid` in THE canonical string-keyed wire shape,
+   or nil when the session has no turns yet.
+
+   `cache_read_share_percent` is provider cache reads over ALL logical input, so
+   it describes cost. `reusable_prefix_coverage_percent` is provider reads over
+   the exact prior same-route prefixes that were eligible, so new tool output
+   cannot make cache architecture look worse. Their token numerators and
+   denominators ride beside both percentages. Never throws."
   [sid]
   (try (when-let [db (lp/db-info)]
          (when-let [u (persistance/db-session-usage-stats db sid)]
            (let [input (long (or (:input-tokens u) 0))
-                 cached (long (or (:input-cache-read-tokens u) 0))]
+                 cached (long (or (:input-cache-read-tokens u) 0))
+                 reusable (long (or (:prompt-cache-reusable-tokens u) 0))
+                 reused (long (or (:prompt-cache-reused-tokens u) 0))]
 
              (wire/canonical (cond-> u
                                (pos? input)
-                               (assoc :cache-hit-rate (double (/ cached input))))))))
+                               (assoc :cache-read-share-percent (usage-percent cached input))
+
+                               (pos? reusable)
+                               (assoc :reusable-prefix-coverage-percent
+                                 (usage-percent reused reusable)))))))
        (catch Throwable _ nil)))
 
 (defn change-root!
