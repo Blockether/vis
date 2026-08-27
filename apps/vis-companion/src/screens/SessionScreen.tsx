@@ -941,22 +941,23 @@ function expandFileMentions(text: string): string {
   });
 }
 
-// Matches the veil's `duration-200`. Kept in JS because the veil has to stay
-// MOUNTED for the length of its own fade-out (see the reveal effect below).
-const VEIL_FADE_MS = 200;
-
-// Mirrors the TUI's `paint-content-loading!`: a centered Braille spinner next
-// to "Loading session…" only when an existing session has no transcript snapshot
-// to paint. Cached re-entry and new-session creation both open straight to content.
-function LoadingSession() {
+// Mirrors the TUI's content-loading treatment, but names BOTH phases of a cold
+// open: the network has not answered yet, or a known number of recent turns is
+// being mounted and positioned. The count is deliberately turns, the unit the
+// session list already teaches; DOM nodes and markdown chunks are implementation.
+function LoadingSession({ ready, total }: { ready: number; total: number }) {
+  const preparing = total > 0;
+  const label = preparing
+    ? `Preparing ${Math.min(ready, total)} of ${total} recent turns…`
+    : "Loading recent turns…";
   return (
     <div
       className="flex min-h-[55vh] items-center justify-center font-mono text-body text-white"
       role="status"
-      aria-label="Loading session"
+      aria-label="Loading recent turns"
     >
       <Spinner />
-      <span>&nbsp;&nbsp;Loading session…</span>
+      <span>&nbsp;&nbsp;{label}</span>
     </div>
   );
 }
@@ -1251,9 +1252,6 @@ export function SessionScreen({
   // A cached transcript is already the honest first frame. Reserve the veil for
   // a genuinely cold open while its first transcript page crosses the network.
   const [loading, setLoading] = useState(
-    () => !fresh && openingTranscript === null,
-  );
-  const [veiled, setVeiled] = useState(
     () => !fresh && openingTranscript === null,
   );
   const [connected, setConnected] = useState(false);
@@ -1678,7 +1676,7 @@ export function SessionScreen({
   );
   const preLiveTurnIdsRef = useRef<Set<string>>(preLiveTurnIdsSeed);
   const cancelRef = useRef<() => void>(() => undefined);
-  // A cold open stays veiled until its first transcript page has been placed. A
+  // A cold open stays covered until its first transcript page has been placed. A
   // cached re-entry still runs the same positioning pass, but paints immediately.
   const initialScrollPendingRef = useRef(!fresh);
   // Mirror the latest render values for async callbacks. Written in an effect so
@@ -1780,7 +1778,6 @@ export function SessionScreen({
     setVoiceModeHolding(false);
     const needsColdLoad = !fresh && cachedTranscript === null;
     setLoading(needsColdLoad);
-    setVeiled(needsColdLoad);
     setVisibleTurnCount(INITIAL_VISIBLE_TURNS);
     setHydratedTurnCount(FIRST_PAINT_TURNS);
     followingRef.current = true;
@@ -3882,20 +3879,25 @@ export function SessionScreen({
     };
   }, [sid]);
 
-  // Fill the render window back up to `visibleTurnCount`, a chunk per frame,
-  // once the first paint is out. Rows land ABOVE the viewport, so a reader at
-  // the bottom sees nothing; a reader who scrolled up is held by the scroller's
-  // one anchor observer.
+  // Fill the render window back up to the turns ACTUALLY in hand, a chunk per
+  // frame. Waiting on the network is not hydration: advancing to the requested
+  // window while `turns` was empty made the first honest progress reading jump
+  // straight to "5 of 5" even though none of those rows had been prepared yet.
+  // Rows land ABOVE the viewport, so a reader at the bottom sees nothing; a reader
+  // who scrolled up is held by the scroller's one anchor observer.
   useEffect(() => {
-    if (hydratedTurnCount >= visibleTurnCount) return;
+    const target = Math.min(visibleTurnCount, turns.length);
+    if (hydratedTurnCount >= target) return;
     let frame: number | null = window.requestAnimationFrame(() => {
       frame = null;
-      setHydratedTurnCount((count) => count + HYDRATE_TURNS_PER_FRAME);
+      setHydratedTurnCount((count) =>
+        Math.min(target, count + HYDRATE_TURNS_PER_FRAME),
+      );
     });
     return () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
-  }, [hydratedTurnCount, visibleTurnCount]);
+  }, [hydratedTurnCount, visibleTurnCount, turns.length]);
 
   // The opening ramp repaints the transcript on every frame it hydrates; the
   // reader should meet it settled, not mid-whip. The mounted turn COUNT is not
@@ -3923,21 +3925,7 @@ export function SessionScreen({
     cancelReveal,
   ]);
 
-  // A cold-open veil must DISSOLVE, not vanish. Unmounting it the instant the
-  // transcript is ready swaps a full-bleed `bg-ink` sheet for the whole transcript
-  // inside a single frame. Holding it mounted at `opacity-0` for one transition
-  // lets the transcript cross-fade in underneath. Cached sessions never mount it.
-  useEffect(() => {
-    if (loading) {
-      setVeiled(true);
-      return;
-    }
-    if (!veiled) return;
-    const timer = window.setTimeout(() => setVeiled(false), VEIL_FADE_MS);
-    return () => window.clearTimeout(timer);
-  }, [loading, veiled]);
-
-  // The veil can never outlive the watchdog (see LOADING_VEIL_MAX_MS).
+  // The loading sheet can never outlive the watchdog (see LOADING_VEIL_MAX_MS).
   useEffect(() => {
     if (!loading) return;
     const timer = window.setTimeout(
@@ -5754,14 +5742,12 @@ export function SessionScreen({
               </>
             </div>
           </div>
-          {veiled && (
-            <div
-              aria-hidden={!loading}
-              className={`absolute inset-0 z-10 flex items-center justify-center bg-ink transition-opacity duration-200 motion-reduce:transition-none ${
-                loading ? "opacity-100" : "pointer-events-none opacity-0"
-              }`}
-            >
-              <LoadingSession />
+          {loading && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-ink">
+              <LoadingSession
+                ready={Math.min(hydratedTurnCount, visibleTurnCount, turns.length)}
+                total={Math.min(visibleTurnCount, turns.length)}
+              />
             </div>
           )}
         </div>

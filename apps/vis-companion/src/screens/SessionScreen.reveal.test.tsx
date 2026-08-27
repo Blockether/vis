@@ -32,13 +32,13 @@ describe("returning to a cached session", () => {
     });
 
     expect(screen.getByText("Already in memory")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Loading session")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Loading recent turns")).not.toBeInTheDocument();
   });
 
   it("treats a cached empty transcript as ready rather than cold", () => {
     renderSessionScreen({ client: { cachedTranscript: () => [] } });
 
-    expect(screen.queryByLabelText("Loading session")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Loading recent turns")).not.toBeInTheDocument();
   });
 });
 
@@ -58,11 +58,45 @@ describe("opening a session", () => {
       },
     });
 
-    expect(screen.getByLabelText("Loading session")).toBeInTheDocument();
+    expect(screen.getByLabelText("Loading recent turns")).toBeInTheDocument();
     expect(await screen.findByText("Rename the machine tag")).toBeInTheDocument();
     await waitFor(() =>
-      expect(screen.queryByText(/Loading session/)).not.toBeInTheDocument(),
+      expect(screen.queryByLabelText("Loading recent turns")).not.toBeInTheDocument(),
     );
+  });
+
+  // Regression, user report: the opaque opening sheet only said "Loading session",
+  // hid already-arrived turns without saying how many were still being prepared, then
+  // faded through a briefly empty-looking frame while the scroll position caught up.
+  it("reports opening progress and reveals the placed transcript atomically", async () => {
+    let resolveTranscript!: (turns: Array<{
+      id: string;
+      user_request: string;
+      status: string;
+      iterations: never[];
+    }>) => void;
+    const transcript = new Promise<Parameters<typeof resolveTranscript>[0]>((resolve) => {
+      resolveTranscript = resolve;
+    });
+    renderSessionScreen({ client: { transcript: () => transcript } });
+
+    const loading = screen.getByLabelText("Loading recent turns");
+    expect(loading).toHaveTextContent("Loading recent turns…");
+    expect(loading.parentElement).not.toHaveClass("transition-opacity", "duration-200");
+
+    // A slow network response must not advance a counter for turns that do not exist yet.
+    await new Promise((resolve) => window.setTimeout(resolve, 50));
+
+    resolveTranscript(
+      Array.from({ length: 8 }, (_, index) => ({
+        id: `t${index + 1}`,
+        user_request: `Turn ${index + 1}`,
+        status: "completed",
+        iterations: [],
+      })),
+    );
+
+    expect(await screen.findByText("Preparing 2 of 8 recent turns…")).toBeInTheDocument();
   });
 
   // Regression, user report: a response shorter than the transcript viewport stayed
