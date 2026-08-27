@@ -75,6 +75,15 @@ const OPEN_PAST_PX = 8;
  * halfway lands on one of the two and never at a third of a verb. A pointer
  * needs no gesture and gets no mark: the strip's buttons are in the tab order,
  * and focusing one scrolls the drawer open by itself.
+ *
+ * A MOUSE NEVER SLIDES. On `mouse:` (>= 40rem and `pointer: fine`) the track
+ * stops being one: the row panel is the whole width, the strip leaves the flow
+ * for the trailing edge, and it fades in on hover or focus-within. A pointer
+ * has no swipe, so all the horizontal scroll left it was a two-finger trackpad
+ * drag or shift+wheel — every row of the list answering a sideways gesture the
+ * reader did not aim at it by sliding a delete button under the cursor, and the
+ * list scrolling sideways as a whole. The switch is the variant alone: no
+ * pointer media query is read at runtime, so a touched hybrid keeps its slide.
  */
 export function SwipeActions({
   actions,
@@ -191,7 +200,7 @@ export function SwipeActions({
         }
         setOpen((current) => (current === next ? current : next));
       }}
-      className="flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="group/swipe flex snap-x snap-mandatory overflow-x-auto overflow-y-hidden overscroll-x-contain [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden mouse:relative mouse:snap-none mouse:overflow-hidden"
     >
       {/* A GRID, not a plain block: the track is as tall as its TALLEST panel, and the
           action strip (a 16px icon over a 10px caption) stands 34px against a 32px
@@ -212,7 +221,7 @@ export function SwipeActions({
         {children}
       </div>
       <div
-        className="flex shrink-0 snap-end"
+        className="flex shrink-0 snap-end mouse:absolute mouse:inset-y-0 mouse:right-0 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/swipe:opacity-100 mouse:group-focus-within/swipe:opacity-100 mouse:motion-reduce:transition-none"
         role="group"
         aria-label={label ? `${label} actions` : 'Row actions'}
       >

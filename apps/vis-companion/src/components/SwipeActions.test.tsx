@@ -83,6 +83,43 @@ describe('SwipeActions tones', () => {
   });
 });
 
+// Regression, user report (paraphrased: on the desktop that sideways scrolling is
+// broken and should not be there at all): every row of both lists was a scroll-snap
+// track 288px wider than its own box, and a pointer has no swipe — so the only way
+// one could reach it was a two-finger trackpad drag or shift+wheel, which slid a
+// delete button under the cursor on whichever rows the sideways gesture crossed.
+// A mouse gets no track and no scroll: the strip stands at the trailing edge and
+// fades in on hover or on keyboard focus.
+describe('a mouse never slides', () => {
+  const markup = () =>
+    renderToStaticMarkup(
+      <SwipeActions
+        label="a session"
+        actions={[{ key: 'delete', label: 'Delete', icon: <TrashIcon />, tone: 'danger', onSelect: () => {} }]}
+      >
+        <span>row</span>
+      </SwipeActions>,
+    );
+
+  it('takes the horizontal track away from a pointer', () => {
+    const html = markup();
+    expect(html).toContain('mouse:relative');
+    expect(html).toContain('mouse:snap-none');
+    expect(html).toContain('mouse:overflow-hidden');
+    // The touch surface is untouched: a finger still slides the same snap track.
+    expect(html).toContain('snap-x snap-mandatory overflow-x-auto');
+  });
+
+  it('reveals the strip on hover and on keyboard focus instead', () => {
+    const html = markup();
+    expect(html).toContain('group/swipe');
+    expect(html).toContain('mouse:absolute mouse:inset-y-0 mouse:right-0');
+    expect(html).toContain('mouse:opacity-0');
+    expect(html).toContain('mouse:group-hover/swipe:opacity-100');
+    expect(html).toContain('mouse:group-focus-within/swipe:opacity-100');
+  });
+});
+
 describe('the slide', () => {
   const track = (index = 0) =>
     document.querySelectorAll<HTMLElement>('.snap-x')[index] as HTMLElement;
