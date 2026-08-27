@@ -193,3 +193,49 @@ When asked to review, audit, critique or modernize a design — screenshot, mock
 - Text scaling to 130% and reduced motion both survive.
 - App: `npm test -- <files>`, `npm run lint`, `npm run build` clean, and any new control pinned in
   `ui.test.tsx`. TUI: a capture PNG eyeballed and grid assertions added.
+
+## 10. Component recipes — the measured defaults
+
+Numbers a reviewer can check with `get box`. Deviate only with a reason in the diff.
+
+| component | touch | pointer (`mouse:`) |
+|---|---|---|
+| list row | ≥60px, two lines: `text-sub` 15/22 title + `text-ui` 11/16 metadata | 34px, one line, fixed tracks per fact |
+| row leading | 16px gutter carrying the unread mark; text at 32px | 7px mark, no gutter |
+| separator | hairline inset to the TEXT (32px), never to the screen edge | inset 16px |
+| trailing slot | time, then chips; swipe holds the actions | ONE 124px slot: time normally, four 28px icon buttons on hover — nothing reflows |
+| section header | 30px, sticky, `--color-level-project` paper, name + count | 28px, same |
+| search | 36px field; NO keyboard-shortcut chip on a phone | 30px field, `/` chip, max 380px |
+| segmented rail | 44px band, 28px painted chip | 26px chip |
+| sheet / dialog | title band 44px, content top ≥104px, footer buttons 48px, backdrop ≤26% ink | centred panel, same bands |
+| form control | 44px (select, password, text); OTP box 44×52; chip 32px; slider thumb 22 inside a 44 band; checkbox 20 inside a 44 row | 30px, thumb 16 |
+| swipe action | 72px per cell, ICON ONLY at ≤72px — a 10px label collides with its neighbour; destructive after an 8px gap in its own tint | n/a |
+| transcript | role label `text-meta` mono, body `text-title` 13/20, user message behind a 2px rule, tool call = 2px rule + `--code-bg` + `--result-bg` | same, but the column is capped at 720px and centred |
+| composer | 44px controls, exactly one filled control (send), 28px tally strip above | 60px field, `Send` button inside it |
+| settings | group label `text-meta`, rows 48px, switch 46×28 | rows 34px |
+| theme swatch | ≥3 per row so the theme's real name fits at `text-meta` | ≥4 per row |
+| artifact card | preview shows the CONTENT's shape (bars for an image, lines for a page, cells for a table) — never a generic file glyph; one edge (the preview), text unboxed below | same, 32px inline icon in a docked panel |
+
+Two derived rules that catch most of the damage:
+
+- **Density follows the pointer, never the width.** An iPad is a large screen driven by a hand: the
+  query is `mouse:`, and a `sm:` breakpoint may never shrink a target.
+- **Fill the window.** A 1280×800 window whose list ends two thirds down is under-populated, not
+  clean: at 34px that is ~21 rows plus headers. A mockup that paints eight rows is measuring nothing.
+
+## 11. Paint it, then LOOK at it
+
+A design answer that was never rendered and inspected is a guess, and it will read as one.
+
+1. Build the screens as ONE self-contained HTML file at real device size — iPhone 16 is 393×852pt
+   with a 59px status bar and a 34px home indicator; a frame that omits them lies about the space.
+   Paint from `themes.generated.css` variables and the `text-*` steps only, both appearances.
+2. Render and crop:
+   `spel --session agent-<ts> set viewport 1440 900 && … open file:///… && … get box '#p1' && … screenshot -f /tmp/full.png`
+   — chain the commands in ONE shell (the daemon lives with that process), then crop each frame with
+   PIL from the `get box` figures. Close the session when the task ends.
+3. Put the PNG in front of yourself (`attach(path, audience="model")`) and read it as a stranger.
+   The first render is ALWAYS wrong in ways prose cannot predict: labels collide inside a cell, a
+   glyph clips at the device edge, a path chip wraps mid-word, a keyboard chip appears on a phone.
+4. Fix, re-render, look again. Ship the HTML as the artifact — it is inspectable at any zoom, and it
+   is what §9 is checked against.
