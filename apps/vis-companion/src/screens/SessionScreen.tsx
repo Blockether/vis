@@ -5649,8 +5649,9 @@ export function SessionScreen({
         )}
 
         <div className="relative flex min-h-0 flex-1 flex-col">
-          {/* Layered over the transcript it indexes, INSIDE the same box: the
-          artifacts are the session's own output, not another screen. */}
+          {/* The gallery belongs to this session but not to this transcript rectangle:
+          it portals into the viewport-pinned shell, so its full-screen contract includes
+          the session header and every detail opened from it inherits the whole glass. */}
           {artifactsOpen && (
             <ArtifactsSheet
               client={client}

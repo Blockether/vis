@@ -121,8 +121,11 @@ const run = artifact({
   iterationId: "i5",
 });
 
-const sheet = (artifacts: SessionArtifact[]) =>
-  renderToStaticMarkup(
+const sheet = (artifacts: SessionArtifact[]) => {
+  const shell = globalThis.document.createElement("div");
+  shell.setAttribute("data-viewport-shell", "");
+  globalThis.document.body.append(shell);
+  const view = render(
     <ArtifactsSheet
       client={client}
       sid="s1"
@@ -130,6 +133,11 @@ const sheet = (artifacts: SessionArtifact[]) =>
       onClose={() => {}}
     />,
   );
+  const html = shell.querySelector("#artifacts-surface")?.outerHTML ?? "";
+  view.unmount();
+  shell.remove();
+  return html;
+};
 
 /**
  * A gateway whose bytes can actually be read: the reader fetches the blob url.
@@ -672,7 +680,33 @@ describe("an artifact with a history", () => {
     expect(dots).not.toContain("justify-items-end");
   });
 });
+// Regression, user report: the gallery called itself a full-screen surface but was
+// absolutely positioned inside the transcript box, leaving the 115px session header
+// exposed on iPhone and making every artifact detail inherit the same short frame.
+describe("the artifacts surface", () => {
+  it("covers the viewport-pinned shell rather than only the transcript", () => {
+    const shell = globalThis.document.createElement("div");
+    shell.setAttribute("data-viewport-shell", "");
+    globalThis.document.body.append(shell);
 
+    try {
+      render(
+        <ArtifactsSheet
+          client={client}
+          sid="s1"
+          artifacts={[picture]}
+          onClose={() => {}}
+        />,
+      );
+
+      const surface = shell.querySelector("#artifacts-surface");
+      expect(surface).toBeTruthy();
+      expect(surface?.className).toContain("pt-[env(safe-area-inset-top)]");
+    } finally {
+      shell.remove();
+    }
+  });
+});
 // Regression: an opened attachment was read in a letterbox. Every kind that owns
 // its own scrolling — a clip, a note, a text file, a document — is handed the
 // overlay's whole body (`fill`); only a list of rows keeps the padded scroller.
@@ -717,6 +751,15 @@ describe("an opened artifact", () => {
     return { view, overlay, prose };
   };
 
+  // Regression, user report: opening an artifact replaced the safe gallery with an
+  // inset-zero detail layer whose title band sat underneath the iOS status bar.
+  it("keeps an opened artifact below the native safe area", async () => {
+    readable();
+    const { view, overlay } = await openNote();
+    expect(overlay.className).toContain("pt-[env(safe-area-inset-top)]");
+    view.unmount();
+    vi.unstubAllGlobals();
+  });
   it("is given the whole height of the overlay", async () => {
     readable();
     const { view, overlay, prose } = await openNote();

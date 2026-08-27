@@ -26,6 +26,7 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   ARTIFACT_FILTERS,
   docKindLabel,
@@ -57,6 +58,7 @@ import {
   KebabButton,
   ListRow,
   LoadMore,
+  overlayLayer,
 } from "./ui";
 
 /**
@@ -751,7 +753,7 @@ function DetailOverlay({
       role="dialog"
       aria-modal="true"
       aria-label={name}
-      className="absolute inset-0 z-40 flex flex-col bg-ink"
+      className="absolute inset-0 z-40 flex flex-col bg-ink pt-[env(safe-area-inset-top)]"
     >
       <DialogHeader
         isStacked
@@ -1170,12 +1172,13 @@ export function ArtifactsSheet({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose, opened, versionsOf]);
 
-  return (
+  const { host, position } = overlayLayer();
+  return createPortal(
     <div
       id="artifacts-surface"
       role="region"
       aria-label="Artifacts produced by the model"
-      className="absolute inset-0 z-30 flex flex-col bg-ink"
+      className={`${position} inset-0 z-30 flex flex-col bg-ink pt-[env(safe-area-inset-top)]`}
     >
       {/* The sheet is an opened surface, so it opens the way every other one does:
           the app's dialog band, naming itself, with the one ✕ inheriting its ink. */}
@@ -1244,6 +1247,7 @@ export function ArtifactsSheet({
           {voiceControl}
         </div>
       )}
-    </div>
+    </div>,
+    host,
   );
 }
