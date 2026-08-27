@@ -1047,7 +1047,7 @@ export function App() {
       )}
 
       <main
-        className={`min-h-0 flex-1 overflow-x-hidden overscroll-contain ${shellView === "session" ? "overflow-hidden" : "overflow-y-auto"}`}
+        className={`h-full min-h-0 min-w-0 w-full flex-1 overflow-x-hidden overscroll-contain ${shellView === "session" ? "overflow-hidden" : "overflow-y-auto"}`}
       >
         {sessionsMounted && (
           <div className={sessionsVisible ? "h-full" : "hidden"}>

@@ -90,6 +90,25 @@ describe('the app bar', () => {
     return view;
   };
 
+  // Regression, user report (desktop screenshots with empty paper below both views):
+  // the flex item had no explicit full-size box and the sessions card changed to
+  // intrinsic height at `sm`, leaving the app painted only across its upper strip.
+  it('gives desktop screens the whole shell instead of an intrinsic-height strip', async () => {
+    const view = await mount();
+    const main = view.baseElement.querySelector('main') as HTMLElement;
+    expect(main.className).toContain('h-full');
+    expect(main.className).toContain('min-w-0');
+    expect(main.className).toContain('w-full');
+
+    const sessions = screen.getByRole('region', { name: 'Sessions' });
+    const list = sessions.querySelector('.overflow-y-auto') as HTMLElement;
+    expect(list).toBeTruthy();
+    expect(list.parentElement?.className).toContain('h-full');
+    expect(list.parentElement?.className).not.toContain('sm:h-auto');
+
+    view.unmount();
+    view.restore();
+  });
   // The chrome is the only thing that pads the top safe area on these screens,
   // so if it stops doing it the app bar sits under the status bar clock.
   it('pads the status bar from the shell chrome', async () => {

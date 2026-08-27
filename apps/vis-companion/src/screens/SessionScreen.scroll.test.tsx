@@ -49,6 +49,15 @@ describe("scrolling a transcript", () => {
     flushParked();
   });
 
+  // Regression, user report (desktop session screenshot): the transcript section
+  // kept its intrinsic width inside the shell, exposing page overflow and a native
+  // horizontal scrollbar beneath the composer.
+  it("owns the full width of the viewport frame", () => {
+    renderSessionScreen({ session: sessionFixture({ id: "desktop" }) });
+    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const session = viewport.closest("section") as HTMLElement;
+    expect(session.className).toContain("w-full");
+  });
   it("marks the reader's place without a store write per frame", async () => {
     // Frames are driven by hand so the gesture is exactly as long as it says.
     const frames: FrameRequestCallback[] = [];

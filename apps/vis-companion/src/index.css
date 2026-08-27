@@ -325,6 +325,7 @@
   * {
     -webkit-tap-highlight-color: transparent;
     scrollbar-color: var(--dialog-border) var(--bg);
+    scrollbar-width: thin;
   }
 
   ::selection {

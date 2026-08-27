@@ -2016,9 +2016,10 @@ export function SessionsScreen({
             across the sheet: every machine closes itself in its own rail, exactly where
             that machine's content ends. The section's own `env(safe-area-inset-bottom)`
             keeps the last row and the pager clear of the home indicator.
-            At `sm` the card detaches again and ENDS where its content ends (`max-h-full`
-            + `h-auto`), so the desktop never draws a border around empty paper. */}
-        <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-panel sm:mx-0 sm:h-auto sm:max-h-full sm:border-x sm:border-r-2">
+            At `sm` the card detaches from the viewport edges but still fills the
+            available height. Its list owns overflow; the document never grows a second
+            scrollbar or leaves an intrinsic-height strip above empty desktop paper. */}
+        <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-panel sm:mx-0 sm:max-h-full sm:border-x sm:border-r-2">
         {/* The pull reports itself while it happens: the card clips the band until a
             finger brings it down over the list's first header. */}
         <PullToSearchHint phase={pullPhase} ref={hintRef} />
