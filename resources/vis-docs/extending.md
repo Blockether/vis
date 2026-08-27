@@ -1396,8 +1396,7 @@ resources/META-INF/vis/manifest.edn
 ```
 
 ```clojure
-{:version 1
- :initialization
+{:initialization
  [com.blockether.vis.internal.foundation.core/register!
   {:register com.acme.ext.weather.core/register!
    :apropos  "META-INF/vis/apropos/weather.edn"}

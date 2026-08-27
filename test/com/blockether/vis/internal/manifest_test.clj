@@ -14,11 +14,10 @@
 
 (defdescribe
   manifest-shape-test
-  (it "reads one versioned initialization vector and nothing else"
+  (it "reads one initialization vector and nothing else"
       (let [m (manifest/read-manifest)]
         (expect (s/valid? ::manifest/manifest m) (pr-str (s/explain-data ::manifest/manifest m)))
-        (expect (= #{:version :initialization} (set (keys m))))
-        (expect (= 1 (:version m)))
+        (expect (= #{:initialization} (set (keys m))))
         (expect (seq (:initialization m)))))
   (it "answers exactly one manifest on the classpath"
       ;; The whole point of naming resources explicitly: two manifests would
@@ -50,35 +49,36 @@
                   {:register 'example.gamma/register!
                    :is-optional true
                    :because "the native library may be absent"}]
-                 (parsed (str "{:version 1 :initialization "
+                 (parsed (str "{:initialization "
                               "[example.alpha/register! " "{:register example.beta/register! "
                               ":apropos \"META-INF/vis/apropos/docs.edn\"} "
                               "{:register example.gamma/register! "
                               ":is-optional true "
                               ":because \"the native library may be absent\"}]}")))))
-  (it "refuses a manifest that carries anything but the two keys"
-      ;; Regression: the resource list used to be a THIRD top-level key, so every
-      ;; pack's documents were declared far from the pack that registers them.
-      (expect (refused? "{:version 1 :initialization [a.b/c!] :apropos [\"x.edn\"]}"))
-      (expect (refused? "{:initialization [a.b/c!]}"))
-      (expect (refused? "{:version 2 :initialization [a.b/c!]}")))
+  (it "refuses a manifest that carries anything but the initialization vector"
+      ;; Regression: the resource list used to be a second top-level key, so every
+      ;; pack's documents were declared far from the pack that registers them, and
+      ;; a `:version` number nobody ever read used to be required beside it.
+      (expect (refused? "{:initialization [a.b/c!] :apropos [\"x.edn\"]}"))
+      (expect (refused? "{}"))
+      (expect (refused? "{:version 1 :initialization [a.b/c!]}")))
   (it "refuses an empty, duplicated or unqualified initialization"
-      (expect (refused? "{:version 1 :initialization []}"))
-      (expect (refused? "{:version 1 :initialization [a.b/c! a.b/c!]}"))
-      (expect (refused? "{:version 1 :initialization [register!]}"))
-      (expect (refused? "{:version 1 :initialization #{a.b/c!}}")))
+      (expect (refused? "{:initialization []}"))
+      (expect (refused? "{:initialization [a.b/c! a.b/c!]}"))
+      (expect (refused? "{:initialization [register!]}"))
+      (expect (refused? "{:initialization #{a.b/c!}}")))
   (it "refuses an entry with an unknown key or a resource that is not a path"
-      (expect (refused? "{:version 1 :initialization [{:register a.b/c! :extra 1}]}"))
-      (expect (refused? "{:version 1 :initialization [{:apropos \"x.edn\"}]}"))
-      (expect (refused? "{:version 1 :initialization [{:register a.b/c! :apropos \"/x.edn\"}]}"))
-      (expect (refused? "{:version 1 :initialization [{:register a.b/c! :apropos \"\"}]}")))
+      (expect (refused? "{:initialization [{:register a.b/c! :extra 1}]}"))
+      (expect (refused? "{:initialization [{:apropos \"x.edn\"}]}"))
+      (expect (refused? "{:initialization [{:register a.b/c! :apropos \"/x.edn\"}]}"))
+      (expect (refused? "{:initialization [{:register a.b/c! :apropos \"\"}]}")))
   (it "refuses a weakness nobody explained, and an explanation of no weakness"
-      (expect (refused? "{:version 1 :initialization [{:register a.b/c! :is-optional true}]}"))
-      (expect (refused? "{:version 1 :initialization [{:register a.b/c! :because \"why\"}]}"))
-      (expect (refused? (str "{:version 1 :initialization "
+      (expect (refused? "{:initialization [{:register a.b/c! :is-optional true}]}"))
+      (expect (refused? "{:initialization [{:register a.b/c! :because \"why\"}]}"))
+      (expect (refused? (str "{:initialization "
                              "[{:register a.b/c! :is-optional false :because \"why\"}]}"))))
   (it "refuses a tagged literal anywhere in the manifest"
-      (expect (refused? "{:version 1 :initialization [#inst \"2020-01-01\"]}"))))
+      (expect (refused? "{:initialization [#inst \"2020-01-01\"]}"))))
 
 (defdescribe
   initialization-test

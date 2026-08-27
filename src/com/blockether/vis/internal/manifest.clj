@@ -1,10 +1,9 @@
 (ns com.blockether.vis.internal.manifest
   "The one closed distribution manifest.
 
-   `META-INF/vis/manifest.edn` has exactly two keys:
+   `META-INF/vis/manifest.edn` carries exactly one key:
 
-     {:version 1
-      :initialization [qualified.ns/register!
+     {:initialization [qualified.ns/register!
                        {:register    qualified.ns/register!
                         :apropos     \"META-INF/vis/apropos/shim-pandas.edn\"
                         :is-optional true
@@ -46,7 +45,6 @@
        (not (str/includes? x "\\"))
        (not-any? #{"" "." ".."} (str/split x #"/"))))
 
-(s/def ::version #{1})
 (s/def ::register qualified-var-symbol?)
 (s/def ::apropos resource-path?)
 (s/def ::is-optional true?)
@@ -63,8 +61,7 @@
                     :distinct true)
          seq))
 (s/def ::manifest
-  (s/and (s/keys :req-un [::version ::initialization])
-         #(= #{:version :initialization} (set (keys %)))))
+  (s/and (s/keys :req-un [::initialization]) #(= #{:initialization} (set (keys %)))))
 
 (defn- read-edn
   "Read manifest EDN `text`, refusing tagged literals - the one reader."

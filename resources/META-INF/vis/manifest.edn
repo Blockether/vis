@@ -1,5 +1,4 @@
-{:version 1
- :initialization
+{:initialization
  [{:register com.blockether.vis.internal.foundation.core/register!
    :apropos "META-INF/vis/apropos/docs.edn"}
   {:register com.blockether.vis.internal.foundation.shim-yaml/register!

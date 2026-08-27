@@ -145,10 +145,11 @@ Whole skill body."}
             runs
             (atom 0)]
 
-        (try (dc/register-source! ::live
-                                  (fn []
-                                    (swap! runs inc)
-                                    [{:name (str "live-" @value) :text "A live document."}]))
+        (try (dc/register-source!
+               ::live
+               (fn []
+                 (swap! runs inc)
+                 [{:name (str "live-" @value) :kind "function" :text "A live document."}]))
              (expect (some (comp #{"live-v1"} :name) (dc/entries)))
              (reset! value "v2")
              (expect (some (comp #{"live-v2"} :name) (dc/entries)))
@@ -193,11 +194,17 @@ Whole skill body."}
                    {:name "x" :kind "function"}
                    {:name "x" :kind "function" :text "x" :resource "vis-docs/gateway.md"}
                    ;; Site navigation is the docs site's own resource, never a record.
-                   {:name "x" :kind "doc" :resource "vis-docs/gateway.md" :blurb "One sentence."}
-                   {:name "x" :kind "doc" :text "inline"}]]
+                   {:name "x" :kind "doc" :resource "vis-docs/gateway.md" :blurb "One sentence."}]]
         (expect (not (s/valid? :vis.doc/record bad)) (pr-str bad))
         (expect (throws? clojure.lang.ExceptionInfo #(#'dc/checked-record "test.edn" bad))
                 (pr-str bad))))
+  (it "refuses a page that carries prose instead of naming its file"
+      ;; Refused at DECLARATION only: `:vis.doc/record` says what a READER receives,
+      ;; and by then `resolved-record` has spent the address and slurped the file
+      ;; into `:text`, so the resolved page carries no `:resource` at all.
+      (let [inline {:name "x" :kind "doc" :text "inline"}]
+        (expect (s/valid? :vis.doc/record inline))
+        (expect (throws? clojure.lang.ExceptionInfo #(#'dc/checked-record "test.edn" inline)))))
   (it "reads every declared record once, spending the resource it named"
       (let [rs (#'dc/manifest-records)]
         (expect (seq rs))
