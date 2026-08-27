@@ -116,7 +116,8 @@ async function pickedFileBlob(
   if (file.blob) return retyped(file.blob, mediaType);
   if (file.data) return base64AsBlob(file.data, mediaType);
   if (file.path) {
-    const response = await fetch(file.path);
+    const readablePath = Capacitor.convertFileSrc(file.path);
+    const response = await fetch(readablePath);
     if (!response.ok) throw new Error(`Could not read ${file.name}`);
     return retyped(await response.blob(), mediaType);
   }
@@ -190,36 +191,50 @@ async function collectAttachments(
 ): Promise<PickAttachmentResult> {
   const { maxFiles = 8 } = limits;
   const gate = attachmentGate(limits);
-  const attachments: PendingAttachment[] = [];
   const rejected: string[] = [];
-  for (const candidate of candidates) {
-    const { name, mimeType } = candidate;
+  const accepted = candidates.filter((candidate) => {
+    if (gate.accepts(candidate.mimeType)) return true;
+    rejected.push(`${candidate.name}: unsupported media format`);
+    return false;
+  });
+  // Native path reads and data-URL encodes are independent. Starting all of them
+  // together avoids paying one complete file-copy latency per attachment.
+  const prepared = await Promise.all(
+    accepted.map(async (candidate) => {
+      try {
+        return {
+          candidate,
+          value: await prepareAttachment(
+            await candidate.blob(),
+            candidate.name,
+            candidate.mimeType,
+            gate.limitFor(candidate.mimeType),
+          ),
+        };
+      } catch (cause) {
+        return { candidate, error: (cause as Error).message };
+      }
+    }),
+  );
+  const attachments: PendingAttachment[] = [];
+  for (const result of prepared) {
+    const { candidate } = result;
+    if ('error' in result) {
+      rejected.push(`${candidate.name}: ${result.error}`);
+      continue;
+    }
     if (attachments.length >= maxFiles) {
-      rejected.push(`${name}: limit of ${maxFiles} attachments reached`);
+      rejected.push(`${candidate.name}: limit of ${maxFiles} attachments reached`);
       continue;
     }
-    if (!gate.accepts(mimeType)) {
-      rejected.push(`${name}: unsupported media format`);
-      continue;
-    }
-    try {
-      const prepared = await prepareAttachment(
-        await candidate.blob(),
-        name,
-        mimeType,
-        gate.limitFor(mimeType),
-      );
-      attachments.push({
-        id: crypto.randomUUID(),
-        filename: prepared.filename,
-        media_type: prepared.mediaType,
-        base64: prepared.dataUrl,
-        previewUrl: prepared.dataUrl,
-        size: prepared.size,
-      });
-    } catch (cause) {
-      rejected.push(`${name}: ${(cause as Error).message}`);
-    }
+    attachments.push({
+      id: crypto.randomUUID(),
+      filename: result.value.filename,
+      media_type: result.value.mediaType,
+      base64: result.value.dataUrl,
+      previewUrl: result.value.dataUrl,
+      size: result.value.size,
+    });
   }
   return { attachments, rejected };
 }
@@ -300,11 +315,11 @@ export async function pickMediaAttachments(
   const wantsVideo = mediaTypes.some(isVideoMediaType);
   const result = Capacitor.isNativePlatform()
     ? await (wantsVideo ? FilePicker.pickMedia : FilePicker.pickImages)({
-        readData: true,
+        readData: false,
         skipTranscoding: false,
         ordered: true,
       })
-    : await FilePicker.pickFiles({ types: mediaTypes, readData: true });
+    : await FilePicker.pickFiles({ types: mediaTypes, readData: false });
 
   return collectAttachments(pickedCandidates(result.files), limits);
 }
@@ -324,7 +339,7 @@ export async function pickDocumentAttachments(
   limits: AttachmentLimits = {},
 ): Promise<PickAttachmentResult> {
   const types = limits.mediaTypes ?? DEFAULT_MEDIA_TYPES;
-  const result = await FilePicker.pickFiles({ types, readData: true });
+  const result = await FilePicker.pickFiles({ types, readData: false });
   return collectAttachments(pickedCandidates(result.files), limits);
 }
 
@@ -345,18 +360,20 @@ export async function capturePhotoAttachment(
     quality: 100,
     allowEditing: false,
     correctOrientation: true,
-    resultType: CameraResultType.Base64,
+    resultType: CameraResultType.Uri,
     saveToGallery: false,
     source: CameraSource.Camera,
   });
-  if (!photo.base64String) throw new Error('The camera did not return a photo');
+  if (!photo.webPath) throw new Error('The camera did not return a photo');
 
   const format = photo.format.toLowerCase();
   const extension = format === 'jpeg' ? 'jpg' : format;
   const mimeType =
     format === 'jpg' || format === 'jpeg' ? 'image/jpeg' : `image/${format}`;
   const timestamp = new Date().toISOString().replace(/[:.]/gu, '-');
-  const blob = base64AsBlob(photo.base64String, mimeType);
+  const response = await fetch(photo.webPath);
+  if (!response.ok) throw new Error('Could not read the captured photo');
+  const blob = retyped(await response.blob(), mimeType);
 
   return collectAttachments(
     [

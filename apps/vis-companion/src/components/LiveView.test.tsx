@@ -477,6 +477,47 @@ describe('what a run says about its own layout', () => {
     expect(headline.parentElement?.className).not.toContain('flex');
   });
 
+  // Regression, user report: Activity patches rendered one-by-one on WKWebView and
+  // starved the independent elapsed-time paint, leaving its clock visibly frozen.
+  it('coalesces an Activity patch burst into one phone paint', async () => {
+    let receive: ((event: SseEvent) => void) | null = null;
+    const running = activityView();
+    const client = { liveViews: () => Promise.resolve([running]) } as unknown as GatewayClient;
+    const subscriptions = {
+      subscribeConnection: () => () => undefined,
+      subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
+        receive = listener;
+        return () => undefined;
+      },
+    } as unknown as SessionSubscriptionHub;
+    function Probe() {
+      const views = useLiveViews(client, subscriptions, 'session-1');
+      return <span>{views[0]?.seq ?? 'none'}</span>;
+    }
+
+    render(<Probe />);
+    await waitFor(() => expect(screen.getByText('0')).toBeTruthy());
+    vi.useFakeTimers();
+    try {
+      for (const seq of [1, 2, 3]) {
+        act(() =>
+          receive?.({
+            type: LIVE_VIEW_PATCH_EVENT,
+            view_id: running.id,
+            first_seq: seq,
+            patch: { view_id: running.id, seq, ops: [] },
+          }),
+        );
+      }
+
+      expect(screen.getByText('0')).toBeTruthy();
+      act(() => vi.advanceTimersByTime(100));
+      expect(screen.getByText('3')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: interrupt
   // removed the live panel, then its one transcript read raced the running block
   // persisting the record, so no artifact row appeared.

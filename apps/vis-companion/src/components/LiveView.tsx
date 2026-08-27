@@ -15,9 +15,11 @@ import { InlineMarkdown } from './ChatContent';
 import { AlertIcon } from './icons';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
+import type { SseEvent } from '../lib/types';
 import {
   applyLiveViewEvent,
   LIVE_VIEW_CLOSE_EVENT,
+  LIVE_VIEW_PATCH_EVENT,
   LIVE_NOTE_CHARS,
   isLiveViewEvent,
   liveFraction,
@@ -841,6 +843,16 @@ export function useLiveViews(
       if (connected) reload();
     });
     const recordRefreshTimers: ReturnType<typeof setTimeout>[] = [];
+    let patchTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingPatches: SseEvent[] = [];
+    const flushPatches = () => {
+      if (patchTimer !== null) clearTimeout(patchTimer);
+      patchTimer = null;
+      if (pendingPatches.length === 0) return;
+      const batch = pendingPatches;
+      pendingPatches = [];
+      setViews((current) => batch.reduce(applyLiveViewEvent, current));
+    };
     const revealRecord = () => {
       onRecordFiled?.();
       // A close on the gateway thread files into the running block's collector
@@ -855,6 +867,15 @@ export function useLiveViews(
     const stopEvents = subscriptions.subscribeSession(sid, (event) => {
       if (!isLiveViewEvent(event)) return;
       revision.current += 1;
+      if (event.type === LIVE_VIEW_PATCH_EVENT) {
+        pendingPatches.push(event);
+        // Activity can emit much faster than WKWebView can paint. Fold a burst in
+        // memory and give React one picture, leaving the clock and touch handling
+        // enough main-thread time to move independently.
+        patchTimer ??= setTimeout(flushPatches, 80);
+        return;
+      }
+      flushPatches();
       setViews((current) => applyLiveViewEvent(current, event));
       if (event.type === LIVE_VIEW_CLOSE_EVENT) revealRecord();
     });
@@ -864,6 +885,8 @@ export function useLiveViews(
       controller.abort();
       stopConnection();
       stopEvents();
+      if (patchTimer !== null) clearTimeout(patchTimer);
+      pendingPatches = [];
       for (const timer of recordRefreshTimers) clearTimeout(timer);
     };
   }, [client, sid, subscriptions, onRecordFiled]);

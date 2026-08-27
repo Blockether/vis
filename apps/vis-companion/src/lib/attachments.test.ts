@@ -8,7 +8,7 @@
  *
  * @vitest-environment jsdom
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const filePicker = vi.hoisted(() => ({
   pickFiles: vi.fn(),
@@ -18,7 +18,7 @@ const filePicker = vi.hoisted(() => ({
 
 vi.mock('@capawesome/capacitor-file-picker', () => ({ FilePicker: filePicker }));
 vi.mock('@capacitor/core', () => ({
-  Capacitor: { isNativePlatform: () => true },
+  Capacitor: { isNativePlatform: () => true, convertFileSrc: (path: string) => `native:${path}` },
 }));
 
 import {
@@ -43,6 +43,8 @@ beforeEach(() => {
   filePicker.pickImages.mockReset();
 });
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe('the FILES door', () => {
   it('opens the document browser, not the gallery sheet', async () => {
     filePicker.pickFiles.mockResolvedValue({
@@ -57,11 +59,43 @@ describe('the FILES door', () => {
     expect(filePicker.pickImages).not.toHaveBeenCalled();
     expect(filePicker.pickFiles).toHaveBeenCalledWith({
       types: ['image/png', 'audio/mp4'],
-      readData: true,
+      readData: false,
     });
     expect(result.rejected).toEqual([]);
     expect(result.attachments.map((a) => a.media_type)).toEqual(['audio/mp4']);
     expect(result.attachments[0].filename).toBe('memo.m4a');
+  });
+
+  it('reads several native files concurrently instead of serializing their copies', async () => {
+    filePicker.pickFiles.mockResolvedValue({
+      files: [
+        { name: 'one.png', mimeType: 'image/png', path: '/one.png' },
+        { name: 'two.png', mimeType: 'image/png', path: '/two.png' },
+      ],
+    });
+    const releases: Array<() => void> = [];
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((resolve) =>
+          releases.push(() =>
+            resolve({
+              ok: true,
+              blob: async () => new Blob([new Uint8Array(8)], { type: 'image/png' }),
+            } as Response),
+          ),
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const pending = pickDocumentAttachments({ mediaTypes: ['image/png'] });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'native:/one.png');
+    expect(fetchMock).toHaveBeenNthCalledWith(2, 'native:/two.png');
+    releases.forEach((release) => release());
+    await expect(pending).resolves.toMatchObject({ rejected: [], attachments: [{}, {}] });
   });
 
   it('claims a file the platform could not name by its extension', async () => {
