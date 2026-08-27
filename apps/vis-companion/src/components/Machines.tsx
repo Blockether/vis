@@ -433,7 +433,12 @@ function AddressMenu({
           title="Automatic"
           hint="Follow the most durable address that answers"
           icon={<SortIcon className="size-4" />}
-          onSelect={() => onSelect(bestAddress(urls) ?? conn.url, false)}
+          onSelect={() =>
+            onSelect(
+              bestAddress(urls.filter((url) => reach[url] === 'online')) ?? conn.url,
+              false,
+            )
+          }
         />
       )}
     </Menu>

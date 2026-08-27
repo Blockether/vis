@@ -22,7 +22,9 @@ vi.mock('../lib/gateway', async (importOriginal) => ({
       this.url = conn.url;
     }
     ping() {
-      return Promise.resolve(!this.url.includes('127.0.0.1'));
+      return Promise.resolve(
+        !this.url.includes('127.0.0.1') && !this.url.includes('100.64.0.11'),
+      );
     }
   },
 }));
@@ -34,6 +36,7 @@ import type { GatewayConn } from '../lib/types';
 const TAILSCALE = 'http://100.64.0.10:7890';
 const LAN = 'http://192.168.0.5:7890';
 const LOOPBACK = 'http://127.0.0.1:7890';
+const DEAD_TAILSCALE = 'http://100.64.0.11:7890';
 
 /** A machine this device can reach three ways, currently bound to the LAN one. */
 const tower: GatewayConn = {
@@ -51,12 +54,13 @@ const nas: GatewayConn = { url: 'http://10.0.0.9:7890', token: 't', label: 'nas'
 afterEach(cleanup);
 
 /** The settings column's list, with the binding verb wired. */
-function fleet(conns: GatewayConn[] = [tower, nas]) {
+function fleet(conns: GatewayConn[] = [tower, nas], primaryUrl?: string) {
   const bound: Array<[string, string, boolean]> = [];
   render(
     <MachineRows
       conns={conns}
       selectedUrl={conns[0]?.url}
+      primaryUrl={primaryUrl}
       health={{}}
       onPick={() => {}}
       onSelectAddress={(conn, url, pinned) => {
@@ -147,6 +151,29 @@ describe('binding a machine to one of its addresses', () => {
 
     await pinned.user.click(pinned.menu.getByRole('menuitem', { name: /^Automatic/ }));
     expect(bound).toEqual([[LAN, TAILSCALE, false]]);
+  });
+
+  // Regression, user report (paraphrased: an address could not be chosen for a
+  // non-primary machine, and Automatic did not take on the first attempt after
+  // making it primary): Automatic ranked an address that its own open menu had
+  // already proved did not answer, so the saved machine moved onto a dead route.
+  it('makes Automatic follow the best address that answers', async () => {
+    const pinned: GatewayConn = {
+      ...tower,
+      pinned: true,
+      alts: [DEAD_TAILSCALE],
+    };
+    const bound = fleet([pinned, nas], nas.url);
+    const { menu, user } = await openAddresses('tower');
+
+    await waitFor(() =>
+      expect(rowsOf(menu)).toContain(
+        '100.64.0.11:7890Works from anywhere your tailnet reachesno answer',
+      ),
+    );
+    await user.click(menu.getByRole('menuitem', { name: /^Automatic/ }));
+
+    expect(bound).toEqual([[LAN, LAN, false]]);
   });
 
   it('leaves no address panel behind in settings', () => {
