@@ -224,6 +224,40 @@ describe("a reader reaching the end of a turn that is still being written", () =
     expect(viewport.scrollTop).toBe(chosenTop);
     expect(moves).toEqual([]);
   });
+  // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: WebKit can keep
+  // scrolling with native momentum after touchcancel and after the gesture grace.
+  // The viewport visibly retreated into a running turn, but follow stayed armed, so
+  // the geometrically stale state suppressed “Latest” while the reader sat mid-turn.
+  it("offers Latest when native momentum retreats after gesture ownership expires", async () => {
+    const paint = installFrames();
+    const live = { height: 46_000 };
+    let now = Date.now() + 10_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    renderSessionScreen({
+      session: sessionFixture({ id: "momentum-retreat", status: "running" }),
+      client: {
+        cachedTranscript: () => transcript(),
+        transcript: () => Promise.resolve(transcript()),
+      },
+    });
+    await act(async () => {});
+    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const moves: number[] = [];
+    measure(viewport, live, moves);
+    await paint();
+
+    viewport.scrollTop = live.height - SHELL;
+    fireEvent.scroll(viewport);
+    await paint();
+
+    noteReaderGesture();
+    now += 301;
+    viewport.scrollTop -= 900;
+    fireEvent.scroll(viewport);
+    await paint();
+
+    expect(latestOffered()).toBe(true);
+  });
 
   it("leaves a reader who stayed in history where they are", async () => {
     const { viewport, live } = await readerDrags({

@@ -4944,8 +4944,13 @@ export function SessionScreen({
       // A hand on the scroller ANSWERS a held batch: whatever line it leaves them
       // on is theirs, and nothing carries them off it.
       if (readerOwns) cancelFollowResume();
-      const readerRetreated =
-        readerOwns && readerRetreatedFrom(viewport, previousTop, previousHeight);
+      // Native WebKit momentum can outlive touchcancel and the gesture grace. A real
+      // upward move still proves retreat; height-aware comparison excludes a clamp.
+      const readerRetreated = readerRetreatedFrom(
+        viewport,
+        previousTop,
+        previousHeight,
+      );
       // Being at the end IS following; leaving it is only ever the reader's own
       // doing. `reader-gesture.ts` is the one place that knows the difference,
       // and a scroll event raised by growth, by a clamp or by one of this
