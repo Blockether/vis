@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
 
 let restore = () => {};
-afterEach(() => restore());
+// The notice paints before its fleet read; let that read reach the fake before restoring fetch.
+afterEach(async () => {
+  await act(async () => {});
+  restore();
+});
 
 // A share arrives with a payload and NO destination. The app used to guess — it
 // opened the most recent session and dropped the memo there — which is the one
@@ -21,12 +25,15 @@ describe("the share the list is holding", () => {
     restore = view.restore;
 
     const label = await screen.findByText("Sharing");
+    const detail = screen.getByText(/memo\.m4a — pick a session, or start a new one/);
     const banner = label.closest('[role="status"]');
-    expect(banner?.className).toContain("border-warn-strong/60");
-    expect(banner?.className).toContain("bg-warn-surface");
-    expect(
-      screen.getByText(/memo\.m4a — pick a session, or start a new one/),
-    ).toBeInTheDocument();
+    expect(banner?.className).toContain("border-edge-strong");
+    expect(banner?.className).toContain("bg-level-project");
+    expect(banner?.className).toContain("text-footer-strong");
+    expect(banner?.className).not.toContain("warn");
+    expect(label.className).toContain("block");
+    expect(detail.className).toContain("block");
+    expect(label.nextElementSibling).toBe(detail);
   });
 
   it("counts a multi-file share rather than listing it", async () => {
@@ -56,6 +63,10 @@ describe("the share the list is holding", () => {
     restore = view.restore;
 
     const discard = await screen.findByLabelText("Discard the share");
+    const banner = discard.closest('[role="status"]');
+    expect(discard.parentElement).toBe(banner);
+    expect(discard.className).toContain("self-stretch");
+
     await act(async () => {
       discard.click();
     });

@@ -1916,16 +1916,53 @@ export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<H
     </div>
   );
 }
-export function Banner({ kind, children }: { kind: 'ok' | 'warn' | 'err'; children: ReactNode }) {
+/**
+ * A SHORT STATE MESSAGE, with one optional title band and one way out.
+ *
+ * Plain banners remain compact prose. A titled banner owns its two-line hierarchy and
+ * padding here, while its dismiss control becomes the trailing band cell: no call site
+ * can strand the close mark inside spare left/right padding or put the detail back beside
+ * the title. `neutral` is for information that is neither success, warning nor failure.
+ */
+export function Banner({
+  kind,
+  title,
+  dismiss,
+  children,
+}: {
+  kind: 'neutral' | 'ok' | 'warn' | 'err';
+  title?: ReactNode;
+  dismiss?: { label: string; onClick: () => void };
+  children: ReactNode;
+}) {
   const colors = {
+    neutral: 'border-edge-strong bg-level-project text-footer-strong',
     ok: 'border-ok/50 bg-ok/10 text-ok',
     warn: 'border-warn-strong/60 bg-warn-surface text-warn',
     err: 'border-err/50 bg-err/10 text-err',
   }[kind];
+  const isTitled = title !== undefined;
 
   return (
-    <div className={`border px-3 py-2 font-mono text-body ${colors}`} role="status">
-      {children}
+    <div
+      className={`border font-mono text-body ${colors} ${
+        isTitled ? 'flex min-h-12 items-stretch p-0' : 'px-3 py-2'
+      }`}
+      role="status"
+    >
+      {isTitled ? (
+        <>
+          <div className="min-w-0 flex-1 px-3 py-1">
+            <div className="block text-title font-bold">{title}</div>
+            <div className="block truncate text-body text-footer-strong">{children}</div>
+          </div>
+          {dismiss ? (
+            <CloseButton isBand label={dismiss.label} onClick={dismiss.onClick} />
+          ) : null}
+        </>
+      ) : (
+        children
+      )}
     </div>
   );
 }

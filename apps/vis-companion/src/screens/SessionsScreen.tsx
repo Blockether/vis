@@ -2,7 +2,6 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import {
   Banner,
   Button,
-  CloseButton,
   ConfirmRow,
   DialogFrame,
   HeaderActions,
@@ -1910,16 +1909,16 @@ export function SessionsScreen({
               that does not exist yet, and the ✕ throws it away. */}
           {share && (
             <div className="order-last w-full">
-              <Banner kind="warn">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="whitespace-nowrap font-bold">Sharing</span>
-                  <span className="min-w-0 flex-1 truncate opacity-80">
-                    {shareSummary(share)} — pick a session, or start a new one
-                  </span>
-                  {onDiscardShare && (
-                    <CloseButton label="Discard the share" onClick={onDiscardShare} />
-                  )}
-                </div>
+              <Banner
+                kind="neutral"
+                title="Sharing"
+                dismiss={
+                  onDiscardShare
+                    ? { label: 'Discard the share', onClick: onDiscardShare }
+                    : undefined
+                }
+              >
+                {shareSummary(share)} — pick a session, or start a new one
               </Banner>
             </div>
           )}
