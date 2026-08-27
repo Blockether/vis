@@ -17,6 +17,8 @@ interface NativeSpeechPlugin {
       is_network_required?: boolean;
     }[];
   }>;
+  /** Opens iOS Settings at the system catalogue where Apple voice assets are downloaded. */
+  openVoiceSettings(): Promise<void>;
 }
 
 /** ONE registration of the native plugin; `speech-voices.ts` asks it for the list. */

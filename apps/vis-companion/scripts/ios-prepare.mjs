@@ -829,6 +829,7 @@ public class VisBadgePlugin: CAPPlugin, CAPBridgedPlugin {
 `;
 const speechSource = `import AVFAudio
 import Capacitor
+import UIKit
 
 @objc(NativeSpeechPlugin)
 public class NativeSpeechPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesizerDelegate {
@@ -836,6 +837,7 @@ public class NativeSpeechPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesize
   public let jsName = "NativeSpeech"
   public let pluginMethods: [CAPPluginMethod] = [
     CAPPluginMethod(name: "getVoices", returnType: CAPPluginReturnPromise),
+    CAPPluginMethod(name: "openVoiceSettings", returnType: CAPPluginReturnPromise),
     CAPPluginMethod(name: "speak", returnType: CAPPluginReturnPromise),
     CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise)
   ]
@@ -872,6 +874,26 @@ public class NativeSpeechPlugin: CAPPlugin, CAPBridgedPlugin, AVSpeechSynthesize
         ]
       }
       call.resolve(["voices": voices])
+    }
+  }
+
+  @objc public func openVoiceSettings(_ call: CAPPluginCall) {
+    guard let url = URL(
+      string: "App-Prefs:root=ACCESSIBILITY&path=SPEECH_TITLE/QuickSpeakAccents"
+    ) else {
+      call.reject("iOS could not form the voice settings link.")
+      return
+    }
+    DispatchQueue.main.async {
+      UIApplication.shared.open(url, options: [:]) { didOpen in
+        if didOpen {
+          call.resolve()
+        } else {
+          call.reject(
+            "iOS could not open voice settings. Open Settings → Accessibility → Read & Speak → Voices."
+          )
+        }
+      }
     }
   }
 

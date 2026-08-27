@@ -27,6 +27,14 @@ export function iosVoiceDownloadGuidance(
   return platform === "ios" ? IOS_VOICE_DOWNLOAD_GUIDANCE : null;
 }
 
+/** Opens the system-owned Apple voice catalogue; other platforms have no matching route. */
+export async function openIosVoiceSettings(
+  platform: string = Capacitor.getPlatform(),
+): Promise<void> {
+  if (platform !== "ios") return;
+  await nativeSpeech.openVoiceSettings();
+}
+
 function normalizedLanguage(value: string | undefined): string {
   return (value ?? "").replaceAll("_", "-").toLowerCase();
 }

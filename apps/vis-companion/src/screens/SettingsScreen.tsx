@@ -82,6 +82,7 @@ import {
   bestDeviceVoices,
   deviceVoices,
   iosVoiceDownloadGuidance,
+  openIosVoiceSettings,
   type DeviceVoice,
 } from "../lib/speech-voices";
 import { onWake } from "../lib/wake";
@@ -1751,6 +1752,17 @@ export function SpeechEnginesPanel({
     }
   }
 
+  async function openDeviceVoiceSettings() {
+    try {
+      await openIosVoiceSettings();
+      setErr(null);
+    } catch {
+      setErr(
+        "iOS could not open voice settings. Open Settings → Accessibility → Read & Speak → Voices.",
+      );
+    }
+  }
+
   function toggleTtsSettings(engine: string) {
     setOpenTtsSettings((current) => {
       const next = new Set(current);
@@ -1963,9 +1975,20 @@ export function SpeechEnginesPanel({
                               })}
                             </div>
                             {voiceDownloadGuidance && (
-                              <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
-                                {voiceDownloadGuidance}
-                              </p>
+                              <div className="grid gap-2 border-t border-dialog-edge p-3 sm:p-4">
+                                <p className="font-mono text-meta text-dialog-hint">
+                                  {voiceDownloadGuidance}
+                                </p>
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  density="compact"
+                                  className="justify-self-start"
+                                  onClick={() => void openDeviceVoiceSettings()}
+                                >
+                                  Open voice settings
+                                </Button>
+                              </div>
                             )}
                           </SettingsChoiceGroup>
                         )}

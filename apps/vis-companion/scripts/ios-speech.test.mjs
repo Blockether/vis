@@ -17,6 +17,12 @@ describe('iOS public speech bridge', () => {
     expect(speech).toContain('voice.quality == .enhanced');
   });
 
+  it('opens the system voice catalogue from the app', () => {
+    expect(speech).toContain('CAPPluginMethod(name: "openVoiceSettings"');
+    expect(speech).toContain('App-Prefs:root=ACCESSIBILITY&path=SPEECH_TITLE/QuickSpeakAccents');
+    expect(speech).toContain('UIApplication.shared.open');
+  });
+
   it('speaks the exact selected identifier and settles on finish or cancellation', () => {
     expect(speech).toContain('voice.identifier == requestedVoice');
     expect(speech).toContain('AVSpeechUtteranceDefaultSpeechRate');

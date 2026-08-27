@@ -4,6 +4,7 @@ const nativeSpeech = vi.hoisted(() => ({
   getVoices: vi.fn(),
   speak: vi.fn(),
   stop: vi.fn(),
+  openVoiceSettings: vi.fn(),
 }));
 
 vi.mock("@capacitor/core", () => ({
@@ -11,13 +12,14 @@ vi.mock("@capacitor/core", () => ({
   registerPlugin: () => nativeSpeech,
 }));
 
-import { deviceVoices } from "./speech-voices";
+import { deviceVoices, openIosVoiceSettings } from "./speech-voices";
 import { speechOutput } from "./speech";
 
 beforeEach(() => {
   nativeSpeech.getVoices.mockReset();
   nativeSpeech.speak.mockReset().mockResolvedValue(undefined);
   nativeSpeech.stop.mockReset().mockResolvedValue(undefined);
+  nativeSpeech.openVoiceSettings.mockReset().mockResolvedValue(undefined);
 });
 
 describe("native iOS speech", () => {
@@ -44,6 +46,12 @@ describe("native iOS speech", () => {
       },
     ]);
     expect(nativeSpeech.getVoices).toHaveBeenCalledOnce();
+  });
+
+  it("opens Apple's voice catalogue in iOS Settings through the native bridge", async () => {
+    await expect(openIosVoiceSettings()).resolves.toBeUndefined();
+
+    expect(nativeSpeech.openVoiceSettings).toHaveBeenCalledOnce();
   });
 
   it("speaks, auditions, and stops the exact public Apple voice natively", async () => {

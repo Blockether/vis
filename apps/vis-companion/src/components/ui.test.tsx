@@ -3858,6 +3858,25 @@ describe("one way out, and it says what it closes", () => {
   });
 });
 
+describe("iOS voice downloads", () => {
+  const panel = settingsSource.slice(
+    settingsSource.indexOf("export function SpeechEnginesPanel"),
+    settingsSource.indexOf("function FormLabel"),
+  );
+  const guidance = panel.slice(
+    panel.indexOf("{voiceDownloadGuidance && ("),
+    panel.indexOf("</SettingsChoiceGroup>", panel.indexOf("{voiceDownloadGuidance && (")),
+  );
+
+  it("turns the manual system path into a direct settings action", () => {
+    expect(panel).toContain("openIosVoiceSettings");
+    expect(guidance).toContain("Open voice settings");
+    expect(guidance).toContain('density="compact"');
+    expect(guidance).toContain("text-meta text-dialog-hint");
+    expect(guidance).not.toContain("text-chip text-dialog-hint");
+  });
+});
+
 // A pocket voice IS a reference recording, so "create a voice" is an upload. The band
 // that does it stands in the MACHINE's own settings column, beside that machine's other
 // inventories, because the clip is stored on the machine and every session there speaks
