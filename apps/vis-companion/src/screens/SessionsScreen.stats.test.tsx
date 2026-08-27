@@ -80,6 +80,18 @@ describe("the expanded session card", () => {
     expect(screen.getByText("98%")).toBeTruthy();
   });
 
+  // Regression, user report ("alignment is wrong"): the cache row put its label on the
+  // left and pushed its percentage to the right edge of each half, so both values
+  // floated away from the left-aligned label-over-value columns of the grid above it.
+  it("stacks each cache value under its own label", async () => {
+    await open();
+    const label = await screen.findByText("Cached input");
+    const value = screen.getByText("77%");
+    expect(value.previousElementSibling).toBe(label);
+    expect(value.parentElement).toBe(label.parentElement);
+    expect(value.parentElement?.className).not.toContain("justify-between");
+  });
+
   it("uses the compact type step for both cache values", async () => {
     await open();
     const cacheValue = await screen.findByText("77%");

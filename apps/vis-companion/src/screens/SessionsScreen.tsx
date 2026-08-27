@@ -3288,12 +3288,10 @@ function Stat({ label, value }: { label: string; value: string }) {
 function CacheStat({ label, value, explanation }: { label: string; value: string; explanation: string }) {
   return (
     <div className="min-w-0">
-      <div className="flex items-baseline justify-between gap-2">
-        <dt className="truncate font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-          {label}
-        </dt>
-        <dd className="shrink-0 font-mono text-chip font-bold tabular-nums text-white">{value}</dd>
-      </div>
+      <dt className="truncate font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+        {label}
+      </dt>
+      <dd className="truncate font-mono text-chip font-bold tabular-nums text-white">{value}</dd>
       <dd className="mt-0.5 text-balance font-mono text-chip leading-snug text-dialog-hint">{explanation}</dd>
     </div>
   );
