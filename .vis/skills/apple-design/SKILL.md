@@ -103,8 +103,12 @@ draws it. **Nothing else in `src/**` imports `lucide-react`, and nothing else dr
   align to the label beside them, cannot take a stroke, and on a phone render in whatever face the OS
   substituted. The TUI is the one surface where a glyph IS the mark (a cell holds a character,
   `HUMAN_INPUT_CHOICE_MARKS`) — which is exactly why the app never borrows from it.
-  - *Live defect, worth fixing in the next composer commit:* the send `ComposerButton` still paints the
-    character `↑` (`SessionScreen.tsx:6392`) although `ArrowUp` is already imported in `icons.tsx`.
+  - The composer's send button is the case that proves the rule rather than the exception to it: its mark is
+    `SendIcon` — Lucide's `ArrowUp` under the name of the ACT — and `icons.test.tsx` refuses `↑` in shipped
+    source exactly as it refuses `✕` and `▾`.
+- **A mark with no call site is deleted, not kept.** `icons.test.tsx` fails on an export nothing draws, so the
+  vocabulary can never grow into a library of its own; and the library is a dependency of that ONE module —
+  `import { Check } from "lucide-react"` in a screen is the vocabulary going away one call site at a time.
 - **The box comes from the type step beside it, and Lucide's stroke `2` is never touched.** Inter and JetBrains
   Mono both measure cap 0.719em, stem 0.0875em, so ONE table serves both families:
 

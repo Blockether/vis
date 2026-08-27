@@ -1131,7 +1131,7 @@ export function ComposerButton({
     voice: `${
       surface === 'overlay' ? overlayFrame : 'h-8 w-7 mouse:h-7 mouse:w-6'
     } bg-accent text-accent-foreground hover:bg-accent-2 disabled:bg-button disabled:text-muted`,
-    send: 'size-8 border border-dialog-edge bg-dialog-title text-ui font-bold text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:bg-button disabled:text-dialog-hint mouse:size-7',
+    send: 'size-8 border border-dialog-edge bg-dialog-title text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:bg-button disabled:text-dialog-hint mouse:size-7',
     // It stands in the send's slot, which is already the right size: taking the
     // whole of it is how the two never disagree about where the strip ends.
     stop: 'size-full border border-err bg-cancelled hover:bg-warn-surface starting:scale-90 starting:opacity-0',

@@ -208,6 +208,17 @@ export function ArrowOutIcon({ className }: { className?: string }) {
   return <Mark icon={ArrowUpRight} className={className} />;
 }
 
+/**
+ * SEND — named for the act, not the direction. This is the same `ArrowUp` the
+ * sort header points with, and it is deliberately not called `ArrowUpIcon`: the
+ * composer's primary control says "send", and a screen that names the job can
+ * never end up drawing two marks for one verb. The character `↑` stood here
+ * long after every other mark had moved — the control this app presses most,
+ * wearing the body font's weight beside icons drawn at stroke 2.
+ */
+export function SendIcon({ className }: { className?: string }) {
+  return <Mark icon={ArrowUp} className={className} />;
+}
 /** Add. Rotated 45° by its caller, it is the same stroke saying "close". */
 export function PlusIcon({ className }: { className?: string }) {
   return <Mark icon={Plus} className={className} />;

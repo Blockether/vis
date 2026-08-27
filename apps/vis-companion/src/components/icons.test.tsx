@@ -361,6 +361,11 @@ const GLYPHS_AS_ICONS = [
   "◀",
   "▲",
   "↓",
+  // Regression, reported as "we want Lucide — ensure it is in the icons": the
+  // composer's send button went on painting `↑` after every other mark moved to
+  // the one set, so the control this app presses most was the one place it still
+  // said "icon" with the body font.
+  "↑",
   "↗",
   "▣",
   "≡",

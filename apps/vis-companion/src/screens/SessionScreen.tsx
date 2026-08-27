@@ -48,6 +48,7 @@ import {
   ImageIcon,
   MicIcon,
   PlusIcon,
+  SendIcon,
   VoiceLoopIcon,
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
@@ -6389,7 +6390,7 @@ export function SessionScreen({
                 label={running ? "Queue message" : "Send message"}
                 title={running ? "Queue behind the running turn" : "Send"}
               >
-                {"↑"}
+                <SendIcon className="size-3.5" />
               </ComposerButton>
             </div>
           </div>
