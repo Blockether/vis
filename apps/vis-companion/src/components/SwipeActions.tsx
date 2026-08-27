@@ -84,6 +84,14 @@ const OPEN_PAST_PX = 8;
  * reader did not aim at it by sliding a delete button under the cursor, and the
  * list scrolling sideways as a whole. The switch is the variant alone: no
  * pointer media query is read at runtime, so a touched hybrid keeps its slide.
+ *
+ * A STRIP THAT STANDS OVER THE ROW OWNS THOSE PIXELS WHOLE. Out of the flow it
+ * lands on the row's own trailing columns — the status chip and the timestamp —
+ * and a cell tinted `accent/15` let both read THROUGH it, the star's caption
+ * printed over an `IDLE` that was still there. So the strip carries its own
+ * opaque slab, and while it is invisible it takes no pointer either: an
+ * `opacity-0` strip with `pointer-events` left on is four unseeable buttons
+ * covering the date every row in the list ends with.
  */
 export function SwipeActions({
   actions,
@@ -221,7 +229,7 @@ export function SwipeActions({
         {children}
       </div>
       <div
-        className="flex shrink-0 snap-end mouse:absolute mouse:inset-y-0 mouse:right-0 mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/swipe:opacity-100 mouse:group-focus-within/swipe:opacity-100 mouse:motion-reduce:transition-none"
+      className="flex shrink-0 snap-end mouse:pointer-events-none mouse:absolute mouse:inset-y-0 mouse:right-0 mouse:bg-panel mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/swipe:pointer-events-auto mouse:group-hover/swipe:opacity-100 mouse:group-focus-within/swipe:pointer-events-auto mouse:group-focus-within/swipe:opacity-100 mouse:motion-reduce:transition-none"
         role="group"
         aria-label={label ? `${label} actions` : 'Row actions'}
       >

@@ -118,6 +118,19 @@ describe('a mouse never slides', () => {
     expect(html).toContain('mouse:group-hover/swipe:opacity-100');
     expect(html).toContain('mouse:group-focus-within/swipe:opacity-100');
   });
+
+  // Regression, user report (paraphrased: make sure things do not sit on top of
+  // each other): the strip stood over the row's own status chip and timestamp
+  // with no slab of its own, so an `accent/15` cell printed its caption over an
+  // `IDLE` that read straight through it — and while invisible it still took the
+  // pointer, four unseeable buttons covering the date of every row.
+  it('owns the pixels it stands on, and takes no pointer while unseen', () => {
+    const html = markup();
+    expect(html).toContain('mouse:bg-panel');
+    expect(html).toContain('mouse:pointer-events-none');
+    expect(html).toContain('mouse:group-hover/swipe:pointer-events-auto');
+    expect(html).toContain('mouse:group-focus-within/swipe:pointer-events-auto');
+  });
 });
 
 describe('the slide', () => {
