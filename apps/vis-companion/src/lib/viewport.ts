@@ -14,6 +14,7 @@ import {
   layoutHeight,
   readViewportMetrics,
 } from './viewport-metrics';
+import { hasHardwarePointer } from './pointer';
 
 /** `input` types that never raise a keyboard. */
 const NON_TEXT_INPUT_TYPES = new Set([
@@ -839,6 +840,14 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
             : softKeyboardUp || isViewportRotating()
         )
           return false;
+        // A HARDWARE KEYBOARD RAISES NO KEYS. What focus brings up on a Magic
+        // Keyboard iPad — or any desktop-class window — is the accessory bar, tens
+        // of pixels, not the third of the screen this predicts: the estimate would
+        // reserve a keyboard that never comes and leave the composer floating above
+        // a dead band of background until the native event corrected it. The real
+        // `keyboardWillShow` still pins, from a measured height. Rotation is exempt:
+        // it only ever rebuilds the pin of a keyboard already confirmed up.
+        if (!duringRotation && hasHardwarePointer()) return false;
         const metrics = readViewportMetrics();
         const fullHeight = layoutHeight(metrics);
         const predictedHeight = keyboardHeightForPrepin(fullHeight);

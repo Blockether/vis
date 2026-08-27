@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { HARDWARE_POINTER, holdKeyboardAcrossSheet, isEnterSendKeyboard } from './keyboard';
+import { holdKeyboardAcrossSheet, isEnterSendKeyboard } from './keyboard';
+import { HARDWARE_POINTER } from './pointer';
 
 let platform = 'web';
 
