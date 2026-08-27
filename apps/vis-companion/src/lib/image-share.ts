@@ -1,8 +1,7 @@
 import { Clipboard } from '@capacitor/clipboard';
 import { Capacitor } from '@capacitor/core';
-import { Directory, Filesystem } from '@capacitor/filesystem';
-import { Share } from '@capacitor/share';
-import { blobAsDataUrl, editedFilename, sheetDismissed } from './image-file';
+import { blobAsDataUrl, editedFilename } from './image-file';
+import { shareArtifact } from './artifact-share';
 
 /**
  * Handing a finished picture to the operating system: the clipboard, the share
@@ -50,59 +49,13 @@ export async function copyImage(blob: Blob, name: string): Promise<string> {
 }
 
 /**
- * Share the picture, or download it where no sheet exists. Resolves EMPTY when
- * the human dismissed the sheet: that is a decision, not a failure to report.
+ * Share the finished PNG, or download it where no sheet exists. Resolves EMPTY
+ * when the human dismissed the sheet: that is a decision, not a failure.
  */
 export async function shareImage(blob: Blob, name: string): Promise<string> {
-  const filename = editedFilename(name);
-  let nativePath: string | null = null;
-  try {
-    if (Capacitor.isNativePlatform()) {
-      nativePath = `shared/${Date.now()}-${filename}`;
-      const dataUrl = await blobAsDataUrl(blob);
-      await Filesystem.writeFile({
-        path: nativePath,
-        directory: Directory.Cache,
-        data: dataUrl.slice(dataUrl.indexOf(',') + 1),
-        recursive: true,
-      });
-      const { uri } = await Filesystem.getUri({
-        path: nativePath,
-        directory: Directory.Cache,
-      });
-      await Share.share({
-        title: name,
-        files: [uri],
-        dialogTitle: 'Share image',
-      });
-      return 'Image shared.';
-    }
-    const file = new File([blob], filename, { type: 'image/png' });
-    if (
-      navigator.share &&
-      (!navigator.canShare || navigator.canShare({ files: [file] }))
-    ) {
-      await navigator.share({ title: name, files: [file] });
-      return 'Image shared.';
-    }
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
-    return 'Image downloaded.';
-  } catch (cause) {
-    if (sheetDismissed(cause)) return '';
-    throw cause;
-  } finally {
-    // The temporary copy the share sheet read from is ours to clean up, whether
-    // the sheet was used or waved away.
-    if (nativePath) {
-      void Filesystem.deleteFile({
-        path: nativePath,
-        directory: Directory.Cache,
-      }).catch(() => undefined);
-    }
-  }
+  return shareArtifact(blob, editedFilename(name), 'image/png', {
+    title: name,
+    dialogTitle: 'Share image',
+    noun: 'Image',
+  });
 }

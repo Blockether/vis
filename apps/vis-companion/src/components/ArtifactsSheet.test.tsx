@@ -480,10 +480,19 @@ describe("the artifacts sheet", () => {
     expect(html).not.toContain("≡");
   });
 
-  it("gives a recorded file its format instead of a glyph for everything", () => {
-    const html = sheet([recorded]);
-    expect(html).not.toContain("≡");
-    expect(text(html)).toContain("LOG");
+  // A file the app cannot preview is still useful: opening it is the path to the
+  // system share sheet rather than a dead tile.
+  it("opens a recorded file and gives it its format", async () => {
+    const user = userEvent.setup();
+    render(
+      <ArtifactsSheet client={client} sid="s1" artifacts={[recorded]} onClose={() => {}} />,
+    );
+
+    const tile = screen.getByRole("button", { name: /Open build\.log/ });
+    expect(tile).toHaveTextContent("LOG");
+    await user.click(tile);
+    // jsdom has no platform share sheet, so the same action honestly falls back to Save.
+    expect(await screen.findByRole("button", { name: "Save" })).toBeInTheDocument();
   });
 
   // A settled live view is the one recorded file the app can PAINT, so its tile is
@@ -519,18 +528,16 @@ describe("the artifacts sheet", () => {
     expect(strip).not.toMatch(/sm:min-h|sm:h-/);
   });
 
-  it("opens what it can read and refuses to fake the rest", () => {
+  it("opens every original without pretending every format has a reader", () => {
     const html = sheet([picture, document, recorded]);
     expect(html).toContain(
       'aria-label="Open revenue.png, PNG, 2.0KB, produced in turn 6"',
     );
     expect(html).toContain('aria-label="Open q3-report.pdf, PDF, 1.0KB');
-    // A recorded file has no reader in the app, so it is not a control at all.
-    expect(html).not.toContain("build.log, LOG");
-    expect(text(html)).toContain("build.log");
+    expect(html).toContain('aria-label="Open build.log, LOG, 1.0KB');
     expect(html.match(/<button/g)).toHaveLength(
-      // close + six filters + two openable tiles
-      9,
+      // close + six filters + three artifact tiles
+      10,
     );
   });
 

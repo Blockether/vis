@@ -14,9 +14,9 @@
  *     `null` at zero — no dead control, no gallery that opens onto "No artifacts
  *     yet".
  *   * A photo grid is not the only shape. Documents and recorded files have no
- *     picture and do not pretend to: a doc wears a page with its kind, a file
- *     wears its extension and is NOT a button, because a control that cannot do
- *     anything when you press it is a lie told with a focus ring.
+ *     picture and do not pretend to: a doc wears a page with its kind, and a file
+ *     wears its extension. Every tile opens because every original can now leave
+ *     through the system share sheet, even when the app has no reader for it.
  *   * Provenance is data. `PNG · 214KB · turn 6` is what makes an artifact
  *     citable, and it is the same sentence a screen reader gets, because a
  *     thumbnail has no text in it.
@@ -40,6 +40,7 @@ import {
 import { useAttachImage } from "../lib/attach-image";
 import { editedFilename } from "../lib/image-file";
 import type { GatewayClient } from "../lib/gateway";
+import { artifactShareVerb, shareArtifactUrl } from "../lib/artifact-share";
 import { DataTable, parseCsv } from "./DataTable";
 import { DocFrame } from "./DocArtifact";
 import { ImageViewer } from "./ImageViewer";
@@ -50,6 +51,7 @@ import { PdfAnnotator } from "./PdfArtifact";
 import { readArtifactText } from "./TextArtifact";
 import { AlertIcon, ClipIcon, MicIcon, PlayIcon } from "./icons";
 import {
+  BandButton,
   Chip,
   DialogHeader,
   KebabButton,
@@ -619,16 +621,6 @@ function Tile({
     />
   );
 
-  if (artifact.kind === "file") {
-    return (
-      // No `aria-label`: a plain <div> has no role to carry one, and the name
-      // and meta line inside it are already the whole announcement.
-      <div className="relative min-w-0">
-        <div className={shell}>{body}</div>
-        {dots}
-      </div>
-    );
-  }
 
   return (
     <div className="relative min-w-0">
@@ -718,6 +710,7 @@ function DetailOverlay({
   name,
   subtitle,
   actions,
+  share,
   onClose,
   fill = false,
   children,
@@ -727,11 +720,32 @@ function DetailOverlay({
   subtitle?: ReactNode;
   /** The artifact's own verbs, as cells of this band before the ✕. */
   actions?: ReactNode;
+  /** The retained original file offered to the platform share sheet. */
+  share?: { url: string; name: string; mediaType: string };
   onClose: () => void;
   /** The child fills the body and scrolls itself. */
   fill?: boolean;
   children: ReactNode;
 }) {
+  const [shareState, setShareState] = useState<"idle" | "sharing">("idle");
+  const [shareStatus, setShareStatus] = useState("");
+  const shareAction = share ? (
+    <BandButton
+      disabled={shareState === "sharing"}
+      onClick={() => {
+        setShareState("sharing");
+        setShareStatus("");
+        void shareArtifactUrl(share.url, share.name, share.mediaType)
+          .then(setShareStatus)
+          .catch(() => setShareStatus("Could not share artifact."))
+          .finally(() => setShareState("idle"));
+      }}
+    >
+      {shareState === "sharing"
+        ? `${artifactShareVerb(share.name, share.mediaType)}…`
+        : artifactShareVerb(share.name, share.mediaType)}
+    </BandButton>
+  ) : null;
   return (
     <div
       role="dialog"
@@ -742,8 +756,8 @@ function DetailOverlay({
       <DialogHeader
         isStacked
         title={name}
-        subtitle={subtitle}
-        actions={actions}
+        subtitle={shareStatus || subtitle}
+        actions={shareAction || actions ? <>{actions}{shareAction}</> : undefined}
         closeLabel={`Close ${name}`}
         onClose={onClose}
       />
@@ -809,7 +823,6 @@ function TableDetail({
 
 /**
  * One opened artifact. The bytes are fetched HERE rather than by the tile, so
- * One opened artifact. The bytes are fetched HERE rather than by the tile, so
  * closing the detail releases them again and a session full of PDFs never holds
  * more than the one being read.
  */
@@ -865,9 +878,23 @@ function ArtifactDetail({
     );
   }
 
+  const share = { url, name: artifact.name, mediaType: artifact.mediaType };
+
+  // An arbitrary file may have no safe in-app reader, but its original bytes are
+  // still useful. The detail states that honestly and gives the band one real verb.
+  if (artifact.kind === "file") {
+    return (
+      <DetailOverlay name={artifact.name} share={share} onClose={onClose}>
+        <p className="font-mono text-meta text-dialog-hint">
+          {artifact.media} · {artifact.sizeLabel || "size unknown"} · ready to share
+        </p>
+      </DetailOverlay>
+    );
+  }
+
   if (artifact.kind === "audio") {
     return (
-      <DetailOverlay name={artifact.name} onClose={onClose}>
+      <DetailOverlay name={artifact.name} share={share} onClose={onClose}>
         <div className="p-3">
           {/* The same row the transcript paints, so the words a memo carries are one
               press away here too rather than only in the message it arrived on. */}
@@ -884,7 +911,7 @@ function ArtifactDetail({
 
   if (artifact.kind === "video") {
     return (
-      <DetailOverlay name={artifact.name} onClose={onClose} fill>
+      <DetailOverlay name={artifact.name} share={share} onClose={onClose} fill>
         <video
           src={url}
           controls
@@ -908,6 +935,7 @@ function ArtifactDetail({
           <DetailOverlay
             name={artifact.name}
             subtitle={subtitle}
+            share={share}
             onClose={onClose}
             fill
           >
@@ -920,7 +948,7 @@ function ArtifactDetail({
 
   if (isTableMedia(artifact.mediaType, artifact.name)) {
     return (
-      <DetailOverlay name={artifact.name} onClose={onClose} fill>
+      <DetailOverlay name={artifact.name} share={share} onClose={onClose} fill>
         <TableDetail url={url} artifact={artifact} />
       </DetailOverlay>
     );
@@ -946,6 +974,7 @@ function ArtifactDetail({
             name={artifact.name}
             subtitle={note}
             actions={actions}
+            share={share}
             onClose={onClose}
             fill
           >
@@ -962,7 +991,7 @@ function ArtifactDetail({
     <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} />
   );
   return (
-    <DetailOverlay name={artifact.name} onClose={onClose} fill>
+    <DetailOverlay name={artifact.name} share={share} onClose={onClose} fill>
       {isPdfMedia(artifact.mediaType) ? (
         <PdfAnnotator
           client={client}
