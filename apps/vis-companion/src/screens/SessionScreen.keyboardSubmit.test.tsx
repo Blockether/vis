@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { renderSessionScreen } from "./session-screen-harness";
@@ -46,5 +46,47 @@ describe("sending from the native composer", () => {
 
     expect(document.activeElement).toBe(composer);
     expect(keyboardHide).not.toHaveBeenCalled();
+  });
+
+  it("smoothly reveals the submitted prompt after it mounts", async () => {
+    renderSessionScreen({
+      client: { submitTurn: () => new Promise(() => {}) },
+    });
+    const composer = await screen.findByLabelText("Message Vis");
+    const viewport = screen.getByRole("region", { name: "Transcript" });
+    let scrollTop = 0;
+    Object.defineProperties(viewport, {
+      scrollHeight: {
+        configurable: true,
+        get: () =>
+          document.querySelector('[data-live="true"]') ? 1_200 : 600,
+      },
+      clientHeight: { configurable: true, value: 600 },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+    });
+    const scrollTo = vi.fn();
+    viewport.scrollTo = scrollTo;
+    fireEvent.change(composer, { target: { value: "Show this prompt" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() =>
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1_200, behavior: "smooth" }),
+    );
+    const smoothCall = scrollTo.mock.calls.findIndex(
+      ([options]) => options.behavior === "smooth",
+    );
+    expect(
+      scrollTo.mock.calls
+        .slice(smoothCall + 1)
+        .filter(([options]) => options.behavior === "auto"),
+    ).toHaveLength(0);
+    fireEvent(viewport, new Event("scrollend"));
   });
 });

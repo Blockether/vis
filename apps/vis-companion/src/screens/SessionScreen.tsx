@@ -1498,6 +1498,13 @@ export function SessionScreen({
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // One user activation, one post-commit reveal. Keeping this as state (rather than
+  // calling scrollToEnd inside send) makes React mount the optimistic prompt before
+  // the scroller measures its new end.
+  const [submitScrollRequest, setSubmitScrollRequest] = useState(0);
+  // While the browser owns that smooth movement, the ordinary follow correctors must
+  // stand down: one eager `auto` write cancels CSSOM smooth scrolling outright.
+  const submitScrollActiveRef = useRef(false);
   // A hardware keyboard has a Shift to hold for the new line; an on-screen one
   // does not, so there Return simply types one.
   const enterSends = isEnterSendPlatform();
@@ -2003,6 +2010,56 @@ export function SessionScreen({
     syncJump();
   }, [syncJump]);
 
+  // Sending is a transition into the newly authored turn, not a correction. The old
+  // eager pin ran before React mounted that turn, did no useful movement, and the
+  // content observer then snapped to the new end. Start one smooth movement from the
+  // committed DOM instead; reduced-motion readers still land there immediately.
+  useLayoutEffect(() => {
+    if (!submitScrollRequest) return;
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+    const reduceMotion =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      submitScrollActiveRef.current = false;
+      scrollToEnd("auto");
+      return;
+    }
+
+    const start = viewport.scrollTop;
+    const end = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+    submitScrollActiveRef.current = Math.abs(start - end) >= 1;
+    let finished = false;
+    let fallback: number | null = null;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      submitScrollActiveRef.current = false;
+      viewport.removeEventListener("scrollend", finish);
+      if (fallback !== null) window.clearTimeout(fallback);
+      if (followingRef.current && !readerOwnsScroll()) {
+        followEnd(viewport);
+        correctedTopRef.current = viewport.scrollTop;
+        syncJump();
+      }
+    };
+    viewport.addEventListener("scrollend", finish, { once: true });
+    scrollToEnd("smooth");
+    if (!submitScrollActiveRef.current) {
+      finish();
+      return;
+    }
+    // `scrollend` is the contract; this only releases browsers that do not ship it.
+    fallback = window.setTimeout(finish, 700);
+    return () => {
+      finished = true;
+      submitScrollActiveRef.current = false;
+      viewport.removeEventListener("scrollend", finish);
+      if (fallback !== null) window.clearTimeout(fallback);
+    };
+  }, [scrollToEnd, submitScrollRequest, syncJump]);
+
   // Opening a session must LAND on the latest turn. The opening layout effect waits
   // until the mounted window is complete, so this is one correction against the
   // complete initial DOM rather than a visible sequence of guesses as rows hydrate.
@@ -2099,6 +2156,9 @@ export function SessionScreen({
       previousHeight = viewport.scrollHeight;
       if (busy()) return;
       const readerOwns = readerOwnsScroll();
+      // The send transition is already carrying this viewport to the end. Any direct
+      // correction here would turn that one movement into the reported snap.
+      if (submitScrollActiveRef.current && !readerOwns) return;
       // The end is its own anchor, and a hand on the glass owns the scroller: in
       // both cases the reader's line is wherever they just put it, so re-read it.
       if (followingRef.current || readerOwns) {
@@ -3769,7 +3829,12 @@ export function SessionScreen({
     // frame — so catching up here would undo the drag AND re-assert following on
     // the way out, teaching the next chunk to do it again. Stand down and let
     // `handleScroll` say where the gesture actually left them.
-    if (followingRef.current && !readerOwnsScroll()) scrollToEnd("auto");
+    if (
+      followingRef.current &&
+      !submitScrollActiveRef.current &&
+      !readerOwnsScroll()
+    )
+      scrollToEnd("auto");
   }, [
     turns,
     visibleTurnCount,
@@ -3934,7 +3999,11 @@ export function SessionScreen({
           // until the next chunk snaps the view back by the whole accumulated
           // gap. Re-pin in the frame it grew — one line, not a leap.
           if (!shellMoved) composerOnly = !followingRef.current;
-          else if (followingRef.current && !readerOwnsScroll()) {
+          else if (
+            followingRef.current &&
+            !submitScrollActiveRef.current &&
+            !readerOwnsScroll()
+          ) {
             // Pin in THIS callback, not in the frame after it. A
             // `ResizeObserver` still runs before the browser paints, so writing
             // the end here lands in the very frame the keyboard shrank the
@@ -3956,7 +4025,13 @@ export function SessionScreen({
           // through a transcript they were reading.
         }
       }
-      if (composerOnly || !followingRef.current || readerOwnsScroll()) return;
+      if (
+        composerOnly ||
+        !followingRef.current ||
+        submitScrollActiveRef.current ||
+        readerOwnsScroll()
+      )
+        return;
       // The opening correction owns the scroller until it has placed its first
       // paint window, and a reader with a parked position is not following the
       // end even while the flag still says so.
@@ -4645,13 +4720,8 @@ export function SessionScreen({
             attachments: sent.length ? sent : undefined,
           };
           liveTurnRef.current = started;
+          setSubmitScrollRequest((request) => request + 1);
           setLiveTurn(started);
-          // This bubble goes into the TRANSCRIPT, so ride it down on the settle
-          // schedule: a single scroll measures the height before the deferred
-          // segments land, and its own late scroll event then clears
-          // `followingRef`. A QUEUED submission needs none of this — its tray row
-          // renders in the footer, above the composer, always in view.
-          pinToEnd();
         }
       } catch (cause) {
         setPrompt(authoredRequest);
@@ -4699,10 +4769,8 @@ export function SessionScreen({
       attachments: sent.length ? sent : undefined,
     };
     liveTurnRef.current = optimistic;
+    setSubmitScrollRequest((request) => request + 1);
     setLiveTurn(optimistic);
-    // The optimistic bubble has just been added to the transcript: same settle
-    // schedule, for the same reason one frame is not enough.
-    pinToEnd();
 
     submitsInFlightRef.current += 1;
     try {
