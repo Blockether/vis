@@ -719,6 +719,27 @@ describe("a Python evaluation without detected Activity", () => {
     expect(painted.getByRole("button", { name: "Expand execution trace" })).toBeTruthy();
   });
 
+  it("shows an interrupted Python execution as a stop, not a JVM failure", () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnWith({
+          source: "walk_the_tree()",
+          error: {
+            message: "java.lang.InterruptedException",
+            trace: "java.lang.InterruptedException: FutureTask/awaitDone",
+          },
+          duration_ms: 29,
+        })}
+      />,
+    );
+
+    expect(painted.container.textContent).toContain("INTERRUPTED · PYTHON · 29ms");
+    expect(painted.container.textContent).not.toContain("FAILED · PYTHON");
+    fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
+    expect(painted.container.textContent).toContain("Interrupted");
+    expect(painted.container.textContent).not.toContain("FutureTask/awaitDone");
+  });
+
   it("enhances the same receipt when semantic activity arrives", () => {
     const runningTurn = turnWith({ source: "answer = search()" }, "running");
     const painted = render(<AssistantMessage turn={runningTurn} streaming />);

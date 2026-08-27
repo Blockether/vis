@@ -848,16 +848,18 @@
 ;; passes through to eval untouched — no parsing, unwrapping, or reformatting.
 
 (defn- python-op-error
-  "Map a throwable from the Python eval path to the op-error shape: a GraalPy
-   PolyglotException goes through env/map-polyglot-error (proper
-   :python/syntax|runtime|host phase + line/column); anything else falls back to
-   extension/ex->op-error. Class checked by NAME so this ns never imports the
-   GraalPy classes directly."
-  [python-context e code]
-  (try (if (= "org.graalvm.polyglot.PolyglotException" (.getName (class e)))
-         (env/map-polyglot-error python-context e code)
-         (extension/ex->op-error e {:form-source code}))
-       (catch Throwable _ {:message (or (ex-message e) (.getName (class e)))})))
+  "Map a throwable from the Python eval path to the op-error shape. A turn cancel
+   is a normal, terse interruption — never the JVM stack that happened to be
+   waiting when Cancel landed. Other GraalPy PolyglotExceptions go through
+   env/map-polyglot-error (proper :python/syntax|runtime|host phase + location);
+   anything else falls back to extension/ex->op-error."
+  [python-context e code cancel-token]
+  (if (cancellation/cancelled? cancel-token)
+    {:message "Python execution was interrupted" :type :vis/interrupted}
+    (try (if (= "org.graalvm.polyglot.PolyglotException" (.getName (class e)))
+           (env/map-polyglot-error python-context e code)
+           (extension/ex->op-error e {:form-source code}))
+         (catch Throwable _ {:message (or (ex-message e) (.getName (class e)))}))))
 
 ;; ONE persistent interpreter per session. The GraalPy sandbox is created ONCE
 ;; (`create-environment`) and reused across every turn, so the model's globals
@@ -1170,7 +1172,10 @@
                     :reinspect-attachments (mpl-capture/drain-reinspections reinspection-sink))))
               (catch Throwable e
                 (reset! thrown e)
-                {:result nil :lru {} :forms [] :error (python-op-error python-context e code)}))))
+                {:result nil
+                 :lru {}
+                 :forms []
+                 :error (python-op-error python-context e code cancel-token)}))))
 
         dispose-cancel-hook
         (when cancel-token
@@ -1238,15 +1243,21 @@
         timeout-sentinel
         (Object.)
 
-        execution-result
+        raw-execution-result
         (try
           (rt/await-wall exec-future eval-deadline timeout-sentinel)
           (catch Throwable e
             (reset! thrown e)
             (when-not (interrupt-guest! python-context)
               (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil)))
-            {:result nil :lru {} :error (python-op-error python-context e code)})
-          (finally (when dispose-cancel-hook (try (dispose-cancel-hook) (catch Throwable _ nil)))))]
+            {:result nil :lru {} :error (python-op-error python-context e code cancel-token)})
+          (finally (when dispose-cancel-hook (try (dispose-cancel-hook) (catch Throwable _ nil)))))
+
+        execution-result
+        (if (and (cancellation/cancelled? cancel-token) (:error raw-execution-result))
+          (assoc raw-execution-result
+            :error {:message "Python execution was interrupted" :type :vis/interrupted})
+          raw-execution-result)]
 
     (if (identical? timeout-sentinel execution-result)
       ;; Eval timeout: the guest frame is unwound by a Truffle safepoint interrupt,

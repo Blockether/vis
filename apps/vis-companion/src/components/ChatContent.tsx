@@ -1074,7 +1074,20 @@ function fenced(body: string, lang = ""): string {
   return `${delimiter}${lang}\n${body}\n${delimiter}`;
 }
 
+function interruptedPython(form: TranscriptForm): boolean {
+  const error = form.error;
+  if (typeof error === "string") return error === "java.lang.InterruptedException";
+  if (error == null || typeof error !== "object") return false;
+  const record = error as Record<string, unknown>;
+  return (
+    record.type === "vis/interrupted" ||
+    record.type === ":vis/interrupted" ||
+    record.message === "java.lang.InterruptedException"
+  );
+}
+
 function resultBody(form: TranscriptForm): string {
+  if (interruptedPython(form)) return "";
   if (form.error != null) return jsonText(form.error);
   const rendered = form.result_render?.trimEnd();
   if (rendered) return markAnsiHighlights(rendered);
@@ -1188,22 +1201,25 @@ function ToolSummary({
 const CARD_BAND = "flex min-h-8 items-center gap-1.5 px-2";
 
 const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
+  const interrupted = interruptedPython(form);
   const resultText = resultBody(form);
-  const failed = form.error != null;
+  const failed = form.error != null && !interrupted;
   // Once any real outcome has arrived (body/result/render/duration) a stale
   // "Running…" placeholder from the gateway must not linger — the op is done.
   const hasOutcome =
+    interrupted ||
     resultText !== "" ||
     form.result != null ||
     form.result_render != null ||
     form.duration_ms != null;
   const placeholderSummary = form.result_summary?.trim() === "Running…";
-  const rawSummary =
-    placeholderSummary && hasOutcome
+  const rawSummary = interrupted
+    ? "Interrupted"
+    : placeholderSummary && hasOutcome
       ? ""
       : form.result_summary?.trim() || (failed ? "Failed" : "");
   const running =
-    !failed && !hasOutcome && (!form.result_summary || placeholderSummary);
+    !interrupted && !failed && !hasOutcome && (!form.result_summary || placeholderSummary);
   const body = resultText;
   const summary = rawSummary;
   const duration = formatDuration(form.duration_ms);
@@ -1216,11 +1232,13 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   // one-way, so re-collapsing keeps the parsed body for the next open, and
   // "Copy result" copies `body` (the string), never the DOM.
   const [wasOpened, setWasOpened] = useState(false);
-  const summaryClass = failed
-    ? "text-err"
-    : running
-      ? "text-code-result"
-      : "text-accent-ink";
+  const summaryClass = interrupted
+    ? "text-dialog-hint"
+    : failed
+      ? "text-err"
+      : running
+        ? "text-code-result"
+        : "text-accent-ink";
   // A card wears no OP-NAME badge — GREP, a private transport's _SHELL_WAIT, the
   // op that produced it: a result is its own tally and its own body, and the TUI
   // card (`tool-card-entries`) paints the same way. What a card with NO tally
@@ -1434,9 +1452,11 @@ function pythonReceiptText(
   activityState?: NonNullable<LiveViewModel["activity"]>["state"],
   activityDurationMs?: number,
 ): string {
-  const failed = form.error != null || activityState === "failed";
+  const interrupted = interruptedPython(form);
+  const failed = (form.error != null && !interrupted) || activityState === "failed";
   const placeholder = form.result_summary?.trim() === "Running…";
   const settled =
+    interrupted ||
     activityState === "succeeded" ||
     activityState === "cancelled" ||
     failed ||
@@ -1445,15 +1465,17 @@ function pythonReceiptText(
     form.result != null ||
     form.result_render != null ||
     Boolean(form.result_summary?.trim() && !placeholder);
-  const state = failed
-    ? "FAILED"
-    : activityState === "cancelled"
-      ? "CANCELLED"
-      : activityState === "succeeded"
-        ? "DONE"
-        : live || !settled
-          ? "RUNNING"
-          : "DONE";
+  const state = interrupted
+    ? "INTERRUPTED"
+    : failed
+      ? "FAILED"
+      : activityState === "cancelled"
+        ? "CANCELLED"
+        : activityState === "succeeded"
+          ? "DONE"
+          : live || !settled
+            ? "RUNNING"
+            : "DONE";
   const duration = activityDurationMs ?? form.duration_ms;
   return [state, "PYTHON", state === "RUNNING" ? "" : formatDuration(duration)]
     .filter(Boolean)

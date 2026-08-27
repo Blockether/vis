@@ -6481,35 +6481,39 @@
                              (expect (= 1 (count (:attachments result))))
                              (expect (str/includes? (str (:stdout result)) "# Watching"))))))
 
-(defdescribe live-view-outlives-the-block-that-showed-it-test
-             ;; Regression, reported from the app: a `gh` watch of a CI run was cancelled
-             ;; two hours in. The pane went away, which is right — but nothing of it
-             ;; reached the transcript. The block answered a bare
-             ;; `java.lang.InterruptedException`, no attachment row was ever filed, and
-             ;; everything the human had been watching survived only as an NDJSON record
-             ;; on disk that nothing pointed at.
-             (describe "a stopped block still hands over what it was SHOWING"
-                       (it "answers the record and the picture of the view a cancel killed"
-                           (let [[result left]
-                                 (cancelled-watching-block (str (open-a-view)
-                                                                "import time\n"
-                                                                "print('polled once')\n"
-                                                                "time.sleep(30)\n"))
+(defdescribe
+  live-view-outlives-the-block-that-showed-it-test
+  ;; Regression, reported from the app: a `gh` watch of a CI run was cancelled
+  ;; two hours in. The pane went away, which is right — but nothing of it
+  ;; reached the transcript. The block answered a bare
+  ;; `java.lang.InterruptedException`, no attachment row was ever filed, and
+  ;; everything the human had been watching survived only as an NDJSON record
+  ;; on disk that nothing pointed at.
+  (describe
+    "a stopped block still hands over what it was SHOWING"
+    (it "answers the record and the picture of the view a cancel killed"
+        (let [[result left]
+              (cancelled-watching-block
+                (str (open-a-view) "import time\n" "print('polled once')\n" "time.sleep(30)\n"))
 
-                                 row
-                                 (first (:attachments result))]
+              row
+              (first (:attachments result))]
 
-                             (expect (= [] left))
-                             ;; The human's half: the record is a ROW, so the gallery and the
-                             ;; database hold what they watched.
-                             (expect (= 1 (count (:attachments result))))
-                             (expect (= "file" (:kind row)))
-                             (expect (str/ends-with? (str (:filename row)) ".live.ndjson"))
-                             ;; The model's half: the picture the view ended on, and the lines
-                             ;; the block printed before the stop.
-                             (expect (str/includes? (str (:stdout result)) "# Watching"))
-                             (expect (str/includes? (str (:stdout result)) "did not finish"))
-                             (expect (str/includes? (str (:stdout result)) "polled once"))))))
+          (expect (= [] left))
+          ;; Cancellation is presentation, not a Python/JVM failure: the
+          ;; persisted form names it without leaking the host wait stack.
+          (expect (= {:message "Python execution was interrupted" :type :vis/interrupted}
+                     (:error result)))
+          ;; The human's half: the record is a ROW, so the gallery and the
+          ;; database hold what they watched.
+          (expect (= 1 (count (:attachments result))))
+          (expect (= "file" (:kind row)))
+          (expect (str/ends-with? (str (:filename row)) ".live.ndjson"))
+          ;; The model's half: the picture the view ended on, and the lines
+          ;; the block printed before the stop.
+          (expect (str/includes? (str (:stdout result)) "# Watching"))
+          (expect (str/includes? (str (:stdout result)) "did not finish"))
+          (expect (str/includes? (str (:stdout result)) "polled once"))))))
 
 (defdescribe normalize-tool-input-strings-only-test
              (describe "model-drift and extension EDN are stringified, keys AND values"
