@@ -88,11 +88,50 @@ other's family is the fastest way to make our app look like a different app.
 - Sentence case for everything a human reads. ALL CAPS is reserved for chips of ≤ 10 characters
   (`LIVE`, `PDF`, `DRAFT`) and for nothing else — a shouted button label is slop, not emphasis.
 
+**Marks — one library, and it is Lucide.** `lucide-react`, **ISC**: 98.7M downloads a week (11x the
+next permissive set), no attribution in the UI, no NOTICE file, no share-alike, 1777 icons,
+tree-shaken one module per icon. `src/components/icons.tsx` stays the ONE wrapper and every mark
+inside it is a Lucide drawing carrying its Lucide name, unedited. Never a second family, never a
+bespoke `<path>` for one screen, and never a character borrowed from the terminal (`✓ ✗ ● ◇ ■ → ▾ ↗`)
+— a glyph is TYPE: it wears the font's weight instead of the control's, it cannot take a stroke, and
+on a phone it renders in whatever face the OS substituted.
+
+- **Not SF Symbols.** It is the native look and it is licensed for Apple platforms only, unmodified,
+  so it cannot ship in the Android or the web build. One set that renders identically on every
+  surface beats a set we may use on one — and Lucide's rounded joins and single stroke sit beside SF
+  Pro without looking foreign, which is what makes it read as native on iOS and macOS.
+- **The box comes from the type step beside it, and the stroke stays `2`.** Lucide draws on a
+  24-unit grid; at these boxes the rendered stroke lands within 4% of the family's own stem — Inter
+  and JetBrains Mono both measure cap 0.72em and stem 0.0875em, so ONE table serves both:
+
+  | type step | icon box | stroke on screen | stem of the type beside it |
+  |---|---|---|---|
+  | `text-head` 17/24 | 18px | 1.50px | 1.49px |
+  | `text-title` 13/20 | 14px (`size-3.5`) | 1.17px | 1.14px |
+  | `text-ui` 11/16 | 12px (`size-3`) | 1.00px | 0.96px |
+  | `text-meta` 10/16, `text-chip` 8/14 | none — the row's mark sits one step up, in the gutter | | |
+
+  Scale the BOX, never the stroke: re-drawing a Lucide path to "fix" its weight is how a set stops
+  being a set. The box is a `size-*` utility (rem), never a px literal: at 130% system text scaling
+  a rem mark grows with its row and a px one is left behind.
+- **One shape family per column.** A status column is `circle-check` / `circle-x` / `circle-dot` /
+  `circle-dashed` / `circle-slash` — the same 20-unit ring, only the interior changes, so fifty rows
+  keep one vertical rhythm. `check` (16x11 of ink) beside `circle-dashed` (20x20) is the optical-size
+  bug: same box, visibly different mark.
+- A mark inside a labelled control is `aria-hidden`; a mark that IS the label carries the label.
+- **The TUI gets no SVG.** A cell holds a character, so the terminal's marks are a closed character
+  set mirroring these names one for one (`HUMAN_INPUT_CHOICE_MARKS`). That is the one surface where a
+  glyph IS the mark, and the reason the app must never borrow from it.
+
 ## 2. Colour — measured, never eyeballed
 
 Contrast minimums (HIG / WCAG AA): **4.5:1 for text under 18.66px or non-bold, 3:1 for larger or
 bold text and for any glyph, icon or hairline that CARRIES MEANING**. Decorative separators are
 exempt; a status dot is not.
+
+Measure a mark against the surface it SITS on, not the page `--bg`: on `blockether-light` `--ok` is
+3.0 against the paper but **2.86 on a panel**, under the floor for a mark that carries meaning — so a
+passing green mark on light is `#15803d` (4.35 on that panel), or the state is also said in a word.
 
 Measured against each theme's own `--bg` (recompute after any palette edit — see the snippet):
 
@@ -295,6 +334,8 @@ Reject on sight, in a mockup or in a diff:
 14. A painted face inflated to the 44px target: fat strips, a search field taller than its bar.
 15. Two filled accents on one screen.
 16. Facts deleted to make a screen look calm.
+17. A mark drawn by hand where a Lucide name exists — a bespoke `<path>`, a terminal glyph
+    (`✓ ✗ ● ◇ → ▾`), or two icon families in one app.
 
 ## 9. Review protocol
 
@@ -337,6 +378,8 @@ When asked to review, audit, critique or modernize a design — screenshot, mock
   `ui.test.tsx`. TUI: a capture PNG eyeballed and grid assertions added.
 - Any mockup or review PNG is set in the shipped families (§1), loaded from the repo's own files,
   and the render was CHECKED to have used them (§12).
+- Every mark is a Lucide name at the box its type step allows (§1): no hand-drawn path, no glyph,
+  stroke `2` untouched, and the light theme's mark measured on its own panel.
 
 ## 11. Component recipes — the measured defaults
 
@@ -359,6 +402,7 @@ Numbers a reviewer can check with `get box`. Deviate only with a reason in the d
 | settings | group label `text-ui`, rows 48px, switch 46×28 | rows 34px |
 | theme swatch | ≥3 per row so the theme's real name fits at `text-ui` | ≥4 per row |
 | artifact card | preview shows the CONTENT's shape (bars for an image, lines for a page, cells for a table) — never a generic file glyph; one edge (the preview), text unboxed below | same, 32px inline icon in a docked panel |
+| row mark | 14px `circle-*` in a 16px gutter, centred on the first line | 12px in the same gutter; it never becomes a tap target |
 
 Two derived rules that catch most of the damage:
 
