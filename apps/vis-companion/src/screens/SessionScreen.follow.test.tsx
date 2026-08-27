@@ -394,4 +394,47 @@ describe("a reader reaching the end of a turn that is still being written", () =
     expect(viewport.scrollTop).toBe(live.height - SHELL);
     expect(latestOffered()).toBe(false);
   });
+
+  // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: while the app was
+  // suspended at the end, WebKit briefly reflowed the scroller and emitted a scroll.
+  // It restored the bottom on foreground without another event, leaving “Latest” on
+  // screen even though tapping it had nowhere to go.
+  it("remeasures Latest after waking at the bottom", async () => {
+    vi.useFakeTimers();
+    const paint = installFrames();
+    const live = { height: 46_000 };
+    renderSessionScreen({
+      session: sessionFixture({ id: "wake-at-end", status: "running" }),
+      client: {
+        cachedTranscript: () => transcript(),
+        transcript: () => Promise.resolve(transcript()),
+      },
+    });
+    await act(async () => {});
+    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const moves: number[] = [];
+    measure(viewport, live, moves);
+    await paint();
+
+    viewport.scrollTop = live.height - SHELL;
+    fireEvent.scroll(viewport);
+    await paint();
+    expect(latestOffered()).toBe(false);
+
+    // Background layout noise temporarily makes the old bottom look like history.
+    viewport.scrollTop -= 900;
+    fireEvent.scroll(viewport);
+    await paint();
+    expect(latestOffered()).toBe(true);
+
+    // WebKit restores its viewport before the wake bus fires, but emits no scroll.
+    viewport.scrollTop = live.height - SHELL;
+    act(() => {
+      window.dispatchEvent(new Event("online"));
+      vi.advanceTimersByTime(251);
+    });
+    await paint();
+
+    expect(latestOffered()).toBe(false);
+  });
 });

@@ -2684,9 +2684,32 @@ export function SessionScreen({
     // work moved on and the last thing you saw is buried. So a long absence
     // returns to the end of the conversation, a short one does not.
     const RESUME_AT_END_AFTER_MS = 60_000;
+    let wakeGeometryFrame: number | null = null;
+    const reconcileWakeGeometry = () => {
+      wakeGeometryFrame = null;
+      const viewport = scrollRef.current;
+      if (!viewport) return;
+      // WebKit can emit a scroll while its background viewport is collapsed, then
+      // restore the exact bottom before foregrounding without emitting the matching
+      // scroll. Geometry is authoritative on wake: never leave a stale “Latest”
+      // offer pointing at the pixel already under the reader.
+      if (isAtBottom(viewport)) {
+        followingRef.current = true;
+        aimedEndRef.current = viewport.scrollHeight;
+        correctedTopRef.current = viewport.scrollTop;
+        forgetReadingPosition(sid);
+      }
+      syncJump();
+    };
     const stopWake = onWake(({ awayMs }) => {
       inflightSince = null;
       subscriptions.resync();
+      reconcileWakeGeometry();
+      // Native resume can precede WebKit's final viewport restoration by one paint.
+      // Measure once more after that paint rather than trusting the suspended box.
+      if (wakeGeometryFrame !== null)
+        window.cancelAnimationFrame(wakeGeometryFrame);
+      wakeGeometryFrame = window.requestAnimationFrame(reconcileWakeGeometry);
       if (awayMs >= RESUME_AT_END_AFTER_MS) {
         resumePinRef.current = true;
         pinToEnd();
@@ -2759,6 +2782,8 @@ export function SessionScreen({
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      if (wakeGeometryFrame !== null)
+        window.cancelAnimationFrame(wakeGeometryFrame);
       stopWake();
       stopReady();
     };
@@ -2768,6 +2793,7 @@ export function SessionScreen({
     loadTranscript,
     subscriptions,
     pinToEnd,
+    syncJump,
     acceptQueueBacklog,
     adoptRunningTurn,
   ]);
