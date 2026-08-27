@@ -186,24 +186,20 @@ Whole skill body."}
       (expect (s/valid? :vis.doc/record
                         {:name "pandas.read_csv" :kind "function" :text "Read a CSV file."}))
       (expect (s/valid? :vis.doc/record
-                        {:name "gateway"
-                         :kind "doc"
-                         :resource "vis-docs/gateway.md"
-                         :title "Gateway"
-                         :section "Run it"
-                         :order 30
-                         :blurb "One sentence."})))
+                        {:name "gateway" :kind "doc" :resource "vis-docs/gateway.md"})))
   (it "refuses a record no reader could use, naming the resource it came from"
       (doseq [bad [{:kind "doc" :resource "vis-docs/gateway.md"}
                    {:name "" :kind "function" :text "x"} {:name "x" :kind "page" :text "x"}
                    {:name "x" :kind "function"}
                    {:name "x" :kind "function" :text "x" :resource "vis-docs/gateway.md"}
+                   ;; Site navigation is the docs site's own resource, never a record.
+                   {:name "x" :kind "doc" :resource "vis-docs/gateway.md" :blurb "One sentence."}
                    {:name "x" :kind "doc" :text "inline"}]]
         (expect (not (s/valid? :vis.doc/record bad)) (pr-str bad))
         (expect (throws? clojure.lang.ExceptionInfo #(#'dc/checked-record "test.edn" bad))
                 (pr-str bad))))
   (it "reads every declared record once, spending the resource it named"
-      (let [rs (dc/records)]
+      (let [rs (#'dc/manifest-records)]
         (expect (seq rs))
         (doseq [r rs]
           (expect (contains? dc/kinds (:kind r)) (str (:name r) " carries no kind"))
@@ -212,13 +208,13 @@ Whole skill body."}
   (it "reads the resources on the FIRST ask and never bakes them into the Var"
       ;; A `def` here would be evaluated by `graal-build-time` inside the BUILDER, so
       ;; every parsed record would ship in the image heap of every process.
-      (expect (fn? dc/records))
-      (let [before (dc/records)]
+      (expect (fn? @#'dc/manifest-records))
+      (let [before (#'dc/manifest-records)]
         (expect (seq before))
         ;; Read once, then answered from the cache.
-        (expect (identical? before (dc/records)))
+        (expect (identical? before (#'dc/manifest-records)))
         (dc/forget-records!)
-        (let [after (dc/records)]
+        (let [after (#'dc/manifest-records)]
           ;; Forgotten, so read from the resources AGAIN - same records, new value.
           (expect (not (identical? before after)))
           (expect (= before after))))))

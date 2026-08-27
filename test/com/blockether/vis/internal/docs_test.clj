@@ -293,7 +293,7 @@
              " characters — over "
              max-unit-chars
              ", so it is a list or a table wearing prose"))
-      (when (str/blank? (str blurb)) [(say "has no `:blurb` in the manifest")])
+      (when (str/blank? (str blurb)) [(say "has no `:blurb` in vis-docs/site.edn")])
       (for [[_ target frag]
             (re-seq #"\]\((?!https?:|/|#)([A-Za-z0-9._-]+\.md)(#[A-Za-z0-9._-]+)?\)" md)
 

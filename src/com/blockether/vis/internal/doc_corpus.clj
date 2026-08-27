@@ -1,21 +1,25 @@
 (ns com.blockether.vis.internal.doc-corpus
   "The one ordered document corpus behind `apropos(pattern)` and `doc(name)`.
 
-   `META-INF/vis/manifest.edn` names every static EDN resource explicitly. Each
+   `META-INF/vis/manifest.edn` names every static EDN resource explicitly, and each
    resource is a vector of records shaped as `{:name :kind :text}` or, for a
-   documentation page, `{:name :kind doc :resource ...}`; every one of them is
-   checked against `:vis.doc/record` and read WHOLE on the FIRST ask into `records`
-   — the docs site renders that same value. Dynamic skills, MCP tools and live
-   callable contracts append records through `register-source!`.
+   documentation page, `{:name :kind doc :resource ...}`. There is ONE shape and ONE
+   spec — `:vis.doc/record` — for a harvested symbol, a page, a skill and an MCP tool
+   alike: a static record that breaks it throws naming its resource, a dynamic
+   source's is logged and dropped. Dynamic skills, MCP tools and live callable
+   contracts append records through `register-source!`.
 
-   `apropos` applies one regular expression to record names and preserves corpus
-   order. There is no ranking, tokenization, search index or classpath discovery.
-   `doc` retrieves the same record by name and prints its whole text."
+   `entries` is the whole corpus in source order, deduplicated by EXACT name; `pages`
+   is the documentation subset the docs site renders. `apropos` applies one regular
+   expression to record names and preserves corpus order — there is no ranking,
+   tokenization, search index or classpath discovery. `doc` retrieves the same record
+   by name and prints its whole text."
   (:require [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
-            [com.blockether.vis.internal.manifest :as manifest]))
+            [com.blockether.vis.internal.manifest :as manifest]
+            [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
 
@@ -35,16 +39,6 @@
   #{"function" "class" "module" "tool" "doc" "skill" "local"})
 
 (s/def :vis.doc/kind kinds)
-(s/def :vis.doc/entry
-  (s/keys :req-un [:vis.doc/name :vis.doc/text]
-          :opt-un [:vis.doc/call :vis.doc/params :vis.doc/kind]))
-(s/def :vis.doc/entries (s/coll-of :vis.doc/entry :kind vector?))
-(s/def :vis.doc/result
-  (s/or :index (s/keys :req-un [:vis.doc/entries])
-        :entry :vis.doc/entry))
-
- ;; `apropos` returns the matching records unchanged and in corpus order.
-(s/def :vis.apropos/result :vis.doc/entries)
 
 ;; Rendering a gist, comparing a name
 
@@ -150,20 +144,23 @@
   (if (some? resource) (nil? text) (not (str/blank? (str text)))))
 
 (s/def :vis.doc/resource string?)
-(s/def :vis.doc/title (s/nilable string?))
-(s/def :vis.doc/section (s/nilable string?))
-(s/def :vis.doc/blurb (s/nilable string?))
-(s/def :vis.doc/order (s/nilable nat-int?))
-(s/def :vis.doc/site (s/nilable map?))
 (s/def :vis.doc/record
   (s/and (s/keys :req-un [:vis.doc/name :vis.doc/kind]
-                 :opt-un [:vis.doc/text :vis.doc/resource :vis.doc/call :vis.doc/params
-                          :vis.doc/title :vis.doc/section :vis.doc/blurb :vis.doc/order
-                          :vis.doc/site])
+                 :opt-un [:vis.doc/text :vis.doc/resource :vis.doc/call :vis.doc/params])
+         ;; CLOSED: a key no reader reads is a key that drifts. Site navigation —
+         ;; how a page is titled, grouped and ordered — is the docs site's own
+         ;; business and lives in `vis-docs/site.edn`, not in the search corpus.
+         #(every? #{:name :kind :text :resource :call :params} (keys %))
          #(not (str/blank? (:name %)))
-         one-body?
-         ;; A page IS a markdown file: `docs` renders exactly the resource it names.
-         #(or (not= "doc" (:kind %)) (string? (:resource %)))))
+         one-body?))
+
+(defn- page-names-a-file?
+  "A page IS a markdown file: a `doc` record DECLARES the resource `docs` renders.
+   Checked where a record is DECLARED and not in `:vis.doc/record`, which says what
+   every READER receives — by then `resolved-record` has spent the address and the
+   page carries its `:text`."
+  [{:keys [kind resource]}]
+  (or (not= "doc" kind) (string? resource)))
 
 (defn- checked-record
   "`record`, or a throw naming it and explaining why. The manifest declares WHICH
@@ -171,7 +168,7 @@
    catalogue and a regenerated symbol index both fail at load with `explain-data`
    instead of quietly contributing nothing to search."
   [resource record]
-  (if (s/valid? :vis.doc/record record)
+  (if (and (s/valid? :vis.doc/record record) (page-names-a-file? record))
     record
     (throw (ex-info (str "Invalid document record in " (pr-str resource))
                     {:type :vis.doc/invalid-record
@@ -200,7 +197,7 @@
   ;; instead of once, far away, at load.
   (atom nil))
 
-(defn records
+(defn- manifest-records
   "Every static record the manifest names, in manifest order and already whole:
    checked against `:vis.doc/record` and carrying its `:text`.
 
@@ -226,14 +223,6 @@
   (reset! cached-records nil)
   nil)
 
-(defn documents
-  "Every documentation PAGE, in manifest order and whole: `:text` is the page's
-   markdown and its site metadata (`:title`, `:section`, `:order`, `:blurb`,
-   `:site`) travels with it. The docs site renders from THIS — one read, one
-   validation, one order, and no second reader of the same resources."
-  []
-  (filterv #(= "doc" (:kind %)) (records)))
-
 (defn- skill-entries
   "Every discovered skill as an entry carrying its WHOLE `SKILL.md` body. The
    frontmatter `description` is restored as the document's first line — that is
@@ -254,37 +243,56 @@
 ")) body)})))
         (discovery/skills)))
 
-(register-source! :manifest-apropos #'records)
+(register-source! :manifest-apropos #'manifest-records)
 (register-source! :skills #'skill-entries)
 
 (defn- dedupe-by-name
-  "Transducer keeping the FIRST entry for each name."
+  "Transducer keeping the FIRST entry for each EXACT name. Names are compared as
+   written, never case-folded: Python is case-sensitive, so `requests.Session` the
+   class and `requests.session` the function are two symbols, and folding them left
+   the second one with no way to be reached."
   []
   (fn [rf]
     (let [seen (volatile! #{})]
-      (fn ([] (rf)) ([acc] (rf acc)) ([acc e] (let [k (normalize-name (:name e))]
+      (fn ([] (rf)) ([acc] (rf acc)) ([acc e] (let [k (str (:name e))]
                                                 (if (contains? @seen k)
                                                   acc
                                                   (do (vswap! seen conj k) (rf acc e)))))))))
 
+(defn- usable-entry?
+  "True when a source's entry is a `:vis.doc/record` every reader can use. A broken
+   one is named in the log and skipped rather than coerced into something smaller:
+   the static resources already threw at read, so what this catches is a live skill,
+   an MCP listing or an extension's own source."
+  [id entry]
+  (or (s/valid? :vis.doc/record entry)
+      (do (tel/log! {:level :warn
+                     :id ::unusable-entry
+                     :data {:source id
+                            :name (:name entry)
+                            :explain (s/explain-data :vis.doc/record entry)}})
+          false)))
+
 (defn entries
   "The whole corpus, read from its plain ordered sources and deduplicated by name
-   (first wins). A source that throws contributes nothing — discovery must never
-   be the reason an environment fails to build."
+   (first wins). Every entry travels WHOLE, in the one shape `:vis.doc/record`
+   declares. A source that throws contributes nothing — discovery must never be the
+   reason an environment fails to build."
   []
   (into []
-        (comp (mapcat (fn [[_id entries-fn]]
-                        (try (entries-fn) (catch Throwable _ nil))))
-              (filter #(and (seq (str (:name %))) (some? (:text %))))
-              (map (fn [e]
-                     (cond-> {:name (str (:name e)) :text (str (:text e))}
-                       (contains? kinds (:kind e))
-                       (assoc :kind (:kind e))
-
-                       (seq (str (:call e)))
-                       (assoc :call (str (:call e))))))
+        (comp (mapcat (fn [[id entries-fn]]
+                        (into []
+                              (filter #(usable-entry? id %))
+                              (try (entries-fn) (catch Throwable _ nil)))))
               (dedupe-by-name))
         @sources))
+
+(defn pages
+  "Every documentation PAGE, in manifest order and whole — the corpus filtered to the
+   `doc` kind. The docs site renders from THIS: one read, one validation, one order,
+   and no second reader of the same resources."
+  []
+  (filterv #(= "doc" (:kind %)) (entries)))
 
  ;; Search — one regular expression over names
 

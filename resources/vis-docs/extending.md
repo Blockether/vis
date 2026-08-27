@@ -1805,16 +1805,15 @@ file named by the root manifest:
 ;; resources/META-INF/vis/apropos/weather.edn
 [{:name "weather"
   :kind "doc"
-  :resource "vis-docs/weather.md"
-  :title "Weather"
-  :section "Extensions"
-  :order 50
-  :blurb "Current conditions extension."}]
+  :resource "vis-docs/weather.md"}]
 ```
 
 There is no resource scan. Name `"META-INF/vis/apropos/weather.edn"` as the
-`:apropos` of your own entry in the distribution manifest, and both the docs site
-and `doc("weather")` read the page.
+`:apropos` of your own entry in the distribution manifest, and `doc("weather")`
+reads the page. The docs SITE needs one more line, in `resources/vis-docs/site.edn`
+— the only place that titles a page, groups it under a section and orders it, and
+the reason a record carries none of that. A page the site never navigates to is
+refused when the site renders: a page no reader can reach does not exist.
 
 ### Complete minimal example
 

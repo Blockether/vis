@@ -1,17 +1,19 @@
 ;; Static documentation records named by META-INF/vis/manifest.edn.
+;; A page IS the markdown file it names; how the site titles, groups and orders
+;; it lives in vis-docs/site.edn, which nothing searches.
 [
- {:name "index", :kind "doc", :resource "vis-docs/index.md", :title "Introduction", :section nil, :order 0, :blurb "What Vis is and the context-as-environment idea — start here.", :site {:title "Vis", :tagline "A coding agent that keeps its state in a running program, not in the chat.", :repo "https://github.com/Blockether/vis", :headline "Context is an environment, not a transcript.", :sub "Forty steps into a task, most agents are still paying for step one. Vis holds state in a live runtime the model talks to through code — vars, a database, query results — and pulls the handful of values it actually needs. Works with any text model.", :cta {:label "Get started", :slug "token-optimization"}}}
- {:name "token-optimization", :kind "doc", :resource "vis-docs/token-optimization.md", :title "Token optimization", :section "How it works", :order 10, :blurb "How Vis keeps the context window small by holding state in a live runtime instead of the transcript."}
- {:name "graalpython", :kind "doc", :resource "vis-docs/graalpython.md", :title "GraalPython sandbox", :section "How it works", :order 20, :blurb "The GraalPython sandbox that executes the model's Python tool code."}
- {:name "jail", :kind "doc", :resource "vis-docs/jail.md", :title "Process jail & egress", :section "How it works", :order 25, :blurb "The OS jail and gateway egress proxy: filesystem admission, network policy, managed processes, and how to verify them."}
- {:name "content-blocks", :kind "doc", :resource "vis-docs/content-blocks.md", :title "Content-block protocol", :section "How it works", :order 28, :blurb "The canonical role-labelled message, typed block, persistence, and streaming contract."}
- {:name "jvm-native-image", :kind "doc", :resource "vis-docs/jvm-native-image.md", :title "JVM & native-image", :section "Runtime", :order 30, :blurb "Running Vis on the JVM and building the standalone native-image binary."}
- {:name "distributions", :kind "doc", :resource "vis-docs/distributions.md", :title "Runtime distributions", :section "Runtime", :order 40, :blurb "Runtime selection (native, release-tagged source), update channels, wrapper bundles, and platform builds."}
- {:name "configuration", :kind "doc", :resource "vis-docs/configuration.md", :title "Configuration", :section "Using Vis", :order 50, :blurb "Config files, providers, and models — how to set Vis up."}
- {:name "context-and-prompts", :kind "doc", :resource "vis-docs/context-and-prompts.md", :title "Context files & prompts", :section "Using Vis", :order 55, :blurb "AGENTS.md/CLAUDE.md project context files and prompt customization."}
- {:name "exporting-sessions", :kind "doc", :resource "vis-docs/exporting-sessions.md", :title "Exporting sessions", :section "Using Vis", :order 58, :blurb "Exporting and sharing past sessions and forensic reports."}
- {:name "skills", :kind "doc", :resource "vis-docs/skills.md", :title "Skills", :section "Using Vis", :order 60, :blurb "On-demand skills the agent loads only when a task needs them."}
- {:name "queue-and-cancel", :kind "doc", :resource "vis-docs/queue-and-cancel.md", :title "Queue, cancel & quit", :section "Using Vis", :order 62, :blurb "Queueing follow-up messages, auto-drain on resume, cancelling a turn, and Ctrl+C quit."}
- {:name "gateway", :kind "doc", :resource "vis-docs/gateway.md", :title "Gateway, pairing & remote access", :section "Using Vis", :order 65, :blurb "The gateway server, companion pairing, and driving a gateway on another machine from the CLI."}
- {:name "reporting-bugs", :kind "doc", :resource "vis-docs/reporting-bugs.md", :title "Reporting bugs safely", :section "Using Vis", :order 68, :blurb "How to file a safe bug report: what to include, what never to paste, and how to sanitize a session export."}
- {:name "extending", :kind "doc", :resource "vis-docs/extending.md", :title "Extending Vis", :section "Extensions", :order 70, :blurb "One guide to extending Vis: drop-in Python extensions and full-surface Clojure extensions."}]
+ {:name "index", :kind "doc", :resource "vis-docs/index.md"}
+ {:name "token-optimization", :kind "doc", :resource "vis-docs/token-optimization.md"}
+ {:name "graalpython", :kind "doc", :resource "vis-docs/graalpython.md"}
+ {:name "jail", :kind "doc", :resource "vis-docs/jail.md"}
+ {:name "content-blocks", :kind "doc", :resource "vis-docs/content-blocks.md"}
+ {:name "jvm-native-image", :kind "doc", :resource "vis-docs/jvm-native-image.md"}
+ {:name "distributions", :kind "doc", :resource "vis-docs/distributions.md"}
+ {:name "configuration", :kind "doc", :resource "vis-docs/configuration.md"}
+ {:name "context-and-prompts", :kind "doc", :resource "vis-docs/context-and-prompts.md"}
+ {:name "exporting-sessions", :kind "doc", :resource "vis-docs/exporting-sessions.md"}
+ {:name "skills", :kind "doc", :resource "vis-docs/skills.md"}
+ {:name "queue-and-cancel", :kind "doc", :resource "vis-docs/queue-and-cancel.md"}
+ {:name "gateway", :kind "doc", :resource "vis-docs/gateway.md"}
+ {:name "reporting-bugs", :kind "doc", :resource "vis-docs/reporting-bugs.md"}
+ {:name "extending", :kind "doc", :resource "vis-docs/extending.md"}]

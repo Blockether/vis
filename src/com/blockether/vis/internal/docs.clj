@@ -4,14 +4,16 @@
 
    Each documentation record names one exact Markdown resource; no classpath
    enumeration or alternate docs manifest exists. The same records feed the live
-   docs site and the sandbox `doc`/`apropos` surface.
+   docs site and the sandbox `doc`/`apropos` surface, and how a page is TITLED,
+   grouped and ordered — everything only this site reads — is `vis-docs/site.edn`.
    THE PAGE CONTRACT — one canonical shape for every page, enforced by
    `docs-test/docs-page-canon-test`:
 
-     * The manifest `:title` IS the page's `# H1`, spelled identically, on the
-       FIRST line of the file: the sidebar, the browser tab and the page itself
-       must never disagree about a page's name. `index.md` is the ONE exception —
-       the landing page's title is the themed hero, so it carries no `#` at all.
+     * The `:title` in `vis-docs/site.edn` IS the page's `# H1`, spelled
+       identically, on the FIRST line of the file: the sidebar, the browser tab
+       and the page itself must never disagree about a page's name. `index.md` is
+       the ONE exception — the landing page's title is the themed hero, so it
+       carries no `#` at all.
      * Under the H1 comes a LEAD paragraph, before the first `##`: what this page
        covers, so a reader who stops there still knows what they found.
      * `##` and `###` only. A deeper heading gets no `id` and no on-this-page
@@ -26,8 +28,8 @@
      * The last `##` of every page is `See also` — two or more sibling pages, each
        with the reason to follow it. That web is what keeps ONE topic in ONE page:
        a topic explained twice is a cross-link somebody never wrote.
-     * Every manifest entry carries a `:blurb`, the one sentence the sidebar and
-       the index cards show.
+     * Every page carries a `:blurb` in `vis-docs/site.edn`, the one sentence the
+       sidebar and the index cards show.
      * NO WALL OF TEXT: one paragraph — or one list item with its continuation
        lines — stays under 800 characters. Past that the reader is handed a
        table or a list as prose, and the structure is usually already in the
@@ -41,7 +43,8 @@
    Markdown → HTML uses commonmark-java (already a dependency); the theme is an
    enterprise-grade docs layout (sticky header, sidebar, on-this-page rail) in
    the VIS palette (cobalt on white, Hanken Grotesk + JetBrains Mono)."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.doc-corpus :as doc-corpus])
   (:import [java.io ByteArrayOutputStream]
@@ -123,47 +126,75 @@
 
  ;; explicit documentation records
 
+(def ^:private site-resource
+  "The docs site's own navigation and hero copy. NOT a document: nothing here is
+   searchable, and nothing the corpus carries decides how this site reads."
+  "vis-docs/site.edn")
+
+(defn- site-file
+  "`{:site {...} :nav [{:section _ :pages [{:page :title :blurb} ...]} ...]}`, read
+   from `site-resource` and checked. The nav VECTOR is the order — a page's place in
+   the manual is where it stands here, so there is no order number to keep in step."
+  []
+  (let [url
+        (or (io/resource site-resource)
+            (throw (ex-info "Missing docs site resource"
+                            {:type ::missing-site :resource site-resource})))
+
+        parsed
+        (edn/read-string
+          {:default (fn [tag _]
+                      (throw (ex-info "Tagged literal in the docs site resource"
+                                      {:type ::tagged-literal :resource site-resource :tag tag})))}
+          (slurp url))]
+
+    (when-not (and (map? parsed)
+                   (map? (:site parsed))
+                   (vector? (:nav parsed))
+                   (every? #(and (map? %) (vector? (:pages %))) (:nav parsed)))
+      (throw (ex-info "Malformed docs site resource"
+                      {:type ::malformed-site :resource site-resource})))
+    parsed))
+
 (defn- collect*
   []
-  (let [records
-        (doc-corpus/documents)
+  (let [{:keys [site nav]}
+        (site-file)
 
-        site
-        (reduce (fn [acc record]
-                  (merge acc (:site record)))
-                {:title "Vis" :tagline "" :repo nil}
-                records)
+        by-name
+        (into {} (map (juxt :name identity)) (doc-corpus/pages))
 
         pages
-        (mapv (fn [{:keys [name title section order blurb text]}]
-                (let [md
-                      (str text)
+        (into []
+              (for [{section :section group :pages}
+                    nav
+
+                    {:keys [page title blurb]}
+                    group]
+
+                (let [record
+                      (or (get by-name page)
+                          (throw (ex-info "The docs site navigates to a page no record carries"
+                                          {:type ::unknown-page :page page})))
+
+                      md
+                      (str (:text record))
 
                       [html toc]
                       (anchors+toc (md->html md))]
 
-                  {:slug name
-                   :title (or title (first-h1 md) name)
+                  {:slug page
+                   :title (or title (first-h1 md) page)
                    :section section
                    :blurb blurb
-                   :order (or order 100)
                    :md md
                    :html html
-                   :toc toc}))
-              records)
+                   :toc toc})))]
 
-        sec-order
-        (into {}
-              (map (fn [[sec ps]]
-                     [sec (reduce min (map #(or (:order %) 100) ps))]))
-              (group-by :section pages))
-
-        ordered
-        (sort-by
-          (juxt #(if (= "index" (:slug %)) 0 1) #(get sec-order (:section %) 100) :order :title)
-          pages)]
-
-    {:site site :pages (vec ordered)}))
+    (when-let [unreachable (seq (remove (set (map :slug pages)) (keys by-name)))]
+      (throw (ex-info "A documentation page the site never navigates to"
+                      {:type ::unnavigated-page :pages (vec unreachable)})))
+    {:site site :pages pages}))
 
 (defonce ^:private rendered (delay (collect*)))
 
