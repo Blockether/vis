@@ -118,8 +118,6 @@ import {
   applyReadingPosition,
   arrivedAtEnd,
   followEnd,
-  FOLLOW_RESUME_QUIET_MS,
-  growthFitsFollowWindow,
   forgetReadingPosition,
   heightSettler,
   isAtBottom,
@@ -1985,15 +1983,6 @@ export function SessionScreen({
   // to keep, and measuring it as such is what stopped a streaming session from
   // ever following its own newest turn again. Read by `arrivedAtEnd`.
   const aimedEndRef = useRef(0);
-  // The timer that gives back a follow surrendered to one large live batch. The
-  // reader's own hand is the only thing that keeps the held line (see
-  // `FOLLOW_RESUME_QUIET_MS`), so every gesture cancels this.
-  const followResumeRef = useRef<number | null>(null);
-  const cancelFollowResume = useCallback(() => {
-    if (followResumeRef.current === null) return;
-    window.clearTimeout(followResumeRef.current);
-    followResumeRef.current = null;
-  }, []);
 
   const scrollToEnd = useCallback((behavior: ScrollBehavior = "auto") => {
     const viewport = scrollRef.current;
@@ -2117,7 +2106,6 @@ export function SessionScreen({
     if (!viewport || !transcript || typeof ResizeObserver === "undefined")
       return;
     let frame: number | null = null;
-    let previousHeight = viewport.scrollHeight;
     // `captureScrollAnchor` already ignores the echo of our own corrections.
     // Rotation is its own transaction and owns the anchor for its duration.
     const busy = () =>
@@ -2129,25 +2117,7 @@ export function SessionScreen({
     const handleViewportScroll = () => {
       if (frame === null) frame = window.requestAnimationFrame(recapture);
     };
-    // A batch too big to reveal is HELD, not refused: the reader who was following
-    // asked for the newest, so the hold expires unless a hand takes the scroller.
-    const armFollowResume = () => {
-      cancelFollowResume();
-      followResumeRef.current = window.setTimeout(() => {
-        followResumeRef.current = null;
-        if (busy() || readerOwnsScroll() || followingRef.current) return;
-        followingRef.current = true;
-        followEnd(viewport);
-        correctedTopRef.current = viewport.scrollTop;
-        seenTopRef.current = viewport.scrollTop;
-        seenHeightRef.current = viewport.scrollHeight;
-        captureScrollAnchor();
-        syncJump();
-      }, FOLLOW_RESUME_QUIET_MS);
-    };
     const observer = new ResizeObserver(() => {
-      const before = previousHeight;
-      previousHeight = viewport.scrollHeight;
       if (busy()) return;
       const readerOwns = readerOwnsScroll();
       // The send transition is already carrying this viewport to the end. Any direct
@@ -2156,23 +2126,11 @@ export function SessionScreen({
       // The end is its own anchor, and a hand on the glass owns the scroller: in
       // both cases the reader's line is wherever they just put it, so re-read it.
       if (followingRef.current || readerOwns) {
-        // For a reader following the end, the end IS the anchor — and this
-        // callback is the one place that sees the growth before it paints. A
-        // line-sized stream flush follows naturally, but a whole result card must
-        // not replace half the visible page. Hold this line and let Latest offer
-        // the new block instead. Opening hydration remains absolutely pinned.
+        // For a reader following the end, the end IS the anchor. This callback
+        // sees every content change before paint, regardless of whether a stream
+        // flush adds one line or mounts a whole tool/result card. Only a real
+        // reader gesture may surrender that follow.
         if (followingRef.current && !readerOwns) {
-          if (
-            !loading &&
-            !initialScrollPendingRef.current &&
-            !growthFitsFollowWindow(viewport, before)
-          ) {
-            followingRef.current = false;
-            scrollAnchorRef.current = scrollAnchorFor(viewport, transcript);
-            syncJump();
-            armFollowResume();
-            return;
-          }
           followEnd(viewport);
           correctedTopRef.current = viewport.scrollTop;
           syncJump();
@@ -2198,9 +2156,8 @@ export function SessionScreen({
       observer.disconnect();
       viewport.removeEventListener("scroll", handleViewportScroll);
       if (frame !== null) window.cancelAnimationFrame(frame);
-      cancelFollowResume();
     };
-  }, [cancelFollowResume, captureScrollAnchor, loading, syncJump]);
+  }, [captureScrollAnchor, syncJump]);
 
   // Rotation is one transaction: snapshot before intermediate reflows, then wait
   // two paint frames after the final viewport measurement before restoring once.
@@ -4941,9 +4898,6 @@ export function SessionScreen({
       // that tolerance; leaving follow armed there lets the next stream flush
       // snap the scroller straight back after gesture ownership expires.
       const readerOwns = readerOwnsScroll();
-      // A hand on the scroller ANSWERS a held batch: whatever line it leaves them
-      // on is theirs, and nothing carries them off it.
-      if (readerOwns) cancelFollowResume();
       // Native WebKit momentum can outlive touchcancel and the gesture grace. A real
       // upward move still proves retreat; height-aware comparison excludes a clamp.
       const readerRetreated = readerRetreatedFrom(

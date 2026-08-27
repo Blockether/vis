@@ -5,10 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 import { noteReaderGesture } from "../lib/reader-gesture";
 import { flushParked } from "../lib/parked";
-import {
-  FOLLOW_RESUME_QUIET_MS,
-  parkedReadingPosition,
-} from "../lib/reading-position";
+import { parkedReadingPosition } from "../lib/reading-position";
 
 // Regression, user report ("it was live, I even scrolled all the way down, and
 // it never remembered that I want the new things — it kept putting me back
@@ -274,19 +271,17 @@ describe("a reader reaching the end of a turn that is still being written", () =
     expect(parkedReadingPosition("reading")).toBe(gap);
   });
 
-  // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: every large
-  // tool/result block arriving at the end moved the transcript by that block's
-  // full height. Measured in WebKit, one 261 px update moved scrollTop 259 px in
-  // a 489 px viewport; a tool-heavy turn repeatedly replaced what was on screen.
-  it("stops following before a large live batch yanks the visible page", async () => {
+  // Regression, session 237a00b5-2c5e-466c-9b2f-c94a9793a499: consecutive
+  // tool and result cards arrived while Live View was pinned, but every card larger
+  // than a quarter-screen disabled follow. The transcript appeared frozen until a
+  // delayed jump, then the next large card froze it again.
+  it("keeps a pinned Live View on the newest content through large batches", async () => {
     const paint = installFrames();
     const resize = installObserver();
     const live = { height: 46_000 };
-    // No gesture from an earlier test may own this test's scroller.
-    const now = Date.now();
-    vi.spyOn(Date, "now").mockReturnValue(now + 1_000);
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1_000);
     renderSessionScreen({
-      session: sessionFixture({ id: "bursty", status: "running" }),
+      session: sessionFixture({ id: "large-live-batches", status: "running" }),
       client: {
         cachedTranscript: () => transcript(),
         transcript: () => Promise.resolve(transcript()),
@@ -304,84 +299,26 @@ describe("a reader reaching the end of a turn that is still being written", () =
     await paint();
     moves.length = 0;
 
-    // A line-sized stream flush remains a follow: reading current prose should
-    // still reveal its next line without an offer to jump.
-    live.height += 40;
-    act(() => resize(content));
-    expect(viewport.scrollTop).toBe(live.height - SHELL);
-    expect(latestOffered()).toBe(false);
-
-    // A card-sized batch is different: keep the current line on the glass and
-    // let Latest offer the new block instead of moving half a screen at once.
-    const before = viewport.scrollTop;
-    live.height += SHELL / 2;
-    act(() => resize(content));
-    expect(viewport.scrollTop).toBe(before);
-    expect(latestOffered()).toBe(true);
-  });
-  // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: holding the line for one
-  // large live batch parked the reader above the newest content for the rest of the
-  // turn. Every later block landed below the fold, and only a tap on "↓ Latest" ever
-  // brought them back — on a phone, where a quarter of the viewport is ~180 px, that
-  // was every result card in the session.
-  it("carries a reader who never touched the scroller back to the newest", async () => {
-    vi.useFakeTimers();
-    const paint = installFrames();
-    const resize = installObserver();
-    const live = { height: 46_000 };
-    const now = Date.now();
-    vi.spyOn(Date, "now").mockReturnValue(now + 1_000);
-    renderSessionScreen({
-      session: sessionFixture({ id: "burst-over", status: "running" }),
-      client: {
-        cachedTranscript: () => transcript(),
-        transcript: () => Promise.resolve(transcript()),
-      },
-    });
-    await act(async () => {});
-    const viewport = screen.getByRole("region", { name: "Transcript" });
-    const content = viewport.firstElementChild!;
-    const moves: number[] = [];
-    measure(viewport, live, moves);
-    await paint();
-
-    viewport.scrollTop = live.height - SHELL;
-    fireEvent.scroll(viewport);
-    await paint();
-
-    // One line-sized flush first, so the batch below is measured against the height
-    // the observer last saw — exactly what a streaming turn does.
-    live.height += 40;
-    act(() => resize(content));
-
-    // A card-sized batch still holds the visible page still.
-    const held = viewport.scrollTop;
-    live.height += SHELL / 2;
-    act(() => resize(content));
-    expect(viewport.scrollTop).toBe(held);
-    expect(latestOffered()).toBe(true);
-
-    // Nothing else lands and no hand comes near the glass: the burst is over, and a
-    // reader who was following is owed the end of it.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(FOLLOW_RESUME_QUIET_MS + 100);
-    });
-    expect(viewport.scrollTop).toBe(live.height - SHELL);
-    expect(latestOffered()).toBe(false);
+    for (const growth of [SHELL / 2, SHELL, SHELL / 2, SHELL * 1.5]) {
+      live.height += growth;
+      act(() => resize(content));
+      expect(viewport.scrollTop).toBe(live.height - SHELL);
+      expect(latestOffered()).toBe(false);
+    }
+    expect(moves).toHaveLength(4);
   });
 
-  // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: the reader who ANSWERS a
-  // burst by scrolling has said what they want, and the resume above must not overrule
-  // them.
-  it("leaves a reader who answered the burst by hand where they put themselves", async () => {
-    vi.useFakeTimers();
+  // Regression, session 237a00b5-2c5e-466c-9b2f-c94a9793a499: content size was
+  // being used as a proxy for reader intent. Follow must stop only after the reader
+  // actually moves upward, and later large batches must preserve that chosen line.
+  it("holds the line after the reader scrolls upward during Live View", async () => {
     const paint = installFrames();
     const resize = installObserver();
     const live = { height: 46_000 };
     let now = Date.now() + 10_000;
     vi.spyOn(Date, "now").mockImplementation(() => now);
     renderSessionScreen({
-      session: sessionFixture({ id: "burst-answered", status: "running" }),
+      session: sessionFixture({ id: "manual-live-retreat", status: "running" }),
       client: {
         cachedTranscript: () => transcript(),
         transcript: () => Promise.resolve(transcript()),
@@ -398,21 +335,19 @@ describe("a reader reaching the end of a turn that is still being written", () =
     fireEvent.scroll(viewport);
     await paint();
 
-    live.height += SHELL / 2;
-    act(() => resize(content));
-
-    // They take the scroller and read what landed.
     noteReaderGesture();
     viewport.scrollTop -= 900;
     fireEvent.scroll(viewport);
     await paint();
     const chosenTop = viewport.scrollTop;
-    now += 301;
+    moves.length = 0;
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(FOLLOW_RESUME_QUIET_MS + 100);
-    });
+    now += 301;
+    live.height += SHELL;
+    act(() => resize(content));
+
     expect(viewport.scrollTop).toBe(chosenTop);
+    expect(moves).toEqual([]);
     expect(latestOffered()).toBe(true);
   });
 

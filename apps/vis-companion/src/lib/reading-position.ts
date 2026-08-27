@@ -71,38 +71,6 @@ export function isAtBottom(box: ScrollBox): boolean {
   return distanceFromEnd(box) <= AT_BOTTOM_PX;
 }
 
-/**
- * Whether one content resize is small enough to keep following without replacing
- * the page under the reader.
- *
- * Line-sized stream flushes should reveal themselves. A card-sized tool result is
- * different: moving more than a quarter of the viewport in one frame makes the
- * transcript look as though it jumped, so the caller should hold the current line
- * and offer Latest instead. The bottom tolerance is the floor so compact viewports
- * still admit an ordinary line. A zero height is only an unmeasured first sample.
- */
-export function growthFitsFollowWindow(
-  box: ScrollBox,
-  previousHeight: number,
-): boolean {
-  if (previousHeight <= 0) return true;
-  const growth = box.scrollHeight - previousHeight;
-  return growth <= Math.max(AT_BOTTOM_PX, box.clientHeight / 4);
-}
-
-/**
- * How long a reader who was FOLLOWING, and whose page was held still for one large
- * live batch, is left above it before the end is carried to them.
- *
- * A batch that replaces the visible page is held (`growthFitsFollowWindow`) — but a
- * reader parked at the end asked for the newest, and on a phone a quarter of the
- * viewport is ~180 px, so every result card surrendered the follow and left them
- * tapping "Latest" for the rest of the turn. The hand is the only signal that says
- * otherwise: a reader who answers the batch by scrolling keeps the line they chose,
- * and only a reader who touched nothing is carried on. Long enough to reach for the
- * glass, short enough that "I should be at the bottom" is true again.
- */
-export const FOLLOW_RESUME_QUIET_MS = 2_000;
 
 /**
  * Whether a smaller `scrollTop` is the reader RETREATING, or the scroller being

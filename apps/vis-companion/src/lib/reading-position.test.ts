@@ -3,7 +3,6 @@ import {
   applyReadingPosition,
   arrivedAtEnd,
   followEnd,
-  growthFitsFollowWindow,
   forgetReadingPosition,
   isAtBottom,
   heightSettler,
@@ -129,27 +128,6 @@ describe('following the end while the transcript grows', () => {
   });
 });
 
-// Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: a 261 px live
-// tool/result update moved a 489 px WebKit viewport by nearly the whole update.
-describe('the live follow window', () => {
-  const box = (scrollHeight: number, clientHeight: number): ScrollBox => ({
-    scrollTop: scrollHeight - clientHeight,
-    scrollHeight,
-    clientHeight,
-  });
-
-  it('admits a line-sized stream flush', () => {
-    expect(growthFitsFollowWindow(box(46_040, 800), 46_000)).toBe(true);
-  });
-
-  it('refuses a batch larger than a quarter viewport', () => {
-    expect(growthFitsFollowWindow(box(46_400, 800), 46_000)).toBe(false);
-  });
-
-  it('accepts the first usable measurement as its baseline', () => {
-    expect(growthFitsFollowWindow(box(46_000, 800), 0)).toBe(true);
-  });
-});
 
 // Regression, session 15db52fb-9a44-45db-96e7-13b423eff274: opening a session walked
 // the transcript for a few frames and then stopped 6 917 px above its newest turn
