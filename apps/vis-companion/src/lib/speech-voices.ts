@@ -17,6 +17,16 @@ export interface DeviceVoice {
 /** Three premium-ranked alternatives plus System default keep the device picker deliberate. */
 export const BEST_DEVICE_VOICE_LIMIT = 3;
 
+export const IOS_VOICE_DOWNLOAD_GUIDANCE =
+  "Add natural Apple voices in Settings → Accessibility → Read & Speak (or Spoken Content) → Voices. Download a Premium or Enhanced voice, then return here; this list refreshes automatically.";
+
+/** Apple exposes no public API for an app to install its system voice assets. */
+export function iosVoiceDownloadGuidance(
+  platform: string = Capacitor.getPlatform(),
+): string | null {
+  return platform === "ios" ? IOS_VOICE_DOWNLOAD_GUIDANCE : null;
+}
+
 function normalizedLanguage(value: string | undefined): string {
   return (value ?? "").replaceAll("_", "-").toLowerCase();
 }
@@ -111,9 +121,10 @@ function rankedDeviceVoices(
 }
 
 /**
- * Up to three installed voices worth putting in front of a person. iOS leads with Apple's
- * recommended public voices, then fills every missing place with the best voice this device
- * actually has. Other platforms rank directly by device language, quality and availability.
+ * Up to three installed voices worth putting in front of a person. iOS exposes only
+ * Premium and Enhanced voices as explicit choices: its Standard/Compact fallbacks sound
+ * mechanical and remain available through System default. Other platforms rank directly
+ * by device language, quality and availability.
  */
 export function bestDeviceVoices(
   voices: DeviceVoice[],
@@ -132,7 +143,11 @@ export function bestDeviceVoices(
   if (recommended.length >= BEST_DEVICE_VOICE_LIMIT) return recommended;
   const recommendedNames = new Set(recommended.map(publicAppleVoiceName));
   const alternatives = rankedDeviceVoices(
-    unique.filter((voice) => !recommendedNames.has(publicAppleVoiceName(voice))),
+    unique.filter(
+      (voice) =>
+        voiceQuality(voice) >= 450 &&
+        !recommendedNames.has(publicAppleVoiceName(voice)),
+    ),
     selectedId,
     preferredLanguages,
   );

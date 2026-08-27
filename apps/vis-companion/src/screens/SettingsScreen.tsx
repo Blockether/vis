@@ -78,7 +78,13 @@ import {
 } from "../lib/storage";
 import { speechOutput } from "../lib/speech";
 import { DownloadIcon, PlayIcon, StopIcon } from "../components/icons";
-import { bestDeviceVoices, deviceVoices, type DeviceVoice } from "../lib/speech-voices";
+import {
+  bestDeviceVoices,
+  deviceVoices,
+  iosVoiceDownloadGuidance,
+  type DeviceVoice,
+} from "../lib/speech-voices";
+import { onWake } from "../lib/wake";
 import {
   DEFAULT_THEME,
   THEMES,
@@ -1617,15 +1623,20 @@ export function SpeechEnginesPanel({
 
   useEffect(() => {
     let isLive = true;
-    void deviceVoices()
-      .then((list) => {
-        if (isLive) setVoices(list);
-      })
-      .catch(() => {
-        if (isLive) setVoices([]);
-      });
+    const refresh = () => {
+      void deviceVoices()
+        .then((list) => {
+          if (isLive) setVoices(list);
+        })
+        .catch(() => {
+          if (isLive) setVoices([]);
+        });
+    };
+    refresh();
+    const stopRefreshingOnWake = onWake(refresh);
     return () => {
       isLive = false;
+      stopRefreshingOnWake();
     };
   }, []);
 
@@ -1785,6 +1796,7 @@ export function SpeechEnginesPanel({
     : asrEngine ?? (capabilities ? "Not installed" : "Checking…");
   const ttsChoice = ttsEngines.find((engine) => engine.id === chosenTtsEngine);
   const deviceList = bestDeviceVoices(voices ?? [], prefs.deviceVoice);
+  const voiceDownloadGuidance = iosVoiceDownloadGuidance();
   const chosenDeviceVoice = deviceList.find((voice) => voice.id === prefs.deviceVoice);
   const ttsLabel = ttsChoice
     ? gatewayEngineLabel(ttsChoice)
@@ -1950,6 +1962,11 @@ export function SpeechEnginesPanel({
                                 );
                               })}
                             </div>
+                            {voiceDownloadGuidance && (
+                              <p className="border-t border-dialog-edge px-3 py-4 font-mono text-chip text-dialog-hint sm:px-4">
+                                {voiceDownloadGuidance}
+                              </p>
+                            )}
                           </SettingsChoiceGroup>
                         )}
                         <SettingsChoiceGroup label="Speech rate" isNested>

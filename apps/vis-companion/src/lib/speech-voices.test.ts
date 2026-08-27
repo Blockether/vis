@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { BEST_DEVICE_VOICE_LIMIT, bestDeviceVoices, type DeviceVoice } from "./speech-voices";
+import {
+  BEST_DEVICE_VOICE_LIMIT,
+  bestDeviceVoices,
+  iosVoiceDownloadGuidance,
+  type DeviceVoice,
+} from "./speech-voices";
 
 const voices: DeviceVoice[] = [
   { id: "premium-local", label: "Premium Local", language: "en-US", quality: 500, isLocal: true },
@@ -124,5 +129,45 @@ describe("best device voices", () => {
       "Serena (Premium)",
       "Evan (Enhanced)",
     ]);
+  });
+
+  // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: filling missing
+  // recommendations with standard Apple voices exposed robotic choices as desirable voices.
+  it("does not pad iOS choices with standard-quality voices", () => {
+    const chosen = bestDeviceVoices(
+      [
+        {
+          id: "com.apple.voice.enhanced.en-US.Samantha",
+          label: "Samantha (Enhanced)",
+          language: "en-US",
+          quality: 450,
+        },
+        {
+          id: "com.apple.voice.compact.en-US.Fred",
+          label: "Fred",
+          language: "en-US",
+          quality: 300,
+        },
+        {
+          id: "com.apple.voice.compact.en-US.Grandma",
+          label: "Grandma",
+          language: "en-US",
+          quality: 300,
+        },
+      ],
+      null,
+      ["en-US"],
+      "ios",
+    );
+
+    expect(chosen.map((voice) => voice.label)).toEqual(["Samantha (Enhanced)"]);
+  });
+
+  it("explains Apple's system-managed voice download path only on iOS", () => {
+    expect(iosVoiceDownloadGuidance("ios")).toContain(
+      "Settings → Accessibility → Read & Speak",
+    );
+    expect(iosVoiceDownloadGuidance("android")).toBeNull();
+    expect(iosVoiceDownloadGuidance("web")).toBeNull();
   });
 });
