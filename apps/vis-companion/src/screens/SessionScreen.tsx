@@ -52,7 +52,7 @@ import {
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
 import { LiveView, useLiveViews } from "../components/LiveView";
-import type { LiveView as LiveViewModel } from "../lib/live-view";
+import { isLiveViewEvent, type LiveView as LiveViewModel } from "../lib/live-view";
 import { speechOutput } from "../lib/speech";
 import { markSessionId } from "../lib/session-id";
 import { settledTranscriptCoversLiveTurn } from "../lib/live-turn-handover";
@@ -815,9 +815,13 @@ export function reduceLiveEvent(
   return turn;
 }
 
-function coalesceLiveEvents(events: SseEvent[]): SseEvent[] {
+export function coalesceLiveEvents(events: SseEvent[]): SseEvent[] {
   const merged: SseEvent[] = [];
   for (const event of events) {
+    // The live-view hook owns these frames. Keep them in the arrival queue until
+    // its shared journal cursor advances, but never run them through the turn
+    // reducer as a second visual stream.
+    if (isLiveViewEvent(event)) continue;
     const previous = merged.at(-1);
     const sameDelta =
       previous?.type === "content.block.delta" &&

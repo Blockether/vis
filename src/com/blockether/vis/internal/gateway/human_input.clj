@@ -135,34 +135,38 @@
   (first (filter #(contains? op %) [:lines :rows :stats :steps :links])))
 
 (defn- coalesce
-  "Fold `op` into `ops`, merging it into the last op that touched the SAME node
-   when the two say the same thing twice.
+  "Fold `op` into `ops`, merging it into the last operation with the same owner
+   when two updates in one phone frame supersede each other.
 
    `set` MERGES on the engine's side, so two sets on one node are one set with
    the later keys winning; `append` upserts by id, so two appends are one append
-   with the items still in order. Everything structural — `add-node`,
-   `remove-node`, `clear`, `remove` — is kept exactly as it stands: it decides
-   what the node IS, and a surface that never saw it would paint a view the
-   record does not have. Nothing is ever reordered: an op merges only into the
-   last op on its OWN node, so ops on different nodes keep their order and a
-   `clear` between two appends still cuts the log."
+   with the items still in order. `set-activity` is already a complete bounded
+   snapshot, so only its latest replacement belongs on the wire. Everything
+   structural — `add-node`, `remove-node`, `clear`, `remove` — is kept exactly as
+   it stands: it decides what the node IS, and a surface that never saw it would
+   paint a view the record does not have. Nothing is ever reordered: a node op
+   merges only into the last op on its OWN node."
   [ops op]
   (let [node
         (op-node op)
 
         at
-        (when node
-          (last (keep-indexed (fn [i earlier]
-                                (when (= node (op-node earlier)) i))
-                              ops)))
+        (cond (= :set-activity (:op op)) (last (keep-indexed (fn [i earlier]
+                                                               (when (= :set-activity (:op earlier))
+                                                                 i))
+                                                             ops))
+              node (last (keep-indexed (fn [i earlier]
+                                         (when (= node (op-node earlier)) i))
+                                       ops)))
 
         prior
-        (when at (nth ops at))
+        (when (some? at) (nth ops at))
 
         k
         (append-key op)]
 
     (cond (nil? prior) (conj ops op)
+          (= :set-activity (:op op) (:op prior)) (assoc ops at op)
           (= :set (:op op) (:op prior)) (assoc ops at (merge prior op))
           (and (= :append (:op op) (:op prior))
                (some? k)

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button,
   BandLabel,
@@ -851,7 +851,11 @@ export function useLiveViews(
       if (pendingPatches.length === 0) return;
       const batch = pendingPatches;
       pendingPatches = [];
-      setViews((current) => batch.reduce(applyLiveViewEvent, current));
+      // Activity is informative, not input-critical. Let elapsed clocks, touch and
+      // streamed prose interrupt this render instead of waiting behind a large table.
+      startTransition(() => {
+        setViews((current) => batch.reduce(applyLiveViewEvent, current));
+      });
     };
     const revealRecord = () => {
       onRecordFiled?.();
