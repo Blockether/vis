@@ -34,6 +34,8 @@ export function renderApp({
   machines = [{}] as AppMachine[],
   /** Addresses that answer nothing at all — a LAN address from another network. */
   unreachable = [] as string[],
+  /** The machine saved as both primary and current, by fixture index. */
+  primary = 0,
 } = {}) {
   const conns: GatewayConn[] = machines.map((machine, index) => {
     const id = `app-gateway-${++origins}`;
@@ -56,16 +58,11 @@ export function renderApp({
   const dead = new Set(unreachable.map((address) => new URL(address).origin));
   // Both mirrors: the sync read is plain web storage, the async one comes back
   // through Capacitor Preferences, whose web implementation prefixes its keys.
+  const primaryConn = conns[primary] ?? conns[0];
   for (const prefix of ["", "CapacitorStorage."]) {
     localStorage.setItem(`${prefix}vis.connections`, JSON.stringify(conns));
-    localStorage.setItem(
-      `${prefix}vis.activeConnection`,
-      JSON.stringify(conns[0]),
-    );
-    localStorage.setItem(
-      `${prefix}vis.primaryConnection`,
-      JSON.stringify(conns[0]),
-    );
+    localStorage.setItem(`${prefix}vis.activeConnection`, primaryConn?.url ?? "");
+    localStorage.setItem(`${prefix}vis.primaryConnection`, primaryConn?.url ?? "");
   }
 
   const answer = (body: unknown) =>

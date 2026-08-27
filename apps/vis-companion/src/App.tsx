@@ -1053,6 +1053,7 @@ export function App() {
           <div className={sessionsVisible ? "h-full" : "hidden"}>
             <SessionsScreen
               conns={conns}
+              primary={primary}
               isVisible={sessionsVisible}
               query={query}
               onQuery={setQuery}

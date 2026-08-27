@@ -362,6 +362,8 @@ const BROWSE_WIDTH = PANEL_SIZES.browse.width;
 interface Props {
   /** Every paired machine, in pairing order. This screen renders the FLEET. */
   conns: GatewayConn[];
+  /** The machine that leads and initially owns the sessions scope. */
+  primary?: GatewayConn | null;
   /** The fleet-wide search, asked by the app bar above every machine chip. */
   query: string;
   onQuery: (next: string) => void;
@@ -402,6 +404,7 @@ const WHOLE_SESSION_FORK = 'whole-session';
 
 export function SessionsScreen({
   conns,
+  primary = null,
   query,
   onQuery,
   subscriptions,
@@ -412,18 +415,22 @@ export function SessionsScreen({
   share = null,
   onDiscardShare,
 }: Props) {
+  const primaryKey = primary ? machineKey(primary) : null;
   // A machine OWNS its projects: every row belongs to exactly one gateway, and a
   // project only exists inside the machine it lives on. The fleet is therefore
   // one entry per paired machine, seeded from that machine's last known list so
   // returning to this tab repaints the previous frame instantly; the effects
   // below revalidate each machine independently and reconcile on top.
   const [machines, setMachines] = useState<FleetMachine[]>(() => hydrateMachines(conns, []));
-  // Exactly one paired machine is always active. Seed the state with the first machine
-  // itself — not an unselected sentinel — and resolve removals or failures to the next
-  // machine that can answer. Pressing the selected tab cannot turn it off.
+  // Exactly one paired machine is always active. The saved primary owns the first
+  // scope; if it changes while this mounted screen is behind Settings, it becomes
+  // the scope on return. Pressing the selected tab cannot turn it off.
   const [scopePick, setScopePick] = useState<string | null>(() =>
-    conns[0] ? machineKey(conns[0]) : null,
+    primaryKey ?? (conns[0] ? machineKey(conns[0]) : null),
   );
+  useEffect(() => {
+    if (primaryKey) setScopePick(primaryKey);
+  }, [primaryKey]);
   const scope = resolveScope(machines, scopePick);
   // THE FIELD IS IMMEDIATE; THE SEARCH IS A GESTURE THAT ENDS. `query` is what the
   // reader is typing, `searchNeedle` is what typing RESTED on — and every answer, every
@@ -1472,15 +1479,16 @@ export function SessionsScreen({
     [machines],
   );
   // Pairing order still owns sections, hues and every persisted identity. The switch is
-  // only a destination list: keep each group's original order, but put every destination
-  // that no longer answers after all the destinations the reader can still enter.
-  const switcherMachines = useMemo(
-    () => [
-      ...machines.filter((machine) => !machine.error),
-      ...machines.filter((machine) => Boolean(machine.error)),
-    ],
-    [machines],
-  );
+  // only a destination list: the answering primary leads, every other answering machine
+  // keeps pairing order, and destinations that no longer answer follow all of them.
+  const switcherMachines = useMemo(() => {
+    const answering = machines.filter((machine) => !machine.error);
+    const primaryIndex = primaryKey
+      ? answering.findIndex((machine) => machineKey(machine.conn) === primaryKey)
+      : -1;
+    if (primaryIndex > 0) answering.unshift(...answering.splice(primaryIndex, 1));
+    return [...answering, ...machines.filter((machine) => Boolean(machine.error))];
+  }, [machines, primaryKey]);
 
   const selectScope = useCallback((next: string | null) => setScopePick(next), []);
 
