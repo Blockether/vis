@@ -313,11 +313,16 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
  * The list's geometry in px, read off the live screen (dev server, Chromium, one
  * machine whose top project holds 102 pages of sessions):
  *
- *   - a session row is 48px with a 1px rule under it, and 34px + 1px under
+ *   - a session row is 48px with a 1px rule under it, and 32px + 1px under
  *     `mouse:`, where the density follows the pointer (`index.css`);
- *   - the first row of a project starts at y=211 (y=215 under `mouse:`) — the app
- *     bar, the filter row, the scope strip, the project's own band and the shelf
- *     carrying its pager, all of which a page pays for before its first row;
+ *   - the first row of a project starts at y=211 on a phone and at y=137 on a
+ *     desk — the app bar, the filter row, the scope strip, the project's own band
+ *     and the shelf carrying its pager, all of which a page pays for before its
+ *     first row. The desk used to pay 215 for the same bands because the page's
+ *     top inset was spelled TWICE, once on the section and once on the scope
+ *     strip standing inside it;
+ *   - FOOT is the gap the panel keeps under itself once it detaches from the
+ *     glass (`sm:pb-6`); a phone is full bleed and pays none;
  *   - PEEK is what a page leaves UNDER its last row, so the next project's band
  *     shows and the list never ends flush with the bottom of the screen.
  *
@@ -325,9 +330,10 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
  * pager with a row attached.
  */
 const LIST_PEEK = 40;
+const LIST_FOOT = 24;
 const LIST_GEOMETRY = {
   touch: { row: 49, chrome: 211 + LIST_PEEK, min: 3 },
-  mouse: { row: 35, chrome: 215 + LIST_PEEK, min: 3 },
+  mouse: { row: 33, chrome: 137 + LIST_FOOT + LIST_PEEK, min: 3 },
 } as const;
 
 /**
@@ -1796,7 +1802,7 @@ export function SessionsScreen({
   if (loadError) return null;
 
   return (
-    <section aria-label="Sessions" className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-6">
+    <section aria-label="Sessions" className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-4">
       {/* On phones this panel sits FLUSH under the app header, whose own `border-b`
           already draws the rule below the Vis mark. A `border-y` here stacked a
           second hairline on top of it, so the Sessions tab wore a 2px seam while
@@ -1843,8 +1849,14 @@ export function SessionsScreen({
           needed it, so the switch's left edge and the verb's right edge are the same
           distance from the paper: 12 and 12 of a 390 phone (strip at 12, the projects
           mark ending at 378), and 984 inside a card that ends at 1000 on a 1024 desk. */}
+      {/* ONE TOP INSET, NOT TWO. The section already spells the page's top edge
+          (`sm:pt-4`); this row spelled a second one (`sm:pt-8`) on top of it, so on
+          a desk the machine strip started 56px under the app bar and the card 97px
+          under it — a hand's width of paper above a list that then ran out of
+          screen before it ran out of rows. The phone keeps its own `pt-6`: there
+          the section is full bleed and this row IS the first thing under the bar. */}
       {machines.length > 0 && (
-        <div className="relative z-10 flex flex-wrap items-center gap-x-1.5 gap-y-2 px-3 pb-3 pt-6 sm:flex-nowrap sm:pb-4 sm:pl-0 sm:pr-4 sm:pt-8">
+        <div className="relative z-10 flex flex-wrap items-center gap-x-1.5 gap-y-2 px-3 pb-3 pt-6 sm:flex-nowrap sm:pb-3 sm:pl-0 sm:pr-4 sm:pt-0">
           {/* The switch owns the leading space of this row: it GROWS, so the machine's
               verb stands at the trailing inset without an auto margin that would fight
               the search report for the same free space. The track inside it keeps its

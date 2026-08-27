@@ -34,8 +34,9 @@ describe('rows that fit the screen', () => {
 
     // The same ten rows ran three past the fold on the shortest phone.
     expect(fitRows(568, LIST)).toBe(6);
-    // A cursor makes the row 14px shorter, so the same window holds more of them.
-    expect(fitRows(900, { row: 35, chrome: 255, min: 3 })).toBe(18);
+    // A cursor makes the row 15px shorter and the desk's own paper is thinner, so
+    // the same window holds a third more of them.
+    expect(fitRows(900, { row: 33, chrome: 201, min: 3 })).toBe(21);
   });
 
   it('never cuts a page shorter than a list, and can be given a share of the screen', () => {
