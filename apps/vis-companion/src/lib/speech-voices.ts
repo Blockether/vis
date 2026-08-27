@@ -76,23 +76,11 @@ function recommendedIosVoices(voices: DeviceVoice[]): DeviceVoice[] {
   ).filter((voice): voice is DeviceVoice => voice !== undefined);
 }
 
-/**
- * The installed voices worth putting in front of a person. iOS is intentionally a closed
- * shortlist of the exact public Apple names and tiers Vis recommends; it never promotes an
- * unrelated stored choice back into the picker. Other platforms keep the three best voices
- * for the device language and preserve a stored installed choice.
- */
-export function bestDeviceVoices(
+function rankedDeviceVoices(
   voices: DeviceVoice[],
-  selectedId: string | null = null,
-  preferredLanguages: readonly string[] = preferredDeviceLanguages(),
-  platform: string = Capacitor.getPlatform(),
+  selectedId: string | null,
+  preferredLanguages: readonly string[],
 ): DeviceVoice[] {
-  const unique = Array.from(
-    new Map(voices.filter((voice) => voice.id).map((voice) => [voice.id, voice])).values(),
-  );
-  if (platform === "ios") return recommendedIosVoices(unique);
-
   const preferred = Array.from(
     new Set(preferredLanguages.map(normalizedLanguage).filter(Boolean)),
   );
@@ -104,8 +92,8 @@ export function bestDeviceVoices(
       (one) => one === language || one.split("-")[0] === base,
     );
   };
-  const matching = unique.filter(matchesPreferred);
-  const pool = matching.some((voice) => voice.language) ? matching : unique;
+  const matching = voices.filter(matchesPreferred);
+  const pool = matching.some((voice) => voice.language) ? matching : voices;
   const ranked = [...pool].sort((left, right) => {
     const byLanguage = languageRank(left, preferred) - languageRank(right, preferred);
     if (byLanguage !== 0) return byLanguage;
@@ -117,9 +105,38 @@ export function bestDeviceVoices(
     return left.label.localeCompare(right.label);
   });
   const result = ranked.slice(0, BEST_DEVICE_VOICE_LIMIT);
-  const selected = selectedId ? unique.find((voice) => voice.id === selectedId) : undefined;
+  const selected = selectedId ? voices.find((voice) => voice.id === selectedId) : undefined;
   if (!selected || result.some((voice) => voice.id === selected.id)) return result;
   return [...result.slice(0, BEST_DEVICE_VOICE_LIMIT - 1), selected];
+}
+
+/**
+ * Up to three installed voices worth putting in front of a person. iOS leads with Apple's
+ * recommended public voices, then fills every missing place with the best voice this device
+ * actually has. Other platforms rank directly by device language, quality and availability.
+ */
+export function bestDeviceVoices(
+  voices: DeviceVoice[],
+  selectedId: string | null = null,
+  preferredLanguages: readonly string[] = preferredDeviceLanguages(),
+  platform: string = Capacitor.getPlatform(),
+): DeviceVoice[] {
+  const unique = Array.from(
+    new Map(voices.filter((voice) => voice.id).map((voice) => [voice.id, voice])).values(),
+  );
+  if (platform !== "ios") {
+    return rankedDeviceVoices(unique, selectedId, preferredLanguages);
+  }
+
+  const recommended = recommendedIosVoices(unique);
+  if (recommended.length >= BEST_DEVICE_VOICE_LIMIT) return recommended;
+  const recommendedNames = new Set(recommended.map(publicAppleVoiceName));
+  const alternatives = rankedDeviceVoices(
+    unique.filter((voice) => !recommendedNames.has(publicAppleVoiceName(voice))),
+    selectedId,
+    preferredLanguages,
+  );
+  return [...recommended, ...alternatives].slice(0, BEST_DEVICE_VOICE_LIMIT);
 }
 
 /**

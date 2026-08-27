@@ -83,4 +83,46 @@ describe("best device voices", () => {
       "com.apple.voice.enhanced.en-US.Samantha",
     ]);
   });
+
+  // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: iOS showed only the one
+  // hard-coded recommendation installed on the phone and hid every other usable system voice.
+  it("fills an incomplete iOS recommendation list with installed voices", () => {
+    const chosen = bestDeviceVoices(
+      [
+        {
+          id: "com.apple.voice.enhanced.en-US.Samantha",
+          label: "Samantha (Enhanced)",
+          language: "en-US",
+          quality: 450,
+        },
+        {
+          id: "com.apple.voice.premium.en-US.Serena",
+          label: "Serena (Premium)",
+          language: "en-US",
+          quality: 500,
+        },
+        {
+          id: "com.apple.voice.enhanced.en-US.Evan",
+          label: "Evan (Enhanced)",
+          language: "en-US",
+          quality: 450,
+        },
+        {
+          id: "com.apple.voice.compact.en-US.Fred",
+          label: "Fred",
+          language: "en-US",
+          quality: 300,
+        },
+      ],
+      null,
+      ["en-US"],
+      "ios",
+    );
+
+    expect(chosen.map((voice) => voice.label)).toEqual([
+      "Samantha (Enhanced)",
+      "Serena (Premium)",
+      "Evan (Enhanced)",
+    ]);
+  });
 });
