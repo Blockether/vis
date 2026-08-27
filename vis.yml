@@ -39,6 +39,9 @@ workspace:
     - id: tree-sitter-clojure
       path: ~/tree-sitter-clojure
       description: Blockether fork of sogaiu/tree-sitter-clojure — THE Clojure grammar (grammar.js + queries/highlights.scm + queries/tags.scm). The language pack pins it by rev in sources/language_definitions.json; bump the grammar here, tag v0.0.13-blockether.N, then move that rev.
+    - id: spel
+      path: ~/spel
+      description: Sibling repo — Spel CLI and runtime.
     - id: svar
       path: ~/svar
       description: Sibling repo — structured LLM output + routing library.
@@ -98,7 +101,7 @@ toggles:
 #   # here is not confined-granted. Access (RW vs read-only) comes from the
 #   # catalog entry above.
 #   filesystem:
-#     allow: [fff, clj-fff, clj-parinferish, clj-ruff, tree-sitter, tree-sitter-clojure, svar, clj-imaging, infrastructure, blockether-com, m2, clojure, clj-tslp, graal, npm]
+#     allow: [fff, clj-fff, clj-parinferish, clj-ruff, tree-sitter, tree-sitter-clojure, spel, svar, clj-imaging, infrastructure, blockether-com, m2, clojure, clj-tslp, graal, npm]
 #
 #   # Outbound egress allowlist. A bare host also matches its subdomains, so
 #   # `github.com` covers `api.github.com`, and `githubusercontent.com` covers
