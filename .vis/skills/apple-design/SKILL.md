@@ -30,6 +30,26 @@ defect in this repo's screens.
 
 ## 1. Type — the scale is closed
 
+**Families.** Two in the app, declared once, never chosen per screen:
+
+| where | family | declared in |
+|---|---|---|
+| app UI and prose — the `<body>` default (`font-sans`) | **Inter Variable** | `apps/vis-companion/src/index.css` → `--font-sans` |
+| everything the engine printed — live view rows, tables, code, transcript, chips, every `ui.tsx` control (`font-mono`) | **JetBrains Mono Variable** | same file → `--font-mono` |
+| docs site (`resources/vis-docs`) | **Hanken Grotesk** (`--sans`/`--display`) + **JetBrains Mono** (`--mono`) | `src/com/blockether/vis/internal/docs.clj` |
+| TUI | the terminal's own font — the design IS the character grid; capture PNGs paint that grid at `:font-size 18` | `…/channel_tui/cinema.clj` |
+
+- Both app families are imported upright AND italic, and `font-synthesis: none` forbids a
+  synthesized face: a weight or slant whose file was never imported paints as plain upright
+  regular. Feature settings (`cv02 cv03 cv04 cv11`) are set once on `body`, never per component.
+- The files are in the tree — `@fontsource-variable/{inter,jetbrains-mono}/files/*-latin-wght-normal.woff2`
+  and the tracked `resources/vis-docs/assets/fonts/{hanken-grotesk,jetbrains-mono}.woff2`. Anything
+  that renders a screen loads THOSE: `@font-face` in the mockup's own HTML, or
+  `fontTools.ttLib.woff2.decompress(path, BytesIO()) → PIL ImageFont.truetype`. `system-ui`,
+  DejaVu, Aileron, Arial or PIL's `load_default` review a product we do not ship.
+- Mono carries machine output and data; Inter carries prose a person reads. An app mockup set
+  entirely in mono is exactly as wrong as a terminal set in Inter.
+
 `src/index.css` clears Tailwind's scale on purpose. The eight steps and their roles:
 
 | step | px/line | what it is allowed to be |
@@ -158,6 +178,9 @@ Reject on sight, in a mockup or in a diff:
 9. Labels like "Manage", "Settings", "Options" where a verb and an object would say it.
 10. Any placeholder, sample or lorem text left in a shipped screen.
 
+11. A mockup set in a font we do not ship — `system-ui`, DejaVu, Arial, PIL's default — or app
+    prose set in the mono family; both review a product that does not exist.
+
 ## 8. Review protocol
 
 When asked to review, audit, critique or modernize a design — screenshot, mockup, or code:
@@ -193,6 +216,7 @@ When asked to review, audit, critique or modernize a design — screenshot, mock
 - Text scaling to 130% and reduced motion both survive.
 - App: `npm test -- <files>`, `npm run lint`, `npm run build` clean, and any new control pinned in
   `ui.test.tsx`. TUI: a capture PNG eyeballed and grid assertions added.
+- Any mockup or review PNG is set in the shipped families (§1) loaded from the repo's own files.
 
 ## 10. Component recipes — the measured defaults
 
@@ -226,6 +250,10 @@ Two derived rules that catch most of the damage:
 ## 11. Paint it, then LOOK at it
 
 A design answer that was never rendered and inspected is a guess, and it will read as one.
+
+Every frame is set in the SHIPPED families (§1): the file declares `@font-face` over the repo's own
+`.woff2`, because a headless browser has neither installed and a silent fall back to `system-ui`
+measures someone else's typeface.
 
 1. Build the screens as ONE self-contained HTML file at real device size — iPhone 16 is 393×852pt
    with a 59px status bar and a 34px home indicator; a frame that omits them lies about the space.
