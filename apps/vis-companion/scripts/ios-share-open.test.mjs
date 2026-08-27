@@ -74,6 +74,16 @@ describe('VisShare share extension', () => {
     expect(shareController).toContain('type.preferredMIMEType ?? ""');
   });
 
+  // Regression, issue vis_session_id#3d6dc388-a21c-4005-b498-87c02668cb34:
+  // a local index.html conforms to public.text, so the generic file branch
+  // rejected it and sharing the file produced no attachment.
+  it('stages a local HTML document as a file before excluding shared text', () => {
+    expect(shareController).toContain('let documents: [UTType] = [.pdf, .html]');
+    expect(shareController).toContain('candidate in documents.contains');
+    expect(shareController.indexOf('candidate in documents.contains'))
+      .toBeLessThan(shareController.indexOf('!$0.conforms(to: .text)'));
+  });
+
   // iOS offers the extension only for what its activation rule claims: without
   // these three keys the share sheet shows Vis for a link and hides it for a memo.
   it('is offered for files, images and movies as well as links', () => {

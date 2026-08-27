@@ -472,12 +472,17 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    /// The type to copy the attachment AS. Media first — a photo registers both
-    /// public.jpeg and public.file-url — then any concrete file that is neither
-    /// text nor a link, because those two belong in the message, not on a chip.
+    /// The type to copy the attachment AS. Documents and media first — an HTML
+    /// file is text by UTI inheritance but is still a FILE, while plain shared
+    /// prose belongs in the message. A photo registers both public.jpeg and
+    /// public.file-url, so concrete formats also have to win over generic data.
     private func stageableType(_ provider: NSItemProvider) -> UTType? {
-        let media: [UTType] = [.image, .movie, .audio, .pdf]
+        let documents: [UTType] = [.pdf, .html]
+        let media: [UTType] = [.image, .movie, .audio]
         let types = provider.registeredTypeIdentifiers.compactMap { UTType($0) }
+        if let match = types.first(where: { candidate in documents.contains { candidate.conforms(to: $0) } }) {
+            return match
+        }
         if let match = types.first(where: { candidate in media.contains { candidate.conforms(to: $0) } }) {
             return match
         }
