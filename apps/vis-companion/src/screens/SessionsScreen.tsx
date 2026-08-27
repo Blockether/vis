@@ -3235,17 +3235,22 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
             <Stat label="Folds" value={compactCount(usage.fold_count)} />
             <Stat label="In" value={compactCount(usage.input_tokens)} />
             <Stat label="Out" value={compactCount(usage.output_tokens)} />
-            <Stat
+            <Stat label="Cost" value={formatUsd(usage.cost_usd)} />
+          </dl>
+          <dl
+            aria-label="Prompt cache"
+            className="mt-2.5 grid grid-cols-2 gap-3 border-t border-dialog-edge/40 pt-2"
+          >
+            <CacheStat
               label="Cached input"
               value={typeof cacheReadShare === 'number' ? `${Math.round(cacheReadShare)}%` : '—'}
-              title="Share of all logical input tokens served from provider cache"
+              explanation="Share of all input served from provider cache"
             />
-            <Stat
+            <CacheStat
               label="Reuse coverage"
               value={typeof reuseCoverage === 'number' ? `${Math.round(reuseCoverage)}%` : '—'}
-              title="Cache reads over prior same-route input that was an exact reusable prefix"
+              explanation="Share of reusable prior input recovered from cache"
             />
-            <Stat label="Cost" value={formatUsd(usage.cost_usd)} />
           </dl>
           <dl className="mt-2.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-dialog-edge/40 pt-2">
             {/* `/usage` names the model the session actually RAN on, but only
@@ -3269,13 +3274,27 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
   );
 }
 
-function Stat({ label, value, title }: { label: string; value: string; title?: string }) {
+function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0" title={title}>
+    <div className="min-w-0">
       <dt className="truncate font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
         {label}
       </dt>
       <dd className="truncate font-mono text-chip font-bold tabular-nums text-white">{value}</dd>
+    </div>
+  );
+}
+
+function CacheStat({ label, value, explanation }: { label: string; value: string; explanation: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="flex items-baseline justify-between gap-2">
+        <dt className="truncate font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
+          {label}
+        </dt>
+        <dd className="shrink-0 font-mono text-chip font-bold tabular-nums text-white">{value}</dd>
+      </div>
+      <dd className="mt-0.5 text-balance font-mono text-chip leading-snug text-dialog-hint">{explanation}</dd>
     </div>
   );
 }

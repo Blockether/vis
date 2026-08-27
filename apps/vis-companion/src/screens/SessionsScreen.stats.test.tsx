@@ -68,10 +68,14 @@ describe("the expanded session card", () => {
     expect(screen.queryByText(/python_execution/)).toBeNull();
   });
 
-  it("shows cost share and reusable-prefix coverage as separate cache metrics", async () => {
+  it("puts both cache metrics in a separate explained row", async () => {
     await open();
-    expect(await screen.findByText("Cached input")).toBeTruthy();
-    expect(screen.getByText("Reuse coverage")).toBeTruthy();
+    const cachedInput = await screen.findByText("Cached input");
+    const reuseCoverage = screen.getByText("Reuse coverage");
+    expect(screen.getByText("Share of all input served from provider cache")).toBeTruthy();
+    expect(screen.getByText("Share of reusable prior input recovered from cache")).toBeTruthy();
+    expect(cachedInput.closest("dl")).toBe(reuseCoverage.closest("dl"));
+    expect(cachedInput.closest("dl")).not.toBe(screen.getByText("Turns").closest("dl"));
     expect(screen.getByText("77%")).toBeTruthy();
     expect(screen.getByText("98%")).toBeTruthy();
   });
