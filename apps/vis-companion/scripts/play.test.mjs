@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseTracks, planRelease, promoteBundle, publishBundle, TESTING_TRACKS } from './play.mjs';
+import { parseTracks, planRelease, playCall, promoteBundle, publishBundle, TESTING_TRACKS } from './play.mjs';
 
 // `play.mjs` is the ONE place that talks to the Play Developer API, so the only thing worth
 // stubbing is the transport: every release path inherits whatever policy lives here.
@@ -27,6 +27,9 @@ const transport = (...queue) => {
 };
 
 const ok = (body) => ({ status: 200, body });
+const waits = [];
+const request = (method = 'GET', path = '/applications/example/edits') =>
+  playCall('tok', method, path, { wait: async (ms) => void waits.push(ms) });
 const token = () => ok({ access_token: 'tok' });
 const edit = () => ok({ id: 'edit-1' });
 // What Play answers when asked which tracks this listing has — the standard four unless a test
@@ -55,6 +58,7 @@ const trackPuts = (seen) =>
 const realFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = realFetch;
+  waits.length = 0;
   vi.restoreAllMocks();
 });
 
@@ -117,6 +121,32 @@ describe('planRelease', () => {
   // and the CLI plans before the build so this costs a second instead of a signed .aab.
   it('refuses a staged rollout aimed at more than one track', () => {
     expect(() => planRelease({ userFraction: '0.1' })).toThrow(/exactly one track/);
+  });
+});
+
+describe('playCall', () => {
+  // Regression, session 907a20a8-877c-4395-9cba-1450317dbd38: one Play upload
+  // headers timeout aborted the whole Android release after the bundle had already been built.
+  it('retries a transient transport failure', async () => {
+    const timeout = Object.assign(new TypeError('fetch failed'), { cause: { code: 'UND_ERR_HEADERS_TIMEOUT' } });
+    const seen = transport(timeout, ok({ versionCode: 4090 }));
+
+    await expect(request('POST', '/applications/example/edits/1/bundles')).resolves.toEqual({ versionCode: 4090 });
+
+    expect(seen).toHaveLength(2);
+    expect(waits).toEqual([1_000]);
+  });
+
+  it('retries temporary Play responses but not permanent refusals', async () => {
+    transport({ status: 503, body: { error: { message: 'unavailable' } } }, ok({ tracks: [] }));
+    await expect(request()).resolves.toEqual({ tracks: [] });
+    expect(waits).toEqual([1_000]);
+
+    waits.length = 0;
+    const seen = transport({ status: 403, body: { error: { message: 'no access' } } });
+    await expect(request()).rejects.toThrow(/403 no access/);
+    expect(seen).toHaveLength(1);
+    expect(waits).toEqual([]);
   });
 });
 

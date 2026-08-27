@@ -19,6 +19,10 @@ import { createPrivateKey, sign as cryptoSign } from 'node:crypto';
 const SCOPE = 'https://www.googleapis.com/auth/androidpublisher';
 const API = 'https://androidpublisher.googleapis.com/androidpublisher/v3';
 const UPLOAD = 'https://androidpublisher.googleapis.com/upload/androidpublisher/v3';
+const BACKOFF_MS = [1_000, 4_000, 10_000];
+const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504]);
+const RETRY_AFTER_CAP_MS = 60_000;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const base64url = (buf) => Buffer.from(buf).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 
@@ -50,25 +54,54 @@ export const playToken = async (serviceAccount, { scope = SCOPE } = {}) => {
   return { token: json.access_token, account: sa.client_email };
 };
 
-const call = async (token, method, path, { body, contentType = 'application/json', base = API } = {}) => {
-  const res = await fetch(`${base}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body === undefined ? {} : { 'Content-Type': contentType }),
-    },
-    ...(body === undefined ? {} : { body: contentType === 'application/json' ? JSON.stringify(body) : body }),
-  });
-  const text = await res.text();
-  const json = text ? JSON.parse(text) : {};
-  if (!res.ok) {
-    const err = new Error(`Play ${method} ${path} → ${res.status} ${json.error?.message ?? text}`);
+const parseJson = (text) => {
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    return {};
+  }
+};
+
+const retryAfterMs = (res) => {
+  const seconds = Number(res.headers?.get?.('retry-after'));
+  return Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds * 1_000, RETRY_AFTER_CAP_MS) : undefined;
+};
+
+/** One Play request, replayed through transient transport and API failures. */
+export const playCall = async (token, method, path, { body, contentType = 'application/json', base = API, wait = sleep } = {}) => {
+  for (let n = 0; ; n += 1) {
+    let res;
+    let text;
+    try {
+      res = await fetch(`${base}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body === undefined ? {} : { 'Content-Type': contentType }),
+        },
+        ...(body === undefined ? {} : { body: contentType === 'application/json' ? JSON.stringify(body) : body }),
+      });
+      text = await res.text();
+    } catch (cause) {
+      const code = cause.cause?.code ? ` (${cause.cause.code})` : '';
+      const err = new Error(`Play ${method} ${path} → ${cause.message}${code}`, { cause });
+      if (n >= BACKOFF_MS.length) throw err;
+      await wait(BACKOFF_MS[n]);
+      continue;
+    }
+
+    const json = parseJson(text);
+    if (res.ok) return json;
+    const detail = json.error?.message ?? text.trim().slice(0, 200) ?? res.statusText;
+    const err = new Error(`Play ${method} ${path} → ${res.status} ${detail}`);
     err.status = res.status;
     err.reason = json.error?.errors?.[0]?.reason;
-    throw err;
+    if (!RETRYABLE.has(res.status) || n >= BACKOFF_MS.length) throw err;
+    await wait(retryAfterMs(res) ?? BACKOFF_MS[n]);
   }
-  return json;
 };
+
+const call = playCall;
 
 /** The track names this listing actually has, read inside an edit the caller already holds. */
 const editTracks = async (token, packageName, editId) =>
