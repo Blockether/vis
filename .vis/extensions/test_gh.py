@@ -34,6 +34,20 @@ def fixture(name):
     return json.loads((FIXTURES / name).read_text())
 
 
+def golden(name, actual):
+    """The captured expectation — WRITTEN when the file is missing, compared when it is.
+
+    A golden nobody can regenerate is a golden nobody dares to change. Delete the file,
+    run this suite, and read the diff before committing what it captured;
+    `gh_live_test.clj` then replays the re-captured `ops.json` through the engine, so
+    nothing this file re-blesses is blessed by this file alone.
+    """
+    path = FIXTURES / name
+    if not path.exists():
+        path.write_text(json.dumps(actual, ensure_ascii=False, indent=2) + "\n")
+    return json.loads(path.read_text())
+
+
 Recorder = vis.testing.LiveRecorder
 assert_tree = vis.testing.assert_tree
 
@@ -91,21 +105,28 @@ def test_a_poll_reads_as_the_seven_answers():
     shape = gh.run_shape(fixture("run-mid.json"))
 
     assert shape["is_over"] is False
-    assert shape["headline"] == "4 of 6 jobs finished, 1 failed"
-    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a live run showed
-    # progress and elapsed durations but not the calendar date and time it began.
-    assert shape["detail"] == (
-        "workflow **CI** on `main` · started **18 Aug 2026, 14:10 UTC** · "
-        "in focus **2 jobs**"
+    # Regression, session f64a6044-9f64-41ab-8d01-dff764cc9149: the status counted jobs
+    # ("4 of 6 jobs finished") and so said the same sentence for 23 minutes of a 97-minute
+    # run. It names the WORK now — what broke, or what is moving — and the arithmetic
+    # moved to the progress bar, which counts STEPS because steps are what change.
+    assert (
+        shape["headline"] == "tests · vis-agent + vis-contract (PyPI packages) failed"
     )
-    assert (shape["done"], shape["total"]) == (4, 6)
+    assert shape["detail"] == "Run both package suites · failed after 12s"
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a live run showed progress
+    # and elapsed durations but not the calendar date and time it began. It is an identity
+    # fact of the run, so it rides in the view's head with the branch and the title —
+    # test_the_head_says_when_the_run_began holds that line.
+    assert (shape["done"], shape["total"]) == (31, 35)
     assert shape["tone"] == "running"
-    assert {one["id"]: one["value_text"] for one in shape["score"]} == {
-        "passed": "3",
-        "failed": "1",
-        "skipped": "0",
-        "queued": "2",
-    }
+    # Four counters, four fixed ids: only the LABEL changes when the run ends, because a
+    # stat is patched by id and "how much is moving" becomes "how much never ran".
+    assert [(one["id"], one["label"], one["value_text"]) for one in shape["score"]] == [
+        ("active", "running", "2"),
+        ("passed", "passed", "3"),
+        ("waiting", "queued", "0"),
+        ("elapsed", "elapsed", "·"),
+    ]
     # A row is addressed by the job's databaseId, which is why it keeps its slot as it changes.
     assert [one["id"] for one in shape["rows"]] == [
         "95742028721",
@@ -116,7 +137,7 @@ def test_a_poll_reads_as_the_seven_answers():
         "95742029230",
     ]
     assert shape["rows"][1]["cells"] == [
-        "tests / vis-agent + vis-contract (PyPI packages)",
+        "vis-agent + vis-contract (PyPI packages)",
         "failure",
         "12s",
     ]
@@ -127,11 +148,65 @@ def test_a_poll_reads_as_the_seven_answers():
     assert "branch" not in next(
         row for row in shape["rows"] if row["cells"][0] == "lint / clj-kondo"
     )
+    # The row under a group says only the variant: the group above it already said the rest.
+    assert shape["rows"][0]["cells"][0] == "macos-latest"
     # Every concurrently running job is focused; the elapsed column waits for its end.
     assert shape["focus_ids"] == ["95742028721", "95742028781"]
-    assert shape["focus"] == "tests / macos-latest + tests / ubuntu-latest"
+    assert shape["focus"] == "tests · macos-latest + ubuntu-latest"
     assert shape["rows"][0]["cells"][2] == "·"
     assert [one["id"] for one in shape["links"]] == ["run", "95742028770"]
+
+
+def test_the_timeline_folds_to_the_step_under_way():
+    shape = gh.run_shape(fixture("run-mid.json"), focus_ids=["95742028721"])
+
+    # Sixty steps is not a timeline, it is a wall. What went before is one named row, and
+    # the time it took is on it — so the fold is an answer, not a hidden pile.
+    assert shape["steps"][0] == {
+        "id": "95742028721:earlier",
+        "label": "8 earlier steps · 21s",
+        "tone": "idle",
+    }
+    # Regression, session f64a6044-9f64-41ab-8d01-dff764cc9149: every step a running job
+    # had not reached yet was painted as running, because a JOB that is queued is alive
+    # and the step tone borrowed that rule. A step nobody has reached is idle.
+    assert [one["tone"] for one in shape["steps"][1:]] == [
+        "ok",
+        "running",
+        "idle",
+        "idle",
+        "idle",
+    ]
+    # Over, nothing is folded: the settled picture is where the whole story is read.
+    assert not any(
+        one["id"].endswith(":earlier")
+        for one in gh.run_shape(fixture("run-final.json"))["steps"]
+    )
+
+
+def test_the_head_says_when_the_run_began(monkeypatch):
+    received = {}
+    monkeypatch.setattr(gh, "require_gh", lambda: None)
+    monkeypatch.setattr(
+        gh, "fetch_run", lambda run_id, repo=None: fixture("run-mid.json")
+    )
+
+    def capture(title, description, poll, log_of=None, superseded_by=None):
+        received["watch"] = (title, description)
+        return "watched"
+
+    monkeypatch.setattr(gh, "watch", capture)
+
+    assert gh.gh_watch_run(run=32146686161) == "watched"
+
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a live run showed progress
+    # and elapsed durations but never the calendar date and time it began, so a run opened
+    # from a notification could have been today's or last week's.
+    assert received["watch"] == (
+        "CI · run 32146686161",
+        "main · docs(release): record the TestFlight build testers now have · push"
+        " · started 18 Aug 2026, 14:10 UTC",
+    )
 
 
 def test_parallel_jobs_are_all_focused_and_an_explicit_focus_wins():
@@ -143,7 +218,7 @@ def test_parallel_jobs_are_all_focused_and_an_explicit_focus_wins():
     assert shape["focus_ids"] == ["95742028721", "95742028781"]
     selected = gh.run_shape(mid, focus_ids=["95742028770"])
     assert selected["focus_ids"] == ["95742028770"]
-    assert selected["focus"] == "tests / vis-agent + vis-contract (PyPI packages)"
+    assert selected["focus"] == "tests · vis-agent + vis-contract (PyPI packages)"
 
 
 def test_a_green_run_defaults_to_its_last_job():
@@ -156,7 +231,9 @@ def test_a_green_run_defaults_to_its_last_job():
     shape = gh.run_shape(payload)
 
     assert shape["focus_ids"] == [str(payload["jobs"][-1]["databaseId"])]
-    assert shape["focus"] == payload["jobs"][-1]["name"]
+    # The row drops the parent its group already names; the STATUS says both, because
+    # there it is the whole name of the thing being done.
+    assert shape["focus"] == "classpath · extensions/channels/vis-channel-tui"
 
 
 def test_a_finished_run_focuses_the_job_that_failed():
@@ -164,9 +241,14 @@ def test_a_finished_run_focuses_the_job_that_failed():
 
     assert shape["is_over"] is True
     assert shape["tone"] == "error"
-    assert shape["focus"] == "tests / vis-agent + vis-contract (PyPI packages)"
+    assert shape["focus"] == "tests · vis-agent + vis-contract (PyPI packages)"
     assert shape["focus_ids"] == ["95742028770"]
-    assert [one["value_text"] for one in shape["score"]] == ["5", "1", "0", "0"]
+    assert [(one["label"], one["value_text"]) for one in shape["score"]] == [
+        ("failed", "1"),
+        ("passed", "5"),
+        ("unrun", "0"),
+        ("elapsed", "28m 33s"),
+    ]
 
 
 def test_the_view_opens_declared_from_the_first_poll(watched):
@@ -183,7 +265,6 @@ def test_the_view_opens_declared_from_the_first_poll(watched):
         "score",
         "jobs",
         "steps",
-        "output",
         "links",
     ]
     assert [one["type"] for one in opened["view"]["nodes"]] == [
@@ -192,7 +273,6 @@ def test_the_view_opens_declared_from_the_first_poll(watched):
         "stat",
         "table",
         "steps",
-        "log",
         "link",
     ]
     jobs = node(opened["view"], "jobs")
@@ -237,7 +317,7 @@ def test_the_log_window_ends_where_the_job_failed():
     assert all(line.startswith("2026-08-18T") for line in window)
 
 
-def test_a_running_focus_pane_says_the_log_is_not_published_yet():
+def test_a_running_job_has_no_log_pane_at_all():
     payload = fixture("run-mid.json")
     shape = gh.run_shape(
         payload,
@@ -249,16 +329,14 @@ def test_a_running_focus_pane_says_the_log_is_not_published_yet():
         focus_ids=["95742028721"],
         now=gh._timestamp("2026-08-18T14:20:50Z"),
     )
-    lines = gh._focus_log_lines(shape, None, {}, gh.FAILED_TAIL_LINES)
 
     # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: the pane repeated the steps
     # panel as a ticking three-line pulse, so its signature changed every tick and a long job
     # left hundreds of copies of the same placeholder in the log's record.
+    # GitHub publishes a job's raw log when the job ENDS. Until then there is nothing to
+    # read, and a pane that says so is a line of nothing above everything else.
+    assert gh._focus_log_lines(shape, None, {}, gh.FAILED_TAIL_LINES) == []
     assert shape["rows"][0]["cells"][2] == "10m 34s"
-    assert lines == [
-        "── tests / macos-latest · log",
-        "· GitHub publishes this job's raw log when the job ends",
-    ]
     assert later["rows"][0]["cells"][2] == "10m 37s"
     assert gh._focus_signature(shape) == gh._focus_signature(later)
 
@@ -279,30 +357,18 @@ def test_a_ticking_run_writes_its_log_pane_once_per_change(recorder, monkeypatch
     # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: elapsed time in the focused
     # rows made every tick look like a new focus, so the log's record grew by one copy of the
     # placeholder per tick and the Companion offered hundreds of "earlier lines" of it.
-    assert [op["lines"] for op in written if op["op"] == "append"] == [
-        [
-            "── tests / macos-latest · log",
-            "· GitHub publishes this job's raw log when the job ends",
-            "── tests / ubuntu-latest · log",
-            "· GitHub publishes this job's raw log when the job ends",
-        ],
-        [
-            "── tests / vis-agent + vis-contract (PyPI packages) · log",
-            *failing_log(),
-        ],
-    ]
+    # Nothing is written until GitHub has published something: five ticks of two running
+    # jobs leave the pane unborn, and the failure that ends the run writes it once.
+    assert [op["lines"] for op in written if op["op"] == "append"] == [failing_log()]
 
 
 def test_running_focus_waits_while_finished_focus_gets_its_log(watched):
     recorder, _ = watched
     output = [op for op in recorder.patched() if op.get("node_id") == "output"]
 
-    assert output[0]["lines"] == [
-        "── tests / macos-latest · log",
-        "· GitHub publishes this job's raw log when the job ends",
-        "── tests / ubuntu-latest · log",
-        "· GitHub publishes this job's raw log when the job ends",
-    ]
+    # The pane is the FAILED job's log — the running two had nothing to publish yet, so
+    # nothing was drawn for them and the first thing written is the reason to look.
+    assert [op["lines"] for op in output if op["op"] == "append"] == [failing_log()]
     assert recorder.asked[0] == ("95742028770", gh.LOG_TAIL_LINES)
     assert {job_id for job_id, _lines in recorder.asked} == {
         str(job["databaseId"]) for job in fixture("run-final.json")["jobs"]
@@ -312,13 +378,14 @@ def test_running_focus_waits_while_finished_focus_gets_its_log(watched):
 def test_the_settled_pane_is_one_photograph(watched):
     recorder, result = watched
     lines = node(recorder.picture(), "output")["lines"]
-    written = [op for op in recorder.patched() if op.get("node_id") == "output"]
-
     # The feed is the story WHILE it runs; what is LEFT is the log of the job that has to be
     # acted on. The model receives only the compact semantic ending below.
-    assert any(op["op"] == "clear" for op in written)
-    assert lines[0] == "── tests / vis-agent + vis-contract (PyPI packages) · log"
-    assert lines[1:] == failing_log()
+    assert lines == failing_log()
+    # The pane is added under the status when there is something in it, never declared
+    # empty with the rest — a phone screen has no room for a node that says "not yet".
+    added = [op for op in recorder.patched() if op.get("op") == "add-node"]
+    assert [op["node_spec"]["id"] for op in added] == ["output"]
+    assert added[0]["after"] == "run"
     assert json.loads(result)["run"]["conclusion"] == "failure"
     assert ("95742028770", gh.LOG_TAIL_LINES) in recorder.asked
     snapshots = recorder.said[-1]["ending"]["focus_snapshots"]
@@ -326,7 +393,7 @@ def test_the_settled_pane_is_one_photograph(watched):
         [str(job["databaseId"])] for job in fixture("run-final.json")["jobs"]
     ]
     assert node(snapshots[0]["view"], "jobs")["focused_ids"] == ["95742028721"]
-    assert node(snapshots[-1]["view"], "output")["lines"][0].endswith(" · log")
+    assert node(snapshots[-1]["view"], "output")["lines"] == failing_log()
 
 
 def test_a_log_is_asked_of_the_job_not_of_the_run(monkeypatch):
@@ -401,10 +468,7 @@ def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
     ]
     assert focus_ops[-1]["focused_ids"] == [selected]
     assert json.loads(result)["run"]["conclusion"] == "failure"
-    assert node(recorder.picture(), "output")["lines"] == [
-        "── lint / clj-kondo · log",
-        f"log for {selected}",
-    ]
+    assert node(recorder.picture(), "output")["lines"] == [f"log for {selected}"]
     assert asked[0] == (selected, gh.LOG_TAIL_LINES)
     assert {job_id for job_id, _lines in asked} == {
         str(job["databaseId"]) for job in fixture("run-final.json")["jobs"]
@@ -436,10 +500,7 @@ def test_a_focus_change_refreshes_details_even_while_github_is_unavailable(recor
     assert recorder.node("jobs")["focused_ids"] == [selected]
     assert json.loads(result)["ending"]["reason"] == "poll_failure"
     assert node(recorder.picture(), "steps")["steps"][0]["label"] == "Set up job"
-    assert node(recorder.picture(), "output")["lines"] == [
-        "── tests / vis-agent + vis-contract (PyPI packages) · log",
-        f"log for {selected}",
-    ]
+    assert node(recorder.picture(), "output")["lines"] == [f"log for {selected}"]
 
 
 def test_the_model_gets_one_deduplicated_diagnostic_string(watched):
@@ -493,7 +554,7 @@ def test_the_model_gets_one_deduplicated_diagnostic_string(watched):
     )
     assert not any("Terminate orphan process" in line for line in failed_log)
     assert result == json.dumps(report, ensure_ascii=False, separators=(",", ":"))
-    assert_tree(recorder.picture(), fixture("view.json"))
+    assert_tree(recorder.picture(), golden("view.json", recorder.picture()))
 
 
 def test_the_ops_are_the_ones_the_engine_replays(watched):
@@ -502,7 +563,7 @@ def test_the_ops_are_the_ones_the_engine_replays(watched):
     actual = recorder.ops()
     # Archive-only focus pictures do not change the live operation golden.
     actual[-1]["ending"].pop("focus_snapshots")
-    assert actual == fixture("ops.json")
+    assert actual == golden("ops.json", actual)
 
 
 def test_a_stop_answers_the_picture_the_human_left(recorder):
@@ -526,8 +587,11 @@ def test_a_stop_answers_the_picture_the_human_left(recorder):
     # Whatever ended it, the model is answered the same shape — here, the run half-done.
     assert verdict["reason"] == "interrupted"
     assert verdict["is_completed"] is False
-    assert node(verdict["view"], "run")["text"] == "4 of 6 jobs finished, 1 failed"
-    assert node(verdict["view"], "progress")["done"] == 4
+    assert (
+        node(verdict["view"], "run")["text"]
+        == "tests · vis-agent + vis-contract (PyPI packages) failed"
+    )
+    assert node(verdict["view"], "progress")["done"] == 31
 
 
 def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
@@ -561,12 +625,13 @@ def test_a_newer_commit_supersedes_the_implicit_run_watch(recorder):
         "superseded",
     ]
     assert all(row["tone"] != "running" for row in rows)
-    assert node(picture, "score")["stats"][-1] == {
-        "id": "queued",
-        "value_text": "0",
-        "label": "queued",
-        "tone": "idle",
-    }
+    stats = node(picture, "score")["stats"]
+    assert [one["id"] for one in stats] == ["active", "passed", "waiting", "elapsed"]
+    # Nothing is running or queued once the run has been handed over.
+    assert [(one["value_text"], one["tone"]) for one in stats[:1] + stats[2:3]] == [
+        ("0", "idle"),
+        ("0", "idle"),
+    ]
     assert node(picture, "links")["links"][-1]["id"] == "newer-run"
 
 
@@ -592,7 +657,10 @@ def test_a_transient_github_failure_keeps_the_watch_alive(recorder):
     assert not polls
     picture = recorder.picture()
     assert all(one["id"] != "activity" for one in picture["nodes"])
-    assert node(picture, "run")["text"].startswith("6 of 6 jobs finished")
+    assert (
+        node(picture, "run")["text"]
+        == "tests · vis-agent + vis-contract (PyPI packages) failed"
+    )
 
 
 def test_a_permanently_unavailable_run_stops_after_bounded_retries(recorder):
@@ -877,7 +945,9 @@ def test_a_pull_requests_checks_read_as_the_same_run():
     assert [one["tone"] for one in shape["rows"]] == ["ok", "running", "error"]
     assert [one["cells"][0] for one in shape["rows"]] == ["lint", "tests", "build"]
     assert shape["is_over"] is False
-    assert shape["headline"] == "2 of 3 jobs finished, 1 failed"
+    assert shape["headline"] == "build failed"
+    # A check has no steps, so the check IS the unit the bar counts: 0 of 0 is a dead bar.
+    assert (shape["done"], shape["total"]) == (2, 3)
 
     settled = gh.checks_payload([dict(one, bucket="pass") for one in rows], "1421")
     assert gh.run_shape(settled)["is_over"] is True

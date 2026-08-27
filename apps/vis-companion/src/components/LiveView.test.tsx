@@ -119,6 +119,26 @@ describe('a live view on the phone', () => {
     expect(screen.getByRole('columnheader', { name: 'Host' })).toBeTruthy();
   });
 
+  // Caps are for the NAME. A live node names what it is a label OF — the failing
+  // job, the runner the timeline belongs to — and a whole line of caps shouts the
+  // part that has to be read.
+  it('sets the node name in caps and leaves its qualifier in ordinary type', () => {
+    paint({
+      view: withNode(opened(), {
+        id: 'tail',
+        type: 'log',
+        label: 'Failure · Run native build',
+        lines: ['exit 1'],
+        window_lines: 2000,
+        total_lines: 1,
+      }),
+    });
+    const caps = [...document.querySelectorAll('span.uppercase')].filter((one) =>
+      one.textContent?.startsWith('Failure'),
+    );
+    expect(caps.map((one) => one.textContent)).toEqual(['Failure']);
+    expect(caps[0]?.parentElement?.textContent).toBe('Failure · Run native build');
+  });
   // A path or an attachment names a place on the MACHINE: dressing it as a link
   // would promise a tap that does nothing under the thumb.
   it('opens what the phone can reach and states what it cannot', () => {

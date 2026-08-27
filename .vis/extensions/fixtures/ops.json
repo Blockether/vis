@@ -7,19 +7,26 @@
       "nodes": [
         {
           "tone": "running",
-          "detail": "workflow **CI** on `main` · started **18 Aug 2026, 14:10 UTC** · in focus **2 jobs**",
-          "text": "4 of 6 jobs finished, 1 failed",
+          "detail": "Run both package suites · failed after 12s",
+          "text": "tests · vis-agent + vis-contract (PyPI packages) failed",
           "type": "status",
           "id": "run"
         },
         {
-          "done": 4,
-          "total": 6,
+          "done": 31,
+          "total": 35,
+          "label": "Steps finished",
           "type": "progress",
           "id": "progress"
         },
         {
           "stats": [
+            {
+              "id": "active",
+              "value_text": "2",
+              "label": "running",
+              "tone": "running"
+            },
             {
               "id": "passed",
               "value_text": "3",
@@ -27,22 +34,16 @@
               "tone": "ok"
             },
             {
-              "id": "failed",
-              "value_text": "1",
-              "label": "failed",
-              "tone": "error"
-            },
-            {
-              "id": "skipped",
+              "id": "waiting",
               "value_text": "0",
-              "label": "skipped",
+              "label": "queued",
               "tone": "idle"
             },
             {
-              "id": "queued",
-              "value_text": "2",
-              "label": "queued",
-              "tone": "running"
+              "id": "elapsed",
+              "value_text": "10m 34s",
+              "label": "elapsed",
+              "tone": "idle"
             }
           ],
           "type": "stat",
@@ -53,32 +54,32 @@
             {
               "id": "95742028721",
               "tone": "running",
+              "branch": "tests",
               "cells": [
-                "tests / macos-latest",
+                "macos-latest",
                 "in progress",
                 "10m 34s"
-              ],
-              "branch": "tests"
+              ]
             },
             {
               "id": "95742028770",
               "tone": "error",
+              "branch": "tests",
               "cells": [
-                "tests / vis-agent + vis-contract (PyPI packages)",
+                "vis-agent + vis-contract (PyPI packages)",
                 "failure",
                 "12s"
-              ],
-              "branch": "tests"
+              ]
             },
             {
               "id": "95742028781",
               "tone": "running",
+              "branch": "tests",
               "cells": [
-                "tests / ubuntu-latest",
+                "ubuntu-latest",
                 "in progress",
                 "10m 34s"
-              ],
-              "branch": "tests"
+              ]
             },
             {
               "id": "95742028809",
@@ -92,22 +93,22 @@
             {
               "id": "95742028943",
               "tone": "ok",
+              "branch": "classpath",
               "cells": [
-                "classpath / .",
+                ".",
                 "success",
                 "21s"
-              ],
-              "branch": "classpath"
+              ]
             },
             {
               "id": "95742029230",
               "tone": "ok",
+              "branch": "classpath",
               "cells": [
-                "classpath / extensions/channels/vis-channel-tui",
+                "extensions/channels/vis-channel-tui",
                 "success",
                 "22s"
-              ],
-              "branch": "classpath"
+              ]
             }
           ],
           "is_focusable": true,
@@ -133,96 +134,56 @@
           "id": "jobs"
         },
         {
-          "label": "Selected job steps",
+          "label": "Timeline",
           "steps": [
             {
-              "id": "95742028721:1",
-              "label": "tests / macos-latest · Set up job",
-              "tone": "ok"
-            },
-            {
-              "id": "95742028721:2",
-              "label": "tests / macos-latest · Run actions/checkout@v7",
-              "tone": "ok"
-            },
-            {
-              "id": "95742028721:3",
-              "label": "tests / macos-latest · Run ./.github/actions/setup-graalvm-25",
-              "tone": "ok"
-            },
-            {
-              "id": "95742028721:4",
-              "label": "tests / macos-latest · Run DeLaGuardo/setup-clojure@13.6.1",
-              "tone": "ok"
-            },
-            {
-              "id": "95742028721:5",
-              "label": "tests / macos-latest · Run actions/cache@v6",
-              "tone": "ok"
-            },
-            {
-              "id": "95742028721:6",
-              "label": "tests / macos-latest · Seed a minimal AI provider config + harness fixtures",
-              "tone": "ok"
-            },
-            {
-              "id": "95742028721:7",
-              "label": "tests / macos-latest · Install bubblewrap + passt (Linux jail enforcer + filtered egress)",
+              "id": "95742028721:earlier",
+              "label": "8 earlier steps · 21s",
               "tone": "idle"
             },
             {
-              "id": "95742028721:8",
-              "label": "tests / macos-latest · Run actions/cache@v6",
-              "tone": "ok"
-            },
-            {
               "id": "95742028721:9",
-              "label": "tests / macos-latest · Provision the sherpa-onnx native runtime",
+              "label": "macos-latest · Provision the sherpa-onnx native runtime",
               "tone": "ok"
             },
             {
               "id": "95742028721:10",
-              "label": "tests / macos-latest · Run test suite · 10m 00s",
+              "label": "macos-latest · Run test suite · 10m 00s",
               "tone": "running"
             },
             {
               "id": "95742028721:18",
-              "label": "tests / macos-latest · Post Run actions/cache@v6",
-              "tone": "running"
+              "label": "macos-latest · Post Run actions/cache@v6",
+              "tone": "idle"
             },
             {
               "id": "95742028721:19",
-              "label": "tests / macos-latest · Post Run actions/cache@v6",
-              "tone": "running"
+              "label": "macos-latest · Post Run actions/cache@v6",
+              "tone": "idle"
             },
             {
               "id": "95742028721:20",
-              "label": "tests / macos-latest · Post Run actions/checkout@v7",
-              "tone": "running"
+              "label": "macos-latest · Post Run actions/checkout@v7",
+              "tone": "idle"
             },
             {
               "id": "95742028781:1",
-              "label": "tests / ubuntu-latest · Set up job",
+              "label": "ubuntu-latest · Set up job",
               "tone": "ok"
             },
             {
               "id": "95742028781:2",
-              "label": "tests / ubuntu-latest · Run actions/checkout@v7",
+              "label": "ubuntu-latest · Run actions/checkout@v7",
               "tone": "ok"
             },
             {
               "id": "95742028781:3",
-              "label": "tests / ubuntu-latest · Run ./.github/actions/setup-graalvm-25",
+              "label": "ubuntu-latest · Run ./.github/actions/setup-graalvm-25",
               "tone": "ok"
             }
           ],
           "type": "steps",
           "id": "steps"
-        },
-        {
-          "label": "Selected job log",
-          "type": "log",
-          "id": "output"
         },
         {
           "links": [
@@ -244,50 +205,46 @@
     }
   },
   {
+    "op": "state"
+  },
+  {
+    "op": "state"
+  },
+  {
+    "op": "state"
+  },
+  {
     "op": "patch",
     "patch": {
       "ops": [
         {
-          "lines": [
-            "── tests / macos-latest · log",
-            "· GitHub publishes this job's raw log when the job ends",
-            "── tests / ubuntu-latest · log",
-            "· GitHub publishes this job's raw log when the job ends"
-          ],
-          "op": "append",
-          "node_id": "output"
+          "text": "tests · vis-agent + vis-contract (PyPI packages) failed",
+          "tone": "error",
+          "detail": "Run both package suites · failed after 12s",
+          "op": "set",
+          "node_id": "run"
         }
       ]
     }
   },
   {
-    "op": "state"
-  },
-  {
-    "op": "state"
-  },
-  {
-    "op": "state"
-  },
-  {
     "op": "patch",
     "patch": {
       "ops": [
         {
-          "text": "6 of 6 jobs finished, 1 failed",
-          "tone": "error",
-          "detail": "workflow **CI** on `main` · started **18 Aug 2026, 14:10 UTC** · in focus **tests / vis-agent + vis-contract (PyPI packages)**",
-          "op": "set",
-          "node_id": "run"
-        },
-        {
-          "done": 6,
-          "total": 6,
+          "done": 36,
+          "total": 36,
           "op": "set",
           "node_id": "progress"
         },
         {
           "stats": [
+            {
+              "id": "active",
+              "value_text": "1",
+              "label": "failed",
+              "tone": "error"
+            },
             {
               "id": "passed",
               "value_text": "5",
@@ -295,10 +252,16 @@
               "tone": "ok"
             },
             {
-              "id": "queued",
+              "id": "waiting",
               "value_text": "0",
-              "label": "queued",
-              "tone": "running"
+              "label": "unrun",
+              "tone": "idle"
+            },
+            {
+              "id": "elapsed",
+              "value_text": "28m 33s",
+              "label": "elapsed",
+              "tone": "idle"
             }
           ],
           "op": "append",
@@ -309,7 +272,7 @@
             {
               "id": "95742028721",
               "cells": [
-                "tests / macos-latest",
+                "macos-latest",
                 "success",
                 "28m 33s"
               ],
@@ -319,7 +282,7 @@
             {
               "id": "95742028781",
               "cells": [
-                "tests / ubuntu-latest",
+                "ubuntu-latest",
                 "success",
                 "12m 54s"
               ],
@@ -398,12 +361,23 @@
           "node_id": "steps"
         },
         {
-          "op": "clear",
-          "node_id": "output"
-        },
+          "op": "add-node",
+          "node_spec": {
+            "label": "Failure · vis-agent + vis-contract (PyPI packages)",
+            "type": "log",
+            "id": "output"
+          },
+          "after": "run"
+        }
+      ]
+    }
+  },
+  {
+    "op": "patch",
+    "patch": {
+      "ops": [
         {
           "lines": [
-            "── tests / vis-agent + vis-contract (PyPI packages) · log",
             "2026-08-18T14:10:24.6255054Z     [",
             "2026-08-18T14:10:24.6255326Z         'open',",
             "2026-08-18T14:10:24.6255617Z   -     'patch',",

@@ -95,11 +95,23 @@ const EMPTY_LINE = {
 /** How many earlier lines one press of `Load earlier` reads out of the record. */
 const LOG_PAGE = 200;
 
-/** The node's name, in the label voice the dialog's fields already use. */
+/**
+ * The node's name, in the label voice the dialog's fields already use.
+ *
+ * CAPS CARRY THE NAME, and only the name. A live label often says what it is a
+ * label OF — `Failure · vis-agent + vis-contract (PyPI packages)`, `Timeline ·
+ * macos-latest` — and setting the whole line in caps shouts the very part that
+ * has to be read: caps strip the ascenders and descenders a word is recognised
+ * by, so a long tail stops being scannable and starts competing with the rows it
+ * introduces. Everything up to the first `·` is the name; what follows is
+ * ordinary type at the same size and colour.
+ */
 function NodeLabel({ children }: { children: string }) {
+  const [name, ...rest] = children.split(' · ');
   return (
-    <span className="block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-      {children}
+    <span className="block font-mono text-chip text-dialog-hint">
+      <span className="uppercase tracking-[0.08em]">{name}</span>
+      {rest.length > 0 && <span> · {rest.join(' · ')}</span>}
     </span>
   );
 }

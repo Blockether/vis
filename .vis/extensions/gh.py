@@ -7,15 +7,18 @@ the model needs the final jobs, steps, timing, and failed logs without repeating
 read, copy, or model-visible credential: when `gh` is signed out, GitHub's browser device flow is
 mediated by private human input before any view opens.
 
-Seven nodes answer distinct questions about a run: status (`run`), completion (`progress`), outcome
-counts (`score`), jobs (`jobs`), the selected job's steps (`steps`) and log (`output`), and where to
-open it (`links`). Job rows are controls: all concurrently running jobs are focused by default; with
-none running, the last failed job (or simply the last job) is focused. A tap replaces that focus in
-shared live state, so the extension, terminal, and every Companion agree on the steps and log below
-it. One mapping serves all nodes: every unfinished status is `running`, `success` is `ok`, `skipped`
-and `neutral` are `idle`, and every unsuccessful conclusion is `error`. Rows are upserted by the
-job's `databaseId`, so a job that changes state keeps its slot and the eye keeps its place, and only
-what CHANGED since the last poll crosses the wire.
+Six nodes answer distinct questions about a run: what the machine is doing RIGHT NOW (`run`), how far
+the steps have got (`progress`), the outcome counts and the wall clock (`score`), the jobs (`jobs`), the
+focused job's timeline (`steps`), and where to open it (`links`). A seventh, the log, is not declared: it
+is ADDED after `run` the moment a focused job has something to read and dropped again when it has not, so
+a phone shows a failure over the fold instead of a permanent line about a log GitHub has not published.
+Job rows are controls: all concurrently running jobs are focused by default; with none running, the last
+failed job (or simply the last job) is focused. A tap replaces that focus in shared live state, so the
+extension, terminal, and every Companion agree on the timeline and log below it. One mapping serves all
+nodes: every unfinished status is `running`, `success` is `ok`, `skipped` and `neutral` are `idle`, and
+every unsuccessful conclusion is `error`. Rows are upserted by the job's `databaseId`, so a job that
+changes state keeps its slot and the eye keeps its place, and only what CHANGED since the last poll
+crosses the wire.
 
 GitHub serves a log per JOB, not per run: the REST endpoint `actions/jobs/N/logs` returns 404 while
 that job is writing, then answers with the whole log the moment the job ends. The log pane of a
@@ -128,15 +131,22 @@ def _wall_time():
     return time.time()
 
 
+def _span(seconds):
+    """A duration read at a glance: hours appear only when there are hours."""
+    minutes, rest = divmod(max(0, int(seconds)), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    return f"{minutes}m {rest:02d}s" if minutes else f"{rest}s"
+
+
 def _elapsed(item, now=None):
     """Elapsed wall time, live when `now` is supplied and the item has not ended yet."""
     began = _timestamp(item.get("startedAt"))
     ended = _timestamp(item.get("completedAt"))
     if began is None or (ended is None and now is None):
         return "·"
-    seconds = max(0, int((ended if ended is not None else now) - began))
-    minutes, seconds = divmod(seconds, 60)
-    return f"{minutes}m {seconds:02d}s" if minutes else f"{seconds}s"
+    return _span((ended if ended is not None else now) - began)
 
 
 def _state_text(job):
@@ -179,8 +189,217 @@ def default_focus_ids(jobs):
     return [_job_id(jobs[-1], len(jobs) - 1)] if jobs else []
 
 
+def _job_steps(job):
+    return [step for step in (job.get("steps") or []) if isinstance(step, dict)]
+
+
+def _job_display(job, group=None):
+    """The name a row shows: a matrix variant drops the parent its group already names."""
+    name = str(job.get("name") or "?")
+    if group and name.startswith(f"{group} / "):
+        return name[len(group) + 3 :] or name
+    return name
+
+
+def _focus_name(job, group=None):
+    """The name the STATUS uses — parent and variant, joined the way a person says it."""
+    variant = _job_display(job, group)
+    return f"{group} · {variant}" if group else variant
+
+
+def _current_step(job):
+    """The step a job is ON: the one running, else the one that failed, else the last finished."""
+    steps = _job_steps(job)
+    for step in steps:
+        if str(step.get("status") or "") == "in_progress":
+            return step
+    for step in reversed(steps):
+        if tone_of(step.get("status"), step.get("conclusion")) == "error":
+            return step
+    for step in reversed(steps):
+        if str(step.get("status") or "") == "completed":
+            return step
+    return None
+
+
+def _step_tone(step):
+    """A STEP's tone, which is not a job's: a step nobody has reached is not running.
+
+    `tone_of` answers for a JOB, where "queued" means the runner is coming and the row
+    should read as alive. A job's own step list is different — it names every step the
+    workflow declares, so the twenty steps after the one under way are all "queued" and
+    painting them as running turns the timeline into a wall of activity around the one
+    line that is actually moving.
+    """
+    status = str(step.get("status") or "")
+    if status == "in_progress":
+        return "running"
+    if status == "completed":
+        return tone_of(status, step.get("conclusion"))
+    return "idle"
+
+
+def _step_counts(jobs):
+    """Steps finished over steps known.
+
+    GitHub lists a job's steps only once that job STARTS, so the total grows as the run
+    fans out. That is the truth and not a defect: work nobody has scheduled is work
+    nobody can measure. What matters is that it MOVES — a matrix of three that takes
+    forty minutes moves a job counter zero times and a step counter every minute or two.
+    """
+    done = 0
+    total = 0
+    for job in jobs:
+        for step in _job_steps(job):
+            total += 1
+            if str(step.get("status") or "") == "completed":
+                done += 1
+    if total:
+        return done, total
+    # A pull request's checks are jobs with no steps at all: then the check IS the unit,
+    # and counting steps would leave the bar dead at 0 of 0 for the whole run.
+    finished = sum(1 for job in jobs if str(job.get("status") or "") == "completed")
+    return finished, len(jobs)
+
+
+def _run_elapsed(jobs, now=None):
+    """How long the RUN has been going: first job to start, last to finish."""
+    began = [
+        instant
+        for instant in (_timestamp(job.get("startedAt")) for job in jobs)
+        if instant is not None
+    ]
+    if not began:
+        return "·"
+    ends = [_timestamp(job.get("completedAt")) for job in jobs]
+    if ends and all(end is not None for end in ends):
+        return _span(max(ends) - min(began))
+    return "·" if now is None else _span(now - min(began))
+
+
+def _run_status(payload, jobs, tones, groups, now=None):
+    """The status line is the WORK, not the arithmetic.
+
+    Measured on a 97-minute run: `1 of 12 jobs finished` did not change for 23 minutes,
+    so the node a person reads first said nothing about what the machine was doing while
+    the machine was busy. The step under way is what moves, so the step is what it says —
+    and when something has failed, the failure outranks whatever is still running.
+    """
+    paired = list(zip(jobs, tones, groups, strict=True))
+    failed = [(job, group) for job, tone, group in paired if tone == "error"]
+    running = [
+        (job, group)
+        for job, tone, group in paired
+        if tone == "running" and str(job.get("status") or "") == "in_progress"
+    ]
+    if failed:
+        job, group = failed[0]
+        step = _current_step(job)
+        detail = [str(step.get("name") or "?")] if step is not None else []
+        took = _elapsed(job, now)
+        detail.append(f"failed after {took}" if took != "·" else "failed")
+        if len(failed) > 1:
+            detail.append(f"{len(failed) - 1} more failed")
+        return f"{_focus_name(job, group)} failed", " · ".join(detail)
+    if running:
+        job, group = running[0]
+        step = _current_step(job)
+        detail = []
+        if step is not None:
+            detail.append(str(step.get("name") or "?"))
+            moment = _elapsed(step, now)
+            if moment != "·":
+                detail.append(f"{moment} in this step")
+        if len(running) > 1:
+            detail.append(f"{len(running) - 1} other jobs running")
+        return _focus_name(job, group), " · ".join(detail) or "starting"
+    if str(payload.get("status") or "") == "completed":
+        passed = sum(1 for tone in tones if tone == "ok")
+        ending = str(payload.get("conclusion") or "").replace("_", " ")
+        headline = (
+            f"All {passed} jobs passed"
+            if ending == "success" and passed
+            else (ending.capitalize() or "Finished")
+        )
+        took = _run_elapsed(jobs, now)
+        return (
+            headline,
+            f"{len(jobs)} jobs · {took}" if took != "·" else f"{len(jobs)} jobs",
+        )
+    waiting = len(jobs) or "no"
+    return "Waiting for a runner", f"{waiting} jobs queued"
+
+
+def _span_seconds(item):
+    """How long one item took, in seconds, or zero when GitHub never said."""
+    began = _timestamp(item.get("startedAt"))
+    ended = _timestamp(item.get("completedAt"))
+    if began is None or ended is None:
+        return 0
+    return max(0, int(ended - began))
+
+
+def _timeline(selected, groups_by_id, is_over, now=None):
+    """The focused job's steps, folded to what is happening while the run is LIVE.
+
+    A job has sixty steps and a person watching wants three: the one that just finished,
+    the one under way, and the one coming. The rest are named — `5 earlier steps · 2m07s`
+    is one idle row that says the time went somewhere — and when the run is OVER nothing
+    is folded at all, because the settled picture is where the whole story is read.
+    """
+    steps = []
+    active_step_ids = []
+    for job_id, job in selected:
+        name = _job_display(job, groups_by_id.get(job_id))
+        rows = []
+        for index, step in enumerate(_job_steps(job)):
+            step_name = str(step.get("name") or "?")
+            step_id = f"{job_id}:{step.get('number') or step_name or index}"
+            tone = _step_tone(step)
+            if str(step.get("status") or "") == "in_progress":
+                active_step_ids.append(step_id)
+            moment = _elapsed(step, now)
+            if tone == "running" and moment != "·":
+                step_name = f"{step_name} · {moment}"
+            label = f"{name} · {step_name}" if len(selected) > 1 else step_name
+            rows.append(
+                {
+                    "id": step_id,
+                    "label": label,
+                    "tone": tone,
+                    "_seconds": _span_seconds(step),
+                }
+            )
+        here = next(
+            (index for index, row in enumerate(rows) if row["id"] in active_step_ids),
+            None,
+        )
+        if is_over or here is None or here < 2:
+            steps.extend(
+                {key: value for key, value in row.items() if key != "_seconds"}
+                for row in rows
+            )
+            continue
+        folded = rows[: here - 1]
+        seconds = sum(row["_seconds"] for row in folded)
+        steps.append(
+            {
+                "id": f"{job_id}:earlier",
+                "label": "{} earlier {} · {}".format(
+                    len(folded), "step" if len(folded) == 1 else "steps", _span(seconds)
+                ),
+                "tone": "idle",
+            }
+        )
+        steps.extend(
+            {key: value for key, value in row.items() if key != "_seconds"}
+            for row in rows[here - 1 :]
+        )
+    return steps, active_step_ids
+
+
 def run_shape(payload, focus_ids=None, now=None):
-    """Everything the eight nodes show, derived from one `gh run view --json` payload.
+    """Everything the nodes show, derived from one `gh run view --json` payload.
 
     Pure: `focus_ids=None` applies the live default; explicit ids are the human's shared
     selection, pruned to jobs that still exist. The same payload and focus always answer the
@@ -191,6 +410,9 @@ def run_shape(payload, focus_ids=None, now=None):
     groups = _job_groups(jobs)
     indexed = [(_job_id(job, index), job) for index, job in enumerate(jobs)]
     by_id = dict(indexed)
+    groups_by_id = {
+        job_id: group for (job_id, _), group in zip(indexed, groups, strict=True)
+    }
     requested = (
         default_focus_ids(jobs)
         if focus_ids is None
@@ -203,78 +425,88 @@ def run_shape(payload, focus_ids=None, now=None):
     if not selected_ids and jobs:
         selected_ids = default_focus_ids(jobs)
     selected = [(job_id, by_id[job_id]) for job_id in selected_ids]
-    finished = [job for job in jobs if str(job.get("status") or "") == "completed"]
     failed = [
         job for job, job_tone in zip(jobs, tones, strict=True) if job_tone == "error"
     ]
+    is_over = str(payload.get("status") or "") == "completed"
+    headline, detail = _run_status(payload, jobs, tones, groups, now)
+    done, total = _step_counts(jobs)
+    steps, active_step_ids = _timeline(selected, groups_by_id, is_over, now)
+    focus_names = [
+        _job_display(job, groups_by_id.get(job_id)) for job_id, job in selected
+    ]
+    focus_groups = {groups_by_id.get(job_id) for job_id, _ in selected}
+    if len(selected) == 1:
+        focus = _focus_name(selected[0][1], groups_by_id.get(selected[0][0]))
+    elif len(focus_groups) == 1 and None not in focus_groups:
+        # Three legs of one matrix are one thing being done three ways: name the parent
+        # once and list the variants, the way a person reads the run out loud.
+        focus = f"{focus_groups.pop()} · " + " + ".join(focus_names)
+    else:
+        focus = " + ".join(
+            _focus_name(job, groups_by_id.get(job_id)) for job_id, job in selected
+        )
     counted = {
         "passed": sum(1 for job_tone in tones if job_tone == "ok"),
         "failed": len(failed),
-        "skipped": sum(1 for job_tone in tones if job_tone == "idle"),
-        "queued": sum(1 for job_tone in tones if job_tone == "running"),
+        "running": sum(
+            1 for job in jobs if str(job.get("status") or "") == "in_progress"
+        ),
+        "queued": sum(
+            1
+            for job, job_tone in zip(jobs, tones, strict=True)
+            if job_tone == "running" and str(job.get("status") or "") != "in_progress"
+        ),
     }
-    headline = f"{len(finished)} of {len(jobs)} jobs finished"
-    if failed:
-        headline += f", {len(failed)} failed"
-    is_over = str(payload.get("status") or "") == "completed"
-    focus_names = [str(job.get("name") or "?") for _, job in selected]
-    focus = focus_names[0] if len(focus_names) == 1 else " + ".join(focus_names)
-    focus_detail = focus if len(focus_names) == 1 else f"{len(focus_names)} jobs"
-    steps = []
-    active_step_ids = []
-    for job_id, job in selected:
-        for index, step in enumerate(job.get("steps") or []):
-            step_status = str(step.get("status") or "")
-            step_name = str(step.get("name") or "?")
-            step_id = f"{job_id}:{step.get('number') or step_name or index}"
-            if step_status == "in_progress":
-                active_step_ids.append(step_id)
-            step_tone = tone_of(step.get("status"), step.get("conclusion"))
-            step_elapsed = _elapsed(step, now)
-            if step_tone == "running" and step_elapsed != "·":
-                step_name = f"{step_name} · {step_elapsed}"
-            steps.append(
-                {
-                    "id": step_id,
-                    "label": (
-                        f"{job.get('name') or '?'} · {step_name}"
-                        if len(selected) > 1
-                        else step_name
-                    ),
-                    "tone": step_tone,
-                }
-            )
     return {
         "is_over": is_over,
         "run_url": str(payload.get("url") or ""),
         "headline": headline,
-        "detail": "workflow **{}** on `{}`{} · in focus **{}**".format(
-            payload.get("workflowName") or "?",
-            payload.get("headBranch") or "?",
-            (
-                f" · started **{started}**"
-                if (started := _display_started(payload.get("startedAt")))
-                else ""
-            ),
-            focus_detail,
-        ),
+        "detail": detail,
         "tone": tone_of(payload.get("status"), payload.get("conclusion")),
-        "done": len(finished),
-        "total": len(jobs),
+        "done": done,
+        "total": total,
+        # Four counters, four fixed ids, because a stat is patched by id: what CHANGES
+        # is the label. Before anything breaks the question is "how much is moving";
+        # after, it is "how much never ran" — and the clock is a counter too, the one
+        # answer to "is this normal" that no other node carries.
         "score": [
-            {"id": name, "value_text": str(counted[name]), "label": name, "tone": tone}
-            for name, tone in (
-                ("passed", "ok"),
-                ("failed", "error"),
-                ("skipped", "idle"),
-                ("queued", "running"),
-            )
+            {
+                "id": "active",
+                "value_text": str(counted["failed"] if is_over else counted["running"]),
+                # While it runs, the question is how much is moving; once it is over,
+                # movement is not a thing that can happen and only the damage counts.
+                "label": "failed" if is_over else "running",
+                "tone": (
+                    ("error" if counted["failed"] else "idle")
+                    if is_over
+                    else ("running" if counted["running"] else "idle")
+                ),
+            },
+            {
+                "id": "passed",
+                "value_text": str(counted["passed"]),
+                "label": "passed",
+                "tone": "ok",
+            },
+            {
+                "id": "waiting",
+                "value_text": str(counted["queued"]),
+                "label": "unrun" if is_over else "queued",
+                "tone": "idle",
+            },
+            {
+                "id": "elapsed",
+                "value_text": _run_elapsed(jobs, now),
+                "label": "elapsed",
+                "tone": "idle",
+            },
         ],
         "rows": [
             {
                 "id": _job_id(job, index),
                 "cells": [
-                    str(job.get("name") or "?"),
+                    _job_display(job, group),
                     _state_text(job),
                     _elapsed(job, now),
                 ],
@@ -304,12 +536,18 @@ def run_shape(payload, focus_ids=None, now=None):
 
 
 def declared_nodes(shape):
-    """The eight nodes, declared once from the first poll and addressed by id ever after."""
+    """The six nodes, declared once from the first poll and addressed by id ever after.
+
+    The log is NOT among them: it is added after `run` when there is something to read
+    (`_show_focus_logs`), so an empty pane never takes the space above the jobs.
+    """
     return [
         vis.status(
             "run", shape["headline"], tone=shape["tone"], detail=shape["detail"]
         ),
-        vis.progress("progress", done=shape["done"], total=shape["total"]),
+        vis.progress(
+            "progress", done=shape["done"], total=shape["total"], label="Steps finished"
+        ),
         vis.stat("score", stats=[dict(one) for one in shape["score"]]),
         vis.table(
             "jobs",
@@ -330,9 +568,8 @@ def declared_nodes(shape):
         vis.steps(
             "steps",
             steps=[dict(one) for one in shape["steps"]],
-            label="Selected job steps",
+            label="Timeline",
         ),
-        vis.output("output", label="Selected job log"),
         vis.link("links", links=[dict(one) for one in shape["links"]]),
     ]
 
@@ -349,7 +586,7 @@ def push_changes(view, before, after):
         view["progress"].set(done=after["done"], total=after["total"])
     was = {one["id"]: one for one in before.get("score") or []}
     for one in after["score"]:
-        if was.get(one["id"], {}).get("value_text") != one["value_text"]:
+        if was.get(one["id"]) != one:
             view["score"].set(
                 one["id"], one["value_text"], label=one["label"], tone=one["tone"]
             )
@@ -362,6 +599,11 @@ def push_changes(view, before, after):
     steps = {one["id"]: one for one in before.get("steps") or []}
     if before.get("focus_ids") != after["focus_ids"]:
         view["jobs"].focus(*after["focus_ids"])
+        steps = {}
+        view["steps"].clear()
+    # The timeline FOLDS while the run is live, so a step can leave it: the rows that
+    # went behind `5 earlier steps` are cleared rather than left behind the fold.
+    if steps and {one["id"] for one in after["steps"]} < set(steps):
         steps = {}
         view["steps"].clear()
     for step in after["steps"]:
@@ -661,9 +903,11 @@ def superseded_shape(shape):
         for step in shape.get("steps") or []
     ]
     settled["active_step_ids"] = []
+    # Nothing is running or queued once the run has been handed over: a counter that
+    # still says "running 2" is the same stale state the rows were just cleared of.
     settled["score"] = [
         {**stat, "value_text": "0", "tone": "idle"}
-        if stat.get("id") == "queued"
+        if stat.get("id") in {"active", "waiting"} and stat.get("label") != "failed"
         else stat
         for stat in shape.get("score") or []
     ]
@@ -771,32 +1015,64 @@ def _job_log_tail(job_id, lines, log_of, cache):
 
 
 def _focus_log_lines(shape, log_of, cache, lines):
-    """Raw tails for finished focus, and one line for a job GitHub still withholds."""
+    """The raw tail of every focused job GitHub has actually published.
+
+    A running job HAS no log — GitHub publishes it when the job ends — and a pane that
+    says so is one line of nothing sitting above the jobs for the forty minutes somebody
+    is watching. So a job with nothing to read contributes nothing, the caller drops the
+    node when this comes back empty, and the pane exists only while it holds something.
+
+    One focused job needs no heading: the node's own label already names it. Several do,
+    and then each tail is introduced by the job it came from.
+    """
     rows = {row["id"]: row for row in shape.get("rows") or []}
-    shown = []
+    picked = []
     for job_id in shape.get("focus_ids") or []:
         row = rows.get(job_id)
-        if not row:
-            continue
-        shown.append(f"── {row['cells'][0]} · log")
-        if row["tone"] == "running":
-            # The steps panel already carries this job's current step and its elapsed
-            # time. The log pane states only what it cannot show yet, once.
-            shown.append("· GitHub publishes this job's raw log when the job ends")
+        if not row or row["tone"] == "running":
             continue
         tail = _job_log_tail(job_id, lines, log_of, cache)
         if tail:
-            shown.extend(tail)
-        else:
-            shown.append("· No job log is available")
-    return shown or ["· No job is focused"]
+            picked.append((row["cells"][0], list(tail)))
+    if len(picked) == 1:
+        return picked[0][1]
+    shown = []
+    for name, tail in picked:
+        shown.append(f"── {name} · log")
+        shown.extend(tail)
+    return shown
 
 
-def _show_focus_logs(view, shape, log_of, cache, lines, clear=True):
-    """Replace the output pane with one combined photograph of focused job logs."""
-    if clear:
-        view["output"].clear()
-    view["output"].write(*_focus_log_lines(shape, log_of, cache, lines))
+def _log_label(shape):
+    """The log node's name: one word for what it is, then what it is a log OF."""
+    rows = {row["id"]: row for row in shape.get("rows") or []}
+    focused = [
+        rows[job_id] for job_id in shape.get("focus_ids") or [] if job_id in rows
+    ]
+    if not focused:
+        return "Log"
+    named = " + ".join(row["cells"][0] for row in focused)
+    broke = any(row.get("tone") == "error" for row in focused)
+    return f"{'Failure' if broke else 'Log'} · {named}"
+
+
+def _show_focus_logs(view, shape, log_of, cache, lines):
+    """Put the focused job's log directly under the status — when there IS one.
+
+    A log node declared with the rest spends most of a run saying that GitHub has not
+    published anything yet: one line of nothing, above everything the view was opened
+    for. So the pane is ADDED when there is something to read, dropped when there is
+    not, and it sits after `run` — on a phone that is where the eye already is when
+    something breaks. Its label names the job it belongs to, so a new job is a new node
+    rather than a rename, and the callers only reach here when the focus moved.
+    """
+    written = _focus_log_lines(shape, log_of, cache, lines)
+    if "output" in view:
+        view.drop("output")
+    if not written:
+        return
+    view.add(vis.output("output", label=_log_label(shape)), after="run")
+    view["output"].write(*written)
 
 
 def _archive_focus_snapshots(view, payload, log_of, cache):
@@ -818,10 +1094,19 @@ def _archive_focus_snapshots(view, payload, log_of, cache):
             text=shape["headline"], tone=shape["tone"], detail=shape["detail"]
         )
         nodes["jobs"]["focused_ids"] = [job_id]
-        nodes["steps"]["steps"] = [dict(step) for step in shape["steps"]]
+        if "steps" in nodes:
+            nodes["steps"]["steps"] = [dict(step) for step in shape["steps"]]
         lines = _focus_log_lines(shape, log_of, cache, LOG_TAIL_LINES)
-        nodes["output"]["lines"] = lines
-        nodes["output"]["total_lines"] = len(lines)
+        log = vis.output(
+            "output", label=_log_label(shape), lines=lines, total_lines=len(lines)
+        )
+        if "output" in nodes:
+            nodes["output"].update(log)
+        else:
+            # The live view only carries a log while one is worth reading; a settled
+            # picture of ONE job always is, so the snapshot declares it in the same
+            # place the live one would have taken, under the status.
+            picture["nodes"].insert(1, log)
         snapshots.append({"node_id": "jobs", "focused_ids": [job_id], "view": picture})
     return snapshots
 
@@ -878,9 +1163,7 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
     terminal_failure = None
     with vis.live(title, declared_nodes(shape), description=description) as view:
         try:
-            _show_focus_logs(
-                view, shape, log_of, log_cache, FAILED_TAIL_LINES, clear=False
-            )
+            _show_focus_logs(view, shape, log_of, log_cache, FAILED_TAIL_LINES)
             shown_focus = _focus_signature(shape)
             while not shape["is_over"]:
                 if view.is_interrupted:
@@ -1030,8 +1313,21 @@ def gh_watch_run(run=None, repo=None, pr=None):
     run_id = run or newest_run(repo)
     first = fetch_run(run_id, repo)
     title = str(first.get("workflowName") or "GitHub Actions")
-    described = "{} · {}".format(
-        first.get("displayTitle") or run_id, first.get("event") or ""
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: a live run showed
+    # progress and elapsed durations but never the calendar date and time it began.
+    # It is an identity fact of the run, so it belongs in the head with the branch
+    # and the title — the status line above the jobs is for what is happening NOW.
+    described = " · ".join(
+        part
+        for part in (
+            str(first.get("headBranch") or ""),
+            str(first.get("displayTitle") or run_id),
+            str(first.get("event") or ""),
+            (lambda began: f"started {began}" if began else "")(
+                _display_started(first.get("startedAt"))
+            ),
+        )
+        if part
     )
     owner = repo_of(first, repo)
     return watch(

@@ -4,19 +4,41 @@
   "nodes": [
     {
       "tone": "error",
-      "detail": "workflow **CI** on `main` · started **18 Aug 2026, 14:10 UTC** · in focus **tests / vis-agent + vis-contract (PyPI packages)**",
-      "text": "6 of 6 jobs finished, 1 failed",
+      "detail": "Run both package suites · failed after 12s",
+      "text": "tests · vis-agent + vis-contract (PyPI packages) failed",
       "type": "status",
       "id": "run"
     },
     {
-      "done": 6,
-      "total": 6,
+      "label": "Failure · vis-agent + vis-contract (PyPI packages)",
+      "type": "log",
+      "id": "output",
+      "lines": [
+        "2026-08-18T14:10:24.6255054Z     [",
+        "2026-08-18T14:10:24.6255326Z         'open',",
+        "2026-08-18T14:10:24.6255617Z   -     'patch',",
+        "2026-08-18T14:10:24.6255911Z     ]",
+        "2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s",
+        "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1."
+      ],
+      "window_lines": 2000,
+      "total_lines": 6
+    },
+    {
+      "done": 36,
+      "total": 36,
+      "label": "Steps finished",
       "type": "progress",
       "id": "progress"
     },
     {
       "stats": [
+        {
+          "id": "active",
+          "value_text": "1",
+          "label": "failed",
+          "tone": "error"
+        },
         {
           "id": "passed",
           "value_text": "5",
@@ -24,22 +46,16 @@
           "tone": "ok"
         },
         {
-          "id": "failed",
-          "value_text": "1",
-          "label": "failed",
-          "tone": "error"
-        },
-        {
-          "id": "skipped",
+          "id": "waiting",
           "value_text": "0",
-          "label": "skipped",
+          "label": "unrun",
           "tone": "idle"
         },
         {
-          "id": "queued",
-          "value_text": "0",
-          "label": "queued",
-          "tone": "running"
+          "id": "elapsed",
+          "value_text": "28m 33s",
+          "label": "elapsed",
+          "tone": "idle"
         }
       ],
       "type": "stat",
@@ -50,32 +66,32 @@
         {
           "id": "95742028721",
           "tone": "ok",
+          "branch": "tests",
           "cells": [
-            "tests / macos-latest",
+            "macos-latest",
             "success",
             "28m 33s"
-          ],
-          "branch": "tests"
+          ]
         },
         {
           "id": "95742028770",
           "tone": "error",
+          "branch": "tests",
           "cells": [
-            "tests / vis-agent + vis-contract (PyPI packages)",
+            "vis-agent + vis-contract (PyPI packages)",
             "failure",
             "12s"
-          ],
-          "branch": "tests"
+          ]
         },
         {
           "id": "95742028781",
           "tone": "ok",
+          "branch": "tests",
           "cells": [
-            "tests / ubuntu-latest",
+            "ubuntu-latest",
             "success",
             "12m 54s"
-          ],
-          "branch": "tests"
+          ]
         },
         {
           "id": "95742028809",
@@ -89,22 +105,22 @@
         {
           "id": "95742028943",
           "tone": "ok",
+          "branch": "classpath",
           "cells": [
-            "classpath / .",
+            ".",
             "success",
             "21s"
-          ],
-          "branch": "classpath"
+          ]
         },
         {
           "id": "95742029230",
           "tone": "ok",
+          "branch": "classpath",
           "cells": [
-            "classpath / extensions/channels/vis-channel-tui",
+            "extensions/channels/vis-channel-tui",
             "success",
             "22s"
-          ],
-          "branch": "classpath"
+          ]
         }
       ],
       "columns": [
@@ -127,7 +143,7 @@
       "order": "insertion"
     },
     {
-      "label": "Selected job steps",
+      "label": "Timeline",
       "steps": [
         {
           "id": "95742028770:1",
@@ -182,22 +198,6 @@
       ],
       "type": "steps",
       "id": "steps"
-    },
-    {
-      "label": "Selected job log",
-      "type": "log",
-      "id": "output",
-      "lines": [
-        "── tests / vis-agent + vis-contract (PyPI packages) · log",
-        "2026-08-18T14:10:24.6255054Z     [",
-        "2026-08-18T14:10:24.6255326Z         'open',",
-        "2026-08-18T14:10:24.6255617Z   -     'patch',",
-        "2026-08-18T14:10:24.6255911Z     ]",
-        "2026-08-18T14:10:24.6256211Z 1 failed, 58 passed in 0.72s",
-        "2026-08-18T14:10:24.6506792Z ##[error]Process completed with exit code 1."
-      ],
-      "window_lines": 2000,
-      "total_lines": 7
     },
     {
       "links": [

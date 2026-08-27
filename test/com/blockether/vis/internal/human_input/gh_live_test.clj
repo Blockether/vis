@@ -89,14 +89,18 @@
       (expect (= "failure" (get-in model-report [:run :conclusion])))
       (expect (= 6 (count (:jobs model-report))))
       (expect (= [:95742028770] (vec (keys (:failed_logs model-report)))))
-      ;; Seven distinct answers: overview, selected-job details, and the run link.
-      (expect (= ["run" "progress" "score" "jobs" "steps" "output" "links"]
+      ;; The log is NOT declared with the rest: it arrives as one `add-node` addressed
+      ;; `after` "run", and the engine's own ordering is what puts it second here.
+      (expect (= ["run" "output" "progress" "score" "jobs" "steps" "links"]
                  (mapv :id (:nodes view))))
-      (expect (= [:status :progress :stat :table :steps :log :link] (mapv :type (:nodes view))))
-      (expect (= "6 of 6 jobs finished, 1 failed" (:text (node view "run"))))
+      (expect (= [:status :log :progress :stat :table :steps :link] (mapv :type (:nodes view))))
+      ;; The status says the WORK, not the arithmetic: counting jobs left it unchanged for
+      ;; 23 minutes of a 97-minute run. The counting moved to the bar, which counts steps.
+      (expect (= "tests · vis-agent + vis-contract (PyPI packages) failed"
+                 (:text (node view "run"))))
       (expect (= :error (:tone (node view "run"))))
-      (expect (= [6 6] ((juxt :done :total) (node view "progress"))))
-      (expect (= ["5" "1" "0" "0"] (mapv :value-text (:stats (node view "score")))))
+      (expect (= [36 36] ((juxt :done :total) (node view "progress"))))
+      (expect (= ["1" "5" "0" "28m 33s"] (mapv :value-text (:stats (node view "score")))))
       ;; A row is addressed by the job's databaseId, so a job that changes state keeps its slot.
       (let [jobs-node
             (node view "jobs")
@@ -120,21 +124,22 @@
       ;; The checklist follows the job in focus: the failing job's steps, not the running one's.
       (expect (= 10 (count (:steps (node view "steps")))))
       (expect (some #(= :error (:tone %)) (:steps (node view "steps"))))
-      ;; A running selection's log pane states only what GitHub still withholds. Repeating the
-      ;; steps panel there wrote one more copy of the same placeholder into the record per tick.
-      (expect (some (fn [op]
-                      (and (= "output" (get op "node_id"))
-                           (= ["── tests / macos-latest · log"
-                               "· GitHub publishes this job's raw log when the job ends"
-                               "── tests / ubuntu-latest · log"
-                               "· GitHub publishes this job's raw log when the job ends"]
-                              (get op "lines"))))
-                    patch-ops))
+      ;; The pane exists only while it holds something. GitHub publishes a job's log when
+      ;; the job ENDS, so nothing is drawn for the two running ones and the engine receives
+      ;; exactly one add — under the status, where the eye already is when something breaks.
+      (expect (= [["output" "run"]]
+                 (into []
+                       (comp (filter #(= "add-node" (get % "op")))
+                             (map (juxt #(get-in % ["node_spec" "id"]) #(get % "after"))))
+                       patch-ops)))
+      (expect (not-any? #(= "· GitHub publishes this job's raw log when the job ends"
+                            (first (get % "lines")))
+                        patch-ops))
       ;; The run-wide Activity duplicate is not part of the extension contract.
       (expect (not-any? #(= "activity" (get % "node_id")) patch-ops))
-      (expect (= 7 (count (:lines (node view "output")))))
-      (expect (str/starts-with? (first (:lines (node view "output")))
-                                "── tests / vis-agent + vis-contract (PyPI packages) · log"))
+      (expect (= 6 (count (:lines (node view "output")))))
+      (expect (= "Failure · vis-agent + vis-contract (PyPI packages)"
+                 (:label (node view "output"))))
       (expect (str/ends-with? (last (:lines (node view "output")))
                               "##[error]Process completed with exit code 1."))
       (expect (= ["run" "95742028770"] (mapv :id (:links (node view "links")))))))
@@ -145,7 +150,8 @@
             document
             (live/->markdown view)]
 
-        (expect (str/includes? document "6 of 6 jobs finished, 1 failed"))
+        (expect (str/includes? document "tests · vis-agent + vis-contract (PyPI packages) failed"))
+        (expect (str/includes? document "**100%** · 36/36 done"))
         (expect (str/includes? document "tests / vis-agent + vis-contract (PyPI packages)"))
         (expect (str/includes? document "exit code 1"))))
   (it "paints the picture the extension's own host painted, key for key"
@@ -161,7 +167,9 @@
         (expect (= (mapv #(get % "type") (get outside "nodes"))
                    (mapv (comp name :type) (:nodes engine))))
         (expect (= (get (first (get outside "nodes")) "text") (:text (node engine "run"))))
-        (expect (= (mapv #(get % "id") (get (nth (get outside "nodes") 3) "rows"))
+        (expect (= (mapv #(get % "id")
+                         (get (some #(when (= "jobs" (get % "id")) %) (get outside "nodes"))
+                              "rows"))
                    (mapv :id (:rows (node engine "jobs")))))))
   (it "crosses the strings-only seam a Python extension actually speaks"
       (let [dir
@@ -180,7 +188,9 @@
                   (json/read-json (hi/live-json! (json/write-json-str envelope)) :key-fn identity)]
 
               (expect (true? (get answer "is_open")))
-              (expect (= ["run" "progress" "score" "jobs" "steps" "output" "links"]
+              ;; What the FIRST envelope declares — the log is not among them. It arrives in a
+              ;; later patch, addressed `after` "run", and only once there is something to read.
+              (expect (= ["run" "progress" "score" "jobs" "steps" "links"]
                          (mapv #(get % "id") (get-in answer ["view" "nodes"])))))))))
   ;; Regression, session f8115c8c-b997-49bf-a22b-81816d961fe3: a watch that ran to the end
   ;; died at its own close. The archive pictures an extension seals are the ones `state`
