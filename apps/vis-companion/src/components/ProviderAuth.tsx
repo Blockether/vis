@@ -694,6 +694,20 @@ export function useProviderAuth(client: GatewayClient): ProviderAuth {
 }
 
 /**
+ * For an API-key flow, the ONE instruction line worth painting here: where the
+ * key comes from. The daemon tells the terminal everything — the boilerplate
+ * ("X requires a static API key.", which this card itself is the answer to) and
+ * the shell steps (`export …`, `vis-agent providers auth …`) have no business
+ * over a field that already says "Paste the provider API key", exactly the call
+ * the TUI channel makes with `api-key-hint`. Device and PKCE instructions are
+ * genuinely multi-step browser guidance and stay listed whole.
+ */
+function apiKeyHintLine(instructions: readonly string[] | null | undefined): string | null {
+  const lines = (instructions ?? []).map((line) => line.trim()).filter(Boolean);
+  return lines.find((line) => line.includes('http')) ?? null;
+}
+
+/**
  * The live sign-in step: a device code to type into the browser, a redirect URL
  * to paste back, or an API key to enter. Only ever rendered by
  * `ProviderNotice`, INSIDE the card of the provider the flow belongs to.
@@ -702,6 +716,11 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
   const { flow } = auth;
   if (!flow) return null;
   const busy = auth.pending === 'auth:complete';
+
+  // Only an api-key flow gets its daemon guidance pruned to the navigable line;
+  // null means "nothing of it belongs here" rather than "no instructions".
+  const apiKeyHint =
+    flow.kind === 'api-key' ? apiKeyHintLine(flow.instructions) : null;
 
   return (
     <div className="space-y-3 border border-accent/50 bg-panel-2 p-3">
@@ -715,7 +734,9 @@ function ProviderFlowPanel({ auth }: { auth: ProviderAuth }) {
         </p>
       )}
 
-      {flow.instructions?.length ? (
+      {apiKeyHint !== null ? (
+        <p className="break-words font-mono text-meta text-dialog-hint">{apiKeyHint}</p>
+      ) : flow.kind !== 'api-key' && flow.instructions?.length ? (
         <ol className="list-inside list-decimal space-y-1 font-mono text-ui text-dialog-hint">
           {flow.instructions.map((line) => (
             <li key={line}>{line}</li>

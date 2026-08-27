@@ -28,6 +28,7 @@ import { PlusIcon, ProjectsIcon } from "./icons";
 import { MACHINE_COLORS } from "../lib/machine-colors";
 import {
   BackButton,
+  Input,
   BandLabel,
   BandTally,
   EditableName,
@@ -3935,6 +3936,23 @@ describe("a panel band sits UNDER its column band, never beside it", () => {
     expect(panel).toContain("text-chip font-bold uppercase");
     expect(panel).toContain("text-dialog-hint");
     expect(panel).toContain("border-l-2 border-accent");
+  });
+});
+
+// The browser paints a password field's mask its own way; all the vocabulary
+// adds is room between the dots, so a pasted key can be counted while typing.
+describe("Input", () => {
+  const mark = (props: { type?: string }) =>
+    renderToStaticMarkup(<Input defaultValue="sk-test-key-123" {...props} />);
+
+  it("gives a masked field tracking between its dots", () => {
+    const html = mark({ type: "password" });
+    expect(html).toContain('type="password"');
+    expect(html).toContain("tracking-[0.15em]");
+  });
+
+  it("leaves a plain field's rhythm alone", () => {
+    expect(mark({})).not.toContain("tracking-[0.15em]");
   });
 });
 

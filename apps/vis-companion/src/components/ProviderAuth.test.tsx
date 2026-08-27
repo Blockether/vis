@@ -139,6 +139,53 @@ describe('ProviderNotice', () => {
   });
 });
 
+// Reported: adding an API-key provider opened on a numbered notice over the
+// paste field ("Z.ai (Coding Plan) requires a static API key.") — guidance the
+// terminal prints because IT may have no form to ask in. This card IS that
+// sentence's answer, so only a line saying where the key comes from stays.
+describe('the api-key card prunes terminal guidance', () => {
+  it('drops the boilerplate notice and the shell steps', () => {
+    const flow = apiKeyFlow('zai-coding-plan');
+    flow.instructions = [
+      'Z.ai (Coding Plan) requires a static API key.',
+      '',
+      'Two ways to authenticate:',
+      '         export ZAI_API_KEY=<your-zai-api-key>',
+      '    2. Add the provider through the TUI (Ctrl+K -> Providers).',
+    ];
+    const html = renderToStaticMarkup(
+      <ProviderNotice auth={state({ flow })} provider={provider('zai-coding-plan')} />,
+    );
+    expect(html).not.toContain('<ol');
+    expect(html).not.toContain('requires a static API key');
+    expect(html).not.toContain('export ZAI_API_KEY');
+    expect(html).not.toContain('Ctrl+K');
+  });
+
+  it('keeps the one navigable line naming where the key lives', () => {
+    const flow = apiKeyFlow('openrouter');
+    flow.instructions = [
+      'OpenRouter requires a static API key.',
+      'Create one at https://openrouter.ai/keys.',
+    ];
+    const html = renderToStaticMarkup(
+      <ProviderNotice auth={state({ flow })} provider={provider('openrouter')} />,
+    );
+    expect(html).toContain('Create one at https://openrouter.ai/keys.');
+    expect(html).not.toContain('<ol');
+    expect(html).not.toContain('requires a static API key');
+  });
+
+  it('keeps listing browser-guided flows whole', () => {
+    const flow: AuthFlow = { ...apiKeyFlow('github-copilot'), kind: 'device' };
+    const html = renderToStaticMarkup(
+      <ProviderNotice auth={state({ flow })} provider={provider('github-copilot')} />,
+    );
+    expect(html).toContain('<ol');
+    expect(html).toContain('requires a static API key');
+  });
+});
+
 describe('unscopedMessage', () => {
   const rows = [provider('anthropic'), provider('zai-coding-plan')];
 
