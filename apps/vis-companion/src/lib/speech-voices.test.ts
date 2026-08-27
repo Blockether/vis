@@ -163,6 +163,34 @@ describe("best device voices", () => {
     expect(chosen.map((voice) => voice.label)).toEqual(["Samantha (Enhanced)"]);
   });
 
+  // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: the Apple voice
+  // backing System default was also rendered as an identical explicit choice.
+  it("does not duplicate the iOS system default as an explicit voice", () => {
+    const chosen = bestDeviceVoices(
+      [
+        {
+          id: "com.apple.voice.enhanced.en-US.Samantha",
+          label: "Samantha (Enhanced)",
+          language: "en-US",
+          quality: 450,
+          isDefault: true,
+        },
+        {
+          id: "com.apple.voice.premium.en-US.Ava",
+          label: "Ava (Premium)",
+          language: "en-US",
+          quality: 500,
+          isDefault: false,
+        },
+      ],
+      null,
+      ["en-US"],
+      "ios",
+    );
+
+    expect(chosen.map((voice) => voice.label)).toEqual(["Ava (Premium)"]);
+  });
+
   it("explains Apple's system-managed voice download path only on iOS", () => {
     expect(iosVoiceDownloadGuidance("ios")).toContain(
       "Settings → Accessibility → Read & Speak",

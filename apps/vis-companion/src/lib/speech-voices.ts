@@ -139,11 +139,15 @@ export function bestDeviceVoices(
     return rankedDeviceVoices(unique, selectedId, preferredLanguages);
   }
 
-  const recommended = recommendedIosVoices(unique);
+  // iOS already exposes each language's `isDefault` voice through the automatic
+  // System default row. Listing that same identifier again creates two controls
+  // which speak with the same voice.
+  const explicit = unique.filter((voice) => !voice.isDefault);
+  const recommended = recommendedIosVoices(explicit);
   if (recommended.length >= BEST_DEVICE_VOICE_LIMIT) return recommended;
   const recommendedNames = new Set(recommended.map(publicAppleVoiceName));
   const alternatives = rankedDeviceVoices(
-    unique.filter(
+    explicit.filter(
       (voice) =>
         voiceQuality(voice) >= 450 &&
         !recommendedNames.has(publicAppleVoiceName(voice)),
