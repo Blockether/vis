@@ -2232,12 +2232,17 @@ export function SessionScreen({
   // session's transcript is tens of megabytes, so a blind re-read is the most
   // expensive thing this screen can do. Called with no row it always refetches.
   const loadTranscript = useCallback(
-    async (row?: Session | null) => {
+    async (row?: Session | null, signal?: AbortSignal) => {
       try {
         const next =
           row === undefined
-            ? await client.transcript(sid)
-            : await client.transcriptIfMoved(sid, row);
+            ? await client.transcript(sid, signal)
+            : await client.transcriptIfMoved(sid, row, signal);
+        // This screen deliberately survives a sid change. Its outgoing read may
+        // still settle after the next session is already painted (some WebViews
+        // do not stop a fetch promptly), so cancellation guards the state as well
+        // as the transport.
+        if (signal?.aborted) return null;
         if (!next) {
           // Unchanged: the gateway just told us the cache IS its current answer.
           setTurnsFresh(true);
@@ -2262,6 +2267,7 @@ export function SessionScreen({
         }
         return next;
       } catch (cause) {
+        if (signal?.aborted) return null;
         setError((cause as Error).message);
         initialScrollPendingRef.current = false;
         setLoading(false);
@@ -2417,7 +2423,7 @@ export function SessionScreen({
       // there. A re-entry keeps the meta-first order, where the stamp is exactly
       // what makes the transcript read free.
       const noRows = !client.cachedTranscript(sid)?.length;
-      const body = noRows ? loadTranscript() : null;
+      const body = noRows ? loadTranscript(undefined, controller.signal) : null;
       let row: Session | null = null;
       try {
         row = await client.session(sid, controller.signal, true);
@@ -2427,7 +2433,7 @@ export function SessionScreen({
         /* Unreachable gateway: fall through, the transcript read reports it. */
       }
       if (controller.signal.aborted) return;
-      const rows = await (body ?? loadTranscript(row));
+      const rows = await (body ?? loadTranscript(row, controller.signal));
       if (controller.signal.aborted) return;
       // AFTER the transcript: the persisted 'running' placeholder must already be
       // on screen when the bubble takes it over, or the two swap places and the

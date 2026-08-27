@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 
 import { renderSessionScreen } from "./session-screen-harness";
 
@@ -97,6 +97,65 @@ describe("opening a session", () => {
     );
 
     expect(await screen.findByText("Preparing 2 of 8 recent turns…")).toBeInTheDocument();
+  });
+
+  // Regression, Vis session 77fc84b5-5d0a-4780-ae96-b7f5e3f78b46: switching
+  // among several live sessions while one transcript read was still in flight let
+  // that old response repaint the new session, and left each abandoned request
+  // occupying the transport that a later New session request needed.
+  it("discards a transcript response from the session already left", async () => {
+    type Turn = {
+      id: string;
+      user_request: string;
+      status: string;
+      iterations: never[];
+    };
+    const resolvers = new Map<string, (turns: Turn[]) => void>();
+    const signals = new Map<string, AbortSignal | undefined>();
+    const view = renderSessionScreen({
+      session: { id: "first", title: "First", status: "idle" },
+      client: {
+        cachedSession: (sid: string) => ({ id: sid, title: sid, status: "idle" }),
+        cachedTranscript: () => null,
+        session: (sid: string) =>
+          Promise.resolve({ id: sid, title: sid, status: "idle" }),
+        transcript: (sid: string, signal?: AbortSignal) => {
+          signals.set(sid, signal);
+          return new Promise<Turn[]>((resolve) => resolvers.set(sid, resolve));
+        },
+      },
+    });
+
+    await waitFor(() => expect(resolvers.has("first")).toBe(true));
+    view.rerenderSession("second");
+    await waitFor(() => expect(resolvers.has("second")).toBe(true));
+
+    await act(async () => {
+      resolvers.get("second")?.([
+        {
+          id: "second-turn",
+          user_request: "The current session",
+          status: "completed",
+          iterations: [],
+        },
+      ]);
+    });
+    expect(await screen.findByText("The current session")).toBeInTheDocument();
+
+    await act(async () => {
+      resolvers.get("first")?.([
+        {
+          id: "first-turn",
+          user_request: "The session already left",
+          status: "completed",
+          iterations: [],
+        },
+      ]);
+    });
+
+    expect(screen.queryByText("The session already left")).not.toBeInTheDocument();
+    expect(screen.getByText("The current session")).toBeInTheDocument();
+    expect(signals.get("first")?.aborted).toBe(true);
   });
 
   // Regression, user report: a response shorter than the transcript viewport stayed

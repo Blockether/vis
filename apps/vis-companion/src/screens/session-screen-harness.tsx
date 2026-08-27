@@ -83,13 +83,17 @@ export function renderSessionScreen({
     ...hubOverrides,
   };
 
-  return render(
+  const screenFor = (sid: string) => (
     <SessionScreen
       client={client as never}
       subscriptions={subscriptions as never}
-      sid={session.id}
+      sid={sid}
       onBack={() => {}}
       onOpenSession={() => {}}
-    />,
+    />
   );
+  const view = render(screenFor(session.id));
+  return Object.assign(view, {
+    rerenderSession: (sid: string) => view.rerender(screenFor(sid)),
+  });
 }
