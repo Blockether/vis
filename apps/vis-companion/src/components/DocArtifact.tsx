@@ -24,7 +24,13 @@ import {
 import { PdfAnnotator } from "./PdfArtifact";
 import { readArtifactText, TextFrame } from "./TextArtifact";
 import { ChevronIcon } from "./icons";
-import { BandButton, ListRow, overlayLayer, OverlayScreen } from "./ui";
+import {
+  BandButton,
+  Button,
+  ListRow,
+  overlayLayer,
+  OverlayScreen,
+} from "./ui";
 import { useStickyOverlay } from "../lib/sticky-overlay";
 
 /**
@@ -61,28 +67,42 @@ export type AnnotateContext = {
  * rather than a styling one, and the danger is a COMBINATION, not a flag:
  * a blob: URL inherits the app's origin, so `allow-same-origin` would hand the
  * artifact the app's storage, the gateway's bearer token and the ability to
- * strip its own sandbox. It is never granted, to any media type.
- *
- * Everything else is. A page is a DESIGN, and a design that cannot run its own
- * script is a picture of one: no CDN framework, no tab, no modal, no live data.
- * With the origin withheld the frame runs opaque — `localStorage` throws,
- * `document.cookie` is empty, `parent` is unreadable — so the script can style
- * and animate its own document and reach the network, and nothing else. Two
+ * strip its own sandbox. It is never granted, to any media type. Two more
  * capabilities stay off because they act on the app AROUND the frame rather
  * than inside it: `allow-top-navigation`, which would yank the user off the
- * companion, and `allow-popups`, which would open windows behind it. A PDF
- * needs `allow-scripts` for the same reason it always did — Chromium's built-in
- * viewer refuses to paint without it.
+ * companion, and `allow-popups`, which would open windows behind it.
+ *
+ * `allow-scripts` IS THE ONE CAPABILITY THE READER GRANTS, because a frame is a
+ * DOCUMENT boundary and not a scheduling one. A sandboxed blob: frame is
+ * same-site, so Chromium keeps it in the app's own renderer process, and
+ * WKWebView paints every frame on a single web process: a page that loops takes
+ * the transcript, the composer and the ✕ that would have closed it with it, and
+ * no timer is left running to recover from the outside. Measured on an attached
+ * design whose `MutationObserver` re-entered itself on the mutation its own
+ * callback had just made — the app had to be killed. So a page is READ first and
+ * RUN only when someone asks for it ({@link DocFrame}), one open at a time.
+ *
+ * A PDF is the exception that is not one: `allow-scripts` there runs Chromium's
+ * built-in viewer, which refuses to paint without it, never the artifact.
  */
-export function docSandbox(mime: string | undefined): string {
-  return isPdfMedia(mime)
-    ? "allow-scripts"
-    : "allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads";
+export function docSandbox(mime: string | undefined, scripts = false): string {
+  if (isPdfMedia(mime)) return "allow-scripts";
+  const capabilities =
+    "allow-forms allow-modals allow-pointer-lock allow-downloads";
+  return scripts ? `allow-scripts ${capabilities}` : capabilities;
 }
 
 /**
  * The artifact itself, quarantined. `url` is an object URL for the attachment's
  * bytes, and an opened document always fills its box.
+ *
+ * It paints with the page's script withheld: markup and CSS are most of a
+ * design, and a static read is the one reading no artifact can hang. The strip
+ * above the frame is where that risk is taken deliberately — `Run scripts`
+ * remounts the frame with `allow-scripts` (the `key` is what reloads the
+ * document, since `sandbox` alone is only read at load), and the same remount
+ * takes the capability back, so a page that turned out to loop can still be
+ * stopped for as long as it leaves the thread.
  */
 export const DocFrame = memo(function DocFrame({
   url,
@@ -93,15 +113,41 @@ export const DocFrame = memo(function DocFrame({
   mime: string;
   name: string;
 }) {
-  return (
+  const [runsScripts, setRunsScripts] = useState(false);
+  const frame = (
     <iframe
+      key={runsScripts ? "scripts" : "static"}
       title={name}
       src={url}
-      sandbox={docSandbox(mime)}
+      sandbox={docSandbox(mime, runsScripts)}
       referrerPolicy="no-referrer"
       loading="lazy"
       className="min-h-0 w-full flex-1 border-0 bg-input"
     />
+  );
+  // A PDF frame carries no strip: what runs inside it is the browser's viewer,
+  // and the reader has nothing to decide about the artifact's own script.
+  if (isPdfMedia(mime)) return frame;
+  return (
+    <div className="flex min-h-0 w-full flex-1 flex-col">
+      <div className="flex shrink-0 items-center gap-2 border-b border-code-edge bg-panel px-2 py-1">
+        <p className="min-w-0 flex-1 truncate font-mono text-chip text-footer-muted">
+          {runsScripts
+            ? "This page is running its own script."
+            : "This page is shown without running its script."}
+        </p>
+        <Button
+          type="button"
+          variant="quiet"
+          density="compact"
+          aria-pressed={runsScripts}
+          onClick={() => setRunsScripts((runs) => !runs)}
+        >
+          {runsScripts ? "Stop scripts" : "Run scripts"}
+        </Button>
+      </div>
+      {frame}
+    </div>
   );
 });
 
