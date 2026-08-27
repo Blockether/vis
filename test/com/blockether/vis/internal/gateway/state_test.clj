@@ -1026,6 +1026,13 @@
                                 :turn-soul-id "soul-2"
                                 :iteration-id "i9"
                                 :tool-call-id "call_C"})
+                          ;; Host Activity is durable transcript state, not a produced artifact.
+                          (att {:filename "activity.live.ndjson"
+                                :classification :activity
+                                :media-type "application/vnd.vis.live+ndjson"
+                                :turn-soul-id "soul-2"
+                                :iteration-id "i9"
+                                :tool-call-id "call_0_activity"})
                           (att {:filename "late.png"
                                 :turn-soul-id "soul-2"
                                 :iteration-id "i9"
@@ -1039,7 +1046,7 @@
             (expect (= [1 1 3] (mapv :turn rows)))
             ;; `(tool_call_id, position)` is the byte endpoint's own order, so
             ;; index N names the same artifact everywhere.
-            (expect (= [0 1 0] (mapv :index rows)))
+            (expect (= [0 1 1] (mapv :index rows)))
             (expect (= ["i1" "i1" "i9"] (mapv :iteration_id rows)))
             (expect (= 3 (:version (last rows)))))))))
   (it "is empty, never an exception, when the read fails"

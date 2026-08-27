@@ -293,6 +293,13 @@ function toArtifact(
   };
 }
 
+/** Host Activity is persisted execution-trace state, never a produced artifact. */
+function belongsInArtifactGallery(
+  attachment: Partial<IterationAttachment>,
+): boolean {
+  return attachment.classification !== "activity";
+}
+
 export function collectArtifacts(
   turns: TranscriptTurn[],
   earlier = 0,
@@ -303,7 +310,9 @@ export function collectArtifacts(
     for (const iteration of turn.iterations ?? []) {
       const iterationId = iteration.id ?? "";
       for (const attachment of iteration.attachments ?? []) {
-        list.push(toArtifact(attachment, { turn: ordinal, iterationId }));
+        if (belongsInArtifactGallery(attachment)) {
+          list.push(toArtifact(attachment, { turn: ordinal, iterationId }));
+        }
       }
     }
   });
@@ -326,6 +335,7 @@ export function artifactsFromIndex(
   rows: SessionArtifactRow[],
 ): SessionArtifact[] {
   return rows
+    .filter(belongsInArtifactGallery)
     .map((row) =>
       toArtifact(row, {
         turn: row.turn ?? 0,

@@ -21,6 +21,7 @@
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.human-input :as human-input]
+            [com.blockether.vis.internal.human-input.live :as live]
             [com.blockether.vis.internal.session-model :as smodel]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.gateway.bus :as bus]
@@ -2221,37 +2222,41 @@
    ([[user-iteration-attachments]]), and a user's own uploaded image is not an
    artifact the model produced, so it is not here either."
   [sid]
-  (try (let [db
-             (lp/db-info)
+  (try
+    (let [db
+          (lp/db-info)
 
-             ordinal
-             (into {}
-                   (map-indexed (fn [i turn]
-                                  [(str (:id turn)) (inc (long i))]))
-                   (persistance/db-list-session-turns db sid))
+          ordinal
+          (into {}
+                (map-indexed (fn [i turn]
+                               [(str (:id turn)) (inc (long i))]))
+                (persistance/db-list-session-turns db sid))
 
-             rows
-             (->> (persistance/db-list-session-attachments-meta db sid)
-                  (filter :iteration-id)
-                  (remove attachments/hidden-from-user?))]
+          rows
+          (->> (persistance/db-list-session-attachments-meta db sid)
+               (filter :iteration-id)
+               (remove attachments/hidden-from-user?))]
 
-         (->> (group-by #(str (:iteration-id %)) rows)
-              (mapcat (fn [[iid group]]
-                        ;; `(tool_call_id, position)` is the order
-                        ;; `db-list-iteration-attachments-meta` serves, so index N is
-                        ;; the same N the byte endpoint resolves.
-                        (let [ordered (vec (sort-by (juxt #(str (:tool-call-id %))
-                                                          #(or (:position %) 0))
-                                                    group))]
-                          (map (fn [descriptor row]
-                                 (assoc descriptor :turn (get ordinal (str (:turn-soul-id row)) 0)))
-                               (attachment-descriptors iid ordered)
-                               ordered))))
-              (sort-by (juxt :turn :iteration_id :index))
-              vec))
-       (catch Throwable t
-         (tel/log! :warn ["gateway: session artifacts read failed" (str sid) (ex-message t)])
-         [])))
+      (->> (group-by #(str (:iteration-id %)) rows)
+           (mapcat (fn [[iid group]]
+                     ;; `(tool_call_id, position)` is the order
+                     ;; `db-list-iteration-attachments-meta` serves, so index N is
+                     ;; the same N the byte endpoint resolves.
+                     (let [ordered (vec (sort-by (juxt #(str (:tool-call-id %))
+                                                       #(or (:position %) 0))
+                                                 group))]
+                       (map (fn [descriptor row]
+                              (assoc descriptor :turn (get ordinal (str (:turn-soul-id row)) 0)))
+                            (attachment-descriptors iid ordered)
+                            ordered))))
+           ;; Activity receipts remain in the transcript for execution-trace restore,
+           ;; but the produced-artifacts gallery must never list host presentation state.
+           (remove live/activity-attachment?)
+           (sort-by (juxt :turn :iteration_id :index))
+           vec))
+    (catch Throwable t
+      (tel/log! :warn ["gateway: session artifacts read failed" (str sid) (ex-message t)])
+      [])))
 
 (defn- hydrated-turn-trace
   "Canonical persisted iteration rows for `turn-id`."
