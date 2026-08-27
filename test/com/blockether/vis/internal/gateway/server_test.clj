@@ -161,6 +161,46 @@
          (is (= sid (first @submitted))) (is (= "anthropic" (get-in @submitted [1 :provider])))
          (is (= "claude-opus-5" (get-in @submitted [1 :model])))))))
 
+(deftest binary-upload-is-resolved-at-turn-submit
+  (let [sid
+        (random-uuid)
+
+        body-bytes
+        (.getBytes "binary-image" "UTF-8")
+
+        submitted
+        (atom nil)]
+
+    (with-redefs-fn {#'state/soul (constantly {:id sid})
+                     #'state/submit-turn! (fn [_ opts]
+                                            (reset! submitted opts)
+                                            {:turn {:turn_id "turn-1"}})}
+      #(let [uploaded
+             ((rv 'upload-attachment-handler)
+               {:path-params {:sid (str sid)}
+                :query-params {"filename" "shot.png" "media_type" "image/png"}
+                :headers {"content-length" (str (alength body-bytes))}
+                :body (java.io.ByteArrayInputStream. body-bytes)}) upload-id
+             (get (wire/parse-json (:body uploaded)) "upload_id") response
+             ((rv 'submit-turn-handler)
+               {:path-params {:sid (str sid)}
+                :body (java.io.ByteArrayInputStream.
+                        (.getBytes (wire/json-str {:request "inspect"
+                                                   :attachments [{:upload_id upload-id
+                                                                  :filename "shot.png"
+                                                                  :media_type "image/png"
+                                                                  :size (alength body-bytes)}]})
+                                   "UTF-8"))}) attachment (first (:attachments @submitted))]
+         (is (= 201 (:status uploaded))) (is (= 202 (:status response))) (is (= "shot.png"
+                                                                                (:filename
+                                                                                  attachment)))
+         (is (= "image/png" (:media-type attachment))) (is (= "binary-image"
+                                                              (String.
+                                                                (.decode
+                                                                  (java.util.Base64/getDecoder)
+                                                                  ^String (:base64 attachment))
+                                                                "UTF-8")))))))
+
 (deftest list-turns-status-filter-routes-to-queued-overlay
   (let [sid
         (random-uuid)

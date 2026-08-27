@@ -387,6 +387,45 @@ describe('GatewayClient turn cancellation', () => {
     expect(body.turn_features).toEqual({ voice_projection: true });
   });
 
+  it('uploads attachment bytes before submitting only opaque references', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ upload_id: 'upload-1', size: 3 })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ turn_id: 'turn-media' })),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+
+    await new GatewayClient(conn).submitTurn('session-1', 'inspect', {
+      attachments: [
+        {
+          filename: 'tiny.png',
+          media_type: 'image/png',
+          base64: 'data:image/png;base64,YWJj',
+        },
+      ],
+    });
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
+      '/v1/sessions/session-1/attachments',
+    );
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBeInstanceOf(Blob);
+    expect(await (fetchMock.mock.calls[0]?.[1]?.body as Blob).text()).toBe('abc');
+    const submitBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(submitBody.attachments).toEqual([
+      {
+        upload_id: 'upload-1',
+        filename: 'tiny.png',
+        media_type: 'image/png',
+        size: 3,
+      },
+    ]);
+    expect(JSON.stringify(submitBody)).not.toContain('YWJj');
+  });
+
   it('cancels a known turn by id, which needs no correlation id', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({})));
     vi.stubGlobal('fetch', fetchMock);

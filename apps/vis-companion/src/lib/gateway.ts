@@ -757,6 +757,17 @@ export function queuedTurnFromWire(row: Record<string, unknown>): QueuedTurn {
   };
 }
 
+function attachmentPayloadBlob(attachment: GatewayAttachment): Blob {
+  const encoded = attachment.base64.startsWith("data:")
+    ? attachment.base64.slice(attachment.base64.indexOf(",") + 1)
+    : attachment.base64;
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1)
+    bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: attachment.media_type });
+}
+
 export class GatewayClient {
   readonly base: string;
   private readonly token?: string;
@@ -3589,7 +3600,7 @@ export class GatewayClient {
    */
   private readonly submissionKeys = new Map<string, string>();
 
-  submitTurn(
+  async submitTurn(
     sid: string,
     request: string,
     options: {
@@ -3602,6 +3613,25 @@ export class GatewayClient {
   ): Promise<SubmittedTurn> {
     const clientId = `companion:${crypto.randomUUID()}`;
     this.submissionKeys.set(sid, clientId);
+    const attachments = await Promise.all(
+      (options.attachments ?? []).map(async (attachment) => {
+        const query = new URLSearchParams({
+          filename: attachment.filename,
+          media_type: attachment.media_type,
+        });
+        const uploaded = await this.request<{ upload_id: string; size: number }>(
+          "POST",
+          `/v1/sessions/${encodeURIComponent(sid)}/attachments?${query.toString()}`,
+          attachmentPayloadBlob(attachment),
+        );
+        return {
+          upload_id: uploaded.upload_id,
+          filename: attachment.filename,
+          media_type: attachment.media_type,
+          size: uploaded.size,
+        };
+      }),
+    );
     return this.request<SubmittedTurn>(
       "POST",
       `/v1/sessions/${encodeURIComponent(sid)}/turns`,
@@ -3609,7 +3639,7 @@ export class GatewayClient {
         request,
         display_request: options.displayRequest,
         model: options.model,
-        attachments: options.attachments,
+        attachments,
         extra_body: options.extraBody,
         turn_features: options.turnFeatures,
         idempotency_key: clientId,

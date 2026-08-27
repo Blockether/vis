@@ -48,12 +48,13 @@
             [ring.middleware.multipart-params :as ring-multipart]
             [ring.middleware.multipart-params.byte-array :as multipart-ba]
             [taoensso.telemere :as tel])
-  (:import [java.io OutputStream]
+  (:import [java.io InputStream OutputStream]
            [java.net BindException]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files LinkOption OpenOption Path]
            [java.nio.file.attribute FileAttribute PosixFilePermissions]
            [java.security MessageDigest]
+           [java.util Base64 UUID]
            [java.util.concurrent ArrayBlockingQueue TimeUnit]
            [org.eclipse.jetty.server ConnectionFactory HttpConfiguration HttpConnectionFactory
             Server ServerConnector]
@@ -389,6 +390,42 @@
                  (catch Throwable t
                    (tel/log! :warn ["gateway: refcount shutdown failed" (ex-message t)]))))))
 
+(def ^:private upload-ttl-ms
+  "How long a binary upload may wait for its tiny turn submission. Long enough for
+   a phone retry, short enough that an abandoned picker cannot pin image bytes."
+  (* 10 60 1000))
+
+(def ^:private pending-upload-budget-bytes (* 320 1024 1024))
+(def ^:private pending-upload-count-limit 64)
+(defonce ^:private pending-uploads (atom {}))
+
+(defn- reap-uploads!
+  [^long now]
+  (swap! pending-uploads (fn [uploads]
+                           (into {}
+                                 (remove (fn [[_ {:keys [created-at]}]]
+                                           (> (- now (long created-at)) (long upload-ttl-ms))))
+                                 uploads))))
+
+(defn- store-upload!
+  [upload-id upload]
+  (swap! pending-uploads (fn [uploads]
+                           (loop [kept uploads]
+                             (let [total (reduce +
+                                                 0
+                                                 (map (fn [{:keys [bytes]}]
+                                                        (alength ^bytes bytes))
+                                                      (vals kept)))]
+                               (if (and (< (count kept) (long pending-upload-count-limit))
+                                        (<= (+ total (alength ^bytes (:bytes upload)))
+                                            (long pending-upload-budget-bytes)))
+                                 (assoc kept upload-id upload)
+                                 (let [[oldest-id] (apply min-key
+                                                     (fn [[id value]]
+                                                       [(:created-at value) id])
+                                                     kept)]
+                                   (recur (dissoc kept oldest-id)))))))))
+
 (defn- reap-sweep!
   "One reap sweep, with every step isolated. A step that throws loses ITS step for
    this second and nothing else - above all it must not cost the refcount-shutdown
@@ -402,6 +439,7 @@
     (step! "client-leases" reap-client-leases!)
     (step! "sse-clients" reap-sse-clients!)
     (step! "turn-progress" note-turn-progress!)
+    (step! "uploads" #(reap-uploads! (System/currentTimeMillis)))
     (step! "refcount-shutdown" maybe-stop-when-idle!)))
 
 (defn- ensure-idle-reaper!
@@ -473,7 +511,6 @@
   (some-> (:body request)
           slurp
           wire/parse-json))
-
 (defn- optional-body-json
   "The JSON body of `request` when it HAS one, nil when it is empty or malformed.
    For routes whose body is an EXTRA rather than the point of the call: a stop
@@ -510,6 +547,64 @@
             str
             str/trim
             not-empty)))
+
+(defn- upload-limit
+  [media-type]
+  (cond (str/starts-with? (str media-type) "video/") attachments/max-video-bytes
+        (str/starts-with? (str media-type) "audio/") attachments/max-audio-bytes
+        :else attachments/max-upload-image-bytes))
+(defn- upload-attachment-handler
+  "POST raw attachment bytes, returning an opaque id for a later turn submission."
+  [request]
+  (let [sid
+        (path-sid request)
+
+        filename
+        (query-str request "filename")
+
+        media-type
+        (query-str request "media_type")
+
+        limit
+        (long (upload-limit media-type))
+
+        declared
+        (some-> (get-in request [:headers "content-length"])
+                parse-long)]
+
+    (cond (or (nil? sid) (nil? (state/soul sid))) (session-404 (get-in request [:path-params :sid]))
+          (or (str/blank? filename) (str/blank? media-type))
+          (error-response 400 :invalid-request "filename and media_type are required")
+          (and declared (> (long declared) limit))
+          (error-response 413 :attachment-too-large "attachment exceeds the upload limit")
+          :else (let [^bytes bytes (.readNBytes ^InputStream (:body request) (inc limit))]
+                  (if (> (alength bytes) limit)
+                    (error-response 413 :attachment-too-large "attachment exceeds the upload limit")
+                    (let [now (System/currentTimeMillis)
+                          upload-id (str (UUID/randomUUID))
+                          upload {:sid sid
+                                  :filename filename
+                                  :media-type media-type
+                                  :bytes bytes
+                                  :created-at now}]
+
+                      (reap-uploads! now)
+                      (store-upload! upload-id upload)
+                      (json-response 201 {:upload_id upload-id :size (alength bytes)})))))))
+
+(defn- resolve-upload-attachments
+  [sid rows]
+  (mapv (fn [row]
+          (if-let [upload-id (or (get row "upload_id") (get row :upload-id))]
+            (when-let [{stored-sid :sid :keys [filename media-type bytes]} (@pending-uploads
+                                                                            upload-id)]
+              (when (= sid stored-sid)
+                {:filename filename
+                 :media-type media-type
+                 :size (alength ^bytes bytes)
+                 :base64 (.encodeToString (Base64/getEncoder) ^bytes bytes)}))
+            row))
+        (or rows [])))
 
 (defn- path-tid [request] (get-in request [:path-params :tid]))
 
@@ -2465,21 +2560,32 @@
 
     (if (nil? sid)
       (session-404 (get-in request [:path-params :sid]))
-      (let [result (state/submit-turn! sid
-                                       {:request (get body "request")
-                                        :idempotency-key (get body "idempotency_key")
-                                        :provider (get body "provider")
-                                        :model (get body "model")
-                                        :reasoning-default (or (get body "reasoning_default")
-                                                               (configured-reasoning-level))
-                                        :extra-body (get body "extra_body")
-                                        :turn-features (get body "turn_features")
-                                        :workspace (get body "workspace")
-                                        :attachments (get body "attachments")
-                                        ;; The submitter's own pre-expansion prose. Dropping it here
-                                        ;; is what made a queued image render as a raw /var/folders path.
-                                        :display-request (get body "display_request")})]
-        (cond (:turn result) (json-response (if (:idempotent? result) 200 202) (:turn result))
+      (let [attachments
+            (resolve-upload-attachments sid (get body "attachments"))
+
+            missing-upload?
+            (some nil? attachments)
+
+            result
+            (when-not missing-upload?
+              (state/submit-turn! sid
+                                  {:request (get body "request")
+                                   :idempotency-key (get body "idempotency_key")
+                                   :provider (get body "provider")
+                                   :model (get body "model")
+                                   :reasoning-default (or (get body "reasoning_default")
+                                                          (configured-reasoning-level))
+                                   :extra-body (get body "extra_body")
+                                   :turn-features (get body "turn_features")
+                                   :workspace (get body "workspace")
+                                   :attachments attachments
+                                   ;; The submitter's own pre-expansion prose. Dropping it here
+                                   ;; is what made a queued image render as a raw /var/folders path.
+                                   :display-request (get body "display_request")}))]
+
+        (cond missing-upload?
+              (error-response 400 :invalid-upload "attachment upload is missing or expired")
+              (:turn result) (json-response (if (:idempotent? result) 200 202) (:turn result))
               (= :turn-in-progress (:error result))
               (error-response 409
                               :turn-in-progress "session already has a running turn"
@@ -4259,6 +4365,7 @@
         [(sid-route "/workspace/resume") {:post resume-draft-handler}]
         [(sid-route "/forks") {:get fork-points-handler :post fork-session-handler}]
         [(sid-route "/suggest") {:get suggest-handler}]
+        [(sid-route "/attachments") {:post upload-attachment-handler}]
         [(sid-route "/turns") {:get list-turns-handler :post submit-turn-handler}]
         [(sid-route "/turns/:tid")
          {:get get-turn-handler
