@@ -53,6 +53,11 @@
   {:vendor "Z.ai"
    :file "zai-auth.json"
    :key-hint "<your-zai-api-key>"
+
+   ;; Where the key comes from. Both the TUI band and the companion prune these
+   ;; instructions down to their one URL-bearing line, so whatever else this
+   ;; shape prints stays terminal-only.
+   :auth-notes ["  Create one at https://z.ai/manage-apikey/apikey-list." ""]
    :error-type :vis/zai-not-authenticated
    :plans {:coding {:provider-id :zai-coding-plan
                     :label "Z.ai (Coding Plan)"

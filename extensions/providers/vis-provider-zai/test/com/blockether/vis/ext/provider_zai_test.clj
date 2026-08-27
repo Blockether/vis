@@ -38,6 +38,7 @@
       (require 'com.blockether.vis.ext.provider-zai :reload)
       (let [lines ((:provider/auth-prompt-fn (vis/provider-by-id :zai-coding-plan)))]
         (expect (some #(= "  Z.ai (Coding Plan) requires a static API key." %) lines))
+        (expect (some #(= "  Create one at https://z.ai/manage-apikey/apikey-list." %) lines))
         (expect (some #(= "         export ZAI_CODING_API_KEY=<your-zai-api-key>" %) lines))
         (expect (some #(= (str "  Endpoint: " (svar/provider-base-url :zai-coding-plan)) %)
                       lines)))))
