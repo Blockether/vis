@@ -106,6 +106,23 @@ describe("focusing the composer with a keyboard already attached", () => {
     expect(shell).toHaveStyle({ height: "751px" });
   });
 
+  // Regression, user report (paraphrased: writing on the desktop still opened a dead
+  // grey band under the composer): iPadOS hands over the keyboard's whole frame even
+  // when a hardware keyboard parks all but its shortcut bar below the screen, so the
+  // window reserved a third of itself for keys nobody could see and left the composer
+  // floating above the background, with the system's bar alone at the bottom edge.
+  it("reserves nothing for a keyboard frame parked off the screen", () => {
+    pointing("fine");
+    window_(1194, 834);
+    render(<ViewportProbe />);
+    const shell = screen.getByTestId("shell");
+    const composer = screen.getByRole("textbox", { name: "Message" });
+
+    act(() => composer.focus());
+    act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 353 }));
+
+    expect(shell.style.height).toBe("");
+  });
   it("still places the composer a frame early on a touch screen", () => {
     pointing("coarse");
     window_(390, 844);

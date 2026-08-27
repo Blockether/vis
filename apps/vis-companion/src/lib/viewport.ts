@@ -87,6 +87,22 @@ function isPlausibleKeyboardHeight(height: number, fullHeight: number): boolean 
   return Number.isFinite(height) && height >= fullHeight * 0.15 && height <= fullHeight * 0.7;
 }
 
+// iPadOS hands over the keyboard's WHOLE frame even when a hardware keyboard parks
+// all but its shortcut bar below the screen, and Capacitor's iPad branch adds that
+// parked part back (`onKeyboardWillShow` reads only `rect.size.height`). A window
+// driven by a Magic Keyboard is therefore told a third of itself is covered while
+// tens of pixels of bar are all that is on screen: reserving the reported band
+// leaves the composer floating above dead background with the system's own bar
+// alone at the bottom edge. A fine pointer is the same evidence the prepin uses —
+// no keys can come up — and the plugin itself calls anything under a fifth of the
+// screen the shortcut bar rather than a keyboard, so above that line the frame is
+// the parked one and covers nothing.
+const HARDWARE_KEYBOARD_BAR_MAX_RATIO = 0.2;
+
+function coversTheWindow(height: number, fullHeight: number): boolean {
+  if (!hasHardwarePointer()) return true;
+  return height > 0 && height < fullHeight * HARDWARE_KEYBOARD_BAR_MAX_RATIO;
+}
 function keyboardHeightForPrepin(
   fullHeight: number,
   orientation = keyboardOrientation(),
@@ -869,7 +885,24 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         );
         return true;
       };
+      const finishKeyboardHide = () => {
+        keyboardPinned = false;
+        pinnedShellHeight = null;
+        setBox(null);
+        sync();
+      };
       const onWillShow = (info: KeyboardInfo) => {
+        // A frame parked below the screen covers nothing, so there is nothing to
+        // reserve and nothing to cache: reclaim the whole window and keep the home
+        // indicator's inset, which the system's own bar sits in.
+        if (!coversTheWindow(info.keyboardHeight, layoutHeight(readViewportMetrics()))) {
+          softKeyboardUp = false;
+          keyboardHeight = 0;
+          keyboardExpectedAfterRotation = false;
+          setSafeBottom(SAFE_BOTTOM_DEFAULT);
+          finishKeyboardHide();
+          return;
+        }
         softKeyboardUp = true;
         keyboardHeight = info.keyboardHeight;
         // Mid-rotation the two operands describe different devices — iOS reports
@@ -886,12 +919,6 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         keyboardPinned = true;
         setSafeBottom(SAFE_BOTTOM_KEYBOARD);
         pin(fullHeight - keyboardHeight);
-      };
-      const finishKeyboardHide = () => {
-        keyboardPinned = false;
-        pinnedShellHeight = null;
-        setBox(null);
-        sync();
       };
       const onWillHide = () => {
         // Rotation on iOS 26 reports `didHide` before `willHide`, before either
