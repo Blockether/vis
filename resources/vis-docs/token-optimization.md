@@ -16,7 +16,7 @@ apropos()                        # every public symbol, in corpus order
 doc("patch")                     # one function's whole contract
 doc(apropos(r"^pandas\.read_csv$")[0])  # an item is a doc target
 doc("gateway")                  # a documentation page by slug
-doc("spel")                     # a skill, whole
+doc("release-checklist")         # a skill, whole
 doc()                            # curated starting verbs
 ```
 

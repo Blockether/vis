@@ -958,7 +958,7 @@
 (defn- paint-actions!
   "The PINNED action bar: every button the request offers on ONE row, drawn as the
    SHARED neobrutalist cap `components/action-button!` — the same control the
-   confirm dialog and the spel-bridge modal use:
+   confirm dialog uses:
 
      Submit   Cancel
 

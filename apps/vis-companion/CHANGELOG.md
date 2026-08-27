@@ -459,7 +459,6 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Move the session pick when a provider's auth stays dead
 - Keep slash commands out of the input history ring
 - Read the document corpus live in the sandbox
-- Spel session discipline is one session per task
 - Settle a tool handed to to_thread inside its gather slot
 - Drop the structural editing scenarios
 - Drop the last structural editing references
@@ -478,7 +477,6 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Ask the sessions list for one page when nothing moved
 - Tag Android alerts so the badge can clear
 - Address a fresh attachment in the block that made it
-- Regenerate the spel skill from spel 0.9.27
 - Badge the icon with the alerts still waiting
 - Put an opened note's Save in its header band
 - Wear the name's step on a status dot
@@ -512,7 +510,6 @@ What each TestFlight build changed. Edit before uploading; the release script ne
 - Reformat every Clojure and Python source in place
 - Pin the two loaded-runner flakes without a stopwatch
 - Own the espeak and pty-log preconditions the runners lack
-- Regenerate the spel agent skill for 0.9.26
 - Name the keys a test run answers with
 - Make the test suite green on both runners
 

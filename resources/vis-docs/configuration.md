@@ -605,7 +605,7 @@ REPLs, test runners — is confined.
 ### macOS native-image startup failures
 
 `CSunMiscSignal.open() failed` with `errno: 1` is not a domain-allowlist error.
-GraalVM Native Image tools such as `spel`, `bb`, and `clj-kondo` create a named
+GraalVM Native Image tools such as `bb` and `clj-kondo` create a named
 POSIX semaphore while installing signal handlers, before their command runs.
 The macOS profile permits that single IPC class with `ipc-posix-sem`; network
 permissions remain unchanged.

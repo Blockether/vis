@@ -15,15 +15,13 @@
 #              `docker buildx --output type=local` cross-platform releases, and
 #              the exact layout the runtime stage installs.
 #   model    — the Parakeet ASR model, fetched once into its own cache layer.
-#   browsers — spel (Playwright) + its browser bundles, in its own layer.
 #   runtime  — that native runtime, the model, and the agent toolchain.
 #
 # Version pins are ARGs. These ARGs and this header are the only place a
 # version is written down in this repo; bump them here.
 #
 #   docker build -t vis-gateway:local .
-#   docker build -t vis-gateway:lean --build-arg WITH_BROWSERS=false \
-#                                    --build-arg WITH_CHROME=false .
+#   docker build -t vis-gateway:lean --build-arg WITH_CHROME=false .
 #
 # EXTENDING THIS IMAGE
 # `runtime` is the LAST stage, so `docker build .` produces it, and it is the
@@ -65,8 +63,6 @@ ARG GRAAL_ARCH=x64
 ARG CLOJURE_VERSION=1.12.5.1654
 ARG MAVEN_VERSION=3.9.16
 ARG MAVEN_SHA512=831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6
-ARG SPEL_VERSION=0.9.22
-ARG SPEL_SHA256=9b1ec00c85823d3b42bbe5249a2ae3e7b96a7feed6e9a4f9817988d8a55d58e7
 ARG PARAKEET_MODEL=sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
 ARG PARAKEET_RELEASE=asr-models
 
@@ -76,7 +72,6 @@ ARG PARAKEET_RELEASE=asr-models
 # nothing to configure. These two knobs tune the native build the image runs.
 ARG VIS_ORACLE_NATIVE_IMAGE=false
 ARG VIS_NATIVE_EXTRA_ARGS=
-ARG WITH_BROWSERS=true
 ARG WITH_CHROME=true
 ARG BASE_IMAGE=debian:bookworm-slim
 
@@ -254,39 +249,6 @@ RUN set -eux; \
     done; \
     du -sh "/opt/vis/models/${PARAKEET_MODEL}"
 
-# ── Stage: browsers ──────────────────────────────────────────────────────────
-# spel (Clojure Playwright CLI) plus its driver and browser bundles. Its own
-# stage so the ~1.5 GB download is cached independently of the vis build and
-# can be dropped wholesale with --build-arg WITH_BROWSERS=false.
-FROM ${BASE_IMAGE} AS browsers
-ARG SPEL_VERSION
-ARG SPEL_SHA256
-ARG WITH_BROWSERS
-ENV DEBIAN_FRONTEND=noninteractive \
-    SPEL_DRIVER_DIR=/opt/vis/spel/driver \
-    PLAYWRIGHT_BROWSERS_PATH=/opt/vis/playwright
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
-RUN set -eux; \
-    mkdir -p /opt/vis/spel /opt/vis/playwright "$SPEL_DRIVER_DIR"; \
-    url="https://github.com/Blockether/spel/releases/download/v${SPEL_VERSION}/spel-linux-amd64"; \
-    curl -fL --retry 3 --retry-delay 5 -o /opt/vis/spel/spel "$url"; \
-    echo "${SPEL_SHA256}  /opt/vis/spel/spel" | sha256sum -c -; \
-    chmod 0755 /opt/vis/spel/spel; \
-    /opt/vis/spel/spel version
-# `spel install --with-deps` also apt-installs the shared libraries the browser
-# bundles link against — which is why this runs as root and why the runtime
-# stage repeats it for its own filesystem.
-RUN set -eux; \
-    if [ "${WITH_BROWSERS}" = "true" ]; then \
-        apt-get update; \
-        /opt/vis/spel/spel install --with-deps; \
-        rm -rf /var/lib/apt/lists/*; \
-        du -sh /opt/vis/playwright; \
-    else \
-        echo "WITH_BROWSERS=false — browser bundles skipped"; \
-    fi
 
 # ── Stage: runtime ───────────────────────────────────────────────────────────
 FROM ${BASE_IMAGE} AS runtime
@@ -294,7 +256,6 @@ ARG CLOJURE_VERSION
 ARG MAVEN_VERSION
 ARG MAVEN_SHA512
 ARG PARAKEET_MODEL
-ARG WITH_BROWSERS
 ARG WITH_CHROME
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -357,7 +318,7 @@ RUN set -eux; \
     else \
         echo "WITH_CHROME=false — chrome skipped"; \
     fi
-
+ENV CHROME_BIN=/usr/bin/google-chrome-stable
 # JDK + clojure + maven: the Clojure language pack shells out to `clojure`
 # (`clojure -M:test`), which is unusable without a JDK on PATH — the exact
 # breakage found on the host, where GraalVM was installed but `java` was on
@@ -386,47 +347,6 @@ RUN set -eux; \
     rm /tmp/maven.tar.gz; \
     mvn -v
 
-# spel + Playwright. The shared caches live under /opt (root-owned, world
-# readable) rather than in the vis user's home, so a wiped state volume does
-# not cost a 1.5 GB re-download. Browsers are copied even when WITH_BROWSERS
-# is false — the directory is then just the spel binary and an empty cache.
-# The Playwright env has to be in force for the RUN below: `spel install`
-# resolves its cache from PLAYWRIGHT_BROWSERS_PATH, so declaring it after the
-# RUN makes spel re-download the ~500 MB of browsers into the default cache and
-# throws away the copy we just made.
-#
-# The native image bakes its TrustStore at build time, which is why spel reads
-# SPEL_CA_BUNDLE; the Playwright driver is a Node subprocess and reads
-# NODE_EXTRA_CA_CERTS instead. Both are set, at the system bundle, so mounting
-# an extra CA into /usr/local/share/ca-certificates and running
-# update-ca-certificates is all an inspecting proxy needs.
-ENV SPEL_DRIVER_DIR=/opt/vis/spel/driver \
-    PLAYWRIGHT_BROWSERS_PATH=/opt/vis/playwright \
-    SPEL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
-    NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt \
-    CHROME_BIN=/usr/bin/google-chrome-stable
-
-COPY --from=browsers /opt/vis/spel /opt/vis/spel
-COPY --from=browsers /opt/vis/playwright /opt/vis/playwright
-RUN ln -sf /opt/vis/spel/spel /usr/local/bin/spel
-# The browser bundles link against system libraries that live in the browsers
-# stage's filesystem, not in this one. Re-run the dependency half here.
-RUN set -eux; \
-    if [ "${WITH_BROWSERS}" = "true" ]; then \
-        apt-get update; \
-        /opt/vis/spel/spel install --with-deps; \
-        rm -rf /var/lib/apt/lists/*; \
-    fi; \
-    # `spel install` assembles the Node driver as root and leaves
-    # <driver>/<platform> at 0700. The runtime user cannot traverse it, so
-    # `driver-ready?` reads false and spel re-assembles into the root-owned
-    # driver directory — an AccessDeniedException instead of a browser. These
-    # caches are shared and read-only at runtime; make the tree traversable.
-    chmod -R a+rX /opt/vis/spel /opt/vis/playwright; \
-    spel version
-
-# Prove the copied bundles are visible through the env set above.
-RUN test "${WITH_BROWSERS}" != "true" || ls /opt/vis/playwright
 
 # ── voice model ──
 COPY --from=model /opt/vis/models /opt/vis/models
@@ -448,11 +368,6 @@ RUN /usr/sbin/useradd --create-home --shell /bin/bash --uid 10001 vis \
     && chmod 0700 /home/vis/.ssh \
     && chown -R vis:vis /home/vis /work
 
-# The runtime user, not root, is what launches browsers: an unreadable driver
-# is what turns `spel open` into an AccessDeniedException at 03:00.
-RUN test "${WITH_BROWSERS}" != "true" \
-    || su -s /bin/sh vis -c 'test -r /opt/vis/spel/driver/linux/package/cli.js \
-                            && test -x /opt/vis/spel/driver/linux/node'
 
 # ── Vis Agent: the native runtime this source builds ──
 # The gateway process IS `vis-agent-native` — the same binary a release

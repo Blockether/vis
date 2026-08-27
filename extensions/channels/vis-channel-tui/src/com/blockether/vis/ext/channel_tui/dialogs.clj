@@ -954,7 +954,7 @@
        ;; Accent bar background
        (p/set-bg! g t/dialog-title-bg)
        (p/fill-rect! g (inc box-left) title-row inner-w 1)
-       ;; Title text - BOLD, matching the spel/blockether 700-weight header
+       ;; Title text - BOLD, matching the Blockether 700-weight header
        (p/set-fg! g t/dialog-title-fg)
        (p/styled g [p/BOLD] (p/put-str! g tx title-row title-text))
        (draw-dialog-close-button! g box-right title-row)
@@ -2096,8 +2096,8 @@
 
 ;;; ── Confirm dialog ──────────────────────────────────────────────────────────
 (defn- draw-button!
-  "Draw a confirm-dialog action button in the shared blockether look (mirroring
-   `components/action-button!` and the spel-bridge modal): every state is the same
+  "Draw a confirm-dialog action button in the shared Blockether look, mirroring
+   `components/action-button!`: every state is the same
    filled ` label ` pill and only the COLOUR differs. `Yes` is the PRIMARY cap (ink
    fill, cream bold label) and `No` the muted secondary — and whichever one the
    choice sits on takes the ACCENT fill, the same colour the active tab wears. No

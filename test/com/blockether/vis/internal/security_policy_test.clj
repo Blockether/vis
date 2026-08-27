@@ -19,7 +19,7 @@
           (doto (java.io.File. home "vis") .mkdirs)
 
           sibling
-          (doto (java.io.File. home "spel") .mkdirs)
+          (doto (java.io.File. home "demo") .mkdirs)
 
           cache
           (doto (java.io.File. home ".m2") .mkdirs)
@@ -27,11 +27,11 @@
           cfg
           {"workspace"
            {"filesystem"
-            [{"id" "spel" "path" "~/spel" "description" "Sibling repo" "draft" "copy-and-apply"}
+            [{"id" "demo" "path" "~/demo" "description" "Sibling repo" "draft" "copy-and-apply"}
              {"id" "ro" "path" "~/read-only" "access" "read-only" "draft" "not-allowed"}
              {"id" "m2" "path" "~/.m2" "search" false "description" "Maven cache"}]}
            "jail" {"enabled" true
-                   "filesystem" {"allow" ["spel" "ro" "m2"]}
+                   "filesystem" {"allow" ["demo" "ro" "m2"]}
                    "network" {"allowed_domains" ["example.com"] "inbound_ports" [5273]}}}
 
           snapshot
@@ -52,15 +52,15 @@
       (expect (= "relative/AGENTS.md" (paths/abbreviate-home "relative/AGENTS.md" (.getPath home))))
       (expect (= (str (.getPath home) "-other/AGENTS.md")
                  (paths/abbreviate-home (str (.getPath home) "-other/AGENTS.md") (.getPath home))))
-      (expect (= ["~/vis" "~/spel" "~/.m2" "~/.vis"] (get-in view ["filesystem" "read_write"])))
+      (expect (= ["~/vis" "~/demo" "~/.m2" "~/.vis"] (get-in view ["filesystem" "read_write"])))
       (expect (= ["~/read-only"] (get-in view ["filesystem" "process_read_only"])))
       (expect (= ["~/.m2" "~/.vis"] (get-in view ["filesystem" "no_search"])))
-      (expect (= {"~/spel" "Sibling repo"
+      (expect (= {"~/demo" "Sibling repo"
                   "~/.m2" "Maven cache"
                   "~/.vis" (get config-spec/vis-home-entry "description")}
                  (get-in view ["filesystem" "descriptions"])))
       ;; Only roots that opt OUT of the default `shared` isolation are named.
-      (expect (= {"~/spel" "copy-and-apply" "~/read-only" "not-allowed"}
+      (expect (= {"~/demo" "copy-and-apply" "~/read-only" "not-allowed"}
                  (get-in view ["filesystem" "draft"])))
       (expect (= {(.getCanonicalPath sibling) :copy-and-apply
                   (.getCanonicalPath (java.io.File. home "read-only")) :not-allowed}

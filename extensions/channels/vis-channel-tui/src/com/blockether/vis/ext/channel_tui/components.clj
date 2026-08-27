@@ -162,8 +162,8 @@
      w)))
 
 (defn action-button!
-  "Neobrutalist dialog/action button — the shared blockether look (the spel-bridge
-   web modal). Every state is the SAME filled cap ` label `; only the COLOUR moves.
+  "Neobrutalist dialog/action button in the shared Blockether look. Every state is
+   the SAME filled cap ` label `; only the COLOUR moves.
 
    Two axes, two palettes, no glyphs:
 

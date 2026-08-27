@@ -21,9 +21,6 @@
 
 workspace:
   filesystem:
-    - id: spel
-      path: ~/spel
-      description: Sibling repo — Clojure Playwright (spel) browser automation.
     - id: fff
       path: ~/fff
       description: Blockether FFF fork — high-performance fuzzy file finder and grep engine.
@@ -101,7 +98,7 @@ toggles:
 #   # here is not confined-granted. Access (RW vs read-only) comes from the
 #   # catalog entry above.
 #   filesystem:
-#     allow: [spel, fff, clj-fff, clj-parinferish, clj-ruff, tree-sitter, tree-sitter-clojure, svar, clj-imaging, infrastructure, blockether-com, m2, clojure, clj-tslp, graal, npm]
+#     allow: [fff, clj-fff, clj-parinferish, clj-ruff, tree-sitter, tree-sitter-clojure, svar, clj-imaging, infrastructure, blockether-com, m2, clojure, clj-tslp, graal, npm]
 #
 #   # Outbound egress allowlist. A bare host also matches its subdomains, so
 #   # `github.com` covers `api.github.com`, and `githubusercontent.com` covers

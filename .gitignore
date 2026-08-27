@@ -4,7 +4,7 @@
 .cache/
 # clj-kondo: the local cache is generated, but config.edn, hooks/ AND the
 # configs imported from dependencies (`imports/`) are the lint rules — without
-# them a fresh checkout resolves no lazytest/malli/spel macro and `-M:lint`
+# them a fresh checkout resolves no lazytest/malli macro and `-M:lint`
 # fails only on CI. Refresh them with:
 #   clojure -M:test:lint -m clj-kondo.main --copy-configs --dependencies \
 #     --lint "$(clojure -Spath -M:test)"

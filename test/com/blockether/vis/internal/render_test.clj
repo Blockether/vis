@@ -184,7 +184,7 @@
       ;; A bookmarklet / long shell command authored as a lone `` `…` `` span
       ;; must render as a code block (verbatim + copy affordance), not an
       ;; inline chip that wraps and corrupts a select-copy.
-      (let [src "javascript:(function(){var o=\"http://127.0.0.1\";window.__spel.connect();})();"]
+      (let [src "javascript:(function(){var o=\"http://127.0.0.1\";window.__bridge.connect();})();"]
         (expect (= [:ast {} [:code {} src]] (render/markdown->ast (str "`" src "`"))))))
   (it "keeps a long lone file-path code span as an inline :c chip"
       ;; grep/patch/outline op-cards title every per-file section with a lone

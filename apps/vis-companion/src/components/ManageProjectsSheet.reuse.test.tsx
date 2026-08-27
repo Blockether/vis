@@ -16,7 +16,7 @@ import type { BrowseEntry, BrowseListing } from "../lib/types";
 const HOME = "/Users/me";
 const CODE = `${HOME}/code`;
 const VIS = `${CODE}/vis`;
-const SPEL = `${CODE}/spel`;
+const DEMO = `${CODE}/demo`;
 
 function entry(
   name: string,
@@ -36,7 +36,7 @@ const TREE: Record<string, BrowseEntry[]> = {
   [HOME]: [entry("code", HOME)],
   [CODE]: [
     entry("vis", CODE, { is_repo: true, branch: "main" }),
-    entry("spel", CODE, { is_repo: true, branch: "main" }),
+    entry("demo", CODE, { is_repo: true, branch: "main" }),
     entry("tools", CODE, { is_repo: true, branch: "trunk" }),
     entry("notes", CODE, { entry_count: 1 }),
   ],
@@ -59,7 +59,7 @@ function listing(asked: string): BrowseListing {
 
 const PROJECTS: ManagedProject[] = [
   { name: "vis", root: VIS, projectId: "p-vis", count: 3, live: 1 },
-  { name: "spel", root: SPEL, projectId: "p-spel", count: 1, live: 0 },
+  { name: "demo", root: DEMO, projectId: "p-demo", count: 1, live: 0 },
 ];
 
 function machine() {
@@ -84,7 +84,7 @@ function sheet(props: Partial<SheetProps> = {}) {
       at={null}
       client={client as unknown as GatewayClient}
       startAt={VIS}
-      knownRoots={new Set([VIS, SPEL])}
+      knownRoots={new Set([VIS, DEMO])}
       projects={PROJECTS}
       onCancel={onCancel}
       onChoose={onChoose}
@@ -191,7 +191,7 @@ describe("ManageProjectsSheet paints no box of its own", () => {
     // The badge is the row's own word, not a chip this file invented: the folder Vis
     // already runs sessions in says so, a bare checkout only says `git`.
     expect(
-      screen.getByRole("menuitem", { name: /spel/ }).textContent,
+      screen.getByRole("menuitem", { name: /demo/ }).textContent,
     ).toContain("project");
     expect(row.textContent).toContain("git");
     expect(
@@ -489,7 +489,7 @@ describe("the projects mark opens the inventory", () => {
 
     const row = await screen.findByRole("menuitem", { name: /vis/ });
     expect(row).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /spel/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /demo/ })).toBeInTheDocument();
     // Nothing was asked of the gateway: the inventory is what this device already knows.
     expect(client.browse.mock.calls.length).toBe(0);
 
@@ -506,7 +506,7 @@ describe("the projects mark opens the inventory", () => {
     expect(question.textContent).toContain("3 transcripts");
     expect(question.textContent).toContain("1 running");
     expect(screen.queryByRole("menuitem", { name: /vis/ })).toBeNull();
-    expect(screen.getByRole("menuitem", { name: /spel/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /demo/ })).toBeInTheDocument();
     // The anchored projects sheet is still the only dialog on screen.
     expect(screen.getAllByRole("dialog")).toEqual([panel()]);
     expect(onRemove).not.toHaveBeenCalled();
@@ -526,7 +526,7 @@ describe("the projects mark opens the inventory", () => {
     await waitFor(() =>
       expect(screen.queryByRole("menuitem", { name: /vis/ })).toBeNull(),
     );
-    expect(screen.getByRole("menuitem", { name: /spel/ })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /demo/ })).toBeInTheDocument();
     expect(screen.getAllByRole("dialog")).toEqual([panel()]);
   });
 
@@ -540,7 +540,7 @@ describe("the projects mark opens the inventory", () => {
     await userEvent.click(
       screen.getByRole("button", { name: "Back to projects on tower" }),
     );
-    expect(await screen.findByRole("menuitem", { name: /spel/ })).toBeInTheDocument();
+    expect(await screen.findByRole("menuitem", { name: /demo/ })).toBeInTheDocument();
   });
 
   it("keeps the way OUT when the caller asked for the browser by name", async () => {

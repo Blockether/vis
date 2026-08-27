@@ -390,8 +390,8 @@
                                           :content "VIS-RULE"}]})
 
                     agents/added-root-guidance-index
-                    (constantly [{:root (str (System/getProperty "user.home") "/spel")
-                                  :path (str (System/getProperty "user.home") "/spel/AGENTS.md")
+                    (constantly [{:root (str (System/getProperty "user.home") "/demo")
+                                  :path (str (System/getProperty "user.home") "/demo/AGENTS.md")
                                   :source :agents-md}])]
 
         (let [env
@@ -404,10 +404,10 @@
               (prompt/stable-prompt-text messages)]
 
           (expect (str/includes? text "VIS-RULE"))
-          (expect (str/includes? text "~/spel — guidance: ~/spel/AGENTS.md"))
+          (expect (str/includes? text "~/demo — guidance: ~/demo/AGENTS.md"))
           (expect (str/includes? text "guidance is not loaded yet"))
           (expect (str/includes? text "read its exact guidance path in `python_execution`"))
-          (expect (not (str/includes? text "SPEL-RULE"))))))
+          (expect (not (str/includes? text "DEMO-RULE"))))))
   (it "falls back to CLAUDE.md when primary AGENTS.md is absent"
       (with-redefs [agents/primary-instructions
                     (constantly {:found? true

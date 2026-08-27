@@ -81,13 +81,13 @@
       (let [access
             {"generation" "sha256:abc"
              "is_jailed" true
-             "filesystem" {"read_write" ["~/vis" "~/spel"]}
+             "filesystem" {"read_write" ["~/vis" "~/demo"]}
              "changes_require" "reload"}
 
             m
             (cr/ctx-static-map {:ctx (assoc base-ctx "session_access" access)})]
 
-        (expect (= ["~/vis" "~/spel"] (get-in m ["access" "filesystem" "read_write"])))
+        (expect (= ["~/vis" "~/demo"] (get-in m ["access" "filesystem" "read_write"])))
         (expect (= "reload" (get-in m ["access" "changes_require"])))
         (expect (not (contains? m "session_access")))))
   ;; Regression, issue #ctx-resources: the live shell/REPL registry used to be

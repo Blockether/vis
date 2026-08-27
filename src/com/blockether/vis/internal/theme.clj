@@ -295,8 +295,7 @@
 
 (def blockether-light-palette
   "Blockether brand light palette: warm cream ground + amber accent + brand
-   green/red/teal — the exact tokens the blockether.com site and the spel
-   Allure report use. A re-skin of `light-palette`; only the brand chrome is
+   green/red/teal — the exact tokens the blockether.com site uses. A re-skin of
    overridden (syntax + per-tool badge colours are inherited)."
   (merge
     light-palette
@@ -314,7 +313,7 @@
      :border-fg [140 133 122]
      :dialog-bg [250 243 235]
      :dialog-fg [38 38 38]
-     ;; Cream-on-ink title header — the spel-bridge dialog signature: the dark
+     ;; Cream-on-ink title header — the Blockether dialog signature: the dark
      ;; frame ink carried across the header row with the warm cream ground as text.
      :dialog-title-fg [250 243 235]
      :dialog-title-bg [63 63 63]
@@ -383,7 +382,7 @@
 
 (def blockether-dark-palette
   "Blockether brand dark palette: deep slate ground + amber accent + brand
-   green/red/teal — matching the blockether.com / spel report dark theme.
+   green/red/teal — matching the blockether.com dark theme.
    A re-skin of `dark-palette`; syntax + per-tool badge colours are inherited."
   (merge
     dark-palette
@@ -680,7 +679,7 @@
   (make-theme "blockether-light" "Blockether Light" :light blockether-light-palette))
 
 (def blockether-dark
-  "Blockether brand dark theme — matching blockether.com / the spel report."
+  "Blockether brand dark theme — matching blockether.com."
   (make-theme "blockether-dark" "Blockether Dark" :dark blockether-dark-palette))
 
 (def default-theme blockether-light)

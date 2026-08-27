@@ -471,7 +471,7 @@
 (defdescribe
   project-id-resolution-test
   (let [projects [{:id "9f2c1a44-0000-0000-0000-000000000001" :name "vis"}
-                  {:id "9f2c1a44-0000-0000-0000-000000000002" :name "spel"}
+                  {:id "9f2c1a44-0000-0000-0000-000000000002" :name "demo"}
                   {:id "b1000000-0000-0000-0000-000000000003" :name "svar"}]]
     (it "resolves a full id, and an unambiguous prefix"
         (expect (= ["svar"] (mapv :name (match-projects projects "b1000000"))))
@@ -480,7 +480,7 @@
     (it "reports EVERY candidate for an ambiguous prefix instead of picking one"
         ;; Deleting a project is irreversible: a prefix that fits two projects
         ;; must never silently resolve to the first one.
-        (expect (= ["vis" "spel"] (mapv :name (match-projects projects "9f2c")))))
+        (expect (= ["vis" "demo"] (mapv :name (match-projects projects "9f2c")))))
     (it "matches nothing for an unknown id or blank input"
         (expect (= [] (match-projects projects "zzzz")))
         (expect (= [] (match-projects projects "  ")))

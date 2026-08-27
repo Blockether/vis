@@ -1,6 +1,6 @@
 # vis — containerised gateway
 # Everything vis needs is inside the image (JDK, clojure, maven, python, node,
-# chrome, spel + Playwright browsers, ffmpeg, the Parakeet ASR model). The
+# chrome, ffmpeg, and the Parakeet ASR model). The
 # host contributes nothing but a port, a state volume and a workspace.
 #
 # Site tooling is NOT in here. This file builds and runs the BASE image; a
@@ -29,7 +29,6 @@ services:
       dockerfile: Dockerfile
       args:
         # Build-time toggles only; version pins live in the Dockerfile's ARGs.
-        WITH_BROWSERS: ${WITH_BROWSERS:-true}
         WITH_CHROME: ${WITH_CHROME:-true}
         # No version arg: `vis-agent --version` reads a resource stamped from
         # the repo-root VIS_VERSION, which is the only version source there is.
@@ -62,8 +61,8 @@ services:
       # docker seed these volumes writable — see the Dockerfile's useradd.
       - vis-ssh:/home/vis/.ssh
       - vis-config:/home/vis/.config
-      # Model and browser caches live in the image, so a `docker volume rm` of
-      # the state volume costs nothing but the session history.
+      # The model cache lives in the image, so a `docker volume rm` of the
+      # state volume costs nothing but the session history.
 
     environment:
       # VIS_HOME/VIS_PARAKEET_MODEL_DIR are already set in the image; repeated
@@ -88,8 +87,8 @@ services:
     # the only cure is running the browser with --no-sandbox, which is strictly
     # worse. no-new-privileges above already blocks the setuid escalation path.
 
-    # Chrome/Playwright need a bigger /dev/shm than docker's 64 MB default, or
-    # the browser dies with "Target closed" on the first heavy page.
+    # Chrome needs a bigger /dev/shm than docker's 64 MB default, or it can
+    # terminate on the first heavy page.
     shm_size: ${VIS_SHM_SIZE:-1gb}
 
     logging:

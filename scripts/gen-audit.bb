@@ -477,8 +477,8 @@ a software consultancy and development company based in Kraków, Poland
   regulated industries and e-commerce**, delivered predominantly as
   data-driven Clojure solutions.
 - **Track record.** Years of work aligning stakeholders and shipping inside
-  regulated environments; an active open-source footprint (e.g. `svar`,
-  `spel`, `holy-lambda`) alongside its commercial engagements.
+  regulated environments; an active open-source footprint (e.g. `svar` and
+  `holy-lambda`) alongside its commercial engagements.
 - **Contact.** General enquiries and commercial support:
   <contact@blockether.com>. Security disclosure: <security@blockether.com>
   (§11). Web: <https://blockether.com>. Source repository:

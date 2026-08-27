@@ -100,7 +100,7 @@
       (expect (some (fn [[tool _ & parts]]
                       (and (= :agents tool) (= [".agents" "skills"] parts)))
                     d/skill-sources)))
-  (it "opencode sources include SPEL/generated plural agents and skills layouts"
+  (it "opencode sources include generated plural agents and skills layouts"
       (expect (some (fn [[tool _ & parts]]
                       (and (= :opencode tool) (= [".opencode" "agents"] parts)))
                     d/agent-sources))
@@ -148,31 +148,31 @@
                         ((deref #'d/skill-resources) root)))
              (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
 
-(defdescribe
-  opencode-spel-layout-discovery-test
-  (it "discovers SPEL skills from .opencode/skills/<name>/SKILL.md"
-      (let [root
-            (.toFile (Files/createTempDirectory "vis-opencode-skill" (make-array FileAttribute 0)))
+(defdescribe opencode-layout-discovery-test
+             (it "discovers skills from .opencode/skills/<name>/SKILL.md"
+                 (let [root
+                       (.toFile (Files/createTempDirectory "vis-opencode-skill"
+                                                           (make-array FileAttribute 0)))
 
-            skill-md
-            (io/file root ".opencode" "skills" "spel" "SKILL.md")]
+                       skill-md
+                       (io/file root ".opencode" "skills" "demo" "SKILL.md")]
 
-        (try (io/make-parents skill-md)
-             (spit skill-md "---\nname: spel\ndescription: Browser automation\n---\nBODY")
-             (with-redefs-fn {#'d/project-root (fn []
-                                                 root)
-                              #'d/skill-sources [[:opencode :rel ".opencode" "skills"]]}
-               (fn []
-                 (let [skills
-                       (d/discover-skills)
+                   (try (io/make-parents skill-md)
+                        (spit skill-md "---\nname: demo\ndescription: Example skill\n---\nBODY")
+                        (with-redefs-fn {#'d/project-root (fn []
+                                                            root)
+                                         #'d/skill-sources [[:opencode :rel ".opencode" "skills"]]}
+                          (fn []
+                            (let [skills
+                                  (d/discover-skills)
 
-                       spel
-                       (first (filter #(= "spel" (:name %)) skills))]
+                                  demo
+                                  (first (filter #(= "demo" (:name %)) skills))]
 
-                   (expect (= "spel" (:name spel)))
-                   (expect (= :opencode (:tool spel)))
-                   (expect (re-find #"BODY" (:body spel))))))
-             (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
+                              (expect (= "demo" (:name demo)))
+                              (expect (= :opencode (:tool demo)))
+                              (expect (re-find #"BODY" (:body demo))))))
+                        (finally (run! #(.delete ^java.io.File %) (reverse (file-seq root))))))))
 
 (defdescribe
   command-discovery-test

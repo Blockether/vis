@@ -25,7 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(live): return optimized model results
 - fix(cli): merge Ubuntu and Windows trust in WSL
 - fix(companion): keep keyboard open after send
-- chore(docs): regenerate spel agents for 0.9.31
 - fix(companion): retain finished job details
 - fix(companion): keep fenced code ragged
 - fix(companion): keep markdown code spans ragged
@@ -234,7 +233,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - feat(live): return optimized model results (ec9864ec8)
 - fix(cli): merge Ubuntu and Windows trust in WSL (aeceaa0ce)
 - fix(companion): keep keyboard open after send (cc88261f5)
-- chore(docs): regenerate spel agents for 0.9.31 (b500dcb8c)
 - fix(companion): retain finished job details (4bed954db)
 - fix(companion): keep fenced code ragged (4a67ac707)
 - fix(companion): keep markdown code spans ragged (eaee188a7)
@@ -655,7 +653,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - fix(shell): keep the output a pty child printed just before it exited
 - fix(shell): stop a pty child inheriting the parent's descriptors
-- docs(docs): regenerate the spel skill from spel 0.9.28
 - fix(ci): track the clj-kondo configs imported from dependencies
 - chore(release): v0.1.39
 - fix(companion): read the artifact overlay after its bytes arrive
@@ -678,7 +675,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(companion): ask the sessions list for one page when nothing moved
 - fix(companion): tag Android alerts so the badge can clear
 - fix(sandbox): address a fresh attachment in the block that made it
-- docs(skills): regenerate the spel skill from spel 0.9.27
 - feat(companion): badge the icon with the alerts still waiting
 - fix(companion): put an opened note's Save in its header band
 - fix(companion): wear the name's step on a status dot
@@ -727,7 +723,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore(repo): reformat every Clojure and Python source in place
 - test(ci): pin the two loaded-runner flakes without a stopwatch
 - test(ci): own the espeak and pty-log preconditions the runners lack
-- docs(docs): regenerate the spel agent skill for 0.9.26
 - docs(cli): name the keys a test run answers with
 - fix(ci): make the test suite green on both runners
 - feat(companion): give providers the machine row and its slide
@@ -830,7 +825,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 #### com.blockether/vis
 - fix(shell): keep the output a pty child printed just before it exited (c162148a4)
 - fix(shell): stop a pty child inheriting the parent's descriptors (da26cafe3)
-- docs(docs): regenerate the spel skill from spel 0.9.28 (7aac609a6)
 - fix(ci): track the clj-kondo configs imported from dependencies (568592963)
 - chore(release): v0.1.39 (fea04e0c1)
 - fix(companion): read the artifact overlay after its bytes arrive (3f3288fdf)
@@ -853,7 +847,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - fix(companion): ask the sessions list for one page when nothing moved (1a9f51080)
 - fix(companion): tag Android alerts so the badge can clear (fe187409f)
 - fix(sandbox): address a fresh attachment in the block that made it (ed8777994)
-- docs(skills): regenerate the spel skill from spel 0.9.27 (13c6f6f06)
 - feat(companion): badge the icon with the alerts still waiting (666fa4b03)
 - fix(companion): put an opened note's Save in its header band (cd2ba0705)
 - fix(companion): wear the name's step on a status dot (0ff682bd0)
@@ -900,7 +893,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - chore(repo): reformat every Clojure and Python source in place (2770d1cb5)
 - test(ci): pin the two loaded-runner flakes without a stopwatch (65b83f977)
 - test(ci): own the espeak and pty-log preconditions the runners lack (886b34bac)
-- docs(docs): regenerate the spel agent skill for 0.9.26 (0f7446c4b)
 - docs(cli): name the keys a test run answers with (98cda9046)
 - fix(ci): make the test suite green on both runners (0403732e6)
 - feat(companion): give providers the machine row and its slide (21ec0d43a)

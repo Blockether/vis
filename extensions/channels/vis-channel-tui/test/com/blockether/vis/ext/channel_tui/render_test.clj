@@ -1235,7 +1235,7 @@
                                 [{:iteration 1
                                   :activity :shell-run
                                   :shell/cmd
-                                  "cd ../ && git clone git@github.com:Blockether/spel.git"}]}
+                                  "cd ../ && git clone git@github.com:example/demo.git"}]}
                                80
                                {:show-thinking true :show-iterations true}
                                {:now-ms 1000 :turn-start-ms 0}))]

@@ -421,7 +421,7 @@
             (let [db {:messages []
                       :settings {}
                       :workspace {"git" {"is_workspace" true
-                                         "repo" "spel"
+                                         "repo" "demo"
                                          "branch" "main"
                                          "modified" 0
                                          "created" 0
@@ -429,7 +429,7 @@
                                          "is_upstream" true
                                          "ahead" 0
                                          "behind" 0}}}]
-              (expect (= [" git ~/spel (main) "]
+              (expect (= [" git ~/demo (main) "]
                          (->> (build-segments db 0)
                               (filter #(= :right (:region %)))
                               (remove fixture-seg?)
