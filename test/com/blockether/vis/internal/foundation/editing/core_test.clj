@@ -823,32 +823,46 @@
   ;; ensure-existing-file! reports paths through paths/abbreviate-home so a
   ;; workspace under $HOME reads "~/vis/…" instead of a leaked absolute home
   ;; path in both the not-found and is-a-directory messages.
-  (it "file-not-found + path-is-dir messages collapse $HOME to ~"
-      (let [ensure
-            (private-fn "ensure-existing-file!")
+  (it
+    "file-not-found + path-is-dir messages collapse $HOME to ~"
+    (let [ensure
+          (private-fn "ensure-existing-file!")
 
-            safe
-            (private-fn "safe-path")
+          safe
+          (private-fn "safe-path")
 
-            home
-            (System/getProperty "user.home")
+          ;; The check OWNS the home it measures: only paths UNDER the home
+          ;; directory collapse, and deriving the probes from `fs/cwd`
+          ;; silently assumed the checkout sits inside it — true on a
+          ;; workstation, false on a runner that moves HOME out of the way,
+          ;; where nothing abbreviated and the message read as a leak.
+          prior
+          (System/getProperty "user.home")
 
-            missing
-            (str (fs/cwd) "/target/editing-test/homoge-missing.txt")
+          home
+          (str (fs/cwd) "/" (temp-root))
 
-            dirp
-            (temp-dir-path "homoge-dir")
+          missing
+          (str (temp-root) "/homoge-missing.txt")
 
-            msg-of
-            (fn [p]
-              (try (ensure (safe p)) nil (catch clojure.lang.ExceptionInfo e (.getMessage e))))]
+          dirp
+          (temp-dir-path "homoge-dir")
 
-        (let [m (msg-of missing)]
-          (expect (string/includes? m "File not found: ~/"))
-          (expect (not (string/includes? m home))))
-        (let [m (msg-of dirp)]
-          (expect (string/includes? m "Path is a directory, not a file: ~/"))
-          (expect (not (string/includes? m home)))))))
+          msg-of
+          (fn [p]
+            (try (ensure (safe p)) nil (catch clojure.lang.ExceptionInfo e (.getMessage e))))]
+
+      (try (System/setProperty "user.home" home)
+           (let [m (msg-of missing)]
+             ;; The exact abbreviation, which also proves the swapped home is
+             ;; the one being measured: under the real home this would still
+             ;; carry the workspace path between "~/" and the file name.
+             (expect (string/includes? m "File not found: ~/homoge-missing.txt"))
+             (expect (not (string/includes? m home))))
+           (let [m (msg-of dirp)]
+             (expect (string/includes? m "Path is a directory, not a file: ~/homoge-dir"))
+             (expect (not (string/includes? m home))))
+           (finally (System/setProperty "user.home" prior))))))
 
 
 
