@@ -987,25 +987,36 @@ function ArtifactDetail({
     );
   }
 
-  // PDFs are rendered by the app so each page fits this overlay; drawing stamps the
-  // visible page back into the same filename as its next version.
-  const frame = (
-    <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} />
-  );
+  // PDFs are rendered by the app so each page fits this overlay; the band carries the
+  // pager and the pen, and annotating stamps the visible page back into the same
+  // filename as its next version.
+  if (isPdfMedia(artifact.mediaType)) {
+    return (
+      <PdfAnnotator
+        client={client}
+        sid={sid}
+        iterationId={artifact.iterationId}
+        name={artifact.name}
+        mediaType={artifact.mediaType}
+        url={url}
+        chrome={({ actions, note, body }) => (
+          <DetailOverlay
+            name={artifact.name}
+            subtitle={note}
+            actions={actions}
+            share={share}
+            onClose={onClose}
+            fill
+          >
+            {body}
+          </DetailOverlay>
+        )}
+      />
+    );
+  }
   return (
     <DetailOverlay name={artifact.name} share={share} onClose={onClose} fill>
-      {isPdfMedia(artifact.mediaType) ? (
-        <PdfAnnotator
-          client={client}
-          sid={sid}
-          iterationId={artifact.iterationId}
-          name={artifact.name}
-          mediaType={artifact.mediaType}
-          url={url}
-        />
-      ) : (
-        frame
-      )}
+      <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} />
     </DetailOverlay>
   );
 }

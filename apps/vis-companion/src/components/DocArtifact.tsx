@@ -330,22 +330,26 @@ export const DocOverlay = memo(function DocOverlay({
     );
   }
 
+  // A PDF is read the same way: the app rasterises the page so it fits, and the
+  // band it hands up carries the pager and the pen.
+  if (annotate && url && !failed && isPdfMedia(mime)) {
+    return (
+      <PdfAnnotator
+        client={annotate.client}
+        sid={annotate.sid}
+        iterationId={annotate.iterationId}
+        name={name}
+        mediaType={mime}
+        url={url}
+        chrome={chrome}
+      />
+    );
+  }
+
   return chrome({
     actions: null,
     note: "",
-    body:
-      annotate && url && !failed && isPdfMedia(mime) ? (
-        <PdfAnnotator
-          client={annotate.client}
-          sid={annotate.sid}
-          iterationId={annotate.iterationId}
-          name={name}
-          mediaType={mime}
-          url={url}
-        />
-      ) : (
-        <DocBody name={name} mime={mime} url={url} failed={failed} />
-      ),
+    body: <DocBody name={name} mime={mime} url={url} failed={failed} />,
   });
 });
 

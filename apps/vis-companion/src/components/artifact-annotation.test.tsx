@@ -235,7 +235,7 @@ describe("an artifact opened from the transcript", () => {
     expect(page?.className).toContain("max-w-full");
     expect(page?.src).toContain("page-1");
 
-    press('button[aria-label="Draw on page 1"]');
+    press('button[aria-label="Annotate page 1"]');
     press('button[aria-label="apply"]');
     await settle();
 
@@ -250,6 +250,42 @@ describe("an artifact opened from the transcript", () => {
     expect(page?.src).toContain("page-2");
   });
 
+  // Reported: the pager and the pen stood in a strip of their own under the page, at the
+  // far end of the screen from the ✕, with the position printed between them.
+  it("carries the pager and the pen in the band that names the file", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(new Uint8Array([37, 80, 68, 70]))),
+    );
+    await act(async () => {
+      root.render(
+        <DocOverlay
+          name="report.pdf"
+          mime="application/pdf"
+          url="blob:pdf"
+          failed={false}
+          annotate={{ client: gatewayStub(2), sid: "s1", iterationId: "i1" }}
+          onClose={() => undefined}
+        />,
+      );
+    });
+    await settle();
+
+    const band = host.querySelector("header")!;
+    for (const label of ["Previous page", "Next page", "Annotate page 1"]) {
+      expect(band.querySelector(`button[aria-label="${label}"]`)).not.toBe(null);
+    }
+    // Where the reader stands is the band’s to report, under the filename.
+    expect(band.textContent).toContain("Page 1 of 3");
+
+    press('button[aria-label="Next page"]');
+    await settle();
+    expect(band.textContent).toContain("Page 2 of 3");
+    expect(band.querySelector('button[aria-label="Annotate page 2"]')).not.toBe(
+      null,
+    );
+  });
+
   it("stays a plain reader when the artifact cannot be marked up", async () => {
     await act(async () => {
       root.render(
@@ -262,7 +298,7 @@ describe("an artifact opened from the transcript", () => {
         />,
       );
     });
-    expect(document.querySelector('button[aria-label^="Draw on page"]')).toBe(
+    expect(document.querySelector('button[aria-label^="Annotate page"]')).toBe(
       null,
     );
   });
