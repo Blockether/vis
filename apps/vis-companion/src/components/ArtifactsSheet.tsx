@@ -1078,9 +1078,13 @@ function ArtifactVersions({
  * On a phone the strip is too narrow for the word, so the visible chip is a
  * paperclip and a count — which is why the WORD lives in `aria-label`/`title`
  * instead of only in the pixels, and `aria-expanded` says whether the surface it
- * owns is open. Its BOX is the one the Share button used to occupy and the one
- * the session id beside it still occupies: `h-6`, the app's chip height, so the
- * header reads as a row of chips instead of one tower with text next to it.
+ * owns is open.
+ *
+ * ITS BOX IS THE BAND'S, and so is the session id's beside it: a 32px face on touch,
+ * 24px under a pointer, and the 44px target as invisible slop. The two are measured
+ * against EACH OTHER — a chip that disagreed with its neighbour is what made this
+ * header read as one big button with some text next to it — and against the `⋯` on
+ * every other band in the app, which is `Button density="compact"`.
  */
 export function ArtifactsChip({
   count,
@@ -1094,9 +1098,15 @@ export function ArtifactsChip({
   onToggle: () => void;
 }) {
   if (!count) return null;
+  // At rest it is CHROME: the page's ink on the band's own paper, no frame, like every
+  // other control on a header. It used to wear `--dialog-title`, which IS the accent in
+  // `blockether-dark`, so a filled amber block sat in the navigation bar beside a way
+  // out wearing the same token. OPEN keeps the amber fill and stays the one filled
+  // accent on the screen: the composer it could compete with is hidden underneath the
+  // sheet this chip just opened.
   const tone = open
     ? "border-accent bg-accent text-accent-foreground"
-    : "border-dialog-title bg-dialog-title text-dialog-title-foreground hover:bg-accent-2";
+    : "border-transparent text-white hover:bg-hover";
   const label = `${count} artifacts produced by the model`;
   return (
     <button
@@ -1106,7 +1116,7 @@ export function ArtifactsChip({
       aria-controls={controls}
       aria-label={label}
       title={label}
-      className={`inline-flex h-6 shrink-0 items-center gap-1 border px-2 font-mono text-chip font-bold tracking-[0.08em] uppercase focus-visible:outline-2 focus-visible:outline-accent ${tone}`}
+      className={`relative inline-flex h-8 shrink-0 items-center gap-1.5 rounded-control border px-2 font-mono text-ui font-bold transition-colors duration-150 after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:h-6 mouse:text-meta mouse:after:content-none ${tone}`}
     >
       <ClipIcon className="size-3" />
       <span aria-hidden="true" className="hidden sm:inline">

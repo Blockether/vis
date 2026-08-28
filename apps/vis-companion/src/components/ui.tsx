@@ -467,6 +467,7 @@ export function CopyChip({
   value,
   label,
   title,
+  density = 'default',
   className = '',
   children,
 }: {
@@ -476,6 +477,14 @@ export function CopyChip({
   label: string;
   /** Hover text, when there is more to say than the label — the full id. */
   title?: string;
+  /**
+   * `compact` is a SCREEN HEADER's rhythm — the one `Button` already spells: a 32px
+   * face on touch, 24px under a pointer, and Apple's 44px target restored as invisible
+   * slop rather than as paint. The default belongs to a CARD's own band, which is 32px
+   * tall and centres a 24px chip, so a chip that grew there would stack padding on top
+   * of its own height.
+   */
+  density?: 'default' | 'compact';
   /** Placement only; the chip's own face is fixed. */
   className?: string;
   /** What it reads at rest. */
@@ -493,24 +502,41 @@ export function CopyChip({
       // Clipboard access can be unavailable in an untrusted mobile webview.
     }
   }
+  // ONE control, two rhythms. On a card's band it keeps its own paper, because that band
+  // is content and the chip is the only control on it. A SCREEN's band is CHROME: the
+  // chip drops its paper for the page's ink and joins the row of quiet controls every
+  // other header in the app already wears.
+  //
+  // The minimum width keeps "Copy" and "Copied" the same box, so the chip never jumps
+  // under the finger that just pressed it — but only while the word is THERE. Where a
+  // phone header has room for the mark alone, the box goes square instead of holding a
+  // word's worth of air open beside the control next to it.
+  const face =
+    density === 'compact'
+      ? `relative h-8 min-w-8 border-transparent bg-transparent text-ui after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] mouse:h-6 mouse:min-w-6 mouse:text-meta mouse:after:content-none sm:min-w-[6ch] ${
+          isCopied ? 'text-ok' : 'text-white'
+        }`
+      : `h-6 min-w-[6ch] bg-button text-chip ${
+          isCopied ? 'border-ok text-ok' : 'border-dialog-edge text-button-foreground'
+        }`;
   return (
     <button
       type="button"
       onClick={copy}
       aria-label={label}
       title={title ?? label}
-      // The minimum width keeps "Copy" and "Copied" the same box, so the chip
-      // never jumps under the finger that just pressed it.
-      className={`group inline-flex h-6 min-w-[6ch] items-center justify-center gap-1 border bg-button px-2 text-center font-mono text-chip transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${
-        isCopied ? 'border-ok text-ok' : 'border-dialog-edge text-button-foreground'
-      } ${className}`}
+      className={`group inline-flex items-center justify-center gap-1 rounded-control border px-2 text-center font-mono transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none ${face} ${className}`}
     >
       {isCopied ? (
         <CheckIcon className="size-3 text-ok" />
       ) : (
         <CopyIcon className="size-3 opacity-60 transition-opacity group-hover:opacity-100" />
       )}
-      <span className="min-w-0 truncate">{isCopied ? 'Copied' : children}</span>
+      <span
+        className={`min-w-0 truncate ${density === 'compact' ? 'hidden sm:inline' : ''}`}
+      >
+        {isCopied ? 'Copied' : children}
+      </span>
     </button>
   );
 }
@@ -946,6 +972,12 @@ export function Waveform({
  * column carrying one chevron. It is not an `IconButton`: an icon button is a
  * box inside a row, and this one IS the row's left edge, so it owns the safe
  * area the phone puts outside the paper and grows with the band's height.
+ *
+ * It is INK on the band's own paper, never a plate. `--dialog-title` IS the accent in
+ * `blockether-dark`, so a filled way-out painted a yellow block into the navigation
+ * bar — above the title it leads, and beside a composer send wearing that same token,
+ * which is two filled accents on one screen and a bar outranking its own screen. A bar
+ * carries navigation, and navigation is a glyph in the page's ink.
  */
 export function BackButton({
   label,
@@ -956,7 +988,7 @@ export function BackButton({
     <button
       type="button"
       aria-label={label}
-      className={`grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center border-r border-dialog-edge bg-dialog-title pl-[env(safe-area-inset-left)] font-mono text-subhead font-bold text-dialog-title-foreground transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-accent-2 focus-visible:bg-accent-2 focus-visible:outline-none active:scale-[0.96] motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))] ${className}`}
+      className={`grid w-[calc(2.75rem+env(safe-area-inset-left))] shrink-0 place-items-center pl-[env(safe-area-inset-left)] text-white transition-[background-color,transform,translate,scale,rotate] duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.96] motion-reduce:transition-none mouse:w-[calc(2.5rem+env(safe-area-inset-left))] ${className}`}
       {...props}
     >
       <ChevronIcon back className="size-4" aria-hidden />

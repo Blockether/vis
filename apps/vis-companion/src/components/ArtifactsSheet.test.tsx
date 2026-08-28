@@ -13,21 +13,20 @@ import { CopyChip } from "./ui";
 import type { GatewayClient } from "../lib/gateway";
 import type { SessionArtifact } from "../lib/artifacts";
 
-/** The height the OTHER chip in the session header wears, read from the
- *  component that owns it. The session id is a `CopyChip` (so is every `Copy`
- *  in the transcript), and it is the surviving half of the pair the deleted
- *  Share button belonged to — so "the same height as the button that used to be
- *  there" is checked against THAT control and not against a number typed into
- *  this file. */
-const sessionIdChipHeight = () => {
+/** The BOX the OTHER chip in the session header wears, read from the component that
+ *  owns it. The session id is a `CopyChip` on the band's density (so is every `Copy` in
+ *  the transcript, at its own), and it is the surviving half of the pair the deleted
+ *  Share button belonged to — so "the same box as the chip beside it" is checked
+ *  against THAT control and not against a number typed into this file. */
+const sessionIdChipBox = () => {
   const chip = renderToStaticMarkup(
-    <CopyChip value="s1" label="Copy session id">
+    <CopyChip value="s1" label="Copy session id" density="compact">
       s1
     </CopyChip>,
   );
-  return (
-    buttonClasses(chip).find((one) => /^h-\d+$/.test(one)) ?? ""
-  );
+  return buttonClasses(chip)
+    .filter((one) => /^(mouse:)?h-\d+$/.test(one))
+    .sort();
 };
 
 /** Every class on a rendering's first <button>. */
@@ -197,17 +196,23 @@ describe("the artifacts chip", () => {
     expect(html).toContain("hidden sm:inline");
   });
 
-  // Regression: the chip stood 44px, then 32px, tall beside a 24px session id,
-  // so the header read as one big button with some text next to it. It occupies
-  // the box the Share button used to — measured from the chip still shipping.
+  // Regression: the chip stood 44px, then 32px, tall beside a 24px session id, so the
+  // header read as one big button with some text next to it. Both wear the band's own
+  // rhythm now — and they are still measured against each other, never against a number.
   it("is exactly the chip the session id beside it is", () => {
     const html = renderToStaticMarkup(
       <ArtifactsChip count={3} open onToggle={() => {}} />,
     );
-    expect(sessionIdChipHeight()).toBe("h-6");
-    expect(buttonClasses(html)).toContain(sessionIdChipHeight());
-    // One height, in every state: no taller touch box to fall back out of.
-    expect(buttonClasses(html).join(" ")).not.toMatch(/min-h-|sm:h-|mouse:h-/);
+    expect(sessionIdChipBox()).toEqual(["h-8", "mouse:h-6"]);
+    for (const box of sessionIdChipBox()) {
+      expect(buttonClasses(html)).toContain(box);
+    }
+    // A 32px face on touch, 24px under a pointer, and Apple's 44px target arriving as
+    // invisible slop — never as a taller painted box to fall back out of.
+    for (const slop of ["after:absolute", "after:-top-1.5", "after:-bottom-1.5"]) {
+      expect(buttonClasses(html)).toContain(slop);
+    }
+    expect(buttonClasses(html).join(" ")).not.toMatch(/min-h-|sm:h-/);
     expect(html).toContain('aria-expanded="true"');
   });
 

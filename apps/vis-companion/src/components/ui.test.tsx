@@ -2424,6 +2424,33 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(first(html())).toContain("h-6");
     });
 
+    // Regression, measured on the session's own header: the id chip was a 24px painted
+    // box with nothing around it, so a finger got 24px where the platform asks for 44 —
+    // and it wore its own paper inside a band that is chrome.
+    it("takes a header band's rhythm, and its target as slop", () => {
+      const markup = renderToStaticMarkup(
+        <CopyChip value="abc" label="Copy session id" density="compact">
+          abc12345
+        </CopyChip>,
+      );
+      const band = first(markup);
+      expect(band).toContain("h-8");
+      expect(band).toContain("mouse:h-6");
+      // React escapes the quotes inside `content-[""]`, so the slop is read off the
+      // three classes that place it.
+      expect(band).toContain("after:absolute");
+      expect(band).toContain("after:-top-1.5");
+      expect(band).toContain("after:-bottom-1.5");
+      expect(band).toContain("border-transparent");
+      expect(band).not.toContain("bg-button");
+      // A phone header has room for the mark and the mark only.
+      expect(markup).toContain("hidden sm:inline");
+      // ...and with the word gone the box is SQUARE, never a word's worth of air held
+      // open beside the control next to it.
+      expect(band).toContain("min-w-8");
+      expect(band).toContain("sm:min-w-[6ch]");
+    });
+
     // Regression, reported as "remove the # for copy and use the real icon": the
     // session id chip led with a `#` glyph, which names an identifier and says
     // nothing about pressing it.
@@ -2870,10 +2897,15 @@ describe("the composer's own controls", () => {
     );
   });
 
+  // Regression, measured on `blockether-dark`, where `--dialog-title` IS the accent: the
+  // way out was a filled amber plate in the navigation bar, above the title it leads and
+  // beside a composer send wearing that same token.
   it("leaves by the band's own leading half, notch included", () => {
     const html = renderToStaticMarkup(<BackButton label="Back to sessions" />);
     expect(html).toContain('aria-label="Back to sessions"');
     expect(classes(html)).toContain("pl-[env(safe-area-inset-left)]");
+    expect(classes(html)).not.toContain("bg-dialog-title");
+    expect(classes(html)).toContain("hover:bg-hover");
   });
 
   it("floats over the transcript with its own paper and its own lift", () => {
@@ -4142,6 +4174,11 @@ describe("Corners", () => {
       ),
       renderToStaticMarkup(
         <SearchField value="" onValue={() => {}} label="Search sessions" />,
+      ),
+      renderToStaticMarkup(
+        <CopyChip value="fd3c03f9" label="Copy session id">
+          fd3c03f9
+        </CopyChip>,
       ),
     ]) {
       expect(corners(pressed)).toContain("rounded-control");

@@ -992,6 +992,7 @@ function CopyableId({ id, className }: { id: string; className: string }) {
       value={markSessionId(id)}
       label="Copy session id"
       title={`Copy session id\n${id}`}
+      density="compact"
       className={className}
     >
       {short}
@@ -5593,10 +5594,10 @@ export function SessionScreen({
               <span className="shrink-0">{connected ? "Connected" : "Reconnecting"}</span>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-1 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))]">
+          <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))] mouse:gap-1">
             <CopyableId
               id={sid}
-              className="hidden max-w-[9rem] sm:inline-flex"
+              className="max-w-[9rem]"
             />
             <ArtifactsChip
               count={artifacts.length}
