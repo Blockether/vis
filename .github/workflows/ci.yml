@@ -53,7 +53,11 @@ jobs:
       # suite reads all three. Point every later step at a scratch home under the
       # runner's work root -- persistent, not RUNNER_TEMP, so the dependency cache
       # still survives between runs -- and the workstation's own provider config
-      # can never be overwritten by CI.
+      # can never be overwritten by CI. BOTH spellings of "home" must move together:
+      # vis reads the `user.home` JVM property, while this seed step and fff read
+      # $HOME -- and fff decides from $HOME which directories it refuses to index,
+      # so a run that moved only one of them listed the real home through the WRONG
+      # code path. Every clojure invocation below passes -Duser.home="$HOME".
       - name: Keep this run out of the runner's real home
         if: runner.environment == 'self-hosted'
         shell: bash
@@ -135,7 +139,7 @@ jobs:
           restore-keys: vis-native-${{ runner.os }}-
       - name: Provision the sherpa-onnx native runtime
         run: |
-          clojure -M -e "(require '[com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]) (prn (sherpa/ensure-native!))"
+          clojure -J-Duser.home="$HOME" -M -e "(require '[com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]) (prn (sherpa/ensure-native!))"
       - name: Run test suite
         env:
           # These are hard CI contracts, not best-effort coverage: macOS must
@@ -147,7 +151,7 @@ jobs:
           # less memory than Linux, whose default quarter-RAM heap also exhausted.
           # Our own Apple-silicon runner has 36 GiB, so it takes the Linux size.
           JAVA_TOOL_OPTIONS: ${{ (runner.os == 'macOS' && runner.environment == 'github-hosted') && '-Xmx5g' || '-Xmx10g' }}
-        run: clojure -M:test
+        run: clojure -J-Duser.home="$HOME" -M:test
 
   # Every extension must resolve its own deps.edn cleanly — catches stale
   # :local/root paths or missing siblings the aggregate run would mask.
