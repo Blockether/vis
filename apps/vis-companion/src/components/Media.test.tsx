@@ -235,7 +235,7 @@ describe("MediaRecording", () => {
     const words = screen.getByText(/buy milk and call back/);
     expect(words.textContent).toBe("“buy milk and call back”");
     expect(words.className).toContain("italic");
-    expect(words.className).toContain("text-left");
+    expect(words.className).toContain("text-justify");
   });
 
   it("ignores a transcript that is only whitespace", () => {

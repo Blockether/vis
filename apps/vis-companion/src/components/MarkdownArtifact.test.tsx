@@ -618,7 +618,7 @@ describe("a remark already written", () => {
     const body = [...opened.comments()!.querySelectorAll("span")].find(
       (span) => span.textContent === "Stale.",
     )!;
-    expect(body.className).toContain("text-left");
+    expect(body.className).toContain("text-justify");
     expect(body.className).toContain("italic");
 
     // Pressing the card edits; the one mark on it still removes.
