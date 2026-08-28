@@ -538,7 +538,8 @@ export function SessionsScreen({
   // it arrived with, so only answers that land AFTER this point raise a badge.
   // Without the seed, a fresh install would paint the whole fleet unread.
   useEffect(() => {
-    for (const machine of machines) if (machine.sessions) seedReadMarks(machine.sessions);
+    const sessions = machines.flatMap((machine) => machine.sessions ?? []);
+    void seedReadMarks(sessions);
   }, [machines]);
 
   // The app icon's badge is the SAME tally as the dots on these rows: one per

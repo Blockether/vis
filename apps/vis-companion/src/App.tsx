@@ -40,6 +40,7 @@ import {
   mergeAddresses,
 } from "./lib/endpoints";
 import { onWake } from "./lib/wake";
+import { hydrateReadMarks } from "./lib/unread";
 import { warm } from "./lib/warm";
 import { SessionSubscriptionHub } from "./lib/subscriptions";
 import { parsePairing } from "./lib/pairing";
@@ -528,8 +529,7 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    // Mount-time gateway load: the flag flips when the read settles, or when the
-    // watchdog fires.
+    // Keep the splash bounded while restoring both durable device state and gateways.
     let revealed = false;
     const reveal = () => {
       if (revealed) return;
@@ -537,7 +537,7 @@ export function App() {
       setReady(true);
     };
     const timer = window.setTimeout(reveal, BOOT_REVEAL_MS);
-    void refresh().finally(reveal);
+    void Promise.all([refresh(), hydrateReadMarks()]).finally(reveal);
     return () => window.clearTimeout(timer);
   }, [refresh]);
 

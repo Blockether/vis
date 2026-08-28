@@ -116,21 +116,22 @@ describe('syncBadge', () => {
   });
 
   // The tray must hold exactly the answers still owed — but an alert for a
-  // session outside the loaded window, or one belonging to a machine that is not
-  // answering, is not ours to throw away.
+  // session outside the loaded window, one whose durable read mark has not loaded,
+  // or one belonging to a machine that is not answering is not ours to throw away.
   it('drops the delivered alerts of sessions it knows are read, and only those', async () => {
     const { markSessionRead, syncBadge } = await fresh();
     markSessionRead('read', 4);
     markSessionRead('unread', 3);
     markSessionRead('down', 1);
     await syncBadge([
-      machine([row('read', 4), row('unread', 5)]),
+      machine([row('read', 4), row('unread', 5), row('unmarked', 5)]),
       machine([row('down', 9)], 'connection refused'),
     ]);
     const isDone = native.dropped[0];
     expect(isDone('read')).toBe(true);
     expect(isDone('down')).toBe(false);
     expect(isDone('unread')).toBe(false);
+    expect(isDone('unmarked')).toBe(false);
     expect(isDone('elsewhere')).toBe(false);
     expect(isDone(undefined)).toBe(false);
   });

@@ -1,4 +1,6 @@
+import { Preferences } from '@capacitor/preferences';
 import { useSyncExternalStore } from 'react';
+import { bridged } from './bridge';
 import type { Session, TranscriptTurn } from './types';
 
 /**
@@ -11,9 +13,9 @@ import type { Session, TranscriptTurn } from './types';
  * the gateway's `turn_count` at the moment the transcript was on screen. Any
  * later growth is an answer the user has not read.
  *
- * Marks live in localStorage, keyed by session id, and are deliberately NOT
- * synced to the gateway: "did I read this" is a property of this device, not of
- * the session.
+ * Marks belong to this device, not to the gateway. localStorage supplies the
+ * synchronous first frame; Capacitor Preferences is the durable copy that survives
+ * iOS recycling or resetting the webview.
  */
 
 const KEY = 'vis.session-read.v1';
@@ -22,34 +24,84 @@ const KEY = 'vis.session-read.v1';
 type Marks = Record<string, number>;
 
 let marks: Marks | null = null;
+let hydration: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 let version = 0;
 
-function load(): Marks {
-  if (marks) return marks;
-  marks = {};
+function localGet(): string | null {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) {
-      const parsed: unknown = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        for (const [sid, value] of Object.entries(parsed as Record<string, unknown>)) {
-          if (typeof value === 'number' && Number.isFinite(value)) marks[sid] = value;
-        }
-      }
-    }
+    return globalThis.localStorage?.getItem(KEY) ?? null;
   } catch {
-    // Private mode, quota, corrupt JSON — an empty map is a safe read state.
+    return null;
   }
+}
+
+function localSet(value: string): void {
+  try {
+    globalThis.localStorage?.setItem(KEY, value);
+  } catch {
+    // Private mode / quota: the Preferences write is the durable one anyway.
+  }
+}
+
+function parse(raw: string | null): Marks {
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const store: Marks = {};
+    for (const [sid, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'number' && Number.isFinite(value)) store[sid] = value;
+    }
+    return store;
+  } catch {
+    return {};
+  }
+}
+
+function load(): Marks {
+  if (marks === null) marks = parse(localGet());
   return marks;
 }
 
+/** Write both halves without putting a native bridge round trip in a press path. */
 function persist(): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(load()));
-  } catch {
-    // Never let a storage failure break the list.
+  const value = JSON.stringify(load());
+  localSet(value);
+  void bridged(
+    async () => {
+      await Preferences.set({ key: KEY, value });
+    },
+    () => undefined,
+  );
+}
+
+/** Read marks only move forward, so the larger watermark is always the newer one. */
+function mergeMarks(incoming: Marks): boolean {
+  const store = load();
+  let changed = false;
+  for (const [sid, value] of Object.entries(incoming)) {
+    if ((store[sid] ?? -1) >= value) continue;
+    store[sid] = value;
+    changed = true;
   }
+  return changed;
+}
+
+/** Restore the durable half once, before an unseen row is seeded as already read. */
+export async function hydrateReadMarks(): Promise<void> {
+  if (hydration) return hydration;
+  hydration = (async () => {
+    const raw = await bridged(
+      async () => (await Preferences.get({ key: KEY })).value ?? null,
+      localGet,
+    );
+    const changed = mergeMarks(parse(raw));
+    // This also migrates read marks created by releases that only used localStorage.
+    persist();
+    if (changed) announce();
+  })();
+  return hydration;
 }
 
 function announce(): void {
@@ -114,11 +166,12 @@ export function markSessionRead(sid: string, turns: number): void {
 }
 
 /**
- * Seed marks for sessions this device has never seen. Without this, the first
- * list load after install would paint EVERY session unread, which is noise, not
- * a signal. Only genuinely new rows are seeded; existing marks are untouched.
+ * Seed marks for sessions this device has never seen. The durable copy must be
+ * restored first: seeding against an empty webview store would turn every unread
+ * answer into an already-read one on restart.
  */
-export function seedReadMarks(sessions: readonly Session[]): void {
+export async function seedReadMarks(sessions: readonly Session[]): Promise<void> {
+  await hydrateReadMarks();
   const store = load();
   let changed = false;
   for (const session of sessions) {
@@ -129,6 +182,11 @@ export function seedReadMarks(sessions: readonly Session[]): void {
   if (!changed) return;
   persist();
   announce();
+}
+
+/** Has this device established a read watermark for the session? */
+export function hasSessionReadMark(sid: string): boolean {
+  return load()[sid] !== undefined;
 }
 
 /**

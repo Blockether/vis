@@ -30,7 +30,7 @@
 import { Capacitor, registerPlugin } from '@capacitor/core';
 import type { FleetMachine } from './fleet';
 import { dropDeliveredPushes } from './push';
-import { unreadTurnCount } from './unread';
+import { hasSessionReadMark, unreadTurnCount } from './unread';
 
 /** The whole native surface: one verb, no state. */
 interface VisBadgePlugin {
@@ -100,6 +100,8 @@ export async function syncBadge(machines: readonly FleetMachine[]): Promise<void
   for (const machine of machines) {
     if (machine.error) continue;
     for (const session of machine.sessions ?? []) {
+      // Until durable marks have loaded, this device does not KNOW the alert was read.
+      if (!hasSessionReadMark(session.id)) continue;
       known.add(session.id);
       if (unreadTurnCount(session) > 0) unread.add(session.id);
     }
