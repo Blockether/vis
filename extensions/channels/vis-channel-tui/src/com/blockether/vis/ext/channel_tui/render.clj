@@ -6195,6 +6195,15 @@
         activity-reason
         (:activity/reason last-iteration)
 
+        ;; The model the router resolved this call to. The provider wait is the one
+        ;; phase whose subject the engine knows and the terminal does not, so it
+        ;; travels on the marker; without it every wait reads "the provider".
+        activity-model
+        (some-> (:activity/model last-iteration)
+                str
+                str/trim
+                not-empty)
+
         tool-op
         (:tool/op last-iteration)
 
@@ -6265,9 +6274,9 @@
             (str "Vis is continuing after tool results (iter " n ")")
 
             :user-submit
-            (str "Vis is calling the provider (user submit, iter " n ")")
+            (str "Vis is calling " (or activity-model "the provider") " (user submit, iter " n ")")
 
-            (str "Vis is calling the provider (iter " n ")"))
+            (str "Vis is calling " (or activity-model "the provider") " (iter " n ")"))
           (= :response-parse activity) (str "Vis is parsing model response (iter " n ")")
           (= :tool-call activity) (if tool-phrase
                                     (str "Vis is " tool-phrase " (iter " n ")")

@@ -1743,6 +1743,14 @@
     (it "names the human's own submit on the first provider call"
         (expect (str/includes? (spinner [{:activity :provider-call :activity/reason :user-submit}])
                                "Vis is calling the provider (user submit, iter 1)")))
+    ;; Regression, reported as "it just says the same thing and I wait": the line
+    ;; stood unchanged for the whole provider wait because the only subject it
+    ;; could name was "the provider".
+    (it "names the model when the engine reported one"
+        (expect (str/includes? (spinner [{:activity :provider-call
+                                          :activity/reason :user-submit
+                                          :activity/model "claude-opus-5"}])
+                               "Vis is calling claude-opus-5 (user submit, iter 1)")))
     (it "names a tool-result continuation on every later call"
         (expect (str/includes? (spinner [{:activity :provider-call}
                                          {:activity :provider-call :activity/reason :tool-result}])

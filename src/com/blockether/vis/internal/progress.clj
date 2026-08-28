@@ -315,7 +315,10 @@
     ;; human submit.
     (assoc entry
       :activity :provider-call
-      :activity/reason (:reason chunk))
+      :activity/reason (:reason chunk)
+      ;; ...and WHO it is waiting on, so the spinner names the resolved model
+      ;; instead of "the provider".
+      :activity/model (:model chunk))
 
     :shell-run
     (assoc entry

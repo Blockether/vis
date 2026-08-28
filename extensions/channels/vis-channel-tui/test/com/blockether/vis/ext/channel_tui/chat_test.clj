@@ -572,6 +572,15 @@
     (it "a provider-call activity projects to :provider-call"
         (expect (= {:phase :provider-call :iteration 1}
                    (g->c {"type" "activity" "activity" "provider-call" "iteration" 1}))))
+    ;; Regression, reported as "I send and nothing happens": this marker is the only
+    ;; thing on the wire during the longest silence of a turn, so the spinner can
+    ;; name WHO it is waiting on only if the model rides along with it.
+    (it "a provider-call activity carries the model it is calling"
+        (expect (= {:phase :provider-call :iteration 1 :model "claude-opus-5"}
+                   (g->c {"type" "activity"
+                          "activity" "provider-call"
+                          "iteration" 1
+                          "model" "claude-opus-5"}))))
     ;; Regression, issue #120: the reason a provider request exists never reached an
     ;; attached tab, so a tool-result continuation read like a fresh user submit.
     (it "a provider-call activity carries its continuation reason"

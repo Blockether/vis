@@ -1074,7 +1074,10 @@
           "provider-call"
           (cond-> {:phase :provider-call :iteration iteration}
             (event-get event :reason)
-            (assoc :reason (wire-keyword (event-get event :reason))))
+            (assoc :reason (wire-keyword (event-get event :reason)))
+
+            (event-get event :model)
+            (assoc :model (str (event-get event :model))))
 
           "response-parse"
           {:phase :response-parse :iteration iteration}

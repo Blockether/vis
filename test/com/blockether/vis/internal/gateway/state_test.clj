@@ -436,6 +436,17 @@
   (it "a provider call ships the continuation reason that opened it"
       (expect (= ["activity" false {:activity "provider-call" :iteration 3 :reason "tool-result"}]
                  (#'state/chunk->event {:phase :provider-call :iteration 3 :reason :tool-result}))))
+  ;; Regression, reported as "I send and nothing happens for seconds": this marker
+  ;; is the ONLY event on the wire between a submit and the first token (measured
+  ;; on one machine: 6.4s median to the first painted token, 10.5s at p90, never
+  ;; under a second), so a channel that is not told WHO the turn is waiting on can
+  ;; only repeat one frozen sentence for the whole wait.
+  (it "a provider call names the model the router resolved to"
+      (expect
+        (= ["activity" false
+            {:activity "provider-call" :iteration 1 :reason "user-submit" :model "claude-opus-5"}]
+           (#'state/chunk->event
+            {:phase :provider-call :iteration 1 :reason :user-submit :model "claude-opus-5"}))))
   (it "response-parse :done does NOT emit an activity event (the parse finished)"
       (let [[type] (#'state/chunk->event {:phase :response-parse :iteration 1 :status :done})]
         (expect (not= "activity" type)))))

@@ -1358,7 +1358,7 @@
   "Ephemeral `activity` wire event `[type store? payload]` for a coarse-progress
    phase, or nil. store? is false: channels paint a spinner label; nothing
    persists. `:response-parse :done` clears (emits nil) — the parse finished."
-  [{:keys [phase cmd iteration reason] :as chunk}]
+  [{:keys [phase cmd iteration reason model] :as chunk}]
   (when (and (activity-phases phase)
              (not (and (= phase :response-parse) (= :done (:status chunk)))))
     (let [op
@@ -1385,6 +1385,15 @@
          ;; WHY the provider request exists (`user-submit` / `tool-result`).
          (some? reason)
          (assoc :reason (name reason))
+
+         ;; WHO the turn is waiting on. The silence between the request leaving and
+         ;; the first token is the longest one a turn has (measured on this machine:
+         ;; 6.4s median from submit to the first painted token, 10.5s at p90), and the
+         ;; engine is the only side that knows which model the router resolved to. A
+         ;; channel left without it can only print the same generic sentence for the
+         ;; whole wait.
+         (some? model)
+         (assoc :model (str model))
 
          (some? cmd)
          (assoc :cmd (str cmd))

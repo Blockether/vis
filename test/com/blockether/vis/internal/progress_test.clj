@@ -65,6 +65,25 @@
           (expect (= "(def x \"doc\" 1)" (:code form)))
           (expect (false? (:silent? form)))))))
 
+;; Regression, reported as "I send and nothing happens for seconds": the provider
+;; wait is the longest silence in a turn (measured on one machine: 6.4s median
+;; from submit to the first painted token, 10.5s at p90), and everything a channel
+;; can say during it comes from this entry — so the marker keeps the model too.
+(defdescribe
+  progress-tracker-provider-call-model-test
+  (it "keeps the model a provider call is waiting on"
+      (let [tracker
+            (progress/make-progress-tracker)
+
+            on
+            (:on-chunk tracker)]
+
+        (on {:phase :provider-call :iteration 1 :reason :user-submit :model "claude-opus-5"})
+        (let [entry (first ((:get-timeline tracker)))]
+          (expect (= :provider-call (:activity entry)))
+          (expect (= :user-submit (:activity/reason entry)))
+          (expect (= "claude-opus-5" (:activity/model entry)))))))
+
 (defdescribe
   progress-tracker-iteration-key-test
   (it "buckets every phase by its :iteration position; skips a chunk with none"
