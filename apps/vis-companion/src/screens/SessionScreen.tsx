@@ -893,7 +893,6 @@ function mergeSlashCommands(remote: SlashCommand[]): SlashCommand[] {
 
 function slashCommandMatches(command: SlashCommand, query: string): boolean {
   const name = command.name.toLowerCase();
-  if (query === "/" && name.startsWith("/skill:")) return false;
   if (name.startsWith(query)) return true;
   if (!name.startsWith("/skill:") || !query.startsWith("/")) return false;
   return name.slice("/skill:".length).startsWith(query.slice(1));

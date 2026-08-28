@@ -44,10 +44,10 @@ describe("session-scoped slash discovery", () => {
   });
 });
 
-// Skills keep their canonical namespace without requiring users to include it
-// when searching the slash palette.
+// Skills keep their canonical namespace while remaining discoverable both by
+// unprefixed search and in the complete slash palette.
 describe("skill slash search", () => {
-  it("finds a prefixed skill by its unprefixed name", async () => {
+  it("shows a prefixed skill by name and in the complete palette", async () => {
     const user = userEvent.setup();
     renderSessionScreen({
       session: sessionFixture({ id: "skill-search" }),
@@ -66,6 +66,6 @@ describe("skill slash search", () => {
 
     await user.clear(composer);
     await user.type(composer, "/");
-    expect(screen.queryByText("/skill:create-extension")).toBeNull();
+    expect(await screen.findByText("/skill:create-extension")).toBeTruthy();
   });
 });
