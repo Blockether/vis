@@ -2609,14 +2609,13 @@ export const LIST_EDGE = 'pl-3 sm:pl-4';
 /**
  * RUNNING PROSE, and the app has exactly ONE rule for it.
  *
- * Transcript columns are narrow on phones, and inline code, links, and mixed-language
- * text create uneven line-breaking opportunities. Full justification turns that
- * unevenness into conspicuous gaps between ordinary words. Running prose therefore
- * keeps a natural ragged edge everywhere; hyphenation and balanced wrapping remain
- * available to prevent avoidable overflow.
+ * The transcript is one reading column: reasoning, answers, speech, and the user's
+ * own text align both edges. Inline code remains an atomic left-aligned box inside
+ * that column, while hyphenation and pretty wrapping moderate the spaces between
+ * ordinary words on narrow phones.
  */
 export const PROSE =
-  'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-left';
+  'hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty text-justify';
 
 /**
  * THE INNER EDGE OF A PRESSABLE ROW, and the other half of `LIST_EDGE`.

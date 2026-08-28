@@ -1859,25 +1859,19 @@ describe("a project's pages are cut by the gateway that counts them", () => {
   });
 });
 
-// Regression, user report: full justification made short lines around inline code
-// look broken on a narrow phone, with large and inconsistent spaces between words.
-describe("running prose has one naturally spaced rule", () => {
+// Regression, user correction: a narrow-phone spacing fix replaced the app's
+// intended justified reading column with a ragged edge in reasoning and answers too.
+describe("running prose has one justified rule", () => {
   const RULE = "hyphens-auto [hyphenate-limit-chars:6_3_3] text-pretty";
 
-  it("declares the shared rule once in ui.tsx with a ragged edge", () => {
-    expect(uiSource).toContain(`'${RULE} text-left'`);
+  it("declares the shared rule once in ui.tsx with an aligned edge", () => {
+    expect(uiSource).toContain(`'${RULE} text-justify'`);
     expect(uiSource).not.toContain("PROSE_RAGGED");
   });
 
   it("is what answers and the user bubble wear", () => {
     expect(chatSource).toContain("const runningText = PROSE;");
     expect(chatSource).toContain("text-you-message-foreground ${PROSE}");
-  });
-
-  it("leaves no full justification in running screens", () => {
-    for (const source of [uiSource, chatSource, settingsSource, sessionsListSource]) {
-      expect(source).not.toContain("text-justify");
-    }
   });
 });
 

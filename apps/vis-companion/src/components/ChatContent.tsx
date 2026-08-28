@@ -564,8 +564,8 @@ export const Markdown = memo(function Markdown({
   nested?: boolean;
   onOpenAttachment?: OpenAttachment;
 }) {
-  // Transcript prose keeps natural word spacing on narrow screens. Inline code and
-  // links remain breakable so a long atom cannot force the whole column to overflow.
+  // Transcript prose shares one fully justified reading column. Inline code and
+  // links remain breakable so a long atom cannot force that column to overflow.
   const runningText = PROSE;
   // A heading inside a tool result card is a STRUCTURAL divider — one file in a
   // multi-file `cat`, one occurrence in an index, one step in a batch — not a
@@ -3585,9 +3585,9 @@ export const UserMessage = memo(function UserMessage({
       className={fill ? mediaTileContentClass : mediaContentClass}
     />
   );
-  // The bubble uses the same ragged prose rule as answers. Its raw text can contain
+  // The bubble uses the same justified prose rule as answers. Its raw text can contain
   // paths and URLs that the renderer cannot scope separately, so `break-words` remains
-  // the last-resort overflow guard without changing ordinary word spacing.
+  // the last-resort overflow guard while hyphenation moderates ordinary word spacing.
   return (
     <article className="mt-4 w-full">
       <div className="mb-1 font-mono text-meta font-bold text-you-role">
