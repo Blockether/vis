@@ -147,12 +147,16 @@ _main()
     {:lines lines :done done}))
 
 (defn- stderr-tail
-  "What the child printed to stderr, as line strings — waiting BRIEFLY for the
-   pump to reach EOF, so a just-exited child's last words are not lost to a
-   race."
+  "What the child printed to stderr, as line strings — waiting for the pump to
+   reach EOF, so a just-exited child's last words are not lost to a race.
+
+   Reached only after the process was reaped, so EOF is already on its way and
+   the wait ends in microseconds. The ceiling exists for the loaded machine that
+   has not yet scheduled the pump thread: at 500 ms a busy CI runner answered a
+   dead launch with no tail at all, losing the one line that explained it."
   [info]
   (let [{:keys [lines done]} (:stderr info)]
-    (when lines (deref done 500 nil) (vec (remove str/blank? @lines)))))
+    (when lines (deref done 5000 nil) (vec (remove str/blank? @lines)))))
 
 (defn status
   "STRING-keyed lifecycle view (crosses as a tool `:result`): `result`, `cwd`,
