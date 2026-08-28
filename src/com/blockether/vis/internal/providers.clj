@@ -847,7 +847,12 @@
    leave the last-known value untouched."
   []
   (when (compare-and-set! fleet-refreshing false true)
-    (future (try (reset! fleet-cache {:at (util/now-ms) :val (configured-providers)})
+    (future (try (let [v (configured-providers)]
+                   ;; Stamp when the enumeration FINISHED. A snapshot dated from
+                   ;; before a ~200ms enumeration is born part-stale, and one
+                   ;; slower than the TTL would be stale on arrival — every later
+                   ;; read would fire yet another refresh, forever.
+                   (reset! fleet-cache {:at (util/now-ms) :val v}))
                  (catch Throwable _ nil)
                  (finally (reset! fleet-refreshing false))))))
 
@@ -871,7 +876,7 @@
         @fleet-cache]
 
     (cond (nil? at) (let [v (configured-providers)]
-                      (reset! fleet-cache {:at now :val v})
+                      (reset! fleet-cache {:at (util/now-ms) :val v})
                       v)
           (>= (- now (long at)) (long fleet-cache-ttl-ms)) (do (refresh-fleet-cache!) val)
           :else val)))

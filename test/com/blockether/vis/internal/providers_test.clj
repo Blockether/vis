@@ -162,8 +162,11 @@
           (providers/configured-providers-cached))
         (is (= 1 @calls) "only ONE background refresh runs (single-flight)")
         (deliver gate true)
+        ;; Single-flight is asserted ABOVE, while the refresh is provably in
+        ;; flight. Once the gate opens that refresh is DONE, so any later read
+        ;; is free to start a new one — counting calls here pinned a promise the
+        ;; product never made, and lost the bet on a loaded runner.
         (await-value providers/configured-providers-cached fleet)
-        (is (= 1 @calls) "and the refresh that lands is that same one")
         (is (= fleet (providers/configured-providers-cached)) "the refreshed snapshot lands")))
     (providers/invalidate-configured-providers!)))
 
