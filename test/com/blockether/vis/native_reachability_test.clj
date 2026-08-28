@@ -31,7 +31,6 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.manifest :as manifest]
-            [com.blockether.vis.internal.nativeimage :as nativeimage]
             [lazytest.core :refer [defdescribe expect it]]
             [yamlstar.core :as yamlstar]))
 
@@ -123,33 +122,6 @@
                 "[ring.adapter.jetty9 :as jetty]"))))
 
 
-(defn- with-os-name
-  "Run `f` with the build host's reported `os.name`, restoring the real one."
-  [os f]
-  (let [original (System/getProperty "os.name")]
-    (try (System/setProperty "os.name" os) (f) (finally (System/setProperty "os.name" original)))))
-
-;; Regression: v0.1.32 was the last native release whose Linux binaries shipped.
-;; v0.1.33 added the FFM downcall registration below, and v0.1.33/34/35 all died in
-;; `native-binary-paints-the-tui-test` with a SIGSEGV inside the generated stub for
-;; lanterna's `open("/dev/tty", …)` — on x64 AND arm64, every attempt. Registering the
-;; descriptor is what lets `TTYDeviceControl`'s <clinit> succeed in the image; skipping
-;; it leaves that <clinit>'s own `catch Throwable` to mark the native TTY unsupported,
-;; and the terminal forks /bin/stty exactly as it did through v0.1.32.
-(defdescribe
-  native-tty-downcalls-are-not-registered-on-linux-test
-  (it "skips the FFM registration when the image is built on Linux"
-      (let [out (with-out-str (with-os-name "Linux" #(nativeimage/-duringSetup nil nil)))]
-        (expect (re-find #"SKIPPED on Linux" out))
-        (expect (nil? (re-find #"registered 5 FFM downcalls" out)))))
-  (it "still takes the fast path on the platform it was proven on"
-      ;; The builder class is HOSTED-ONLY, so off Linux this reaches the
-      ;; registration and fails on `RuntimeForeignAccess` being absent from a
-      ;; plain JVM — which is precisely NOT the Linux skip.
-      (let [out (with-out-str (with-os-name "Mac OS X" #(nativeimage/-duringSetup nil nil)))]
-        (expect (nil? (re-find #"SKIPPED on Linux" out))))))
-
-
 (def ^:private manifest-file (io/file "resources" "META-INF" "vis" "manifest.edn"))
 
 (defn- manifest-initialization-nses
@@ -216,8 +188,8 @@
        set))
 
 ;; Regression: native binaries cannot define a namespace when a lazy handler is
-;; first selected. The build keeps JVM initialization cheap while treating the
-;; closed first-party source set and manifest initializer namespaces as reachable.
+;; first selected, so every namespace the engine resolves BY NAME at runtime has to
+;; belong to the first-party source closure the image is AOT-compiled from.
 ;;
 ;; Regression: once a manifest entry became a MAP, reading it as a bare symbol
 ;; threw ClassCastException here, so this gate stopped checking anything at all
@@ -228,32 +200,16 @@
                        (manifest-initialization-nses)
 
                        sources
-                       (first-party-source-nses)
-
-                       build-src
-                       (slurp (io/file "build.clj"))]
+                       (first-party-source-nses)]
 
                    (expect (seq initializers))
                    (expect (empty? (remove sources initializers))
-                           "every initializer namespace must be in first-party source")
-                   (expect (str/includes? build-src
-                                          "(manifest-initialization-namespaces class-dir)")
-                           "the native preload must derive initializer roots from manifest.edn")))
-             (it "preloads the first-party source closure for implementations resolved by name"
-                 (let [sources
-                       (first-party-source-nses)
-
-                       missing
-                       (sort (remove sources (nses-loaded-by-name)))
-
-                       build-src
-                       (slurp (io/file "build.clj"))]
-
+                           "every initializer namespace must be in first-party source")))
+             (it "keeps every namespace resolved by name inside the first-party source closure"
+                 (let [missing (sort (remove (first-party-source-nses) (nses-loaded-by-name)))]
                    (expect (empty? missing)
                            (str "runtime-resolved namespaces missing from first-party source: "
-                                (pr-str missing)))
-                   (expect (re-find #"source\s+\(map\s+str\s+\(source-namespaces\)\)" build-src)
-                           "the native preload must include the full first-party source closure"))))
+                                (pr-str missing))))))
 
 
 ;; Regression: the v0.1.33-v0.1.35 binaries — and the 2026-08-13 dry run — died in

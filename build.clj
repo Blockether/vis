@@ -23,7 +23,6 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.tools.build.api :as b]
-            [com.blockether.vis.internal.manifest :as manifest]
             [deps-deploy.deps-deploy :as dd]))
 
 (def version
@@ -666,111 +665,6 @@
     (filterv #(.exists (io/file %)) dirs)))
 
 
-(defn- ns-name-of
-  "The namespace symbol of a Clojure source string, or nil. Reads the first
-   form so metadata before the name (e.g. `(ns ^{:doc …} foo)`) is handled, and
-   files loaded via `in-ns` (no `(ns …)` form) are skipped."
-  [content]
-  (try (with-open [r (java.io.PushbackReader. (java.io.StringReader. content))]
-         (binding [*read-eval* false]
-           (let [form (read {:read-cond :allow :eof nil} r)]
-             (when (and (seq? form) (= 'ns (first form))) (first (filter symbol? (rest form)))))))
-       (catch Throwable _ nil)))
-
-(defn- source-namespaces
-  "Every first-party Clojure namespace under the production source roots. Native
-   image treats this closed source set as reachable, including code loaded by name."
-  []
-  (->> (all-source-roots)
-       (map io/file)
-       (filter #(.isDirectory ^java.io.File %))
-       (mapcat file-seq)
-       (filter #(and (.isFile ^java.io.File %)
-                     (re-matches #".*\.cljc?$" (.getName ^java.io.File %))))
-       (keep #(ns-name-of (slurp %)))
-       distinct
-       (sort-by str)
-       vec))
-
-(def ^:private warn-on-reflection-re #"\(set!\s+\*(?:warn-on-reflection|unchecked-math)\*")
-
-(defn- preload-namespaces
-  "Namespaces whose source has a top-level `(set! *warn-on-reflection* …)` /
-   `(set! *unchecked-math* …)`. On GraalVM these must be initialized via `require`
-   (which binds the var) BEFORE build-time class init runs their `<clinit>` raw on
-   a parallel worker — otherwise the `set!` throws `Can't change/establish root
-   binding`. Scans every source dir + dependency jar on the :native classpath.
-   The native-image Feature reads this list and requires each one. See
-   native-image handling (com.blockether.vis.internal.nativeimage)."
-  [basis]
-  (let [cljc?
-        #(re-matches #".*\.cljc?$" %)
-
-        from-dir
-        (fn [d]
-          (->> (file-seq (io/file d))
-               (filter #(and (.isFile ^java.io.File %) (cljc? (.getName ^java.io.File %))))
-               (keep (fn [f]
-                       (let [c (slurp f)]
-                         (when (re-find warn-on-reflection-re c) (ns-name-of c)))))))
-
-        from-jar
-        (fn [jar]
-          (with-open [zf (java.util.zip.ZipFile. ^String jar)]
-            (doall (->> (enumeration-seq (.entries zf))
-                        (filter #(cljc? (.getName ^java.util.zip.ZipEntry %)))
-                        (keep (fn [e]
-                                (let [c (slurp (.getInputStream zf ^java.util.zip.ZipEntry e))]
-                                  (when (re-find warn-on-reflection-re c) (ns-name-of c)))))))))]
-
-    (->> (:classpath-roots basis)
-         (mapcat (fn [r]
-                   (let [f (io/file r)]
-                     (cond (not (.exists f)) nil
-                           (str/ends-with? r ".jar") (from-jar r)
-                           (.isDirectory f) (from-dir r)
-                           :else nil))))
-         (remove nil?)
-         distinct
-         (sort-by str)
-         vec)))
-
-(defn- manifest-initialization-namespaces
-  "Namespace of every initializer in the one closed distribution manifest, read
-   through the manifest's OWN parser so the image cannot be built from a shape the
-   runtime would refuse."
-  [class-dir]
-  (let [path (io/file class-dir "META-INF" "vis" "manifest.edn")]
-    (mapv (comp namespace :register) (manifest/parse (str path) (slurp path)))))
-
-(defn- write-preload-namespaces!
-  [class-dir basis]
-  ;; The native Feature requires this closed set at build time. Initializers come
-  ;; from the one runtime manifest; all first-party source namespaces are included
-  ;; so a handler may remain lazy on the JVM without disappearing from the image.
-  (let [warn
-        (map str (preload-namespaces basis))
-
-        source
-        (map str (source-namespaces))
-
-        initializers
-        (manifest-initialization-namespaces class-dir)
-
-        nses
-        (->> (concat warn source initializers)
-             distinct
-             sort
-             vec)
-
-        out
-        (io/file class-dir "META-INF" "vis-native-image" "preload.edn")]
-
-    (io/make-parents out)
-    (spit out (pr-str nses))
-    (println "Preload list:" (count nses)
-             "namespaces (dependencies with reflection flags + first-party source) ->" (str out))))
-
 (defn- write-migration-indexes!
   "Flyway discovers migrations by LISTING its classpath location dir — which
    native-image can't do. For every `**/migration/` dir of `.sql` we copied,
@@ -793,7 +687,7 @@
 
 (defn- prepare-native-classes!
   "AOT-compile every namespace (core and extensions) into `native-class-dir`,
-   copy all resources, and write the native preload list. Shared by `uber` and
+   copy all resources. Shared by `uber` and
    `native`; returns the `:native`-alias basis."
   []
   (b/delete {:path native-class-dir})
@@ -817,8 +711,6 @@
 
       (b/delete {:path (.getPath f)})
       (println "Swept agent-state dir from class-dir:" (.getPath f)))
-    ;; list every namespace the native Feature must require before build-time init
-    (write-preload-namespaces! native-class-dir basis)
     ;; index Flyway migrations so they're discoverable without dir listing
     (write-migration-indexes! native-class-dir)
     ;; `vis/VERSION` resource: what `vis-agent --version` prints and the gateway
@@ -1157,12 +1049,11 @@
         (mapv #(str "-J" %) (truststore-properties nil))]
 
     (cond-> ["-cp" (native-classpath basis) "-o" native-bin
-             ;; Restricted native access (java.lang.foreign): lanterna's TTYDeviceControl
-             ;; drives the TTY with termios/ioctl downcalls instead of forking /bin/stty.
-             ;; Without this the JDK prints a 4-line "restricted method" warning on the
-             ;; first paint — and a future JDK blocks the call outright. The downcall
-             ;; DESCRIPTORS themselves are registered in the build Feature
-             ;; (com.blockether.vis.internal.nativeimage/-duringSetup).
+             ;; Restricted native access (java.lang.foreign): rift's downcalls and
+             ;; the GraalPy/Truffle host need it, and lanterna's TTYDeviceControl
+             ;; probes for it before degrading to forking /bin/stty. Without this the
+             ;; JDK prints a 4-line "restricted method" warning on the first paint —
+             ;; and a future JDK blocks the call outright.
              "--enable-native-access=ALL-UNNAMED"
              ;; …and that class must decide IN THE BINARY. Its <clinit> builds the
              ;; termios/ioctl MethodHandles; graal-build-time initializes it inside the
@@ -1172,9 +1063,9 @@
              ;; `DowncallStubsHolder` the first time the TUI opened /dev/tty — measured
              ;; on v0.1.33-v0.1.35 and again on the 2026-08-13 dry run, in
              ;; `native-binary-paints-the-tui-test`, on x64 and arm64 alike. Initialized
-             ;; at RUN time it decides for itself: the termios fast path where the
-             ;; descriptors were registered (macOS), and lanterna's own catch-and-degrade
-             ;; to forking /bin/stty where they were not.
+             ;; at RUN time it decides for itself, and since the image registers no FFM
+             ;; downcall descriptors that decision is lanterna's own catch-and-degrade
+             ;; to forking /bin/stty.
              "--initialize-at-run-time=com.googlecode.lanterna.terminal.ansi.TTYDeviceControl"
              "-H:IncludeResources=META-INF/vis/.*" "-H:IncludeResources=.*\\.edn$"
              ;; the build-written `vis/VERSION` (git sha) read by `vis-agent --version`

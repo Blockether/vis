@@ -60,9 +60,9 @@
         ;;      the ANSI cursor-parking round-trip that silently degrades to 80x24. Every
         ;;      call falls back to stty; force the old path with
         ;;      -Dcom.googlecode.lanterna.terminal.UnixTerminal.nativeTTY=false. Needs
-        ;;      --enable-native-access=ALL-UNNAMED (see the root deps.edn aliases) and,
-        ;;      in the native image, the downcall descriptors
-        ;;      com.blockether.vis.internal.nativeimage registers.
+        ;;      --enable-native-access=ALL-UNNAMED (see the root deps.edn aliases); the
+        ;;      native image registers no FFM downcall descriptors, so the binary takes
+        ;;      that stty fallback.
         ;;  15. No Swing/AWT emulator: the whole terminal.swing package (17 classes) is
         ;;      DELETED and DefaultTerminalFactory only ever builds a text terminal (its
         ;;      emulator switches are no-ops), so nothing can make AWT reachable from the
