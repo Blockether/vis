@@ -5594,9 +5594,9 @@ export function SessionScreen({
          its full height. With the floor gone the row also FOLLOWED ITS CONTENT,
          so anything that changed the title block moved the whole heading on a
          phone and nowhere else. */}
-        <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)]">
+        <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] mouse:min-h-9 mouse:pt-0">
           <BackButton label="Back to sessions" onClick={onBack} />
-          <div className="min-w-0 flex-1 self-center px-3 py-1.5">
+          <div className="min-w-0 flex-1 self-center px-3 py-1.5 mouse:py-1">
             {/* THE TITLE LEADS THE SCREEN, so it is the largest thing on the bar.
                 It read `text-body` — the transcript's own prose step, set right
                 under it — which left the screen a reader lives in wearing the
