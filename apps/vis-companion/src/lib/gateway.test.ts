@@ -933,3 +933,43 @@ describe('a gateway that stops serving this build', () => {
     stop();
   });
 });
+
+// Regression: a screen that left (unmounted, session switched) aborted its signal, and
+// the request path still started the fetch before racing it — the abandoned fetch then
+// rejected with nobody listening, so Node called it an unhandled rejection and the whole
+// companion suite exited non-zero with all 174 files passing.
+describe('GatewayClient abandoned requests', () => {
+  it('handles the rejection of a fetch its caller had already aborted', async () => {
+    const stop = new AbortController();
+    stop.abort();
+    // A plain function, never `vi.fn`: the spy tracks the promise it returns, which
+    // attaches the very handler whose absence is the defect.
+    let calls = 0;
+    vi.stubGlobal('fetch', () => {
+      calls += 1;
+      return Promise.reject(new DOMException('Aborted', 'AbortError'));
+    });
+    const { GatewayClient } = await import('./gateway');
+    // Reached through `globalThis` because this app compiles without Node types.
+    const node = globalThis as unknown as {
+      process: {
+        on: (event: string, listener: (reason: unknown) => void) => void;
+        off: (event: string, listener: (reason: unknown) => void) => void;
+      };
+    };
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown) => unhandled.push(reason);
+    node.process.on('unhandledRejection', record);
+    try {
+      await expect(new GatewayClient(conn).status(stop.signal)).rejects.toThrow();
+      // Node reports an abandoned rejection a macrotask after the microtasks drain.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    } finally {
+      node.process.off('unhandledRejection', record);
+    }
+
+    expect(calls).toBe(1);
+    expect(unhandled).toEqual([]);
+  });
+});

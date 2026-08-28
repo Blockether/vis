@@ -4281,8 +4281,14 @@ export class GatewayClient {
  * resource cleanup, not the mechanism on which reconnect liveness depends.
  */
 function raceAbort<T>(work: PromiseLike<T> | T, signal: AbortSignal): Promise<T> {
-  if (signal.aborted)
+  if (signal.aborted) {
+    // The caller already STARTED `work` — an in-flight fetch or body read. Returning
+    // without touching it leaves its own abort rejection with no handler, which Node
+    // reports as an unhandled rejection and which fails a whole test run whose every
+    // case passed. Swallow only that abandoned tail; the caller still sees the abort.
+    void Promise.resolve(work).catch(() => undefined);
     return Promise.reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+  }
   return new Promise<T>((resolve, reject) => {
     let settled = false;
     const cleanup = () => signal.removeEventListener("abort", onAbort);
