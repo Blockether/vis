@@ -1,4 +1,4 @@
-(ns com.blockether.vis.human-input
+(ns com.blockether.vis.view
   "Builders for the two things an extension shows the operator: the typed pause
    it WAITS on — `com.blockether.vis.core/request-human-input!` — and the live
    view it does not, `com.blockether.vis.core/with-live-view!`.
@@ -8,21 +8,21 @@
    things a hand-typed map gets wrong cannot happen. The node TYPE is the
    function you called, so `:type \"plaintxt\"` is a compile-time unresolved
    symbol instead of a refused request at run time; and the node is VALIDATED
-   the moment it is built, by the engine's own [[com.blockether.vis.internal.human-input/normalize-node]]
+   the moment it is built, by the engine's own [[com.blockether.vis.internal.view/normalize-node]]
    seam, so a bad `:default`, an unknown key or a `:select` with no options
    throws at the line that built it rather than in front of the human.
 
        (require '[com.blockether.vis.core :as vis]
-                '[com.blockether.vis.human-input :as hi])
+                '[com.blockether.vis.view :as view])
 
        (vis/request-human-input!
-         (hi/form {:title \"Deploy\" :description \"Where this build lands.\"}
-                  (hi/heading \"Target\")
-                  (hi/paragraph \"Staging pages nobody.\")
-                  (hi/row (hi/select \"env\" [\"staging\" \"prod\"] {:label \"Environment\"
-                                                                :is-required true})
-                          (hi/slider \"canary\" {:label \"Canary %\" :min 0 :max 100 :step 5}))
-                  (hi/password \"token\" {:label \"Deploy token\" :is-required true})))
+         (view/form {:title \"Deploy\" :description \"Where this build lands.\"}
+                    (view/heading \"Target\")
+                    (view/paragraph \"Staging pages nobody.\")
+                    (view/row (view/select \"env\" [\"staging\" \"prod\"] {:label \"Environment\"
+                                                                      :is-required true})
+                              (view/slider \"canary\" {:label \"Canary %\" :min 0 :max 100 :step 5}))
+                    (view/password \"token\" {:label \"Deploy token\" :is-required true})))
 
    Three node contracts, exactly as the engine sees them: a FIELD holds one
    answer and is keyed by its name, a GROUP ([[row]] / [[column]]) only arranges
@@ -39,21 +39,21 @@
    verdict carrying the markdown the model reads.
 
        (vis/with-live-view!
-         (hi/view {:title \"CI\"}
-                  (hi/status \"now\" \"Polling GitHub…\" {:tone \"running\"})
-                  (hi/table \"jobs\" [(hi/table-column \"job\" \"Job\")
-                                    (hi/table-column \"took\" \"Took\" {:align \"right\"})]))
+         (view/view {:title \"CI\"}
+                    (view/status \"now\" \"Polling GitHub…\" {:tone \"running\"})
+                    (view/table \"jobs\" [(view/table-column \"job\" \"Job\")
+                                        (view/table-column \"took\" \"Took\" {:align \"right\"})]))
          (fn [view-id]
            (vis/patch-live-view!
              view-id
              [{:op \"set\" :node-id \"now\" :text \"18 jobs\" :tone \"ok\"}
               {:op \"append\" :node-id \"jobs\"
-               :rows [(hi/table-row \"build\" [\"tests / ubuntu\" \"13m0s\"] {:tone \"ok\"})]}])))
+               :rows [(view/table-row \"build\" [\"tests / ubuntu\" \"13m0s\"] {:tone \"ok\"})]}])))
 
    Python extensions get the SAME names on the `vis` module —
    `vis.select('env', ['staging', 'prod'], label='Environment')` — built by
    the same engine seam across the JSON boundary."
-  (:require [com.blockether.vis.internal.human-input :as engine]))
+  (:require [com.blockether.vis.internal.view :as engine]))
 
 (set! *warn-on-reflection* true)
 
@@ -229,7 +229,7 @@
 ;; Live views — the picture the human WATCHES while the work runs
 ;;
 ;; Nodes are built and checked exactly like fields, through the engine's own
-;; [[com.blockether.vis.internal.human-input/normalize-live-node]] seam. The four
+;; [[com.blockether.vis.internal.view/normalize-live-node]] seam. The four
 ;; STATE ops (`set`, `append`, `clear`, `remove`) deliberately get no builder:
 ;; each is a two-key map the engine already refuses by name against its closed
 ;; table, and an invented `set-node` here would mint a second vocabulary beside
@@ -308,9 +308,10 @@
      :label label)))
 
 (defn table-row
-  "One row of a [[table]], keyed by `id`: `cells` in the order the columns were
-   declared, optionally `:tone`d. Built rather than typed because it is the one
-   POSITIONAL thing here — a cell means whatever column stands over it.
+  "One row of a [[table]], keyed by `id`: `cells` in column order, optionally
+   `:tone`d or placed below a collapsible `:branch` label shared by sibling rows.
+   Built rather than typed because it is the one POSITIONAL thing here — a cell
+   means whatever column stands over it.
 
    A row is not a node, so it is checked by the table, or the patch, carrying it."
   ([id cells] {:id id :cells (vec cells)})

@@ -14,7 +14,7 @@
 ;;   :outside/local   a real local implementation: a file, stderr, a subprocess.
 ;;   :outside/prompt  the terminal stands in for the human channel Vis would raise.
 ;;   :outside/refuse  no honest local answer exists, and `:op/refusal` says why.
-{:contract/version 4
+{:contract/version 5
  :contract/ops
  [{:op/name "state_get"
    :op/global "__vis_host_state_get__"
@@ -109,8 +109,8 @@
  ;; trip per written line would park the extension on the journal writer once per
  ;; line, which is why the batching is part of the contract and not a nicety.
  ;;
- ;; Not to be confused with `human_input.live` in the rendered package document:
- ;; that is the view VOCABULARY the engine owns, this is the verb's grammar.
+ ;; Not to be confused with `view.live` in the rendered package document:
+ ;; that is the View VOCABULARY the engine owns, this is the verb's grammar.
  :contract/live
  {:live/default-op "open"
   :live/spawn-ops ["open"]

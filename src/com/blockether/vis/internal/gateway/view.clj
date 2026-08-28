@@ -1,39 +1,21 @@
-(ns com.blockether.vis.internal.gateway.human-input
-  "Gateway half of the typed human-input pause AND of the live view.
+(ns com.blockether.vis.internal.gateway.view
+  "Gateway transport for the shared View lifecycle.
 
-   `com.blockether.vis.internal.human-input` BLOCKS the extension thread and
-   publishes `:human-input/request` / `:human-input/close` on every channel the
-   request names — `[:tui :app]` by default. The TUI draws its dialog from the
-   `:tui` channel; this namespace serves the `:app` channel and is the reason a
-   companion-app operator ever learns a run is waiting on them:
+   The engine publishes `:view/open`, `:view/patch` and `:view/close` envelopes on
+   every selected channel. This namespace projects the `:app` copy into the matching
+   `view.open`, `view.patch` and `view.close` session events, preserving `:kind` so
+   clients choose capability policy without guessing from event names.
 
-     - the request becomes a `human_input.request` SESSION event, so it rides
-       SSE live, sits in the replay ring for a client that connects later, and
-       reaches the push tap (which alerts the phone);
-     - the close becomes `human_input.close`, so every client drops the form
-       the moment ANY surface answers — TUI, app or a timeout;
-     - [[pending]] / [[submit!]] / [[cancel!]] back the REST routes so the app
-       can answer a request it finds already open.
-
-   A LIVE VIEW is the same interaction inverted: nothing blocks, the human only
-   watches work move and may stop it. Its three events cross here the same way
-   (`human_input.live.open` / `.patch` / `.close`), with one difference that is
-   about the phone and not about the engine: patches are COALESCED on a tick
-   ([[live-flush-ms]]) before they are published, because a run that streams a
-   build log would otherwise pay a durable journal write per line.
-   [[live-views]] / [[live-view-of]] / [[live-log-range]] / [[focus-live!]] /
-   [[interrupt-live!]] back the REST routes, so a client that joined mid-flight
-   reads the picture back instead of replaying a stream it never saw.
-
-   Every request names the session it parks — `human-input/request!` refuses one
-   that does not — so a run waiting on a human is always a run the app can see.
-   A live view names its session for the same reason."
+   An `:input` View blocks and can be submitted or cancelled. A `:live` View does not
+   block; its patches are coalesced on [[live-flush-ms]] before durable publication,
+   and it can be focused or interrupted. Both kinds replay and resync through the
+   same View owner while their capability-specific REST actions remain explicit."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.human-input :as human-input]
-            [com.blockether.vis.internal.human-input.live-sink :as live-sink]
-            [com.blockether.vis.internal.human-input.spec :as hi-spec])
+            [com.blockether.vis.internal.view :as view]
+            [com.blockether.vis.internal.view.sink :as sink]
+            [com.blockether.vis.internal.view.spec :as view-spec])
   (:import [java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit]))
 
 (set! *warn-on-reflection* true)
@@ -42,18 +24,15 @@
 
 (def ^:private listener-id ::gateway)
 
-(def live-open-event
-  "Session event a live view is DECLARED with. Carries the whole materialized
-   view, so a client that has this frame needs nothing else to start painting."
-  "human_input.live.open")
+(def view-open-event
+  "Session event that mounts either View kind with its complete starting document."
+  "view.open")
 
-(def live-patch-event
-  "Session event carrying accepted operations against an open view."
-  "human_input.live.patch")
+(def view-patch-event
+  "Session event carrying accepted operations against an open View."
+  "view.patch")
 
-(def live-close-event
-  "Session event a live view ENDS with, verdict and all."
-  "human_input.live.close")
+(def view-close-event "Session event that ends either View kind with its result." "view.close")
 
 (defn- session-of
   "Session id a request view / close event belongs to, as a string, or nil."
@@ -63,20 +42,17 @@
           str/trim
           not-empty))
 
-(defn pending
-  "Pending human-input request views for session `sid`, oldest first. These are
-   the requests this session is BLOCKED on right now."
+(defn input-views
+  "Input Views session `sid` is BLOCKED on right now, oldest first."
   [sid]
   (let [sid (str sid)]
-    (filterv #(= sid (session-of %)) (human-input/pending-requests))))
+    (filterv #(= sid (session-of %)) (view/pending-requests))))
 
-(defn request-of
-  "The pending request `request-id` when it belongs to `sid`, else nil. Every
-   REST answer goes through this: a request id from another session (or an
-   already-settled one) must not be answerable."
-  [sid request-id]
-  (let [view (human-input/pending-request (str request-id))]
-    (when (and view (= (str sid) (session-of view))) view)))
+(defn input-view-of
+  "Input View `view-id` when it is pending in `sid`, else nil."
+  [sid view-id]
+  (let [document (view/pending-request (str view-id))]
+    (when (and document (= (str sid) (session-of document))) document)))
 
 (defn submit!
   "Answer `request-id` with a raw `field id -> value` map. Returns
@@ -84,14 +60,14 @@
    when a value fails validation — the request stays pending so the operator
    can fix it."
   [request-id values]
-  (human-input/submit! (str request-id) values))
+  (view/submit! (str request-id) values))
 
 (defn cancel!
   "Cancel `request-id`. Returns true when it was still pending and dismissable:
    the engine refuses a request declared `is_cancellable false`, so the app is
    held to exactly the rule the TUI dialog paints."
   [request-id]
-  (human-input/cancel! (str request-id) "cancelled"))
+  (view/cancel! (str request-id) "cancelled"))
 
 ;; --- Live views (a run the human WATCHES) ---
 
@@ -182,8 +158,9 @@
   [frame]
   (when (seq (:ops frame))
     (state/append-event! (:session-id frame)
-                         live-patch-event
-                         {:view-id (:view-id frame)
+                         view-patch-event
+                         {:kind :live
+                          :view-id (:view-id frame)
                           :first-seq (:first-seq frame)
                           :patch {:view-id (:view-id frame) :seq (:seq frame) :ops (:ops frame)}})))
 
@@ -231,22 +208,22 @@
    client reads after joining late, waking up or losing its stream."
   [sid]
   (let [sid (str sid)]
-    (filterv #(= sid (session-of %)) (human-input/live-views))))
+    (filterv #(= sid (session-of %)) (view/live-views))))
 
 (defn live-view-of
   "Live view `view-id` when it belongs to `sid`, else nil. Every REST answer goes
    through this: a view id from another session must not be readable or
    stoppable from here."
   [sid view-id]
-  (let [view (human-input/live-view (str view-id))]
+  (let [view (view/live-view (str view-id))]
     (when (and view (= (str sid) (session-of view))) view)))
 
 (def ^:private live-log-page
   "Lines one log page answers: a WINDOW, the same amount a surface holds live
-   ([[hi-spec/log-defaults]]). It is both the default and the ceiling — a client
+   ([[view-spec/log-defaults]]). It is both the default and the ceiling — a client
    asking for more than a window is asking for the file, and the record IS the
    file."
-  (:window-lines hi-spec/log-defaults))
+  (:window-lines view-spec/log-defaults))
 
 (defn live-log-range
   "`limit` lines of log node `node-id` in view `view-id` of session `sid`, from
@@ -258,16 +235,16 @@
    the registry: a view that has already closed still answers, which is what
    makes a finished run's log readable at all."
   [sid view-id node-id from limit]
-  (live-sink/log-range (live-sink/view-file (str sid) (str view-id))
-                       node-id
-                       (max 0 (long (or from 0)))
-                       (min (long live-log-page) (max 1 (long (or limit live-log-page))))))
+  (sink/log-range (sink/view-file (str sid) (str view-id))
+                  node-id
+                  (max 0 (long (or from 0)))
+                  (min (long live-log-page) (max 1 (long (or limit live-log-page))))))
 
 (defn focus-live!
   "Focus `item-ids` in table `node-id` of open live view `view-id`. The engine
    records and publishes the same patch an extension would write."
   [view-id node-id item-ids]
-  (human-input/focus-live! (str view-id) node-id item-ids))
+  (view/focus-live! (str view-id) node-id item-ids))
 
 (defn interrupt-live!
   "Stop live view `view-id` from the app, with `note` — the comment the person
@@ -275,55 +252,35 @@
    view had already ended: a view is ALWAYS stoppable, exactly as Escape always
    stops the one the TUI is painting."
   ([view-id] (interrupt-live! view-id nil))
-  ([view-id note] (human-input/interrupt-live! (str view-id) note)))
+  ([view-id note] (view/interrupt-live! (str view-id) note)))
 
 (defn on-channel-event!
-  "Translate one `:app` channel event into a session event. Unknown ops are
-   ignored — the channel bus is shared.
-
-   Every request names a session: `human-input/request!` refuses one that does
-   not, so the app is always told which run is parked. A live view names its
-   session the same way, and its three events cross as the same kind of ordinary
-   journal event: they ride SSE live, sit in the replay ring for a client that
-   connects later, and reach a client in ANOTHER process — which is what lets a
-   second terminal paint the very same view."
+  "Project one canonical `:app` View event into the session journal."
   [event]
   (case (:op event)
-    :human-input/request
-    (when-let [sid (session-of (:request event))]
-      (state/append-event! sid "human_input.request" {:request (:request event)}))
-
-    :human-input/close
-    ;; `:session-id` rides on the close event itself: by the time it is
-    ;; published the request is already out of the pending registry.
+    :view/open
     (when-let [sid (session-of event)]
       (state/append-event! sid
-                           "human_input.close"
-                           {:request-id (:request-id event) :reason (:reason event)}))
+                           view-open-event
+                           {:kind (:kind event) :view-id (:view-id event) :view (:view event)}))
 
-    :human-input/live-open
-    (when-let [sid (session-of event)]
-      (state/append-event! sid live-open-event {:view-id (:view-id event) :view (:view event)}))
+    :view/patch
+    (when (and (= :live (:kind event)) (session-of event))
+      (buffer-patch! (session-of event) (:view-id event) (:patch event)))
 
-    :human-input/live-patch
+    :view/close
     (when-let [sid (session-of event)]
-      (buffer-patch! sid (:view-id event) (:patch event)))
-
-    :human-input/live-close
-    (when-let [sid (session-of event)]
-      ;; An ending must never overtake the work it ends: whatever this view
-      ;; still holds is published first, in the order the engine accepted it.
-      (flush-view! (:view-id event))
+      ;; An ending never overtakes buffered live work.
+      (when (= :live (:kind event)) (flush-view! (:view-id event)))
       (state/append-event! sid
-                           live-close-event
-                           {:view-id (:view-id event) :result (:result event)}))
+                           view-close-event
+                           {:kind (:kind event) :view-id (:view-id event) :result (:result event)}))
 
     nil)
   nil)
 
 (defn install!
-  "Subscribe the gateway to `:app` human-input events. Idempotent — the bus
-   replaces a listener registered under the same id."
+  "Subscribe the gateway to `:app` View lifecycle events. Idempotent."
   []
   (channel-events/add-channel-event-listener! channel-id listener-id on-channel-event!)
   nil)

@@ -1,7 +1,7 @@
-(ns com.blockether.vis.internal.human-input.live-test
+(ns com.blockether.vis.internal.view.materializer-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.human-input.live :as live]
-            [com.blockether.vis.internal.human-input.spec :as hs]
+            [com.blockether.vis.internal.view.materializer :as live]
+            [com.blockether.vis.internal.view.spec :as hs]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- view

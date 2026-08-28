@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 import { coalesceLiveEvents } from "./SessionScreen";
 import type { SseEvent } from "../lib/types";
 
-function event(type: string, seq: number): SseEvent {
-  return { type, seq } as unknown as SseEvent;
+function event(type: string, seq: number, kind?: 'live'): SseEvent {
+  return { type, seq, ...(kind ? { kind } : {}) } as SseEvent;
 }
 
 // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: Activity frames
@@ -15,7 +15,7 @@ describe("Activity stream isolation", () => {
     expect(
       coalesceLiveEvents([
         event("turn.started", 1),
-        event("human_input.live.patch", 2),
+        event("view.patch", 2, "live"),
         event("content.block.delta", 3),
       ]).map((frame) => frame.type),
     ).toEqual(["turn.started", "content.block.delta"]);

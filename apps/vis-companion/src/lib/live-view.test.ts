@@ -1,11 +1,4 @@
-/**
- * The reducer against the engine's own laws.
- *
- * `src/com/blockether/vis/internal/human_input/live.clj` materializes a view in
- * Clojure; this module does it again in TypeScript so a phone that missed no
- * frame never has to ask. Every case here names the law it holds, because a rule
- * that drifts here paints a picture the terminal does not.
- */
+/** The TypeScript materializer against `internal.view.materializer` laws. */
 import { describe, expect, it } from 'vitest';
 import fixture from './live-view.fixture.json';
 import {
@@ -20,13 +13,11 @@ import {
   orderedRows,
   staleLiveViews,
   LIVE_LOG_WINDOW,
-  LIVE_VIEW_CLOSE_EVENT,
-  LIVE_VIEW_OPEN_EVENT,
-  LIVE_VIEW_PATCH_EVENT,
   type LiveNode,
   type LiveView,
 } from './live-view';
 import type { SseEvent } from './types';
+import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, isViewEvent } from './view';
 
 /** The engine's own fixture, read the way the section reads a snapshot. */
 function opened(): LiveView {
@@ -38,7 +29,7 @@ function opened(): LiveView {
 /** One coalesced patch frame, shaped exactly as the gateway publishes it. */
 function frame(view: LiveView, seq: number, ops: unknown[], firstSeq = seq): SseEvent {
   return {
-    type: LIVE_VIEW_PATCH_EVENT,
+    type: VIEW_PATCH_EVENT, kind: 'live',
     view_id: view.id,
     first_seq: firstSeq,
     patch: { view_id: view.id, seq, ops },
@@ -304,16 +295,18 @@ describe('a patch frame', () => {
 describe('the three session events', () => {
   const other: SseEvent = { type: 'turn.delta' };
 
-  it('answers for its own events and no others', () => {
-    expect([LIVE_VIEW_OPEN_EVENT, LIVE_VIEW_PATCH_EVENT, LIVE_VIEW_CLOSE_EVENT].map((type) =>
-      isLiveViewEvent({ type }),
-    )).toEqual([true, true, true]);
+  it('accepts the shared lifecycle only for the live capability', () => {
+    const events = [VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, VIEW_CLOSE_EVENT].map(
+      (type): SseEvent => ({ type, kind: 'live' }),
+    );
+    expect(events.map(isViewEvent)).toEqual([true, true, true]);
+    expect(events.map(isLiveViewEvent)).toEqual([true, true, true]);
+    expect(isLiveViewEvent({ type: VIEW_OPEN_EVENT, kind: 'input' })).toBe(false);
     expect(isLiveViewEvent(other)).toBe(false);
-    expect(isLiveViewEvent({ type: 'human_input.request' })).toBe(false);
   });
 
   it('opens once, however many times the frame arrives', () => {
-    const open: SseEvent = { type: LIVE_VIEW_OPEN_EVENT, view_id: fixture.id, view: fixture };
+    const open: SseEvent = { type: VIEW_OPEN_EVENT, kind: 'live', view_id: fixture.id, view: fixture };
     const once = applyLiveViewEvent([], open);
     const twice = applyLiveViewEvent(once, open);
     expect(once.map((view) => view.id)).toEqual([fixture.id]);
@@ -324,21 +317,21 @@ describe('the three session events', () => {
   // rows go back to the transcript exactly as the terminal gives its band back.
   it('drops the view the close event names, and keeps the list identity otherwise', () => {
     const views = applyLiveViewEvent([], {
-      type: LIVE_VIEW_OPEN_EVENT,
+      type: VIEW_OPEN_EVENT, kind: 'live',
       view_id: fixture.id,
       view: fixture,
     });
     expect(
-      applyLiveViewEvent(views, { type: LIVE_VIEW_CLOSE_EVENT, view_id: fixture.id, result: {} }),
+      applyLiveViewEvent(views, { type: VIEW_CLOSE_EVENT, kind: 'live', view_id: fixture.id, result: {} }),
     ).toEqual([]);
-    expect(applyLiveViewEvent(views, { type: LIVE_VIEW_CLOSE_EVENT, view_id: 'other' })).toBe(views);
+    expect(applyLiveViewEvent(views, { type: VIEW_CLOSE_EVENT, kind: 'live', view_id: 'other' })).toBe(views);
     expect(applyLiveViewEvent(views, frame({ ...views[0], id: 'other' }, 1, []))).toBe(views);
     expect(applyLiveViewEvent(views, other)).toBe(views);
   });
 
   it('folds a patch into the view it names', () => {
     const views = applyLiveViewEvent([], {
-      type: LIVE_VIEW_OPEN_EVENT,
+      type: VIEW_OPEN_EVENT, kind: 'live',
       view_id: fixture.id,
       view: fixture,
     });
@@ -363,7 +356,7 @@ describe('the three session events', () => {
       };
       const running = liveViewFromWire(raw)!;
       const views = applyLiveViewEvent([running], {
-        type: LIVE_VIEW_CLOSE_EVENT,
+        type: VIEW_CLOSE_EVENT, kind: 'live',
         view_id: running.id,
         ts: 99,
         result: {
@@ -399,7 +392,7 @@ describe('the three session events', () => {
       nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
     })!;
     const views = applyLiveViewEvent([running], {
-      type: LIVE_VIEW_CLOSE_EVENT,
+      type: VIEW_CLOSE_EVENT, kind: 'live',
       view_id: running.id,
       ts: 42,
       result: { is_completed: true, reason: 'completed' },
@@ -424,7 +417,7 @@ describe('the three session events', () => {
     })!;
     expect(
       applyLiveViewEvent([running], {
-        type: LIVE_VIEW_CLOSE_EVENT,
+        type: VIEW_CLOSE_EVENT, kind: 'live',
         view_id: running.id,
         result: { view: { activity: { state: 'succeeded' } } },
       }),
@@ -441,7 +434,7 @@ describe('the three session events', () => {
     };
     const next = applyLiveViewEvent(
       [{ ...liveViewFromWire({ ...raw, id: 'activity-1' })!, is_settled: true }],
-      { type: LIVE_VIEW_OPEN_EVENT, view_id: raw.id, view: raw },
+      { type: VIEW_OPEN_EVENT, kind: 'live', view_id: raw.id, view: raw },
     );
     expect(next).toHaveLength(1);
     expect(next[0]).toMatchObject({ id: 'activity-2' });
@@ -488,7 +481,7 @@ describe('what a table and a progress state', () => {
 /**
  * A record is the only thing a settled view leaves behind, so what it folds back
  * into is the whole contract of re-opening one: the picture the run ENDED on, and
- * the verdict that says how. `human-input.live-sink` writes these three lines.
+ * the verdict that says how. `view.sink` writes these three lines.
  */
 describe('the record of a settled view', () => {
   const openLine = JSON.stringify({ kind: 'open', at: 1, view: fixture });
@@ -572,7 +565,7 @@ describe('the record of a settled view', () => {
     expect(record?.reason).toBeUndefined();
   });
 
-  // Copied verbatim out of a record `human-input.live-sink` actually wrote (only the
+  // Copied verbatim out of a record `view.sink` actually wrote (only the
   // ids are shortened): every key in it is spelled by `gateway/wire`, and a fixture
   // written by hand cannot catch the day that encoder changes its mind.
   it('folds a record the engine really wrote, key for key', () => {

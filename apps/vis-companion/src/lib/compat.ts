@@ -16,22 +16,13 @@
 import type { GatewayHealth, GatewayProtocol } from './types';
 
 /**
- * Wire protocol number THIS app build speaks. Bump on a breaking wire change.
- *
- * 3 tells the gateway this build settles a live view from the patches it already
- * applied, so the close frame may arrive without its `result.view` copy. The app
- * reads both shapes; the number is what lets the gateway stop sending the bytes.
+ * Wire protocol number THIS app build speaks. Protocol 4 is the shared View
+ * lifecycle: `view.open`, `view.patch`, `view.close`, plus the required `kind`.
  */
-export const APP_PROTOCOL = 3;
+export const APP_PROTOCOL = 4;
 
-/**
- * Oldest gateway protocol this app accepts: only the current wire contract.
- *
- * Raised to 3 alongside the gateway's own floor, so the two halves refuse each
- * other symmetrically — whichever side is behind is the side named in the
- * verdict, and neither is left reading a shape the other stopped sending.
- */
-export const APP_MIN_GATEWAY_PROTOCOL = 3;
+/** Oldest gateway protocol this app accepts: the shared View contract. */
+export const APP_MIN_GATEWAY_PROTOCOL = 4;
 
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';

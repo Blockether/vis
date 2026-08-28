@@ -1,37 +1,13 @@
 /**
- * A live view — a run SHOWING its work — as the companion app sees it.
- *
- * An extension that has nothing to ASK can still have something to SHOW: a scan
- * sweeping a fleet, a build draining a log, a table filling in row by row. The
- * engine mounts such a view once and then PATCHES it by node id, and the
- * gateway turns the three channel events into the session events
- * `human_input.live.open`, `human_input.live.patch` and `human_input.live.close`.
- *
- * A view is not a question. Nothing here blocks a run, nothing answers, and the
- * only thing the operator can do to one is INTERRUPT it — one POST, not a form.
- * That is why a view is a section on the session screen rather than a dialog.
- * Ordinary views leave when they end; Activity overlays its terminal picture
- * through the short record-filing handoff so running work never flashes stale.
- * The record keeps either kind, the model receives it as data, and settled rows
- * return to the transcript.
- *
- * This module is the pure half: the closed vocabularies the engine declares,
- * wire parsing, and the reduction of those three events into what is on screen.
- * The reducer is the engine's own materializer in TypeScript — `set` merges,
- * `append` upserts keyed items BY ID and keeps the slot the eye left them in, a
- * log's window slides while its record count keeps growing, `clear` empties the
- * window but never the record. Every rule below names the engine function it
- * mirrors (`human-input.live`), because divergence here is a phone painting a
- * picture the terminal never showed.
+ * The live capability of a View: a non-blocking semantic picture driven by patches.
+ * Shared `view.open`, `view.patch`, and `view.close` frames carry `kind: 'live'`;
+ * this module owns the closed document vocabulary and its pure materializer.
  */
 
 import type { SseEvent } from './types';
+import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, viewKind } from './view';
 
-export const LIVE_VIEW_OPEN_EVENT = 'human_input.live.open';
-export const LIVE_VIEW_PATCH_EVENT = 'human_input.live.patch';
-export const LIVE_VIEW_CLOSE_EVENT = 'human_input.live.close';
-
-/** What a view can be MADE of (`human-input.spec/live-node-types`). CLOSED. */
+/** What a view can be MADE of (`view.spec/live-node-types`). CLOSED. */
 export const LIVE_NODE_TYPES = [
   'status',
   'progress',
@@ -44,12 +20,12 @@ export const LIVE_NODE_TYPES = [
 
 /**
  * The one node that paints NOTHING of its own: it ARRANGES the nodes it holds,
- * and it is the FORM's group verbatim (`human-input.spec/group-type-name`), so
+ * and it is the FORM's group verbatim (`view.spec/group-type-name`), so
  * a run lays a view out with the same words it lays a question out with.
  */
 export const LIVE_GROUP_TYPE = 'group';
 
-/** How a group stands what it holds (`human-input.spec/group-directions`). CLOSED. */
+/** How a group stands what it holds (`view.spec/group-directions`). CLOSED. */
 export const LIVE_GROUP_DIRECTIONS = ['row', 'column'] as const;
 /** How a surface COLOURS one line, row, step or stat (`live-tones`). CLOSED. */
 export const LIVE_TONES = ['idle', 'running', 'ok', 'warn', 'error'] as const;
@@ -325,7 +301,7 @@ export interface LiveView {
 }
 
 /**
- * One page of a log node's RECORD, as `GET …/human-input/live/:view/log/:node`
+ * One page of a log node's RECORD, as `GET …/views/live/:view/log/:node`
  * answers it. The section shows a WINDOW; this is how the operator walks back
  * past it without the phone ever holding the whole run.
  */
@@ -1059,12 +1035,11 @@ export function applyLivePatch(view: LiveView, frame: unknown): LiveView {
   return { ...patched, seq };
 }
 
-/** True for the three session events this module reduces. */
+/** True for lifecycle events owned by the live capability. */
 export function isLiveViewEvent(event: SseEvent): boolean {
   return (
-    event.type === LIVE_VIEW_OPEN_EVENT ||
-    event.type === LIVE_VIEW_PATCH_EVENT ||
-    event.type === LIVE_VIEW_CLOSE_EVENT
+    viewKind(event) === 'live' &&
+    (event.type === VIEW_OPEN_EVENT || event.type === VIEW_PATCH_EVENT || event.type === VIEW_CLOSE_EVENT)
   );
 }
 
@@ -1086,7 +1061,7 @@ export function isLiveViewEvent(event: SseEvent): boolean {
  * place the finished picture is written down.
  */
 export function applyLiveViewEvent(views: LiveView[], event: SseEvent): LiveView[] {
-  if (event.type === LIVE_VIEW_CLOSE_EVENT) {
+  if (event.type === VIEW_CLOSE_EVENT) {
     const viewId = text(event.view_id);
     if (viewId === '') return views;
     const at = views.findIndex((view) => view.id === viewId);
@@ -1109,7 +1084,7 @@ export function applyLiveViewEvent(views: LiveView[], event: SseEvent): LiveView
     const kept = views.filter((view) => view.id !== viewId);
     return kept.length === views.length ? views : kept;
   }
-  if (event.type === LIVE_VIEW_OPEN_EVENT) {
+  if (event.type === VIEW_OPEN_EVENT) {
     const view = liveViewFromWire(event.view);
     if (!view) return views;
     const current =
@@ -1120,7 +1095,7 @@ export function applyLiveViewEvent(views: LiveView[], event: SseEvent): LiveView
     merged[at] = view;
     return merged;
   }
-  if (event.type !== LIVE_VIEW_PATCH_EVENT) return views;
+  if (event.type !== VIEW_PATCH_EVENT) return views;
   const viewId = text(event.view_id);
   const at = views.findIndex((view) => view.id === viewId);
   if (at < 0) return views;
@@ -1140,7 +1115,7 @@ export function staleLiveViews(views: LiveView[]): LiveView[] {
  * The RECORD of one settled view, folded back into the picture it ended on.
  *
  * What durably outlives a closed view is the NDJSON the engine appended while it
- * ran (`human-input.live-sink`): the declared view, one line per ACCEPTED patch,
+ * ran (`view.sink`): the declared view, one line per ACCEPTED patch,
  * and the verdict that sealed it. Folding those lines here is the same reduction
  * `applyLiveViewEvent` runs over the stream, run over a file instead — which is
  * what lets an artifact opened months later paint the run without the gateway

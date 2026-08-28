@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.human-input-test
+(ns com.blockether.vis.internal.view-test
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -6,10 +6,10 @@
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl]
-            [com.blockether.vis.internal.human-input :as hi]
-            [com.blockether.vis.internal.human-input.live :as live]
-            [com.blockether.vis.internal.human-input.live-sink :as live-sink]
-            [com.blockether.vis.internal.human-input.spec :as hs]
+            [com.blockether.vis.internal.view :as hi]
+            [com.blockether.vis.internal.view.materializer :as live]
+            [com.blockether.vis.internal.view.sink :as live-sink]
+            [com.blockether.vis.internal.view.spec :as hs]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it throws?]]
             [taoensso.telemere :as tel]))
@@ -38,11 +38,11 @@
    The waiter runs on another thread, so the event may land a beat later."
   [events]
   (loop [attempts 0]
-    (if-let [id (some #(when (= :human-input/request (:op %)) (:request-id %)) @events)]
+    (if-let [id (some #(when (= :view/open (:op %)) (:view-id %)) @events)]
       id
       (if (< attempts 200)
         (do (Thread/sleep 10) (recur (inc attempts)))
-        (throw (ex-info "no :human-input/request event arrived" {}))))))
+        (throw (ex-info "no :view/open event arrived" {}))))))
 
 (defn- start-request!
   "Open `request` on a fresh channel from another thread. Returns
@@ -146,7 +146,7 @@
   (it "carries the offending field id in the exception data"
       (let [data (try (normalized-fields {:id "env" :type "wat"})
                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
-        (expect (= :vis/human-input-invalid-field (:type data)))
+        (expect (= :vis/view-invalid-field (:type data)))
         (expect (= "env" (:field-id data))))))
 
 (defdescribe
@@ -250,7 +250,7 @@
       (:id request)
       (if (< attempts 400)
         (do (Thread/sleep 10) (recur (inc attempts)))
-        (throw (ex-info "no pending human-input request" {:title title}))))))
+        (throw (ex-info "no pending input View" {:title title}))))))
 
 (defdescribe
   spec-key-spelling-test
@@ -545,14 +545,14 @@
                (expect (= request-id (:request-id result)))
                (expect (= "prod" (get-in result [:values "env"])))
                (expect (= "hunter2" (hi/reveal-secret (get-in result [:values "token"])))))
-             (expect (= [:human-input/request :human-input/close] (mapv :op @events)))
+             (expect (= [:view/open :view/close] (mapv :op @events)))
              (expect (zero? (count (hi/pending-requests))))
              (finally (detach!)))))
   (it "never shows a channel the plaintext or the waiting promise"
       (let [{:keys [future events request-id detach!]}
             (start-request! {:title "Deploy"
                              :fields [{:id "token" :type "password" :is-required true}]})]
-        (try (let [view (:request (first (filterv #(= :human-input/request (:op %)) @events)))]
+        (try (let [view (:view (first (filterv #(= :view/open (:op %)) @events)))]
                (expect (= request-id (:id view)))
                (expect (= "Deploy" (:title view)))
                (expect (nil? (:promise view)))
@@ -560,9 +560,9 @@
                (expect (= [:password] (mapv :type (:fields view))))
                (expect (= view (hi/pending-request request-id))))
              (hi/submit! request-id {"token" "hunter2"})
-             (let [closed (first (filterv #(= :human-input/close (:op %)) @events))]
-               (expect (= request-id (:request-id closed)))
-               (expect (= "submitted" (:reason closed)))
+             (let [closed (first (filterv #(= :view/close (:op %)) @events))]
+               (expect (= request-id (:view-id closed)))
+               (expect (= "submitted" (get-in closed [:result :reason])))
                (expect (not (clojure.string/includes? (pr-str @events) "hunter2"))))
              (deref future 5000 ::blocked)
              (finally (detach!)))))
@@ -574,7 +574,8 @@
                         (deref future 5000 ::blocked)))
              (expect (false? (hi/cancel! request-id)) "a second cancel is a no-op")
              (expect (= "cancelled"
-                        (:reason (first (filterv #(= :human-input/close (:op %)) @events)))))
+                        (get-in (first (filterv #(= :view/close (:op %)) @events))
+                                [:result :reason])))
              (finally (detach!)))))
   (it "carries a custom cancel reason"
       (let [{:keys [future request-id detach!]} (start-request! {:title "Deploy"
@@ -628,7 +629,7 @@
       (let [ex (try (hi/request! {:title "Deploy" :fields [{:id "env"}]})
                     nil
                     (catch clojure.lang.ExceptionInfo e e))]
-        (expect (= :vis/human-input-invalid-request (:type (ex-data ex)))))))
+        (expect (= :vis/view-invalid-request (:type (ex-data ex)))))))
 
 (defdescribe
   non-cancellable-request-test
@@ -742,11 +743,11 @@
                    (try (expect (some? (hi/pending-request request-id)))
                         (future-cancel fut)
                         (expect (true? (await-true #(nil? (hi/pending-request request-id)))))
-                        (expect (true? (await-true #(boolean
-                                                      (some (fn [e]
-                                                              (and (= :human-input/close (:op e))
-                                                                   (= request-id (:request-id e))))
-                                                            @events)))))
+                        (expect (true? (await-true #(boolean (some (fn [e]
+                                                                     (and (= :view/close (:op e))
+                                                                          (= request-id
+                                                                             (:view-id e))))
+                                                                   @events)))))
                         (finally (detach!))))))
 
 (defdescribe undeliverable-request-test
@@ -1154,11 +1155,11 @@
   [thunk]
   (try (thunk) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
 
-;; The declared contract. `human-input` PARSES — either spelling of every key,
-;; a type name looked up in a closed vocabulary — and `human-input.spec`
-;; DECLARES what parsing has to produce. These tests hold the two together: the
-;; vocabulary has one home, real normalized output satisfies the spec, and a
-;; form no surface could paint is refused even when the engine itself built it.
+;; The declared contract. `view` PARSES — either spelling of every key, a type
+;; name looked up in a closed vocabulary — and `view.spec` DECLARES what parsing
+;; has to produce. These tests hold the two together: the vocabulary has one
+;; home, real normalized output satisfies the spec, and a form no surface could
+;; paint is refused even when the engine itself built it.
 (defdescribe
   declared-contract-test
   (it "every type a request can carry normalizes into the declared form"
@@ -1201,7 +1202,7 @@
   (it "the closed vocabulary has ONE home"
       ;; Two copies of the type table drift, and the copy the normalizer reads
       ;; is the one that decides what a surface is asked to paint.
-      (expect (nil? (ns-resolve 'com.blockether.vis.internal.human-input 'field-types)))
+      (expect (nil? (ns-resolve 'com.blockether.vis.internal.view 'field-types)))
       (expect (= #{:plaintext :password :multiline :select :multiselect :checkbox :range :otp}
                  (set (vals hs/field-types))))
       (expect (str/includes? (refusal #(hi/normalize-field {:name "a" :type "slider"}))
@@ -1221,7 +1222,7 @@
         (expect (nil? (hs/field-error legal)))
         (expect (str/includes? (refusal #(#'hi/checked-field "env" (dissoc legal :options)))
                                "options"))
-        (expect (= :vis/human-input-invalid-field
+        (expect (= :vis/view-invalid-field
                    (refusal-type #(#'hi/checked-field "env" (assoc legal :name "environment")))))
         (expect (some? (hs/field-error (assoc legal :is-secret true))))
         (expect (some? (hs/field-error (-> legal
@@ -1239,18 +1240,18 @@
         (expect (nil? (hs/request-error request)))
         (expect (str/includes? (refusal #(#'hi/checked-request (dissoc request :submit-label)))
                                "submit-label"))
-        (expect (= :vis/human-input-invalid-request
+        (expect (= :vis/view-invalid-request
                    (refusal-type #(#'hi/checked-request (assoc request :channel-ids [])))))))
   (it "checks every answer on its way out, whatever settled it"
       ;; `settle!` is the one funnel — submitted, cancelled, timed out,
       ;; undeliverable — so an answer missing `:request-id`, or claiming a
       ;; submission it has no `:values` for, never reaches the parked thread.
-      (expect (= :vis/human-input-invalid-answer
+      (expect (= :vis/view-invalid-answer
                  (refusal-type #(#'hi/checked-answer
                                   "r1"
                                   nil
                                   {:is-submitted true :reason "submitted" :request-id "r1"}))))
-      (expect (= :vis/human-input-invalid-answer
+      (expect (= :vis/view-invalid-answer
                  (refusal-type
                    #(#'hi/checked-answer "r1" nil {:is-submitted false :reason "cancelled"}))))
       (let [answer (hi/request! {:title "unmounted"
@@ -1313,7 +1314,7 @@
                                        {:is-submitted false :reason "cancelled" :request-id "r1"})))
         (expect (nil? (hs/answer-error nil (answered {"whatever" "x"}))))
         (expect
-          (= :vis/human-input-invalid-answer
+          (= :vis/view-invalid-answer
              (refusal-type
                #(#'hi/checked-answer "r1" fields (answered (assoc legal "env" "staging")))))))))
 
@@ -1348,7 +1349,7 @@
         ;; One home for the vocabulary, as with the field and group tables.
         (expect (= #{:heading :paragraph} (set (vals hs/decor-types))))
         (expect (not (contains? (set (vals hs/field-types)) :heading)))
-        (expect (nil? (ns-resolve 'com.blockether.vis.internal.human-input 'decor-types)))
+        (expect (nil? (ns-resolve 'com.blockether.vis.internal.view 'decor-types)))
         (expect (nil? (hs/decor-error head)))
         (expect (some? (hs/field-error head)))
         (expect (some? (hs/group-error head)))
@@ -1457,6 +1458,14 @@
       (expect (nil? (hs/live-view-error
                       (assoc-in (live-view) [:nodes 5 :rows 0 :branch] "Release apps"))))
       (expect (some? (hs/live-view-error (assoc-in (live-view) [:nodes 5 :rows 0 :branch] "")))))
+  (it "keeps a table row's declared branch through normalization"
+      (expect (= "tests · 3 variants"
+                 (get-in (hi/normalize-live-node
+                           {:id "jobs"
+                            :type "table"
+                            :columns [{:id "job" :label "Job"}]
+                            :rows [{:id "linux" :cells ["linux"] :branch "tests · 3 variants"}]})
+                         [:rows 0 :branch]))))
   (it "refuses a table row whose id is missing, because a row with no id cannot be upserted"
       (expect (some? (hs/live-view-error
                        (assoc-in (live-view) [:nodes 5 :rows] [{:cells ["a" "b"]}]))))))
@@ -1597,7 +1606,7 @@
 (def ^:private live-views-dir
   "The private var every view record hangs under, redefined per test so nothing
    here writes anywhere near the developer's own `~/.vis`."
-  (requiring-resolve 'com.blockether.vis.internal.human-input.live-sink/views-dir))
+  (requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir))
 
 (defn- temp-views-dir
   []

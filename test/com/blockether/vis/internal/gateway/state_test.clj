@@ -4189,10 +4189,10 @@
                    (failure-text (atom {:stall-detail "no worker activity for 5ms"})))))))
 
 ;; Regression, issue #128: a session was keyed by whatever spelling the caller
-;; held, so a producer with the id as a STRING (gateway.human-input reads it off
+;; held, so a producer with the id as a STRING (gateway.view reads it off
 ;; the request map)
 ;; appended under that spelling and opened a GHOST entry — its own seq counter,
-;; its own replay ring and NO subscribers. `human_input.request` reached the
+;; its own replay ring and NO subscribers. `view.open` reached the
 ;; journal and never the SSE fan-out, so the OTP form was never drawn.
 (defdescribe registry-sid-spelling-test
              (it "delivers an event appended under the STRING sid to a UUID subscriber"
@@ -4203,10 +4203,9 @@
                        (atom [])]
 
                    (state/subscribe! sid "sub-1" #(swap! seen conj %) 0)
-                   (try (state/append-event! (str sid) "human_input.request" {:request {:id "r1"}})
-                        (expect (= ["human_input.request"] (mapv #(get % "type") @seen)))
-                        (expect (= ["human_input.request"]
-                                   (mapv #(get % "type") (state/events-since sid 0))))
+                   (try (state/append-event! (str sid) "view.open" {:kind :input :view {:id "r1"}})
+                        (expect (= ["view.open"] (mapv #(get % "type") @seen)))
+                        (expect (= ["view.open"] (mapv #(get % "type") (state/events-since sid 0))))
                         (finally (state/unsubscribe! sid "sub-1")))))
              (it "reads one session's state under either spelling"
                  (let [sid
@@ -4216,8 +4215,8 @@
                        (atom [])]
 
                    (state/subscribe! (str sid) "sub-2" #(swap! seen conj %) 0)
-                   (try (state/append-event! sid "human_input.request" {:request {:id "r2"}})
-                        (expect (= ["human_input.request"] (mapv #(get % "type") @seen)))
+                   (try (state/append-event! sid "view.open" {:kind :input :view {:id "r2"}})
+                        (expect (= ["view.open"] (mapv #(get % "type") @seen)))
                         (expect (= (state/current-seq sid) (state/current-seq (str sid))))
                         (expect (= 1 (count (state/events-since (str sid) 0))))
                         (finally (state/unsubscribe! (str sid) "sub-2"))))))

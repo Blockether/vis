@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "ops": [
     {
       "name": "state_get",
@@ -101,21 +101,22 @@
       "summary": "Resolve the environment variables the extension declared.",
       "outside": "local"
     }],
-  "shell": 
+  "shell":
   {
     "default_op": "run",
     "spawn_ops": ["run","background"],
     "handle_ops": ["logs","wait","send","stop"]
   },
-  "live": 
+  "live":
   {
     "default_op": "open",
     "spawn_ops": ["open"],
     "handle_ops": ["patch","state","close"],
     "flush_ms": 100
   },
-  "human_input": 
+  "view":
   {
+    "kinds": ["input","live"],
     "field_types": ["checkbox","multiline","multiselect","otp","password","plaintext","range","select"],
     "text_types": ["multiline","password","plaintext"],
     "choice_types": ["multiselect","select"],
@@ -123,19 +124,19 @@
     "decor_types": ["heading","paragraph"],
     "group_type": "group",
     "group_directions": ["column","row"],
-    "otp": 
+    "otp":
     {
       "length": 6,
       "ceiling": 12
     },
-    "range": 
+    "range":
     {
       "min": 0,
       "max": 100,
       "step": 1
     },
     "secret_handle_prefix": "vis-secret:",
-    "live": 
+    "live":
     {
       "node_types": ["link","log","progress","stat","status","steps","table"],
       "link_targets": ["attachment","path","url"],
@@ -145,13 +146,13 @@
       "aligns": ["left","right"],
       "sort_dirs": ["asc","desc"],
       "reasons": ["completed","failed","interrupted","superseded","timeout","undeliverable"],
-      "log": 
+      "log":
       {
         "window_lines": 2000,
         "window_lines_cap": 100000,
         "max_patch_lines": 500
       },
-      "table": 
+      "table":
       {
         "max_rows": 5000,
         "max_patch_rows": 200

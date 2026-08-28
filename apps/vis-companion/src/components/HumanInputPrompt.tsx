@@ -3,7 +3,7 @@ import { Banner, Button, ChoiceRow, DialogFrame, Input, Modal, Slider } from './
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
-  applyHumanInputEvent,
+  applyInputViewEvent,
   clampHumanInputRange,
   humanInputFormChange,
   humanInputFormRefused,
@@ -11,7 +11,7 @@ import {
   humanInputOtp,
   humanInputOtpDigits,
   humanInputRange,
-  isHumanInputEvent,
+  isInputViewEvent,
   toggleHumanInputOption,
   HUMAN_INPUT_CHOICE_MARKS,
   type HumanInputField,
@@ -28,7 +28,7 @@ import {
  * views of the SAME request, answered through the same engine coercion — and a
  * phone that is not looking gets the push the gateway sends alongside.
  *
- * Live `human_input.request` frames open the form; `human_input.close` closes it
+ * Live `view.open` frames open the form; `view.close` closes it
  * no matter who answered, so a request settled in the TUI cannot leave a dead
  * dialog here.
  *
@@ -61,7 +61,7 @@ export function HumanInputPrompt({
     const controller = new AbortController();
     const reload = () => {
       client
-        .humanInputRequests(sid, controller.signal)
+        .inputViews(sid, controller.signal)
         .then((requests) => {
           if (!cancelled) setPending(requests);
         })
@@ -72,8 +72,8 @@ export function HumanInputPrompt({
       if (connected) reload();
     });
     const stopEvents = subscriptions.subscribeSession(sid, (event) => {
-      if (!isHumanInputEvent(event)) return;
-      setPending((current) => applyHumanInputEvent(current, event));
+      if (!isInputViewEvent(event)) return;
+      setPending((current) => applyInputViewEvent(current, event));
     });
     return () => {
       cancelled = true;

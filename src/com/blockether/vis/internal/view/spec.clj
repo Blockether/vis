@@ -1,34 +1,28 @@
-(ns com.blockether.vis.internal.human-input.spec
-  "The executable contract for typed human input: `clojure.spec` over the
-   NORMALIZED form of a request, plus the closed vocabulary that form is built
-   from.
+(ns com.blockether.vis.internal.view.spec
+  "The executable contract for every View document.
 
-   Two layers, one contract. `com.blockether.vis.internal.human-input` PARSES —
-   an extension (or a Python object arriving as JSON) writes `is_required` or
-   `:is-required`, `\"otp\"` or `:otp`, and the normalizer turns whatever came in
-   into one internal shape, naming the key its author has to fix when it cannot.
-   This namespace DECLARES that shape: every map is CLOSED, `:name` and `:id`
-   are the same identity, a `:select` really carries options, an `:otp` really
-   fits its boxes, and a `:default` really is a value of the field's own type.
+   Two temporal kinds share this vocabulary. An `:input` View is a typed form with
+   an answer contract; a `:live` View is a semantic picture changed by patches. Both
+   use the same group/layout language, lifecycle envelope and CLOSED-map rule.
 
-   Both are needed. A parser that only refuses bad INPUT still lets a bug
-   INSIDE the engine hand a surface a field with no `:label`, or hand a blocked
-   extension an answer with no `:request-id` — and that failure then surfaces as
-   a broken dialog three namespaces away from its cause. The specs are checked
-   once per request and once per answer, never per keystroke, so the guard sits
-   where it costs nothing.
+   [[com.blockether.vis.internal.view]] PARSES extension data into one normalized
+   shape and refuses unknown names or keys. This namespace DECLARES that shape with
+   `clojure.spec`: input fields and answers, live nodes and patches, and the complete
+   roots every renderer receives. A declared key is therefore part of the contract,
+   not optional metadata a normalizer may silently discard.
 
-   The functions here only EXPLAIN ([[field-error]], [[group-error]],
-   [[request-error]], [[answer-error]] return nil or a one-line reason); the
-   refusal itself stays
-   in `human-input`, which owns the error envelope every surface already
-   handles."
+   The functions here only EXPLAIN invalid values; the View engine owns the error
+   envelopes and checks the five boundary seams once, never per keystroke."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.vis.internal.activity :as activity]
             [com.blockether.vis.internal.util :as util]))
 
 ;; The closed vocabulary
+
+(def view-kinds
+  "Wire name -> lifecycle kind. Capability policy dispatches on this CLOSED set."
+  {"input" :input "live" :live})
 
 (def field-types
   "Wire type name -> internal field type. A CLOSED set: an unknown name is
@@ -325,7 +319,7 @@
 
 (def live-artifact-media-type
   "The media type a settled live view carries. Its bytes are the view's RECORD —
-   the append-only NDJSON `human-input.live-sink` has been writing since `open` —
+   the append-only NDJSON `view.sink` has been writing since `open` —
    so the artifact IS that file rather than a re-encoded copy of it."
   "application/vnd.vis.live+ndjson")
 
@@ -333,7 +327,7 @@
   "Byte size under which a settled view ALSO travels inline, on top of the file it
    already points at (256 KiB — the same floor
    `attachment-storage/default-offload-floor-bytes` uses to decide that a small
-   payload never earns an external round-trip; stated here because the HITL
+   payload never earns an external round-trip; stated here because the View
    contract may not drag the imaging stack in to read it).
 
    A view this small survives a session sync to another machine; a build log does
@@ -355,7 +349,8 @@
    require this namespace reads instead. The tables above stay the one definition:
    a Python reader gets a rendering of them, never a transcription."
   []
-  {:field-types (vec (sort (keys field-types)))
+  {:view-kinds (vec (sort (keys view-kinds)))
+   :field-types (vec (sort (keys field-types)))
    :text-types (mapv clojure.core/name (sort text-types))
    :choice-types (mapv clojure.core/name (sort choice-types))
    :secret-types (mapv clojure.core/name (sort secret-types))

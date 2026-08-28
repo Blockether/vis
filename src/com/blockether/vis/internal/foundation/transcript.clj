@@ -156,7 +156,7 @@
    backend, or `:none`) without carrying them.
 
    `:classification` rides along because it is what a MODEL-FACING projection
-   filters on (`human-input.live/activity-attachment?`): the host's own Activity
+   filters on (`view.materializer/activity-attachment?`): the host's own Activity
    receipt is presentation, and a reader that cannot tell it apart hands the model
    an id the sandbox attachment reader refuses."
   [att]

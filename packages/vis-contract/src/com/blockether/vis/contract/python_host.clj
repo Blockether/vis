@@ -12,8 +12,8 @@
    an extension can compile against the declaration without the engine. Its PyPI
    half ships [[package-document]] as `vis_contract/contract.json`.
 
-   The human-input vocabulary is the one part this project does not own:
-   `internal.human-input.spec` declares it and PASSES it to [[package-document]],
+   The View vocabulary is the one part this project does not own:
+   `internal.view.spec` declares it and PASSES it to [[package-document]],
    because a closed vocabulary with two definitions is exactly the bug a contract
    exists to prevent.
 
@@ -138,69 +138,65 @@
 ;; ---------------------------------------------------------------------------
 ;; The document the PACKAGE reads
 ;;
-;; `python/src/vis_contract/contract.json` is this document plus the human-input
+;; `python/src/vis_contract/contract.json` is this document plus the View
 ;; vocabulary, rendered for a Python reader that has no EDN and no JVM. It is
 ;; CHECKED IN because a wheel installed from PyPI has no repository to read, and
-;; GENERATED because the engine's `human-input.spec` holds the one definition of
-;; that vocabulary -- `doc("human-input")` forbids a second copy, so the package
-;; gets a rendering, never a transcription. `python_package_test` fails on drift
-;; and names [[write-package-document!]] as the fix.
+;; GENERATED because the engine's `view.spec` holds the one definition of that
+;; vocabulary -- the package gets a rendering, never a transcription.
+;; `python_package_test` fails on drift and names [[write-package-document!]] as
+;; the fix.
 
-(s/def :human-input/strings
-  (s/and (s/coll-of non-blank-string? :kind vector? :distinct true) not-empty))
-(s/def :human-input/field-types :human-input/strings)
-(s/def :human-input/text-types :human-input/strings)
-(s/def :human-input/choice-types :human-input/strings)
-(s/def :human-input/secret-types :human-input/strings)
-(s/def :human-input/decor-types :human-input/strings)
-(s/def :human-input/group-type non-blank-string?)
-(s/def :human-input/group-directions :human-input/strings)
-(s/def :human-input/otp (s/keys :req-un [:human-input/length :human-input/ceiling]))
-(s/def :human-input/length pos-int?)
-(s/def :human-input/ceiling pos-int?)
-(s/def :human-input/range (s/keys :req-un [:human-input/min :human-input/max :human-input/step]))
-(s/def :human-input/min number?)
-(s/def :human-input/max number?)
-(s/def :human-input/step number?)
-(s/def :human-input/secret-handle-prefix non-blank-string?)
+(s/def :view/strings (s/and (s/coll-of non-blank-string? :kind vector? :distinct true) not-empty))
+(s/def :view/view-kinds :view/strings)
+(s/def :view/field-types :view/strings)
+(s/def :view/text-types :view/strings)
+(s/def :view/choice-types :view/strings)
+(s/def :view/secret-types :view/strings)
+(s/def :view/decor-types :view/strings)
+(s/def :view/group-type non-blank-string?)
+(s/def :view/group-directions :view/strings)
+(s/def :view/otp (s/keys :req-un [:view/length :view/ceiling]))
+(s/def :view/length pos-int?)
+(s/def :view/ceiling pos-int?)
+(s/def :view/range (s/keys :req-un [:view/min :view/max :view/step]))
+(s/def :view/min number?)
+(s/def :view/max number?)
+(s/def :view/step number?)
+(s/def :view/secret-handle-prefix non-blank-string?)
 ;; The LIVE half of the vocabulary: the node types, patch operations, tones,
 ;; orders and endings a streaming view is built from, plus the bounds a patch is
 ;; REFUSED against. Same shape as above — closed tables the engine owns and this
 ;; document only renders.
-(s/def :human-input/node-types :human-input/strings)
-(s/def :human-input/link-targets :human-input/strings)
-(s/def :human-input/ops :human-input/strings)
-(s/def :human-input/tones :human-input/strings)
-(s/def :human-input/orders :human-input/strings)
-(s/def :human-input/aligns :human-input/strings)
-(s/def :human-input/sort-dirs :human-input/strings)
-(s/def :human-input/reasons :human-input/strings)
-(s/def :human-input/window-lines pos-int?)
-(s/def :human-input/window-lines-cap pos-int?)
-(s/def :human-input/max-patch-lines pos-int?)
-(s/def :human-input/max-rows pos-int?)
-(s/def :human-input/max-patch-rows pos-int?)
-(s/def :human-input/max-stats pos-int?)
-(s/def :human-input/max-steps pos-int?)
-(s/def :human-input/max-links pos-int?)
-(s/def :human-input/max-nodes pos-int?)
-(s/def :human-input/log
-  (s/keys :req-un [:human-input/window-lines :human-input/window-lines-cap
-                   :human-input/max-patch-lines]))
-(s/def :human-input/table (s/keys :req-un [:human-input/max-rows :human-input/max-patch-rows]))
-(s/def :human-input/live
-  (s/keys :req-un [:human-input/node-types :human-input/link-targets :human-input/ops
-                   :human-input/tones :human-input/orders :human-input/aligns :human-input/sort-dirs
-                   :human-input/reasons :human-input/log :human-input/table :human-input/max-stats
-                   :human-input/max-steps :human-input/max-links :human-input/max-nodes]))
+(s/def :view/node-types :view/strings)
+(s/def :view/link-targets :view/strings)
+(s/def :view/ops :view/strings)
+(s/def :view/tones :view/strings)
+(s/def :view/orders :view/strings)
+(s/def :view/aligns :view/strings)
+(s/def :view/sort-dirs :view/strings)
+(s/def :view/reasons :view/strings)
+(s/def :view/window-lines pos-int?)
+(s/def :view/window-lines-cap pos-int?)
+(s/def :view/max-patch-lines pos-int?)
+(s/def :view/max-rows pos-int?)
+(s/def :view/max-patch-rows pos-int?)
+(s/def :view/max-stats pos-int?)
+(s/def :view/max-steps pos-int?)
+(s/def :view/max-links pos-int?)
+(s/def :view/max-nodes pos-int?)
+(s/def :view/log (s/keys :req-un [:view/window-lines :view/window-lines-cap :view/max-patch-lines]))
+(s/def :view/table (s/keys :req-un [:view/max-rows :view/max-patch-rows]))
+(s/def :view/live
+  (s/keys :req-un [:view/node-types :view/link-targets :view/ops :view/tones :view/orders
+                   :view/aligns :view/sort-dirs :view/reasons :view/log :view/table :view/max-stats
+                   :view/max-steps :view/max-links :view/max-nodes]))
 ;; The vocabulary the ENGINE hands in. Specced here because the contract is what
 ;; the package trusts: a surface that drifts is caught rendering the document, not
 ;; by an extension author reading a field type Python has never heard of.
-(s/def :contract/human-input
-  (s/keys :req-un [:human-input/field-types :human-input/text-types :human-input/choice-types
-                   :human-input/secret-types :human-input/decor-types :human-input/group-type
-                   :human-input/group-directions :human-input/otp :human-input/range
-                   :human-input/secret-handle-prefix :human-input/live]))
+(s/def :contract/view
+  (s/keys :req-un [:view/view-kinds :view/field-types :view/text-types :view/choice-types
+                   :view/secret-types :view/decor-types :view/group-type :view/group-directions
+                   :view/otp :view/range :view/secret-handle-prefix :view/live]))
 
 (defn- op->json
   [{:op/keys [name global arity summary outside refusal]}]
@@ -212,15 +208,16 @@
     refusal
     (assoc "refusal" refusal)))
 
-(defn- human-input->json
-  [{:keys [field-types text-types choice-types secret-types decor-types group-type group-directions
-           otp range secret-handle-prefix live]
+(defn- view->json
+  [{:keys [view-kinds field-types text-types choice-types secret-types decor-types group-type
+           group-directions otp range secret-handle-prefix live]
     :as vocabulary}]
-  (when-not (s/valid? :contract/human-input vocabulary)
-    (throw (ex-info "the human-input vocabulary handed to the contract is not one"
+  (when-not (s/valid? :contract/view vocabulary)
+    (throw (ex-info "the View vocabulary handed to the contract is not one"
                     {:type :vis/contract-invalid
-                     :explain (s/explain-str :contract/human-input vocabulary)})))
-  (array-map "field_types" field-types
+                     :explain (s/explain-str :contract/view vocabulary)})))
+  (array-map "kinds" view-kinds
+             "field_types" field-types
              "text_types" text-types
              "choice_types" choice-types
              "secret_types" secret-types
@@ -251,10 +248,10 @@
 
 (defn package-document
   "The contract as `vis_contract/contract.json`: snake_case string keys, ops in
-   document order, and the closed human-input vocabulary the outside host prompts
-   with. `human-input` comes from the namespace that OWNS that vocabulary --
-   `(com.blockether.vis.internal.human-input.spec/contract-vocabulary)`."
-  [human-input]
+   document order, and the closed View vocabulary the outside host prompts with.
+   `view-vocabulary` comes from the namespace that OWNS it —
+   `(com.blockether.vis.internal.view.spec/contract-vocabulary)`."
+  [view-vocabulary]
   (array-map "version" (version)
              "ops" (mapv op->json (ops))
              "shell"
@@ -265,7 +262,7 @@
                                  "spawn_ops" spawn-ops
                                  "handle_ops" handle-ops
                                  "flush_ms" flush-ms))
-             "human_input" (human-input->json human-input)))
+             "view" (view->json view-vocabulary)))
 
 (def package-document-path
   "Where the rendered document is checked in, from the repository root."
@@ -273,11 +270,13 @@
 
 (defn package-document-json
   "[[package-document]] as the checked-in file's exact bytes."
-  [human-input]
-  (str (json/write-json-str (package-document human-input) {:indent-str "  "}) "\n"))
+  [view-vocabulary]
+  (-> (json/write-json-str (package-document view-vocabulary) {:indent-str "  "})
+      (str/replace #" +\n" "\n")
+      (str "\n")))
 
 (defn write-package-document!
   "Re-render [[package-document-path]]. Run me after changing the contract or the
-   human-input vocabulary; `python_package_test` is what notices you did not."
-  ([human-input] (write-package-document! human-input package-document-path))
-  ([human-input path] (spit path (package-document-json human-input)) path))
+   View vocabulary; `python_package_test` is what notices you did not."
+  ([view-vocabulary] (write-package-document! view-vocabulary package-document-path))
+  ([view-vocabulary path] (spit path (package-document-json view-vocabulary)) path))

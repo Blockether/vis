@@ -3,7 +3,7 @@
 Vis runs an extension's Python inside its own sandbox, with the host seeded into
 the module the extension imports. This package is the DECLARATION of that
 boundary, published on its own so it can be read where Vis is not: the ops a host
-answers, the shell verb's grammar, the closed human-input vocabulary every surface
+answers, the shell verb's grammar, the closed View vocabulary every surface
 draws, and [[Host]], the protocol an implementation is checked against.
 
 `contract.json` beside this file is rendered from the repository's
@@ -31,7 +31,7 @@ from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
     "CONTRACT",
-    "HUMAN_INPUT",
+    "VIEW",
     "OPS",
     "LIVE",
     "SHELL",
@@ -49,7 +49,7 @@ def _load_contract():
 
 
 CONTRACT = _load_contract()
-"""The whole rendered document: version, ops, shell grammar, human-input vocabulary."""
+"""The whole rendered document: version, ops, verb grammars and View vocabulary."""
 
 VERSION = CONTRACT["version"]
 """Bumped whenever an op is added, removed or re-shaped."""
@@ -67,8 +67,8 @@ LIVE = CONTRACT["live"]
 host round trip per written line would park the extension on the journal writer
 once per line."""
 
-HUMAN_INPUT = CONTRACT["human_input"]
-"""The closed human-input vocabulary — field, decor and group types and their defaults."""
+VIEW = CONTRACT["view"]
+"""The closed View vocabulary — lifecycle kinds, semantic nodes and their bounds."""
 
 
 def op(name):

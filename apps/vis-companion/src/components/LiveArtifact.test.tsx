@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // A settled run is opened from a FILE, so every case here folds a real record —
-// the three lines `human-input.live-sink` writes — and reads the document that
+// the three lines `view.sink` writes — and reads the document that
 // landed. The point of the screen is that a finished run stays readable without
 // the terminal that ran it, and that reading it costs the phone a bounded
 // picture rather than the whole log.

@@ -25,8 +25,8 @@
     [com.blockether.vis.internal.env-python :as env]
     [com.blockether.vis.internal.egress-proxy :as egress]
     [com.blockether.vis.internal.form :as form]
-    [com.blockether.vis.internal.human-input :as human-input]
-    [com.blockether.vis.internal.human-input.live :as live]
+    [com.blockether.vis.internal.view :as view]
+    [com.blockether.vis.internal.view.materializer :as live]
     [com.blockether.vis.internal.gateway-sandbox :as gateway-sandbox]
     [com.blockether.vis.internal.process-jail :as process-jail]
     [com.blockether.vis.internal.attachment-storage :as attachment-storage]
@@ -1029,12 +1029,12 @@
           (when-let [view-id @activity-view-id]
             (when-not (= :closed @activity-phase)
               (reset! activity-phase :closing)
-              (try (human-input/patch-activity! view-id @activity-state true)
-                   (let [result (human-input/close-live! view-id settlement nil)]
+              (try (view/patch-activity! view-id @activity-state true)
+                   (let [result (view/close-live! view-id settlement nil)]
                      (reset! activity-phase :closed)
                      result)
                    (catch Throwable t
-                     (reset! activity-phase (if (human-input/live-view view-id) :open :closed))
+                     (reset! activity-phase (if (view/live-view view-id) :open :closed))
                      (throw t))))))
 
         cancel-token
@@ -1082,9 +1082,9 @@
                                                      event)]
                                          (when (:session-id env)
                                            (if-let [view-id @activity-view-id]
-                                             (human-input/patch-activity! view-id state)
+                                             (view/patch-activity! view-id state)
                                              (reset! activity-view-id
-                                               (:id (human-input/open-activity!
+                                               (:id (view/open-activity!
                                                       {:session-id (:session-id env)
                                                        :iteration-id (:iteration-id env)
                                                        :iteration (:activity/iteration env)
@@ -1099,7 +1099,7 @@
         timeout-ms
         (long (rt/eval-timeout-ms-for-code rt/*eval-timeout-ms* code))
 
-        ;; MOVABLE wall: a `human-input` pause inside the block parks this clock
+        ;; MOVABLE wall: an input View pause inside the block parks this clock
         ;; instead of dying at it, and a live view LIFTS it entirely for as long
         ;; as the human is watching (see rt/parkable-wall).
         {eval-deadline :deadline eval-park :park eval-hold :hold}
@@ -1108,7 +1108,7 @@
         ;; The views already open when this block started. Anything the block
         ;; opens on top of them is the block's own, and dies with it.
         views-before
-        (human-input/open-live-ids)
+        (view/open-live-ids)
 
         ;; A view the block opened and never closed. Sweeping it is the run's last
         ;; act, so a wall or a cancel cannot leave a pane painting a picture that
@@ -1123,7 +1123,7 @@
         (fn [ending]
           (let [sink (atom [])]
             (try (when-let [verdicts (seq (binding [mpl-capture/*attachment-sink* sink]
-                                            (human-input/close-abandoned! views-before ending)))]
+                                            (view/close-abandoned! views-before ending)))]
                    {:verdicts (vec verdicts) :attachments (mpl-capture/drain sink)})
                  (catch Throwable t
                    (tel/log! {:level :warn
@@ -8510,7 +8510,7 @@
                         ;; A view still open when the block ends outlives the collector that
                         ;; block was draining: from here on its record belongs to the
                         ;; ITERATION, which is only nameable now.
-                        _ (human-input/adopt-open-views! iteration-id)
+                        _ (view/adopt-open-views! iteration-id)
                         ;; Context end-of-iter bookkeeping.
                         ctx-atom-ref (:ctx-atom environment)
                         _ (when ctx-atom-ref

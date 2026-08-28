@@ -8,8 +8,8 @@
    extension. The file is PARSED (`vis-python/extension_check.py`, `ast` only),
    the statically knowable arguments of every `vis.ask` and every `vis.live` call
    are reconstructed, and what comes out is judged by CALLING
-   [[com.blockether.vis.internal.human-input/normalize-request]] or
-   [[com.blockether.vis.internal.human-input/normalize-live-view]] -- the engine's
+   [[com.blockether.vis.internal.view/normalize-request]] or
+   [[com.blockether.vis.internal.view/normalize-live-view]] -- the engine's
    own normalizers, the seams every running dialog and every mounted view cross,
    so a refusal here is the line the author would have seen in front of the human.
 
@@ -29,7 +29,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.gateway.wire :as wire]
-            [com.blockether.vis.internal.human-input :as human-input]
+            [com.blockether.vis.internal.view :as view]
             [com.blockether.vis.internal.python-extensions :as px])
   (:import (java.io File)
            (org.graalvm.polyglot Context Value)))
@@ -43,7 +43,7 @@
   "What [[judge-request]] hands a checked `vis.ask` back: nobody was asked, so the
    only honest settlement is the engine's own word for a request that reached no
    surface."
-  (json/write-json-str (human-input/answer->wire {:is-submitted false :reason "undeliverable"})))
+  (json/write-json-str (view/answer->wire {:is-submitted false :reason "undeliverable"})))
 
 (defn- judge-request
   "The checker's `request_input`: normalize the request the way a real ask does,
@@ -52,9 +52,9 @@
    extension that runs, and that line is what the checker reports."
   [request-json & _]
   (let [request (json/read-json (str request-json) :key-fn identity)]
-    (human-input/normalize-request (cond-> request
-                                     (map? request)
-                                     (dissoc "channel_id" "channel_ids")))
+    (view/normalize-request (cond-> request
+                              (map? request)
+                              (dissoc "channel_id" "channel_ids")))
     unasked-answer))
 
 (defn- judge-view
@@ -71,9 +71,9 @@
         (get envelope "view")
 
         view
-        (human-input/normalize-live-view (cond-> declared
-                                           (map? declared)
-                                           (dissoc "channel_id" "channel_ids")))]
+        (view/normalize-live-view (cond-> declared
+                                    (map? declared)
+                                    (dissoc "channel_id" "channel_ids")))]
 
     (wire/json-str {:view-id (:id view) :is-open true :view view})))
 

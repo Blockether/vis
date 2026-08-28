@@ -14,7 +14,7 @@
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
-            [com.blockether.vis.internal.human-input :as engine]
+            [com.blockether.vis.internal.view :as engine]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType]
@@ -406,11 +406,11 @@
       (expect (empty? (:human-input-queue @state/app-db))))
   (it "opens and closes the dialog straight from channel events"
       (reset! state/app-db {:render-version 0})
-      (#'screen/handle-channel-event! {:op :human-input/request :request (request)})
+      (#'screen/handle-channel-event! {:op :view/open :kind :input :view (request)})
       (expect (= "req-1" (get-in @state/app-db [:human-input :request :id])))
       ;; An open dialog owns the screen: render fast paths off, cursor is ours.
       (expect (true? (#'screen/overlay-locked? @state/app-db)))
-      (#'screen/handle-channel-event! {:op :human-input/close :request-id "req-1"})
+      (#'screen/handle-channel-event! {:op :view/close :kind :input :view-id "req-1"})
       (expect (nil? (:human-input @state/app-db)))
       (expect (false? (#'screen/overlay-locked? @state/app-db))))
   (it "submits the typed values and closes once the engine accepts them"

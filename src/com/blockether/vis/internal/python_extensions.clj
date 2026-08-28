@@ -430,7 +430,7 @@
     (.putMember
       g
       "__vis_host_request_input__"
-      ;; Typed human-input pause: one JSON request object in, one JSON
+      ;; Typed input View pause: one JSON request object in, one JSON
       ;; answer object out. BLOCKS this extension call until the human
       ;; answers, cancels, or the request times out.
       ;;
@@ -459,7 +459,7 @@
                             (when (some? verdict)
                               (json/read-json (str verdict) :key-fn identity)))))]
 
-              (env/->py ((requiring-resolve 'com.blockether.vis.internal.human-input/request-json!)
+              (env/->py ((requiring-resolve 'com.blockether.vis.internal.view/request-json!)
                           request-json
                           validators-json
                           run))))))
@@ -471,20 +471,18 @@
                 ;; the opposite of `request_input`, which parks until a human
                 ;; answers.
                 (->executable (fn [envelope]
-                                ((requiring-resolve
-                                   'com.blockether.vis.internal.human-input/live-json!)
+                                ((requiring-resolve 'com.blockether.vis.internal.view/live-json!)
                                   envelope))))
     (.putMember g
                 "__vis_host_reveal_secret__"
                 (->executable (fn [handle]
-                                ((requiring-resolve
-                                   'com.blockether.vis.internal.human-input/reveal-secret)
+                                ((requiring-resolve 'com.blockether.vis.internal.view/reveal-secret)
                                   (str handle)))))
     (.putMember g
                 "__vis_host_forget_secret__"
                 (->executable (fn [handle]
                                 (boolean ((requiring-resolve
-                                            'com.blockether.vis.internal.human-input/forget-secret!)
+                                            'com.blockether.vis.internal.view/forget-secret!)
                                            (str handle))))))
     ;; DECLARED ENV: one JSON list of names in, one JSON object of the values
     ;; the host could resolve out. Backed by `resolve-declared-env`, so an

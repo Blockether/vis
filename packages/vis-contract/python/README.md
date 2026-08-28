@@ -15,7 +15,7 @@ import vis_contract
 vis_contract.VERSION  # the contract version
 vis_contract.OPS["shell"]["outside"]  # "local" — what the op does with no Vis
 vis_contract.SHELL["spawn_ops"]  # ["run", "background"]
-vis_contract.HUMAN_INPUT["field_types"]  # the closed dialog vocabulary
+vis_contract.VIEW["kinds"]  # ["input", "live"] — one lifecycle, two policies
 
 
 class MyHost:

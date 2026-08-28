@@ -1,5 +1,5 @@
-(ns com.blockether.vis.internal.human-input.validation
-  "Field validation for human-input requests: a validator is a FUNCTION.
+(ns com.blockether.vis.internal.view.validation
+  "Field validation for input View requests: a validator is a FUNCTION.
 
    A field carries `:validate` — one function or a list of them. Each one is
    called with the COERCED value, or with the value and the whole coerced
@@ -16,7 +16,7 @@
 
    Validation is code, not data, and it never crosses the wire. The ENGINE is
    the only authority: it runs every validator when a form is CONFIRMED
-   ([[com.blockether.vis.internal.human-input/submit!]]) and hands the surfaces
+   ([[com.blockether.vis.internal.view/submit!]]) and hands the surfaces
    the errors it found, keyed by field. Neither the TUI band nor the companion
    app owns a validation rule or re-checks anything as the operator types —
    they show the engine's verdict, and drop a field's error the moment that

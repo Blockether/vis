@@ -1,51 +1,37 @@
-(ns com.blockether.vis.internal.human-input
-  "Typed human-input requests — the pause/resume primitive an extension uses to
-   ask the operator for structured values in the middle of a run.
+(ns com.blockether.vis.internal.view
+  "The one lifecycle for every operator-facing View.
 
-   An extension calls [[request!]] with a title and a vector of typed fields.
-   The call BLOCKS the calling thread, publishes a `:human-input/request`
-   channel event so the mounted channel can draw a dialog, and returns once a
-   channel calls [[submit!]] / [[cancel!]], or the request runs out of time.
+   A View has a CLOSED semantic document, a stable id, and the same `open`, `patch`
+   and `close` rail on every channel. Its `:kind` declares the capability policy:
 
-   A request either carries a DEADLINE (`:timeout-ms`, five minutes by default)
-   or waits INDEFINITELY (`:timeout-ms` 0) — an extension that must not guess an
-   answer says so and parks until the human is back at the keyboard, while one
-   that can carry on alone names the wait it is willing to bill and gets a
-   `timeout` answer when nobody came. Even an indefinite request cannot park a
-   thread nobody can release: a request that reaches no mounted channel is
-   answered `undeliverable` at once, and interrupting the surrounding turn
-   cancels it.
+   - `:input` is Human Input — a typed form that BLOCKS until [[submit!]],
+     [[cancel!]], timeout, or interruption;
+   - `:live` is a non-blocking picture driven by its producer and optionally
+     interrupted by the operator.
 
-   This namespace PARSES: it takes either spelling of every key, looks an
-   extension-supplied type name up in a CLOSED vocabulary
-   ([[com.blockether.vis.internal.human-input.spec/field-types]]) instead of
-   `keyword`-minting it, and names the key an author has to fix when it cannot.
-   What it produces is DECLARED by `clojure.spec` in
-   `com.blockether.vis.internal.human-input.spec`: every normalized field, every
-   normalized request, and every answer handed back to a blocked extension — its
-   VALUES included, each against the domain the field that asked for it declared
-   — is checked against that contract, so an engine bug surfaces here instead of
-   as a half-built dialog three namespaces away. Coercion and validation live in
-   one place, so the value an extension receives already matches the declared
-   type: a `:checkbox` yields a boolean, a `:multiselect` a vector of declared
-   option values, a `:select` one declared option value.
+   The distinction belongs in policy, not transport. Both kinds share the pending
+   registry and publish `:view/open` / `:view/patch` / `:view/close` envelopes;
+   renderers dispatch on `:kind` and never infer behavior from an event name.
 
-   Secrets never travel as plaintext. A `:password` and an `:otp` field both
-   resolve to an opaque
-   `vis-secret:<uuid>` handle; the plaintext stays in a process-local vault and
-   is readable only through [[reveal-secret]] from the trusted extension side.
-   Handles are what land in logs, transcripts and wire payloads, so a leaked
-   event is worthless."
+   This namespace PARSES extension data against the CLOSED vocabulary declared by
+   [[com.blockether.vis.internal.view.spec]]. Input answers are coerced and checked
+   once at the settle seam; live patches are normalized and materialized once before
+   any surface sees them. Unknown keys are refused, while every declared key is
+   preserved through normalization.
+
+   Secrets never travel as plaintext. A `:password` and an `:otp` field resolve to
+   an opaque `vis-secret:<uuid>` handle; plaintext stays in a process-local vault
+   and is readable only through [[reveal-secret]] from the trusted extension side."
   (:require [charred.api :as json]
             [clojure.string :as str]
             [com.blockether.vis.internal.activity :as activity]
             [com.blockether.vis.internal.channel-events :as channel-events]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.gateway.wire :as wire]
-            [com.blockether.vis.internal.human-input.live :as live]
-            [com.blockether.vis.internal.human-input.live-sink :as live-sink]
-            [com.blockether.vis.internal.human-input.spec :as hi-spec]
-            [com.blockether.vis.internal.human-input.validation :as validation]
+            [com.blockether.vis.internal.view.materializer :as materializer]
+            [com.blockether.vis.internal.view.sink :as sink]
+            [com.blockether.vis.internal.view.spec :as view-spec]
+            [com.blockether.vis.internal.view.validation :as validation]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
@@ -97,7 +83,7 @@
 
 (defn- stash-secret!
   [value]
-  (let [handle (str hi-spec/secret-handle-prefix (random-uuid))]
+  (let [handle (str view-spec/secret-handle-prefix (random-uuid))]
     (swap! secrets #(evict-oldest (assoc % handle {:value value :at (System/nanoTime)})))
     handle))
 
@@ -151,25 +137,25 @@
 
 (defn- invalid-field!
   [field-id message]
-  (throw (ex-info (str "Invalid human-input field" (when field-id (str " " field-id)) ": " message)
-                  {:type :vis/human-input-invalid-field :field-id field-id :reason message})))
+  (throw (ex-info (str "Invalid input View field" (when field-id (str " " field-id)) ": " message)
+                  {:type :vis/view-invalid-field :field-id field-id :reason message})))
 
 (defn- invalid-request!
   [message]
-  (throw (ex-info (str "Invalid human-input request: " message)
-                  {:type :vis/human-input-invalid-request :reason message})))
+  (throw (ex-info (str "Invalid input View request: " message)
+                  {:type :vis/view-invalid-request :reason message})))
 
 (defn- invalid-answer!
   [request-id message]
-  (throw (ex-info (str "Invalid human-input answer for " request-id ": " message)
-                  {:type :vis/human-input-invalid-answer :request-id request-id :reason message})))
+  (throw (ex-info (str "Invalid input View answer for " request-id ": " message)
+                  {:type :vis/view-invalid-answer :request-id request-id :reason message})))
 
 (defn- checked-field
   "`field` once it satisfies the declared contract, else a refusal naming it. The
    parsing below refuses bad INPUT key by key; this refuses a normalized form no
    surface could paint, whoever built it."
   [field-id field]
-  (if-let [why (hi-spec/field-error field)]
+  (if-let [why (view-spec/field-error field)]
     (invalid-field! field-id why)
     field))
 
@@ -178,7 +164,7 @@
    field's. A group answers nothing, so what it must have is different: children,
    a direction they run in, and no key that describes a value."
   [field-id group]
-  (if-let [why (hi-spec/group-error group)]
+  (if-let [why (view-spec/group-error group)]
     (invalid-field! field-id why)
     group))
 
@@ -188,13 +174,13 @@
    paints — and it must carry nothing that would make a surface go looking for a
    value it can never hold."
   [decor]
-  (if-let [why (hi-spec/decor-error decor)]
+  (if-let [why (view-spec/decor-error decor)]
     (invalid-field! nil why)
     decor))
 
 (defn- checked-request
   [request]
-  (if-let [why (hi-spec/request-error request)]
+  (if-let [why (view-spec/request-error request)]
     (invalid-request! why)
     request))
 
@@ -208,7 +194,7 @@
    dropped, every value inside its own field's domain, and a `:password` or an
    `:otp` as the vault HANDLE rather than the plaintext."
   [request-id fields answer]
-  (if-let [why (hi-spec/answer-error fields answer)]
+  (if-let [why (view-spec/answer-error fields answer)]
     (invalid-answer! request-id why)
     answer))
 
@@ -226,33 +212,35 @@
 (defn- wire-keys
   "The spec vocabulary `ks` in the canonical snake_case spelling a Python/JSON
    spec writes. The keys a parser accepts are exactly the ones
-   [[com.blockether.vis.internal.human-input.spec]] declares — deriving them here
+   [[com.blockether.vis.internal.view.spec]] declares — deriving them here
    is what keeps the wire from growing a second copy of that table."
   [ks]
   (into #{} (map snake-key) ks))
 
-(def ^:private field-keys "Every key a VALUE field spec may carry." (wire-keys hi-spec/field-keys))
+(def ^:private field-keys
+  "Every key a VALUE field spec may carry."
+  (wire-keys view-spec/field-keys))
 
 (def ^:private layout-keys
   "The keys only a `group` has. A field that holds an ANSWER carrying one of them
    is a spec that meant to group and forgot to say so: dropping the key in
    silence drew the form flat and sent the author hunting for a layout bug in the
    surfaces, so it is refused with the fix in the message."
-  (wire-keys hi-spec/layout-keys))
+  (wire-keys view-spec/layout-keys))
 
-(def ^:private group-keys "Every key a `group` may carry." (wire-keys hi-spec/group-keys))
+(def ^:private group-keys "Every key a `group` may carry." (wire-keys view-spec/group-keys))
 
-(def ^:private decor-keys "Every key a decoration may carry." (wire-keys hi-spec/decor-keys))
+(def ^:private decor-keys "Every key a decoration may carry." (wire-keys view-spec/decor-keys))
 
 (def ^:private option-keys
   "Every key one `:options` entry may carry."
-  (wire-keys hi-spec/option-keys))
+  (wire-keys view-spec/option-keys))
 
 (def ^:private request-keys
   "Every key a request spec may carry. `channel_id` is the singular spelling of
    `channel_ids` — a one-channel convenience, and the only wire key with no
    counterpart in the normalized form."
-  (conj (wire-keys hi-spec/request-keys) "channel_id"))
+  (conj (wire-keys view-spec/request-keys) "channel_id"))
 
 (defn- accepted-spelling?
   "Two spellings, one meaning: the snake_case STRING a Python/JSON spec writes,
@@ -352,16 +340,16 @@
    bounds, so a client that types an exact number is never argued with."
   [field-id field]
   (let [lo
-        (normalize-number field-id ":min" (pick field "min" :min) (:min hi-spec/range-defaults))
+        (normalize-number field-id ":min" (pick field "min" :min) (:min view-spec/range-defaults))
 
         hi
-        (normalize-number field-id ":max" (pick field "max" :max) (:max hi-spec/range-defaults))
+        (normalize-number field-id ":max" (pick field "max" :max) (:max view-spec/range-defaults))
 
         step
         (normalize-number field-id
                           ":step"
                           (pick field "step" :step)
-                          (:step hi-spec/range-defaults))]
+                          (:step view-spec/range-defaults))]
 
     (when-not (< (double lo) (double hi))
       (invalid-field! field-id ":max must be greater than :min"))
@@ -376,27 +364,27 @@
   [field-id field]
   (let [hi
         (or (normalize-length field-id ":max_length" (pick field "max_length" :max-length))
-            (long (:length hi-spec/otp-defaults)))
+            (long (:length view-spec/otp-defaults)))
 
         lo
         (or (normalize-length field-id ":min_length" (pick field "min_length" :min-length)) hi)]
 
     (when (> (long lo) (long hi))
       (invalid-field! field-id ":max_length must be at least :min_length"))
-    (when (> (long hi) (long (:ceiling hi-spec/otp-defaults)))
+    (when (> (long hi) (long (:ceiling view-spec/otp-defaults)))
       (invalid-field!
         field-id
-        (str ":max_length must be at most " (:ceiling hi-spec/otp-defaults) " digits")))
+        (str ":max_length must be at most " (:ceiling view-spec/otp-defaults) " digits")))
     {:min-length lo :max-length hi}))
 
 (defn- normalize-direction
   [field-id value]
   (let [name' (str/lower-case (or (trimmed value) "column"))]
-    (or (get hi-spec/group-directions name')
+    (or (get view-spec/group-directions name')
         (invalid-field! field-id
                         (str "unknown :direction " (pr-str name')
                              " — expected one of "
-                             (str/join ", " (sort (keys hi-spec/group-directions))))))))
+                             (str/join ", " (sort (keys view-spec/group-directions))))))))
 
 (declare coerce-value normalize-node)
 
@@ -405,18 +393,18 @@
    name alone, and decided FIRST: which keys are legal, whether a `:name` is
    required and whether the node may hold children all follow from the answer."
   [node]
-  (= hi-spec/group-type-name (str/lower-case (or (trimmed (pick node "type" :type)) ""))))
+  (= view-spec/group-type-name (str/lower-case (or (trimmed (pick node "type" :type)) ""))))
 
 (defn- decor-type
   "The internal DECORATION type this RAW spec node asks for, or nil when it asks
    for something answerable. Read from the type name alone and read FIRST, like
    [[group-node?]]: a heading is ink on the form, so it never walks a value path."
   [node]
-  (get hi-spec/decor-types (str/lower-case (or (trimmed (pick node "type" :type)) ""))))
+  (get view-spec/decor-types (str/lower-case (or (trimmed (pick node "type" :type)) ""))))
 
 (defn normalize-field
   "Validate one FIELD spec — a leaf holding exactly one answer — and return its
-   internal form. Throws `ex-info` with `:type :vis/human-input-invalid-field`
+   internal form. Throws `ex-info` with `:type :vis/view-invalid-field`
    on a bad spec.
 
    Three names, three jobs, and every field ends up with all three:
@@ -468,14 +456,14 @@
         (or (trimmed (pick field "type" :type)) "plaintext")
 
         field-type
-        (get hi-spec/field-types (str/lower-case type-name))
+        (get view-spec/field-types (str/lower-case type-name))
 
         _
         (when-not field-type
           (invalid-field! field-id
                           (str "unknown type " (pr-str type-name)
                                " — expected one of "
-                               (str/join ", " (sort (keys hi-spec/field-types))))))]
+                               (str/join ", " (sort (keys view-spec/field-types))))))]
 
     (checked-field
       field-id
@@ -511,14 +499,14 @@
                                                   ":is-required"
                                                   (pick field "is_required" :is-required)
                                                   false)
-                     :is-secret (contains? hi-spec/secret-types field-type)}
+                     :is-secret (contains? view-spec/secret-types field-type)}
               description
               (assoc :description description)
 
               (trimmed (pick field "placeholder" :placeholder))
               (assoc :placeholder (trimmed (pick field "placeholder" :placeholder)))
 
-              (contains? hi-spec/choice-types field-type)
+              (contains? view-spec/choice-types field-type)
               (assoc :options
                 (normalize-options field-id field-type (pick field "options" :options)))
 
@@ -570,7 +558,7 @@
       (checked-group id
                      (cond-> {:id id
                               :name id
-                              :type hi-spec/group-type
+                              :type view-spec/group-type
                               :direction (normalize-direction field-id
                                                               (pick group "direction" :direction))
                               :fields children}
@@ -582,7 +570,7 @@
 
 (defn- normalize-decor
   "Validate a DECORATION — a heading or a paragraph — and return its internal
-   form. Throws `ex-info` with `:type :vis/human-input-invalid-field` on a bad
+   form. Throws `ex-info` with `:type :vis/view-invalid-field` on a bad
    spec.
 
    The whole node is two things: which decoration it is, and the words it
@@ -622,8 +610,8 @@
    vector for every group it entered."
   [acc fields]
   (reduce (fn [acc {:keys [type] :as field}]
-            (cond (= hi-spec/group-type type) (leaves! acc (:fields field))
-                  (hi-spec/decoration? field) acc
+            (cond (= view-spec/group-type type) (leaves! acc (:fields field))
+                  (view-spec/decoration? field) acc
                   :else (conj! acc field)))
           acc
           fields))
@@ -644,7 +632,7 @@
    it owns, on the same transient accumulator."
   [acc fields]
   (reduce (fn [acc {:keys [type] :as field}]
-            (if (= hi-spec/group-type type)
+            (if (= view-spec/group-type type)
               (nodes! (conj! acc field) (:fields field))
               (conj! acc field)))
           acc
@@ -660,7 +648,7 @@
   [f fields]
   (mapv (fn [{:keys [type] :as field}]
           (f (cond-> field
-               (= hi-spec/group-type type)
+               (= view-spec/group-type type)
                (update :fields #(map-fields f %)))))
         fields))
 
@@ -670,7 +658,7 @@
    A request raised inside a gateway session has to NAME that session: the
    gateway bridge turns the request into a session event so the companion app
    learns the run is blocked, and a session event with no session has nowhere
-   to go. Resolved late and defensively — `human-input` must stay loadable
+   to go. Resolved late and defensively — the View subsystem must stay loadable
    (and testable) without the extension runtime."
   []
   (try (when-let [v (resolve 'com.blockether.vis.internal.extension/*current-environment*)]
@@ -722,9 +710,8 @@
     (long ms)))
 
 (defn normalize-request
-  "Validate a human-input request spec and return its internal form. Throws
-   `ex-info` with `:type :vis/human-input-invalid-request` (or
-   `:vis/human-input-invalid-field`) on a bad spec."
+  "Validate an input View request spec and return its internal form. Throws
+   `ex-info` with View-owned error data on a bad spec."
   [request]
   (when-not (map? request) (invalid-request! "request must be a map"))
   (check-keys! "request" request-keys request invalid-request!)
@@ -786,16 +773,16 @@
 (defn- invalid-live-view!
   [message]
   (throw (ex-info (str "Invalid live view: " message)
-                  {:type :vis/human-input-invalid-live-view :reason message})))
+                  {:type :vis/view-invalid-live-view :reason message})))
 
 (defn- invalid-live-patch!
   [message]
   (throw (ex-info (str "Invalid live-view patch: " message)
-                  {:type :vis/human-input-invalid-patch :reason message})))
+                  {:type :vis/view-invalid-patch :reason message})))
 
 (defn- checked-live-view
   [view]
-  (if-let [why (hi-spec/live-view-error view)]
+  (if-let [why (view-spec/live-view-error view)]
     (invalid-live-view! why)
     view))
 
@@ -803,56 +790,57 @@
   "`node` once it satisfies the node contract, else the reason it does not,
    refused by whoever was declaring it."
   [fail! node]
-  (if-let [why (hi-spec/live-node-error node)]
+  (if-let [why (view-spec/live-node-error node)]
     (fail! why)
     node))
 
 (defn- checked-live-patch
   [patch]
-  (if-let [why (hi-spec/live-patch-error patch)]
+  (if-let [why (view-spec/live-patch-error patch)]
     (invalid-live-patch! why)
     patch))
 
 (def ^:private live-view-decl-keys
   "Every key a live-view SPEC may write: the view's vocabulary minus the engine's
    own stamps, plus the singular `channel_id` [[normalize-channel-ids]] accepts."
-  (conj (wire-keys (reduce disj hi-spec/live-view-keys hi-spec/live-view-stamp-keys)) "channel_id"))
+  (conj (wire-keys (reduce disj view-spec/live-view-keys view-spec/live-view-stamp-keys))
+        "channel_id"))
 
 (def ^:private live-node-decl-keys
   "Every key a NODE spec may write. `total_lines` is the engine's stamp on a log:
    the size of the RECORD is counted, never claimed. `direction` and `fields`
    belong to a layout GROUP and are refused here BY NAME, so a `status` written
    with children hears about them instead of having them dropped."
-  (wire-keys (reduce disj hi-spec/live-node-keys #{:total-lines :direction :fields})))
+  (wire-keys (reduce disj view-spec/live-node-keys #{:total-lines :direction :fields})))
 
 (def ^:private live-group-decl-keys
   "Every key a live layout GROUP spec may write: its own vocabulary, so `lines` on
    a `row` is refused by name rather than quietly ignored."
-  (wire-keys hi-spec/live-group-keys))
+  (wire-keys view-spec/live-group-keys))
 
 (def ^:private live-patch-decl-keys
   "The one key a patch spec may write. `view_id` and `seq` are stamps: a caller
    who could choose the seq could replay a patch, and one who could choose the
    view could patch somebody else's."
-  (wire-keys (reduce disj hi-spec/live-patch-keys #{:view-id :seq})))
+  (wire-keys (reduce disj view-spec/live-patch-keys #{:view-id :seq})))
 
 (def ^:private live-order-decl-keys
   "Every key a `{:by …}` table order may write."
-  (wire-keys hi-spec/live-sorted-keys))
+  (wire-keys view-spec/live-sorted-keys))
 
 (def ^:private live-op-decl-keys
   "Every key ONE operation may write, per operation — the op's own `:op` chooses
    the set, so a `clear` carrying the lines it meant to `append` is refused
    instead of silently emptying the node."
-  (update-vals hi-spec/live-op-key-sets wire-keys))
+  (update-vals view-spec/live-op-key-sets wire-keys))
 
 (def ^:private live-item-keys
   "Every key one item of a keyed collection may write, by the key holding them."
-  {:columns (wire-keys hi-spec/live-column-keys)
-   :rows (wire-keys hi-spec/live-row-keys)
-   :stats (wire-keys hi-spec/live-stat-keys)
-   :steps (wire-keys hi-spec/live-step-keys)
-   :links (wire-keys hi-spec/live-link-keys)})
+  {:columns (wire-keys view-spec/live-column-keys)
+   :rows (wire-keys view-spec/live-row-keys)
+   :stats (wire-keys view-spec/live-stat-keys)
+   :steps (wire-keys view-spec/live-step-keys)
+   :links (wire-keys view-spec/live-link-keys)})
 
 (def ^:private live-item-name
   "What one item of each keyed collection is CALLED, so a refusal names the thing
@@ -919,10 +907,10 @@
    URL scheme; anything else is refused with the three kinds named, because a
    surface opens each of them differently."
   [fail! declared target]
-  (cond (some? declared) (live-term fail! ":target-kind" hi-spec/link-targets declared)
+  (cond (some? declared) (live-term fail! ":target-kind" view-spec/link-targets declared)
         (re-find #"^[a-zA-Z][a-zA-Z0-9+.-]*://" target) :url
         :else (fail! (str ":target-kind must be one of "
-                          (str/join ", " (sort (keys hi-spec/link-targets)))
+                          (str/join ", " (sort (keys view-spec/link-targets)))
                           " — only a target carrying a scheme names its own kind"))))
 
 (defn- normalize-live-item
@@ -939,18 +927,21 @@
                        (fail! (str what " " id ": " message)))
           label (trimmed (pick* item :label))
           tone (some->> (pick* item :tone)
-                        (live-term item-fail! ":tone" hi-spec/live-tones))]
+                        (live-term item-fail! ":tone" view-spec/live-tones))]
 
       (case kind
         :columns
         (cond-> {:id id :label (or label (item-fail! "a column needs a :label"))}
           (some? (pick* item :align))
-          (assoc :align (live-term item-fail! ":align" hi-spec/live-aligns (pick* item :align))))
+          (assoc :align (live-term item-fail! ":align" view-spec/live-aligns (pick* item :align))))
 
         :rows
         (cond-> {:id id :cells (text-items item-fail! ":cells" (or (pick* item :cells) []))}
           tone
-          (assoc :tone tone))
+          (assoc :tone tone)
+
+          (trimmed (pick* item :branch))
+          (assoc :branch (trimmed (pick* item :branch))))
 
         :stats
         (cond-> {:id id
@@ -993,8 +984,8 @@
                          (cond-> {:by (live-text fail! "a `{:by …}` order's :by" (pick* order :by))}
                            (some? (pick* order :dir))
                            (assoc :dir
-                             (live-term fail! ":dir" hi-spec/live-sort-dirs (pick* order :dir)))))
-        :else (live-term fail! ":order" hi-spec/live-orders order)))
+                             (live-term fail! ":dir" view-spec/live-sort-dirs (pick* order :dir)))))
+        :else (live-term fail! ":order" view-spec/live-orders order)))
 
 (defn- live-node
   "One declared node of a live view. `fail!` is the refusal of whoever declares
@@ -1023,10 +1014,10 @@
           (group-fail! "a group needs a non-empty :fields — a row arranging nothing is a typo"))
         (checked-live-node group-fail!
                            (cond-> {:id id
-                                    :type hi-spec/group-type
+                                    :type view-spec/group-type
                                     :direction (live-term group-fail!
                                                           ":direction"
-                                                          hi-spec/group-directions
+                                                          view-spec/group-directions
                                                           (or (pick* node :direction) "column"))
                                     :fields (mapv #(live-node group-fail! %) children)}
                              label
@@ -1035,7 +1026,7 @@
                    (fail! "a node needs a non-blank :id — every patch names the node it speaks to"))
             node-fail! (fn [message]
                          (fail! (str "node " id ": " message)))
-            type (live-term node-fail! ":type" hi-spec/live-node-types (pick* node :type))
+            type (live-term node-fail! ":type" view-spec/live-node-types (pick* node :type))
             label (trimmed (pick* node :label))
             base (cond-> {:id id :type type}
                    label
@@ -1050,7 +1041,7 @@
             (cond-> (assoc base
                       :text (live-text node-fail! "a status' :text" (pick* node :text))
                       :tone (or (some->> (pick* node :tone)
-                                         (live-term node-fail! ":tone" hi-spec/live-tones))
+                                         (live-term node-fail! ":tone" view-spec/live-tones))
                                 :idle))
               (trimmed (pick* node :detail))
               (assoc :detail (trimmed (pick* node :detail))))
@@ -1079,7 +1070,7 @@
                        [])
               :window-lines (if-some [window (pick* node :window-lines)]
                               (live-long node-fail! ":window-lines" window)
-                              (long (:window-lines hi-spec/log-defaults))))
+                              (long (:window-lines view-spec/log-defaults))))
 
             :table
             (cond-> (assoc base
@@ -1087,7 +1078,7 @@
                       :rows (items :rows)
                       :max-rows (if-some [bound (pick* node :max-rows)]
                                   (live-long node-fail! ":max-rows" bound)
-                                  (long (:max-rows hi-spec/table-defaults)))
+                                  (long (:max-rows view-spec/table-defaults)))
                       :order (normalize-live-order node-fail! (pick* node :order)))
               (some? (pick* node :is-focusable))
               (assoc :is-focusable
@@ -1101,7 +1092,7 @@
 
 (defn normalize-live-node
   "One declared node, refused where it was BUILT — the seam the node builders in
-   `com.blockether.vis.human-input` validate through, so an unknown key or a
+   `com.blockether.vis.view` validate through, so an unknown key or a
    `:tone` outside the table throws at the line that wrote it rather than in
    front of the human."
   [node]
@@ -1117,14 +1108,14 @@
                    (when (map? node)
                      (if (group-node? node)
                        (live-nodes? (pick* node :fields))
-                       (contains? hi-spec/live-node-types
+                       (contains? view-spec/live-node-types
                                   (some-> (trimmed (pick* node :type))
                                           str/lower-case)))))
                  nodes)))
 
 (defn normalize-live-view
   "Validate a live-view spec and return the view the materializer holds. Throws
-   `ex-info` with `:type :vis/human-input-invalid-live-view` on a bad spec, so a
+   `ex-info` with `:type :vis/view-invalid-live-view` on a bad spec, so a
    view is refused WHERE IT WAS DECLARED, before any surface drew anything.
 
    Three keys are the ENGINE's stamps and a spec that writes one is refused: the
@@ -1235,7 +1226,7 @@
    :label (fn [fail! value]
             (live-text fail! ":label" value))
    :tone (fn [fail! value]
-           (live-term fail! ":tone" hi-spec/live-tones value))
+           (live-term fail! ":tone" view-spec/live-tones value))
    :value (fn [fail! value]
             (live-fraction fail! ":value" value))
    :done (fn [fail! value]
@@ -1269,7 +1260,7 @@
   [fail! op]
   (when-not (map? op) (fail! "an operation must be a map"))
   (let [kind
-        (live-term fail! ":op" hi-spec/live-ops (pick* op :op))
+        (live-term fail! ":op" view-spec/live-ops (pick* op :op))
 
         ;; "an append op", "a set op" — the refusal is read out loud by whoever wrote it.
         article
@@ -1285,7 +1276,7 @@
                 (assoc acc k ((live-op-value k) op-fail! value))
                 acc))
             {:op kind}
-            (disj (hi-spec/live-op-key-sets kind) :op))))
+            (disj (view-spec/live-op-key-sets kind) :op))))
 
 (defn normalize-live-op
   "One patch operation, refused where it was BUILT — the seam the `add-node` /
@@ -1302,7 +1293,7 @@
    The ops may arrive bare or under `:ops`, because the wire carries a map and a
    Clojure caller has a vector — everything below that is one vocabulary. Shape
    only: whether the node an op names EXISTS, and whether it would cross a
-   bound, is `live/apply-patch`'s answer."
+   bound, is `materializer/apply-patch`'s answer."
   [view patch]
   (let [ops (cond (map? patch)
                   (do (check-keys! "patch" live-patch-decl-keys patch invalid-live-patch!)
@@ -1392,10 +1383,10 @@
 (defn- coerce-range
   [{lo :min hi :max st :step} value]
   (let [lo
-        (if (number? lo) lo (:min hi-spec/range-defaults))
+        (if (number? lo) lo (:min view-spec/range-defaults))
 
         hi
-        (if (number? hi) hi (:max hi-spec/range-defaults))
+        (if (number? hi) hi (:max view-spec/range-defaults))
 
         n
         (cond (nil? value) lo
@@ -1410,7 +1401,7 @@
           ;; The SPEC decides the answer's type, not the keystroke that produced it:
           ;; an all-integer slider always hands the extension a long, so `0`, `"0"`
           ;; and `0.0` cannot reach it as three different things.
-          (every? integer? [lo hi (if (number? st) st (:step hi-spec/range-defaults))])
+          (every? integer? [lo hi (if (number? st) st (:step view-spec/range-defaults))])
           [:ok (long (Math/round (double n)))]
           :else [:ok (double n)])))
 
@@ -1420,10 +1411,10 @@
    separators here rather than a typo the operator has to go back and delete."
   [{:keys [is-required min-length max-length]} value]
   (let [lo
-        (long (or min-length (:length hi-spec/otp-defaults)))
+        (long (or min-length (:length view-spec/otp-defaults)))
 
         hi
-        (long (or max-length (:length hi-spec/otp-defaults)))
+        (long (or max-length (:length view-spec/otp-defaults)))
 
         digits
         (cond (nil? value) ""
@@ -1444,7 +1435,7 @@
   "Coerce and validate one raw `value` against normalized `field`. Returns
    `[:ok coerced]` or `[:error message]`."
   [{:keys [type] :as field} value]
-  (cond (contains? hi-spec/text-types type) (coerce-text field value)
+  (cond (contains? view-spec/text-types type) (coerce-text field value)
         (= :select type) (coerce-select field value)
         (= :multiselect type) (coerce-multiselect field value)
         (= :checkbox type) (coerce-checkbox field value)
@@ -1574,11 +1565,11 @@
 
 (def ^:private request-stamps
   "The engine's own request stamps, wire spelling -> normalized key."
-  (into {} (map (juxt snake-key identity)) hi-spec/request-stamp-keys))
+  (into {} (map (juxt snake-key identity)) view-spec/request-stamp-keys))
 
 (defn view<-wire
   "Inverse of [[request->view]] for a view that CROSSED A PROCESS BOUNDARY — the
-   canonical snake_case map a `human_input.request` session event carries.
+   canonical snake_case map a `view.open` session event carries.
 
    A run parked inside `vis-agent serve` publishes on an in-process channel bus that
    never leaves that JVM, so for every other process the session event IS the
@@ -1614,26 +1605,26 @@
         (map (juxt snake-key identity))
         (reduce into
                 #{}
-                [hi-spec/live-view-keys hi-spec/live-node-keys hi-spec/live-group-keys
-                 hi-spec/live-column-keys hi-spec/live-row-keys hi-spec/live-stat-keys
-                 hi-spec/live-step-keys hi-spec/live-link-keys hi-spec/live-sorted-keys
-                 hi-spec/live-patch-keys hi-spec/live-op-keys hi-spec/live-result-keys
-                 hi-spec/live-picture-keys hi-spec/live-elided-keys])))
+                [view-spec/live-view-keys view-spec/live-node-keys view-spec/live-group-keys
+                 view-spec/live-column-keys view-spec/live-row-keys view-spec/live-stat-keys
+                 view-spec/live-step-keys view-spec/live-link-keys view-spec/live-sorted-keys
+                 view-spec/live-patch-keys view-spec/live-op-keys view-spec/live-result-keys
+                 view-spec/live-picture-keys view-spec/live-elided-keys])))
 
 (def ^:private live-wire-terms
   "The CLOSED table each keyword-valued key takes its value from. A term outside its
    table stays the text it arrived as, so the spec check refuses the frame instead
    of minting a keyword no surface knows how to paint."
-  {:type (assoc hi-spec/live-node-types hi-spec/group-type-name hi-spec/group-type)
-   :tone hi-spec/live-tones
-   :op hi-spec/live-ops
-   :order hi-spec/live-orders
-   :dir hi-spec/live-sort-dirs
-   :align hi-spec/live-aligns
-   :direction hi-spec/group-directions
-   :target-kind hi-spec/link-targets
-   :reason hi-spec/live-reasons
-   :classification hi-spec/live-classifications})
+  {:type (assoc view-spec/live-node-types view-spec/group-type-name view-spec/group-type)
+   :tone view-spec/live-tones
+   :op view-spec/live-ops
+   :order view-spec/live-orders
+   :dir view-spec/live-sort-dirs
+   :align view-spec/live-aligns
+   :direction view-spec/group-directions
+   :target-kind view-spec/link-targets
+   :reason view-spec/live-reasons
+   :classification view-spec/live-classifications})
 
 (defn- live<-wire
   "One decoded live value as the engine holds it: canonical keys back to their
@@ -1681,33 +1672,38 @@
 
 (defn live-view<-wire
   "Inverse of the wire projection for a MATERIALIZED live view — the canonical
-   snake_case map a `human_input.live.open` session event carries, and the shape
+   snake_case map a `view.open` session event carries, and the shape
    the live-views resync answers with.
 
    A run SHOWING its work inside `vis-agent serve` publishes on an in-process channel
    bus that never leaves that JVM, so for every other process this event IS the
    view. [[view<-wire]] is the same door for a form."
   [wire]
-  (live<-wire-checked "view" hi-spec/live-view-error wire))
+  (live<-wire-checked "view" view-spec/live-view-error wire))
 
 (defn live-patch<-wire
   "Inverse of the wire projection for one accepted patch — what a
-   `human_input.live.patch` session event carries. The gateway COALESCES patches
+   `view.patch` session event carries. The gateway COALESCES patches
    before it journals them, so `:seq` names the last engine patch the frame folded
    in, and a surface that already applied it can tell."
   [wire]
-  (live<-wire-checked "patch" hi-spec/live-patch-error wire))
+  (live<-wire-checked "patch" view-spec/live-patch-error wire))
 
 (defn live-result<-wire
-  "Inverse of the wire projection for a view's VERDICT — what a
-   `human_input.live.close` session event carries."
+  "Inverse of the wire projection for a view's VERDICT — what a `view.close`
+   session event carries."
   [wire]
-  (live<-wire-checked "verdict" hi-spec/live-result-error wire))
+  (live<-wire-checked "verdict" view-spec/live-result-error wire))
 (defn- publish!
   "Publish `event` on every channel in `channel-ids` and return how many
    listeners it actually reached across all of them."
   [channel-ids event]
   (transduce (map #(channel-events/publish-channel-event! % event)) + 0 channel-ids))
+
+(defn- lifecycle-event
+  "Canonical channel envelope for either View kind."
+  [op entry payload]
+  (merge {:op op :kind (:kind entry) :view-id (:id entry) :session-id (:session-id entry)} payload))
 
 ;; A live view's life — open, patch, close
 ;;
@@ -1724,7 +1720,7 @@
    claim a person ended it. `:model-result` is the optional compact string returned
    to the model while the complete verdict remains human-facing."
   (into (wire-keys (reduce disj
-                           hi-spec/live-result-keys
+                           view-spec/live-result-keys
                            #{:view-id :is-completed :view :elided :is-from-human :note}))
         (wire-keys #{:focus-snapshots :model-result})))
 
@@ -1761,7 +1757,7 @@
    at once because a form nobody can see is a thread parked forever."
   [view]
   (let [view
-        (live/materialize (normalize-live-view view))
+        (materializer/materialize (normalize-live-view view))
 
         view-id
         (:id view)
@@ -1777,7 +1773,7 @@
          :is-system *system-live-declaration*
          :id view-id
          :view (atom view)
-         :file (live-sink/open! view)
+         :file (sink/open! view)
          :promise (promise)
          :session-id (:session-id view)
          :channel-ids (:channel-ids view)
@@ -1799,10 +1795,7 @@
                :data {:view-id view-id :title (:title view) :nodes (mapv :id (:nodes view))}
                :msg "Live view opened"})
     (when (zero? (long (publish! (:channel-ids entry)
-                                 {:op :human-input/live-open
-                                  :view-id view-id
-                                  :session-id (:session-id entry)
-                                  :view view})))
+                                 (lifecycle-event :view/open entry {:view view}))))
       (tel/log! {:level :warn
                  :id ::live-unwatched
                  :data {:view-id view-id :title (:title view) :channel-ids (:channel-ids entry)}
@@ -1847,17 +1840,13 @@
             (normalize-patch @cell patch)
 
             patched
-            (live/apply-patch @cell applied)]
+            (materializer/apply-patch @cell applied)]
 
         (reset! cell patched)
         ;; Activity replacement patches are ephemeral; its final verdict already
         ;; carries the bounded materialized picture used for restore.
-        (when-not (:is-system entry) (live-sink/append! (:file entry) applied))
-        (publish! (:channel-ids entry)
-                  {:op :human-input/live-patch
-                   :view-id view-id
-                   :session-id (:session-id entry)
-                   :patch applied})
+        (when-not (:is-system entry) (sink/append! (:file entry) applied))
+        (publish! (:channel-ids entry) (lifecycle-event :view/patch entry {:patch applied}))
         patched))))
 
 (defn patch-activity!
@@ -1878,11 +1867,11 @@
 
 (defn- human-note
   "The comment a human left with their stop: trimmed, and cut to
-   `hi-spec/note-chars`. A stop is never refused for the length of its note —
+   `view-spec/note-chars`. A stop is never refused for the length of its note —
    what the person managed to type before pressing stop always reaches the model."
   [note]
   (when-let [text (trimmed note)]
-    (subs text 0 (min (count text) (long hi-spec/note-chars)))))
+    (subs text 0 (min (count text) (long view-spec/note-chars)))))
 
 (defn- live-result
   "The verdict of `view`: how it ended, and the whole picture the human watched,
@@ -1899,7 +1888,7 @@
   (when-not (map? ending) (fail! "an ending must be a map"))
   (check-keys! "ending" live-ending-keys ending fail!)
   (let [reason
-        (live-term fail! ":reason" hi-spec/live-reasons (or (pick* ending :reason) :completed))
+        (live-term fail! ":reason" view-spec/live-reasons (or (pick* ending :reason) :completed))
 
         verdict
         (cond-> {:view-id (:id view)
@@ -1919,14 +1908,14 @@
           (assoc :artifact-id (trimmed (pick* ending :artifact-id))))
 
         picture
-        (live/picture view)
+        (materializer/picture view)
 
         result
         (cond-> (assoc verdict :view (:view picture))
           (seq (:elided picture))
           (assoc :elided (:elided picture)))]
 
-    (if-let [why (hi-spec/live-result-error result)]
+    (if-let [why (view-spec/live-result-error result)]
       (fail! why)
       result)))
 
@@ -1941,7 +1930,8 @@
   (-> artifact
       (dissoc :view)
       (assoc :kind "file"
-             :filename (str (or (live/slug (:title artifact)) "live-view") ".live.ndjson"))))
+             :filename (str (or (materializer/slug (:title artifact)) "live-view")
+                            ".live.ndjson"))))
 
 (defn- live-artifact
   "The closed view as an ARTIFACT the human can reopen: what they watched,
@@ -1950,29 +1940,29 @@
    Nothing here reads the log. The record has been the store of truth since
    `open`, so the artifact points at that file (`:storage-uri`) and states how much
    of it there is; only a view small enough to survive a session sync
-   (`hi-spec/live-artifact-inline-bytes`) also travels as bytes, because holding a
+   (`view-spec/live-artifact-inline-bytes`) also travels as bytes, because holding a
    build log in memory as base64 is the cost this whole design removes. `:view` is
    the final materialized state — the summary a surface opens instantly, and the
-   very state `live/->markdown` re-renders the model's document from.
+   very state `materializer/->markdown` re-renders the model's document from.
 
    `:size` and `:line-count` count the RUN — the declared view and every accepted
    patch — because the trailer that seals the record states the verdict, and the
    verdict is already `:reason` and `:view` here."
   [view result ^java.io.File file]
   (let [{:keys [size line-count]}
-        (live-sink/stats file)
+        (sink/stats file)
 
         artifact
         (cond-> {:id (str (java.util.UUID/randomUUID))
                  :view-id (:view-id result)
                  :session-id (:session-id view)
                  :title (:title view)
-                 :media-type hi-spec/live-artifact-media-type
+                 :media-type view-spec/live-artifact-media-type
                  :audience "user"
                  :ended-at (util/now-ms)
                  :reason (:reason result)
                  :view (:view result)
-                 :storage-uri (live-sink/record-uri (:session-id view) (:view-id result))
+                 :storage-uri (sink/record-uri (:session-id view) (:view-id result))
                  :size size
                  :line-count line-count}
           (= :activity (:classification view))
@@ -1980,12 +1970,12 @@
             :activity :activity-anchor
             (get-in view [:activity :anchor]))
 
-          (<= (long size) (long hi-spec/live-artifact-inline-bytes))
+          (<= (long size) (long view-spec/live-artifact-inline-bytes))
           (assoc :base64
             (.encodeToString (java.util.Base64/getEncoder)
                              (java.nio.file.Files/readAllBytes (.toPath file)))))]
 
-    (if-let [why (hi-spec/live-artifact-error artifact)]
+    (if-let [why (view-spec/live-artifact-error artifact)]
       (invalid-live-view! why)
       artifact)))
 
@@ -2061,7 +2051,7 @@
                                    (when-not (and node-id (seq focused-ids) (map? snapshot-view))
                                      (invalid-live-view!
                                        "each focus snapshot needs node_id, focused_ids and view"))
-                                   (when-let [why (hi-spec/live-view-error snapshot-view)]
+                                   (when-let [why (view-spec/live-view-error snapshot-view)]
                                      (invalid-live-view! (str "invalid focus snapshot: " why)))
                                    {:node-id node-id :focused-ids focused-ids :view snapshot-view}))
                                (or (pick* ending :focus-snapshots) []))
@@ -2069,7 +2059,7 @@
                    (invalid-live-view! "an artifact holds at most 500 focus snapshots"))
                _ (when (> (count (.getBytes (wire/json-str snapshots)
                                             java.nio.charset.StandardCharsets/UTF_8))
-                          (long hi-spec/live-focus-snapshot-bytes))
+                          (long view-spec/live-focus-snapshot-bytes))
                    (invalid-live-view! "focus snapshots exceed the 1000000-byte artifact limit"))
                verdict
                (live-result
@@ -2113,16 +2103,13 @@
                ;; model result when it explicitly supplied one.
                (when-let [release (:wall-hold entry)]
                  (release))
-               (live-sink/close! (:file entry)
-                                 (cond-> artifact-result
-                                   (seq snapshots)
-                                   (assoc :focus-snapshots snapshots)))
+               (sink/close! (:file entry)
+                            (cond-> artifact-result
+                              (seq snapshots)
+                              (assoc :focus-snapshots snapshots)))
                (deliver (:promise entry) model-result)
                (publish! (:channel-ids entry)
-                         {:op :human-input/live-close
-                          :view-id view-id
-                          :session-id (:session-id entry)
-                          :result artifact-result})
+                         (lifecycle-event :view/close entry {:result artifact-result}))
                (tel/log! {:level :debug
                           :id ::live-closed
                           :data {:view-id view-id
@@ -2272,13 +2259,10 @@
   (let [[old _] (swap-vals! pending dissoc request-id)]
     (when-let [entry (get old request-id)]
       (deliver (:promise entry) result)
-      ;; The close event carries `:session-id` because the entry is ALREADY
-      ;; gone from `pending` by now: a listener that has to route the close to
-      ;; a session can no longer look it up.
+      ;; The lifecycle envelope carries `:session-id` from the removed entry;
+      ;; listeners never have to recover routing data from the registry.
       (publish! (:channel-ids entry)
-                (cond-> {:op :human-input/close :request-id request-id :reason (:reason result)}
-                  (:session-id entry)
-                  (assoc :session-id (:session-id entry))))
+                (lifecycle-event :view/close entry {:result {:reason (:reason result)}}))
       entry)))
 
 (defn submit!
@@ -2352,7 +2336,7 @@
    dialog shows above the input, and `:description` is the italic line under
    that label — see [[normalize-field]].
 
-   Publishes a `:human-input/request` channel event, waits for [[submit!]] /
+   Publishes a `:view/open` channel event, waits for [[submit!]] /
    [[cancel!]], and always returns a map, either
 
      :is-submitted true, :reason \"submitted\", plus :request-id and :values
@@ -2388,7 +2372,7 @@
   [request]
   (let [entry
         (assoc (normalize-request request)
-          :kind :form
+          :kind :input
           :promise (promise)
           :created-at (util/now-ms))
 
@@ -2409,9 +2393,7 @@
                       :timeout-ms (:timeout-ms entry)}
                :msg "Human-input request opened"})
     (if (zero? (long (publish! (:channel-ids entry)
-                               {:op :human-input/request
-                                :request-id request-id
-                                :request (request->view entry)})))
+                               (lifecycle-event :view/open entry {:view (request->view entry)}))))
       (do (tel/log! {:level :error
                      :id ::request-undeliverable
                      :data {:request-id request-id
@@ -2510,7 +2492,7 @@
    `{field name -> how many validators that field declared}` and `run` is called
    `(run field-name index value values)` to reach the extension's own function,
    answering the verdict
-   [[com.blockether.vis.internal.human-input.validation/check]] understands
+   [[com.blockether.vis.internal.view.validation/check]] understands
    (nil/true, a message string, false, or a throw). Only a name, an index and the
    value being judged ever cross."
   ([request-json] (request-json! request-json nil nil))
@@ -2554,7 +2536,7 @@
       (throw (ex-info (str "unknown live view op " (pr-str op)
                            " — use " (str/join ", "
                                                (sort (into (:spawn live-ops) (:handle live-ops)))))
-                      {:type :vis/human-input-unknown-live-op :op op})))
+                      {:type :vis/view-unknown-live-op :op op})))
     op))
 
 (defn- live-handle-id
@@ -2573,7 +2555,7 @@
    difference between an unattended loop that stops and one that keeps working
    for a screen nobody is watching."
   [view-id]
-  (let [result (live-sink/verdict (live-sink/view-file (ambient-session-id) view-id))]
+  (let [result (sink/verdict (sink/view-file (ambient-session-id) view-id))]
     (when-not result
       (invalid-live-patch!
         (str "no live view " view-id " is open — it was closed, interrupted, or never opened")))

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.human-input.gh-live-test
+(ns com.blockether.vis.internal.view.gh-view-test
   "The gh extension's ops, replayed through the engine that receives them.
 
    `.vis/extensions/gh.py` builds a live view from `gh run view --json`. Its own Python test
@@ -12,8 +12,8 @@
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.human-input :as hi]
-            [com.blockether.vis.internal.human-input.live :as live]
+            [com.blockether.vis.internal.view :as hi]
+            [com.blockether.vis.internal.view.materializer :as live]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private ops-file (io/file ".vis" "extensions" "fixtures" "ops.json"))
@@ -23,7 +23,7 @@
 (def ^:private live-views-dir
   "The private var every view record hangs under, redefined per test so nothing here
    writes anywhere near the developer's own `~/.vis`."
-  (requiring-resolve 'com.blockether.vis.internal.human-input.live-sink/views-dir))
+  (requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir))
 
 (defn- fixture [file] (json/read-json (slurp file) :key-fn identity))
 

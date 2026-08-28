@@ -1731,12 +1731,12 @@ Return `{:slash/status :ok | :error, :slash/title "…"}` plus optional `:slash/
 ### Asking the human (Clojure)
 
 `com.blockether.vis.core/request-human-input!` takes the same request map the
-Python side sends, and `com.blockether.vis.human-input` builds it with the same
+Python side sends, and `com.blockether.vis.view` builds it with the same
 names - the only namespace besides `core` an extension imports:
 
 ```clojure
 (require '[com.blockether.vis.core :as vis]
-         '[com.blockether.vis.human-input :as hi])
+         '[com.blockether.vis.view :as hi])
 
 (vis/request-human-input!
   (hi/form {:title "Deploy" :submit-label "Ship it"}

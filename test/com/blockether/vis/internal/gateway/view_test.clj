@@ -1,25 +1,25 @@
-(ns com.blockether.vis.internal.gateway.human-input-test
+(ns com.blockether.vis.internal.gateway.view-test
   "An extension blocked on a typed human-input request must reach the COMPANION
    APP, not only the TUI.
 
    These tests pin the whole app path: the request defaults to both surfaces,
-   it names its session, the gateway bridge turns it into `human_input.request`
-   / `human_input.close` session events, the REST endpoints the phone actually
+   it names its session, the gateway bridge turns it into `view.open`
+   / `view.close` session events, the REST endpoints the phone actually
    calls answer it, the push tap alerts a phone that a run is parked, and the
    JSON fixture the companion's own suite parses is the engine's own projection.
 
    The matching TUI half — one request driving the terminal dialog and this
    bridge at the same time — is
-   `com.blockether.vis.ext.channel-tui.human-input-cross-channel-test`."
+   `com.blockether.vis.ext.channel-tui.view-cross-channel-test`."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.activity :as activity]
-            [com.blockether.vis.internal.gateway.human-input :as gw-hi]
+            [com.blockether.vis.internal.gateway.view :as gw-hi]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
-            [com.blockether.vis.internal.human-input :as hi]
-            [com.blockether.vis.internal.human-input.live :as live]
-            [com.blockether.vis.internal.human-input.spec :as hi-spec]
+            [com.blockether.vis.internal.view :as hi]
+            [com.blockether.vis.internal.view.materializer :as live]
+            [com.blockether.vis.internal.view.spec :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
 (defn- spec
@@ -52,12 +52,12 @@
     (try (f seen) (finally (state/remove-event-tap! k)))))
 
 (defn- events-of
-  "Every collected event of `type` naming `request-id`. Scoped by request id so
-   a sibling test's traffic can never satisfy an assertion here."
-  [seen type request-id]
+  "Every collected event of `type` naming `view-id`. Scoped by View id so a
+   sibling test's traffic can never satisfy an assertion here."
+  [seen type view-id]
   (filterv (fn [[_ event]]
              (and (= type (get event "type"))
-                  (= request-id (or (get-in event ["request" "id"]) (get event "request_id")))))
+                  (= view-id (or (get-in event ["view" "id"]) (get event "view_id")))))
     @seen))
 
 (deftest human-input-request-shape-test
@@ -85,29 +85,31 @@
       (fn [seen]
         (let [answer (future (hi/request! (spec :id rid :session-id sid)))]
           (try (testing "the pause becomes a session event, so SSE + replay carry it"
-                 (is (await-true #(seq (events-of seen "human_input.request" rid))))
-                 (let [[event-sid event] (first (events-of seen "human_input.request" rid))]
+                 (is (await-true #(seq (events-of seen "view.open" rid))))
+                 (let [[event-sid event] (first (events-of seen "view.open" rid))]
                    (is (= sid event-sid))
-                   (is (= "Deploy?" (get-in event ["request" "title"])))
-                   (is (= sid (get-in event ["request" "session_id"])))
-                   (is (= ["confirm"] (mapv #(get % "id") (get-in event ["request" "fields"]))))))
+                   (is (= "input" (get event "kind")))
+                   (is (= "Deploy?" (get-in event ["view" "title"])))
+                   (is (= sid (get-in event ["view" "session_id"])))
+                   (is (= ["confirm"] (mapv #(get % "id") (get-in event ["view" "fields"]))))))
                (testing "a client that connects later still finds the open form"
-                 (let [view (first (filterv #(= rid (:id %)) (gw-hi/pending sid)))]
+                 (let [view (first (filterv #(= rid (:id %)) (gw-hi/input-views sid)))]
                    (is (some? view))
                    (is (= "Deploy?" (:title view)))))
                (testing "an answer is scoped to the session that owns the request"
-                 (is (some? (gw-hi/request-of sid rid)))
-                 (is (nil? (gw-hi/request-of (str (random-uuid)) rid))))
+                 (is (some? (gw-hi/input-view-of sid rid)))
+                 (is (nil? (gw-hi/input-view-of (str (random-uuid)) rid))))
                (testing "the app's answer releases the blocked extension"
                  (is (= {:is-accepted true} (gw-hi/submit! rid {"confirm" true})))
                  (let [result (deref answer 2000 ::timeout)]
                    (is (true? (:is-submitted result)))
                    (is (= true (get-in result [:values "confirm"])))))
                (testing "the close event tells every OTHER client to drop the form"
-                 (is (await-true #(seq (events-of seen "human_input.close" rid))))
-                 (let [[event-sid event] (first (events-of seen "human_input.close" rid))]
+                 (is (await-true #(seq (events-of seen "view.close" rid))))
+                 (let [[event-sid event] (first (events-of seen "view.close" rid))]
                    (is (= sid event-sid))
-                   (is (= "submitted" (get event "reason")))))
+                   (is (= "input" (get event "kind")))
+                   (is (= "submitted" (get-in event ["result" "reason"])))))
                (finally (hi/cancel! rid "cleanup"))))))))
 
 (deftest rejected-answer-keeps-the-request-open-test
@@ -125,16 +127,16 @@
                               :timeout-ms 4000
                               :fields [{:id "key" :type "plaintext" :is-required true}]}))]
 
-    (try (is (await-true #(some? (gw-hi/request-of sid rid))))
+    (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
          (testing "validation is the engine's, so app and TUI accept the same answers"
            (let [outcome (gw-hi/submit! rid {"key" "   "})]
              (is (false? (:is-accepted outcome)))
              (is (contains? (:errors outcome) "key")))
-           (is (some? (gw-hi/request-of sid rid))))
+           (is (some? (gw-hi/input-view-of sid rid))))
          (testing "cancelling releases the waiter"
            (is (true? (gw-hi/cancel! rid)))
            (is (false? (:is-submitted (deref answer 2000 ::timeout))))
-           (is (nil? (gw-hi/request-of sid rid))))
+           (is (nil? (gw-hi/input-view-of sid rid))))
          (finally (hi/cancel! rid "cleanup")))))
 
 (deftest sessionless-request-is-refused-test
@@ -149,9 +151,9 @@
       (fn [seen]
         (let [ex (try (hi/request! (spec :id rid)) nil (catch clojure.lang.ExceptionInfo e e))]
           (testing "the engine refuses it before anything blocks"
-            (is (= :vis/human-input-invalid-request (:type (ex-data ex))))
+            (is (= :vis/view-invalid-request (:type (ex-data ex))))
             (is (nil? (hi/pending-request rid)))
-            (is (empty? (events-of seen "human_input.request" rid)))))))))
+            (is (empty? (events-of seen "view.open" rid)))))))))
 
 (deftest push-alerts-a-parked-run-test
   ;; The describer stays installed for every case below: a session title is
@@ -160,37 +162,40 @@
     (try (push/set-session-describer! (fn [_sid _tid]
                                         {:title "Ship the parser"}))
          (testing "the title demands action and then asks the question; the body is the detail"
-           (let [n (#'push/human-input-notification
+           (let [n (#'push/input-view-notification
                     "sid-9"
-                    {"type" "human_input.request"
-                     "request" {"id" "req-1"
-                                "title" "Approve the deploy"
-                                "description" "v1.2.3 to production"}})]
+                    {"type" "view.open"
+                     "kind" "input"
+                     "view" {"id" "req-1"
+                             "title" "Approve the deploy"
+                             "description" "v1.2.3 to production"}})]
              (is (= "Action needed — Approve the deploy" (:title n)))
              (is (= "v1.2.3 to production" (:body n)))
              (is (= "sid-9" (:thread-id n)))
-             (is (= "sid-9:human-input" (:collapse-id n)))
-             (is (= "human_input.request" (get-in n [:data :type])))
-             (is (= "req-1" (get-in n [:data :request_id])))
+             (is (= "sid-9:input-view" (:collapse-id n)))
+             (is (= "view.open" (get-in n [:data :type])))
+             (is (= "req-1" (get-in n [:data :view_id])))
              (is (= "sid-9" (get-in n [:data :session_id])))))
          (testing "a question with no detail under it is never repeated in the body"
-           (let [n (#'push/human-input-notification
+           (let [n (#'push/input-view-notification
                     "sid-9"
-                    {"type" "human_input.request"
-                     "request" {"id" "req-2" "title" "Approve the deploy"}})]
+                    {"type" "view.open"
+                     "kind" "input"
+                     "view" {"id" "req-2" "title" "Approve the deploy"}})]
              (is (= "Action needed — Approve the deploy" (:title n)))
              (is (= "Vis is waiting on your answer." (:body n)))))
          (testing "a request carrying only a description still says what it wants"
-           (let [n (#'push/human-input-notification
+           (let [n (#'push/input-view-notification
                     "sid-9"
-                    {"type" "human_input.request"
-                     "request" {"id" "req-3" "description" "Approve the deploy"}})]
+                    {"type" "view.open"
+                     "kind" "input"
+                     "view" {"id" "req-3" "description" "Approve the deploy"}})]
              (is (= "Action needed" (:title n)))
              (is (= "Approve the deploy" (:body n)))))
          (testing "an unlabelled request is still a demand, never blank"
-           (let [n (#'push/human-input-notification
+           (let [n (#'push/input-view-notification
                     "sid-9"
-                    {"type" "human_input.request" "request" {"id" "req-4"}})]
+                    {"type" "view.open" "kind" "input" "view" {"id" "req-4"}})]
              (is (= "Action needed" (:title n)))
              (is (= "Vis is waiting on your answer." (:body n)))))
          (finally (push/set-session-describer! prev)))))
@@ -226,10 +231,10 @@
                         :session-id sid
                         :fields [{:id "note" :type "plaintext" :label "Note" :is-required true}])))]
 
-    (try (is (await-true #(some? (gw-hi/request-of sid rid))))
+    (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
          (testing "a phone that starts cold still finds the open form, snake_case"
            (let [response
-                 ((rv 'list-human-input-handler) {:path-params {:sid sid}})
+                 ((rv 'list-input-views-handler) {:path-params {:sid sid}})
 
                  request
                  (first (get (json-body response) "requests"))]
@@ -242,29 +247,29 @@
              (is (= ["note"] (mapv #(get % "id") (get request "fields"))))
              (is (true? (get-in request ["fields" 0 "is_required"])))))
          (testing "the engine's validation answers the app, and the run stays parked"
-           (let [body (json-body ((rv 'submit-human-input-handler)
+           (let [body (json-body ((rv 'submit-input-view-handler)
                                    {:path-params {:sid sid :request-id rid}
                                     :body (body-stream {:values {"note" "   "}})}))]
              (is (false? (get body "is_accepted")))
              (is (= rid (get body "request_id")))
              (is (contains? (get body "errors") "note"))
-             (is (some? (gw-hi/request-of sid rid)))))
+             (is (some? (gw-hi/input-view-of sid rid)))))
          (testing "another session may not answer this request"
            (is (= 404
-                  (:status ((rv 'submit-human-input-handler)
+                  (:status ((rv 'submit-input-view-handler)
                              {:path-params {:sid (str (random-uuid)) :request-id rid}
                               :body (body-stream {:values {"note" "ship"}})})))))
          (testing "an accepted answer releases the blocked extension"
-           (let [body (json-body ((rv 'submit-human-input-handler)
+           (let [body (json-body ((rv 'submit-input-view-handler)
                                    {:path-params {:sid sid :request-id rid}
                                     :body (body-stream {:values {"note" "ship it"}})}))]
              (is (true? (get body "is_accepted")))
              (is (= "ship it" (get-in (deref answer 2000 ::timeout) [:values "note"])))))
          (testing "a settled request is gone from the snapshot and answerable no more"
-           (is (empty? (get (json-body ((rv 'list-human-input-handler) {:path-params {:sid sid}}))
+           (is (empty? (get (json-body ((rv 'list-input-views-handler) {:path-params {:sid sid}}))
                             "requests")))
            (is (= 404
-                  (:status ((rv 'cancel-human-input-handler)
+                  (:status ((rv 'cancel-input-view-handler)
                              {:path-params {:sid sid :request-id rid}})))))
          (finally (hi/cancel! rid "cleanup")))))
 
@@ -279,13 +284,13 @@
         answer
         (future (hi/request! (spec :id rid :session-id sid)))]
 
-    (try (is (await-true #(some? (gw-hi/request-of sid rid))))
-         (let [body (json-body ((rv 'cancel-human-input-handler)
+    (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
+         (let [body (json-body ((rv 'cancel-input-view-handler)
                                  {:path-params {:sid sid :request-id rid}}))]
            (is (true? (get body "is_cancelled")))
            (is (= rid (get body "request_id")))
            (is (false? (:is-submitted (deref answer 2000 ::timeout))))
-           (is (empty? (gw-hi/pending sid))))
+           (is (empty? (gw-hi/input-views sid))))
          (finally (hi/cancel! rid "cleanup")))))
 
 ;; Cross-language contract
@@ -382,7 +387,7 @@
                    hi-spec/group-type)
              (node-types (:fields view)))))))
 
-(deftest the-companion-urls-route-to-the-human-input-handlers-test
+(deftest the-companion-urls-route-to-the-input-view-handlers-test
   (testing "the URLs `gateway.ts` builds are the URLs this router serves"
     (let [match-by-path
           (requiring-resolve 'reitit.core/match-by-path)
@@ -404,16 +409,16 @@
           (fn [path]
             (match-by-path router path))]
 
-      (is (= @(rv 'list-human-input-handler)
-             (get-in (match (str "/v1/sessions/" sid "/human-input")) [:data :get :handler])))
-      (is (= @(rv 'submit-human-input-handler)
-             (get-in (match (str "/v1/sessions/" sid "/human-input/" encoded "/actions/submit"))
+      (is (= @(rv 'list-input-views-handler)
+             (get-in (match (str "/v1/sessions/" sid "/views/input")) [:data :get :handler])))
+      (is (= @(rv 'submit-input-view-handler)
+             (get-in (match (str "/v1/sessions/" sid "/views/input/" encoded "/actions/submit"))
                      [:data :post :handler])))
-      (is (= @(rv 'cancel-human-input-handler)
-             (get-in (match (str "/v1/sessions/" sid "/human-input/" encoded "/actions/cancel"))
+      (is (= @(rv 'cancel-input-view-handler)
+             (get-in (match (str "/v1/sessions/" sid "/views/input/" encoded "/actions/cancel"))
                      [:data :post :handler])))
       (testing "and hand the handlers the ids they answer with"
-        (let [m (match (str "/v1/sessions/" sid "/human-input/" encoded "/actions/submit"))]
+        (let [m (match (str "/v1/sessions/" sid "/views/input/" encoded "/actions/submit"))]
           (is (= sid (str (get-in m [:path-params :sid]))))
           (is (= rid (get-in m [:path-params :request-id]))))))))
 
@@ -433,34 +438,34 @@
                                    :fields [{:id "note" :type "plaintext" :label "Note"}])))]
 
     (try
-      (is (await-true #(some? (gw-hi/request-of sid rid))))
+      (is (await-true #(some? (gw-hi/input-view-of sid rid))))
       (testing "a malformed body is a 400 — never a 500, never a settled run"
         (doseq [body [{:values "text"} {:values [1 2]} {:values 42} {:values nil} {}]]
           (is (= 400
-                 (:status ((rv 'submit-human-input-handler)
+                 (:status ((rv 'submit-input-view-handler)
                             {:path-params {:sid sid :request-id rid} :body (body-stream body)})))))
         (is (= 400
-               (:status ((rv 'submit-human-input-handler)
+               (:status ((rv 'submit-input-view-handler)
                           {:path-params {:sid sid :request-id rid}}))))
         (is (= 400
-               (:status ((rv 'submit-human-input-handler)
+               (:status ((rv 'submit-input-view-handler)
                           {:path-params {:sid sid :request-id rid}
                            :body (java.io.ByteArrayInputStream. (.getBytes "not json" "UTF-8"))}))))
-        (is (some? (gw-hi/request-of sid rid))))
+        (is (some? (gw-hi/input-view-of sid rid))))
       (testing "a structured value is rejected, not stringified into the answer"
-        (let [body (json-body ((rv 'submit-human-input-handler)
+        (let [body (json-body ((rv 'submit-input-view-handler)
                                 {:path-params {:sid sid :request-id rid}
                                  :body (body-stream {:values {"note" {"a" 1}}})}))]
           (is (false? (get body "is_accepted")))
           (is (= "must be text" (get-in body ["errors" "note"])))
-          (is (some? (gw-hi/request-of sid rid)))))
+          (is (some? (gw-hi/input-view-of sid rid)))))
       (testing "the escaped id still routes, and the same handler answers it"
         (let [match ((requiring-resolve 'reitit.core/match-by-path)
                       ((rv 'router) "token" [])
-                      (str "/v1/sessions/" sid "/human-input/req%2Fone%20two/actions/submit"))]
+                      (str "/v1/sessions/" sid "/views/input/req%2Fone%20two/actions/submit"))]
           (is (= rid (get-in match [:path-params :request-id])))
-          (is (= @(rv 'submit-human-input-handler) (get-in match [:data :post :handler])))
-          (is (true? (get (json-body ((rv 'submit-human-input-handler)
+          (is (= @(rv 'submit-input-view-handler) (get-in match [:data :post :handler])))
+          (is (true? (get (json-body ((rv 'submit-input-view-handler)
                                        {:path-params (:path-params match)
                                         :body (body-stream {:values {"note" "typed"}})}))
                           "is_accepted")))))
@@ -485,7 +490,7 @@
                                        :fields [{:id "note" :type "plaintext" :is-required true}])))
 
             _
-            (is (await-true #(some? (gw-hi/request-of sid rid))))
+            (is (await-true #(some? (gw-hi/input-view-of sid rid))))
 
             ;; Every surface fires at once: valid answers, blank ones, cancels.
             gate
@@ -519,13 +524,13 @@
           (is (= rid (:request-id final)))
           (is (= (if (= :cancel (ffirst winners)) "cancelled" "submitted") (:reason final))))
         (testing "and every surface is told exactly once that the form is gone"
-          (is (await-true #(= 1 (count (events-of seen "human_input.close" rid)))))
-          (is (= 1 (count (events-of seen "human_input.request" rid))))
-          (is (empty? (gw-hi/pending sid)))
-          (is (nil? (gw-hi/request-of sid rid)))
+          (is (await-true #(= 1 (count (events-of seen "view.close" rid)))))
+          (is (= 1 (count (events-of seen "view.open" rid))))
+          (is (empty? (gw-hi/input-views sid)))
+          (is (nil? (gw-hi/input-view-of sid rid)))
           (is (= {:is-accepted false :reason "unknown"} (gw-hi/submit! rid {"note" "late"})))
           (is (= 404
-                 (:status ((rv 'submit-human-input-handler)
+                 (:status ((rv 'submit-input-view-handler)
                             {:path-params {:sid sid :request-id rid}
                              :body (body-stream {:values {"note" "late"}})})))))))))
 
@@ -543,16 +548,16 @@
                                    :is-cancellable false
                                    :fields [{:id "note" :type "plaintext" :is-required true}])))]
 
-    (try (is (await-true #(some? (gw-hi/request-of sid rid))))
+    (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
          (testing "the app is refused the escape hatch the TUI dialog also denies"
-           (let [response ((rv 'cancel-human-input-handler)
+           (let [response ((rv 'cancel-input-view-handler)
                             {:path-params {:sid sid :request-id rid}})]
              (is (= 409 (:status response)))
-             (is (= "human-input-not-cancellable" (get-in (json-body response) ["error" "type"])))
-             (is (false? (:is-cancellable (gw-hi/request-of sid rid))))
-             (is (some? (gw-hi/request-of sid rid)))))
+             (is (= "input-view-not-cancellable" (get-in (json-body response) ["error" "type"])))
+             (is (false? (:is-cancellable (gw-hi/input-view-of sid rid))))
+             (is (some? (gw-hi/input-view-of sid rid)))))
          (testing "answering it is still the way out"
-           (is (true? (get (json-body ((rv 'submit-human-input-handler)
+           (is (true? (get (json-body ((rv 'submit-input-view-handler)
                                         {:path-params {:sid sid :request-id rid}
                                          :body (body-stream {:values {"note" "yes"}})}))
                            "is_accepted")))
@@ -569,7 +574,7 @@
 (def ^:private live-views-dir
   "The private var every view record hangs under, redefined per test so nothing
    here writes anywhere near the developer's own `~/.vis`."
-  (requiring-resolve 'com.blockether.vis.internal.human-input.live-sink/views-dir))
+  (requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir))
 
 (defn- recorded
   "Run `f` with every view record under a temp directory of its own."
@@ -589,7 +594,7 @@
 (def ^:private live-flush-ms
   "The bridge's own tick. Redefined per test through [[unhurried]], so what a view
    HOLDS stays held until something asks for it."
-  (requiring-resolve 'com.blockether.vis.internal.gateway.human-input/live-flush-ms))
+  (requiring-resolve 'com.blockether.vis.internal.gateway.view/live-flush-ms))
 
 (defn- unhurried
   "Run `f` with the flush tick pushed out of reach. These pin WHO publishes a held
@@ -616,8 +621,8 @@
                 (:id view)]
 
             (try (testing "the open crosses as an ordinary session event, in snake_case"
-                   (is (await-true #(seq (live-events-of seen gw-hi/live-open-event view-id))))
-                   (let [[[event-sid event]] (live-events-of seen gw-hi/live-open-event view-id)]
+                   (is (await-true #(seq (live-events-of seen gw-hi/view-open-event view-id))))
+                   (let [[[event-sid event]] (live-events-of seen gw-hi/view-open-event view-id)]
                      (is (= sid event-sid))
                      (is (= "CI" (get-in event ["view" "title"])))
                      (is (= ["now" "tail"] (mapv #(get % "id") (get-in event ["view" "nodes"]))))))
@@ -627,9 +632,9 @@
                                   {:op "set" :node-id "now" :text "Building"}])
                  (testing "patches ride ONE coalesced frame that says which of them it carries"
                    (gw-hi/flush-live-patches!)
-                   (is (await-true #(seq (live-events-of seen gw-hi/live-patch-event view-id))))
+                   (is (await-true #(seq (live-events-of seen gw-hi/view-patch-event view-id))))
                    (let [frames
-                         (live-events-of seen gw-hi/live-patch-event view-id)
+                         (live-events-of seen gw-hi/view-patch-event view-id)
 
                          [_ event]
                          (first frames)]
@@ -645,8 +650,8 @@
                      (is (= ["one" "two" "three"] (get-in event ["patch" "ops" 0 "lines"])))))
                  (finally (hi/close-live! view-id)))
             (testing "and the ending carries the picture the model reads, not a rendering of it"
-              (is (await-true #(seq (live-events-of seen gw-hi/live-close-event view-id))))
-              (let [[[_ event]] (live-events-of seen gw-hi/live-close-event view-id)]
+              (is (await-true #(seq (live-events-of seen gw-hi/view-close-event view-id))))
+              (let [[[_ event]] (live-events-of seen gw-hi/view-close-event view-id)]
                 (is (true? (get-in event ["result" "is_completed"])))
                 (is (= "completed" (get-in event ["result" "reason"])))
                 (is (= ["now" "tail"]
@@ -679,8 +684,8 @@
                 (try (hi/patch-activity! view-id state)
                      (hi/patch-activity! view-id state)
                      (gw-hi/flush-live-patches!)
-                     (let [[[_ event]] (live-events-of seen gw-hi/live-patch-event view-id)]
-                       (is (= 1 (count (live-events-of seen gw-hi/live-patch-event view-id))))
+                     (let [[[_ event]] (live-events-of seen gw-hi/view-patch-event view-id)]
+                       (is (= 1 (count (live-events-of seen gw-hi/view-patch-event view-id))))
                        (is (= 1 (get event "first_seq")))
                        (is (= 2 (get-in event ["patch" "seq"])))
                        (is (= ["set-activity"]
@@ -710,14 +715,14 @@
 
                 (try (hi/patch-live! view-id [{:op "append" :node-id "tail" :lines ["one"]}])
                      (testing "a patch waits for the tick, and the tick is nowhere near due"
-                       (is (empty? (live-events-of seen gw-hi/live-patch-event view-id))))
+                       (is (empty? (live-events-of seen gw-hi/view-patch-event view-id))))
                      (testing "so the gateway leaving is what publishes it"
                        ;; Subscribe again at once: the bus is process-local, so this one
                        ;; listener is also serving every sibling test's view.
                        (gw-hi/uninstall!)
                        (gw-hi/install!)
                        (let [frames
-                             (live-events-of seen gw-hi/live-patch-event view-id)
+                             (live-events-of seen gw-hi/view-patch-event view-id)
 
                              [[_ event]]
                              frames]
@@ -855,8 +860,8 @@
                      (is (true? (get body "is_interrupted")))
                      (is (nil? (gw-hi/live-view-of sid view-id)))))
                  (testing "and the run reads WHO stopped it, and why, before it reads the picture"
-                   (is (await-true #(seq (live-events-of seen gw-hi/live-close-event view-id))))
-                   (let [[[_ event]] (live-events-of seen gw-hi/live-close-event view-id)]
+                   (is (await-true #(seq (live-events-of seen gw-hi/view-close-event view-id))))
+                   (let [[[_ event]] (live-events-of seen gw-hi/view-close-event view-id)]
                      (is (= "interrupted" (get-in event ["result" "reason"])))
                      (is (true? (get-in event ["result" "is_from_human"])))
                      (is (= "wrong subnet — I will re-run it" (get-in event ["result" "note"])))
@@ -876,8 +881,8 @@
                    (is (true? (get (json-body ((rv 'interrupt-live-view-handler)
                                                 {:path-params {:sid sid :view-id bare}}))
                                    "is_interrupted")))
-                   (is (await-true #(seq (live-events-of seen gw-hi/live-close-event bare))))
-                   (let [[[_ event]] (live-events-of seen gw-hi/live-close-event bare)]
+                   (is (await-true #(seq (live-events-of seen gw-hi/view-close-event bare))))
+                   (let [[[_ event]] (live-events-of seen gw-hi/view-close-event bare)]
                      (is (true? (get-in event ["result" "is_from_human"])))
                      (is (nil? (get-in event ["result" "note"])))))
                  (finally (hi/close-live! bare)))))))))
@@ -901,22 +906,21 @@
             (match-by-path router path))]
 
       (is (= @(rv 'list-live-views-handler)
-             (get-in (match (str "/v1/sessions/" sid "/human-input/live")) [:data :get :handler])))
+             (get-in (match (str "/v1/sessions/" sid "/views/live")) [:data :get :handler])))
       (is (= @(rv 'live-view-log-handler)
-             (get-in (match (str "/v1/sessions/" sid "/human-input/live/" view-id "/log/tail"))
+             (get-in (match (str "/v1/sessions/" sid "/views/live/" view-id "/log/tail"))
                      [:data :get :handler])))
       (is (= @(rv 'interrupt-live-view-handler)
-             (get-in (match
-                       (str "/v1/sessions/" sid "/human-input/live/" view-id "/actions/interrupt"))
+             (get-in (match (str "/v1/sessions/" sid "/views/live/" view-id "/actions/interrupt"))
                      [:data :post :handler])))
       (is (= @(rv 'focus-live-view-handler)
-             (get-in (match (str "/v1/sessions/" sid "/human-input/live/" view-id "/actions/focus"))
+             (get-in (match (str "/v1/sessions/" sid "/views/live/" view-id "/actions/focus"))
                      [:data :post :handler])))
       ;; `live` is a STATIC segment where a request id also fits: a form route that
       ;; started resolving to a live handler would answer the wrong run entirely.
       (testing "and a form route is still a form route"
-        (is (= @(rv 'submit-human-input-handler)
-               (get-in (match (str "/v1/sessions/" sid "/human-input/req%201/actions/submit"))
+        (is (= @(rv 'submit-input-view-handler)
+               (get-in (match (str "/v1/sessions/" sid "/views/input/req%201/actions/submit"))
                        [:data :post :handler])))))))
 
 ;; The companion's own unit tests parse `live-view.fixture.json`, exactly as they

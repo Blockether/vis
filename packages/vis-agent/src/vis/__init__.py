@@ -685,7 +685,7 @@ def ask(title, fields, **options):
 
 # -- Form builders ------------------------------------------------------------
 # One helper per node type, named exactly like Clojure's
-# `com.blockether.vis.human-input`: the type IS the function and the name is
+# `com.blockether.vis.view`: the type IS the function and the name is
 # POSITIONAL, so a misspelled type is a NameError on the spot instead of a
 # refused request, and every other key stays the snake_case spelling `ask`
 # documents.
@@ -1019,7 +1019,7 @@ _LIVE_NODES = {
     "link": Link,
 }
 # The typed handle each node type answers. The engine owns the type table
-# (`human-input.spec/live-node-types`, rendered into the contract document);
+# (`view.spec/live-node-types`, rendered into the contract document);
 # `python_host_test` fails when this one names a type that is not in it.
 
 
@@ -1751,7 +1751,7 @@ testing = _Testing()
 
 # -- Live view builders -------------------------------------------------------
 # One helper per node type, named exactly like Clojure's
-# `com.blockether.vis.human-input`, and the ID IS POSITIONAL because every op an
+# `com.blockether.vis.view`, and the ID IS POSITIONAL because every op an
 # extension writes later addresses that id. A builder is a plain dict: nothing
 # here talks to the host, and `vis.live` is what carries it to the engine that
 # judges it.

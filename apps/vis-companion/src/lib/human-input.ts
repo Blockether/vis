@@ -1,28 +1,16 @@
 /**
- * Typed human-input requests, as the companion app sees them.
+ * Human Input is the input-capable View: a typed form that BLOCKS its producer.
+ * The shared `view.open` / `view.close` envelope carries `kind: 'input'`; this
+ * module owns only the capability-specific document parser and reducer.
  *
- * An extension can BLOCK a run on the operator. The engine publishes that pause
- * on every channel the request names — `:tui` and `:app` by default — and the
- * gateway turns the `:app` half into the session events `human_input.request`
- * and `human_input.close`. Both are ordinary journal events, so a phone that
- * was asleep replays them and a phone that is closed gets a push instead.
- *
- * This module is the PURE half of the app's side: wire parsing, the form's
- * starting values, and the reduction of those two events into the list of open
- * requests. The dialog itself only renders what happens here, so the rules are
- * testable without a DOM.
- *
- * There is NO validation in here. A field's validators are FUNCTIONS in the
- * extension that asked the question — they never cross the wire — so the only
- * verdict that exists is the one a REFUSED confirmation brings back.
+ * Validation functions stay in the engine and never cross the wire. A refused
+ * submit returns field errors while the same View remains open.
  */
 
 import type { SseEvent } from './types';
+import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, viewKind } from './view';
 
-export const HUMAN_INPUT_REQUEST_EVENT = 'human_input.request';
-export const HUMAN_INPUT_CLOSE_EVENT = 'human_input.close';
-
-/** The closed set of fields that can carry an ANSWER (`human-input.spec/field-types`). */
+/** The closed set of fields that can carry an ANSWER (`view.spec/field-types`). */
 export const HUMAN_INPUT_FIELD_TYPES = [
   'plaintext',
   'password',
@@ -35,7 +23,7 @@ export const HUMAN_INPUT_FIELD_TYPES = [
 ] as const;
 
 /**
- * Ink rather than a question (`human-input.spec/decor-types`). A `heading` opens
+ * Ink rather than a question (`view.spec/decor-types`). A `heading` opens
  * a section of a long form and a `paragraph` explains one; neither is named,
  * answered, or focusable.
  */
@@ -53,7 +41,7 @@ export const HUMAN_INPUT_NODE_TYPES = [
 
 /**
  * The engine's own fallbacks, copied here because TypeScript needs them at
- * compile time: `human-input.spec/range-defaults` and `human-input.spec/otp-defaults`.
+ * compile time: `view.spec/range-defaults` and `view.spec/otp-defaults`.
  * A slider with no bounds is a PERCENTAGE and a code with no width is six
  * digits — on both surfaces, because a Clojure test reads these very lines and
  * fails when the engine moves and the app does not.
@@ -273,8 +261,8 @@ export function humanInputRequestFromWire(raw: unknown): HumanInputRequest | nul
   };
 }
 
-/** Every pending request in a `GET /v1/sessions/:sid/human-input` body. */
-export function humanInputRequestsFromWire(raw: unknown): HumanInputRequest[] {
+/** Every pending request in a `GET /v1/sessions/:sid/views/input` body. */
+export function inputViewsFromWire(raw: unknown): HumanInputRequest[] {
   return (Array.isArray(raw) ? raw : [])
     .map(humanInputRequestFromWire)
     .filter((request): request is HumanInputRequest => request !== null);
@@ -428,28 +416,22 @@ export function toggleHumanInputOption(
   return (field.options ?? []).map((row) => row.value).filter((value) => chosen.has(value));
 }
 
-/** True for the two session events this module reduces. */
-export function isHumanInputEvent(event: SseEvent): boolean {
-  return event.type === HUMAN_INPUT_REQUEST_EVENT || event.type === HUMAN_INPUT_CLOSE_EVENT;
+/** True for lifecycle events owned by the input capability. */
+export function isInputViewEvent(event: SseEvent): boolean {
+  return viewKind(event) === 'input' && (event.type === VIEW_OPEN_EVENT || event.type === VIEW_CLOSE_EVENT);
 }
 
-/**
- * Fold one session event into the open-request list.
- *
- * Replay is the normal case (a reconnect re-reads the journal), so a repeated
- * `human_input.request` REPLACES its row instead of stacking a second dialog,
- * and a close for an unknown id is a no-op. The list identity is preserved when
- * nothing changed: the dialog must not remount under the operator's fingers.
- */
-export function applyHumanInputEvent(pending: HumanInputRequest[], event: SseEvent): HumanInputRequest[] {
-  if (event.type === HUMAN_INPUT_CLOSE_EVENT) {
-    const requestId = text(event.request_id);
-    if (requestId === '') return pending;
-    const kept = pending.filter((request) => request.id !== requestId);
+/** Fold one input View lifecycle event into the open-form list. */
+export function applyInputViewEvent(pending: HumanInputRequest[], event: SseEvent): HumanInputRequest[] {
+  if (!isInputViewEvent(event)) return pending;
+  if (event.type === VIEW_CLOSE_EVENT) {
+    const viewId = text(event.view_id);
+    if (viewId === '') return pending;
+    const kept = pending.filter((request) => request.id !== viewId);
     return kept.length === pending.length ? pending : kept;
   }
-  if (event.type !== HUMAN_INPUT_REQUEST_EVENT) return pending;
-  const request = humanInputRequestFromWire(event.request);
+  if (event.type !== VIEW_OPEN_EVENT) return pending;
+  const request = humanInputRequestFromWire(event.view);
   if (!request) return pending;
   const index = pending.findIndex((row) => row.id === request.id);
   if (index < 0) return [...pending, request];

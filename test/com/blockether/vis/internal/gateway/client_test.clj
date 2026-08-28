@@ -88,7 +88,7 @@
       (fn []
         (is (= {:view-id "view-1" :node-id "jobs" :focused-ids ["macos"]}
                (client/focus-live-view! "session-1" "view-1" "jobs" ["macos"])))
-        (is (= ["POST" "/v1/sessions/session-1/human-input/live/view-1/actions/focus"
+        (is (= ["POST" "/v1/sessions/session-1/views/live/view-1/actions/focus"
                 {:node_id "jobs" :focused_ids ["macos"]}]
                @request))))))
 

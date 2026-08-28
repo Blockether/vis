@@ -640,52 +640,41 @@
      (with-gateway
        {:session_id (str sid) :turn_id (get event "turn_id") :status status :type "turn.end"})}))
 
-(defn- human-input-notification
-  "Alert for a run BLOCKED on a human. The only push that says \"vis is waiting
-   for YOU\": a turn parked on an unanswered dialog produces no terminal event,
-   so without this the phone stays silent until the request times out.
-
-   The title carries the DEMAND and then the question itself, because the title
-   is what survives a collapsed stack and a truncated body. The session title is
-   deliberately NOT here: it is minted from whatever opened the session, so on a
-   lock screen it reads as noise standing where the question belongs. Which
-   session is parked still rides in `thread-id`, and the tap still lands on it
-   through `data`."
+(defn- input-view-notification
+  "Alert for a run BLOCKED on an input-capable View."
   [sid event]
-  (let [request
-        (get event "request")
+  (let [document
+        (get event "view")
 
         asked
-        (not-empty (str (get request "title")))
+        (not-empty (str (get document "title")))
 
         description
-        (not-empty (str (get request "description")))]
+        (not-empty (str (get document "description")))]
 
     {:title (clip (if asked (str "Action needed — " asked) "Action needed") TITLE_LIMIT)
-     ;; The detail UNDER the question, in the caller's own words — never the
-     ;; question again, which the title already carries. A request that labelled
-     ;; only its description must not lose it to a generic placeholder.
      :body (clip (or description "Vis is waiting on your answer.") BODY_LIMIT)
      :thread-id (str sid)
-     ;; Its own collapse lane: an input request must not be swallowed by the
-     ;; session's last turn banner.
-     :collapse-id (str sid ":human-input")
-     :data (with-gateway {:session_id (str sid)
-                          :request_id (str (get request "id"))
-                          :type "human_input.request"})}))
+     :collapse-id (str sid ":input-view")
+     :data (with-gateway
+             {:session_id (str sid) :view_id (str (get document "id")) :type "view.open"})}))
 
 (defn on-event!
-  "Event tap: push exactly on a terminal turn event or on a human-input request
-   the run is now blocked on, and only when push is both configured and wanted
-   by at least one device. Cheap and silent otherwise — this runs on EVERY
-   gateway event."
+  "Push on terminal turns and on input Views that need the operator."
   [sid event]
-  (try (when-let [kind (#{"turn.completed" "turn.failed" "human_input.request"} (get event "type"))]
-         (when (and (pos? (device-count)) (any-configured?))
-           (let [n (if (= "human_input.request" kind)
-                     (human-input-notification sid event)
-                     (turn-notification sid event))]
-             (future (broadcast! n)))))
+  (try (let [event-type
+             (get event "type")
+
+             input?
+             (and (= "view.open" event-type) (= "input" (get event "kind")))
+
+             terminal?
+             (#{"turn.completed" "turn.failed"} event-type)]
+
+         (when (and (or input? terminal?) (pos? (device-count)) (any-configured?))
+           (future (broadcast! (if input?
+                                 (input-view-notification sid event)
+                                 (turn-notification sid event))))))
        (catch Throwable t
          (tel/log! {:level :warn :id ::push-tap-failed :data {:error (ex-message t)}})))
   nil)

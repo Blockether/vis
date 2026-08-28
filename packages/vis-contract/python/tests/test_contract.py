@@ -93,8 +93,9 @@ def test_the_shell_grammar_is_a_grammar():
     assert "shell" in vis_contract.OPS
 
 
-def test_the_human_input_vocabulary_is_whole():
-    human = vis_contract.HUMAN_INPUT
+def test_the_view_vocabulary_is_whole():
+    view = vis_contract.VIEW
+    assert set(view["kinds"]) == {"input", "live"}
     for key in (
         "field_types",
         "text_types",
@@ -103,14 +104,16 @@ def test_the_human_input_vocabulary_is_whole():
         "decor_types",
         "group_directions",
     ):
-        assert human[key], key
-    assert human["group_type"]
-    assert human["secret_handle_prefix"].endswith(":")
-    assert human["otp"]["length"] <= human["otp"]["ceiling"]
-    assert human["range"]["min"] < human["range"]["max"]
-    # Every text, choice and secret type is a field type — one closed vocabulary.
+        assert view[key], key
+    assert view["group_type"]
+    assert view["secret_handle_prefix"].endswith(":")
+    assert view["otp"]["length"] <= view["otp"]["ceiling"]
+    assert view["range"]["min"] < view["range"]["max"]
+    # Every text, choice and secret type is an input field type in one View vocabulary.
     for key in ("text_types", "choice_types", "secret_types"):
-        assert set(human[key]) <= set(human["field_types"]), key
+        assert set(view[key]) <= set(view["field_types"]), key
+    assert view["live"]["node_types"]
+    assert view["live"]["ops"]
 
 
 def test_check_host_answers_a_complete_host():

@@ -853,6 +853,24 @@
   [m k]
   (get m (vis/wire-key k)))
 
+(defn- wire-view-kind
+  "Rehydrate the CLOSED View kind without minting an arbitrary keyword."
+  [event]
+  (case (event-get event :kind)
+    "input"
+    :input
+
+    :input
+    :input
+
+    "live"
+    :live
+
+    :live
+    :live
+
+    nil))
+
 (defn- wire-keyword
   "Rehydrate a keyword-valued wire field without guessing map-key policy."
   [x]
@@ -1222,42 +1240,37 @@
       "session.model_updated"
       {:phase :model-sync :provider (event-get event :provider) :model (event-get event :model)}
 
-      ;; A run is BLOCKED on the operator. `internal/human-input` publishes the
-      ;; request on the IN-PROCESS `:tui` channel bus, which never leaves the
-      ;; JVM that raised it — so a request parked in the serve daemon reached no
-      ;; terminal at all and the tab just sat there (issue #122). This is the
-      ;; cross-process projection: the request rides SSE live AND sits in the
-      ;; replay ring, so a TUI that attached later still finds the open form.
-      "human_input.request"
-      {:phase :human-input-open :request (event-get event :request)}
+      ;; Both capabilities cross the process boundary on one lifecycle. Internal
+      ;; state remains specialized: input owns the keyboard; live preserves it.
+      "view.open"
+      (case (wire-view-kind event)
+        :input
+        {:phase :human-input-open :request (event-get event :view)}
 
-      ;; Close arrives for EVERY settle — another surface answered, a timeout,
-      ;; an interrupt — so the dialog can never outlive its request.
-      "human_input.close"
-      {:phase :human-input-close
-       :request-id (some-> (event-get event :request-id)
-                           str)
-       :reason (event-get event :reason)}
+        :live
+        {:phase :live-view-open :view (event-get event :view)}
 
-      ;; The PICTURE crosses the same border as the form, and for the same reason:
-      ;; a run SHOWING its work from the serve daemon publishes on a `:tui` bus that
-      ;; never leaves that JVM, so the terminal painted nothing while the phone drew
-      ;; the whole view from these very events.
-      "human_input.live.open"
-      {:phase :live-view-open :view (event-get event :view)}
+        nil)
 
-      ;; COALESCED by the gateway before it journals them: one frame carries every
-      ;; op accepted since the last, under the seq of the last one it folded in.
-      "human_input.live.patch"
-      {:phase :live-view-patch :patch (event-get event :patch)}
+      "view.patch"
+      (when (= :live (wire-view-kind event))
+        {:phase :live-view-patch :patch (event-get event :patch)})
 
-      ;; Close arrives for EVERY ending — done, interrupted, timed out, the run that
-      ;; raised it dying — so a pane can never outlive the work it reports on.
-      "human_input.live.close"
-      {:phase :live-view-close
-       :view-id (some-> (event-get event :view-id)
-                        str)
-       :result (event-get event :result)}
+      "view.close"
+      (case (wire-view-kind event)
+        :input
+        {:phase :human-input-close
+         :request-id (some-> (event-get event :view-id)
+                             str)
+         :reason (event-get (event-get event :result) :reason)}
+
+        :live
+        {:phase :live-view-close
+         :view-id (some-> (event-get event :view-id)
+                          str)
+         :result (event-get event :result)}
+
+        nil)
 
       ;; The mux's synthetic `gateway.connected` / `gateway.disconnected` transport
       ;; edges are deliberately NOT projected: the edge alone is no evidence of a

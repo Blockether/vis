@@ -12,14 +12,13 @@ import activityFixture from '../lib/activity.fixture.json';
 import type { GatewayClient } from '../lib/gateway';
 import {
   LIVE_NOTE_CHARS,
-  LIVE_VIEW_CLOSE_EVENT,
-  LIVE_VIEW_PATCH_EVENT,
   liveViewFromWire,
   type LiveNode,
   type LiveView,
 } from '../lib/live-view';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent } from '../lib/types';
+import { VIEW_CLOSE_EVENT, VIEW_PATCH_EVENT } from '../lib/view';
 
 afterEach(cleanup);
 
@@ -561,7 +560,7 @@ describe('what a run says about its own layout', () => {
       for (const seq of [1, 2, 3]) {
         act(() =>
           receive?.({
-            type: LIVE_VIEW_PATCH_EVENT,
+            type: VIEW_PATCH_EVENT, kind: 'live',
             view_id: running.id,
             first_seq: seq,
             patch: { view_id: running.id, seq, ops: [] },
@@ -603,7 +602,7 @@ describe('what a run says about its own layout', () => {
     try {
       act(() =>
         receive?.({
-          type: LIVE_VIEW_CLOSE_EVENT,
+          type: VIEW_CLOSE_EVENT, kind: 'live',
           view_id: opened().id,
           result: { artifact_id: 'record-1' },
         }),
@@ -645,7 +644,7 @@ describe('what a run says about its own layout', () => {
     await waitFor(() => expect(screen.getByText('running:1:live')).toBeTruthy());
     act(() =>
       receive?.({
-        type: LIVE_VIEW_CLOSE_EVENT,
+        type: VIEW_CLOSE_EVENT, kind: 'live',
         view_id: running.id,
         ts: 99,
         result: {
@@ -691,7 +690,7 @@ describe('what a run says about its own layout', () => {
     await waitFor(() => expect(screen.getByText('0')).toBeTruthy());
     act(() =>
       receive?.({
-        type: LIVE_VIEW_PATCH_EVENT,
+        type: VIEW_PATCH_EVENT, kind: 'live',
         view_id: running.id,
         first_seq: 3,
         patch: { view_id: running.id, seq: 4, ops: [] },
@@ -764,7 +763,7 @@ describe('what a run says about its own layout', () => {
     act(() => reconnect?.(true));
     act(() =>
       receive?.({
-        type: LIVE_VIEW_CLOSE_EVENT,
+        type: VIEW_CLOSE_EVENT, kind: 'live',
         view_id: running.id,
         result: {
           view: {

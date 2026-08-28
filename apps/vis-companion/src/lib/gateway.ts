@@ -65,7 +65,7 @@ import type {
 import { PROTOCOL_HEADERS } from "./compat";
 import { withSavedAttachment } from "./artifacts";
 import {
-  humanInputRequestsFromWire,
+  inputViewsFromWire,
   type HumanInputOutcome,
   type HumanInputRequest,
   type HumanInputValues,
@@ -3783,21 +3783,21 @@ export class GatewayClient {
   /**
    * The typed input requests this session is BLOCKED on right now.
    *
-   * SSE carries `human_input.request` live, but a screen opened (or reloaded,
+   * SSE carries `view.open` live, but a screen opened (or reloaded,
    * or woken by a push) while a run is already parked has to read the open
    * forms back from here — the same snapshot the TUI restores from.
    */
-  async humanInputRequests(
+  async inputViews(
     sid: string,
     signal?: AbortSignal,
   ): Promise<HumanInputRequest[]> {
     const response = await this.request<{ requests: unknown[] }>(
       "GET",
-      `/v1/sessions/${encodeURIComponent(sid)}/human-input`,
+      `/v1/sessions/${encodeURIComponent(sid)}/views/input`,
       undefined,
       signal,
     );
-    return humanInputRequestsFromWire(response.requests);
+    return inputViewsFromWire(response.requests);
   }
 
   /**
@@ -3812,7 +3812,7 @@ export class GatewayClient {
   ): Promise<HumanInputOutcome> {
     return this.request<HumanInputOutcome>(
       "POST",
-      `/v1/sessions/${encodeURIComponent(sid)}/human-input/${encodeURIComponent(requestId)}/actions/submit`,
+      `/v1/sessions/${encodeURIComponent(sid)}/views/input/${encodeURIComponent(requestId)}/actions/submit`,
       { values },
     );
   }
@@ -3824,14 +3824,14 @@ export class GatewayClient {
   ): Promise<{ is_cancelled: boolean; request_id: string }> {
     return this.request<{ is_cancelled: boolean; request_id: string }>(
       "POST",
-      `/v1/sessions/${encodeURIComponent(sid)}/human-input/${encodeURIComponent(requestId)}/actions/cancel`,
+      `/v1/sessions/${encodeURIComponent(sid)}/views/input/${encodeURIComponent(requestId)}/actions/cancel`,
     );
   }
 
   /**
    * The live views this session is SHOWING right now.
    *
-   * SSE carries `human_input.live.open` and its patches, but a screen opened
+   * SSE carries `view.open` and its patches, but a screen opened
    * (or woken by a push, or reconnected after a gap) while a run is already
    * halfway through a scan has to read the picture back from here — the same
    * snapshot the TUI pane restores from, already materialized by the engine.
@@ -3839,7 +3839,7 @@ export class GatewayClient {
   async liveViews(sid: string, signal?: AbortSignal): Promise<LiveView[]> {
     const response = await this.request<{ views: unknown[] }>(
       "GET",
-      `/v1/sessions/${encodeURIComponent(sid)}/human-input/live`,
+      `/v1/sessions/${encodeURIComponent(sid)}/views/live`,
       undefined,
       signal,
     );
@@ -3864,7 +3864,7 @@ export class GatewayClient {
     const query = `?from=${encodeURIComponent(from)}&limit=${encodeURIComponent(limit)}`;
     return this.request<LiveLogPage>(
       "GET",
-      `/v1/sessions/${encodeURIComponent(sid)}/human-input/live/${encodeURIComponent(viewId)}/log/${encodeURIComponent(nodeId)}${query}`,
+      `/v1/sessions/${encodeURIComponent(sid)}/views/live/${encodeURIComponent(viewId)}/log/${encodeURIComponent(nodeId)}${query}`,
       undefined,
       signal,
     );
@@ -3879,7 +3879,7 @@ export class GatewayClient {
   ): Promise<{ focused_ids: string[]; node_id: string; view_id: string }> {
     return this.request<{ focused_ids: string[]; node_id: string; view_id: string }>(
       "POST",
-      `/v1/sessions/${encodeURIComponent(sid)}/human-input/live/${encodeURIComponent(viewId)}/actions/focus`,
+      `/v1/sessions/${encodeURIComponent(sid)}/views/live/${encodeURIComponent(viewId)}/actions/focus`,
       { node_id: nodeId, item_ids: itemIds },
     );
   }
@@ -3898,7 +3898,7 @@ export class GatewayClient {
   ): Promise<{ is_interrupted: boolean; view_id: string }> {
     return this.request<{ is_interrupted: boolean; view_id: string }>(
       "POST",
-      `/v1/sessions/${encodeURIComponent(sid)}/human-input/live/${encodeURIComponent(viewId)}/actions/interrupt`,
+      `/v1/sessions/${encodeURIComponent(sid)}/views/live/${encodeURIComponent(viewId)}/actions/interrupt`,
       note ? { note } : undefined,
     );
   }

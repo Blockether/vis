@@ -156,7 +156,7 @@ def test_a_key_written_as_null_is_no_key_at_all():
 
 def test_a_secret_is_a_handle_until_it_is_revealed():
     handle = _outside._stash("hunter2")
-    assert handle.startswith(CONTRACT["human_input"]["secret_handle_prefix"])
+    assert handle.startswith(CONTRACT["view"]["secret_handle_prefix"])
     assert "hunter2" not in handle
     assert vis.reveal(handle) == "hunter2"
     assert vis.forget(handle) is True
@@ -332,9 +332,9 @@ def test_ask_names_what_is_wrong_with_a_form(form):
 
 def test_ask_knows_only_the_contracts_field_types(monkeypatch):
     monkeypatch.setenv("VIS_OUTSIDE_NONINTERACTIVE", "1")
-    for wire_type in CONTRACT["human_input"]["field_types"]:
+    for wire_type in CONTRACT["view"]["field_types"]:
         node = {"name": "a", "type": wire_type}
-        if wire_type in CONTRACT["human_input"]["choice_types"]:
+        if wire_type in CONTRACT["view"]["choice_types"]:
             node["options"] = ["one", "two"]
         assert _refusal("Deploy", [node]) is None, wire_type
 

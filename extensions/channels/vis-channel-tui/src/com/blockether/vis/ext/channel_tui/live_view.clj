@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.live-view
   "TUI painting for a LIVE VIEW — the picture an extension streams WHILE it works
-   (`com.blockether.vis.internal.human-input`, materialized by
-   `com.blockether.vis.internal.human-input.live`).
+   (`com.blockether.vis.internal.view`, materialized by
+   `com.blockether.vis.internal.view.materializer`).
 
    A form is a QUESTION and owns the keyboard until it is answered; a view is a
    PICTURE and leaves the composer focused. The wheel over the band scrolls it, and
@@ -46,8 +46,8 @@
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
-            [com.blockether.vis.internal.human-input.live :as live]
-            [com.blockether.vis.internal.human-input.spec :as hi-spec]))
+            [com.blockether.vis.internal.view.materializer :as live]
+            [com.blockether.vis.internal.view.spec :as hi-spec]))
 
 (set! *warn-on-reflection* true)
 

@@ -300,9 +300,9 @@
   "Park hook installed by the innermost enclosing timeout wall: `(fn [thunk])`.
 
    Every wall in this engine counts WALL-CLOCK time, so a legitimate block —
-   above all a `human-input` pause waiting on the operator — otherwise dies at
-   the wall with a bare `Timeout` while the dialog is still up. Code
-   about to park on a human answer calls [[park-blocking-wall]]; every
+   above all an input View waiting on the operator — otherwise dies at the
+   wall with a bare `Timeout` while the form is still up. Code about to park
+   on a human answer calls [[park-blocking-wall]]; every
    enclosing wall then stops its clock until the thunk returns."
   nil)
 
@@ -379,7 +379,7 @@
    exit restores the base budget, so an inner park returning cannot collapse the
    clock while an outer park is still live. It also COMPOSES with the park
    inherited from [[*blocking-wall-park*]], so parking an inner wall parks every
-   enclosing one too — a `human-input` call that asks the operator a question
+   enclosing one too — an input View that asks the operator a question
    must not be killed by the Python eval watchdog wrapped around its block.
 
    `hold` is the same clock, taken and released on separate calls (see

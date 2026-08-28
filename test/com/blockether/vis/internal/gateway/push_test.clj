@@ -306,9 +306,9 @@
           (push/set-gateway-id! "0123456789abcdef")
           (push/on-event! sid {"type" "turn.completed" "turn_id" "t1" "status" "completed"})
           (push/on-event! sid
-                          {"type" "human_input.request" "request" {"id" "r1" "title" "Pick one"}})
+                          {"type" "view.open" "kind" "input" "view" {"id" "r1" "title" "Pick one"}})
           (is (await-count sent 2) "both pushes arrive")
-          (is (= #{"turn.end" "human_input.request"} (set (map (comp :type :data) @sent))))
+          (is (= #{"turn.end" "view.open"} (set (map (comp :type :data) @sent))))
           (is (= ["0123456789abcdef" "0123456789abcdef"] (mapv (comp :gateway_id :data) @sent)))))
       (push/set-gateway-id! nil))))
 

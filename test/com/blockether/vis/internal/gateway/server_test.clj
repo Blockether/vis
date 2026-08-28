@@ -3561,7 +3561,8 @@
         (rv 'without-settled-picture)
 
         close-frame
-        {"type" "human_input.live.close"
+        {"type" "view.close"
+         "kind" "live"
          "seq" 7
          "result" {"view" {"id" "v1" "nodes" []} "reason" "completed" "is_completed" true}}]
 
@@ -3578,12 +3579,12 @@
         (is (true? (get-in out ["result" "is_completed"])))
         (is (= 7 (get out "seq")))))
     (testing "no other frame is touched"
-      (doseq [other [{"type" "human_input.live.open" "view" {"id" "v1"}}
-                     {"type" "human_input.live.patch" "patch" {"ops" []}}
+      (doseq [other [{"type" "view.open" "view" {"id" "v1"}}
+                     {"type" "view.patch" "patch" {"ops" []}}
                      {"type" "content.block.delta" "result" {"view" "not a live close"}}]]
         (is (= other (slim other)))))
     (testing "a close carrying no result map is left alone rather than reshaped"
-      (is (= {"type" "human_input.live.close"} (slim {"type" "human_input.live.close"}))))))
+      (is (= {"type" "view.close"} (slim {"type" "view.close"}))))))
 
 ;; The unit case above proves the RESHAPE; this proves the WIRING — that the
 ;; per-connection flag actually reaches the socket writer, and that two clients
@@ -3626,13 +3627,14 @@
             (is (wait-until #(and (re-find #"subscription.ready" (text legacy))
                                   (re-find #"subscription.ready" (text modern)))))
             (state/append-event! sid
-                                 "human_input.live.close"
-                                 {:view-id "v1"
+                                 "view.close"
+                                 {:kind :live
+                                  :view-id "v1"
                                   :result {:view {:id "v1" :title "Activity" :nodes []}
                                            :reason "completed"
                                            :is-completed true}})
-            (is (wait-until #(and (re-find #"live.close" (text legacy))
-                                  (re-find #"live.close" (text modern)))))
+            (is (wait-until #(and (re-find #"view.close" (text legacy))
+                                  (re-find #"view.close" (text modern)))))
             (future-cancel legacy-fut)
             (future-cancel modern-fut)
             (testing "a protocol-2 reader still receives the finished picture"

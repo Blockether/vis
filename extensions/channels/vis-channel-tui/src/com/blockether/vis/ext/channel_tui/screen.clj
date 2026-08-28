@@ -592,31 +592,30 @@
     :notify
     (vis/notify! (or text "") :level (or level :info) :ttl-ms (or ttl-ms copy-success-ttl-ms))
 
-    ;; A pending human-input request owns the whole keyboard until it is
-    ;; answered: the form is built HERE (screen.clj may require the dialog
-    ;; ns, state.clj may not) and handed to state as a ready-made value.
-    :human-input/request
-    (state/dispatch [:human-input-open (hi/init-form (:request event))])
+    ;; One lifecycle, capability-specific state. The renderer dispatches on the
+    ;; declared kind rather than learning policy from transport event names.
+    :view/open
+    (case (:kind event)
+      :input
+      (state/dispatch [:human-input-open (hi/init-form (:view event))])
 
-    ;; Close arrives for EVERY settle — including a timeout or another
-    ;; channel answering first — so the dialog can never outlive its request.
-    :human-input/close
-    (state/dispatch [:human-input-close (:request-id event)])
+      :live
+      (state/dispatch [:live-view-open (:view event)])
 
-    ;; A live view is the form INVERTED: nothing is parked, the composer keeps
-    ;; the keyboard, and the terminal never interprets a patch itself — the
-    ;; engine's materialized view is handed to state as it stands, so the phone
-    ;; and the terminal cannot disagree about a row.
-    :human-input/live-open
-    (state/dispatch [:live-view-open (:view event)])
+      nil)
 
-    :human-input/live-patch
-    (state/dispatch [:live-view-patch (:patch event)])
+    :view/patch
+    (when (= :live (:kind event)) (state/dispatch [:live-view-patch (:patch event)]))
 
-    ;; Close arrives for EVERY ending — done, interrupted, timed out, the run
-    ;; that raised it dying — so a pane can never outlive the work it reports on.
-    :human-input/live-close
-    (state/dispatch [:live-view-close (:view-id event) (:result event)])
+    :view/close
+    (case (:kind event)
+      :input
+      (state/dispatch [:human-input-close (:view-id event)])
+
+      :live
+      (state/dispatch [:live-view-close (:view-id event) (:result event)])
+
+      nil)
 
     nil))
 
@@ -642,12 +641,12 @@
       :submit
       (if local?
         (vis/submit-human-input! request-id values)
-        (vis/gateway-submit-human-input! session-id request-id values))
+        (vis/gateway-submit-input-view! session-id request-id values))
 
       :cancel
       (if local?
         (vis/cancel-human-input! request-id)
-        (vis/gateway-cancel-human-input! session-id request-id)))))
+        (vis/gateway-cancel-input-view! session-id request-id)))))
 
 (defn- error-card-row-geometry?
   "True when a bubble is painted as the failed-turn CARD.
@@ -858,7 +857,7 @@
    by `:human-input-open` against the live event, so a request that also arrives
    on the stream still opens exactly one dialog."
   [session-id]
-  (try (doseq [wire (vis/gateway-human-input-requests session-id)]
+  (try (doseq [wire (vis/gateway-input-views session-id)]
          (when-let [request (hi/request<-wire wire)]
            (state/dispatch [:human-input-open (hi/init-form request)])))
        (catch Throwable _ nil)))

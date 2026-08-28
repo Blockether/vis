@@ -24,10 +24,9 @@ import {
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { SseEvent } from '../lib/types';
+import { VIEW_CLOSE_EVENT, VIEW_PATCH_EVENT } from '../lib/view';
 import {
   applyLiveViewEvent,
-  LIVE_VIEW_CLOSE_EVENT,
-  LIVE_VIEW_PATCH_EVENT,
   LIVE_NOTE_CHARS,
   isLiveViewEvent,
   liveFraction,
@@ -81,7 +80,7 @@ const TONE_INK: Record<LiveTone, string> = {
 
 /**
  * What a node with nothing in it SAYS. The engine's own sentences
- * (`human-input.live/empty-line`), so the phone, the terminal and the document
+ * (`view.materializer/empty-line`), so the phone, the terminal and the document
  * report an empty table with one wording rather than three.
  */
 const EMPTY_LINE = {
@@ -1022,7 +1021,7 @@ export function useLiveViews(
     const stopEvents = subscriptions.subscribeSession(sid, (event) => {
       if (!isLiveViewEvent(event)) return;
       revision.current += 1;
-      if (event.type === LIVE_VIEW_PATCH_EVENT) {
+      if (event.type === VIEW_PATCH_EVENT) {
         pendingPatches.push(event);
         // Activity can emit much faster than WKWebView can paint. Fold a burst in
         // memory and give React one picture, leaving the clock and touch handling
@@ -1032,7 +1031,7 @@ export function useLiveViews(
       }
       flushPatches();
       setViews((current) => applyLiveViewEvent(current, event));
-      if (event.type === LIVE_VIEW_CLOSE_EVENT) revealRecord();
+      if (event.type === VIEW_CLOSE_EVENT) revealRecord();
     });
     return () => {
       cancelled = true;

@@ -502,11 +502,11 @@
          ("turn.completed" "turn.failed" "turn.cancelled")
          (do (clear-live! sid) (clear-all-waiting! sid))
 
-         "human_input.request"
-         (mark-waiting! sid (get event "request"))
+         "view.open"
+         (when (= "input" (get event "kind")) (mark-waiting! sid (get event "view")))
 
-         "human_input.close"
-         (clear-waiting! sid (get event "request_id"))
+         "view.close"
+         (when (= "input" (get event "kind")) (clear-waiting! sid (get event "view_id")))
 
          nil)
        (catch Throwable t (tel/log! :debug ["gateway-bus: publish failed" (ex-message t)]) nil))

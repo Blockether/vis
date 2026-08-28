@@ -10,7 +10,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.agents :as agents]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.human-input :as human-input]
+            [com.blockether.vis.internal.view :as human-input]
             [com.blockether.vis.internal.persistance :as ps]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.provider-auth :as pauth]
@@ -1780,10 +1780,10 @@ vis.extension(
              (expect (false? (toggles/enabled? "shell")))
              (finally (toggles/set-value! "shell" before))))))
 
-;; Human input — `vis.ask` blocks the extension until a channel answers
+;; Input Views — `vis.ask` blocks the extension until a channel answers
 
 (defn- answer-pending!
-  "Wait for a human-input request titled `title` to show up, then run `answer-fn`
+  "Wait for an input View titled `title` to show up, then run `answer-fn`
    on its id. Runs off-thread: `vis.ask` parks the calling thread.
 
    Mounts a no-op listener on the default channels first: a request that reaches
@@ -1938,7 +1938,7 @@ vis.extension(name='asker', description='asker', alias='a',
           (expect (empty? (human-input/pending-requests)))))))
   ;; Regression, issue #104: `vis.ask` raised from an extension SYMBOL was
   ;; reported to reach nobody — no dialog on any channel and not one
-  ;; `human_input.request` in the gateway journal — on the theory that a symbol
+  ;; `view.open` in the gateway journal — on the theory that a symbol
   ;; invoked from a `python_execution` block has no ambient session binding, so
   ;; the request had to name its session through an undocumented `session_id=`
   ;; kwarg. Called the way the sandbox actually binds it (`wrap-extension` over
@@ -1965,10 +1965,10 @@ vis.extension(name='asker', description='asker', alias='a',
                                 #(human-input/submit! % {"env" "prod" "token" "hunter2"}))]
                  (ask-key)
                  (expect (= {:is-accepted true} (deref answered 10000 ::never))))
-               (let [opened (filterv #(= :human-input/request (:op (second %))) @seen)]
+               (let [opened (filterv #(= :view/open (:op (second %))) @seen)]
                  (expect (= [:tui :app] (mapv first opened)))
                  (expect (= ["sid-104" "sid-104"]
-                            (mapv #(get-in (second %) [:request :session-id]) opened))))
+                            (mapv #(get-in (second %) [:view :session-id]) opened))))
                (finally (channel-events/remove-channel-event-listener! :tui ::issue-104)
                         (channel-events/remove-channel-event-listener! :app ::issue-104)))))))
   (it "a cancelled request returns a falsey answer instead of raising"
@@ -2206,11 +2206,11 @@ vis.extension(
                      (expect (= "range" (get res "slider_type")))
                      ;; and every mistake is RAISED by `vis.ask` itself, carrying the
                      ;; engine's own one-line reason — the line the human never had to see
-                     (expect (= "Invalid human-input field env: select needs at least one option"
+                     (expect (= "Invalid input View field env: select needs at least one option"
                                 (get res "bad_option")))
-                     (expect (= "Invalid human-input field canary: :max must be greater than :min"
+                     (expect (= "Invalid input View field canary: :max must be greater than :min"
                                 (get res "bad_track")))
-                     (expect (= "Invalid human-input request: field names must be distinct"
+                     (expect (= "Invalid input View request: field names must be distinct"
                                 (get res "bad_names")))
                      (expect (str/includes? (get res "bad_title") "non-blank :title"))
                      (expect (str/includes? (get res "bad_key") "unknown field key"))

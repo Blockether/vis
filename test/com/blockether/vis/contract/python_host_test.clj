@@ -9,7 +9,7 @@
    context whose `vis._host` is read back and compared to the document."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.shell :as fshell]
-            [com.blockether.vis.internal.human-input :as human-input]
+            [com.blockether.vis.internal.view :as view]
             [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.internal.python-extensions :as pyx]
             [lazytest.core :refer [defdescribe describe expect it]])
@@ -60,15 +60,15 @@
 
               op-type
               (fn [op]
-                (try (human-input/live-dispatch (cond-> {}
-                                                  op
-                                                  (assoc "op" op)))
+                (try (view/live-dispatch (cond-> {}
+                                           op
+                                           (assoc "op" op)))
                      nil
                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
 
-          (expect (every? #(not= :vis/human-input-unknown-live-op (op-type %))
+          (expect (every? #(not= :vis/view-unknown-live-op (op-type %))
                           (concat spawn-ops handle-ops)))
-          (expect (= :vis/human-input-unknown-live-op (op-type "detonate")))
+          (expect (= :vis/view-unknown-live-op (op-type "detonate")))
           (expect (= (op-type nil) (op-type default-op)))
           (expect (pos-int? flush-ms))))
     (it "declares every global the engine actually binds into a live context"

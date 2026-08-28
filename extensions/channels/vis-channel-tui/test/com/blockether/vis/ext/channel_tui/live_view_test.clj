@@ -11,10 +11,10 @@
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.live-view :as lv]
             [com.blockether.vis.ext.channel-tui.state :as state]
-            [com.blockether.vis.human-input :as hi]
-            [com.blockether.vis.internal.human-input :as engine]
-            [com.blockether.vis.internal.human-input.live :as live]
-            [com.blockether.vis.internal.human-input.spec :as hi-spec]
+            [com.blockether.vis.view :as hi]
+            [com.blockether.vis.internal.view :as engine]
+            [com.blockether.vis.internal.view.materializer :as live]
+            [com.blockether.vis.internal.view.spec :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
   (:import [com.googlecode.lanterna.screen TerminalScreen]))
 

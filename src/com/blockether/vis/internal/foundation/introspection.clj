@@ -22,7 +22,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.human-input.live :as live]
+            [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.header :as header]
             [com.blockether.vis.internal.util :as util]))

@@ -1,13 +1,13 @@
-(ns com.blockether.vis.ext.channel-tui.human-input-cross-channel-test
+(ns com.blockether.vis.ext.channel-tui.view-cross-channel-test
   "CROSS-CHANNEL proof that ONE blocked extension drives BOTH surfaces.
 
    `human-input-test` covers the TUI dialog in isolation (the engine stubbed
-   out) and the engine's own `gateway.human-input-test` covers the app path
+   out) and the engine's own `gateway.view-test` covers the app path
    (no terminal in sight). Neither shows the two surfaces on the SAME request,
    which is exactly where a channel-routing or validation drift would hide.
 
    Here the REAL screen listener and the REAL gateway bridge are both
-   subscribed to the real channel bus around a real `human-input/request!`, so
+   subscribed to the real channel bus around a real `view/request!`, so
    every assertion below is about one parked run: it opens on both surfaces,
    either surface can answer it, the answer releases the extension, and the
    OTHER surface drops its form instead of leaving a dead dialog behind."
@@ -20,11 +20,11 @@
             [com.blockether.vis.ext.channel-tui.live-view :as lv]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
-            [com.blockether.vis.internal.gateway.human-input :as gw]
+            [com.blockether.vis.internal.gateway.view :as gw]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.gateway.state :as gw-state]
-            [com.blockether.vis.internal.human-input :as engine]
-            [com.blockether.vis.internal.human-input.spec :as hi-spec]
+            [com.blockether.vis.internal.view :as engine]
+            [com.blockether.vis.internal.view.spec :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
@@ -47,7 +47,7 @@
         (atom [])
 
         tap-key
-        (keyword "human-input-cross-channel-test" (str (System/nanoTime)))]
+        (keyword "view-cross-channel-test" (str (System/nanoTime)))]
 
     (reset! state/app-db {:render-version 0})
     (gw/install!)
@@ -61,12 +61,12 @@
                   (reset! state/app-db {:render-version 0})))))
 
 (defn- events-of
-  "Every collected event of `type` naming `request-id`. Scoped by request id so
-   a sibling test's traffic can never satisfy an assertion here."
-  [seen type request-id]
+  "Every collected event of `type` naming `view-id`. Scoped by View id so a
+   sibling test's traffic can never satisfy an assertion here."
+  [seen type view-id]
   (filterv (fn [[_ event]]
              (and (= type (get event "type"))
-                  (= request-id (or (get-in event ["request" "id"]) (get event "request_id")))))
+                  (= view-id (or (get-in event ["view" "id"]) (get event "view_id")))))
     @seen))
 
 (defn- attach!
@@ -115,28 +115,28 @@
                    {:id "confirm" :type "checkbox" :label "Confirm"}])]
 
         (try (is (await-true #(tui-open? rid)))
-             (is (await-true #(seq (events-of seen "human_input.request" rid))))
+             (is (await-true #(seq (events-of seen "view.open" rid))))
              (testing "both surfaces render the SAME form, from one engine projection"
                (let [[event-sid event]
-                     (first (events-of seen "human_input.request" rid))
+                     (first (events-of seen "view.open" rid))
 
                      view
                      (get-in @state/app-db [:human-input :request])]
 
                  (is (= sid event-sid))
-                 (is (= (:title view) (get-in event ["request" "title"])))
-                 (is (= (:description view) (get-in event ["request" "description"])))
+                 (is (= (:title view) (get-in event ["view" "title"])))
+                 (is (= (:description view) (get-in event ["view" "description"])))
                  ;; Same fields, same order — the TUI reads keyword types, the
                  ;; app reads the snake_case wire encoding of that very view.
                  (is (= ["note" "confirm"] (mapv :id (:fields view))))
                  (is (= (mapv :id (:fields view))
-                        (mapv #(get % "id") (get-in event ["request" "fields"]))))
+                        (mapv #(get % "id") (get-in event ["view" "fields"]))))
                  (is (= (mapv (comp name :type) (:fields view))
-                        (mapv #(get % "type") (get-in event ["request" "fields"]))))
+                        (mapv #(get % "type") (get-in event ["view" "fields"]))))
                  (is (= (mapv :is-required (:fields view))
-                        (mapv #(get % "is_required") (get-in event ["request" "fields"]))))))
+                        (mapv #(get % "is_required") (get-in event ["view" "fields"]))))))
              (testing "a client that connects late finds the same open request"
-               (is (= [rid] (mapv :id (gw/pending sid)))))
+               (is (= [rid] (mapv :id (gw/input-views sid)))))
              (testing "the APP's answer releases the run"
                (is (= {:is-accepted true} (gw/submit! rid {"note" "ship it" "confirm" true})))
                (let [result (deref answer 2000 ::timeout)]
@@ -146,8 +146,8 @@
              (testing "and the TUI dialog closes instead of hanging on a dead request"
                (is (await-true #(nil? (:human-input @state/app-db))))
                (is (false? (#'screen/overlay-locked? @state/app-db)))
-               (is (empty? (gw/pending sid)))
-               (is (seq (events-of seen "human_input.close" rid))))
+               (is (empty? (gw/input-views sid)))
+               (is (seq (events-of seen "view.close" rid))))
              (finally (engine/cancel! rid "cleanup")))))))
 
 (deftest an-answer-typed-in-the-tui-releases-the-app-test
@@ -163,18 +163,19 @@
             (ask! sid rid [{:id "user" :type "plaintext" :label "User" :is-required true}])]
 
         (try (is (await-true #(tui-open? rid)))
-             (is (await-true #(seq (gw/pending sid))))
+             (is (await-true #(seq (gw/input-views sid))))
              (testing "keys typed into the terminal answer the very same request"
                (press! (stroke \o) (stroke \k) (KeyStroke. KeyType/Enter))
                (let [result (deref answer 2000 ::timeout)]
                  (is (true? (:is-submitted result)))
                  (is (= "ok" (get-in result [:values "user"])))))
              (testing "the app is told to drop its form — it never shows a stale dialog"
-               (is (await-true #(seq (events-of seen "human_input.close" rid))))
+               (is (await-true #(seq (events-of seen "view.close" rid))))
                (is (= "submitted"
-                      (get (second (first (events-of seen "human_input.close" rid))) "reason")))
-               (is (empty? (gw/pending sid)))
-               (is (nil? (gw/request-of sid rid)))
+                      (get-in (second (first (events-of seen "view.close" rid)))
+                              ["result" "reason"])))
+               (is (empty? (gw/input-views sid)))
+               (is (nil? (gw/input-view-of sid rid)))
                (is (nil? (:human-input @state/app-db))))
              (finally (engine/cancel! rid "cleanup")))))))
 
@@ -195,7 +196,7 @@
                (testing "the app's blank answer is rejected and the request stays parked"
                  (is (false? (:is-accepted app-outcome)))
                  (is (contains? (:errors app-outcome) "key"))
-                 (is (some? (gw/request-of sid rid))))
+                 (is (some? (gw/input-view-of sid rid))))
                (testing "the TUI's blank answer is refused by the SAME engine"
                  ;; The band keeps no rules of its own: Enter SENDS, the engine
                  ;; refuses, and the message printed under the field is the very
@@ -208,7 +209,7 @@
                (press! (stroke \k) (KeyStroke. KeyType/Enter))
                (is (= "k" (get-in (deref answer 2000 ::timeout) [:values "key"])))
                (is (await-true #(nil? (:human-input @state/app-db))))
-               (is (empty? (gw/pending sid))))
+               (is (empty? (gw/input-views sid))))
              (finally (engine/cancel! rid "cleanup")))))))
 
 (deftest either-surface-can-cancel-the-other-test
@@ -238,8 +239,8 @@
             (try (is (await-true #(tui-open? from-tui)))
                  (press! (KeyStroke. KeyType/Escape))
                  (is (false? (:is-submitted (deref answer 2000 ::timeout))))
-                 (is (await-true #(seq (events-of seen "human_input.close" from-tui))))
-                 (is (empty? (gw/pending sid)))
+                 (is (await-true #(seq (events-of seen "view.close" from-tui))))
+                 (is (empty? (gw/input-views sid)))
                  (is (nil? (:human-input @state/app-db)))
                  (finally (engine/cancel! from-tui "cleanup")))))))))
 
@@ -267,20 +268,20 @@
         (try (testing "the terminal shows one form at a time, the app is offered both"
                (is (await-true #(= 1 (count (:human-input-queue @state/app-db)))))
                (is (tui-open? open-id))
-               (is (await-true #(= [open-id queued-id] (mapv :id (gw/pending sid)))))
+               (is (await-true #(= [open-id queued-id] (mapv :id (gw/input-views sid)))))
                ;; The bridge publishes from another thread: poll, never race it.
-               (is (await-true #(= 1 (count (events-of seen "human_input.request" queued-id))))))
+               (is (await-true #(= 1 (count (events-of seen "view.open" queued-id))))))
              (testing "the app may answer the QUEUED one without disturbing the open dialog"
                (is (:is-accepted (gw/submit! queued-id {"why" "because"})))
                (is (true? (:is-submitted (deref queued-answer 2000 ::timeout))))
                (is (await-true #(empty? (:human-input-queue @state/app-db))))
                (is (tui-open? open-id))
-               (is (= [open-id] (mapv :id (gw/pending sid)))))
+               (is (= [open-id] (mapv :id (gw/input-views sid)))))
              (testing "and the still-open one answers from the terminal as if nothing happened"
                (press! (stroke \o) (stroke \k) (KeyStroke. KeyType/Enter))
                (is (= "ok" (get-in (deref open-answer 2000 ::timeout) [:values "user"])))
                (is (await-true #(nil? (:human-input @state/app-db))))
-               (is (empty? (gw/pending sid))))
+               (is (empty? (gw/input-views sid))))
              (finally (engine/cancel! open-id "cleanup") (engine/cancel! queued-id "cleanup")))))))
 
 (deftest a-timeout-clears-the-form-from-both-surfaces-test
@@ -305,11 +306,11 @@
         (testing "nobody answered: the extension resumes and no surface keeps a dead form"
           (is (= "timeout" (:reason (deref answer 3000 ::timeout))))
           (is (await-true #(nil? (:human-input @state/app-db))))
-          (is (await-true #(seq (events-of seen "human_input.close" rid))))
+          (is (await-true #(seq (events-of seen "view.close" rid))))
           (is (= ["timeout"]
-                 (mapv #(get (second %) "reason") (events-of seen "human_input.close" rid))))
-          (is (empty? (gw/pending sid)))
-          (is (nil? (gw/request-of sid rid))))))))
+                 (mapv #(get-in (second %) ["result" "reason"]) (events-of seen "view.close" rid))))
+          (is (empty? (gw/input-views sid)))
+          (is (nil? (gw/input-view-of sid rid))))))))
 
 ;; The twin of the test above: `:timeout-ms 0` is the extension that must NOT
 ;; guess. No clock may take this dialog off either surface.
@@ -332,20 +333,20 @@
                                           [{:id "user" :type "plaintext" :label "User"}]})))]
 
         (try (is (await-true #(tui-open? rid)))
-             (is (await-true #(seq (gw/pending sid))))
+             (is (await-true #(seq (gw/input-views sid))))
              (testing "long past the deadline a defaulted ask would have had, nobody gave up"
                (Thread/sleep 700)
                (is (= ::timeout (deref answer 1 ::timeout)))
                (is (tui-open? rid))
-               (is (some? (gw/request-of sid rid)))
-               (is (empty? (events-of seen "human_input.close" rid))))
+               (is (some? (gw/input-view-of sid rid)))
+               (is (empty? (events-of seen "view.close" rid))))
              (testing "and the operator who finally shows up is still heard, from the terminal"
                (press! (stroke \o) (stroke \k) (KeyStroke. KeyType/Enter))
                (let [result (deref answer 3000 ::timeout)]
                  (is (= "submitted" (:reason result)))
                  (is (= "ok" (get-in result [:values "user"]))))
                (is (await-true #(nil? (:human-input @state/app-db))))
-               (is (await-true #(empty? (gw/pending sid)))))
+               (is (await-true #(empty? (gw/input-views sid)))))
              (finally (engine/cancel! rid "cleanup")))))))
 
 (deftest both-surfaces-answering-at-once-settles-the-run-once-test
@@ -361,7 +362,7 @@
             (ask! sid rid [{:id "user" :type "plaintext" :label "User" :is-required true}])
 
             _
-            (is (await-true #(and (tui-open? rid) (seq (gw/pending sid)))))
+            (is (await-true #(and (tui-open? rid) (seq (gw/input-views sid)))))
 
             gate
             (java.util.concurrent.CountDownLatch. 1)
@@ -386,10 +387,10 @@
           (is (= rid (:request-id result)))
           (is (contains? #{"submitted" "cancelled"} (:reason result))))
         (testing "and both surfaces end with no form and no way to answer it again"
-          (is (await-true #(= 1 (count (events-of seen "human_input.close" rid)))))
-          (is (= 1 (count (events-of seen "human_input.request" rid))))
+          (is (await-true #(= 1 (count (events-of seen "view.close" rid)))))
+          (is (= 1 (count (events-of seen "view.open" rid))))
           (is (await-true #(nil? (:human-input @state/app-db))))
-          (is (empty? (gw/pending sid)))
+          (is (empty? (gw/input-views sid)))
           (is (= {:is-accepted false :reason "unknown"} (gw/submit! rid {"user" "late"})))
           (is (false? (gw/cancel! rid))))))))
 
@@ -414,30 +415,31 @@
                            [{:id "note" :type "plaintext" :label "Note" :is-required true}]})))]
 
         (try (is (await-true #(tui-open? rid)))
-             (is (await-true #(seq (events-of seen "human_input.request" rid))))
+             (is (await-true #(seq (events-of seen "view.open" rid))))
              (testing "both surfaces are told the escape hatch is closed"
-               (is (false? (:is-cancellable (gw/request-of sid rid))))
-               (is (false? (get-in (second (first (events-of seen "human_input.request" rid)))
-                                   ["request" "is_cancellable"])))
+               (is (false? (:is-cancellable (gw/input-view-of sid rid))))
+               (is (false? (get-in (second (first (events-of seen "view.open" rid)))
+                                   ["view" "is_cancellable"])))
                (is (false? (get-in @state/app-db [:human-input :request :is-cancellable]))))
              (testing "Escape in the terminal does not dismiss it"
                (press! (KeyStroke. KeyType/Escape))
                (is (tui-open? rid))
                (is (not (realized? answer)))
-               (is (empty? (events-of seen "human_input.close" rid))))
+               (is (empty? (events-of seen "view.close" rid))))
              (testing "and the app is refused the same way"
                (is (false? (gw/cancel! rid)))
-               (is (some? (gw/request-of sid rid)))
+               (is (some? (gw/input-view-of sid rid)))
                (is (not (realized? answer)))
                (is (tui-open? rid)))
              (testing "answering is the only way out, and it clears both surfaces"
                (press! (stroke \o) (stroke \k) (KeyStroke. KeyType/Enter))
                (is (= "ok" (get-in (deref answer 2000 ::timeout) [:values "note"])))
-               (is (await-true #(= 1 (count (events-of seen "human_input.close" rid)))))
+               (is (await-true #(= 1 (count (events-of seen "view.close" rid)))))
                (is (= "submitted"
-                      (get (second (first (events-of seen "human_input.close" rid))) "reason")))
+                      (get-in (second (first (events-of seen "view.close" rid)))
+                              ["result" "reason"])))
                (is (await-true #(nil? (:human-input @state/app-db))))
-               (is (empty? (gw/pending sid))))
+               (is (empty? (gw/input-views sid))))
              (finally (engine/cancel-all! "cleanup") (future-cancel answer)))))))
 
 ;; A one-time code and a field's rules are ENGINE data. The app answers over
@@ -464,11 +466,10 @@
                                 (when-not (re-find #"@" value) "must be an email address"))}])]
 
         (try (is (await-true #(tui-open? rid)))
-             (is (await-true #(seq (events-of seen "human_input.request" rid))))
+             (is (await-true #(seq (events-of seen "view.open" rid))))
              (testing "not one validator crosses the wire"
                (let [fields
-                     (get-in (second (first (events-of seen "human_input.request" rid)))
-                             ["request" "fields"])
+                     (get-in (second (first (events-of seen "view.open" rid))) ["view" "fields"])
 
                      by-id
                      (into {} (map (juxt #(get % "id") identity)) fields)]
@@ -487,7 +488,7 @@
                  (is (false? (:is-accepted outcome)))
                  (is (= {"code" "must be digits only" "notify" "must be an email address"}
                         (:errors outcome)))
-                 (is (some? (gw/request-of sid rid)))))
+                 (is (some? (gw/input-view-of sid rid)))))
              (testing "digits typed into the terminal fill the boxes and release the run"
                ;; The band drops everything that is not a digit, so a fat-fingered
                ;; letter never even reaches the engine.
@@ -508,7 +509,7 @@
 
 ;; One vocabulary, three surfaces
 ;;
-;; The terminal reads the engine's own tables (`human-input.spec`) at runtime,
+;; The terminal reads the engine's own tables (`view.spec`) at runtime,
 ;; so it cannot drift. The APP cannot: TypeScript needs its literals at compile
 ;; time, so `apps/vis-companion/src/lib/human-input.ts` declares the same closed
 ;; vocabulary a second time. That copy is checked HERE, against the engine's
@@ -613,10 +614,10 @@
 
 ;; A request parked in the SERVE DAEMON (issue #122)
 ;;
-;; `internal/human-input` publishes on the IN-PROCESS channel bus. That bus does
+;; `internal/view` publishes on the IN-PROCESS channel bus. That bus does
 ;; not cross a JVM, so when the extension parks inside `vis-agent serve` the terminal
 ;; is a different process entirely and the `:tui` publication reaches nobody.
-;; The gateway bridge above still turns the request into a `human_input.request`
+;; The gateway bridge above still turns the request into a `view.open`
 ;; SESSION event — which the TUI simply dropped: `chat/gateway-event->chunk`,
 ;; the ONE projection of that stream into the terminal, had no case for it. The
 ;; operator watched a turn that never moved, and `publish!` counting the gateway
@@ -634,7 +635,7 @@
 
 ;; Regression, issue #122: a run parked by an extension running in the serve
 ;; daemon never surfaced in the terminal at all — the persisted
-;; `human_input.request` / `human_input.close` session events projected to nil,
+;; `view.open` / `view.close` session events projected to nil,
 ;; so the tab sat on a turn that never moved and no dialog was ever drawn.
 (deftest a-daemon-side-request-reaches-the-terminal-test
   (with-surfaces!
@@ -654,10 +655,10 @@
                     :label "Env"
                     :options [{:value "prod" :label "prod"} {:value "dev" :label "dev"}]}])]
 
-        (try (is (await-true #(seq (events-of seen "human_input.request" rid))))
+        (try (is (await-true #(seq (events-of seen "view.open" rid))))
              (testing "the session event PROJECTS — the only route out of the daemon"
                (let [[_ event]
-                     (first (events-of seen "human_input.request" rid))
+                     (first (events-of seen "view.open" rid))
 
                      chunk
                      (#'chat/gateway-event->chunk event)]
@@ -674,9 +675,9 @@
              (testing "the APP answering it closes every terminal's form too"
                (is (= {:is-accepted true} (gw/submit! rid {"note" "ship it" "env" "prod"})))
                (is (true? (:is-submitted (deref answer 2000 ::timeout))))
-               (is (await-true #(seq (events-of seen "human_input.close" rid))))
+               (is (await-true #(seq (events-of seen "view.close" rid))))
                (let [[_ event]
-                     (first (events-of seen "human_input.close" rid))
+                     (first (events-of seen "view.close" rid))
 
                      chunk
                      (#'chat/gateway-event->chunk event)]
@@ -718,12 +719,12 @@
         form
         (hi/init-form (daemon-view "req-remote"))]
 
-    (with-redefs [vis/gateway-submit-human-input!
+    (with-redefs [vis/gateway-submit-input-view!
                   (fn [sid rid values]
                     (swap! calls conj [:submit sid rid values])
                     {:is-accepted true})
 
-                  vis/gateway-cancel-human-input!
+                  vis/gateway-cancel-input-view!
                   (fn [sid rid]
                     (swap! calls conj [:cancel sid rid])
                     true)]
@@ -751,12 +752,12 @@
     ;; The tab is attached to `sid` — a replayed form belongs to that session.
     (swap! state/app-db assoc :session {:id sid})
     (try
-      (with-redefs [vis/gateway-human-input-requests
+      (with-redefs [vis/gateway-input-views
                     (fn [asked]
                       (is (= sid asked))
                       (mapv #(wire/->wire (daemon-view % sid)) rids))
 
-                    vis/gateway-submit-human-input!
+                    vis/gateway-submit-input-view!
                     (fn [answered-sid rid values]
                       (swap! calls conj [answered-sid rid values])
                       {:is-accepted true})]
@@ -791,7 +792,7 @@
 ;; wall. `open-live!` publishes on the in-process `:tui` bus, that bus does not
 ;; cross a JVM, and a run SHOWING its work inside `vis-agent serve` therefore
 ;; reached no terminal at all — while the gateway bridge journalled
-;; `human_input.live.open` / `.patch` / `.close` and the companion painted the whole
+;; `view.open` / `.patch` / `.close` and the companion painted the whole
 ;; view from them. `chat/gateway-event->chunk`, the ONE projection of that stream
 ;; into the terminal, had no case for any of the three.
 
@@ -808,8 +809,8 @@
   [[_ event]]
   (#'chat/gateway-event->chunk event))
 
-;; Regression: a live view opened by a run in the serve daemon never reached the
-;; terminal at all — the three `human_input.live.*` session events projected to nil,
+;; Regression: a live View opened by a run in the serve daemon never reached the
+;; terminal at all — the three `view.*` events with `kind=live` projected to nil,
 ;; so the band stayed empty for the whole run while the companion painted the same
 ;; view frame by frame, and Escape had nothing to interrupt.
 (deftest a-daemon-side-live-view-reaches-the-terminal-test
@@ -830,9 +831,9 @@
 
         (try (testing "the in-process bus reached no terminal — that IS the bug"
                (is (empty? (:live-views @state/app-db))))
-             (is (await-true #(seq (live-events-of seen gw/live-open-event vid))))
+             (is (await-true #(seq (live-events-of seen gw/view-open-event vid))))
              (testing "the open PROJECTS, and rehydrates the ENGINE's own materialized view"
-               (let [chunk (chunk-of (first (live-events-of seen gw/live-open-event vid)))]
+               (let [chunk (chunk-of (first (live-events-of seen gw/view-open-event vid)))]
                  (is (= :live-view-open (:phase chunk)))
                  (is (= view (hi/live-view<-wire (:view chunk)))
                      "byte for byte the view the in-process channel event carried")
@@ -844,16 +845,16 @@
                                 [{:op :set :node-id "now" :text "Deploying"}
                                  {:op :append :node-id "out" :lines ["one" "two"]}])]
                  (gw/flush-live-patches!)
-                 (is (await-true #(seq (live-events-of seen gw/live-patch-event vid))))
-                 (let [chunk (chunk-of (first (live-events-of seen gw/live-patch-event vid)))]
+                 (is (await-true #(seq (live-events-of seen gw/view-patch-event vid))))
+                 (let [chunk (chunk-of (first (live-events-of seen gw/view-patch-event vid)))]
                    (is (= :live-view-patch (:phase chunk)))
                    (state/dispatch [:live-view-patch (hi/live-patch<-wire (:patch chunk))])
                    (is (= advanced (:view (first (:live-views @state/app-db))))
                        "the terminal never interprets a patch itself"))))
              (testing "and the close settles the pane with the verdict the model reads"
                (engine/close-live! vid {:reason :completed})
-               (is (await-true #(seq (live-events-of seen gw/live-close-event vid))))
-               (let [chunk (chunk-of (first (live-events-of seen gw/live-close-event vid)))]
+               (is (await-true #(seq (live-events-of seen gw/view-close-event vid))))
+               (let [chunk (chunk-of (first (live-events-of seen gw/view-close-event vid)))]
                  (is (= :live-view-close (:phase chunk)))
                  (is (= vid (:view-id chunk)))
                  (let [result (hi/live-result<-wire (:result chunk))]
@@ -895,8 +896,14 @@
 ;; and the app never learns fails here, instead of shipping a card the phone paints
 ;; as a hole while a run reports into it.
 (deftest the-app-declares-the-engines-own-live-vocabulary-test
-  (let [source (app-source "lib/live-view.ts")]
+  (let [source
+        (app-source "lib/live-view.ts")
+
+        lifecycle-source
+        (app-source "lib/view.ts")]
+
     (is (some? source))
+    (is (some? lifecycle-source))
     (when source
       (testing "what a view can be MADE of, and what one patch can do to it"
         (is (= (set (keys hi-spec/live-node-types)) (set (ts-strings source "LIVE_NODE_TYPES"))))
@@ -917,8 +924,10 @@
         (is (= (:window-lines hi-spec/log-defaults) (ts-number source "LIVE_LOG_WINDOW")))
         (is (= (:max-rows hi-spec/table-defaults) (ts-number source "LIVE_TABLE_MAX_ROWS")))
         (is (= hi-spec/note-chars (ts-number source "LIVE_NOTE_CHARS"))
-            "the field the phone types a stop note into ends where the engine cuts it"))
-      (testing "and it listens for the three events the bridge actually publishes"
-        (is (= [gw/live-open-event gw/live-patch-event gw/live-close-event]
-               (mapv (partial ts-literal source)
-                     ["LIVE_VIEW_OPEN_EVENT" "LIVE_VIEW_PATCH_EVENT" "LIVE_VIEW_CLOSE_EVENT"])))))))
+            "the field the phone types a stop note into ends where the engine cuts it")))
+    (when lifecycle-source
+      (testing "the shared lifecycle is closed over kinds and events"
+        (is (= (set (keys hi-spec/view-kinds)) (set (ts-strings lifecycle-source "VIEW_KINDS"))))
+        (is (= [gw/view-open-event gw/view-patch-event gw/view-close-event]
+               (mapv (partial ts-literal lifecycle-source)
+                     ["VIEW_OPEN_EVENT" "VIEW_PATCH_EVENT" "VIEW_CLOSE_EVENT"])))))))

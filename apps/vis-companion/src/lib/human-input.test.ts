@@ -1,12 +1,13 @@
 import fixture from './human-input.fixture.json';
 import { describe, expect, it } from 'vitest';
 import type { SseEvent } from './types';
+import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, isViewEvent } from './view';
 import {
-  applyHumanInputEvent,
+  applyInputViewEvent,
   clampHumanInputRange,
   humanInputRange,
   humanInputRequestFromWire,
-  humanInputRequestsFromWire,
+  inputViewsFromWire,
   humanInputFormChange,
   humanInputFormRefused,
   humanInputFormStart,
@@ -15,31 +16,26 @@ import {
   humanInputIsDecoration,
   humanInputOtpDigits,
   initialHumanInputValues,
-  isHumanInputEvent,
+  isInputViewEvent,
   toggleHumanInputOption,
   type HumanInputField,
   type HumanInputRequest,
 } from './human-input';
 
-/**
- * VERBATIM engine output: `wire/json-str` of `human-input/request->view` for a
- * request with one field of every shape. The app must read the daemon's own
- * projection, so this fixture is never hand-tuned to match the parser — the
- * engine suite (`gateway.human-input-test`) re-derives these very bytes and
- * fails if the projection and this file ever disagree.
- */
+/** Engine `view/request->view` output; `gateway.view-test` pins these bytes. */
 const WIRE = fixture as unknown;
 
-function requested(request: unknown = WIRE): SseEvent {
-  return { type: 'human_input.request', session_id: 'sid-1', request } as SseEvent;
+function requested(view: unknown = WIRE): SseEvent {
+  return { type: VIEW_OPEN_EVENT, kind: 'input', session_id: 'sid-1', view } as SseEvent;
 }
 
-function closed(requestId: string, reason = 'submitted'): SseEvent {
+function closed(viewId: string, reason = 'submitted'): SseEvent {
   return {
-    type: 'human_input.close',
+    type: VIEW_CLOSE_EVENT,
+    kind: 'input',
     session_id: 'sid-1',
-    request_id: requestId,
-    reason,
+    view_id: viewId,
+    result: { reason },
   } as SseEvent;
 }
 
@@ -159,9 +155,9 @@ describe('humanInputRequestFromWire', () => {
   });
 
   it('keeps only the requests a REST snapshot can show', () => {
-    expect(humanInputRequestsFromWire([WIRE, null, { id: 'x' }]).map((row) => row.id))
+    expect(inputViewsFromWire([WIRE, null, { id: 'x' }]).map((row) => row.id))
       .toEqual(['req-1']);
-    expect(humanInputRequestsFromWire(undefined)).toEqual([]);
+    expect(inputViewsFromWire(undefined)).toEqual([]);
   });
 });
 
@@ -264,33 +260,35 @@ describe('toggleHumanInputOption', () => {
   });
 });
 
-describe('applyHumanInputEvent', () => {
-  it('opens a form on the gateway request event', () => {
-    expect(isHumanInputEvent(requested())).toBe(true);
-    expect(isHumanInputEvent({ type: 'turn.completed' } as SseEvent)).toBe(false);
-    const pending = applyHumanInputEvent([], requested());
+describe('applyInputViewEvent', () => {
+  it('opens only input-capable Views on the shared lifecycle', () => {
+    expect(isViewEvent(requested())).toBe(true);
+    expect(isInputViewEvent(requested())).toBe(true);
+    expect(isInputViewEvent({ ...requested(), kind: 'live' })).toBe(false);
+    expect(isInputViewEvent({ type: 'turn.completed' } as SseEvent)).toBe(false);
+    const pending = applyInputViewEvent([], requested());
     expect(pending.map((row) => row.id)).toEqual(['req-1']);
   });
 
   it('replaces on replay instead of stacking a second dialog', () => {
-    const once = applyHumanInputEvent([], requested());
-    const twice = applyHumanInputEvent(once, requested());
+    const once = applyInputViewEvent([], requested());
+    const twice = applyInputViewEvent(once, requested());
     expect(twice.map((row) => row.id)).toEqual(['req-1']);
     expect(twice[0]).not.toBe(once[0]);
   });
 
   it('drops the form when the request closes anywhere — TUI, timeout, or here', () => {
-    const pending = applyHumanInputEvent([], requested());
-    expect(applyHumanInputEvent(pending, closed('req-1'))).toEqual([]);
-    expect(applyHumanInputEvent(pending, closed('req-1', 'timeout'))).toEqual([]);
+    const pending = applyInputViewEvent([], requested());
+    expect(applyInputViewEvent(pending, closed('req-1'))).toEqual([]);
+    expect(applyInputViewEvent(pending, closed('req-1', 'timeout'))).toEqual([]);
   });
 
   it('leaves the list ALONE for anything it cannot act on', () => {
-    const pending = applyHumanInputEvent([], requested());
-    expect(applyHumanInputEvent(pending, closed('other'))).toBe(pending);
-    expect(applyHumanInputEvent(pending, closed(''))).toBe(pending);
-    expect(applyHumanInputEvent(pending, requested({ id: 'bad' }))).toBe(pending);
-    expect(applyHumanInputEvent(pending, { type: 'turn.started' } as SseEvent)).toBe(pending);
+    const pending = applyInputViewEvent([], requested());
+    expect(applyInputViewEvent(pending, closed('other'))).toBe(pending);
+    expect(applyInputViewEvent(pending, closed(''))).toBe(pending);
+    expect(applyInputViewEvent(pending, requested({ id: 'bad' }))).toBe(pending);
+    expect(applyInputViewEvent(pending, { type: 'turn.started' } as SseEvent)).toBe(pending);
   });
 });
 

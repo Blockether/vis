@@ -555,16 +555,21 @@
             (bus/publish! sid
                           {"schema" 1
                            "seq" 1
-                           "type" "human_input.request"
+                           "type" "view.open"
+                           "kind" "input"
                            "session_id" sid
-                           "request" {"id" "req-1" "title" "Which branch?"}}
+                           "view" {"id" "req-1" "title" "Which branch?"}}
                           {:store? true})
             (expect (bus/session-waiting? sid))
             (expect (= ["req-1"] (mapv #(get % "id") (get (bus/waiting-requests) sid))))
-            (bus/publish!
-              sid
-              {"schema" 1 "seq" 2 "type" "human_input.close" "session_id" sid "request_id" "req-1"}
-              {:store? true})
+            (bus/publish! sid
+                          {"schema" 1
+                           "seq" 2
+                           "type" "view.close"
+                           "kind" "input"
+                           "session_id" sid
+                           "view_id" "req-1"}
+                          {:store? true})
             (expect (not (bus/session-waiting? sid)))))))
   (it "keeps waiting while a SECOND request of the same run is still open"
       (with-temp-journal
@@ -574,15 +579,20 @@
               (bus/publish! sid
                             {"schema" 1
                              "seq" 1
-                             "type" "human_input.request"
+                             "type" "view.open"
+                             "kind" "input"
                              "session_id" sid
-                             "request" {"id" rid}}
+                             "view" {"id" rid}}
                             {:store? true}))
             (expect (= ["req-a" "req-b"] (mapv #(get % "id") (get (bus/waiting-requests) sid))))
-            (bus/publish!
-              sid
-              {"schema" 1 "seq" 2 "type" "human_input.close" "session_id" sid "request_id" "req-a"}
-              {:store? true})
+            (bus/publish! sid
+                          {"schema" 1
+                           "seq" 2
+                           "type" "view.close"
+                           "kind" "input"
+                           "session_id" sid
+                           "view_id" "req-a"}
+                          {:store? true})
             (expect (bus/session-waiting? sid))
             (expect (= ["req-b"] (mapv #(get % "id") (get (bus/waiting-requests) sid))))))))
   (it "drops the demand at the turn's terminal, answered or not"
@@ -595,9 +605,10 @@
             (bus/publish! sid
                           {"schema" 1
                            "seq" 1
-                           "type" "human_input.request"
+                           "type" "view.open"
+                           "kind" "input"
                            "session_id" sid
-                           "request" {"id" "req-abandoned"}}
+                           "view" {"id" "req-abandoned"}}
                           {:store? true})
             (expect (bus/session-waiting? sid))
             (bus/publish!
@@ -637,9 +648,10 @@
                              (bus/publish! sid
                                            {"schema" 1
                                             "seq" 1
-                                            "type" "human_input.request"
+                                            "type" "view.open"
+                                            "kind" "input"
                                             "session_id" sid
-                                            "request" {"id" "req-forgotten"}}
+                                            "view" {"id" "req-forgotten"}}
                                            {:store? true})
                              (expect (bus/session-waiting? sid))
                              (bus/forget! sid)

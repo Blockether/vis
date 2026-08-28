@@ -131,9 +131,9 @@
              [gateway-cancel-turn! gateway-client/cancel-turn!]
              [gateway-cancel-current-turn! gateway-client/cancel-current-turn!]
              [gateway-drain-idle! gateway-client/drain-idle!]
-             [gateway-human-input-requests gateway-client/human-input-requests]
-             [gateway-submit-human-input! gateway-client/submit-human-input!]
-             [gateway-cancel-human-input! gateway-client/cancel-human-input!]
+             [gateway-input-views gateway-client/input-views]
+             [gateway-submit-input-view! gateway-client/submit-input-view!]
+             [gateway-cancel-input-view! gateway-client/cancel-input-view!]
              [gateway-focus-live-view! gateway-client/focus-live-view!]
              [gateway-interrupt-live-view! gateway-client/interrupt-live-view!]
              [gateway-live-views gateway-client/live-views]
@@ -788,18 +788,17 @@
 ;; `request-human-input!` BLOCKS the calling extension until a channel calls
 ;; `submit-human-input!`/`cancel-human-input!`, or the request times out. The
 ;; dialog itself is a channel concern: a channel subscribes to the bus above and
-;; renders the `:human-input/request` event, then answers by request id.
-(def request-human-input! (requiring-resolve 'com.blockether.vis.internal.human-input/request!))
+;; renders the `:view/open` event, then answers by request id.
+(def request-human-input! (requiring-resolve 'com.blockether.vis.internal.view/request!))
 
-(def submit-human-input! (requiring-resolve 'com.blockether.vis.internal.human-input/submit!))
+(def submit-human-input! (requiring-resolve 'com.blockether.vis.internal.view/submit!))
 
-(def cancel-human-input! (requiring-resolve 'com.blockether.vis.internal.human-input/cancel!))
+(def cancel-human-input! (requiring-resolve 'com.blockether.vis.internal.view/cancel!))
 
 (def pending-human-input-request
-  (requiring-resolve 'com.blockether.vis.internal.human-input/pending-request))
+  (requiring-resolve 'com.blockether.vis.internal.view/pending-request))
 
-(def reveal-human-input-secret
-  (requiring-resolve 'com.blockether.vis.internal.human-input/reveal-secret))
+(def reveal-human-input-secret (requiring-resolve 'com.blockether.vis.internal.view/reveal-secret))
 
 ;; Live views — the picture the human WATCHES while an extension works
 ;;
@@ -809,20 +808,19 @@
 ;; painted, handed over as DATA, stamped with whether a PERSON ended it.
 ;; Reach for `with-live-view!`: a run that dies mid-flight would otherwise leave
 ;; a picture nobody updates on the human's screen and no markdown for the model.
-(def with-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/with-live!))
+(def with-live-view! (requiring-resolve 'com.blockether.vis.internal.view/with-live!))
 
-(def open-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/open-live!))
+(def open-live-view! (requiring-resolve 'com.blockether.vis.internal.view/open-live!))
 
-(def patch-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/patch-live!))
+(def patch-live-view! (requiring-resolve 'com.blockether.vis.internal.view/patch-live!))
 
-(def focus-live-view! (requiring-resolve 'com.blockether.vis.internal.human-input/focus-live!))
+(def focus-live-view! (requiring-resolve 'com.blockether.vis.internal.view/focus-live!))
 
-(def interrupt-live-view!
-  (requiring-resolve 'com.blockether.vis.internal.human-input/interrupt-live!))
+(def interrupt-live-view! (requiring-resolve 'com.blockether.vis.internal.view/interrupt-live!))
 
-(def live-view (requiring-resolve 'com.blockether.vis.internal.human-input/live-view))
+(def live-view (requiring-resolve 'com.blockether.vis.internal.view/live-view))
 
-(def live-views (requiring-resolve 'com.blockether.vis.internal.human-input/live-views))
+(def live-views (requiring-resolve 'com.blockether.vis.internal.view/live-views))
 
 ;; Binary entry point
 ;;

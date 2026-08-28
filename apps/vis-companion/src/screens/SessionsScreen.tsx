@@ -40,6 +40,7 @@ import {
 import { GatewayClient, type ProjectWindows, type SessionMatch } from '../lib/gateway';
 import { SessionSubscriptionHub } from '../lib/subscriptions';
 import type { ForkPoint, GatewayConn, Session, SessionUsage, SseEvent } from '../lib/types';
+import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, viewKind } from '../lib/view';
 import { compactProjectPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
@@ -128,12 +129,14 @@ const SESSION_LIST_EVENTS = new Set([
   'turn.failed',
   'turn.cancelled',
   'session.title_updated',
-  // A run PARKED on a human ends no turn and streams nothing, so without these
-  // two the list kept painting a plain LIVE row for a session that was already
-  // waiting on the reader — and kept it there after somebody answered.
-  'human_input.request',
-  'human_input.close',
 ]);
+
+function isSessionListEvent(event: SseEvent): boolean {
+  return (
+    SESSION_LIST_EVENTS.has(event.type) ||
+    (viewKind(event) === 'input' && (event.type === VIEW_OPEN_EVENT || event.type === VIEW_CLOSE_EVENT))
+  );
+}
 
 // The frames the FLEET stream sends (`GET /v1/events?scope=fleet`): each one is the
 // whole truth about one row — the status the next window read would have carried —
@@ -1153,7 +1156,7 @@ export function SessionsScreen({
       // it is what this list ran on before the fleet stream existed. While that stream
       // delivers it is the authority and these frames are its echo.
       if (fleetStreamingRef.current) return;
-      if (!SESSION_LIST_EVENTS.has(event.type)) return;
+      if (!isSessionListEvent(event)) return;
       readWindow();
     });
     return () => {

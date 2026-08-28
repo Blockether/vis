@@ -2894,7 +2894,7 @@
 (defn- open-human-input
   "Install `form` in ONE tab's db half. IDEMPOTENT BY REQUEST ID: one request
    reaches a tab twice whenever the run parks in THIS process — once on the
-   in-process `:tui` channel bus, once as the gateway's `human_input.request`
+   in-process `:tui` channel bus, once as the gateway's `view.open`
    session event (which is the only route when the run parks in the serve
    daemon). Opening the same form twice would leave a zombie behind the
    answered one."

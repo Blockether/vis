@@ -29,9 +29,9 @@
     com.blockether.vis.internal.foundation.editing.parse
     com.blockether.vis.internal.foundation.environment.languages
     com.blockether.vis.internal.foundation.surface-contract
-    com.blockether.vis.internal.gateway.wire com.blockether.vis.internal.header com.blockether.vis.internal.human-input
-    com.blockether.vis.internal.human-input.live
-    com.blockether.vis.internal.human-input.spec com.blockether.vis.internal.iteration
+    com.blockether.vis.internal.gateway.wire com.blockether.vis.internal.header com.blockether.vis.internal.view
+    com.blockether.vis.internal.view.materializer
+    com.blockether.vis.internal.view.spec com.blockether.vis.internal.iteration
     com.blockether.vis.internal.limits-format com.blockether.vis.internal.oauth
     com.blockether.vis.internal.paths com.blockether.vis.internal.prompt-templates
     com.blockether.vis.internal.provider-error com.blockether.vis.internal.python-project
@@ -52,10 +52,10 @@
     com.blockether.vis.internal.foundation.gif com.blockether.vis.internal.foundation.shell
     com.blockether.vis.internal.foundation.shim-pytest
     com.blockether.vis.internal.foundation.surface-contract
-    com.blockether.vis.internal.gateway.human-input com.blockether.vis.internal.gateway.state
-    com.blockether.vis.internal.gateway.wire com.blockether.vis.internal.header com.blockether.vis.internal.human-input
-    com.blockether.vis.internal.human-input.live
-    com.blockether.vis.internal.human-input.spec com.blockether.vis.internal.iteration
+    com.blockether.vis.internal.gateway.view com.blockether.vis.internal.gateway.state
+    com.blockether.vis.internal.gateway.wire com.blockether.vis.internal.header com.blockether.vis.internal.view
+    com.blockether.vis.internal.view.materializer
+    com.blockether.vis.internal.view.spec com.blockether.vis.internal.iteration
     com.blockether.vis.internal.loop com.blockether.vis.internal.persistance
     com.blockether.vis.internal.process-jail com.blockether.vis.internal.progress
     com.blockether.vis.internal.provider-limits com.blockether.vis.internal.providers

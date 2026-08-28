@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.human-input
-  "TUI rendering for `:human-input/request` — the terminal half of the engine's
-   typed human-input pause primitive (`com.blockether.vis.internal.human-input`).
+  "TUI rendering for `:view/open` — the terminal half of the engine's
+   typed human-input pause primitive (`com.blockether.vis.internal.view`).
 
    The engine parks an extension thread and publishes a request VIEW; this
    namespace turns that view into a form the operator can fill in, and hands
@@ -25,8 +25,8 @@
             [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
-            [com.blockether.vis.internal.human-input :as engine]
-            [com.blockether.vis.internal.human-input.spec :as hi-spec])
+            [com.blockether.vis.internal.view :as engine]
+            [com.blockether.vis.internal.view.spec :as hi-spec])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 (set! *warn-on-reflection* true)
@@ -200,7 +200,7 @@
 
 (defn request<-wire
   "Rehydrate a request VIEW from the canonical snake_case wire map a
-   `human_input.request` SESSION event carries — the only shape a request takes
+   `view.open` SESSION event carries — the only shape a request takes
    when the parked run lives in the serve daemon instead of this process. The
    ENGINE owns that inverse (`view<-wire`); the terminal never keeps a second
    field vocabulary."
@@ -209,19 +209,19 @@
 
 (defn live-view<-wire
   "Rehydrate a MATERIALIZED live view from the canonical snake_case map a
-   `human_input.live.open` session event carries — the only shape a view takes when
+   `view.open` session event carries — the only shape a view takes when
    the run showing it lives in the serve daemon instead of this process. The ENGINE
    owns that inverse; the terminal never keeps a second node vocabulary."
   [wire]
   (engine/live-view<-wire wire))
 
 (defn live-patch<-wire
-  "Rehydrate one accepted patch from a `human_input.live.patch` session event."
+  "Rehydrate one accepted patch from a `view.patch` session event."
   [wire]
   (engine/live-patch<-wire wire))
 
 (defn live-result<-wire
-  "Rehydrate a view's verdict from a `human_input.live.close` session event."
+  "Rehydrate a view's verdict from a `view.close` session event."
   [wire]
   (engine/live-result<-wire wire))
 (defn session-id

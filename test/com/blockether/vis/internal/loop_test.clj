@@ -16,7 +16,7 @@
             [com.blockether.vis.internal.titling :as titling]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.human-input :as hi]
+            [com.blockether.vis.internal.view :as hi]
             [com.blockether.vis.internal.channel-events :as ce]
             [com.blockether.vis.internal.provider-error :as perr]
             [com.blockether.vis.internal.config :as config]
@@ -1188,8 +1188,7 @@
               close-attempts (atom 0)
               close-live! hi/close-live!]
 
-          (with-redefs-fn {(requiring-resolve
-                             'com.blockether.vis.internal.human-input.live-sink/views-dir)
+          (with-redefs-fn {(requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir)
                            (constantly (java.io.File. (System/getProperty "java.io.tmpdir")
                                                       (str "vis-activity-" (random-uuid))))
                            #'hi/close-live! (fn [& args]
@@ -6413,14 +6412,15 @@
 
                  (ce/add-channel-event-listener! chan ::hitl-wall #(swap! events conj %))
                  (try (let [answerer
-                            (future
-                              (loop [n 0]
-                                (if-let [request-id (some #(when (= :human-input/request (:op %))
-                                                             (:request-id %))
-                                                          @events)]
-                                  ;; The operator takes MUCH longer than the 20ms wall.
-                                  (do (Thread/sleep 1500) (hi/submit! request-id {"otp" "123456"}))
-                                  (when (< n 400) (Thread/sleep 10) (recur (inc n))))))
+                            (future (loop [n 0]
+                                      (if-let [request-id (some #(when (and (= :view/open (:op %))
+                                                                            (= :input (:kind %)))
+                                                                   (:view-id %))
+                                                                @events)]
+                                        ;; The operator takes MUCH longer than the 20ms wall.
+                                        (do (Thread/sleep 1500)
+                                            (hi/submit! request-id {"otp" "123456"}))
+                                        (when (< n 400) (Thread/sleep 10) (recur (inc n))))))
 
                             {:keys [deadline park]}
                             (rt/parkable-wall (System/currentTimeMillis) 20)
@@ -6438,7 +6438,7 @@
 (def ^:private live-views-dir
   "The private var every view record hangs under, redefined per test so nothing
    here writes anywhere near the developer's own `~/.vis`."
-  (requiring-resolve 'com.blockether.vis.internal.human-input.live-sink/views-dir))
+  (requiring-resolve 'com.blockether.vis.internal.view.sink/views-dir))
 
 (defn- open-a-view
   "Guest code opening a live view through the host bridge an extension crosses,

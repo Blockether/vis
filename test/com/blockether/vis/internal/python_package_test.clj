@@ -11,7 +11,7 @@
             [clojure.string :as str]
             [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.internal.foundation.shell :as shell]
-            [com.blockether.vis.internal.human-input.spec :as hi]
+            [com.blockether.vis.internal.view.spec :as hi]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (def ^:private agent-dir "packages/vis-agent")

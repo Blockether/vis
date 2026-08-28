@@ -20,8 +20,8 @@
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.git :as git]
-            [com.blockether.vis.internal.human-input :as human-input]
-            [com.blockether.vis.internal.human-input.live :as live]
+            [com.blockether.vis.internal.view :as view]
+            [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.session-model :as smodel]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.gateway.bus :as bus]
@@ -150,7 +150,7 @@
    used to open a SECOND entry under that spelling: its own `:next-seq` counter,
    its own replay ring, and NO subscribers. Those events reached the
    cross-process journal and never the SSE fan-out, which is exactly how a
-   `human_input.request` sat in the journal while the TUI never drew the form.
+   `view.open` sat in the journal while the TUI never drew the form.
 
    Normalizing lives HERE and nowhere else: nothing below touches `registry`
    directly, every read and write goes through one of the accessors under this
@@ -1340,12 +1340,12 @@
          (tel/log! :warn ["gateway: append-iteration-attachment! failed" (str iid) (ex-message t)])
          nil)))
 
-;; A live view a human stops AFTER the block that opened it returned has no
+;; A live View a human stops AFTER the block that opened it returned has no
 ;; collector left to file into — the block's was drained the moment it returned.
 ;; The engine hands the record here instead, and this is the layer that owns the
-;; database, so this is where the door is hung: the human-input namespace cannot
+;; database, so this is where the door is hung: the View namespace cannot
 ;; require it (the turn loop sits between the two).
-(human-input/set-late-artifact-filer! append-iteration-attachment!)
+(view/set-late-artifact-filer! append-iteration-attachment!)
 
 (def ^:private activity-phases
   "Coarse 'Vis is doing X' phases surfaced to the LIVE ticker but never pinned

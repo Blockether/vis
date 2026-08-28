@@ -17,8 +17,8 @@ Nothing here requires a Vis namespace. The engine reads this project off its own
 classpath, `vis-agent` depends on the wheel, and a tool in somebody else's
 repository can read the same declaration without installing an agent.
 
-The one part this project does not own is the human-input vocabulary: the engine's
-`internal.human-input.spec` declares it and hands it to `package-document`, so the
+The one part this project does not own is the View vocabulary: the engine's
+`internal.view.spec` declares it and hands it to `package-document`, so the
 closed vocabulary keeps exactly one definition.
 
 ## Changing the contract
@@ -26,7 +26,7 @@ closed vocabulary keeps exactly one definition.
 1. Edit `resources/vis-contract/python-host.edn` (or `clojure-host.edn`).
 2. Re-render the Python document:
    `(com.blockether.vis.contract.python-host/write-package-document!
-     (com.blockether.vis.internal.human-input.spec/contract-vocabulary))`.
+     (com.blockether.vis.internal.view.spec/contract-vocabulary))`.
 3. `python_package_test` and `contract.python-host-test` are what fail when you do not.
 
 Both halves are versioned by the repository's `VIS_VERSION` — one document, one

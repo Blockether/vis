@@ -24,7 +24,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.file-picker :as file-picker]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
-            [com.blockether.vis.internal.gateway.human-input :as gw-human-input]
+            [com.blockether.vis.internal.gateway.view :as gw-view]
             [com.blockether.vis.internal.gateway.pairing :as pairing]
             [com.blockether.vis.internal.gateway.protocol :as protocol]
             [com.blockether.vis.internal.gateway.push :as push]
@@ -658,19 +658,11 @@
       (long SETTLED_PICTURE_PROTOCOL)))
 
 (defn- without-settled-picture
-  "One outbound frame with `result.view` dropped from a `human_input.live.close`.
-
-   The close repeats a picture its own patch stream already ended on — measured
-   byte-identical to the state `open` + patches produce for every close a real
-   gateway had on hand, at tens of kilobytes a frame. A client from protocol 3
-   settles the view it built instead, so the copy is pure wire weight.
-
-   Applied HERE, on the way out, rather than where the event is produced: the
-   STORED event must keep the picture regardless. The on-disk record and the
-   model both read the whole verdict, and the transcript serves that record back
-   as the run's receipt — SSE is the one reader that can rebuild it instead."
+  "Drop a live `view.close` frame's repeated `result.view` for modern peers."
   [event]
-  (if (and (= "human_input.live.close" (get event "type")) (map? (get event "result")))
+  (if (and (= "view.close" (get event "type"))
+           (= "live" (get event "kind"))
+           (map? (get event "result")))
     (update event "result" dissoc "view")
     event))
 
@@ -2059,7 +2051,7 @@
    listed even when otherwise empty and band above the rest, so the window a device
    walks is the list it paints, and its page count is the gateway's own.
 
-   `awaiting` carries the sessions parked on an unanswered human-input request,
+   `awaiting` carries the sessions parked on an unanswered input View,
    complete and OUTSIDE the window, so a client pins them above a list that no
    longer reorders itself when a turn starts or ends.
 
@@ -3271,28 +3263,28 @@
                                                :data {:type "test"}})
                     :push (push/status)})))
 
-;; --- Human-input requests (a run BLOCKED on the operator) ---
+;; --- Input Views (a run BLOCKED on the operator) ---
 
-(defn- human-input-404
+(defn- input-view-404
   [request-id]
   (error-response 404
-                  :human-input-not-found "no such pending human-input request"
+                  :input-view-not-found "no such pending input View"
                   :request_id (str request-id)))
 
-(defn- list-human-input-handler
-  "GET /v1/sessions/:sid/human-input — the typed input requests this session is
+(defn- list-input-views-handler
+  "GET /v1/sessions/:sid/views/input — the typed input requests this session is
    BLOCKED on right now.
 
-   The live `human_input.request` event is the fast path; this is how a client
+   The live `view.open` event is the fast path; this is how a client
    that connected LATER (cold start, background, reinstall) still finds the
    open form instead of watching a turn that never moves."
   [request]
   (if-let [sid (path-sid request)]
-    (json-response {:requests (gw-human-input/pending sid)})
+    (json-response {:requests (gw-view/input-views sid)})
     (session-404 (get-in request [:path-params :sid]))))
 
-(defn- submit-human-input-handler
-  "POST /v1/sessions/:sid/human-input/:request-id/actions/submit — answer one
+(defn- submit-input-view-handler
+  "POST /v1/sessions/:sid/views/input/:request-id/actions/submit — answer one
    pending request with `{values: {field_id: value}}`.
 
    Validation stays in the engine, so the app and the TUI accept exactly the
@@ -3309,16 +3301,16 @@
         (get (body-json request) "values")]
 
     (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
-          (nil? (gw-human-input/request-of sid request-id)) (human-input-404 request-id)
+          (nil? (gw-view/input-view-of sid request-id)) (input-view-404 request-id)
           (not (map? values)) (error-response 400 :bad-request "values must be an object")
-          :else (let [outcome (gw-human-input/submit! request-id values)]
+          :else (let [outcome (gw-view/submit! request-id values)]
                   (json-response (cond-> {:is_accepted (boolean (:is-accepted outcome))
                                           :request_id request-id}
                                    (seq (:errors outcome))
                                    (assoc :errors (:errors outcome))))))))
 
-(defn- cancel-human-input-handler
-  "POST /v1/sessions/:sid/human-input/:request-id/actions/cancel — dismiss one
+(defn- cancel-input-view-handler
+  "POST /v1/sessions/:sid/views/input/:request-id/actions/cancel — dismiss one
    pending request. The blocked extension resumes with `is_submitted false`.
    A request declared `is_cancellable false` refuses, exactly as in the TUI."
   [request]
@@ -3329,15 +3321,15 @@
         (str (get-in request [:path-params :request-id]))
 
         pending-request
-        (when sid (gw-human-input/request-of sid request-id))]
+        (when sid (gw-view/input-view-of sid request-id))]
 
     (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
-          (nil? pending-request) (human-input-404 request-id)
+          (nil? pending-request) (input-view-404 request-id)
           (false? (:is-cancellable pending-request))
           (error-response 409
-                          :human-input-not-cancellable "this request cannot be cancelled"
+                          :input-view-not-cancellable "this input View cannot be cancelled"
                           :request_id request-id)
-          :else (json-response {:is_cancelled (boolean (gw-human-input/cancel! request-id))
+          :else (json-response {:is_cancelled (boolean (gw-view/cancel! request-id))
                                 :request_id request-id}))))
 
 ;; --- Live views (a run SHOWING its work) ---
@@ -3356,20 +3348,20 @@
   (error-response 404 :live-view-not-found "no such live view" :view_id (str view-id)))
 
 (defn- list-live-views-handler
-  "GET /v1/sessions/:sid/human-input/live — the live views this session is showing
+  "GET /v1/sessions/:sid/views/live — the live views this session is showing
    right now, oldest first, each as the picture a surface paints.
 
-   The `human_input.live.*` events are the fast path; this is what a client that
+   The `view.open` / `view.patch` / `view.close` events are the fast path; this is what a client that
    connected LATER (cold start, background, reinstall) reads, so it paints the
    CURRENT picture instead of waiting for the next patch to tell it something is
    running."
   [request]
   (if-let [sid (path-sid request)]
-    (json-response {:views (gw-human-input/live-views sid)})
+    (json-response {:views (gw-view/live-views sid)})
     (session-404 (get-in request [:path-params :sid]))))
 
 (defn- live-view-log-handler
-  "GET /v1/sessions/:sid/human-input/live/:view-id/log/:node-id — one page of a log
+  "GET /v1/sessions/:sid/views/live/:view-id/log/:node-id — one page of a log
    node, `?from=` (0-based) `&limit=` lines, read from the view's RECORD.
 
    A view carries only its window, so this is how a phone scrolls back through
@@ -3385,15 +3377,15 @@
 
     (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
           (nil? view-id) (live-view-404 (get-in request [:path-params :view-id]))
-          :else (json-response (gw-human-input/live-log-range sid
-                                                              view-id
-                                                              (str (get-in request
-                                                                           [:path-params :node-id]))
-                                                              (query-long request "from")
-                                                              (query-long request "limit"))))))
+          :else (json-response (gw-view/live-log-range sid
+                                                       view-id
+                                                       (str (get-in request
+                                                                    [:path-params :node-id]))
+                                                       (query-long request "from")
+                                                       (query-long request "limit"))))))
 
 (defn- focus-live-view-handler
-  "POST /v1/sessions/:sid/human-input/live/:view-id/actions/focus — focus table
+  "POST /v1/sessions/:sid/views/live/:view-id/actions/focus — focus table
    rows in the engine's live state, so every surface and the extension itself see
    the same selection. The body carries node_id and the selected item_ids."
   [request]
@@ -3404,7 +3396,7 @@
         (path-view-id request)
 
         view
-        (when (and sid view-id) (gw-human-input/live-view-of sid view-id))
+        (when (and sid view-id) (gw-view/live-view-of sid view-id))
 
         body
         (optional-body-json request)
@@ -3418,13 +3410,13 @@
     (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
           (nil? view) (live-view-404 (get-in request [:path-params :view-id]))
           :else (try
-                  (gw-human-input/focus-live! view-id node-id item-ids)
+                  (gw-view/focus-live! view-id node-id item-ids)
                   (json-response {:focused_ids (vec item-ids) :node_id node-id :view_id view-id})
                   (catch clojure.lang.ExceptionInfo e
                     (error-response 400 (:type (ex-data e) :invalid-live-focus) (ex-message e)))))))
 
 (defn- interrupt-live-view-handler
-  "POST /v1/sessions/:sid/human-input/live/:view-id/actions/interrupt — stop one
+  "POST /v1/sessions/:sid/views/live/:view-id/actions/interrupt — stop one
    live view from the app, with an optional `{note: \"…\"}`: the comment the person
    leaves with the stop.
 
@@ -3439,15 +3431,14 @@
         (path-view-id request)
 
         view
-        (when (and sid view-id) (gw-human-input/live-view-of sid view-id))
+        (when (and sid view-id) (gw-view/live-view-of sid view-id))
 
         note
         (get (optional-body-json request) "note")]
 
     (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
           (nil? view) (live-view-404 (get-in request [:path-params :view-id]))
-          :else (json-response {:is_interrupted (some? (gw-human-input/interrupt-live! view-id
-                                                                                       note))
+          :else (json-response {:is_interrupted (some? (gw-view/interrupt-live! view-id note))
                                 :view_id view-id}))))
 (defn- reachable-addresses
   "Every base URL this gateway answers on, most durable first (Tailscale before
@@ -4318,14 +4309,14 @@
          {:get soul-handler :patch patch-session-handler :delete delete-session-handler}]
         [(sid-route "/slashes") {:get slashes-handler}]
         [(sid-route "/release") {:post release-session-handler}]
-        [(sid-route "/human-input") {:get list-human-input-handler}]
-        [(sid-route "/human-input/:request-id/actions/submit") {:post submit-human-input-handler}]
-        [(sid-route "/human-input/:request-id/actions/cancel") {:post cancel-human-input-handler}]
-        [(sid-route "/human-input/live") {:get list-live-views-handler}]
-        [(sid-route "/human-input/live/:view-id/log/:node-id") {:get live-view-log-handler}]
-        [(sid-route "/human-input/live/:view-id/actions/focus") {:post focus-live-view-handler}]
-        [(sid-route "/human-input/live/:view-id/actions/interrupt")
-         {:post interrupt-live-view-handler}] [(sid-route "/voice") {:post voice-handler}]
+        [(sid-route "/views/input") {:get list-input-views-handler}]
+        [(sid-route "/views/input/:request-id/actions/submit") {:post submit-input-view-handler}]
+        [(sid-route "/views/input/:request-id/actions/cancel") {:post cancel-input-view-handler}]
+        [(sid-route "/views/live") {:get list-live-views-handler}]
+        [(sid-route "/views/live/:view-id/log/:node-id") {:get live-view-log-handler}]
+        [(sid-route "/views/live/:view-id/actions/focus") {:post focus-live-view-handler}]
+        [(sid-route "/views/live/:view-id/actions/interrupt") {:post interrupt-live-view-handler}]
+        [(sid-route "/voice") {:post voice-handler}]
         [(sid-route "/voice/jobs/:job-id") {:get voice-job-handler :delete voice-job-handler}]
         [(sid-route "/voice/jobs/:job-id/events") {:get voice-job-events-handler}]
         [(sid-route "/speech") {:post speech-handler}]
@@ -4746,7 +4737,7 @@
              ;; Human-input bridge: a `request-human-input!` raised inside a
              ;; session becomes a session event, so the companion app sees the
              ;; blocked run live (and the push tap above alerts the phone).
-             (gw-human-input/install!))
+             (gw-view/install!))
 
          server
          (try (start-jetty! serving-handler
@@ -4847,7 +4838,7 @@
     (try (.stop server) (catch Throwable _ nil))
     ;; The live-view bridge holds patches for up to one flush window. A gateway
     ;; going away must publish what the engine already accepted, not swallow it.
-    (try (gw-human-input/uninstall!) (catch Throwable _ nil))
+    (try (gw-view/uninstall!) (catch Throwable _ nil))
     ;; Kill every session's background resources (background `shell` children, REPLs)
     ;; BEFORE the JVM goes away — their :stop-fn thunks live only in this
     ;; process; once it exits the children reparent to init and leak.

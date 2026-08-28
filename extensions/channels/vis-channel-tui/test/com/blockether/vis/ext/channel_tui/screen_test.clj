@@ -21,10 +21,10 @@
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.terminals :as term]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
-            [com.blockether.vis.human-input :as hi]
+            [com.blockether.vis.view :as hi]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.human-input :as engine]
-            [com.blockether.vis.internal.human-input.live :as live]
+            [com.blockether.vis.internal.view :as engine]
+            [com.blockether.vis.internal.view.materializer :as live]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]

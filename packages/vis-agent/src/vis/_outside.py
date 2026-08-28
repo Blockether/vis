@@ -59,7 +59,7 @@ __all__ = ["Refused", "answer_with", "contract", "host", "state_home"]
 # here: every op name, every refusal and the whole shell grammar come from it.
 contract = vis_contract.CONTRACT
 _OPS = vis_contract.OPS
-_HUMAN = vis_contract.HUMAN_INPUT
+_VIEW = vis_contract.VIEW
 
 
 class Refused(RuntimeError):
@@ -162,7 +162,7 @@ def notify(text, level="info"):
 # -- Secrets ------------------------------------------------------------------
 
 _VAULT = {}
-_PREFIX = _HUMAN["secret_handle_prefix"]
+_PREFIX = _VIEW["secret_handle_prefix"]
 
 
 def _stash(plaintext):
@@ -423,12 +423,12 @@ def shell(opts):
 
 # -- Asking a human, with no dialog surface -----------------------------------
 
-_GROUP = _HUMAN["group_type"]
-_DECOR = set(_HUMAN["decor_types"])
-_FIELDS = set(_HUMAN["field_types"])
-_TEXT = set(_HUMAN["text_types"])
-_CHOICE = set(_HUMAN["choice_types"])
-_SECRET = set(_HUMAN["secret_types"])
+_GROUP = _VIEW["group_type"]
+_DECOR = set(_VIEW["decor_types"])
+_FIELDS = set(_VIEW["field_types"])
+_TEXT = set(_VIEW["text_types"])
+_CHOICE = set(_VIEW["choice_types"])
+_SECRET = set(_VIEW["secret_types"])
 
 _PRIMED = {}
 
@@ -522,9 +522,9 @@ def _prompt(node, kind):
         )
         return default if not typed else typed.startswith("y")
     if kind == "range":
-        low = node.get("min", _HUMAN["range"]["min"])
-        high = node.get("max", _HUMAN["range"]["max"])
-        step = node.get("step", _HUMAN["range"]["step"])
+        low = node.get("min", _VIEW["range"]["min"])
+        high = node.get("max", _VIEW["range"]["max"])
+        step = node.get("step", _VIEW["range"]["step"])
         typed = input(f"{label} [{low}-{high} step {step}]: ").strip()
         if not typed:
             return node.get("default")
@@ -543,7 +543,7 @@ def _prompt(node, kind):
         import getpass
 
         boxes = (
-            node.get("max_length") or node.get("min_length") or _HUMAN["otp"]["length"]
+            node.get("max_length") or node.get("min_length") or _VIEW["otp"]["length"]
         )
         hint = f" ({boxes} digits)" if kind == "otp" else ""
         return getpass.getpass(f"{label}{hint}: ")
@@ -692,18 +692,18 @@ def _check_node(node, seen):
         return f"{name!r} is a {kind} and needs options to pick from"
     if kind == "otp":
         boxes = (
-            node.get("max_length") or node.get("min_length") or _HUMAN["otp"]["length"]
+            node.get("max_length") or node.get("min_length") or _VIEW["otp"]["length"]
         )
-        if int(boxes) > int(_HUMAN["otp"]["ceiling"]):
+        if int(boxes) > int(_VIEW["otp"]["ceiling"]):
             return "{!r} asks for {} boxes, more than the {} a dialog fits".format(
                 name,
                 boxes,
-                _HUMAN["otp"]["ceiling"],
+                _VIEW["otp"]["ceiling"],
             )
     if kind == "range":
-        low = node.get("min", _HUMAN["range"]["min"])
-        high = node.get("max", _HUMAN["range"]["max"])
-        step = node.get("step", _HUMAN["range"]["step"])
+        low = node.get("min", _VIEW["range"]["min"])
+        high = node.get("max", _VIEW["range"]["max"])
+        step = node.get("step", _VIEW["range"]["step"])
         if low >= high:
             return f"{name!r} has min {low} and max {high}: a track needs room"
         if step <= 0:
@@ -740,7 +740,7 @@ def _check_request(request):
 # `append` upserts an item by its id and concatenates log lines, `clear` empties,
 # `remove` drops ids), so an extension polling its own view reads the truth
 # either side of the boundary.
-_LIVE = _HUMAN["live"]
+_LIVE = _VIEW["live"]
 _LIVE_HOST = contract["live"]
 _LIVE_ITEMS = {
     "stat": "stats",
@@ -761,8 +761,8 @@ def _live_check_node(node, seen):
         # Layout is the FORM's own vocabulary: a view arranges its nodes with the
         # same row and column a question does, and the group paints nothing itself.
         direction = node.get("direction")
-        if direction is not None and direction not in _HUMAN["group_directions"]:
-            ways = ", ".join(_HUMAN["group_directions"])
+        if direction is not None and direction not in _VIEW["group_directions"]:
+            ways = ", ".join(_VIEW["group_directions"])
             return f"a {_GROUP} runs one of {ways}, got {direction!r}"
         children = node.get("fields")
         if not isinstance(children, (list, tuple)) or not children:

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.human-input.live-sink
+(ns com.blockether.vis.internal.view.sink
   "The STORE OF RECORD of one live view: an append-only NDJSON file per view.
 
    A live view is a STREAM, and nothing else in this process keeps one. The
@@ -16,8 +16,8 @@
 
    Lines are wire JSON, which is what lets the file BE the artifact instead of a
    re-encoded copy of one, and what lets a reader hand a patch line straight back
-   to `human-input/normalize-patch`: every live vocabulary is a closed table read
-   in either spelling."
+   to `view/normalize-patch`: every live vocabulary is a closed table read in
+   either spelling."
   (:require [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]

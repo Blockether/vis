@@ -1,12 +1,12 @@
-(ns com.blockether.vis.human-input-test
-  "The public builders — `com.blockether.vis.human-input`.
+(ns com.blockether.vis.view-test
+  "The public builders — `com.blockether.vis.view`.
 
    Two promises are tested here and nothing else, for a form and for a live view
    alike: a builder returns the plain spec map an extension could have typed by
    hand, and a mistake in it is refused AT THE BUILDER CALL with the engine's own
    one-line reason instead of in front of the human."
-  (:require [com.blockether.vis.human-input :as hi]
-            [com.blockether.vis.internal.human-input :as engine]
+  (:require [com.blockether.vis.view :as hi]
+            [com.blockether.vis.internal.view :as engine]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defn- refusal
@@ -71,14 +71,14 @@
                   (expect (= [nil nil] (mapv :name (take 2 nodes))))
                   (expect (= "token" (:name (last nodes))))))
             (it "dates a bad :default to the builder call that made it"
-                (expect (re-find #"^Invalid human-input field env: invalid :default"
+                (expect (re-find #"^Invalid input View field env: invalid :default"
                                  (refusal
                                    #(hi/select "env" ["staging" "prod"] {:default "nope"})))))
             (it "refuses a select with nothing to choose from"
-                (expect (= "Invalid human-input field env: select needs at least one option"
+                (expect (= "Invalid input View field env: select needs at least one option"
                            (refusal #(hi/select "env" [])))))
             (it "refuses an upside-down slider track"
-                (expect (= "Invalid human-input field canary: :max must be greater than :min"
+                (expect (= "Invalid input View field canary: :max must be greater than :min"
                            (refusal #(hi/slider "canary" {:min 5 :max 2})))))
             (it "refuses a key that field type never had"
                 (expect (re-find #"unknown field key :required"
@@ -87,11 +87,11 @@
             (it "refuses a group whose child is not a node"
                 (expect (some? (refusal #(hi/row {:type "plaintxt" :name "who"})))))
             (it "refuses a request with no title, and one with no nodes"
-                (expect (= "Invalid human-input request: request needs a non-blank :title"
+                (expect (= "Invalid input View request: request needs a non-blank :title"
                            (refusal #(hi/form {} (hi/plaintext "who")))))
                 (expect (some? (refusal #(hi/form {:title "Deploy"})))))
             (it "refuses two fields answering to the same name, however deeply nested"
-                (expect (= "Invalid human-input request: field names must be distinct"
+                (expect (= "Invalid input View request: field names must be distinct"
                            (refusal #(hi/form {:title "Deploy"}
                                               (hi/plaintext "who")
                                               (hi/row (hi/column (hi/password "who")))))))))

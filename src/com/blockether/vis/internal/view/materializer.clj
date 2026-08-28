@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.human-input.live
+(ns com.blockether.vis.internal.view.materializer
   "What a live view IS after patch N — and what the MODEL reads when it ends.
 
    A form is answered once, so nobody has to own its state; a live view is a
@@ -29,7 +29,7 @@
    is only how much a surface holds hot, and the model's own budget always says
    how many lines it left behind."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.human-input.spec :as spec]))
+            [com.blockether.vis.internal.view.spec :as spec]))
 
 ;; The host's own view
 
@@ -56,7 +56,7 @@
   [node-id message]
   (throw (ex-info (str "Invalid live-view patch" (when node-id (str " for node " node-id))
                        ": " message)
-                  {:type :vis/human-input-invalid-patch :node-id node-id :reason message})))
+                  {:type :vis/view-invalid-patch :node-id node-id :reason message})))
 
 (def ^:private settable-keys
   "Which keys a `set` may carry, per node type, over the `:label` every node
@@ -459,7 +459,7 @@
    where the view was declared."
   [message]
   (throw (ex-info (str "Invalid live view: " message)
-                  {:type :vis/human-input-invalid-live-view :reason message})))
+                  {:type :vis/view-invalid-live-view :reason message})))
 
 (def ^:private tone?
   "Every colour a surface may paint, as a reader recognizes it. CLOSED in BOTH
@@ -833,7 +833,7 @@
   [line-no message]
   (throw (ex-info (str "Invalid live-view markdown" (when line-no (str " at line " line-no))
                        ": " message)
-                  {:type :vis/human-input-invalid-markdown :line line-no :reason message})))
+                  {:type :vis/view-invalid-markdown :line line-no :reason message})))
 
 (def ^:private reason? "Every ending a verdict may name." (set (vals spec/live-reasons)))
 
