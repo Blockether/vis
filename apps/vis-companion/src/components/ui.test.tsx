@@ -2781,6 +2781,22 @@ describe("the composer's own controls", () => {
     }
   });
 
+  // Regression, measured on the composer sheet: a send with nothing to send kept
+  // its filled square and greyed the arrow inside it — hint ink on button paper
+  // is 1.96:1 in blockether-light, so the reader was told to ignore a mark they
+  // could not see. Paper is what a control offers, so the paper is what leaves.
+  it("takes the paper off a send with nothing to send", () => {
+    const send = classes(
+      renderToStaticMarkup(
+        <ComposerButton tone="send" label="Send message">
+          {"↑"}
+        </ComposerButton>,
+      ),
+    );
+    expect(send).toContain("disabled:border-transparent");
+    expect(send).toContain("disabled:bg-transparent");
+    expect(send).not.toContain("disabled:bg-button");
+  });
   it("is icon-only, so it is named", () => {
     expect(
       renderToStaticMarkup(
@@ -4099,12 +4115,18 @@ describe("Corners", () => {
     eager: true,
   }) as Record<string, string>;
 
+  /** Every corner a piece of markup asks for, as whole class tokens. */
+  const corners = (markup: string) =>
+    [...markup.matchAll(/\bclass="([^"]*)"/g)]
+      .flatMap(([, list]) => list.split(" "))
+      .filter((token) => token.includes("rounded"));
+
   it("writes the ladder's four rungs and no step Tailwind ships", () => {
-    // The rungs are declared in `src/index.css` — chip 6px, control 8px, field 12px,
-    // panel 16px — and the default scale is reset beside them, so a `rounded-2xl`
-    // would be a class that paints nothing. Vitest hands a stylesheet back as an
-    // empty module (`?raw` included), so what is pinned here is every corner the
-    // app actually writes: a rung of the ladder, a dot, or a square.
+    // The rungs are declared in `src/index.css` — chip 6px, control 8px, field
+    // 12px, panel 16px — and the default scale is reset beside them, so a
+    // `rounded-2xl` would be a class that paints nothing. Vitest hands a
+    // stylesheet back as an empty module (`?raw` included), so what is pinned
+    // here is every corner the app actually writes: a rung, a dot, or a square.
     const rungs = new Set(["chip", "control", "field", "panel", "none", "full"]);
     for (const [path, source] of Object.entries(everything)) {
       for (const [, rung] of source.matchAll(
@@ -4115,8 +4137,8 @@ describe("Corners", () => {
     }
   });
 
-  it("gives every control that carries paper the same corner", () => {
-    for (const html of [
+  it("rounds what is pressed and leaves a plane square", () => {
+    for (const pressed of [
       renderToStaticMarkup(<Button>Send</Button>),
       renderToStaticMarkup(<Input defaultValue="anthropic" />),
       renderToStaticMarkup(
@@ -4128,38 +4150,31 @@ describe("Corners", () => {
         <SearchField value="" onValue={() => {}} label="Search sessions" />,
       ),
     ]) {
-      expect(html).toContain("rounded-control");
+      expect(corners(pressed)).toContain("rounded-control");
     }
-  });
-
-  it("leaves what is not pressed square", () => {
-    // A row in a list, a tab in the machine track: both are planes of a page made
-    // of square bands, and the report that made them square still holds.
-    expect(
+    // A row in a list and a tab in the machine track are planes of a page made of
+    // square bands, and the report that made those square still holds.
+    for (const plane of [
       renderToStaticMarkup(<ListRow onClick={() => {}}>anthropic</ListRow>),
-    ).not.toContain("rounded");
-    expect(
       renderToStaticMarkup(
         <MachineTab isOn onClick={() => {}}>
           tower
         </MachineTab>,
       ),
-    ).not.toContain("rounded");
+    ]) {
+      expect(corners(plane)).toEqual([]);
+    }
   });
 
-  it("measures the composer's field off the control it holds", () => {
-    // An 8px control inside a 4px inset is a 12px field. The two are measured from
-    // each other, so the strip's padding and the field's corner move together.
+  it("measures a container off the thing it holds", () => {
+    // An 8px control in a 4px inset is a 12px field, so the strip's padding and
+    // the field's corner move together. A layer over the page is a 16px panel:
+    // docked to the bottom edge on a phone, where only its free edge is rounded,
+    // and a card from `sm:` up.
     expect(sessionScreenSource).toContain('className="flex items-end gap-1 p-1"');
     expect(sessionScreenSource).toContain(
       "rounded-field border border-dialog-edge bg-input",
     );
-  });
-
-  it("rounds a layer over the page, and a docked sheet only at its free edge", () => {
-    // `DialogFrame` and `AnchoredPanel` are the two surfaces that float: on a phone
-    // they are docked to the bottom edge and round only the top corners; from `sm:`
-    // up they are cards and round all four.
     for (const source of [uiSource, menuSource]) {
       expect(source).toContain("rounded-t-panel");
       expect(source).toContain("sm:rounded-panel");

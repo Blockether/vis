@@ -51,6 +51,7 @@ import {
   PlusIcon,
   ReasoningIcon,
   SendIcon,
+  StopIcon,
   VerbosityIcon,
   VoiceLoopIcon,
 } from "../components/icons";
@@ -6371,7 +6372,7 @@ export function SessionScreen({
                     onClick={cancel}
                     label="Stop response"
                   >
-                    <span className="size-1.5 bg-err" />
+                    <StopIcon className="size-3 text-err" />
                   </ComposerButton>
                 )}
               </div>

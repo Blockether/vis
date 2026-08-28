@@ -486,6 +486,23 @@ const oversizedOnChipLines = (source: string) => {
   return offenders;
 };
 
+/**
+ * A CONTROL'S MARK IS AN ICON, and a `<span>` with a background is not one. The
+ * composer's stop painted `size-1.5 bg-err` — a 6px red box drawn with a class,
+ * standing where `StopIcon` already existed — and every scan above walked past
+ * it, because those look for an `<svg>`, a `<path>` or a glyph and this is none
+ * of the three. What is refused is narrow on purpose: an EMPTY painted box that
+ * is the last thing inside a control. A status dot beside a line of text, a
+ * skeleton bar, a machine's colour block — nothing there is pressed, and all of
+ * it stays.
+ */
+const boxesAsMarks = (source: string) =>
+  [
+    ...source.matchAll(
+      /<(?:span|div)\s+className="([^"]*\bbg-[^"]*)"\s*\/>\s*<\/(?:button|Button|ComposerButton)>/g,
+    ),
+  ].map(([, classes]) => classes);
+
 // Regression, reported as "INSTEAD OF THOSE GLYPHS PLEASE USE REAL ICONS!": the
 // artifacts sheet shipped a `▶` for video, `✕` for close and `↓` for load-more,
 // and the same characters stood in for icons across the dialogs, the session
@@ -549,6 +566,27 @@ describe("the shipped screens", () => {
     expect(offenders).toEqual([]);
   });
 
+  // Regression, reported as "why is this drawn with an svg and not Lucide": the
+  // composer's stop was `<span className="size-1.5 bg-err" />` inside the button
+  // — a square painted by a class, one line from a `StopIcon` the set already
+  // exported — and this file stayed green through it.
+  it("never paint a control's mark with a class", () => {
+    expect(
+      boxesAsMarks('<button><span className="size-1.5 bg-err" /></button>'),
+    ).toEqual(["size-1.5 bg-err"]);
+    // A dot that reports a state beside words is not a control's mark.
+    expect(boxesAsMarks('<span className="size-1.5 bg-ok" /> connected')).toEqual(
+      [],
+    );
+
+    const offenders = Object.entries(sources).flatMap(([path, source]) =>
+      path.includes("/dev/") || path.includes(".test.")
+        ? []
+        : boxesAsMarks(source).map((box) => `${path}: ${box}`),
+    );
+
+    expect(offenders).toEqual([]);
+  });
   // A PLOT IS NOT AN ICON. `ui.tsx`'s `Waveform` draws one `<rect>` per measured
   // bucket, as many as the width a `ResizeObserver` reports; an icon is a fixed glyph
   // on the 24-unit grid, and keeping those in one module is the whole point of this

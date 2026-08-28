@@ -1140,7 +1140,13 @@ export function ComposerButton({
     voice: `${
       surface === 'overlay' ? overlayFrame : 'h-8 w-7 mouse:h-7 mouse:w-6'
     } bg-accent text-accent-foreground hover:bg-accent-2 disabled:bg-button disabled:text-muted`,
-    send: 'size-8 border border-dialog-edge bg-dialog-title text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:bg-button disabled:text-dialog-hint mouse:size-7',
+    // NOTHING TO SEND is a control with no PAPER, not a dimmed arrow on paper.
+    // Dimming kept the filled square and greyed the mark inside it: hint ink on
+    // button paper measures 1.96:1 in blockether-light, under the 3:1 floor, so
+    // the reader could not see the thing being greyed. The paper is what leaves
+    // — the state is a SHAPE — and the arrow, now on the field's own paper,
+    // measures 5.27:1.
+    send: 'size-8 border border-dialog-edge bg-dialog-title text-dialog-title-foreground hover:bg-accent-2 disabled:scale-100 disabled:border-transparent disabled:bg-transparent disabled:text-dialog-hint mouse:size-7',
     // It stands in the send's slot, which is already the right size: taking the
     // whole of it is how the two never disagree about where the strip ends.
     stop: 'size-full border border-err bg-cancelled hover:bg-warn-surface starting:scale-90 starting:opacity-0',
