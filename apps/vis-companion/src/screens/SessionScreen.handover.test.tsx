@@ -77,7 +77,9 @@ describe("the message just sent", () => {
     } as unknown as SseEvent);
     await linger(300);
 
-    expect(live()).toMatch(/Vis is/);
+    // The rail must carry a SENTENCE, not a bare "Vis". With no phase marker
+    // from the engine yet, the honest one names what this screen knows: sent.
+    expect(live()).toMatch(/Vis sent your message/);
   });
 });
 
@@ -294,13 +296,13 @@ describe("a message whose POST is still on the wire", () => {
     fireEvent.change(box, { target: { value: "run the tests" } });
     fireEvent.click(screen.getByRole("button", { name: "Send message" }));
     expect(await screen.findByText("run the tests")).toBeInTheDocument();
-    expect(live()).toMatch(/Vis is/);
+    expect(live()).toMatch(/Vis sent your message/);
 
     window.dispatchEvent(new Event("online"));
     await linger(400);
 
     // Still saying what it is doing. A rail that says only "Vis" is the bug.
-    expect(live()).toMatch(/Vis is/);
+    expect(live()).toMatch(/Vis sent your message/);
   });
 });
 

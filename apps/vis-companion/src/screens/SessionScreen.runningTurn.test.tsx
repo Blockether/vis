@@ -38,7 +38,7 @@ describe("a running turn the session read cannot confirm", () => {
 
     expect(await screen.findByText("check the logs")).toBeInTheDocument();
     expect(
-      (await screen.findAllByText(/Vis is waiting for an update/)).length,
+      (await screen.findAllByText(/Vis sent your message/)).length,
     ).toBeGreaterThan(0);
   });
 
@@ -211,7 +211,7 @@ describe("a running turn the session read cannot confirm", () => {
     // so out loud instead of leaving the reader a nameless "Vis".
     expect(await screen.findByText("check the logs")).toBeInTheDocument();
     expect(
-      (await screen.findAllByText(/Vis is waiting for an update/)).length,
+      (await screen.findAllByText(/Vis sent your message/)).length,
     ).toBeGreaterThan(0);
   });
   // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: with a CI watch on screen,
@@ -394,5 +394,89 @@ describe("a running turn the session read cannot confirm", () => {
     });
 
     expect(await screen.findByText("ACTIVITY")).toBeInTheDocument();
+  });
+});
+
+// Regression, reported as "I send it and nothing happens, I wait and it looks
+// like it hung": between the submit and the first token the wire carries exactly
+// ONE event, so the rail repeated a single frozen sentence for the whole wait
+// (measured on one machine: 6.4s median to the first painted token, 10.5s at
+// p90, never under a second).
+describe("the wait between a submit and the first token", () => {
+  it("says the message is sent, then names the model it waits on", async () => {
+    const listeners = new Set<(event: Record<string, unknown>) => void>();
+    const never = new Promise<never>(() => {});
+
+    renderSessionScreen({
+      session: sessionFixture({
+        status: "running",
+        live: true,
+        current_turn_id: "t-live",
+        running_request: "measure the wait",
+      }),
+      client: {
+        cachedTranscript: () => [],
+        transcript: () => never,
+        turnTrace: () => never,
+      },
+      subscriptions: {
+        subscribeConnection: (on: (live: boolean) => void) => {
+          on(true);
+          return () => {};
+        },
+        subscribeSession: (
+          _sid: string,
+          on: (event: Record<string, unknown>) => void,
+        ) => {
+          listeners.add(on);
+          return () => listeners.delete(on);
+        },
+      },
+    });
+
+    await waitFor(() => expect(listeners.size).toBeGreaterThanOrEqual(2));
+    const emit = (event: Record<string, unknown>) => {
+      for (const listener of listeners) listener(event);
+    };
+
+    act(() => {
+      emit({
+        type: "subscription.ready",
+        session_id: "s1",
+        current_turn_id: "t-live",
+        is_live: true,
+      });
+      emit({
+        type: "turn.started",
+        session_id: "s1",
+        turn_id: "t-live",
+        request: "measure the wait",
+        seq: 1,
+      });
+    });
+
+    // Nothing has come back yet, and the one thing this screen knows for certain
+    // is that the message left.
+    expect(
+      (await screen.findAllByText(/Vis sent your message/)).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(/Vis is waiting for an update/)).toBeNull();
+
+    act(() => {
+      emit({
+        type: "activity",
+        session_id: "s1",
+        turn_id: "t-live",
+        activity: "provider-call",
+        iteration: 1,
+        reason: "user-submit",
+        model: "claude-opus-5",
+        seq: 2,
+      });
+    });
+
+    expect(
+      (await screen.findAllByText(/Vis is calling claude-opus-5/)).length,
+    ).toBeGreaterThan(0);
   });
 });

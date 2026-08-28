@@ -1296,6 +1296,32 @@ describe("a turn that has not answered yet", () => {
     expect(html).toContain("animate-spinner-frame");
   });
 
+  // Regression, reported as "I send and nothing happens for a few seconds": the
+  // rail under a sent message held the phase line and NOTHING else until the
+  // first token, and an empty rail reads as a hang. Measured on one machine:
+  // 6.4s median from submit to the first painted token, 10.5s at p90, never
+  // under a second.
+  it("reserves the band the first thinking will fill", () => {
+    const html = renderToStaticMarkup(
+      <AssistantMessage turn={running} streaming />,
+    );
+
+    expect(html).toContain("h-16 w-full animate-pulse bg-thinking-surface");
+  });
+
+  it("gives the reservation back as soon as the engine reports work", () => {
+    const started = {
+      ...running,
+      iterations: [{ thinking: "measuring the wait" }],
+    } as unknown as TranscriptTurn;
+
+    const html = renderToStaticMarkup(
+      <AssistantMessage turn={started} streaming />,
+    );
+
+    expect(html).not.toContain("h-16 w-full animate-pulse bg-thinking-surface");
+  });
+
   it("keeps naming its phase once the screen stops following it", () => {
     const html = renderToStaticMarkup(
       <AssistantMessage turn={running} settled />,

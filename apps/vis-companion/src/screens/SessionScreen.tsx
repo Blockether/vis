@@ -190,6 +190,10 @@ interface LiveActivity {
   // transport's op+id names neither the command nor the budget, so the host
   // composes the phrase once and every channel prints it verbatim.
   phrase?: string;
+  // The model the router resolved this call to, when the phase names one. The
+  // provider wait is the only phase whose subject the engine knows and this
+  // screen does not, so it rides the marker rather than being guessed here.
+  model?: string;
 }
 
 interface LiveTurn {
@@ -528,8 +532,14 @@ function liveProgressPhase(
   );
 
   if (last?.error != null) return "Vis is retrying";
+  // Nothing has arrived from the engine yet. The message IS sent — that is the
+  // one thing this screen knows for certain — and the clock beside this line
+  // says how long ago. "Vis is waiting for an update" put the waiting on Vis
+  // while the request was still in flight, and read as a hang from the first
+  // second (measured: no turn on this machine reaches its first token in under
+  // one second; the median is 6.4s).
   if (iteration === 0)
-    return commandPhase(turn.request) ?? "Vis is waiting for an update";
+    return commandPhase(turn.request) ?? "Vis sent your message";
 
   const suffix = `(iter ${iteration})`;
 
@@ -545,7 +555,9 @@ function liveProgressPhase(
     case "slash":
       return `Vis is running: ${compactLabel(activity.command ?? "", "command")}`;
     case "provider-call":
-      return `Vis is calling the provider ${suffix}`;
+      // Naming the model is what makes this line change during the longest
+      // silence of the turn: "sent" -> "calling claude-opus-5" -> "thinking".
+      return `Vis is calling ${activity.model ?? "the provider"} ${suffix}`;
     case "response-parse":
       return `Vis is parsing model response ${suffix}`;
     case "tool":
@@ -800,6 +812,7 @@ export function reduceLiveEvent(
             operation: stringField(event, "op") || undefined,
             label: stringField(event, "label") || undefined,
             phrase: stringField(event, "phrase") || undefined,
+            model: stringField(event, "model") || undefined,
           }
         : undefined,
     };
