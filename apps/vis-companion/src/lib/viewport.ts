@@ -979,6 +979,17 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
           Keyboard.addListener('keyboardDidHide', onDidHide),
         );
         void Keyboard.setScroll({ isDisabled: true }).catch(() => undefined);
+        // THE GRAY BAR OVER THE COMPOSER. UIKit hangs a form accessory bar —
+        // field arrows and a Done key — off every focused web field. When a
+        // hardware keyboard is attached (an iPad with a keyboard, and this app
+        // running on a Mac) UIKit draws no keyboard, so that bar is the only
+        // thing that arrives: a ~36px neutral panel, inset from the window
+        // edges, in none of the app's colours, laid over the composer for as
+        // long as you type. A screen here owns ONE field, so its field-to-field
+        // arrows navigate nothing, and `Done` repeats the composer's own send.
+        void Keyboard.setAccessoryBarVisible({ isVisible: false }).catch(
+          () => undefined,
+        );
       } catch {
         /* plugin unavailable */
       }
