@@ -28,12 +28,19 @@ vi.mock("@capacitor/preferences", () => ({
 
 // The pen and rasteriser are the browser’s job; these tests hold the wiring from a
 // transcript artifact through a visible PDF revision and back to the same filename.
-const pdfMocks = vi.hoisted(() => ({ renders: 0 }));
+const pdfMocks = vi.hoisted(() => ({
+  renders: 0,
+  /** A raster a test can hold open, to watch the band DURING a page turn. */
+  hold: null as Promise<void> | null,
+}));
 vi.mock("../lib/pdf-annotate", () => ({
-  renderPdfPage: vi.fn(async () => ({
-    src: `data:image/png;base64,page-${++pdfMocks.renders}`,
-    pageCount: 3,
-  })),
+  renderPdfPage: vi.fn(async () => {
+    if (pdfMocks.hold) await pdfMocks.hold;
+    return {
+      src: `data:image/png;base64,page-${++pdfMocks.renders}`,
+      pageCount: 3,
+    };
+  }),
   stampPdfPage: vi.fn(async () => new Uint8Array([1, 2, 3])),
 }));
 
@@ -115,6 +122,7 @@ async function settle() {
 beforeEach(() => {
   native.store.clear();
   pdfMocks.renders = 0;
+  pdfMocks.hold = null;
   globalThis.localStorage.clear();
   resetAnnotationDraftCache();
   host = document.createElement("div");
@@ -273,7 +281,9 @@ describe("an artifact opened from the transcript", () => {
 
     const band = host.querySelector("header")!;
     for (const label of ["Previous page", "Next page", "Annotate page 1"]) {
-      expect(band.querySelector(`button[aria-label="${label}"]`)).not.toBe(null);
+      expect(band.querySelector(`button[aria-label="${label}"]`)).not.toBe(
+        null,
+      );
     }
     // Where the reader stands is the band’s to report, under the filename.
     expect(band.textContent).toContain("Page 1 of 3");
@@ -286,6 +296,53 @@ describe("an artifact opened from the transcript", () => {
     );
   });
 
+  // Regression, user report: clicking ‹ › flickered the very cells being clicked,
+  // Annotate included — a page turn re-fetched the whole document and disabled all
+  // three cells until the new raster arrived.
+  it("turns the page without dimming the band or fetching the file again", async () => {
+    const fetched = vi.fn(
+      async () => new Response(new Uint8Array([37, 80, 68, 70])),
+    );
+    vi.stubGlobal("fetch", fetched);
+    await act(async () => {
+      root.render(
+        <DocOverlay
+          name="report.pdf"
+          mime="application/pdf"
+          url="blob:pdf"
+          failed={false}
+          annotate={{ client: gatewayStub(2), sid: "s1", iterationId: "i1" }}
+          onClose={() => undefined}
+        />,
+      );
+    });
+    await settle();
+    expect(fetched).toHaveBeenCalledTimes(1);
+
+    // Hold the next raster open: what the band looks like DURING a turn is the report.
+    let draw = () => {};
+    pdfMocks.hold = new Promise<void>((done) => {
+      draw = () => done();
+    });
+    press('button[aria-label="Next page"]');
+    await settle();
+
+    const band = host.querySelector("header")!;
+    const cells = Array.from(band.querySelectorAll("button")).filter((cell) =>
+      /page/i.test(cell.getAttribute("aria-label") ?? ""),
+    );
+    expect(cells).toHaveLength(3);
+    expect(
+      cells.filter((cell) => cell.disabled).map((cell) => cell.ariaLabel),
+    ).toEqual([]);
+    // The document is in memory: turning a page never goes back to the network.
+    expect(fetched).toHaveBeenCalledTimes(1);
+
+    draw();
+    pdfMocks.hold = null;
+    await settle();
+    expect(band.textContent).toContain("Page 2 of 3");
+  });
   it("stays a plain reader when the artifact cannot be marked up", async () => {
     await act(async () => {
       root.render(
@@ -336,7 +393,11 @@ describe("a document read back through its own versions", () => {
     );
     const asked: number[] = [];
     const client = {
-      attachmentUrl: async (_sid: string, _iteration: string, index: number) => {
+      attachmentUrl: async (
+        _sid: string,
+        _iteration: string,
+        index: number,
+      ) => {
         asked.push(index);
         return `blob:PLAN.md#${index}`;
       },
@@ -368,8 +429,12 @@ describe("a document read back through its own versions", () => {
     // v1 is fetched by ITS OWN index, and arrives with its prose and its remark.
     expect(asked).toEqual([1, 0]);
     expect(document.body.textContent).toContain("We cut on Friday.");
-    expect(document.body.textContent).toContain("Ship the rail collapse first.");
-    expect(document.body.textContent).not.toContain("The band reads better now.");
+    expect(document.body.textContent).toContain(
+      "Ship the rail collapse first.",
+    );
+    expect(document.body.textContent).not.toContain(
+      "The band reads better now.",
+    );
     expect(
       document.querySelector('[aria-label="Versions of PLAN.md"]')?.textContent,
     ).toContain("v1 of 2");
