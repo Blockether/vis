@@ -2933,6 +2933,26 @@ describe("the composer's own controls", () => {
   });
 });
 
+// Regression, user report ("ikonka Visa mogłaby być trochę większa … header w sesji"):
+// what LEADS a bar was the smallest thing on it. The app's mark was hand-fitted to
+// `h-[18px]`, a size off the scale and under the one where its pupil and smile
+// survive a 1x screen; the session's title — the sentence the whole screen is about
+// — read `text-body`, the very step the transcript's prose beneath it uses.
+describe("what leads a bar is sized to lead it", () => {
+  it("draws the app's mark on the scale, at the step its detail survives", () => {
+    expect(appSource).toContain('className="h-6 w-7 object-contain"');
+    expect(appSource).not.toContain("h-[18px]");
+  });
+
+  it("gives the session's title a step over the prose it heads", () => {
+    expect(sessionScreenSource).toContain(
+      'className="truncate font-mono text-subhead font-bold text-white mouse:text-title"',
+    );
+    expect(sessionScreenSource).not.toContain(
+      'className="truncate font-mono text-body font-bold text-white"',
+    );
+  });
+});
 describe("a setting is picked and switched by one control each", () => {
   const classes = (html: string) =>
     (/<button[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "").split(" ");

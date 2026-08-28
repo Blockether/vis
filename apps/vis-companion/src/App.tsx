@@ -1236,11 +1236,17 @@ export function Header({
         </div>
       ) : (
         <div className="mx-auto flex w-full max-w-[1400px] items-center pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))]">
+          {/* THE MARK IS AN ILLUSTRATION, NOT A GLYPH. An eye outline, an iris, a
+              pupil, a highlight, a smile and seven rays share the box, so barely a
+              third of it is ink and it reads smaller than it measures; under 24px a
+              1x screen washes the pupil to grey and closes the smile. It takes the
+              scale's own rung, half the bar and twice the wordmark's cap height,
+              never a pixel fitted by hand to the file's proportion. */}
           <div className="flex h-12 items-center gap-2.5" aria-label="Vis">
             <img
               src="/vis-logo.png"
               alt=""
-              className="h-[18px] w-5 object-contain"
+              className="h-6 w-7 object-contain"
             />
             <span className="font-mono text-title font-black tracking-[0.18em] text-white">
               VIS

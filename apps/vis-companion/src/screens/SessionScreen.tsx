@@ -5584,7 +5584,12 @@ export function SessionScreen({
         <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)]">
           <BackButton label="Back to sessions" onClick={onBack} />
           <div className="min-w-0 flex-1 self-center px-3 py-1.5">
-            <h1 className="truncate font-mono text-body font-bold text-white">
+            {/* THE TITLE LEADS THE SCREEN, so it is the largest thing on the bar.
+                It read `text-body` — the transcript's own prose step, set right
+                under it — which left the screen a reader lives in wearing the
+                smallest heading in the app. A two-line row under a finger takes
+                `text-subhead`; a pointer reads the app's own header step. */}
+            <h1 className="truncate font-mono text-subhead font-bold text-white mouse:text-title">
               {title}
             </h1>
             <div className="flex min-w-0 items-center gap-1.5 font-mono text-meta text-dialog-hint">
