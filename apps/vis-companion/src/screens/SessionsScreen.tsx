@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Banner,
   Button,
@@ -73,7 +73,7 @@ import {
   StarIcon,
   TrashIcon,
 } from '../components/icons';
-import { useFitRows, useMouseDensity } from '../lib/fit-rows';
+import { useDeskRail, useFitRows, useMouseDensity } from '../lib/fit-rows';
 import {
   clearMachineOutage,
   machineOutage,
@@ -333,6 +333,10 @@ const LIST_FOOT = 24;
 const LIST_GEOMETRY = {
   touch: { row: 49, chrome: 211 + LIST_PEEK, min: 3 },
   mouse: { row: 33, chrome: 137 + LIST_FOOT + LIST_PEEK, min: 3 },
+  // A DESK SPENDS ITS CHROME SIDEWAYS. The machine strip that stands above the list
+  // at every other size is the rail here, so those 40px go back to the rows and the
+  // fleet footer under the list takes 29 of them again.
+  desk: { row: 33, chrome: 126 + LIST_FOOT + LIST_PEEK, min: 3 },
 } as const;
 
 /**
@@ -347,7 +351,13 @@ const LIST_GEOMETRY = {
  */
 function useSessionsPerPage(): number {
   const isMouse = useMouseDensity();
-  return useFitRows(isMouse ? LIST_GEOMETRY.mouse : LIST_GEOMETRY.touch);
+  const isDesk = useDeskRail();
+  const geometry = isDesk
+    ? LIST_GEOMETRY.desk
+    : isMouse
+      ? LIST_GEOMETRY.mouse
+      : LIST_GEOMETRY.touch;
+  return useFitRows(geometry);
 }
 
 /**
@@ -402,6 +412,98 @@ interface Props {
  */
 const WHOLE_SESSION_FORK = 'whole-session';
 
+/**
+ * THE FLEET STANDS BESIDE THE LIST, NOT ON TOP OF IT.
+ *
+ * A phone has one column, so the machines have to spend a row of it: the switch
+ * above the card is that row. A desk window has a second column to spare and a
+ * pointer that can hit a 28px row, so the same two facts — which computers answer,
+ * and which projects they hold — become a rail that never scrolls away, and the
+ * list gets those 40px back as rows.
+ *
+ * Nothing here is new behaviour. A machine row sets exactly the scope a
+ * `MachineTab` sets (and retries a machine that is not answering, instead of
+ * scoping to nothing); a project row is an INDEX ENTRY that takes the list to a
+ * band already rendered in it. So the rail is quiet: hint ink, one tint on the row
+ * the scope is on, counts on the trailing edge in tabular numerals. It draws no
+ * right edge — the card's own left border is the seam, and a rail beside a border
+ * would be two lines doing one job.
+ */
+type RailEntry = {
+  key: string;
+  name: string;
+  count: number;
+  mark?: ReactNode;
+  isActive?: boolean;
+  onPress: () => void;
+};
+
+function FleetRail({
+  machines,
+  projects,
+  action,
+}: {
+  machines: RailEntry[];
+  projects: RailEntry[];
+  action: ReactNode;
+}) {
+  return (
+    <nav
+      aria-label="Fleet"
+      className="flex w-59 shrink-0 flex-col gap-3 overflow-y-auto overscroll-contain border-b border-l border-t border-dialog-edge bg-panel-2 py-3"
+    >
+      <RailGroup label="Machines" entries={machines} />
+      <RailGroup label="Projects" entries={projects} action={action} />
+    </nav>
+  );
+}
+
+/**
+ * One named group of the rail. The caption is the smallest type this app owns and
+ * it labels a LIST rather than a control, so it never carries a fact of its own —
+ * the facts are the rows under it.
+ */
+function RailGroup({
+  label,
+  entries,
+  action,
+}: {
+  label: string;
+  entries: RailEntry[];
+  action?: ReactNode;
+}) {
+  if (entries.length === 0 && !action) return null;
+  return (
+    <div>
+      <div className="flex min-h-6 items-center justify-between gap-2 px-3">
+        <h2 className="font-mono text-chip font-semibold uppercase tracking-[0.08em] text-dialog-hint">
+          {label}
+        </h2>
+        {action}
+      </div>
+      <ul>
+        {entries.map((entry) => (
+          <li key={entry.key}>
+            <button
+              type="button"
+              onClick={entry.onPress}
+              aria-current={entry.isActive ? 'true' : undefined}
+              className={`flex min-h-7 w-full items-center gap-2 px-3 text-left font-mono text-ui transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent motion-reduce:transition-none ${
+                entry.isActive
+                  ? 'bg-hover text-white'
+                  : 'text-dialog-hint hover:bg-hover hover:text-white'
+              }`}
+            >
+              {entry.mark}
+              <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+              <span className="shrink-0 tabular-nums text-dialog-hint">{entry.count}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 export function SessionsScreen({
   conns,
   primary = null,
@@ -1807,6 +1909,90 @@ export function SessionsScreen({
     onUnreachable?.(loadError);
   }, [loadError, onUnreachable]);
 
+  const isDesk = useDeskRail();
+
+  // A rail row is an INDEX ENTRY: it takes the list to a band and changes nothing
+  // else — not the scope, not the page, not the fold. `scrollIntoView` would walk
+  // every scrollable ancestor to get there and can take the whole page with it; the
+  // list has exactly one scroller, and this moves that one.
+  const jumpToProject = useCallback((machine: string, root: string) => {
+    const list = listRef.current;
+    const band = Array.from(
+      list?.querySelectorAll<HTMLElement>('[data-project-root]') ?? [],
+    ).find((el) => el.dataset.machine === machine && el.dataset.projectRoot === root);
+    if (!list || !band) return;
+    list.scrollTop += band.getBoundingClientRect().top - list.getBoundingClientRect().top;
+  }, []);
+
+  // THE RAIL IS BUILT FROM WHAT THE LIST IS ALREADY HOLDING, and only on a desk,
+  // because only a desk paints it: one row per machine in the switcher's own order,
+  // one per project band on screen.
+  const railMachines = useMemo(
+    () =>
+      isDesk
+        ? switcherMachines.map((machine) => {
+            const key = machineKey(machine.conn);
+            const isDown = Boolean(machine.error);
+            return {
+              key,
+              name: machineLabel(machine.conn),
+              count: tallies.get(key)?.sessions ?? 0,
+              mark: <MachineMark color={machineColor(machineColors, key)} isHollow={isDown} />,
+              isActive: scope === key,
+              onPress: () => (isDown ? void retryMachine(machine.conn) : selectScope(key)),
+            };
+          })
+        : [],
+    [isDesk, switcherMachines, tallies, machineColors, scope, selectScope, retryMachine],
+  );
+
+  // The hue only rides a project row when there is more than one machine in view:
+  // with a single machine every row would wear the same block, which says nothing.
+  const railProjects = useMemo(
+    () =>
+      isDesk
+        ? sections.flatMap(({ machine, groups }) => {
+            const key = machineKey(machine.conn);
+            return groups.map((group) => ({
+              key: `${key}\u0000${group.root}`,
+              name: group.label,
+              count: group.tally.count,
+              mark:
+                sections.length > 1 ? (
+                  <MachineMark color={machineColor(machineColors, key)} />
+                ) : null,
+              onPress: () => jumpToProject(key, group.root),
+            }));
+          })
+        : [],
+    [isDesk, sections, machineColors, jumpToProject],
+  );
+
+  // ON A DESK THE FLEET IS THE RAIL, so the row above the list is left with the
+  // page's NOTICES: a share to place, how far a search reached, a create with no
+  // button to speak from. With none of them it does not paint at all — an empty band
+  // is 40px of paper the list could have filled with rows.
+  const showStrip =
+    machines.length > 0 &&
+    (!isDesk || Boolean(share) || (searching && sessions !== null) || creating !== null);
+
+  // What the rail cannot say, in the footer the desk has room for: both counts are
+  // the GATEWAY's own (`machineCounts`), never a count of the rows this device holds.
+  const fleetSessions = machines.reduce(
+    (total, machine) => total + (tallies.get(machineKey(machine.conn))?.sessions ?? 0),
+    0,
+  );
+
+  // ONE VERB, AND TWO PLACES IT CAN STAND: the strip on a phone, the rail's own
+  // PROJECTS caption on a desk. It is built here so neither paint can grow a second
+  // folder with different words behind it (`ui.test.tsx` counts the call site).
+  const projectsVerb =
+    scopeMachine && !scopeMachine.error ? (
+      <MachineProjectsButton
+        machine={machineLabel(scopeMachine.conn)}
+        onPress={(anchor) => openManageProjects(scopeMachine, anchor)}
+      />
+    ) : null;
   if (loadError) return null;
 
   return (
@@ -1863,12 +2049,16 @@ export function SessionsScreen({
           under it — a hand's width of paper above a list that then ran out of
           screen before it ran out of rows. The phone keeps its own `pt-6`: there
           the section is full bleed and this row IS the first thing under the bar. */}
-      {machines.length > 0 && (
+      {showStrip && (
         <div className="relative z-10 flex flex-wrap items-center gap-x-1.5 gap-y-2 px-3 pb-3 pt-6 sm:flex-nowrap sm:pb-3 sm:pl-0 sm:pr-4 sm:pt-0">
           {/* The switch owns the leading space of this row: it GROWS, so the machine's
               verb stands at the trailing inset without an auto margin that would fight
               the search report for the same free space. The track inside it keeps its
               own compact width and scrolls a fleet that outgrows the row. */}
+          {/* The switch IS the phone's fleet. On a desk those machines stand in the
+              rail instead, and this row would be a second place to press for the same
+              one thing. */}
+          {!isDesk && (
           <div role="group" aria-label="Machines" className="flex min-w-0 flex-1">
             <MachineSwitcher>
                 {/* The machine tabs are the groups, and exactly one is always active. */}
@@ -1909,6 +2099,7 @@ export function SessionsScreen({
               })}
             </MachineSwitcher>
           </div>
+          )}
           {/* WHAT IS WAITING TO BE SENT, on the row that already reports the
               state of this list. A share arrives with a payload and no
               destination, and the app must not guess: the memo the human sent
@@ -2018,15 +2209,21 @@ export function SessionsScreen({
                 one machine for this row to speak for, and a control that had to ask
                 which computer it meant would be the chooser the switch exists to
                 abolish. */}
-            {scopeMachine && !scopeMachine.error && (
-              <MachineProjectsButton
-                machine={machineLabel(scopeMachine.conn)}
-                onPress={(anchor) => openManageProjects(scopeMachine, anchor)}
-              />
-            )}
+            {!isDesk && projectsVerb}
           </div>
         </div>
       )}
+      {/* TWO COLUMNS ONLY WHERE THERE ARE TWO COLUMNS. `contents` is not a layout:
+          at every other size this wrapper is not there at all and the card keeps the
+          section's own single column, exactly as it had it. */}
+      <div className={isDesk ? 'flex min-h-0 flex-1' : 'contents'}>
+        {isDesk && (
+          <FleetRail
+            machines={railMachines}
+            projects={railProjects}
+            action={projectsVerb}
+          />
+        )}
         {/* ON A PHONE THE CARD IS THE PAGE, AND IT DOES NOT BREATHE.
             It used to be `mx-3` with a full box and a height that followed its content,
             so every page of the pager resized the frame under the finger (page 74 has 1
@@ -2214,6 +2411,21 @@ export function SessionsScreen({
             <span>Reading sessions...</span>
           </footer>
         )}
+        {/* THE DESK'S OWN FOOTER, and it says only what is true here: `/` opens the
+            fleet search (`App`), and both counts are the gateway's. A window this size
+            can hold a footer without spending a row of the list on it. */}
+        {isDesk && (
+          <footer className={`flex items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-4 py-1.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint ${LIST_FRAME}`}>
+            <span className="flex items-center gap-1.5">
+              <kbd className="border border-dialog-edge px-1 font-mono text-chip normal-case">/</kbd>
+              Search the fleet
+            </span>
+            <span className="tabular-nums">
+              {fleetSessions} sessions · {machines.length === 1 ? '1 machine' : `${machines.length} machines`}
+            </span>
+          </footer>
+        )}
+      </div>
       </div>
 
       {/* Renaming needs a field. Both destructive questions stay in the row they
@@ -2825,7 +3037,13 @@ const ProjectGroup = memo(function ProjectGroup({
   }, [rows]);
   return (
     <>
-    <section aria-label={`${project} sessions`}>
+    {/* The rail's index finds this band by the two facts that identify it, and the
+        only two a jump can be sure of: which machine, and which root. */}
+    <section
+      aria-label={`${project} sessions`}
+      data-machine={machineKey(conn)}
+      data-project-root={root}
+    >
       {/* The project band wears the accent as its outgoing rule — one band per
           project, and the yellow line under it says the rows below belong to the
           name above them rather than to the machine two bands up. */}
@@ -3313,7 +3531,7 @@ function CacheStat({ label, value, explanation }: { label: string; value: string
         {label}
       </dt>
       <dd className="truncate font-mono text-chip font-bold tabular-nums text-white">{value}</dd>
-      <dd className="mt-0.5 text-balance font-mono text-chip leading-snug text-dialog-hint">{explanation}</dd>
+      <dd className="mt-0.5 text-balance font-mono text-chip text-dialog-hint">{explanation}</dd>
     </div>
   );
 }

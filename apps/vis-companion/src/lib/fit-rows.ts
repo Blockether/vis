@@ -110,18 +110,38 @@ export function useFitRows(geometry: ListGeometry): number {
  */
 export const MOUSE_DENSITY = '(width >= 40rem) and (pointer: fine)';
 
-/** True while the `mouse:` variant applies to this screen. */
-export function useMouseDensity(): boolean {
-  const [isMouse, setMouse] = useState(
-    () => (typeof window === 'undefined' ? false : (window.matchMedia?.(MOUSE_DENSITY).matches ?? false)),
+/** True while `query` matches this screen, and it keeps up when the window changes. */
+function useMediaMatch(query: string): boolean {
+  const [isMatch, setMatch] = useState(
+    () => (typeof window === 'undefined' ? false : (window.matchMedia?.(query).matches ?? false)),
   );
   useEffect(() => {
-    const query = window.matchMedia?.(MOUSE_DENSITY);
-    if (!query) return;
-    const read = () => setMouse(query.matches);
-    query.addEventListener('change', read);
+    const media = window.matchMedia?.(query);
+    if (!media) return;
+    const read = () => setMatch(media.matches);
+    media.addEventListener('change', read);
     read();
-    return () => query.removeEventListener('change', read);
-  }, []);
-  return isMouse;
+    return () => media.removeEventListener('change', read);
+  }, [query]);
+  return isMatch;
+}
+
+/** True while the `mouse:` variant applies to this screen. */
+export function useMouseDensity(): boolean {
+  return useMediaMatch(MOUSE_DENSITY);
+}
+
+/**
+ * THE DESK: a fine pointer AND a window wide enough to stand a second column in.
+ *
+ * `mouse:` asks only how the pointer moves, which is why it starts at 40rem — a
+ * narrow window on a laptop still wants the dense row. A rail is a COLUMN, and a
+ * column is width the list has to give up: under 64rem the fleet goes back on top
+ * of the list, where a phone keeps it.
+ */
+export const DESK_RAIL = '(width >= 64rem) and (pointer: fine)';
+
+/** True while there is room to stand the fleet rail beside the list. */
+export function useDeskRail(): boolean {
+  return useMediaMatch(DESK_RAIL);
 }
