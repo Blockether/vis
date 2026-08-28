@@ -15,7 +15,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.pyfmt :as pyfmt]
-            [com.blockether.vis.internal.strutil :as strutil]))
+            [com.blockether.vis.internal.util :as util]))
 
 (def ^:private display-fields
   "Every field carried VERBATIM from the loop to a channel to render a form,
@@ -153,7 +153,7 @@
       ;; a result value → monospaced Python-literal body, so a dict/list reads as
       ;; structured data rather than reflowed prose.
       (some? (:result form)) (when-let [s (clip (env/ctx->python-str (:result form)))]
-                               {:body (strutil/fenced s "python")})
+                               {:body (util/fenced s "python")})
       ;; A `vis-image` fence (matplotlib `plt.show()` → inline PNG, ASCII plot
       ;; carried as its fallback body), a `vis-table` fence (a CSV/TSV artifact
       ;; carried as its own grid) or a `vis-doc` fence (a PDF/HTML document,
@@ -169,7 +169,7 @@
       ;; python_execution printed output → fenced so newlines are preserved verbatim
       ;; (plain stdout is NOT markdown; bare \n collapses to a space through the
       ;; CommonMark SoftLineBreak → :space path if left unwrapped).
-      (not (str/blank? (str (:stdout form)))) {:body (strutil/fenced (clip (:stdout form)))}
+      (not (str/blank? (str (:stdout form)))) {:body (util/fenced (clip (:stdout form)))}
       :else nil)))
 
 (defn result-render

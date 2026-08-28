@@ -34,12 +34,10 @@
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.provider-error :as perr]
             [com.blockether.vis.internal.runtime-settings :as rt]
-            [com.blockether.vis.internal.strutil :refer [truncate]]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.toggles :as toggles]
             [taoensso.telemere :as tel])
-  (:import [java.nio.charset StandardCharsets]
-           [java.security MessageDigest]
-           [java.time Instant]
+  (:import [java.time Instant]
            [java.util Base64]))
 
 (def TOGGLE_ID
@@ -190,8 +188,6 @@
   ;; a file read in front of every `vis-agent` invocation that never sees an image.
   (atom false))
 
-(defn- now-ms ^long [] (System/currentTimeMillis))
-
 (defn- ->stamp
   "`ms` as an ISO-8601 instant — the only form a row carries, so `state.yml` stays
    readable by the person whose machine learned the fact."
@@ -211,7 +207,7 @@
   "Whether a fact stamped `ms` is still inside `MEMORY_TTL_MS`. A missing stamp is stale,
    and so is one from the future: a clock that disagrees is no reason to blind a provider."
   [ms]
-  (boolean (and ms (<= 0 (- (now-ms) (long ms)) MEMORY_TTL_MS))))
+  (boolean (and ms (<= 0 (- (util/now-ms) (long ms)) MEMORY_TTL_MS))))
 
 (defn- id->name
   "Provider id as the store spells it. Ids travel as KEYWORDS through routing and as
@@ -380,7 +376,7 @@
   (load-memory!)
   (when-not (str/blank? (str provider-id))
     (let [now
-          (now-ms)
+          (util/now-ms)
 
           eye
           {:provider-id provider-id
@@ -459,7 +455,7 @@
     (let [[previous _] (swap-vals!
                          image-blind-providers
                          (fn [m]
-                           (if (contains? m provider-id) m (assoc m provider-id (now-ms)))))]
+                           (if (contains? m provider-id) m (assoc m provider-id (util/now-ms)))))]
       ;; Only the FIRST refusal is news; re-stamping on every later one would keep a
       ;; provider blind for as long as anything kept failing there.
       (when-not (contains? previous provider-id) (persist-memory!))))
@@ -483,14 +479,14 @@
              " rejected image input; "
              "no image is offered to that model until that fact expires")))
     (forget-working-eye! {:model model-name})
-    (let [[previous current] (swap-vals! image-blind-models
-                                         (fn [m]
-                                           (update m
-                                                   model-name
-                                                   (fn [row]
-                                                     {:learned-at (or (:learned-at row) (now-ms))
-                                                      :providers (conj (or (:providers row) #{})
-                                                                       provider-id)}))))]
+    (let [[previous current]
+          (swap-vals! image-blind-models
+                      (fn [m]
+                        (update m
+                                model-name
+                                (fn [row]
+                                  {:learned-at (or (:learned-at row) (util/now-ms))
+                                   :providers (conj (or (:providers row) #{}) provider-id)}))))]
       (when (not= previous current) (persist-memory!)))
     model-name))
 
@@ -586,12 +582,7 @@
 (defn- content-digest
   "Cache key: the payload's own bytes plus the container they ride in."
   [{:keys [base64 media-type]}]
-  (let [md
-        (MessageDigest/getInstance "SHA-256")
-
-        digest
-        (.digest md (.getBytes (str media-type "|" base64) StandardCharsets/UTF_8))]
-
+  (let [digest (util/sha256 (util/utf8 (str media-type "|" base64)))]
     (.encodeToString (Base64/getUrlEncoder) digest)))
 
 (defn- cache-put!
@@ -638,7 +629,7 @@
                      (str
                        "\n\nThe agent is working on this request — favour what it needs, but never "
                        "let it invent detail that is not in the image:\n"
-                       (truncate c DESCRIBE_CONTEXT_CHARS))))
+                       (util/truncate c DESCRIBE_CONTEXT_CHARS))))
               (svar/image base64 (or (not-empty (str media-type)) "image/png")))])
 
 (defn- distinct-by
@@ -682,7 +673,7 @@
                           str
                           str/trim
                           not-empty)]
-    {:text (truncate text MAX_DESCRIPTION_CHARS)
+    {:text (util/truncate text MAX_DESCRIPTION_CHARS)
      :model (or (not-empty (str (:routed/model (:ok outcome)))) (str fallback-model))}))
 
 (defn- describe-round
@@ -697,7 +688,7 @@
   [router routing context deadline-at fallback-model pairs]
   (reduce (fn [acc [idx fut image]]
             (let [remaining
-                  (max 0 (- (long deadline-at) (System/currentTimeMillis)))
+                  (max 0 (- (long deadline-at) (util/now-ms)))
 
                   outcome
                   (deref fut remaining ::deadline)]
@@ -806,7 +797,7 @@
                          (distinct-by :key)
                          (take MAX_DESCRIBED_PER_PASS)
                          vec)
-            deadline-at (+ (System/currentTimeMillis) (long DESCRIBE_HARD_DEADLINE_MS))
+            deadline-at (+ (util/now-ms) (long DESCRIBE_HARD_DEADLINE_MS))
             ;; A provider that ERRORS — stale credentials, a gateway 400, a 5xx — must
             ;; not take the whole fleet's eyes down with it. Every round excludes the
             ;; providers that already broke (the error itself names them) and offers
@@ -832,7 +823,7 @@
                                ;; Every provider in the fleet already broke: there is nobody left
                                ;; to offer the image to, and svar would only throw locally.
                                (empty? (remove #(contains? excluded (:id %)) (:providers router)))
-                               (<= (- (long deadline-at) (System/currentTimeMillis)) 0))
+                               (<= (- (long deadline-at) (util/now-ms)) 0))
                          done
                          (let [outcome (describe-round router
                                                        (describe-routing excluded excluded-models)

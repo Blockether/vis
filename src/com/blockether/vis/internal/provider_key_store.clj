@@ -39,6 +39,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
 (defn auth-file
@@ -253,10 +254,9 @@
           :already-authenticated)
       (and existing (= :env-var (:source existing)))
       (do
-        (update-plan!
-          book
-          plan-tag
-          {:api-key (:api-key existing) :saved-at (System/currentTimeMillis) :from :env-var})
+        (update-plan! book
+                      plan-tag
+                      {:api-key (:api-key existing) :saved-at (util/now-ms) :from :env-var})
         (print!
           (str "  Persisted " (:vendor book) " key from env var (" (str/join " / " env-keys) ")."))
         (print! (str "  " label " is ready (endpoint: " base-url ")."))

@@ -15,7 +15,8 @@
    No graphics. No I/O. No channel-specific deps. Pure data + tiny
    pure helpers, written as `.cljc` so a future ClojureScript client can
    require it directly."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util]))
 
 ;;; ── Slot ratios ────────────────────────────────────────────────────────
 ;;
@@ -193,7 +194,7 @@
    `untitled-session-label`. Used by both workspace-label sync in
    state and the synthesised fallback workspace in channels."
   [title]
-  (if (and (string? title) (not (str/blank? title))) title untitled-session-label))
+  (if (util/non-blank-string? title) title untitled-session-label))
 
 (defn short-id
   "Shorten a session UUID to the shared display length. Returns

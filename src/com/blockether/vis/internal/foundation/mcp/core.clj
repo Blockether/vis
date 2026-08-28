@@ -41,9 +41,8 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.foundation.mcp.client :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as mcp-oauth]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
-
-(defn- now-ms [] (System/currentTimeMillis))
 
 ;; Config — declared servers from ~/.vis/state.yml :mcp :servers
 
@@ -845,14 +844,14 @@
    — server, tool, catalog, target — is snake_case STRING-keyed, so nothing
    keyword-shaped can reach the model or a client."
   [op message & {:as extra}]
-  (extension/failure {:result nil
-                      :op op
-                      :metadata {:started-at-ms (now-ms) :finished-at-ms (now-ms) :duration-ms 0}
-                      :error (reduce-kv
-                               (fn [m k v]
-                                 (assoc m (if (= :hint k) :hint (str/replace (name k) "-" "_")) v))
-                               {:message message}
-                               extra)}))
+  (extension/failure
+    {:result nil
+     :op op
+     :metadata {:started-at-ms (util/now-ms) :finished-at-ms (util/now-ms) :duration-ms 0}
+     :error (reduce-kv (fn [m k v]
+                         (assoc m (if (= :hint k) :hint (str/replace (name k) "-" "_")) v))
+                       {:message message}
+                       extra)}))
 
 (defn- needs-auth?
   "True when `server` is an OAuth server nobody has signed into: it answered a
@@ -1039,8 +1038,9 @@
   (fn [err* _env _f _args]
     {:result (extension/failure {:result nil
                                  :op op
-                                 :metadata
-                                 {:started-at-ms (now-ms) :finished-at-ms (now-ms) :duration-ms 0}
+                                 :metadata {:started-at-ms (util/now-ms)
+                                            :finished-at-ms (util/now-ms)
+                                            :duration-ms 0}
                                  :throwable err*})}))
 
 ;; Public vars retain developer examples and fallback docs. Native symbols

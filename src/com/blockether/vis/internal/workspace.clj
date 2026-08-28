@@ -27,6 +27,7 @@
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.persistance :as p]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file CopyOption FileVisitResult Files LinkOption Path SimpleFileVisitor
@@ -1320,7 +1321,7 @@
                 (try (let [{:keys [root backend mechanism]} (backend-fork! trunk trunk name)]
                        (cond-> {:trunk trunk
                                 :clone (file-path root)
-                                :fork-ms (System/currentTimeMillis)
+                                :fork-ms (util/now-ms)
                                 :backend (clojure.core/name (backend-id backend))
                                 :policy (clojure.core/name (draft-policy-id policy))}
                          mechanism
@@ -1392,7 +1393,7 @@
         ;; Capture AFTER the clone returns: cloned files keep their (older)
         ;; source mtime, so only post-fork agent edits exceed this baseline.
         fork-ms
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         ;; Every catalog root whose `draft` policy demands a PRIVATE copy gets one
         ;; minted here, so the draft never writes through to the real root. The

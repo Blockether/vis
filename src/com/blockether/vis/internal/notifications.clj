@@ -33,7 +33,8 @@
    it without introducing a generic pub-sub abstraction nobody asked
    for. If we ever grow more event types, this becomes one consumer
    of a richer system."
-  (:require [taoensso.telemere :as tel]))
+  (:require [taoensso.telemere :as tel]
+            [com.blockether.vis.internal.util :as util]))
 
 ;; Defaults
 
@@ -62,14 +63,12 @@
 
 ;; Internal helpers
 
-(defn- now-ms ^long [] (System/currentTimeMillis))
-
 (defn- expired?
   "True when `entry` has an `:until` deadline that has passed.
    Nil `:until` means sticky - never expires automatically."
   [entry]
   (when-let [until (:until entry)]
-    (< (long until) (now-ms))))
+    (< (long until) (util/now-ms))))
 
 (defn- prune "Drop every expired entry from `coll`." [coll] (filterv (complement expired?) coll))
 
@@ -123,7 +122,7 @@
         (str (java.util.UUID/randomUUID))
 
         now
-        (now-ms)
+        (util/now-ms)
 
         until
         (when ttl-ms (+ now (long ttl-ms)))

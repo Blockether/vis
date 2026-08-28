@@ -22,15 +22,14 @@
    in [[discover-or-start!]] is unit-testable without a real process."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io RandomAccessFile)
            (java.lang ProcessBuilder$Redirect ProcessHandle)
            (java.lang.management ManagementFactory)
            (java.net InetSocketAddress Socket)
            (java.nio.channels FileChannel FileLock)
-           (java.nio.charset StandardCharsets)
-           (java.nio.file AtomicMoveNotSupportedException Files StandardCopyOption)
-           (java.security MessageDigest)))
+           (java.nio.file AtomicMoveNotSupportedException Files StandardCopyOption)))
 
 ;; Paths + registry key
 
@@ -47,16 +46,6 @@
    missing registry without spawning a second daemon onto an occupied port."
   ^java.io.File []
   (io/file (vis-home) "gateway.token"))
-
-(defn- sha256-hex
-  ^String [^String s]
-  (let [md
-        (MessageDigest/getInstance "SHA-256")
-
-        bs
-        (.digest md (.getBytes s StandardCharsets/UTF_8))]
-
-    (apply str (map #(format "%02x" (bit-and (int %) 0xff)) bs))))
 
 (defn db-target
   "Normalize a DB target/spec to the value that identifies a daemon. SQLite specs
@@ -83,7 +72,7 @@
 (defn registry-key
   "Stable key for a DB target: `sha256` of its canonical path (Q2)."
   ^String [db]
-  (sha256-hex (canonical-db db)))
+  (util/sha256-hex (canonical-db db)))
 
 (defn registry-file
   "The registry EDN file for DB target `db`."
@@ -120,7 +109,7 @@
   (if (nil? pid)
     false
     (let [now
-          (System/currentTimeMillis)
+          (util/now-ms)
 
           [alive? at]
           (get @pid-liveness-cache pid)]
@@ -182,7 +171,7 @@
         (registry-file db)
 
         entry
-        (merge {:db (canonical-db db) :created-at (System/currentTimeMillis)} entry)]
+        (merge {:db (canonical-db db) :created-at (util/now-ms)} entry)]
 
     (with-registry-mutation-lock
       db
@@ -502,7 +491,7 @@
   ([db probe] (await-registry! db probe {}))
   ([db probe {:keys [timeout-ms poll-ms on-tick] :or {timeout-ms 8000 poll-ms 100}}]
    (let [start
-         (System/currentTimeMillis)
+         (util/now-ms)
 
          deadline
          (+ start (long timeout-ms))]
@@ -511,9 +500,8 @@
 
        (let [entry (read-registry db)]
          (cond (registry-fresh? entry probe) entry
-               (< (System/currentTimeMillis) deadline)
-               (do (when on-tick
-                     (try (on-tick (- (System/currentTimeMillis) start)) (catch Throwable _ nil)))
+               (< (util/now-ms) deadline)
+               (do (when on-tick (try (on-tick (- (util/now-ms) start)) (catch Throwable _ nil)))
                    (Thread/sleep (long poll-ms))
                    (recur))
                :else nil))))))

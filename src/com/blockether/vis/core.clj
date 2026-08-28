@@ -80,6 +80,7 @@
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.theme :as theme]
             [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace :as workspace]))
 
 ;; The one closed distribution manifest, read-only: an extension can ask whether
@@ -504,7 +505,7 @@
 ;; The namespace and extension slot are spelled `persistance`; public
 ;; prose uses the correct domain word: Persistence.
 (import-vars [ds persistance/ds]
-             [now-ms persistance/now-ms]
+             [now-ms util/now-ms]
              [->id persistance/->id]
              [->uuid persistance/->uuid]
              [->ref persistance/->ref]

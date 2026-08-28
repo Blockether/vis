@@ -23,7 +23,8 @@
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.limits-format :as limits-format]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
-            [com.blockether.vis.internal.registry :as registry])
+            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.net ConnectException URI]
            [java.util Date]))
 
@@ -846,7 +847,7 @@
    leave the last-known value untouched."
   []
   (when (compare-and-set! fleet-refreshing false true)
-    (future (try (reset! fleet-cache {:at (System/currentTimeMillis) :val (configured-providers)})
+    (future (try (reset! fleet-cache {:at (util/now-ms) :val (configured-providers)})
                  (catch Throwable _ nil)
                  (finally (reset! fleet-refreshing false))))))
 
@@ -864,7 +865,7 @@
      callers always get a real fleet, never a nil-because-cold."
   []
   (let [now
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         {:keys [at val]}
         @fleet-cache]

@@ -17,7 +17,8 @@
    - the body must NOT close `idx`; the pool owns it (LRU + idle TTL),
    - every filesystem mutation this process performs must call `note-fs-write!`
      so the next search reads its own writes."
-  (:require [com.blockether.fff :as fff])
+  (:require [com.blockether.fff :as fff]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.io File]))
 
 (def ^:private scan-timeout-ms
@@ -244,7 +245,7 @@
    not from a swap body that may have been retried."
   [keep-key]
   (let [now
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         [old new]
         (swap-vals!
@@ -359,8 +360,7 @@
                              ;; born "just used": a 0 here would look ancient to a
                              ;; concurrent sweep and evict the entry before its first
                              ;; search.
-                             :last-used (java.util.concurrent.atomic.AtomicLong.
-                                          (System/currentTimeMillis))
+                             :last-used (java.util.concurrent.atomic.AtomicLong. (util/now-ms))
                              :closed (java.util.concurrent.atomic.AtomicBoolean. false)
                              :dead (java.util.concurrent.atomic.AtomicBoolean. false)
                              ;; A fresh index is built AFTER this entry lands, so it
@@ -376,8 +376,7 @@
                 taken?
                 (locking lock
                   (when-not (.get lock)
-                    (.set ^java.util.concurrent.atomic.AtomicLong (:last-used e)
-                          (System/currentTimeMillis))
+                    (.set ^java.util.concurrent.atomic.AtomicLong (:last-used e) (util/now-ms))
                     (.incrementAndGet ^java.util.concurrent.atomic.AtomicInteger (:leases e))
                     true))]
 

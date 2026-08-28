@@ -17,7 +17,8 @@
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.protocol :as protocol]
-            [com.blockether.vis.internal.gateway.wire :as wire])
+            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io BufferedReader InputStream InputStreamReader)
            (java.net URI URLEncoder)
            (java.nio.charset StandardCharsets)
@@ -391,13 +392,13 @@
                 (gw-send! (assoc candidate :pid pid) "POST" "/v1/admin/stop" {})
 
                 deadline
-                (+ (System/currentTimeMillis) 3000)]
+                (+ (util/now-ms) 3000)]
 
             (when (<= 200 (long (:status stop-response)) 299)
               (loop []
 
                 (cond (port-free? host port) true
-                      (>= (System/currentTimeMillis) deadline) false
+                      (>= (util/now-ms) deadline) false
                       :else (do (Thread/sleep 50) (recur))))))))
       (catch Throwable t (cancellation/preserve-interrupt! t) nil))))
 
@@ -667,11 +668,11 @@
   "Block (bounded) until nothing is listening on host:port. True when the port was
    released, false on timeout."
   [host port timeout-ms]
-  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
+  (let [deadline (+ (util/now-ms) (long timeout-ms))]
     (loop []
 
       (cond (port-free? (str host) port) true
-            (>= (System/currentTimeMillis) deadline) false
+            (>= (util/now-ms) deadline) false
             :else (do (Thread/sleep 50) (recur))))))
 
 (defn- registered-daemon-handle
@@ -773,12 +774,12 @@
    on respawn. Returns true when down, false on timeout (the caller still
    proceeds: discover-or-start! deletes a stale registry and tolerates a race)."
   [db host port]
-  (let [deadline (+ (System/currentTimeMillis) 3000)]
+  (let [deadline (+ (util/now-ms) 3000)]
     (loop []
 
       (let [entry (discovery/read-registry db)]
         (cond (and (not (discovery/registry-fresh? entry probe-entry?)) (port-free? host port)) true
-              (> (System/currentTimeMillis) deadline) false
+              (> (util/now-ms) deadline) false
               :else (do (Thread/sleep 50) (recur)))))))
 
 (defn- wire-count
@@ -1429,7 +1430,7 @@
   (let [[old _] (swap-vals! session-model-refreshing conj k)]
     (when-not (contains? old k)
       (future (try (let [v (session-model sid)]
-                     (swap! session-model-cache assoc k {:at (System/currentTimeMillis) :val v}))
+                     (swap! session-model-cache assoc k {:at (util/now-ms) :val v}))
                    (catch Throwable _ nil)
                    (finally (swap! session-model-refreshing disj k)))))))
 
@@ -1446,7 +1447,7 @@
         (str sid)
 
         now
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         {:keys [at val]}
         (get @session-model-cache k)]
@@ -1482,7 +1483,7 @@
   (let [[old _] (swap-vals! resources-refreshing conj k)]
     (when-not (contains? old k)
       (future (try (let [v (list-resources sid)]
-                     (swap! resources-cache assoc k {:at (System/currentTimeMillis) :val v}))
+                     (swap! resources-cache assoc k {:at (util/now-ms) :val v}))
                    (catch Throwable _ nil)
                    (finally (swap! resources-refreshing disj k)))))))
 
@@ -1497,7 +1498,7 @@
         (str sid)
 
         now
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         {:keys [at val]}
         (get @resources-cache k)]
@@ -1548,7 +1549,7 @@
                                           (str "/v1/sessions/" (enc sid) "/model")
                                           {:provider provider :model model})
                               "model"))]
-    (swap! session-model-cache assoc (str sid) {:at (System/currentTimeMillis) :val pref})
+    (swap! session-model-cache assoc (str sid) {:at (util/now-ms) :val pref})
     pref))
 
 ;; ── Headless provider OAuth ────────────────────────────────────────────────

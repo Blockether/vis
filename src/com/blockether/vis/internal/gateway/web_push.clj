@@ -13,12 +13,12 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.math BigInteger]
            [java.net URI]
            [java.nio ByteBuffer]
-           [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.security KeyFactory KeyPair KeyPairGenerator PrivateKey SecureRandom Signature]
            [java.security.interfaces ECPublicKey]
@@ -47,13 +47,6 @@
 
 (defonce ^:private key-lock (Object.))
 
-(defn- env-val
-  "Return a trimmed, non-blank environment variable, or nil."
-  [name]
-  (some-> (System/getenv name)
-          str/trim
-          not-empty))
-
 (defn- web-home
   "Resolve the Vis home used for gateway-owned push state.
 
@@ -61,7 +54,7 @@
    conventional `~/.vis` directory."
   ^File []
   (io/file (or (System/getProperty "vis.push.home")
-               (env-val "VIS_HOME")
+               (util/env-val "VIS_HOME")
                (str (System/getProperty "user.home") File/separator ".vis"))))
 
 (defn- web-push-dir
@@ -101,11 +94,6 @@
   "Decode regular base64, as used inside a PEM document."
   ^bytes [^String value]
   (.decode (Base64/getDecoder) value))
-
-(defn- utf8
-  "Encode a protocol string with the protocol's required UTF-8 charset."
-  ^bytes [^String value]
-  (.getBytes value StandardCharsets/UTF_8))
 
 (defn- ec-key-factory
   "Return the JCA factory shared by all P-256 key decoding helpers."
@@ -293,7 +281,7 @@
         (load-or-generate-key-pair)
 
         subject
-        (or (env-val "VIS_WEB_PUSH_SUBJECT") DEFAULT_SUBJECT)
+        (or (util/env-val "VIS_WEB_PUSH_SUBJECT") DEFAULT_SUBJECT)
 
         subject-valid?
         (valid-subject? subject)]
@@ -349,7 +337,7 @@
   "Sign UTF-8 text with the requested JCA signature algorithm."
   ^bytes [^PrivateKey private ^String algorithm ^String input]
   (let [signature
-        (doto (Signature/getInstance algorithm) (.initSign private) (.update (utf8 input)))]
+        (doto (Signature/getInstance algorithm) (.initSign private) (.update (util/utf8 input)))]
     (.sign signature)))
 
 (defn- jose-signature
@@ -376,12 +364,12 @@
   "Build the short-lived VAPID JWT for one push-service origin."
   [cfg ^PrivateKey private ^String audience]
   (let [header
-        (b64url (utf8 (wire/json-str {:alg "ES256" :typ "JWT"})))
+        (b64url (util/utf8 (wire/json-str {:alg "ES256" :typ "JWT"})))
 
         claims
-        (b64url (utf8 (wire/json-str {:aud audience
-                                      :exp (+ (quot (System/currentTimeMillis) 1000) (* 12 60 60))
-                                      :sub (:subject cfg)})))
+        (b64url (util/utf8 (wire/json-str {:aud audience
+                                           :exp (+ (quot (util/now-ms) 1000) (* 12 60 60))
+                                           :sub (:subject cfg)})))
 
         input
         (str header "." claims)
@@ -450,7 +438,7 @@
   "Derive the aes128gcm content-encryption key and nonce from ECDH output."
   [^bytes client-public ^bytes server-public ^bytes auth ^bytes shared]
   (let [key-info
-        (concat-bytes (utf8 KEY_INFO_PREFIX) client-public server-public)
+        (concat-bytes (util/utf8 KEY_INFO_PREFIX) client-public server-public)
 
         ikm
         (hkdf-expand (hmac auth shared) key-info 32)
@@ -462,8 +450,8 @@
         (hmac salt ikm)]
 
     {:salt salt
-     :cek (hkdf-expand prk (utf8 AES_INFO) 16)
-     :nonce (hkdf-expand prk (utf8 NONCE_INFO) 12)}))
+     :cek (hkdf-expand prk (util/utf8 AES_INFO) 16)
+     :nonce (hkdf-expand prk (util/utf8 NONCE_INFO) 12)}))
 
 (defn- aes-gcm-encrypt
   "Encrypt plaintext with the derived AES-128-GCM content key and nonce."
@@ -574,7 +562,7 @@
     (cond (not (:is-configured cfg)) {:status 0 :reason "not-configured"}
           :else (let [target (subscription token)]
                   (cond (nil? target) {:status 400 :reason "invalid-subscription"}
-                        :else (let [payload (utf8 (notification-json notification))]
+                        :else (let [payload (util/utf8 (notification-json notification))]
                                 (if (> (long (alength ^bytes payload)) (long MAX_PAYLOAD_BYTES))
                                   {:status 413 :reason "payload-too-large"}
                                   (let [pair (load-or-generate-key-pair)]

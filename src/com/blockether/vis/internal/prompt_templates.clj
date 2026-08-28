@@ -28,6 +28,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.harness.discovery :as discovery]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
@@ -48,13 +49,6 @@
        :body (str/triml body)}
       {:meta {} :body (str/triml content)})))
 
-(defn- non-blank
-  [s]
-  (let [s (some-> s
-                  str
-                  str/trim)]
-    (when-not (str/blank? s) s)))
-
 ;; File template discovery
 
 (defn- name-stem [^String filename] (str/replace filename #"\.md\z" ""))
@@ -72,11 +66,11 @@
              (parse-frontmatter (slurp f))
 
              nm
-             (or (non-blank (:name meta)) (non-blank (name-stem (.getName f))))]
+             (or (util/non-blank (:name meta)) (util/non-blank (name-stem (.getName f))))]
 
          (when (and nm (not (str/blank? body)))
            {:name nm
-            :description (or (non-blank (:description meta)) "")
+            :description (or (util/non-blank (:description meta)) "")
             :body body
             :scope scope
             :path (.getAbsolutePath f)}))
@@ -226,7 +220,7 @@
                                    :id ::expand-failed
                                    :data {:template name :error (ex-message ex)}})
                         nil))]
-        (when (and (string? body) (not (str/blank? body)))
+        (when (util/non-blank-string? body)
           (cond-> {:name name :text body}
             (:path t)
             (assoc :path (:path t))

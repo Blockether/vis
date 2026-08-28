@@ -57,10 +57,10 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.paths :as paths])
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
            (java.nio.file LinkOption Paths)
-           (java.security MessageDigest)
            (java.util.concurrent TimeUnit)))
 
 (def ^:private link-opts (make-array LinkOption 0))
@@ -932,7 +932,7 @@
                      (let [command (get entry source)]
                        (when-not (and (sequential? command)
                                       (seq command)
-                                      (every? #(and (string? %) (not (str/blank? %))) command))
+                                      (every? util/non-blank-string? command))
                          (refuse-call-env
                            k
                            (str "command source must be a non-empty argv list of non-blank strings"
@@ -1025,14 +1025,7 @@
   [values]
   (into (sorted-map)
         (map (fn [[k v]]
-               [(str k)
-                (if (nil? v)
-                  "unset"
-                  (str/join (map (fn [b]
-                                   (format "%02x" b))
-                                 (take 6
-                                       (.digest (MessageDigest/getInstance "SHA-256")
-                                                (.getBytes (str v) "UTF-8"))))))]))
+               [(str k) (if (nil? v) "unset" (subs (util/sha256-hex (str v)) 0 12))]))
         values))
 (defn env-difference
   "Variable NAMES whose value differs between the env a live process is running

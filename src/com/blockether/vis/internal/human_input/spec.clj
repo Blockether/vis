@@ -25,7 +25,8 @@
    handles."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [com.blockether.vis.internal.activity :as activity]))
+            [com.blockether.vis.internal.activity :as activity]
+            [com.blockether.vis.internal.util :as util]))
 
 ;; The closed vocabulary
 
@@ -444,8 +445,6 @@
 
 ;; Predicates
 
-(defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
-
 (defn- closed?
   "True when `m` carries no key outside `allowed`. The internal form is closed
    in both directions: a wire key that survived normalization is a normalizer
@@ -516,16 +515,16 @@
 
 ;; A field — the leaf that holds one answer
 
-(s/def ::id non-blank-string?)
-(s/def ::branch non-blank-string?)
-(s/def ::name non-blank-string?)
+(s/def ::id util/non-blank-string?)
+(s/def ::branch util/non-blank-string?)
+(s/def ::name util/non-blank-string?)
 ;; One dispatch key, two vocabularies: a form field and a live node can never be
 ;; mistaken for each other, because neither multimethod has a method for the
 ;; other's type.
 (s/def ::type (set (concat (vals field-types) (vals live-node-types))))
-(s/def ::label non-blank-string?)
-(s/def ::description non-blank-string?)
-(s/def ::placeholder non-blank-string?)
+(s/def ::label util/non-blank-string?)
+(s/def ::description util/non-blank-string?)
+(s/def ::placeholder util/non-blank-string?)
 (s/def ::is-required boolean?)
 (s/def ::is-secret boolean?)
 (s/def ::default some?)
@@ -544,13 +543,13 @@
 ;; not an `s/or`, because a conforming branch would reach every `s/and` that
 ;; follows as a tagged pair instead of the value itself.
 (s/def ::value #(or (string? %) (number? %) (nil? %)))
-(s/def ::text non-blank-string?)
+(s/def ::text util/non-blank-string?)
 
 (s/def ::option
   (s/and #(closed? option-keys %)
          (s/keys :req-un [::value ::label])
          ;; An option's value is what the answer map comes back holding.
-         #(non-blank-string? (:value %))))
+         #(util/non-blank-string? (:value %))))
 
 (s/def ::options
   (s/and (s/coll-of ::option :kind vector?)
@@ -654,18 +653,18 @@
 
 ;; A request
 
-(s/def ::title non-blank-string?)
-(s/def ::source non-blank-string?)
-(s/def ::session-id non-blank-string?)
-(s/def ::submit-label non-blank-string?)
-(s/def ::cancel-label non-blank-string?)
+(s/def ::title util/non-blank-string?)
+(s/def ::source util/non-blank-string?)
+(s/def ::session-id util/non-blank-string?)
+(s/def ::submit-label util/non-blank-string?)
+(s/def ::cancel-label util/non-blank-string?)
 (s/def ::is-cancellable boolean?)
 (s/def ::timeout-ms nat-int?)
 (s/def ::classification (set (vals live-classifications)))
 (s/def ::activity-anchor
   (s/and map?
          #(= #{:evaluation-id :iteration :form-index} (set (keys %)))
-         #(non-blank-string? (:evaluation-id %))
+         #(util/non-blank-string? (:evaluation-id %))
          #(nat-int? (:iteration %))
          #(nat-int? (:form-index %))))
 
@@ -704,8 +703,8 @@
 (s/def ::is-submitted boolean?)
 ;; A form settles with a one-line reason a human reads; a live view ends on one
 ;; of [[live-reasons]]. Each shape pins its own side down below.
-(s/def ::reason #(or (non-blank-string? %) (keyword? %)))
-(s/def ::request-id non-blank-string?)
+(s/def ::reason #(or (util/non-blank-string? %) (keyword? %)))
+(s/def ::request-id util/non-blank-string?)
 
 (s/def ::answer-value
   (s/nilable (s/or :text string?
@@ -713,7 +712,7 @@
                    :number number?
                    :choices (s/coll-of string? :kind vector?))))
 
-(s/def ::values (s/map-of non-blank-string? ::answer-value))
+(s/def ::values (s/map-of util/non-blank-string? ::answer-value))
 
 (defn- values-iff-submitted?
   "`:values` is the proof the human answered. A cancelled or timed-out request
@@ -825,7 +824,7 @@
 ;; `::id` is an ADDRESS named by every patch rather than a key in an answer map.
 
 (s/def ::tone (set (vals live-tones)))
-(s/def ::detail non-blank-string?)
+(s/def ::detail util/non-blank-string?)
 (s/def ::line string?)                                      ; a blank line is a line
 ;; A node's `:lines` are its hot WINDOW, so this bound is the window cap, not
 ;; the per-patch one: how many lines ONE patch may carry
@@ -836,25 +835,25 @@
 (s/def ::window-lines (s/int-in 1 (inc (long (:window-lines-cap log-defaults)))))
 (s/def ::done nat-int?)
 (s/def ::total pos-int?)
-(s/def ::path non-blank-string?)
-(s/def ::language non-blank-string?)
+(s/def ::path util/non-blank-string?)
+(s/def ::language util/non-blank-string?)
 (s/def ::align (set (vals live-aligns)))
 (s/def ::cells (s/coll-of string? :kind vector?))
 (s/def ::value-text string?)                                ; a stat's value AS SHOWN ("3.4 MB/s")
-(s/def ::target non-blank-string?)                          ; attachment id, workspace path, or url
+(s/def ::target util/non-blank-string?)                          ; attachment id, workspace path, or url
 (s/def ::target-kind (set (vals link-targets)))
-(s/def ::by non-blank-string?)
+(s/def ::by util/non-blank-string?)
 (s/def ::dir (set (vals live-sort-dirs)))
-(s/def ::node-id non-blank-string?)                         ; the ADDRESS a patch speaks to
-(s/def ::view-id non-blank-string?)
+(s/def ::node-id util/non-blank-string?)                         ; the ADDRESS a patch speaks to
+(s/def ::view-id util/non-blank-string?)
 (s/def ::is-completed boolean?)
 (s/def ::is-from-human boolean?)                            ; a PERSON stopped it, not the run
 (s/def ::is-focusable boolean?)
 (s/def ::focused-ids (s/and (s/coll-of ::id :kind vector?) #(= (count %) (count (distinct %)))))
-(s/def ::note (s/and non-blank-string? #(<= (count %) (long note-chars))))
-(s/def ::summary non-blank-string?)
+(s/def ::note (s/and util/non-blank-string? #(<= (count %) (long note-chars))))
+(s/def ::summary util/non-blank-string?)
 (s/def ::total-lines nat-int?)                              ; a log's record since its last clear, engine-stamped
-(s/def ::artifact-id non-blank-string?)
+(s/def ::artifact-id util/non-blank-string?)
 
 ;; What a SETTLED view is: the record it wrote, addressed rather than copied.
 (s/def ::media-type #{live-artifact-media-type})            ; one kind of artifact, one media type
@@ -864,11 +863,11 @@
   ;; `::view`; a build log never reaches a provider request.
   #{"user"})
 (s/def ::ended-at pos-int?)                                 ; epoch millis the verdict was sealed at
-(s/def ::storage-uri (s/and non-blank-string? #(str/includes? % "://")))
+(s/def ::storage-uri (s/and util/non-blank-string? #(str/includes? % "://")))
 (s/def ::size nat-int?)                                     ; bytes of the record the run wrote
 (s/def ::line-count nat-int?)                               ; NDJSON lines of that record
-(s/def ::base64 non-blank-string?)                          ; only under `live-artifact-inline-bytes`
-(s/def ::error non-blank-string?)
+(s/def ::base64 util/non-blank-string?)                          ; only under `live-artifact-inline-bytes`
+(s/def ::error util/non-blank-string?)
 (s/def ::op (set (vals live-ops)))
 (s/def ::after (s/nilable ::node-id))                       ; place it after this node; nil means last
 (s/def ::item-ids (s/and (s/coll-of ::id :kind vector?) non-empty?))
@@ -933,7 +932,7 @@
   [x]
   (and (map? x)
        (closed? live-sorted-keys x)
-       (non-blank-string? (:by x))
+       (util/non-blank-string? (:by x))
        (or (nil? (:dir x)) (contains? (set (vals live-sort-dirs)) (:dir x)))))
 
 (s/def ::order #(or (contains? (set (vals live-orders)) %) (sorted-order? %)))

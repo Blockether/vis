@@ -10,7 +10,8 @@
    deadline. Never throws."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.foundation.environment.git :as git]
-            [com.blockether.vis.internal.paths :as paths])
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
            (java.nio.file FileVisitResult Files Path SimpleFileVisitor)
            (java.nio.file.attribute BasicFileAttributes)
@@ -92,11 +93,11 @@
         (boolean-array 1 false)
 
         deadline
-        (+ (System/currentTimeMillis) (long deadline-ms))
+        (+ (util/now-ms) (long deadline-ms))
 
         stop?
         (fn []
-          (or (> (System/currentTimeMillis) deadline)
+          (or (> (util/now-ms) deadline)
               (>= (.size roots) (long max-repos))
               (>= (aget visited 0) (long max-files))))
 

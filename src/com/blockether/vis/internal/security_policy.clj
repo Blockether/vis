@@ -6,10 +6,9 @@
    Enforcement and context both derive from this value."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.config-spec :as config-spec]
-            [com.blockether.vis.internal.paths :as paths])
-  (:import [java.nio.charset StandardCharsets]
-           [java.nio.file Files LinkOption Path Paths]
-           [java.security MessageDigest]))
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util])
+  (:import [java.nio.file Files LinkOption Path Paths]))
 
 (def ^:private no-link-options (make-array LinkOption 0))
 
@@ -72,11 +71,7 @@
         (keyword? value) (name value)
         :else value))
 
-(defn- sha256
-  [value]
-  (let [digest (.digest (MessageDigest/getInstance "SHA-256")
-                        (.getBytes (pr-str (stable-value value)) StandardCharsets/UTF_8))]
-    (str "sha256:" (apply str (map #(format "%02x" (bit-and 0xff (long %))) digest)))))
+(defn- sha256 [value] (str "sha256:" (util/sha256-hex (pr-str (stable-value value)))))
 
 (defn snapshot
   "Build the immutable canonical security policy from validated string-keyed

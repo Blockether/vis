@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.env-python :as env-python]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
@@ -27,7 +28,7 @@
 
 (defn- prompt-block
   [tag body]
-  (when (and (string? body) (not (str/blank? body)))
+  (when (util/non-blank-string? body)
     (str ";; -- "
          (-> (str tag)
              (str/replace "_" "-")
@@ -613,7 +614,7 @@
 (defn- extension-prompt-fragment
   [ext body]
   (let [body (extension/normalize-prompt-text body)]
-    (when (and (string? body) (not (str/blank? body)))
+    (when (util/non-blank-string? body)
       (if (extension/ext-builtin? ext)
         ;; BUILT-IN (core kernel, e.g. foundation): render the body bare — NO
         ;; `;; -- EXTENSION … --` header — so its prompt reads as part of the
@@ -641,7 +642,7 @@
         (keep (fn [ext]
                 (when-let [f (:ext/prompt-fn ext)]
                   (try (let [result (call-extension-callback ext f environment)]
-                         (when (and (string? result) (not (str/blank? result)))
+                         (when (util/non-blank-string? result)
                            (extension-prompt-fragment ext result)))
                        (catch Throwable t
                          (tel/log! {:level :warn
@@ -731,13 +732,13 @@
   [environment active-extensions]
   (let [blocks (->> [(extensions-prompt-block environment active-extensions)
                      (sandbox-shims-prompt-block active-extensions)]
-                    (filter #(and (string? %) (not (str/blank? %))))
+                    (filter util/non-blank-string?)
                     seq)]
     (when blocks (prompt-block "turn-system-context" (str/join "\n\n" blocks)))))
 
 (defn- stable-prompt-message
   [content]
-  (when (and (string? content) (not (str/blank? content))) {:role "system" :content content}))
+  (when (util/non-blank-string? content) {:role "system" :content content}))
 
 (defn stable-prompt-text
   "Join stable prompt message contents for token budgeting and debug bindings only.

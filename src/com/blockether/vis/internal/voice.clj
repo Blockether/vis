@@ -29,7 +29,8 @@
       and no job exists yet — and is part of the vocabulary so every surface names the
       same things. Every change is PUSHED to [[watch!]] watchers, so the gateway streams
       a job as SSE and no surface ever polls."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.io File]
            [java.util UUID]))
 
@@ -593,8 +594,6 @@
 
 (defonce ^:private jobs* (atom {}))
 
-(defn- now-ms [] (System/currentTimeMillis))
-
 (defn- new-job-id [] (str "vj_" (str/replace (str (UUID/randomUUID)) "-" "")))
 
 (defn public-job
@@ -629,7 +628,7 @@
    are never dropped."
   [jobs]
   (let [t
-        (long (now-ms))
+        (long (util/now-ms))
 
         alive
         (into {}
@@ -712,29 +711,29 @@
    A TERMINAL phase keeps the percentage it arrived with: `:failed` at 40% is
    where the engine gave up, not zero."
   [job-id update-map]
-  (let [[before after] (swap-vals!
-                         jobs*
-                         (fn [jobs]
-                           (if-let [j (get jobs job-id)]
-                             (if (terminal-phases (:phase j))
-                               jobs
-                               (let [same-phase? (or (nil? (:phase update-map))
-                                                     (= (:phase update-map) (:phase j)))
-                                     floor (if same-phase? (clamp-progress (:progress j)) 0)]
+  (let [[before after]
+        (swap-vals! jobs*
+                    (fn [jobs]
+                      (if-let [j (get jobs job-id)]
+                        (if (terminal-phases (:phase j))
+                          jobs
+                          (let [same-phase? (or (nil? (:phase update-map))
+                                                (= (:phase update-map) (:phase j)))
+                                floor (if same-phase? (clamp-progress (:progress j)) 0)]
 
-                                 (assoc jobs
-                                   job-id (merge j
-                                                 (cond-> (assoc update-map :updated-at (now-ms))
-                                                   (:progress update-map)
-                                                   (update :progress
-                                                           (fn [p]
-                                                             (max (clamp-progress p) floor)))
+                            (assoc jobs
+                              job-id (merge j
+                                            (cond-> (assoc update-map :updated-at (util/now-ms))
+                                              (:progress update-map)
+                                              (update :progress
+                                                      (fn [p]
+                                                        (max (clamp-progress p) floor)))
 
-                                                   (and (not same-phase?)
-                                                        (nil? (:progress update-map))
-                                                        (not (terminal-phases (:phase update-map))))
-                                                   (assoc :progress 0))))))
-                             jobs)))]
+                                              (and (not same-phase?)
+                                                   (nil? (:progress update-map))
+                                                   (not (terminal-phases (:phase update-map))))
+                                              (assoc :progress 0))))))
+                        jobs)))]
     (when (not= (get before job-id) (get after job-id))
       (notify-watchers! job-id (public-job (get after job-id)))))
   nil)
@@ -770,7 +769,7 @@
         (new-job-id)
 
         t
-        (now-ms)
+        (util/now-ms)
 
         job
         (cond-> {:id id

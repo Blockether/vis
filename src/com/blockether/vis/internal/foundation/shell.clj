@@ -76,7 +76,7 @@
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.pty :as pty]
             [com.blockether.vis.internal.foundation.pty-bridge :as pty-bridge]
-            [com.blockether.vis.internal.strutil :as strutil])
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
            (java.lang ProcessHandle)
            (java.util HashMap)
@@ -125,8 +125,6 @@
    in memory; we force a break at this width instead."
   16000)
 
-
-(defn- now-ms ^long [] (System/currentTimeMillis))
 
 ;; Small helpers
 
@@ -666,12 +664,10 @@
                  (try (.destroy d) (catch Throwable _ nil)))
                (descendants))
          (destroy false)
-         (let [deadline (+ (System/currentTimeMillis) 2000)]
+         (let [deadline (+ (util/now-ms) 2000)]
            (loop []
 
-             (when (and ph (.isAlive ph) (< (System/currentTimeMillis) deadline))
-               (Thread/sleep 50)
-               (recur))))
+             (when (and ph (.isAlive ph) (< (util/now-ms) deadline)) (Thread/sleep 50) (recur))))
          (when (and ph (.isAlive ph))
            (run! (fn [^ProcessHandle d]
                    (try (.destroyForcibly d) (catch Throwable _ nil)))
@@ -823,7 +819,7 @@
            (resolve-dir-for-policy opts env policy)
 
            t0
-           (now-ms)
+           (util/now-ms)
 
            p
            (spawn! (or argv cmd) dir policy)
@@ -872,7 +868,7 @@
              (when finished? (.exitValue p))
 
              t1
-             (now-ms)]
+             (util/now-ms)]
 
          (with-meta (shell-result "run"
                                   ;; TOTAL shape ([[shell-result-base]]). The old "lean" map dropped a
@@ -1292,7 +1288,7 @@
           ;; Stamp the ENDING before publishing the code: `uptime_ms` is read off
           ;; these two atoms, and a reader that saw `exit` already set with no end
           ;; stamp would fall back to the clock and report the age of the READ.
-          (compare-and-set! exited-at nil (now-ms))
+          (compare-and-set! exited-at nil (util/now-ms))
           (reset! exit-atom code)
           (index-fn {:ended-at @exited-at :exit code})
           ;; Avoid contending with a manual stop in the normal case: it sets the
@@ -1457,12 +1453,12 @@
          ;; earlier stage stamped, so a job that ran 3s never reports the ten
          ;; minutes that passed before someone came back to read its logs.
          "uptime_ms" (let [t0
-                           (long (or (:started-at entry) (now-ms)))
+                           (long (or (:started-at entry) (util/now-ms)))
 
                            t1
                            (long (or (some-> (:exited-at entry)
                                              deref)
-                                     (now-ms)))]
+                                     (util/now-ms)))]
 
                        (max 0 (- t1 t0)))
          ;; The clock, in epoch ms: when it started, and when it ended — nil
@@ -1544,7 +1540,7 @@
           (atom nil)
 
           t0
-          (now-ms)
+          (util/now-ms)
 
           ;; One sidecar row per log, so "what did that build print" is answerable a
           ;; turn later with no handle in hand. Written at spawn, and again by the
@@ -1694,7 +1690,7 @@
              :metadata {:command (:script live)
                         :pid (:pid (:proc live))
                         :started-at-ms (:started-at live)
-                        :finished-at-ms (now-ms)
+                        :finished-at-ms (util/now-ms)
                         :duration-ms 0}})
           (if-let [command (some-> command
                                    str
@@ -1773,7 +1769,7 @@
             ;; exit could still be missing the last buffered bytes.
             (shell-log/close! sink)
             (let [code (try ((:wait proc)) (catch Throwable _ nil))]
-              (compare-and-set! exited-at nil (now-ms))
+              (compare-and-set! exited-at nil (util/now-ms))
               (reset! exit-atom code)
               (index-fn {:dir cwd :ended-at @exited-at :exit code})
               (when-not @stopped?
@@ -1795,7 +1791,7 @@
    never a refusal — and `timed_out` is FALSE, because no wait was made and
    `timed_out` only ever means one that was made expired."
   [id entry]
-  (let [t (now-ms)]
+  (let [t (util/now-ms)]
     (extension/success {:result (assoc (bg-core "run" id entry)
                                   "duration_ms" 0
                                   ;; NOTHING was waited for, so nothing expired. `timed_out` means one
@@ -1876,7 +1872,7 @@
         (shell-log/open! session id)
 
         t0
-        (now-ms)
+        (util/now-ms)
 
         ;; The wait is how long the CALLER waits, and the only knob there is.
         wait-secs
@@ -1952,7 +1948,7 @@
                    :stopped? stopped?
                    :index-fn index-fn})
       (do (shell-log/close! sink)
-          (reset! exited-at (now-ms))
+          (reset! exited-at (util/now-ms))
           (reset! exit-atom (get r "exit"))
           (index-fn {:dir cwd :ended-at @exited-at :exit @exit-atom})
           (drop-bg-entry! session id)))
@@ -1970,7 +1966,7 @@
                          ;; A run that reported neither made "what is this shell doing" a
                          ;; second call for a question this result already knew.
                          "log_path" (:path sink)
-                         "uptime_ms" (max 0 (- (long (or @exited-at (now-ms))) (long t0)))
+                         "uptime_ms" (max 0 (- (long (or @exited-at (util/now-ms))) (long t0)))
                          "note" (if timed-out
                                   (str "The WAIT expired, not the process: it is still running as"
                                        " shell '" id
@@ -2058,7 +2054,7 @@
            (shell-log/read-chunk id file {:offset offset :limit limit :lines lines})
 
            t
-           (now-ms)]
+           (util/now-ms)]
 
        (extension/success
          ;; Sharing `bg-core`'s identity keys with every other stage: `exit` None
@@ -2133,7 +2129,7 @@
    inside of."
   [env id {:keys [seconds offset]}]
   (let [t0
-        (now-ms)
+        (util/now-ms)
 
         secs
         (clamp-timeout-secs seconds "seconds")
@@ -2154,21 +2150,22 @@
         finish
         (fn [res nxt]
           (let [snap ((:snapshot acc))]
-            (extension/success
-              {:result (assoc res
-                         "stage" "wait"
-                         "offset" start
-                         "next_offset" nxt
-                         "out" (:text snap)
-                         "out_omitted_chars" (long (or (:omitted snap) 0))
-                         ;; The WAIT expired, not the process: a still-running child means
-                         ;; the deadline ended this call and the shell keeps its id.
-                         "timed_out" (= "running" (get res "status"))
-                         "timeout_secs" secs
-                         "duration_ms" (- (now-ms) t0))
-               :op :_shell-wait
-               :metadata
-               {:id id :started-at-ms t0 :finished-at-ms (now-ms) :duration-ms (- (now-ms) t0)}})))]
+            (extension/success {:result (assoc res
+                                          "stage" "wait"
+                                          "offset" start
+                                          "next_offset" nxt
+                                          "out" (:text snap)
+                                          "out_omitted_chars" (long (or (:omitted snap) 0))
+                                          ;; The WAIT expired, not the process: a still-running child means
+                                          ;; the deadline ended this call and the shell keeps its id.
+                                          "timed_out" (= "running" (get res "status"))
+                                          "timeout_secs" secs
+                                          "duration_ms" (- (util/now-ms) t0))
+                                :op :_shell-wait
+                                :metadata {:id id
+                                           :started-at-ms t0
+                                           :finished-at-ms (util/now-ms)
+                                           :duration-ms (- (util/now-ms) t0)}})))]
 
     (loop [off
            start
@@ -2206,7 +2203,7 @@
         ;; speed, instead of at this wait's own deadline.
         (rt/guest-safepoint!)
         ((:append! acc) text)
-        (cond (>= (now-ms) deadline) (finish res nxt)
+        (cond (>= (util/now-ms) deadline) (finish res nxt)
               (not (get res "is_eof")) (recur nxt 0 0 seen)
               (= "running" (get res "status")) (do (Thread/sleep (long (wait-idle-poll-ms idle)))
                                                    (recur nxt (inc idle) 0 seen))
@@ -2292,7 +2289,7 @@
          (throw (ex-info (str "Background shell '" id "' has no writable stdin.")
                          {:type ::no-stdin :id id})))
        (let [payload (str text (when enter? "\n"))
-             t (now-ms)]
+             t (util/now-ms)]
 
          (send-fn (.getBytes payload java.nio.charset.StandardCharsets/UTF_8))
          (extension/success {:result (assoc (bg-core "send" id entry) "keys" (keys-label payload))
@@ -2341,7 +2338,7 @@
         (str id)
 
         t
-        (now-ms)
+        (util/now-ms)
 
         ;; Make a native stop linearizable against native starts of the same id.
         ;; The stop callback re-enters this monitor (JVM monitors are reentrant).
@@ -2364,7 +2361,7 @@
                         ;; registered symbol op carrying its own observation/mutation tag.
                         :op :_shell-stop
                         :metadata
-                        {:id id :started-at-ms t :finished-at-ms (now-ms) :duration-ms 0}})))
+                        {:id id :started-at-ms t :finished-at-ms (util/now-ms) :duration-ms 0}})))
 
 (defn shell-dispatch
   "INTERNAL shell lifecycle grammar, kept for the Python-extension entry points
@@ -2678,7 +2675,7 @@
           (instance? InterruptedException err)
 
           t
-          (now-ms)]
+          (util/now-ms)]
 
       {:result (extension/failure
                  {:result nil
@@ -2934,7 +2931,7 @@
   ([s] (fence s nil))
   ([s lang]
    (when-let [s (present-str (normalize-terminal-output s))]
-     (strutil/fenced s lang))))
+     (util/fenced s lang))))
 
 (defn- shell-section
   "One REPL-style labeled shell body section."

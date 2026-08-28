@@ -56,6 +56,7 @@
             [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.internal.security-policy :as security-policy]
             [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.nio.file Files]
@@ -1506,11 +1507,11 @@
    `helper.py` at CALL time, so entry-only identity let a module edited after the
    load execute in the trusted context with no `/reload` behind it."
   [^File root]
-  (extension/sha256-hex (str/join "\n"
-                                  (keep (fn [[^String rel ^File f]]
-                                          (when (str/ends-with? rel ".py")
-                                            (str rel " " (extension/sha256-hex (slurp f)))))
-                                        (import-root-files root)))))
+  (util/sha256-hex (str/join "\n"
+                             (keep (fn [[^String rel ^File f]]
+                                     (when (str/ends-with? rel ".py")
+                                       (str rel " " (util/sha256-hex (slurp f)))))
+                                   (import-root-files root)))))
 
 (defn- delete-tree!
   [^File dir]
@@ -1586,7 +1587,7 @@
          (slurp (io/file snap (.getName f)))
 
          sha
-         (extension/sha256-hex source)
+         (util/sha256-hex source)
 
          ctx
          (build-context (.getName f))]
@@ -1740,7 +1741,7 @@
 
          fp
          (mapv (fn [^File f]
-                 [(.getCanonicalPath f) (extension/sha256-hex (slurp f))
+                 [(.getCanonicalPath f) (util/sha256-hex (slurp f))
                   (per-root :code-sha (import-root f) code-sha)])
                files)]
 

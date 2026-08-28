@@ -2,10 +2,10 @@
   "Pure bounded reducer from immutable lifecycle events to channel-neutral Activity.
 
    Wrapper-entry sequence owns row placement and terminal events update rows in place."
-  (:require [clojure.string :as str]
-            [com.blockether.vis.internal.activity.event :as event]
+  (:require [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.activity.presenter :as presenter]
-            [com.blockether.vis.internal.gateway.wire :as wire]))
+            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.util :as util]))
 
 (def max-rows 128)
 (def max-receipt-bytes (* 64 1024))
@@ -409,14 +409,12 @@
 
 (defn- closed? [allowed value] (and (map? value) (every? allowed (keys value))))
 
-(defn- non-blank-string? [value] (and (string? value) (not (str/blank? value))))
-
 (defn- resource?
   [value]
   (and (closed? #{:type :id} value)
        (= #{:type :id} (set (keys value)))
-       (non-blank-string? (:type value))
-       (non-blank-string? (:id value))))
+       (util/non-blank-string? (:type value))
+       (util/non-blank-string? (:id value))))
 
 (defn- diff-line?
   [value]
@@ -450,9 +448,9 @@
   (and (<= (long depth) 2)
        (closed? (into row-required-keys row-optional-keys) value)
        (every? #(contains? value %) row-required-keys)
-       (non-blank-string? (:id value))
+       (util/non-blank-string? (:id value))
        (non-negative-integer? (:sequence value))
-       (non-blank-string? (:operation value))
+       (util/non-blank-string? (:operation value))
        (contains? presentation-presenters (:presenter value))
        (contains? presentation-signals (:signal value))
        (contains? presentation-states (:state value))

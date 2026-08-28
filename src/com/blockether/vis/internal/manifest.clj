@@ -28,6 +28,7 @@
             [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
 (def manifest-resource "META-INF/vis/manifest.edn")
@@ -38,8 +39,7 @@
 
 (defn- resource-path?
   [x]
-  (and (string? x)
-       (not (str/blank? x))
+  (and (util/non-blank-string? x)
        (not (str/starts-with? x "/"))
        (not (str/ends-with? x "/"))
        (not (str/includes? x "\\"))

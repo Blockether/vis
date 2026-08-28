@@ -4,7 +4,8 @@
    Keep this namespace pure data: no Lanterna, Swing, browser, or terminal
    backend imports. Channels adapt these tokens to their own render types."
   (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util]))
 
 (def default-theme-id
   "The built-in theme id used when config has no explicit theme."
@@ -17,9 +18,7 @@
   [x]
   (and (vector? x) (= 3 (count x)) (every? byte? x)))
 
-(defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
-
-(defn- theme-key? [x] (or (keyword? x) (non-blank-string? x)))
+(defn- theme-key? [x] (or (keyword? x) (util/non-blank-string? x)))
 
 (defn- theme-setting-value?
   [x]
@@ -34,9 +33,9 @@
 
 (s/def ::rgb rgb?)
 
-(s/def ::name non-blank-string?)
+(s/def ::name util/non-blank-string?)
 
-(s/def ::display-name non-blank-string?)
+(s/def ::display-name util/non-blank-string?)
 
 (s/def ::mode #{:light :dark})
 

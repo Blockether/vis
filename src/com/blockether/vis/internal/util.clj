@@ -1,7 +1,76 @@
-(ns com.blockether.vis.internal.strutil
-  "Shared tiny string helpers. A dependency-free leaf so any namespace can use it
-   without risking a cycle."
-  (:require [clojure.string :as str]))
+(ns com.blockether.vis.internal.util
+  "The engine's one shared leaf: the primitives every namespace kept re-rolling —
+   a millisecond clock, the two blank-string idioms, a trimmed environment read,
+   UTF-8 bytes, SHA-256 and the hex fold.
+
+   It requires NOTHING from the rest of vis and never will. That is the whole
+   contract: a leaf can be required from anywhere — specs that load during
+   namespace initialization, the gateway, the sandbox — without a cycle to
+   reason about. Everything here is a pure function of its arguments (or of one
+   process-wide reading), so nothing here may become a top-level value: a `def`
+   that CALLS one of these freezes the BUILDER's answer into the native image
+   (`native-image-env-capture-test` is the gate).
+
+   A name earns a place here when a THIRD namespace needs it. A helper with one
+   caller belongs beside its caller, not in this file."
+  (:require [clojure.string :as str])
+  (:import (java.nio.charset StandardCharsets)
+           (java.security MessageDigest)))
+
+(defn now-ms
+  "Milliseconds since the epoch — the engine's one wall clock."
+  ^long []
+  (System/currentTimeMillis))
+
+(defn non-blank-string?
+  "True when `x` is a string carrying something other than whitespace."
+  [x]
+  (and (string? x) (not (str/blank? x))))
+
+(defn non-blank
+  "`x` trimmed to a string, or nil when it is nil, empty or all whitespace."
+  ^String [x]
+  (let [s (some-> x
+                  str
+                  str/trim)]
+    (when-not (str/blank? s) s)))
+
+(defn env-val
+  "Environment variable `k`, trimmed, or nil when it is unset or blank."
+  ^String [^String k]
+  (non-blank (System/getenv k)))
+
+(defn utf8
+  "`s` as UTF-8 bytes — the one charset every vis wire format names."
+  ^bytes [^String s]
+  (.getBytes s StandardCharsets/UTF_8))
+
+(defn bytes->hex
+  "Lowercase hex of `b`, two characters per byte and no separators."
+  ^String [^bytes b]
+  (let [sb (StringBuilder. (* 2 (alength b)))]
+    (dotimes [i (alength b)]
+      (let [v (bit-and (aget b i) 0xff)]
+        (when (< v 16) (.append sb \0))
+        (.append sb (Integer/toHexString v))))
+    (.toString sb)))
+
+(defn sha256-digest
+  "A fresh SHA-256 `MessageDigest` — for the streaming case, where the content
+   arrives in chunks and `sha256` would need it all in memory at once."
+  ^MessageDigest []
+  (MessageDigest/getInstance "SHA-256"))
+
+(defn sha256 "SHA-256 digest bytes of `b`." ^bytes [^bytes b] (.digest (sha256-digest) b))
+
+(defn sha256-hex
+  "Lowercase-hex SHA-256 of bytes, or of a string's UTF-8 bytes — the ONE
+   content-identity fold in the engine: cache keys, replay dedup, source
+   markers and pairing all read the same digits for the same input."
+  ^String [x]
+  (bytes->hex (sha256 (if (bytes? x) x (utf8 (str x))))))
+
+;; ── Strings ──────────────────────────────────────────────────────────────
 
 (defn truncate
   "Head-clip `s` to at most `n` chars (no ellipsis)."

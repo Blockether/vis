@@ -47,6 +47,7 @@
    lives in `com.blockether.vis.internal.manifest`."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
 ;; Quiet boot
@@ -69,8 +70,6 @@
 ;; user wants them they pass `--debug` and the CLI re-adds the handler.
 (try (tel/remove-handler! :default/console) (catch Throwable _ nil))
 
-(defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
-
 ;; Channel descriptor - spec
 
 ;; Stable identity key for the channel, e.g. :tui, :cli, :api.
@@ -82,13 +81,13 @@
 ;; Two registered channels MUST NOT share the same :channel/cmd.
 ;; There is no "default" channel - invoking `vis-agent` with no command
 ;; prints help. Every channel is an explicit subcommand.
-(s/def :channel/cmd non-blank-string?)
+(s/def :channel/cmd util/non-blank-string?)
 
 ;; One-line description shown in `vis-agent help`.
-(s/def :channel/doc non-blank-string?)
+(s/def :channel/doc util/non-blank-string?)
 
 ;; Optional usage line shown in `vis-agent help` (defaults to "vis-agent channels <cmd>").
-(s/def :channel/usage non-blank-string?)
+(s/def :channel/usage util/non-blank-string?)
 
  ;; When true, the channel takes over the controlling terminal
  ;; (Lanterna, ncurses, anything that writes to /dev/tty directly).
@@ -138,7 +137,7 @@
 
 (s/def :provider/id keyword?)
 
-(s/def :provider/label non-blank-string?)
+(s/def :provider/label util/non-blank-string?)
 
 ;; All four runtime fns are optional individually so a minimal provider
 ;; (e.g. one that reads a static API key from env) doesn't need to
@@ -210,11 +209,11 @@
 
 ;; Command descriptor - spec
 
-(s/def :cmd/name non-blank-string?)
+(s/def :cmd/name util/non-blank-string?)
 
-(s/def :cmd/doc non-blank-string?)
+(s/def :cmd/doc util/non-blank-string?)
 
-(s/def :cmd/usage non-blank-string?)
+(s/def :cmd/usage util/non-blank-string?)
 
 (s/def :cmd/run-fn ifn?)
 
@@ -234,7 +233,7 @@
 
 ;; arg spec: {:name "model" :kind :flag|:positional :type :string|:int|:boolean
 ;;            :required true :doc "..."}
-(s/def :cmd.arg/name non-blank-string?)
+(s/def :cmd.arg/name util/non-blank-string?)
 
 (s/def :cmd.arg/kind #{:flag :positional})
 

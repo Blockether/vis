@@ -35,6 +35,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.net URI]))
@@ -44,11 +45,6 @@
   (io/file (or (System/getProperty "vis.push.home")
                (System/getenv "VIS_HOME")
                (str (System/getProperty "user.home") File/separator ".vis"))))
-
-(defn- env-val
-  [k]
-  (let [v (System/getenv k)]
-    (when-not (str/blank? v) (str/trim v))))
 
 (defn- side-config
   "Optional `~/.vis/relay.edn` — `{:url \"https://push.example.com\"}`."
@@ -108,7 +104,7 @@
         (or (side-config) {})
 
         env
-        (env-val "VIS_PUSH_RELAY_URL")
+        (util/env-val "VIS_PUSH_RELAY_URL")
 
         raw
         (some-> (or env (:url side) DEFAULT-URL)

@@ -10,8 +10,8 @@
    There is deliberately NO Clojure-side directory walk, git-status subprocess,
    ignore matcher or scoring heuristic left in here — reintroducing one means the
    picker and the search tools would rank and see different files."
-  (:require [clojure.string :as str]
-            [com.blockether.vis.internal.format :as fmt]
+  (:require [com.blockether.vis.internal.format :as fmt]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.fff-index :as fff-index])
@@ -81,13 +81,12 @@
 
    A blank `query` yields fff's default frecency/recency ordering."
   ([query] (fuzzy-file-rows query {}))
-  ([query {:keys [now-ms limit] :or {now-ms (System/currentTimeMillis) limit max-results}}]
+  ([query {:keys [now-ms limit] :or {now-ms (util/now-ms) limit max-results}}]
    (fff-index/with-index
      [idx (cwd-lease)]
      (->> (:items (fff/search idx {:query (or query "") :page-size limit}))
           (mapv (fn [{:keys [relative-path git-status size modified]}]
-                  (let [status (when (and (string? git-status)
-                                          (not (str/blank? git-status))
+                  (let [status (when (and (util/non-blank-string? git-status)
                                           (not= "clean" git-status))
                                  git-status)]
                     {:path relative-path

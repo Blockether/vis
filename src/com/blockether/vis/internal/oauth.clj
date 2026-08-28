@@ -26,7 +26,8 @@
    map, owning their own lock; drop them straight into
    `:provider/get-token-fn` / `:provider/refresh-token-fn`."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util]))
 
 (def default-reuse-window-ms
   "A refresh persisted/produced within this window is REUSED instead of
@@ -47,8 +48,7 @@
    are safe to reuse rather than running another (rotating) exchange."
   ([saved-at-ms] (fresh-within? saved-at-ms default-reuse-window-ms))
   ([saved-at-ms window-ms]
-   (and (number? saved-at-ms)
-        (< (- (System/currentTimeMillis) (long saved-at-ms)) (long window-ms)))))
+   (and (number? saved-at-ms) (< (- (util/now-ms) (long saved-at-ms)) (long window-ms)))))
 
 (defn single-flight!
   "Serialize `refresh!` on `lock`. Once the lock is held, call `reuse`
@@ -108,13 +108,13 @@
    cancelled, so the wait aborts, the interrupt flag is RESTORED (`Thread/sleep`
    clears it) and `InterruptedException` propagates for the caller to close over."
   [ch timeout-ms]
-  (let [deadline (+ (System/currentTimeMillis) (long timeout-ms))]
+  (let [deadline (+ (util/now-ms) (long timeout-ms))]
     (loop []
 
       (let [fl (try (try-lock! ch) (catch Throwable _ ::failed))]
         (cond (= ::failed fl) nil
               (some? fl) fl
-              (>= (System/currentTimeMillis) deadline) nil
+              (>= (util/now-ms) deadline) nil
               :else
               (do (try (Thread/sleep 50)
                        (catch InterruptedException e (.interrupt (Thread/currentThread)) (throw e)))

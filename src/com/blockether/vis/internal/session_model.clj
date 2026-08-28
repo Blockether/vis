@@ -20,6 +20,7 @@
    the session-soul id (the gateway's `sid` and the engine env's `:session-id`)."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.persistance :as persistance]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import (java.util.concurrent Executors
                                  ScheduledExecutorService
@@ -97,7 +98,7 @@
     (let [k (str sid)]
       (if (contains? @pending k)
         (pending->val (get @pending k))
-        (let [now (System/currentTimeMillis)
+        (let [now (util/now-ms)
               c (get @display-cache k)
               at (long (or (:at c) 0))
               c (get @display-cache k)]

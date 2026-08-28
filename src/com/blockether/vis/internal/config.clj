@@ -27,12 +27,12 @@
             [com.blockether.vis.internal.credential-command :as cred]
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]
             [taoensso.trove :as trove]
             [taoensso.trove.telemere :as trove-telemere]
             [yamlstar.core :as yamlstar])
   (:import (java.io ByteArrayOutputStream FileInputStream FileOutputStream OutputStream)
-           (java.nio.charset StandardCharsets)
            (java.nio.channels FileChannel FileLock)
            (java.nio.file CopyOption Files OpenOption Path StandardCopyOption StandardOpenOption)
            (java.nio.file.attribute FileAttribute PosixFilePermissions)))
@@ -81,9 +81,9 @@
   ;; rendering from `h` to `l`, so everything between paints as ONE frame.
   ;; Terminals without 2026 support ignore both marks (unknown private
   ;; modes are no-ops), so emitting them unconditionally is safe.
-  (.getBytes "\u001b[?2026h" "UTF-8"))
+  (util/utf8 "\u001b[?2026h"))
 
-(def ^:private ^"[B" sync-update-end (.getBytes "\u001b[?2026l" "UTF-8"))
+(def ^:private ^"[B" sync-update-end (util/utf8 "\u001b[?2026l"))
 
 (defn- cursor-report-query?
   "Is this chunk Lanterna's CSI 6n cursor-position query? `reportPosition`
@@ -1478,21 +1478,19 @@
         attr
         (PosixFilePermissions/asFileAttribute (PosixFilePermissions/fromString "rw-------"))]
 
-    (try (try (Files/createFile tmp (into-array FileAttribute [attr]))
-              (catch UnsupportedOperationException _
-                (Files/createFile tmp (make-array FileAttribute 0))))
-         (Files/write tmp
-                      (.getBytes content StandardCharsets/UTF_8)
-                      ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
-         (try
-           (Files/move tmp target (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
+    (try
+      (try (Files/createFile tmp (into-array FileAttribute [attr]))
+           (catch UnsupportedOperationException _
+             (Files/createFile tmp (make-array FileAttribute 0))))
+      (Files/write tmp (util/utf8 content) ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
+      (try (Files/move tmp target (into-array CopyOption [StandardCopyOption/ATOMIC_MOVE]))
            (catch Throwable _
              (Files/move tmp target (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
-         (catch Throwable _
-           (spit path content)
-           (try (Files/setPosixFilePermissions target (PosixFilePermissions/fromString "rw-------"))
-                (catch Throwable _ nil)))
-         (finally (try (Files/deleteIfExists tmp) (catch Throwable _ nil))))))
+      (catch Throwable _
+        (spit path content)
+        (try (Files/setPosixFilePermissions target (PosixFilePermissions/fromString "rw-------"))
+             (catch Throwable _ nil)))
+      (finally (try (Files/deleteIfExists tmp) (catch Throwable _ nil))))))
 
 (defn- ->yaml-safe
   "Convert an internal domain map to the string-keyed YAML contract.

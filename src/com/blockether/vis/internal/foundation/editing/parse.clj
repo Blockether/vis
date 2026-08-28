@@ -17,7 +17,8 @@
    native resolver, which selects the right per-platform FFI library at runtime."
   (:require [clojure.string :as str]
             ;; Side-effecting require: selects + loads the platform native lib.
-            [com.blockether.tree-sitter-language-pack])
+            [com.blockether.tree-sitter-language-pack]
+            [com.blockether.vis.internal.util :as util])
   (:import [dev.kreuzberg.treesitterlanguagepack TreeSitterLanguagePack Parser Tree Node Point]
            [java.nio.charset StandardCharsets]
            [java.util Arrays]))
@@ -81,8 +82,6 @@
   (let [lang (detect-language (str path))]
     (when (contains? code-languages lang) lang)))
 
-
-(defn- utf8 ^bytes [^String s] (.getBytes s StandardCharsets/UTF_8))
 
 (defn- byte-slice
   ^String [^bytes bs ^long start ^long end]
@@ -160,7 +159,7 @@
    code-point column on `line`. Parser points always fall on UTF-8 boundaries."
   ^long [^String line ^long byte-col]
   (let [^bytes bs
-        (utf8 line)
+        (util/utf8 line)
 
         end
         (min (max 0 byte-col) (alength bs))
@@ -194,7 +193,7 @@
    and look through a broad recovery wrapper that contains a more specific ERROR."
   [lang ^String source]
   (if-let [^Tree tree (and lang (parse-tree lang source))]
-    (let [src-bytes (utf8 source)
+    (let [src-bytes (util/utf8 source)
           acc (transient [])]
 
       (try
@@ -214,8 +213,9 @@
                              :text (or (when d line-text)
                                        (byte-slice src-bytes (.startByte n) (.endByte n))))
                      d
-                     (assoc :delimiter (:kind d) :error-line (inc (.row sp))))))
-
+                     (assoc :delimiter
+                       (:kind d) :error-line
+                       (inc (.row sp))))))
                (walk [^Node n]
                  (when (or (.isError n) (.isMissing n))
                    (let [^Point sp (.startPosition n)
@@ -230,8 +230,7 @@
                               :kind (.kind n)
                               :missing? (.isMissing n)}]
 
-                     (conj! acc
-                            (if (< (count acc) detail-budget) (described n sp row) row))))
+                     (conj! acc (if (< (count acc) detail-budget) (described n sp row) row))))
                  (dotimes [i (.childCount n)]
                    (when-let [^Node c (.orElse (.child n (int i)) nil)]
                      (try (walk c) (finally (.close c))))))]
@@ -272,7 +271,7 @@
    never mistakes prose for a declaration."
   [lang ^String source]
   (if-let [^Tree tree (and lang (parse-tree lang source))]
-    (let [src-bytes (utf8 source)]
+    (let [src-bytes (util/utf8 source)]
       (try (let [^Node root (.rootNode tree)]
              (try (letfn [(node->data [^Node n children]
                             {:kind (.kind n)

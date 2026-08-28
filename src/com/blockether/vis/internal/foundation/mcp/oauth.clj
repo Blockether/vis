@@ -30,10 +30,11 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
             [com.blockether.vis.internal.oauth :as oauth]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import (com.sun.net.httpserver HttpHandler HttpServer)
            (java.net InetSocketAddress URI URLDecoder URLEncoder)
-           (java.security MessageDigest SecureRandom)
+           (java.security SecureRandom)
            (java.util Base64)))
 
 (def ^:private protocol-version-header "MCP-Protocol-Version")
@@ -48,10 +49,6 @@
   (-> (Base64/getUrlEncoder)
       .withoutPadding
       (.encodeToString bs)))
-
-(defn- sha256
-  ^bytes [^String s]
-  (.digest (MessageDigest/getInstance "SHA-256") (.getBytes s "UTF-8")))
 
 (defn- rand-bytes
   ^bytes [n]
@@ -222,7 +219,7 @@
                        "</body>")
 
                   bs
-                  (.getBytes html "UTF-8")]
+                  (util/utf8 html)]
 
               (.set (.getResponseHeaders ex) "Content-Type" "text/html; charset=utf-8")
               (.sendResponseHeaders ex 200 (alength bs))
@@ -268,14 +265,14 @@
   "Skew the reported expiry by 60s so we refresh proactively, never at the
    exact instant of the 401."
   [{:keys [expires-at-ms]}]
-  (or (nil? expires-at-ms) (< (- (long expires-at-ms) 60000) (System/currentTimeMillis))))
+  (or (nil? expires-at-ms) (< (- (long expires-at-ms) 60000) (util/now-ms))))
 
 (defn- ->tokens
   "Normalize a token endpoint response into `{:token :refresh-token :expires-at-ms
    :saved-at-ms :client-id}`."
   [body extra]
   (let [now
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         expires-in
         (some-> (get body "expires_in")
@@ -324,7 +321,7 @@
      :as-url as-url
      :asmeta asmeta
      :verifier verifier
-     :challenge (b64url (sha256 verifier))
+     :challenge (b64url (util/sha256 (util/utf8 verifier)))
      :state (b64url (rand-bytes 16))
      :resource (get rmeta "resource")
      :scope (or (:scope auth-hint)
@@ -509,7 +506,7 @@
    gateway nobody is authorizing against keeps no timers and no open ports."
   []
   (doseq [[id {:keys [expires-at-ms]}] @flows]
-    (when (< (long expires-at-ms) (System/currentTimeMillis)) (drop-flow! id)))
+    (when (< (long expires-at-ms) (util/now-ms)) (drop-flow! id)))
   nil)
 
 (defn- flow-view
@@ -586,7 +583,7 @@
          :url url
          :redirect-uri redirect-uri
          :loopback server
-         :expires-at-ms (+ (System/currentTimeMillis) (long flow-ttl-ms))
+         :expires-at-ms (+ (util/now-ms) (long flow-ttl-ms))
          :state (atom {"status" "pending"})}]
 
     (swap! flows assoc (:id flow) flow)

@@ -9,6 +9,7 @@
 
    A LEAF — depends on nothing else in the engine, so the loop and its tests read
    these settings from one place instead of carrying them in the loop namespace."
+  (:require [com.blockether.vis.internal.util :as util])
   (:import [org.graalvm.polyglot Context]))
 
 (def DEFAULT_EVAL_TIMEOUT_MS
@@ -407,8 +408,7 @@
 
         leave!
         (fn []
-          (reset! deadline (when-not (pos? (long (swap! depth dec)))
-                             (+ (System/currentTimeMillis) timeout-ms))))
+          (reset! deadline (when-not (pos? (long (swap! depth dec))) (+ (util/now-ms) timeout-ms))))
 
         park
         (fn [thunk]
@@ -461,7 +461,7 @@
           (deref deadline)
 
           remaining
-          (long (if at (- (long at) (System/currentTimeMillis)) LIFTED_WALL_POLL_MS))]
+          (long (if at (- (long at) (util/now-ms)) LIFTED_WALL_POLL_MS))]
 
       (if (pos? remaining)
         (let [r (deref fut remaining timeout-value)]

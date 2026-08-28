@@ -19,7 +19,8 @@
    (built-in) and source code is shown verbatim. The namespace is free of
    state - safe to require from any layer."
   (:require [clojure.pprint :as pprint]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.util Locale]))
 
 (def ^:private turn-key-re #"turn_(\d+)")
@@ -239,7 +240,7 @@
   [p]
   (cond (keyword? p) (name p)
         (and (string? p) (str/starts-with? p ":")) (subs p 1)
-        (and (string? p) (not (str/blank? p))) p
+        (util/non-blank-string? p) p
         :else nil))
 
 (defn display-model-name
@@ -250,7 +251,7 @@
    The wire/config id keeps its slashes — never feed this back to a
    router or provider. nil-safe; non-strings and blanks return nil."
   [m]
-  (when (and (string? m) (not (str/blank? m))) (str/replace m "/" "-")))
+  (when (util/non-blank-string? m) (str/replace m "/" "-")))
 
 (defn- extract-model
   "Pull the model identity off a result map and render it as

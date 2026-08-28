@@ -45,19 +45,13 @@
    ENTRY COUNT alone would not be a bound on memory at all."
   (:require [clojure.string :as str]
             [com.blockether.imaging :as im]
-            [com.blockether.vis.core :as vis])
-  (:import [java.security MessageDigest]
-           [java.util Base64]))
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.util :as util])
+  (:import [java.util Base64]))
 
 (defn- decode64 ^bytes [^String encoded] (.decode (Base64/getDecoder) encoded))
 
 (defn- encode64 ^String [^bytes raw] (.encodeToString (Base64/getEncoder) raw))
-
-(defn- sha256
-  "Content identity of `raw` as hex — the cache key a document's bytes ARE."
-  ^String [^bytes raw]
-  (let [digest (.digest (MessageDigest/getInstance "SHA-256") raw)]
-    (str/join (map #(format "%02x" %) digest))))
 
 ;; Conversion cache — LRU by content hash
 
@@ -219,7 +213,7 @@
         (long (or max-assets 0))]
 
     (cached
-      [(sha256 raw) (str format) (str file-name) (boolean with-assets) max-assets
+      [(util/sha256-hex raw) (str format) (str file-name) (boolean with-assets) max-assets
        (boolean with-blocks)]
       #(convert raw format file-name (boolean with-assets) max-assets (boolean with-blocks)))))
 

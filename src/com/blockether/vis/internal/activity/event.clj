@@ -6,7 +6,8 @@
    must never change the value or exception the Python caller observes."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.activity.presenter :as presenter]
-            [com.blockether.vis.internal.gateway.wire :as wire])
+            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.nio.charset StandardCharsets]
            [java.util UUID]
            [java.util.concurrent.atomic AtomicLong]))
@@ -249,7 +250,7 @@
    :operation operation
    :presenter presenter
    :phase phase
-   :observed-at (System/currentTimeMillis)})
+   :observed-at (util/now-ms)})
 
 (defn- map-value [m k] (when (map? m) (or (get m k) (get m (name k)))))
 
@@ -323,7 +324,7 @@
           source
           (map-value metadata :diff)]
 
-      (when (and (string? source) (not (str/blank? source)))
+      (when (util/non-blank-string? source)
         (let [{:keys [lines omitted-lines]}
               (bounded-diff-lines source)
 
@@ -464,7 +465,7 @@
    {:keys [operation presenter started-at-ms outcome result error classification group-token]
     :as details}]
   (let [duration
-        (max 0 (- (System/currentTimeMillis) (long started-at-ms)))
+        (max 0 (- (util/now-ms) (long started-at-ms)))
 
         error*
         (redact error)

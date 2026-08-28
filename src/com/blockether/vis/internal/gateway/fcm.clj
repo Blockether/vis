@@ -11,6 +11,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.keychain :as keychain]
             [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File]
            [java.net URLEncoder]
@@ -35,11 +36,6 @@
 
 (defn- fcm-dir ^File [] (io/file (vis-home) "fcm"))
 
-(defn- env-val
-  [k]
-  (let [v (System/getenv k)]
-    (when-not (str/blank? v) (str/trim v))))
-
 (defn- discovered-file
   "First `*.json` under `~/.vis/fcm/` — where a downloaded service-account key
    naturally lands."
@@ -54,8 +50,8 @@
   "The parsed service-account JSON, or nil. NEVER expose the result."
   []
   (let [raw (or (keychain/secret "vis-fcm" "service_account")
-                (env-val "VIS_FCM_SERVICE_ACCOUNT")
-                (some-> (env-val "VIS_FCM_SERVICE_ACCOUNT_PATH")
+                (util/env-val "VIS_FCM_SERVICE_ACCOUNT")
+                (some-> (util/env-val "VIS_FCM_SERVICE_ACCOUNT_PATH")
                         io/file
                         (as-> f (when (.isFile ^File f) (slurp f))))
                 (some-> (discovered-file)
@@ -65,8 +61,8 @@
 (defn- source
   []
   (cond (keychain/secret "vis-fcm" "service_account") "keychain"
-        (env-val "VIS_FCM_SERVICE_ACCOUNT") "env"
-        (env-val "VIS_FCM_SERVICE_ACCOUNT_PATH") "file"
+        (util/env-val "VIS_FCM_SERVICE_ACCOUNT") "env"
+        (util/env-val "VIS_FCM_SERVICE_ACCOUNT_PATH") "file"
         (discovered-file) "file"
         :else nil))
 
@@ -78,7 +74,7 @@
         (service-account)
 
         project-id
-        (or (env-val "VIS_FCM_PROJECT_ID") (get sa "project_id"))
+        (or (util/env-val "VIS_FCM_PROJECT_ID") (get sa "project_id"))
 
         missing
         (cond-> []
@@ -106,8 +102,6 @@
 
 (defn- b64url ^String [^bytes b] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b))
 
-(defn- utf8 ^bytes [^String s] (.getBytes s StandardCharsets/UTF_8))
-
 (defn- private-key
   "Parse the PKCS#8 PEM Google embeds in the service-account JSON."
   [^String pem]
@@ -120,17 +114,17 @@
 (defn- sign-jwt
   [sa]
   (let [now
-        (quot (System/currentTimeMillis) 1000)
+        (quot (util/now-ms) 1000)
 
         header
-        (b64url (utf8 (wire/json-str {:alg "RS256" :typ "JWT"})))
+        (b64url (util/utf8 (wire/json-str {:alg "RS256" :typ "JWT"})))
 
         claims
-        (b64url (utf8 (wire/json-str {:iss (get sa "client_email")
-                                      :scope SCOPE
-                                      :aud (or (get sa "token_uri") TOKEN_URI)
-                                      :iat now
-                                      :exp (+ now (long JWT_TTL_SECONDS))})))
+        (b64url (util/utf8 (wire/json-str {:iss (get sa "client_email")
+                                           :scope SCOPE
+                                           :aud (or (get sa "token_uri") TOKEN_URI)
+                                           :iat now
+                                           :exp (+ now (long JWT_TTL_SECONDS))})))
 
         signing-input
         (str header "." claims)
@@ -138,7 +132,7 @@
         sig
         (doto (Signature/getInstance "SHA256withRSA")
           (.initSign (private-key (get sa "private_key")))
-          (.update (utf8 signing-input)))]
+          (.update (util/utf8 signing-input)))]
 
     (str signing-input "." (b64url (.sign sig)))))
 
@@ -180,13 +174,11 @@
   "Cached OAuth access token; Google's are valid an hour, refreshed at 50 min."
   [sa]
   (let [{:keys [token expires-at client-email]} @token-cache]
-    (if (and token
-             (= client-email (get sa "client_email"))
-             (< (System/currentTimeMillis) (long expires-at)))
+    (if (and token (= client-email (get sa "client_email")) (< (util/now-ms) (long expires-at)))
       token
       (when-let [t (fetch-access-token sa)]
         (reset! token-cache {:token t
-                             :expires-at (+ (System/currentTimeMillis) (* 50 60 1000))
+                             :expires-at (+ (util/now-ms) (* 50 60 1000))
                              :client-email (get sa "client_email")})
         t))))
 

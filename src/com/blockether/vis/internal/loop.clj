@@ -9,7 +9,7 @@
     [com.blockether.svar.core :as svar]
     [com.blockether.svar.internal.llm :as svar-llm]
     [com.blockether.svar.internal.router :as svar-router]
-    [com.blockether.svar.internal.util :as util]
+    [com.blockether.svar.internal.util :as svar-util]
     [com.blockether.vis.internal.activity :as activity]
     [com.blockether.vis.internal.activity.event :as activity-event]
     [com.blockether.vis.internal.attachments :as attachments]
@@ -47,7 +47,7 @@
     [com.blockether.vis.internal.resources :as resources]
     [com.blockether.vis.internal.shell-log :as shell-log]
     [com.blockether.vis.internal.slash :as slash]
-    [com.blockether.vis.internal.strutil :as strutil :refer [truncate]]
+    [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.titling :as titling]
     [com.blockether.vis.internal.toggles :as toggles]
     [com.blockether.vis.internal.vision-describe :as vision-describe]
@@ -1103,7 +1103,7 @@
         ;; instead of dying at it, and a live view LIFTS it entirely for as long
         ;; as the human is watching (see rt/parkable-wall).
         {eval-deadline :deadline eval-park :park eval-hold :hold}
-        (rt/parkable-wall (System/currentTimeMillis) timeout-ms)
+        (rt/parkable-wall (util/now-ms) timeout-ms)
 
         ;; The views already open when this block started. Anything the block
         ;; opens on top of them is the block's own, and dies with it.
@@ -1332,7 +1332,7 @@
           (run!))
 
         finished-time
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         execution-time
         (- (long finished-time) (long start-time))]
@@ -1376,7 +1376,7 @@
     (when-let [snap (ctx-loop/session-snapshot environment)]
       ;; the agent gets real dict ergonomics (.get / comprehensions / [k]).
       (env/bind-ctx! python-context (ctx-renderer/project-ctx snap)))
-    (let [start-time (System/currentTimeMillis)
+    (let [start-time (util/now-ms)
           exec (try
                  ;; The Python sandbox surfaces its own syntax/empty-block
                  ;; errors via env/run-python-block.
@@ -1397,8 +1397,8 @@
                                              ex-data
                                              :type)}))
                     :execution-started-at-ms start-time
-                    :execution-finished-at-ms (System/currentTimeMillis)
-                    :duration-ms (- (System/currentTimeMillis) start-time)
+                    :execution-finished-at-ms (util/now-ms)
+                    :duration-ms (- (util/now-ms) start-time)
                     :timeout? false}))]
 
       ;; Helper definitions outlive the PROCESS. The sandbox dies with the
@@ -1627,7 +1627,7 @@
                  (assoc :request-id (:request_id ed))
 
                  (and body (not (str/blank? body)))
-                 (assoc :body-snippet (truncate body 1000))))}
+                 (assoc :body-snippet (util/truncate body 1000))))}
       (cond
         hopeless-overflow?
         "Hopeless preflight context overflow - failing turn (feeding it back can never reach the model and only grows the input; VIS-9)"
@@ -1658,7 +1658,7 @@
 
 ;; Parsed form helpers
 
-;; Replay-dedup keys hash via `extension/sha256-hex` — the ONE
+;; Replay-dedup keys hash via `util/sha256-hex` — the ONE
 ;; string-digest helper.
 
 (defn- ask-code-block-observation
@@ -1753,7 +1753,7 @@
           (str/join "\n\n"))
 
      code-hash
-     (when-not (str/blank? normalized-code) (extension/sha256-hex normalized-code))
+     (when-not (str/blank? normalized-code) (util/sha256-hex normalized-code))
 
      any-entry-error?
      (boolean (some :vis/preflight-error raw-entries))
@@ -1948,7 +1948,7 @@
                 (when (map? (:emit hit)) (:emit hit))
 
                 hook-task?
-                (and (string? title) (not (str/blank? title)))]
+                (util/non-blank-string? title)]
 
             (cond
               ;; Pure-emit hook: no hook-task body, only :emit payload.
@@ -2494,7 +2494,7 @@
    trace."
   [turn-prefix iteration form-idx form-count result rendering-kind]
   (let [finished
-        (long (or (:execution-finished-at-ms result) (System/currentTimeMillis)))
+        (long (or (:execution-finished-at-ms result) (util/now-ms)))
 
         duration
         (long (or (:duration-ms result) 0))
@@ -2781,10 +2781,7 @@
         signature
         (:thinking-signature block)]
 
-    (and (string? thinking)
-         (not (str/blank? thinking))
-         (string? signature)
-         (= thinking signature))))
+    (and (util/non-blank-string? thinking) (string? signature) (= thinking signature))))
 
 (defn- assistant-message-compatible-with-replay-target?
   [target assistant-message]
@@ -4853,7 +4850,7 @@
                                       ;; every gateway consumer agree on one clean string.
                                       thinking (some-> reasoning
                                                        str
-                                                       strutil/strip-elision-marker)
+                                                       util/strip-elision-marker)
                                       delta (cumulative-delta! reasoning-prev-volatile thinking)]
 
                                   (on-chunk {:phase :reasoning
@@ -4884,7 +4881,7 @@
           (not-empty (merge (copilot-llm-headers resolved-model copilot-initiator) llm-headers))
           provider-network (provider-network-policy (:router environment) resolved-model)
           provider-watchdog-timeouts (provider-watchdog-timeouts provider-network)
-          provider-started-at-ms (System/currentTimeMillis)
+          provider-started-at-ms (util/now-ms)
           _ (when on-chunk
               (on-chunk (provider-call-chunk iteration-position
                                              resolved-model
@@ -5033,7 +5030,7 @@
                                                                  (:event/type %))
                                                           (:routed/trace ask-result-raw)))}
                                code-observation))
-          parse-started-at-ms (System/currentTimeMillis)
+          parse-started-at-ms (util/now-ms)
           _ (when on-chunk
               (on-chunk {:phase :response-parse
                          :status :start
@@ -5149,7 +5146,7 @@
                            :scope (form-scope idx)
                            :code expr
                            :render-segments render-segments
-                           :started-at-ms (System/currentTimeMillis)}))
+                           :started-at-ms (util/now-ms)}))
               ;; Stamp form-idx BEFORE eval so the
               ;; executing block's position is recorded
               ;; on the turn-state atom.
@@ -6063,7 +6060,7 @@
   (boolean
     (when pid
       (let [now
-            (System/currentTimeMillis)
+            (util/now-ms)
 
             after
             (swap! provider-auth-cooldown (fn [m]
@@ -6101,7 +6098,7 @@
    window and keeps the escalation honest."
   []
   (let [now
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         live
         (swap! provider-auth-cooldown (fn [m]
@@ -6181,7 +6178,7 @@
    until restart, even once the on-file token was healthy again."
   [pid]
   (let [now
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         cutoff
         (- now (long AUTH_REFRESH_WINDOW_MS))
@@ -6211,7 +6208,7 @@
    grep."
   []
   (let [cutoff
-        (- (System/currentTimeMillis) (long AUTH_REFRESH_WINDOW_MS))
+        (- (util/now-ms) (long AUTH_REFRESH_WINDOW_MS))
 
         in-window
         (into {}
@@ -6283,8 +6280,7 @@
   (let [pid (:provider resolved-model)]
     (and (auth-error-shaped? e)
          (boolean (when-let [{:keys [at]} (get @auth-last-refreshed pid)]
-                    (< (- (System/currentTimeMillis) (long at))
-                       (long AUTH_PROPAGATION_WINDOW_MS)))))))
+                    (< (- (util/now-ms) (long at)) (long AUTH_PROPAGATION_WINDOW_MS)))))))
 
 (defn- note-provider-request-ok!
   "Clear the just-refreshed propagation marker AND any auth cooldown for the provider
@@ -6560,7 +6556,7 @@
               (do (config/invalidate-credential-command! pid)
                   ;; Mark the attempt like an OAuth refresh so a SECOND 401 takes
                   ;; the propagation backoff instead of re-forking the helper.
-                  (swap! auth-last-refreshed assoc pid {:at (System/currentTimeMillis)})
+                  (swap! auth-last-refreshed assoc pid {:at (util/now-ms)})
                   (tel/log! {:level :warn :id ::credential-command-refreshed :data {:provider pid}}
                             (str "Auth 401 for " pid
                                  " — re-running its credential command; retrying with"
@@ -6601,7 +6597,7 @@
                     ;; Pass exactly what this attempt sent. Older/third-party hooks
                     ;; may still expose only a zero-arity implementation.
                     (try (f rejected) (catch clojure.lang.ArityException _ (f)))
-                    (swap! auth-last-refreshed assoc pid {:at (System/currentTimeMillis)})
+                    (swap! auth-last-refreshed assoc pid {:at (util/now-ms)})
                     (tel/log! {:level :warn :id ::auth-token-refreshed :data {:provider pid}}
                               (str "Auth 401 — force-refreshed OAuth token for "
                                    pid
@@ -9198,7 +9194,7 @@
         "shell"
 
         t0
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         ;; Run the core shell implementation without introducing a compile-time cycle.
         ;; The `shell` toggle gate is applied HERE because a direct var call bypasses
@@ -9241,7 +9237,7 @@
                  {:result nil :error {:message (or (ex-message t) (str t))}})))
 
         t1
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         result-map
         (:result envelope)
@@ -9282,8 +9278,7 @@
                                   " → 'Shell commands'. Then `"
                                   cmd
                                   "` will run.")
-              (some? err) (str "**shell error**\n\n"
-                               (strutil/fenced (or (:message err) (pr-str err))))
+              (some? err) (str "**shell error**\n\n" (util/fenced (or (:message err) (pr-str err))))
               display (bang-card->markdown display)
               :else (str "_ran `" cmd "`_"))
 
@@ -9902,7 +9897,7 @@
    {:keys [session-turn-id start-time iteration-count status status-id trace locals answer
            confidence reasoning utilization total-tokens-atom total-cost-atom]}]
   (let [duration-ms
-        (util/elapsed-since start-time)
+        (svar-util/elapsed-since start-time)
 
         eval-evidence
         (turn-eval-evidence reasoning-effort trace)
@@ -10323,7 +10318,7 @@
       (let [db-info (persistance/db-create-connection! db)
             state-atom (atom {:custom-bindings {} :environment nil :session-id nil})
             environment-atom (atom nil)
-            environment-id (str (util/uuid))
+            environment-id (str (svar-util/uuid))
             ;; SINGLE turn-state atom holds all per-turn cursor fields
             ;; (current-{turn-position,iteration,form-idx,iteration-id,
             ;;  session-turn-id,user-request}-atom). All six fields live
@@ -11132,7 +11127,7 @@
   {:environment env
    :lock (java.util.concurrent.locks.ReentrantLock.)
    :condemned (java.util.concurrent.atomic.AtomicBoolean. false)
-   :last-active (java.util.concurrent.atomic.AtomicLong. (System/currentTimeMillis))
+   :last-active (java.util.concurrent.atomic.AtomicLong. (util/now-ms))
    :turns (java.util.concurrent.atomic.AtomicLong. 0)
    ;; The `/reload` epoch this env was built under. `send!` recycles the entry
    ;; when a later `/reload` has bumped `policy-reload-epoch` past this stamp.
@@ -11143,7 +11138,7 @@
    Returns `entry` for threading."
   [entry]
   (when-let [^java.util.concurrent.atomic.AtomicLong la (:last-active entry)]
-    (.set la (System/currentTimeMillis)))
+    (.set la (util/now-ms)))
   entry)
 
 (defn- bump-turns!
@@ -11174,7 +11169,7 @@
                           (:last-active cur)
 
                           idle
-                          (if la (- (System/currentTimeMillis) (.get la)) 0)]
+                          (if la (- (util/now-ms) (.get la)) 0)]
 
                       (when (and cur (>= (long idle) (long min-idle-ms)))
                         (try (dispose-environment! (:environment cur)) (catch Throwable _ nil))
@@ -11192,7 +11187,7 @@
    (tests / manual sweeps)."
   []
   (let [now
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         age
         (fn [entry]
@@ -11546,7 +11541,7 @@
         k
         (assoc old
           :environment fresh-env
-          :last-active (java.util.concurrent.atomic.AtomicLong. (System/currentTimeMillis))
+          :last-active (java.util.concurrent.atomic.AtomicLong. (util/now-ms))
           :turns (java.util.concurrent.atomic.AtomicLong. 0)
           ;; Restamp to the current epoch: the fresh env carries the latest
           ;; security-policy snapshot, so it is no longer reload-stale.

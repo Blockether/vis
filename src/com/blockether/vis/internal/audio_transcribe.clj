@@ -40,11 +40,11 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.voice :as voice]
             [taoensso.telemere :as tel])
   (:import [java.io File FileOutputStream]
            [java.nio.charset StandardCharsets]
-           [java.security MessageDigest]
            [java.util Base64]
            [java.util.concurrent Callable ExecutorService Executors ThreadFactory]))
 
@@ -126,19 +126,11 @@
   []
   (reset! work* {}))
 
-(defn- now-ms ^long [] (System/currentTimeMillis))
-
 (defn- content-digest
   "Registry key: the payload's own bytes plus the container they ride in."
   [{:keys [base64 media-type path]}]
-  (let [md
-        (MessageDigest/getInstance "SHA-256")
-
-        digest
-        (.digest md
-                 (.getBytes (str media-type "|" (or (not-empty (str base64)) (str path)))
-                            StandardCharsets/UTF_8))]
-
+  (let [digest (util/sha256 (util/utf8
+                              (str media-type "|" (or (not-empty (str base64)) (str path)))))]
     (.encodeToString (Base64/getUrlEncoder) digest)))
 
 (defn- ascii-at?
@@ -223,7 +215,7 @@
    SILENT rule: before this, an absent engine, a refused container and a two-hour
    clip were all the same nothing in the log."
   [attachment outcome ^long started-at]
-  (let [ms (- (now-ms) started-at)]
+  (let [ms (- (util/now-ms) started-at)]
     (if-let [text (:transcription outcome)]
       (tel/log! {:level :info
                  :id ::transcribed
@@ -242,7 +234,7 @@
   "Run ONE recording through the engine and answer its outcome. Total: an unreadable
    payload, a throw and a recording with no speech in it are all outcomes."
   [attachment]
-  (let [started (now-ms)]
+  (let [started (util/now-ms)]
     (if-let [{:keys [^File file is-temp]} (try (source-file attachment)
                                                (catch Throwable t
                                                  (tel/log! {:level :warn
@@ -299,7 +291,7 @@
                     (fn [registry]
                       (if (get registry k)
                         registry
-                        (assoc (prune registry) k {:started-at (now-ms) :result (promise)}))))
+                        (assoc (prune registry) k {:started-at (util/now-ms) :result (promise)}))))
 
         entry
         (get after k)]
@@ -370,7 +362,7 @@
       ;; A refusal this side of the engine is exactly the silence turn 35 could not
       ;; explain: no engine, a toggle somebody turned off, a model still downloading.
       ;; It is logged HERE, once per recording per turn, and nowhere else.
-      (do (when (:status gated) (log-outcome! attachment gated (now-ms))) gated)
+      (do (when (:status gated) (log-outcome! attachment gated (util/now-ms))) gated)
       (let [k (content-digest attachment)
             {:keys [outcome result]} (start! k attachment)]
 

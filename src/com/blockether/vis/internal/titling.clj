@@ -10,7 +10,7 @@
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.runtime-settings :as rt]
-            [com.blockether.vis.internal.strutil :refer [truncate]]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
 (defonce ^:private title-listeners
@@ -203,7 +203,7 @@
                    str/trim)))
 
         clipped
-        (truncate line AUTO_TITLE_MAX_CHARS)]
+        (util/truncate line AUTO_TITLE_MAX_CHARS)]
 
     (when-not (or (str/blank? clipped) (auto-title-placeholder? clipped)) clipped)))
 

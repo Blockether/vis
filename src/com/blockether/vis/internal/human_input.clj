@@ -47,6 +47,7 @@
             [com.blockether.vis.internal.human-input.spec :as hi-spec]
             [com.blockether.vis.internal.human-input.validation :as validation]
             [com.blockether.vis.internal.runtime-settings :as rt]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
@@ -1204,7 +1205,7 @@
                :timeout-ms (normalize-timeout view no-timeout-ms invalid-live-view!)
                :channel-ids (normalize-channel-ids view invalid-live-view!)
                :seq 0
-               :created-at (System/currentTimeMillis)}
+               :created-at (util/now-ms)}
         session-id
         (assoc :session-id session-id)
 
@@ -1968,7 +1969,7 @@
                  :title (:title view)
                  :media-type hi-spec/live-artifact-media-type
                  :audience "user"
-                 :ended-at (System/currentTimeMillis)
+                 :ended-at (util/now-ms)
                  :reason (:reason result)
                  :view (:view result)
                  :storage-uri (live-sink/record-uri (:session-id view) (:view-id result))
@@ -2389,7 +2390,7 @@
         (assoc (normalize-request request)
           :kind :form
           :promise (promise)
-          :created-at (System/currentTimeMillis))
+          :created-at (util/now-ms))
 
         request-id
         (:id entry)]

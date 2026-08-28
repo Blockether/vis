@@ -35,11 +35,11 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.image-convert :as image-convert]
-            [com.blockether.vis.internal.paths :as paths])
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.io File RandomAccessFile]
            [java.nio.charset StandardCharsets]
            [java.nio.file Files]
-           [java.security MessageDigest]
            [java.util Base64]))
 
 ;; Limits
@@ -876,12 +876,7 @@
 (defn- content-key
   "Cache key: the payload's own content, plus everything the verdict depends on."
   [^String payload media-type ^long max-bytes ^long max-dimension]
-  (let [md
-        (MessageDigest/getInstance "SHA-256")
-
-        digest
-        (.digest md (.getBytes payload StandardCharsets/UTF_8))]
-
+  (let [digest (util/sha256 (util/utf8 payload))]
     (str (.encodeToString (Base64/getUrlEncoder) digest)
          "|" media-type
          "|" max-bytes

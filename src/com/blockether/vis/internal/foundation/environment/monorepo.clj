@@ -10,7 +10,8 @@
    Reflection-clean. Honors the same skip-directory list as the
    language scanner."
   (:require [clojure.java.io :as io]
-            [com.blockether.vis.internal.paths :as paths])
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
            (java.nio.file FileVisitResult Files Path SimpleFileVisitor)
            (java.nio.file.attribute BasicFileAttributes)))
@@ -98,7 +99,7 @@
          (long-array 1 0)
 
          deadline
-         (+ (System/currentTimeMillis) (long deadline-ms))
+         (+ (util/now-ms) (long deadline-ms))
 
          truncated
          (boolean-array 1 false)
@@ -106,8 +107,7 @@
          visitor
          (proxy [SimpleFileVisitor] []
            (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
-             (cond (> (System/currentTimeMillis) deadline) (do (aset truncated 0 true)
-                                                               FileVisitResult/TERMINATE)
+             (cond (> (util/now-ms) deadline) (do (aset truncated 0 true) FileVisitResult/TERMINATE)
                    (= dir start) FileVisitResult/CONTINUE
                    :else (let [name (str (.getFileName dir))]
                            (if (contains? skip-directories name)
@@ -115,7 +115,7 @@
                              FileVisitResult/CONTINUE))))
            (visitFile [^Path file ^BasicFileAttributes _attrs]
              (let [count* (aget visited 0)]
-               (cond (or (>= count* (long max-files)) (> (System/currentTimeMillis) deadline))
+               (cond (or (>= count* (long max-files)) (> (util/now-ms) deadline))
                      (do (aset truncated 0 true) FileVisitResult/TERMINATE)
                      :else (do (aset visited 0 (inc count*))
                                (let [name (str (.getFileName file))

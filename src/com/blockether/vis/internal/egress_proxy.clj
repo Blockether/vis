@@ -26,7 +26,8 @@
    so `/reload` + config edits take effect with no restart. One request per upstream
    connection (we force `Connection: close`), so HTTP keep-alive can't smuggle a second,
    unfiltered verb onto an already-approved socket."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io InputStream OutputStream)
            (java.net InetAddress InetSocketAddress ServerSocket Socket URI)
            (java.util.concurrent Executors ExecutorService ThreadFactory)
@@ -631,7 +632,7 @@
         (atom false)
 
         last-io
-        (atom (System/currentTimeMillis))
+        (atom (util/now-ms))
 
         give-up?
         (fn [^Socket from ^Socket to]
@@ -639,34 +640,32 @@
               (.isClosed from)
               (.isClosed to)
               (.isShutdown pool)
-              (> (- (System/currentTimeMillis) (long @last-io)) (long TUNNEL_MAX_IDLE_MS))))
+              (> (- (util/now-ms) (long @last-io)) (long TUNNEL_MAX_IDLE_MS))))
 
         copy
         (fn [^Socket from ^Socket to]
-          (try (.setSoTimeout from TUNNEL_READ_TIMEOUT_MS)
-               (let [in
-                     (.getInputStream from)
+          (try
+            (.setSoTimeout from TUNNEL_READ_TIMEOUT_MS)
+            (let [in
+                  (.getInputStream from)
 
-                     out
-                     (.getOutputStream to)
+                  out
+                  (.getOutputStream to)
 
-                     buf
-                     (byte-array 16384)]
+                  buf
+                  (byte-array 16384)]
 
-                 (loop []
+              (loop []
 
-                   ;; -1 ends the relay, 0 is "quiet, still live — keep waiting"
-                   (let [n (long (try (.read in buf)
-                                      (catch java.net.SocketTimeoutException _
-                                        (if (give-up? from to) -1 0))))]
-                     (when-not (neg? n)
-                       (when (pos? n)
-                         (reset! last-io (System/currentTimeMillis))
-                         (.write out buf 0 n)
-                         (.flush out))
-                       (recur)))))
-               (catch Throwable _ (reset! abort true))
-               (finally (try (.shutdownOutput to) (catch Throwable _ nil)))))
+                ;; -1 ends the relay, 0 is "quiet, still live — keep waiting"
+                (let [n (long (try (.read in buf)
+                                   (catch java.net.SocketTimeoutException _
+                                     (if (give-up? from to) -1 0))))]
+                  (when-not (neg? n)
+                    (when (pos? n) (reset! last-io (util/now-ms)) (.write out buf 0 n) (.flush out))
+                    (recur)))))
+            (catch Throwable _ (reset! abort true))
+            (finally (try (.shutdownOutput to) (catch Throwable _ nil)))))
 
         f
         (.submit pool

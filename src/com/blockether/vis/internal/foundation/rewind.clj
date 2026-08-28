@@ -42,13 +42,13 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import [java.io File RandomAccessFile]
            [java.nio ByteBuffer]
            [java.nio.charset StandardCharsets]
-           [java.nio.file CopyOption Files LinkOption StandardCopyOption]
-           [java.security MessageDigest]))
+           [java.nio.file CopyOption Files LinkOption StandardCopyOption]))
 
 ;; Tunables
 
@@ -97,20 +97,6 @@
 
 (defn- default-store-root ^File [] (io/file (System/getProperty "user.home") ".vis" "rewind"))
 
-(defn- sha256-hex
-  ^String [^bytes b]
-  (let [d
-        (.digest (MessageDigest/getInstance "SHA-256") b)
-
-        sb
-        (StringBuilder. 64)]
-
-    (dotimes [i (alength d)]
-      (let [v (bit-and (aget d i) 0xff)]
-        (when (< v 16) (.append sb \0))
-        (.append sb (Integer/toHexString v))))
-    (.toString sb)))
-
 (defn- safe-seg
   "One filesystem-safe path segment for a session id. Sanitizing is LOSSY, so an
    id that had to be rewritten or truncated also carries a digest of the RAW id:
@@ -128,7 +114,7 @@
           :else (str ;; 119 + "-" + 8 hex = 128, the segment budget the test pins.
                   (subs t 0 (min 119 (count t)))
                   "-"
-                  (subs (sha256-hex (.getBytes raw "UTF-8")) 0 8)))))
+                  (subs (util/sha256-hex (util/utf8 raw)) 0 8)))))
 
 (defn store-dir
   "Per-session store directory: `<root>/<session>`."
@@ -146,7 +132,7 @@
    any turn/session-write collapse onto one object."
   ^String [^File dir ^bytes b]
   (let [hex
-        (sha256-hex b)
+        (util/sha256-hex b)
 
         f
         (blob-file dir hex)]
@@ -180,7 +166,7 @@
           (str/join (map #(str (json/write-json-str %) "\n") entries))
 
           bs
-          (.getBytes payload StandardCharsets/UTF_8)]
+          (util/utf8 payload)]
 
       (io/make-parents f)
       (locking journal-lock
@@ -461,7 +447,7 @@
                             "session" (str session)
                             "turn" (long (or turn 0))
                             "turn_id" turn-id
-                            "ts" (System/currentTimeMillis)
+                            "ts" (util/now-ms)
                             "root" root
                             "repo" repo
                             "git_head" head
@@ -474,7 +460,7 @@
                                                 {"session" (str session)
                                                  "turn" (long (or turn 0))
                                                  "turn_id" turn-id
-                                                 "ts" (System/currentTimeMillis)
+                                                 "ts" (util/now-ms)
                                                  "op" (some-> op
                                                               name)
                                                  "origin" "baseline"
@@ -513,7 +499,7 @@
         {"session" (str session)
          "turn" (long (or turn 0))
          "turn_id" turn-id
-         "ts" (System/currentTimeMillis)
+         "ts" (util/now-ms)
          "op" (some-> op
                       name)
          "user_request" user-request}
@@ -550,7 +536,7 @@
                             (cond-> {"session" (str session)
                                      "turn" (long (or turn 0))
                                      "turn_id" turn-id
-                                     "ts" (System/currentTimeMillis)
+                                     "ts" (util/now-ms)
                                      "op" (some-> op
                                                   name)
                                      "origin" "git-sweep"

@@ -83,7 +83,7 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.iteration :as iteration]
-            [com.blockether.vis.internal.strutil :as strutil]))
+            [com.blockether.vis.internal.util :as util]))
 
 (defn- empty-iteration-entry
   [iteration]
@@ -152,7 +152,7 @@
 
 (defn- trimmed-text
   "Plain trim, for streamed provider PROSE. Thinking goes through
-   `strutil/normalize-thinking-text` instead: reasoning also carries blank-line
+   `util/normalize-thinking-text` instead: reasoning also carries blank-line
    runs and the provider's trailing elision marker, neither of which prose may
    lose."
   [text]
@@ -362,8 +362,8 @@
           (dissoc :error)))
 
     :reasoning
-    (let [next-thinking (or (strutil/normalize-thinking-text (:thinking chunk))
-                            (strutil/normalize-thinking-text (:thinking entry)))]
+    (let [next-thinking (or (util/normalize-thinking-text (:thinking chunk))
+                            (util/normalize-thinking-text (:thinking entry)))]
       (-> entry
           (assoc :thinking next-thinking
                  :activity nil)
@@ -452,8 +452,8 @@
 
           base
           (assoc entry
-            :thinking (or (strutil/settled-thinking-text (:thinking chunk))
-                          (strutil/settled-thinking-text (:thinking entry)))
+            :thinking (or (util/settled-thinking-text (:thinking chunk))
+                          (util/settled-thinking-text (:thinking entry)))
             :assistant-prose (or (some-> (:assistant-prose chunk)
                                          str
                                          str/trim
@@ -491,8 +491,8 @@
 
     :iteration-error
     (assoc entry
-      :thinking (or (strutil/settled-thinking-text (:thinking chunk))
-                    (strutil/settled-thinking-text (:thinking entry)))
+      :thinking (or (util/settled-thinking-text (:thinking chunk))
+                    (util/settled-thinking-text (:thinking entry)))
       :activity nil
       :error (:error chunk)
       :done? true)

@@ -30,6 +30,7 @@
    router build, exactly as an unresolved `${NAME}` is handled today."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.cancellation :as cancellation]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import (java.io ByteArrayOutputStream InputStream)
            (java.nio.charset StandardCharsets)
@@ -76,7 +77,7 @@
   (let [parts (cond (string? v) [v]
                     (sequential? v) (vec v)
                     :else nil)]
-    (when (and (seq parts) (every? #(and (string? %) (not (str/blank? %))) parts)) parts)))
+    (when (and (seq parts) (every? util/non-blank-string? parts)) parts)))
 
 (defn- read-stream
   "Drain `is` fully (so the child never blocks on a full pipe) but retain at most
@@ -171,8 +172,7 @@
   (let [{:keys [at token] :as e} (get @cache pid)]
     (when (and e
                (= av (:argv e))
-               (< (- (System/currentTimeMillis) (long at))
-                  (long (if token success-ttl-ms failure-ttl-ms))))
+               (< (- (util/now-ms) (long at)) (long (if token success-ttl-ms failure-ttl-ms))))
       e)))
 
 (defn peek-token
@@ -208,7 +208,7 @@
                   (swap! cache assoc
                     pid
                     (assoc res
-                      :at (System/currentTimeMillis)
+                      :at (util/now-ms)
                       :argv av))
                   (when-let [err (:error res)]
                     (tel/log! {:level :warn

@@ -22,7 +22,8 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
-            [com.blockether.vis.internal.gateway.wire :as wire])
+            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
            (java.nio.file Files)))
 
@@ -125,18 +126,18 @@
   ^File [view]
   (record-rail!)
   (append-line! (view-file (:session-id view) (:id view))
-                {:kind :open :at (System/currentTimeMillis) :view view}))
+                {:kind :open :at (util/now-ms) :view view}))
 
 (defn append!
   "Record one ACCEPTED patch. Called after the materializer took it and before
    any surface is told, so the file is never behind a screen."
   ^File [^File file patch]
-  (append-line! file {:kind :patch :at (System/currentTimeMillis) :patch patch}))
+  (append-line! file {:kind :patch :at (util/now-ms) :patch patch}))
 
 (defn close!
   "Seal the record with the verdict the model reads."
   ^File [^File file result]
-  (append-line! file {:kind :close :at (System/currentTimeMillis) :result result}))
+  (append-line! file {:kind :close :at (util/now-ms) :result result}))
 
 (defn stats
   "How much of the run the record in `file` holds: `:size` bytes and `:line-count`

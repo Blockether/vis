@@ -49,6 +49,7 @@
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace :as workspace]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture])
   (:import (com.github.difflib DiffUtils UnifiedDiffUtils)
@@ -693,8 +694,6 @@
     (.mkdirs parent))
   f)
 
-(defn- now-ms [] (System/currentTimeMillis))
-
 (defn- path->target
   [requested kind]
   (try (let [f (safe-path requested)]
@@ -848,7 +847,7 @@
    only party that knows what to do instead — so it is the message, the `:hint`
    and the `:loop-hint` alike."
   [op kind operation {:keys [reason owner target]}]
-  (let [t (now-ms)]
+  (let [t (util/now-ms)]
     (extension/failure
       {:result nil
        :op op
@@ -909,7 +908,7 @@
   "Failure envelope for a write-intent op the env's `:mutation-gate` refused.
    `refusal` is the gate's human-readable reason string."
   [op kind paths refusal]
-  (let [t (now-ms)]
+  (let [t (util/now-ms)]
     (extension/failure {:result nil
                         :op op
                         :metadata {:target (path->target "." kind)
@@ -941,7 +940,7 @@
             (let [paths (extracted-paths path-extractor args)
                   refusal (gate {:op op :paths paths :atomic? (mutation-atomic? args)})]
 
-              (if (and (string? refusal) (not (str/blank? refusal)))
+              (if (util/non-blank-string? refusal)
                 {:result (plan-required-failure op kind paths refusal)}
                 {:env env :fn f :args args}))
             out))))))
@@ -966,7 +965,7 @@
    used `:info`, the envelope side called the same data `:metadata`. One
    name end-to-end."
   [{:keys [op path kind result metadata]}]
-  (let [t (now-ms)]
+  (let [t (util/now-ms)]
     (extension/success
       {:result result
        :op op
@@ -987,7 +986,7 @@
           (instance? InterruptedException err)
 
           t
-          (now-ms)
+          (util/now-ms)
 
           error
           (when interrupted?
@@ -1552,10 +1551,10 @@
 
        _
        (when-not (or ls?
-                     (and (string? raw-query) (not (str/blank? raw-query)))
+                     (util/non-blank-string? raw-query)
                      (and (sequential? raw-query)
                           (seq raw-query)
-                          (every? #(and (string? %) (not (str/blank? %))) raw-query)))
+                          (every? util/non-blank-string? raw-query)))
          (throw
            (ex-info
              "find \"query\" must be a non-blank string or a non-empty vector of non-blank strings"
@@ -2913,11 +2912,11 @@
         ;; which says nothing about time: before this, a pathological tree could run
         ;; to the outer Python eval wall and return nothing at all.
         deadline
-        (+ (System/currentTimeMillis) (long rg-search-budget-ms))
+        (+ (util/now-ms) (long rg-search-budget-ms))
 
         out-of-time?
         (fn []
-          (>= (System/currentTimeMillis) (long deadline)))
+          (>= (util/now-ms) (long deadline)))
 
         files
         ;; DECORATE-SORT-UNDECORATE: `rel-path` canonicalizes paths (syscalls). Handing it

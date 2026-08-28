@@ -29,6 +29,7 @@
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.foundation.mcp.http :as mcp-http]
             [com.blockether.vis.internal.process-jail :as process-jail]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import (java.io BufferedReader)
            (java.util.concurrent ConcurrentHashMap)))
@@ -36,8 +37,6 @@
 (def ^:private protocol-version "2025-11-25")
 
 (def default-timeout-ms 30000)
-
-(defn- now-ms [] (System/currentTimeMillis))
 
 ;; JSON helpers (charred). JSON-RPC keys stay STRINGS end to end.
 
@@ -524,7 +523,7 @@
                {:name name
                 :transport transport
                 :spec spec
-                :connected-at (now-ms)
+                :connected-at (util/now-ms)
                 :tools (atom nil)
                 :timeout-ms timeout-ms})]
 

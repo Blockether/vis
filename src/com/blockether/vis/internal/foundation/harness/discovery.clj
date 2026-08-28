@@ -19,6 +19,7 @@
             [clojure.string :as str]
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.fff-index :as fff-index]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace :as workspace]))
 
 ;; Frontmatter parsing — minimal, no YAML dependency
@@ -62,13 +63,6 @@
        :body (str/triml body)}
       {:meta {} :body (str/triml content)})))
 
-(defn- non-blank
-  [s]
-  (let [s (some-> s
-                  str
-                  str/trim)]
-    (when-not (str/blank? s) s)))
-
 ;; Pure entry builders (string in, entry out — testable without the fs)
 
 (defn parse-agent
@@ -80,13 +74,13 @@
         (parse-frontmatter content)
 
         nm
-        (or (non-blank (:name meta)) (non-blank name-default))]
+        (or (util/non-blank (:name meta)) (util/non-blank name-default))]
 
     (when nm
       {:name nm
-       :description (or (non-blank (:description meta)) "")
-       :model (non-blank (:model meta))
-       :tools (non-blank (:tools meta))
+       :description (or (util/non-blank (:description meta)) "")
+       :model (util/non-blank (:model meta))
+       :tools (util/non-blank (:tools meta))
        :body (str body)
        :tool tool
        :path path})))
@@ -100,11 +94,11 @@
         (parse-frontmatter content)
 
         nm
-        (or (non-blank (:name meta)) (non-blank name-default))]
+        (or (util/non-blank (:name meta)) (util/non-blank name-default))]
 
     (when nm
       {:name nm
-       :description (or (non-blank (:description meta)) "")
+       :description (or (util/non-blank (:description meta)) "")
        :body (str body)
        :dir dir
        :tool tool
@@ -523,4 +517,3 @@
 (defn skills [] (:skills (ensure!)))
 
 (defn commands [] (:commands (ensure!)))
-

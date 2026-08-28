@@ -28,6 +28,7 @@
    back to today's in-process-only behavior."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File RandomAccessFile]
            [java.nio.charset StandardCharsets]
@@ -156,7 +157,7 @@
         @live-cache
 
         now
-        (System/currentTimeMillis)]
+        (util/now-ms)]
 
     (if (< (- now (long at)) (long LIVE_CACHE_MS))
       turns
@@ -180,7 +181,7 @@
                                "session_id" (str sid)
                                "turn_id" (str turn-id)
                                "pid" producer-pid
-                               "started_at" (System/currentTimeMillis)}))
+                               "started_at" (util/now-ms)}))
          (invalidate-live-cache!))
        (catch Throwable t (tel/log! :debug ["gateway-bus: live mark failed" (ex-message t)])))
   nil)
@@ -265,7 +266,7 @@
         @waiting-cache
 
         now
-        (System/currentTimeMillis)]
+        (util/now-ms)]
 
     (if (< (- now (long at)) (long WAITING_CACHE_MS))
       sessions
@@ -304,8 +305,7 @@
                (wire/json-str {"schema" 1
                                "session_id" (str sid)
                                "pid" producer-pid
-                               "requests" (conj kept
-                                                {"id" rid "since" (System/currentTimeMillis)})}))
+                               "requests" (conj kept {"id" rid "since" (util/now-ms)})}))
          (invalidate-waiting-cache!))
        (catch Throwable t (tel/log! :debug ["gateway-bus: waiting mark failed" (ex-message t)])))
   nil)
@@ -916,7 +916,7 @@
              (.toFile (events-dir))
 
              cutoff
-             (- (System/currentTimeMillis) (long RETAIN_MS))]
+             (- (util/now-ms) (long RETAIN_MS))]
 
          (when (.isDirectory dir)
            (doseq [^File f (.listFiles dir)]
@@ -995,7 +995,7 @@
 
                   (when-not (Thread/interrupted)
                     (let [busy? (poll-once!)
-                          now (System/currentTimeMillis)
+                          now (util/now-ms)
                           last-sweep
                           (if (>= (- now last-sweep) (long SWEEP_MS)) (do (sweep!) now) last-sweep)
                           quiet (if busy? 0 (inc quiet))]

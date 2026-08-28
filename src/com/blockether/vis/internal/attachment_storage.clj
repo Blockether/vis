@@ -30,7 +30,8 @@
    dimensions and frame count, else the original is kept), and it is why a
    matplotlib figure costs a fraction of a row."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.image-convert :as image-convert])
+            [com.blockether.vis.internal.image-convert :as image-convert]
+            [com.blockether.vis.internal.util :as util])
   (:import (java.nio.file Files LinkOption OpenOption Path)
            (java.nio.file.attribute FileAttribute)
            (java.util Base64 UUID)))
@@ -64,7 +65,7 @@
     (when-not (keyword? id)
       (throw (ex-info "Storage backend id must be a keyword"
                       {:type :storage/invalid-backend :backend backend})))
-    (when-not (and (string? scheme) (not (str/blank? scheme)))
+    (when-not (util/non-blank-string? scheme)
       (throw (ex-info "Storage backend scheme must be a non-blank string"
                       {:type :storage/invalid-backend :backend-id id :scheme scheme})))
     (doseq [k [:storage/put-fn :storage/get-fn]]

@@ -24,6 +24,7 @@
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel]))
 
 (set! *unchecked-math* :warn-on-boxed)
@@ -38,11 +39,11 @@
   ;;             :public {…} :result (atom {:status :pending})}
   (atom {}))
 
-(defn- now-ms ^long [] (System/currentTimeMillis))
-
 (defn- new-flow-id [] (str (java.util.UUID/randomUUID)))
 
-(defn- expired? [{:keys [expires-at]}] (boolean (and expires-at (> (now-ms) (long expires-at)))))
+(defn- expired?
+  [{:keys [expires-at]}]
+  (boolean (and expires-at (> (util/now-ms) (long expires-at)))))
 
 (defn- stop-await!
   "Stop a flow's background device poll. WITHOUT this, a cancelled or expired
@@ -214,35 +215,36 @@
                                     :provider-id provider-id
                                     :kind :api-key
                                     :public {:instructions (api-key-instructions provider-id)}
-                                    :created-at (now-ms)
-                                    :expires-at (+ (now-ms) (long default-flow-ttl-ms))}]
+                                    :created-at (util/now-ms)
+                                    :expires-at (+ (util/now-ms) (long default-flow-ttl-ms))}]
 
                          (swap! flows assoc id entry)
                          (tel/log! :info ["provider-auth: flow started" provider-id "api-key"])
                          {:ok? true :flow (public-view entry)})
-          :else
-          (try (let [{:keys [kind flow expires-in-ms] :as started} (start)
-                     id (new-flow-id)
-                     entry {:id id
-                            :provider-id provider-id
-                            :kind (or kind :pkce)
-                            :flow flow
-                            :public (dissoc started :flow)
-                            :created-at (now-ms)
-                            :expires-at (+ (now-ms) (long (or expires-in-ms default-flow-ttl-ms)))
-                            :result (atom {:status :pending})}
-                     entry (if (and (= :device (:kind entry)) await)
-                             (assoc entry :await-future (start-await! entry await))
-                             entry)]
+          :else (try (let [{:keys [kind flow expires-in-ms] :as started} (start)
+                           id (new-flow-id)
+                           entry {:id id
+                                  :provider-id provider-id
+                                  :kind (or kind :pkce)
+                                  :flow flow
+                                  :public (dissoc started :flow)
+                                  :created-at (util/now-ms)
+                                  :expires-at (+ (util/now-ms)
+                                                 (long (or expires-in-ms default-flow-ttl-ms)))
+                                  :result (atom {:status :pending})}
+                           entry (if (and (= :device (:kind entry)) await)
+                                   (assoc entry :await-future (start-await! entry await))
+                                   entry)]
 
-                 (swap! flows assoc id entry)
-                 (tel/log! :info ["provider-auth: flow started" provider-id (name (:kind entry))])
-                 {:ok? true :flow (public-view entry)})
-               (catch Throwable t
-                 (tel/log! :warn ["provider-auth: start failed" provider-id (ex-message t)])
-                 {:ok? false
-                  :error :auth-start-failed
-                  :message (or (ex-message t) "could not start OAuth")})))))
+                       (swap! flows assoc id entry)
+                       (tel/log! :info
+                                 ["provider-auth: flow started" provider-id (name (:kind entry))])
+                       {:ok? true :flow (public-view entry)})
+                     (catch Throwable t
+                       (tel/log! :warn ["provider-auth: start failed" provider-id (ex-message t)])
+                       {:ok? false
+                        :error :auth-start-failed
+                        :message (or (ex-message t) "could not start OAuth")})))))
 
 (defn- claim-flow!
   "Atomically take the flow OUT of the atom so exactly one caller can spend it.

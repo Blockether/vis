@@ -29,6 +29,7 @@
    delete is confined to a path under the drafts store or the events dir."
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.persistance :as p]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace :as workspace])
   (:import [java.io File]
            [java.nio.file FileVisitResult Files LinkOption Path SimpleFileVisitor]
@@ -334,7 +335,7 @@
   ([] (sweep-stale! nil))
   ([{:keys [days now-ms] budget-override :budget-bytes}]
    (let [now
-         (long (or now-ms (System/currentTimeMillis)))
+         (long (or now-ms (util/now-ms)))
 
          reports
          (mapv
@@ -538,7 +539,7 @@
         (long (or days default-stale-days))
 
         now
-        (long (or now-ms (System/currentTimeMillis)))
+        (long (or now-ms (util/now-ms)))
 
         cutoff
         (- now (* days (long day-ms)))

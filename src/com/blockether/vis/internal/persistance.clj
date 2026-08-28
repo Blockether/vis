@@ -22,8 +22,6 @@
 
 (defn ds [db-info] (:datasource db-info))
 
-(defn now-ms ^long [] (System/currentTimeMillis))
-
 (defn ->id
   [v]
   (cond (nil? v) nil

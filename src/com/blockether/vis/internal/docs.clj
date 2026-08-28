@@ -46,9 +46,9 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.doc-corpus :as doc-corpus])
+            [com.blockether.vis.internal.doc-corpus :as doc-corpus]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.io ByteArrayOutputStream]
-           [java.nio.charset StandardCharsets]
            [java.util.zip GZIPOutputStream]
            [org.commonmark.parser Parser]
            [org.commonmark.renderer.html HtmlRenderer]
@@ -659,7 +659,7 @@ a:hover{color:var(--link-hover);text-decoration-color:var(--link-hover)}
   ^bytes [^String s]
   (let [baos (ByteArrayOutputStream.)]
     (with-open [gz (GZIPOutputStream. baos)]
-      (.write gz (.getBytes s StandardCharsets/UTF_8)))
+      (.write gz (util/utf8 s)))
     (.toByteArray baos)))
 
 (defn- ok-html

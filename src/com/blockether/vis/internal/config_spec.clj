@@ -12,15 +12,15 @@
    the end of this namespace, so validation and enforcement share one contract."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [com.blockether.vis.internal.paths :as paths]))
+            [com.blockether.vis.internal.paths :as paths]
+            [com.blockether.vis.internal.util :as util]))
 
-(defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn- positive-int? [x] (and (integer? x) (pos? (long x))))
 (defn- non-negative-number? [x] (and (number? x) (not (neg? (double x)))))
 (defn- port? [x] (and (integer? x) (<= 1 x 65535)))
 (defn- port-list? [x] (and (or (vector? x) (set? x)) (every? port? x)))
 (defn- scalar? [x] (or (string? x) (boolean? x) (number? x) (nil? x)))
-(defn- string-list? [x] (and (vector? x) (every? non-blank-string? x)))
+(defn- string-list? [x] (and (vector? x) (every? util/non-blank-string? x)))
 (defn- non-empty-string-list? [x] (and (string-list? x) (seq x)))
 (def ^:private env-var-name-re #"[A-Za-z_][A-Za-z0-9_]*")
 (defn- env-var-name? [x] (and (string? x) (boolean (re-matches env-var-name-re x))))
@@ -29,13 +29,16 @@
    a bare-relative path resolves against the gateway process cwd, silently
    wrong for a multi-session gateway (allow) or an invalid subpath (deny)."
   [x]
-  (and (non-blank-string? x) (or (str/starts-with? x "/") (= x "~") (str/starts-with? x "~/"))))
+  (and (util/non-blank-string? x)
+       (or (str/starts-with? x "/") (= x "~") (str/starts-with? x "~/"))))
 (defn- rooted-path-list? [x] (and (vector? x) (every? rooted-path? x)))
 (defn- string-map? [m] (and (map? m) (every? string? (keys m)) (every? string? (vals m))))
 (defn- named-scalar-map?
   [m]
-  (and (map? m) (every? non-blank-string? (keys m)) (every? scalar? (vals m))))
-(defn- number-map? [m] (and (map? m) (every? non-blank-string? (keys m)) (every? number? (vals m))))
+  (and (map? m) (every? util/non-blank-string? (keys m)) (every? scalar? (vals m))))
+(defn- number-map?
+  [m]
+  (and (map? m) (every? util/non-blank-string? (keys m)) (every? number? (vals m))))
 
 (declare yaml-value?)
 
@@ -49,7 +52,7 @@
   [x]
   (or (scalar? x) (and (vector? x) (every? yaml-value? x)) (yaml-map? x)))
 
-(defn- named-yaml-map? [m] (and (yaml-map? m) (every? non-blank-string? (keys m))))
+(defn- named-yaml-map? [m] (and (yaml-map? m) (every? util/non-blank-string? (keys m))))
 
 (defn- one-of [values] #(contains? values %))
 (defn- spec-pred [spec] #(s/valid? spec %))
@@ -143,10 +146,10 @@
 (defn api-style?
   "True when `x` names a wire dialect Vis can hand svar."
   [x]
-  (and (non-blank-string? x) (some? (normalize-api-style x))))
+  (and (util/non-blank-string? x) (some? (normalize-api-style x))))
 
 (def model-schema
-  {"name" non-blank-string?
+  {"name" util/non-blank-string?
    "context" positive-int?
    "output_limit" positive-int?
    "is_tool_call" boolean?
@@ -157,25 +160,25 @@
   ;; bare string is ONE argument and is never word-split. Both spellings are the
   ;; same value shape; there is no shell to quote for.
   (s/or :argv non-empty-string-list?
-        :program non-blank-string?))
+        :program util/non-blank-string?))
 
 (s/def ::model-map #(closed-map? model-schema #{"name"} %))
 (s/def ::model
-  (s/or :name non-blank-string?
+  (s/or :name util/non-blank-string?
         :map ::model-map))
 (s/def ::models (s/coll-of ::model :kind vector?))
 
 (def provider-schema
-  {"id" non-blank-string?
+  {"id" util/non-blank-string?
    "api_key" string?
    ;; Command-backed credential: argv whose trimmed stdout IS the API key.
    ;; Resolved live (short-lived SSO/vault helpers) and NEVER persisted.
    "api_key_command" (spec-pred ::api-key-command)
    "models" (spec-pred ::models)
-   "base_url" non-blank-string?
+   "base_url" util/non-blank-string?
    "compatibility" api-style?
    "api_style" api-style?
-   "responses_path" non-blank-string?
+   "responses_path" util/non-blank-string?
    "llm_headers" string-map?
    "extra_body" yaml-map?
    "network" network-timeout-map?
@@ -281,9 +284,9 @@
    "exists" rooted-path?})
 (s/def ::workspace-when #(closed-map? workspace-when-schema %))
 (def workspace-entry-schema
-  {"id" non-blank-string?
+  {"id" util/non-blank-string?
    "path" rooted-path?
-   "description" non-blank-string?
+   "description" util/non-blank-string?
    "access" (one-of workspace-access-values)
    "search" boolean?
    "draft" (one-of workspace-draft-values)
@@ -299,7 +302,7 @@
 ;; Pure id references into the workspace catalog (deny-by-omission): a catalog
 ;; root is OUTSIDE the OS jail unless its id appears in `allow`.
 (def jail-filesystem-keys #{"allow"})
-(def jail-filesystem-schema {"allow" #(and (vector? %) (every? non-blank-string? %))})
+(def jail-filesystem-schema {"allow" #(and (vector? %) (every? util/non-blank-string? %))})
 (s/def ::jail-filesystem #(closed-map? jail-filesystem-schema %))
 
 ;; ── Jail Mach services (macOS) ───────────────────────────────────────────────
@@ -309,7 +312,7 @@
 ;; Keychain read needs; `allow` is the escape hatch for anything else.
 (def jail-mach-services-keys #{"allow" "keychain"})
 (def jail-mach-services-schema
-  {"allow" #(and (vector? %) (every? non-blank-string? %)) "keychain" boolean?})
+  {"allow" #(and (vector? %) (every? util/non-blank-string? %)) "keychain" boolean?})
 (s/def ::jail-mach-services #(closed-map? jail-mach-services-schema %))
 
 (def keychain-mach-services
@@ -367,15 +370,15 @@
 (def network-rule-keys #{"host" "access" "methods" "allow" "ports"})
 (def network-keys
   #{"allowed_domains" "denied_domains" "exclude_domains" "allow_private" "inbound_ports" "rules"})
-(def network-rule-allow-schema {"method" non-blank-string? "path" non-blank-string?})
+(def network-rule-allow-schema {"method" util/non-blank-string? "path" util/non-blank-string?})
 (s/def ::network-rule-allow #(closed-map? network-rule-allow-schema #{"method"} %))
 (s/def ::network-rule-allows (s/coll-of ::network-rule-allow :kind vector?))
 
 (def network-rule-schema
-  {"host" non-blank-string?
+  {"host" util/non-blank-string?
    "access" (one-of #{"read-only" "readonly" "ro" "read-write" "readwrite" "rw" "full" "all" "none"
                       "deny" "closed"})
-   "methods" #(and (or (vector? %) (set? %)) (every? non-blank-string? %))
+   "methods" #(and (or (vector? %) (set? %)) (every? util/non-blank-string? %))
    "ports" port-list?
    "allow" (spec-pred ::network-rule-allows)})
 (s/def ::network-rule #(closed-map? network-rule-schema #{"host"} %))
@@ -419,19 +422,19 @@
 (def grep-schema {"include_gitignored_paths" string-list? "always_exclude" string-list?})
 (s/def ::grep #(closed-map? grep-schema %))
 
-(def db-schema {"backend" non-blank-string? "path" non-blank-string?})
+(def db-schema {"backend" util/non-blank-string? "path" util/non-blank-string?})
 (s/def ::db-spec #(closed-map? db-schema #{"backend"} %))
 
 (def tui-schema
-  {"theme_name" non-blank-string?
-   "contributors_disabled" #(and (or (vector? %) (set? %)) (every? non-blank-string? %))})
+  {"theme_name" util/non-blank-string?
+   "contributors_disabled" #(and (or (vector? %) (set? %)) (every? util/non-blank-string? %))})
 (s/def ::tui-settings #(closed-map? tui-schema %))
 
 (s/def ::python-interpreter
   ;; Same value shape as a provider's `api_key_command`: an argv vector, or a
   ;; bare program/path that is ONE argument and is never word-split.
   (s/or :argv non-empty-string-list?
-        :program non-blank-string?))
+        :program util/non-blank-string?))
 
 (def python-schema
   ;; `resource_cache`: GraalPy internal-resource cache root (where the Python
@@ -449,7 +452,7 @@
   ;; `runner`: default `run_tests({"language": "python"})` backend -- the hermetic `graalpy`
   ;; sandbox or the `project` interpreter's own pytest. Explicit call arguments
   ;; still win.
-  {"resource_cache" non-blank-string?
+  {"resource_cache" util/non-blank-string?
    "source_paths" string-list?
    "interpreter" (spec-pred ::python-interpreter)
    "runner" (one-of #{"graalpy" "project"})})
@@ -457,18 +460,18 @@
 
 
 (def mcp-auth-schema
-  {"client_id" non-blank-string?
-   "scope" non-blank-string?
+  {"client_id" util/non-blank-string?
+   "scope" util/non-blank-string?
    "authorization_timeout_ms" positive-int?})
 (s/def ::mcp-auth #(closed-map? mcp-auth-schema %))
 
 (def mcp-server-schema
   {"transport" (one-of #{"stdio" "streamable_http" "http"})
-   "command" non-blank-string?
+   "command" util/non-blank-string?
    "args" #(and (vector? %) (every? string? %))
-   "cwd" non-blank-string?
+   "cwd" util/non-blank-string?
    "env" string-map?
-   "url" non-blank-string?
+   "url" util/non-blank-string?
    "headers" string-map?
    "enabled" boolean?
    "timeout_ms" positive-int?
@@ -488,10 +491,10 @@
                 (get % "transport"))
 
               has-cmd?
-              (non-blank-string? (get % "command"))
+              (util/non-blank-string? (get % "command"))
 
               has-url?
-              (non-blank-string? (get % "url"))]
+              (util/non-blank-string? (get % "url"))]
 
           (case transport
             "stdio"
@@ -505,7 +508,9 @@
 
             false))))
 (s/def ::mcp-servers
-  #(and (map? %) (every? non-blank-string? (keys %)) (every? (spec-pred ::mcp-server) (vals %))))
+  #(and (map? %)
+        (every? util/non-blank-string? (keys %))
+        (every? (spec-pred ::mcp-server) (vals %))))
 (def mcp-schema {"servers" (spec-pred ::mcp-servers)})
 (s/def ::mcp #(closed-map? mcp-schema %))
 
@@ -514,7 +519,8 @@
    two derive the title locally from the request itself, and `disabled` leaves
    the session unnamed (Blockether/vis#71)."
   #{"llm" "first_sentence" "first_words" "disabled"})
-(def titling-schema {"mode" titling-modes "provider" non-blank-string? "model" non-blank-string?})
+(def titling-schema
+  {"mode" titling-modes "provider" util/non-blank-string? "model" util/non-blank-string?})
 (s/def ::titling #(closed-map? titling-schema %))
 
 ;; What the WIRE answered about images ------------------------------------------
@@ -529,13 +535,17 @@
 ;; timestamp is what lets the reader EXPIRE a row and offer that endpoint an image
 ;; again, instead of blinding it for good on one refusal.
 
-(def vision-fact-schema {"learned_at" non-blank-string? "providers" string-list?})
+(def vision-fact-schema {"learned_at" util/non-blank-string? "providers" string-list?})
 (s/def ::vision-fact #(closed-map? vision-fact-schema #{"learned_at"} %))
 (s/def ::vision-facts
-  #(and (map? %) (every? non-blank-string? (keys %)) (every? (spec-pred ::vision-fact) (vals %))))
+  #(and (map? %)
+        (every? util/non-blank-string? (keys %))
+        (every? (spec-pred ::vision-fact) (vals %))))
 
 (def vision-eye-schema
-  {"provider" non-blank-string? "model" non-blank-string? "learned_at" non-blank-string?})
+  {"provider" util/non-blank-string?
+   "model" util/non-blank-string?
+   "learned_at" util/non-blank-string?})
 (s/def ::vision-eye #(closed-map? vision-eye-schema #{"provider" "learned_at"} %))
 
 (def vision-memory-schema
@@ -579,7 +589,7 @@
   "A literal `environment:` value: a non-blank string, a number or a boolean — the
    same scalar domain one call's own `env` delta takes."
   [v]
-  (or (non-blank-string? v) (number? v) (boolean? v)))
+  (or (util/non-blank-string? v) (number? v) (boolean? v)))
 
 (def ^:private credential-name-pattern
   "A variable name that reads like a credential. A `literal:` is refused under one:
@@ -593,9 +603,9 @@
    ;; The working directory's `.env`, then `.env.local`, read under this name.
    "dotenv" env-var-name?
    ;; macOS Keychain / freedesktop secret service item name.
-   "keychain" non-blank-string?
+   "keychain" util/non-blank-string?
    ;; Optional account qualifying the keychain item; meaningless without one.
-   "account" non-blank-string?
+   "account" util/non-blank-string?
    ;; Structured argv whose trimmed stdout IS the value, same shape and same
    ;; no-shell contract as `api_key_command`.
    "command" (spec-pred ::api-key-command)
@@ -629,10 +639,10 @@
    ;; credential — so "deleted" cannot be expressed by absence and is recorded
    ;; here instead.
    "removed_providers" string-list?
-   "default_provider" non-blank-string?
-   "default_model" non-blank-string?
-   "fallback_provider" non-blank-string?
-   "fallback_model" non-blank-string?
+   "default_provider" util/non-blank-string?
+   "default_model" util/non-blank-string?
+   "fallback_provider" util/non-blank-string?
+   "fallback_model" util/non-blank-string?
    "router" (spec-pred ::router)
    "system_prompt" (spec-pred ::system-prompt)
    "workspace" (spec-pred ::workspace)

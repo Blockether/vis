@@ -37,9 +37,9 @@
             [com.blockether.vis.internal.gateway.relay :as relay]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File]
-           [java.nio.charset StandardCharsets]
            [java.security KeyFactory Signature]
            [java.security.spec PKCS8EncodedKeySpec]
            [java.util Base64]))
@@ -74,11 +74,6 @@
   (io/file (vis-home) "devices.edn"))
 
 (defn- apns-dir ^File [] (io/file (vis-home) "apns"))
-
-(defn- env-val
-  [k]
-  (let [v (System/getenv k)]
-    (when-not (str/blank? v) (str/trim v))))
 
 (defn- discovered-key
   "First `AuthKey_<kid>.p8` under `~/.vis/apns/`, as `{:key-path :key-id}`.
@@ -117,22 +112,24 @@
         (some? (keychain/secret "vis-apns" "key"))
 
         key-path
-        (or (env-val "VIS_APNS_KEY_PATH") (:key-path side) (:key-path disc))
+        (or (util/env-val "VIS_APNS_KEY_PATH") (:key-path side) (:key-path disc))
 
         key-id
-        (or (env-val "VIS_APNS_KEY_ID")
+        (or (util/env-val "VIS_APNS_KEY_ID")
             (keychain/secret "vis-apns" "key_id")
             (:key-id side)
             (:key-id disc))
 
         team-id
-        (or (env-val "VIS_APNS_TEAM_ID") (keychain/secret "vis-apns" "team_id") (:team-id side))
+        (or (util/env-val "VIS_APNS_TEAM_ID")
+            (keychain/secret "vis-apns" "team_id")
+            (:team-id side))
 
         topic
-        (or (env-val "VIS_APNS_TOPIC") (keychain/secret "vis-apns" "topic") (:topic side))
+        (or (util/env-val "VIS_APNS_TOPIC") (keychain/secret "vis-apns" "topic") (:topic side))
 
         default-env
-        (or (env-val "VIS_APNS_ENV")
+        (or (util/env-val "VIS_APNS_ENV")
             (keychain/secret "vis-apns" "environment")
             (:environment side)
             "production")
@@ -167,8 +164,6 @@
 ;; ES256 provider token (JWT)
 
 (defn- b64url ^String [^bytes b] (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) b))
-
-(defn- utf8 ^bytes [^String s] (.getBytes s StandardCharsets/UTF_8))
 
 (defn- private-key
   "Parse a PKCS#8 PEM (`.p8`, what Apple hands out) into an EC private key."
@@ -227,10 +222,10 @@
 (defn- sign-jwt
   [{:keys [key-path key-source key-id team-id]}]
   (let [header
-        (b64url (utf8 (wire/json-str {:alg "ES256" :kid key-id})))
+        (b64url (util/utf8 (wire/json-str {:alg "ES256" :kid key-id})))
 
         claims
-        (b64url (utf8 (wire/json-str {:iss team-id :iat (quot (System/currentTimeMillis) 1000)})))
+        (b64url (util/utf8 (wire/json-str {:iss team-id :iat (quot (util/now-ms) 1000)})))
 
         signing-input
         (str header "." claims)
@@ -240,7 +235,7 @@
           (.initSign (private-key (if (= "keychain" key-source)
                                     (keychain/secret "vis-apns" "key")
                                     (slurp key-path))))
-          (.update (utf8 signing-input)))]
+          (.update (util/utf8 signing-input)))]
 
     (str signing-input "." (b64url (der->jose (.sign sig))))))
 
@@ -255,14 +250,12 @@
         @jwt-cache
 
         fresh?
-        (and token
-             (= key-id (:key-id cfg))
-             (< (- (System/currentTimeMillis) (long at)) (long JWT_TTL_MS)))]
+        (and token (= key-id (:key-id cfg)) (< (- (util/now-ms) (long at)) (long JWT_TTL_MS)))]
 
     (if fresh?
       token
       (let [t (sign-jwt cfg)]
-        (reset! jwt-cache {:token t :at (System/currentTimeMillis) :key-id (:key-id cfg)})
+        (reset! jwt-cache {:token t :at (util/now-ms) :key-id (:key-id cfg)})
         t))))
 
 ;; Device registry
@@ -355,7 +348,7 @@
 
     (when id
       (let [now
-            (System/currentTimeMillis)
+            (util/now-ms)
 
             existing
             (get (ensure-loaded!) id)

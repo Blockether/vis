@@ -25,7 +25,8 @@
    Deliberately dependency-free (no AWT, no `vis.core`): safe to require from BOTH
    a render shim and the hot engine loop without dragging the imaging renderer or a require
    cycle."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util])
   (:import [java.nio.file Files LinkOption Path]
            [java.nio.file.attribute BasicFileAttributes]
            [java.nio.charset StandardCharsets]
@@ -213,10 +214,7 @@
           (.mkdirs))
 
         digest
-        (->> (.digest (java.security.MessageDigest/getInstance "SHA-256") bs)
-             (take 8)
-             (map #(format "%02x" (bit-and (long %) 0xff)))
-             (apply str))
+        (subs (util/sha256-hex bs) 0 16)
 
         f
         (java.io.File. dir (str prefix digest "." ext))]
@@ -225,7 +223,7 @@
       ;; Reuse. `housekeeping/sweep-stale!` judges a cache file by its mtime, so
       ;; a picture rendered AGAIN today must not age out on the day its content
       ;; was first written.
-      (.setLastModified f (System/currentTimeMillis))
+      (.setLastModified f (util/now-ms))
       (java.nio.file.Files/write (.toPath f)
                                  bs
                                  ^"[Ljava.nio.file.OpenOption;"

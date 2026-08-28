@@ -14,6 +14,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import [java.io File]
@@ -85,47 +86,43 @@
   ([^File dir args] (run-git dir args nil))
   ([^File dir args {:keys [timeout-secs]}]
    (let [t0
-         (System/currentTimeMillis)
+         (util/now-ms)
 
          spawned
          (volatile! nil)]
 
-     (try
-       (let [pb (ProcessBuilder. ^java.util.List (git-argv args))]
-         (.directory pb (or dir (cwd-file)))
-         (let [p (.start pb)
-               _ (vreset! spawned p)
-               out (future (slurp (io/reader (.getInputStream p))))
-               err (future (slurp (io/reader (.getErrorStream p))))
-               done (.waitFor p (long (or timeout-secs default-git-timeout-secs)) TimeUnit/SECONDS)]
+     (try (let [pb (ProcessBuilder. ^java.util.List (git-argv args))]
+            (.directory pb (or dir (cwd-file)))
+            (let [p (.start pb)
+                  _ (vreset! spawned p)
+                  out (future (slurp (io/reader (.getInputStream p))))
+                  err (future (slurp (io/reader (.getErrorStream p))))
+                  done
+                  (.waitFor p (long (or timeout-secs default-git-timeout-secs)) TimeUnit/SECONDS)]
 
-           (when-not done
-             (terminate! p)
-             (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
-               (try (.close s)
-                    (catch Throwable t
-                      (tel/log! :debug
-                                ["git: failed to close timed-out process stream"
-                                 (ex-message t)])))))
-           {:exit (when done (.exitValue p))
-            :out (deref out 2000 "")
-            :err (deref err 2000 "")
-            :timed-out? (not done)
-            :duration-ms (- (System/currentTimeMillis) t0)}))
-       (catch Throwable t
-         (cancellation/preserve-interrupt! t)
-         (terminate! @spawned)
-         (tel/log! :warn
-                   ["git: run-git failed"
-                    {:dir (some-> dir
-                                  .getPath)
-                     :args (vec (map str args))
-                     :error (ex-message t)}])
-         {:exit nil
-          :out ""
-          :err ""
-          :timed-out? false
-          :duration-ms (- (System/currentTimeMillis) t0)})))))
+              (when-not done
+                (terminate! p)
+                (doseq [^java.io.InputStream s [(.getInputStream p) (.getErrorStream p)]]
+                  (try (.close s)
+                       (catch Throwable t
+                         (tel/log! :debug
+                                   ["git: failed to close timed-out process stream"
+                                    (ex-message t)])))))
+              {:exit (when done (.exitValue p))
+               :out (deref out 2000 "")
+               :err (deref err 2000 "")
+               :timed-out? (not done)
+               :duration-ms (- (util/now-ms) t0)}))
+          (catch Throwable t
+            (cancellation/preserve-interrupt! t)
+            (terminate! @spawned)
+            (tel/log! :warn
+                      ["git: run-git failed"
+                       {:dir (some-> dir
+                                     .getPath)
+                        :args (vec (map str args))
+                        :error (ex-message t)}])
+            {:exit nil :out "" :err "" :timed-out? false :duration-ms (- (util/now-ms) t0)})))))
 
 
 (defn- git-ok
@@ -604,7 +601,7 @@
     (future (try (let [value (if start (working-tree-status start) (working-tree-status))]
                    (swap! working-tree-status-cache assoc
                      cwd
-                     {:expires-at (+ (System/currentTimeMillis) (long ttl-ms)) :value value}))
+                     {:expires-at (+ (util/now-ms) (long ttl-ms)) :value value}))
                  (catch Throwable t
                    (tel/log! :warn
                              ["git: async working-tree status refresh failed"
@@ -626,7 +623,7 @@
    warm-but-stale entry it returns the cached value immediately and refreshes in
    the background. Keyed by canonical path. Never throws; nil only for a
    nil/blank `root`."
-  ([root] (workspace-status root (System/currentTimeMillis) default-cache-ms))
+  ([root] (workspace-status root (util/now-ms) default-cache-ms))
   ([root now-ms ttl-ms]
    (when-let [start (some-> root
                             str
@@ -650,4 +647,3 @@
             nil)))))
 
 ;; file-picker helper: per-path status + ignore snapshot
-

@@ -19,7 +19,7 @@
             [clojure.string :as str]
             [com.blockether.svar.internal.failure :as failure]
             [com.blockether.vis.internal.content :as content]
-            [com.blockether.vis.internal.strutil :refer [truncate]]))
+            [com.blockether.vis.internal.util :as util]))
 
 (def ^:private CHAT_ERROR_BODY_RENDER_CHARS
   "Cap on raw upstream HTTP body chars surfaced in the chat error bubble.
@@ -30,7 +30,7 @@
 
 (defn parse-provider-body
   [body]
-  (when (and (string? body) (not (str/blank? body)))
+  (when (util/non-blank-string? body)
     (try (json/read-json body :key-fn keyword) (catch Throwable _ nil))))
 
 (defn provider-structured-message
@@ -1054,7 +1054,7 @@
         (provider-structured-message body-raw)]
 
     (when (and body-raw (not (str/blank? body-raw)) (not structured-msg))
-      (truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))))
+      (util/truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))))
 
 (defn provider-error-info
   "Structured echo of the facts a chat surface can render

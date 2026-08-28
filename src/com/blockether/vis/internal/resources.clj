@@ -3,6 +3,7 @@
    long-lived thing vis spawns registers here so the agent, footer, and shutdown
    all share one live view. Resources are deliberately not persisted: their
    processes belong to the gateway and die when the gateway dies."
+  (:require [com.blockether.vis.internal.util :as util])
   (:import (java.lang ProcessHandle)))
 
 ;; In-memory registry: { session-id -> { id -> {:data {..} :stop-fn
@@ -71,7 +72,7 @@
            "can_stop" (boolean stop-fn)
            "can_logs" (boolean logs-fn)
            "can_health" (boolean health-fn)
-           "created_at" (System/currentTimeMillis)}
+           "created_at" (util/now-ms)}
     detail
     (assoc "detail" detail)
 

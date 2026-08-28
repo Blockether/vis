@@ -6,7 +6,8 @@
    values. Markdown exists only as the payload of a prose block."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [com.blockether.vis.internal.gateway.wire :as wire]))
+            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.internal.util :as util]))
 
 (def roles #{"user" "assistant" "system" "developer" "tool"})
 
@@ -15,8 +16,6 @@
 (def tool-statuses #{"pending" "running" "completed" "failed" "cancelled"})
 
 (def reasoning-visibilities #{"private" "visible"})
-
-(defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 
 (defn- json-ready?
   [x]
@@ -33,65 +32,65 @@
 (defmethod block-valid? "prose"
   [block]
   (and (string-keyed-map? block)
-       (non-blank-string? (get block "id"))
+       (util/non-blank-string? (get block "id"))
        (string? (get block "markdown"))))
 
 (defmethod block-valid? "speech"
   [block]
   (and (string-keyed-map? block)
-       (non-blank-string? (get block "id"))
-       (non-blank-string? (get block "text"))))
+       (util/non-blank-string? (get block "id"))
+       (util/non-blank-string? (get block "text"))))
 
 (defmethod block-valid? "code"
   [block]
   (and (string-keyed-map? block)
-       (non-blank-string? (get block "id"))
+       (util/non-blank-string? (get block "id"))
        (string? (get block "text"))
-       (or (nil? (get block "language")) (non-blank-string? (get block "language")))))
+       (or (nil? (get block "language")) (util/non-blank-string? (get block "language")))))
 
 (defmethod block-valid? "tool"
   [block]
   (and (string-keyed-map? block)
-       (non-blank-string? (get block "id"))
-       (non-blank-string? (get block "tool"))
+       (util/non-blank-string? (get block "id"))
+       (util/non-blank-string? (get block "tool"))
        (contains? tool-statuses (get block "status"))))
 
 (defmethod block-valid? "reasoning"
   [block]
   (and (string-keyed-map? block)
-       (non-blank-string? (get block "id"))
+       (util/non-blank-string? (get block "id"))
        (string? (get block "text"))
        (contains? reasoning-visibilities (get block "visibility" "private"))))
 
 (defmethod block-valid? "error"
   [block]
   (and (string-keyed-map? block)
-       (non-blank-string? (get block "id"))
-       (non-blank-string? (get block "code"))
-       (non-blank-string? (get block "message"))
+       (util/non-blank-string? (get block "id"))
+       (util/non-blank-string? (get block "code"))
+       (util/non-blank-string? (get block "message"))
        (or (nil? (get block "retryable")) (boolean? (get block "retryable")))))
 
 (defmethod block-valid? "attachment"
   [block]
   (and (string-keyed-map? block)
-       (non-blank-string? (get block "id"))
-       (non-blank-string? (get block "attachment_id"))
-       (non-blank-string? (get block "name"))
-       (non-blank-string? (get block "media_type"))))
+       (util/non-blank-string? (get block "id"))
+       (util/non-blank-string? (get block "attachment_id"))
+       (util/non-blank-string? (get block "name"))
+       (util/non-blank-string? (get block "media_type"))))
 
 (defmethod block-valid? "notice"
   [block]
   (and (string-keyed-map? block)
-       (non-blank-string? (get block "id"))
-       (non-blank-string? (get block "code"))
-       (non-blank-string? (get block "message"))))
+       (util/non-blank-string? (get block "id"))
+       (util/non-blank-string? (get block "code"))
+       (util/non-blank-string? (get block "message"))))
 
 (defmethod block-valid? :default [_] false)
 
 (defn message-valid?
   [message]
   (and (string-keyed-map? message)
-       (non-blank-string? (get message "id"))
+       (util/non-blank-string? (get message "id"))
        (contains? roles (get message "role"))
        (contains? message-statuses (get message "status"))
        (vector? (get message "content"))
@@ -106,25 +105,26 @@
   (and (string-keyed-map? event)
        (case (get event "type")
          "content.block.started"
-         (and (non-blank-string? (get event "turn_id")) (block-valid? (get event "block")))
+         (and (util/non-blank-string? (get event "turn_id")) (block-valid? (get event "block")))
 
          "content.block.delta"
-         (and (non-blank-string? (get event "turn_id"))
-              (non-blank-string? (get event "block_id"))
+         (and (util/non-blank-string? (get event "turn_id"))
+              (util/non-blank-string? (get event "block_id"))
               (contains? #{"markdown" "text"} (get event "field"))
               (string? (get event "text")))
 
          "content.block.completed"
-         (and (non-blank-string? (get event "turn_id")) (non-blank-string? (get event "block_id")))
+         (and (util/non-blank-string? (get event "turn_id"))
+              (util/non-blank-string? (get event "block_id")))
 
          "turn.completed"
-         (and (non-blank-string? (get event "turn_id")) (= "completed" (get event "status")))
+         (and (util/non-blank-string? (get event "turn_id")) (= "completed" (get event "status")))
 
          "turn.failed"
-         (and (non-blank-string? (get event "turn_id")) (= "failed" (get event "status")))
+         (and (util/non-blank-string? (get event "turn_id")) (= "failed" (get event "status")))
 
          "turn.cancelled"
-         (and (non-blank-string? (get event "turn_id")) (= "cancelled" (get event "status")))
+         (and (util/non-blank-string? (get event "turn_id")) (= "cancelled" (get event "status")))
 
          false)))
 
@@ -216,7 +216,7 @@
 
 (defn message
   [{:keys [id role status content created-at completed-at model provider author]
-    :or {status "streaming" content [] created-at (System/currentTimeMillis)}}]
+    :or {status "streaming" content [] created-at (util/now-ms)}}]
   (assert-message! (cond-> {"id" (str id)
                             "role" (name role)
                             "status" (name status)

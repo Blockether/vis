@@ -32,7 +32,7 @@
             [com.blockether.vis.internal.provider-error :as provider-error]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.shell-log :as shell-log]
-            [com.blockether.vis.internal.strutil :as strutil]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 
@@ -111,7 +111,7 @@
         tail
         (if (and (pos? prev-len) (<= prev-len n)) (subs s prev-len) s)]
 
-    (boolean (re-find strutil/sentence-boundary-pattern tail))))
+    (boolean (re-find util/sentence-boundary-pattern tail))))
 
 (defn- coalesce-delta?
   "True when this transient reasoning/content/prose delta should be SKIPPED on
@@ -377,7 +377,7 @@
 
          ;; Stamped once as well: a CAS retry must not drift the event's timestamp.
          stamp-ts
-         (System/currentTimeMillis)
+         (util/now-ms)
 
          stamp-sid
          (str sid)
@@ -424,7 +424,7 @@
            (vreset! captured event)
            (cond-> (assoc entry
                      :next-seq n
-                     :last-active (System/currentTimeMillis))
+                     :last-active (util/now-ms))
              (and (= type "turn.started") (get-in entry [:turns (:turn_id payload)]))
              (assoc-in [:turns (:turn_id payload) :event_start_seq] n)
 
@@ -500,7 +500,7 @@
               (vreset! captured ev)
               (cond-> (assoc entry
                         :next-seq n
-                        :last-active (System/currentTimeMillis))
+                        :last-active (util/now-ms))
                 store?
                 (update :events #(trim-ring (conj (or % []) ev)))
 
@@ -516,8 +516,7 @@
                                ;; clock — stamping mirror-local time here made
                                ;; a watcher in another process show a
                                ;; different elapsed than the producer.
-                               :started_at (or (get event "started_at")
-                                               (System/currentTimeMillis))})
+                               :started_at (or (get event "started_at") (util/now-ms))})
                     (update :turn-order
                             (fn [order]
                               (if (some #{tid} order) order ((fnil conj []) order tid)))))
@@ -683,7 +682,7 @@
   (doseq [frame frames]
     (let [stamped (assoc frame
                     "seq" (swap! fleet-seq inc)
-                    "ts" (System/currentTimeMillis))]
+                    "ts" (util/now-ms))]
       (doseq [[sub-id sink] @fleet-sinks]
         (try (sink stamped)
              (catch Throwable err
@@ -885,7 +884,7 @@
   [sid provider model]
   ;; `fresh-entry`, never a bare zero: an entry seeded at 0 restarts the seq
   ;; counter below a live client's cursor and silently kills its stream.
-  (update-session! sid #(assoc (or % (fresh-entry sid)) :last-active (System/currentTimeMillis)))
+  (update-session! sid #(assoc (or % (fresh-entry sid)) :last-active (util/now-ms)))
   (let [db
         (lp/db-info)
 
@@ -1470,7 +1469,7 @@
             ;; The iteration's complete reasoning + complete assistant prose ride
             ;; the boundary event too — the canonical, PERSISTED final text.
             :iteration-final
-            (cond-> {:done (boolean done?) :thinking (strutil/settled-thinking-text thinking)}
+            (cond-> {:done (boolean done?) :thinking (util/settled-thinking-text thinking)}
               (some-> assistant-prose
                       str
                       str/trim
@@ -1486,7 +1485,7 @@
             ;; `:vis/provider-error-data`).
             (cond-> {:error (when (some? error)
                               (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-                     :thinking (strutil/settled-thinking-text thinking)}
+                     :thinking (util/settled-thinking-text thinking)}
               (map? error)
               (assoc :error-data (select-keys error [:type :message :status :cause-class]))
 
@@ -1923,7 +1922,7 @@
    therefore remains identical after reconnects."
   [iteration]
   (cond-> (-> iteration
-              (update :thinking strutil/settled-thinking-text))
+              (update :thinking util/settled-thinking-text))
     (seq (:forms iteration))
     (update :forms #(mapv form/with-display %))))
 
@@ -2793,7 +2792,7 @@
                    :role "assistant"
                    :content [(content/error "turn_failed" reason false)]
                    :error reason
-                   :completed_at (System/currentTimeMillis)})
+                   :completed_at (util/now-ms)})
     (append-event! sid "turn.failed" (turn-terminal-payload sid tid "failed"))
     (emit-context-updated! sid)
     (after-turn-terminal! sid tid {:failed? true :cancel-token cancel-token :stalled? true})
@@ -2838,7 +2837,7 @@
                      (Thread/sleep check-ms)
                      (when (turn-watchdog-live? sid tid cancel-token)
                        (let [{:keys [phase last-ms started?] :as stall-state} @stall
-                             idle-ms (- (System/currentTimeMillis) (long (or last-ms 0)))
+                             idle-ms (- (util/now-ms) (long (or last-ms 0)))
                              {:keys [silent? tripped?]} (turn-stall-decision stall-state idle-ms)]
 
                          (if tripped?
@@ -2918,7 +2917,7 @@
           ;; Empty cumulative stream callbacks are transport heartbeats, not model
           ;; progress. Keep their live phase for diagnostics without moving the
           ;; stall deadline.
-          (when stall (swap! stall advance-turn-stall-state chunk (System/currentTimeMillis)))
+          (when stall (swap! stall advance-turn-stall-state chunk (util/now-ms)))
           (try
             (when caller-on-chunk
               (try (caller-on-chunk chunk)
@@ -2928,7 +2927,7 @@
                   (:phase chunk)
 
                   now
-                  (System/currentTimeMillis)]
+                  (util/now-ms)]
 
               (when-not (coalesce-delta? @last-delta-ms chunk now)
                 (let [streaming?
@@ -3123,7 +3122,7 @@
              :duration_ms (:duration-ms result)
              :utilization (:utilization result)
              :error (when failure-code failure-text)
-             :completed_at (System/currentTimeMillis)}]
+             :completed_at (util/now-ms)}]
 
         (when (claim-turn-terminal! sid tid cancel-token)
           (finish-turn! sid tid patch)
@@ -3212,7 +3211,7 @@
                                       (provider-error/provider-error-content t)
                                       :else
                                       [(content/error "turn_failed" (or err "Turn failed") false)])
-                       :completed_at (System/currentTimeMillis)}
+                       :completed_at (util/now-ms)}
                 err
                 (assoc :error err)
 
@@ -3264,10 +3263,7 @@
     (when (claim-turn-terminal! sid tid cancel-token)
       (finish-turn! sid
                     tid
-                    {:status "cancelled"
-                     :role "assistant"
-                     :content []
-                     :completed_at (System/currentTimeMillis)})
+                    {:status "cancelled" :role "assistant" :content [] :completed_at (util/now-ms)})
       (append-event! sid "turn.cancelled" (turn-terminal-payload sid tid "cancelled"))
       (emit-context-updated! sid)
       (after-turn-terminal! sid tid {:failed? false :cancel-token cancel-token :stalled? false}))))
@@ -3284,7 +3280,7 @@
   ;; launch, and the watchdog is armed before the turn is announced.
   (try
     (let [stall
-          (atom {:phase nil :last-ms (System/currentTimeMillis)})
+          (atom {:phase nil :last-ms (util/now-ms)})
 
           ;; Armed BEFORE the turn is announced, so it also covers the window in
           ;; which the announcement — or the worker — fails to come into existence.
@@ -3298,7 +3294,7 @@
                                   :request (or display-request request)
                                   :display_request display-request
                                   :started_at (or (:started_at (turn-record sid tid))
-                                                  (System/currentTimeMillis))}
+                                                  (util/now-ms))}
                            queued?
                            (assoc :queued? true)
 
@@ -3323,10 +3319,7 @@
               ;; Proof of life for the watchdog: the body BEGAN. Waiting for the
               ;; process-wide permit is legitimate work, so it moves the deadline
               ;; off the launch ceiling and onto the stall ceiling.
-              (swap! stall assoc
-                :phase :awaiting-permit
-                :started? true
-                :last-ms (System/currentTimeMillis))
+              (swap! stall assoc :phase :awaiting-permit :started? true :last-ms (util/now-ms))
               (if (acquire-turn-permit! cancel-token)
                 (do (swap! turns-executing inc)
                     ;; The permit is IN HAND: everything from here on — building or
@@ -3336,7 +3329,7 @@
                     ;; own session's wedged engine report a phase it had already
                     ;; left, kept it exempt from the first-output ceiling for six
                     ;; minutes, and blamed a provider it never reached.
-                    (swap! stall assoc :phase :engine-start :last-ms (System/currentTimeMillis))
+                    (swap! stall assoc :phase :engine-start :last-ms (util/now-ms))
                     (try (run-turn! sid
                                     tid
                                     request
@@ -3479,7 +3472,7 @@
                              display_request]}]
                     (next-drainable-turn entry force?)]
              (let [token (or cancel-token (cancellation/cancellation-token))
-                   started-at (System/currentTimeMillis)]
+                   started-at (util/now-ms)]
 
                (vreset! decision
                         {:tid tid
@@ -3549,18 +3542,17 @@
    user request."
   [sid {:keys [reason]}]
   (let [captured (volatile! nil)]
-    (update-session!
-      sid
-      (fn [entry]
-        (when entry
-          (let [held (count-queued entry)]
-            (if (pos? (long held))
-              (let [gen (inc (long (get-in entry [:queue-paused :gen] 0)))
-                    paused {:reason reason :held held :gen gen :at (System/currentTimeMillis)}]
+    (update-session! sid
+                     (fn [entry]
+                       (when entry
+                         (let [held (count-queued entry)]
+                           (if (pos? (long held))
+                             (let [gen (inc (long (get-in entry [:queue-paused :gen] 0)))
+                                   paused {:reason reason :held held :gen gen :at (util/now-ms)}]
 
-                (vreset! captured paused)
-                (assoc entry :queue-paused paused))
-              entry)))))
+                               (vreset! captured paused)
+                               (assoc entry :queue-paused paused))
+                             entry)))))
     (when-let [{:keys [held]} @captured]
       (append-event! sid "queue.paused" {:reason reason :held held}))))
 
@@ -3740,7 +3732,7 @@
                   (:current-turn entry)
                   (do
                     (vreset! decision [:queued tid])
-                    (let [queued-at (System/currentTimeMillis)]
+                    (let [queued-at (util/now-ms)]
                       (-> entry
                           (assoc :last-active queued-at)
                           (assoc-in
@@ -3804,7 +3796,7 @@
                   :else (do
                           (vreset! decision [:accepted tid])
                           (let [token (or cancel-token (cancellation/cancellation-token))
-                                started-at (System/currentTimeMillis)]
+                                started-at (util/now-ms)]
 
                             (-> entry
                                 (assoc :current-turn tid
@@ -4236,7 +4228,7 @@
                      ;; unwinding worker can tell post-cancel submissions (drain
                      ;; them: "stop that, run THIS") from the pre-cancel backlog
                      ;; (dropped) — see `drop-cancelled-backlog!`.
-                     (update-turn! sid tid #(assoc % :cancelling_at (System/currentTimeMillis)))
+                     (update-turn! sid tid #(assoc % :cancelling_at (util/now-ms)))
                      (some-> (:cancel-token turn)
                              (cancellation/cancel! source))
                      ;; A stop must ALWAYS resolve. Firing the token only unwinds a
@@ -4366,7 +4358,7 @@
           prewarm?
           (assoc :router-root (persisted-router-root (:id created))))]
 
-    (put-session! (:id created) {:next-seq 0 :last-active (System/currentTimeMillis)})
+    (put-session! (:id created) {:next-seq 0 :last-active (util/now-ms)})
     created))
 
 (defn- pop-prewarmed!
@@ -4552,7 +4544,7 @@
           last-turn (some->> (:turn-order entry)
                              peek
                              (get (:turns entry)))
-          server-time-ms (System/currentTimeMillis)
+          server-time-ms (util/now-ms)
           stats (try (some-> (lp/db-info)
                              (persistance/db-session-turn-stats sid))
                      (catch Throwable _ nil))
@@ -4678,7 +4670,7 @@
                                                  :through-turn-id through})]
 
       (when-not forked (throw (ex-info "Could not fork this session" {:type :session/fork-failed})))
-      (put-session! forked {:next-seq 0 :last-active (System/currentTimeMillis)})
+      (put-session! forked {:next-seq 0 :last-active (util/now-ms)})
       (soul forked))))
 
 (defn- session-summary-extras
@@ -5190,7 +5182,7 @@
       :session_count (count ranked)
       :live_count (count (filterv listed (keys live)))
       :awaiting_count (count (filterv listed waiting))
-      :server_time_ms (System/currentTimeMillis)})))
+      :server_time_ms (util/now-ms)})))
 
 (defn search-session-ids
   "Soul-id STRINGS whose TRANSCRIPT (user request + assistant iteration text)

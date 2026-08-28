@@ -29,6 +29,7 @@
             [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
             [com.blockether.vis.internal.sandbox-fs :as sandbox-fs]
             [com.blockether.vis.internal.sandbox-resources :as res]
+            [com.blockether.vis.internal.util :as util]
             [flatland.ordered.map :as omap]
             [taoensso.telemere :as tel])
   (:import [org.graalvm.polyglot Context Context$Builder Engine Value PolyglotAccess
@@ -1520,14 +1521,6 @@
     (doseq [[nm f] bindings]
       (.putMember g ^String nm (wrap-ifn f)))))
 
-(defn- sha256-hex
-  "Lowercase-hex SHA-256 of `s` (UTF-8) - the cache key over all shim sources."
-  ^String [^String s]
-  (let [md (java.security.MessageDigest/getInstance "SHA-256")]
-    (->> (.digest md (.getBytes s "UTF-8"))
-         (map #(format "%02x" (bit-and (int %) 0xff)))
-         (apply str))))
-
 (def ^:private shim-triggers-cache-file
   ;; Persistent trigger-map cache: `~/.vis/cache/shim-triggers.json`. Holds a
   ;; hash-keyed SET of trigger maps (newest first, capped) so a multi-project
@@ -1552,12 +1545,12 @@
   "Content hash over every shim's source (sorted by name), so the trigger
    map is recomputed only when a shim's SOURCE (or the shim set) changes."
   ^String [entries]
-  (sha256-hex (->> entries
-                   (filter #(string? (:src %)))
-                   (sort-by :sid)
-                   (map (fn [{:keys [sid src]}]
-                          (str sid "\u0000" src)))
-                   (str/join "\u0001"))))
+  (util/sha256-hex (->> entries
+                        (filter #(string? (:src %)))
+                        (sort-by :sid)
+                        (map (fn [{:keys [sid src]}]
+                               (str sid "\u0000" src)))
+                        (str/join "\u0001"))))
 
 (defn- decode-trigger-map
   "JSON object -> `{sid {:provides [...] :autoload [...]}}`."
@@ -2271,7 +2264,7 @@
     ;; that outlives every `/reload`.
     (try (let [names (->> (registered-sandbox-shims)
                           (mapcat #(concat (:shim/imports %) (:shim/globals %)))
-                          (filter #(and (string? %) (not (str/blank? %))))
+                          (filter util/non-blank-string?)
                           distinct
                           vec)]
            (when (seq names)

@@ -16,7 +16,8 @@
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [com.blockether.svar.internal.router :as svar-router]
-            [com.blockether.vis.internal.registry :as registry]))
+            [com.blockether.vis.internal.registry :as registry]
+            [com.blockether.vis.internal.util :as util]))
 
 (def ^:private limit-statuses #{:ok :unauthenticated :unsupported :error :unknown-provider})
 
@@ -111,7 +112,7 @@
   ([provider-id status note]
    {:provider-id provider-id
     :status status
-    :fetched-at-ms (System/currentTimeMillis)
+    :fetched-at-ms (util/now-ms)
     :static (static-limits provider-id)
     :dynamic (cond-> {:limits []}
                note
@@ -195,7 +196,7 @@
    in-flight upstream call instead of stampeding it (single flight)."
   [provider-id fetch]
   (let [now
-        (System/currentTimeMillis)
+        (util/now-ms)
 
         entry
         (-> (swap! limits-cache

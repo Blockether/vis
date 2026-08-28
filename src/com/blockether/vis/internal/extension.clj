@@ -34,18 +34,15 @@
             [com.blockether.vis.internal.sandbox-resources :as sandbox-resources]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.theme :as theme]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import (java.io ByteArrayOutputStream InputStream)
            (java.net URL)
-           (java.security MessageDigest)
            (java.util.jar JarEntry JarFile)))
 
-(defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 ;; Tool-result contract
 (def ^:private max-trace-frames 12)
-
-(defn- now-ms [] (System/currentTimeMillis))
 
 (declare op-tag op-tags op-keyword->tag op-keyword->batch-hint tool-call-name)
 ;; ---- envelope leaf specs (op/*) ----
@@ -162,7 +159,7 @@
         (or metadata {})
 
         t
-        (now-ms)
+        (util/now-ms)
 
         started
         (long (or (:started-at-ms metadata) t))
@@ -383,9 +380,9 @@
 ;; Implementation function the LLM calls from :code blocks.
 (s/def :ext.symbol/fn fn?)
 ;; One-liner description shown in the sandbox var's docstring.
-(s/def :ext.symbol/doc non-blank-string?)
+(s/def :ext.symbol/doc util/non-blank-string?)
 ;; Original host-side source form for REPL `source(alias.sym)` in Python.
-(s/def :ext.symbol/source non-blank-string?)
+(s/def :ext.symbol/source util/non-blank-string?)
 ;; Argument signatures, e.g. '([term] [term opts]).
 ;; Shown in var meta :arglists and used by `render-symbol-line` to
 ;; build the model-facing call form (e.g. `(cat path)`).
@@ -449,15 +446,15 @@
   (s/or :shape map?
         :fn fn?))
 ;; Wire-name advertised to the model (default: the symbol name). `exists?`→`file_exists`.
-(s/def :ext.symbol/name non-blank-string?)
+(s/def :ext.symbol/name util/non-blank-string?)
 ;; Compact model-facing routing/semantics — the FIRST thing `doc(name)` answers.
 ;; The implementation docstring is developer documentation and never substitutes
 ;; for it.
-(s/def :ext.symbol/description non-blank-string?)
+(s/def :ext.symbol/description util/non-blank-string?)
 ;; Exact raw return contract for the value Python receives; `doc(name)` appends it
 ;; exactly once.
-(s/def :ext.symbol/result non-blank-string?)
-(s/def :ext.symbol.param/name non-blank-string?)
+(s/def :ext.symbol/result util/non-blank-string?)
+(s/def :ext.symbol.param/name util/non-blank-string?)
 (s/def :ext.symbol.param/required? boolean?)
 ;; A tool's model-facing page has ONE shape, and these three keys are all of it:
 ;; `:description` (what the verb does, what it REQUIRES, what an omitted key
@@ -471,7 +468,7 @@
 ;; `:required?` is the machine-readable statement and `doc(name)` renders it.
 ;; A key only one pack/dialect reads leads with that pack and an em dash
 ;; ("clojure — shadow-cljs build id"); the prefix is not charged against the six.
-(s/def :ext.symbol.param/note non-blank-string?)
+(s/def :ext.symbol.param/note util/non-blank-string?)
 ;; The OPTIONS-DICT key vocabulary, in the order a caller should think about it:
 ;; `[{:name "paths" :required? true} {:name "ranges"} …]`. A tool whose `:call`
 ;; shape ends in a dict has its WHOLE contract inside that dict, where a Python
@@ -507,9 +504,9 @@
         :val ::val-symbol-entry))
 ;; Extension spec
 ;; Logical extension id, e.g. "foundation" or "github-copilot".
-(s/def :ext/name non-blank-string?)
+(s/def :ext/name util/non-blank-string?)
 ;; Extension-level documentation - describes what this bundle provides.
-(s/def :ext/description non-blank-string?)
+(s/def :ext/description util/non-blank-string?)
 ;; Namespace(s) whose source loads/registers this extension. `vis/extension`
 ;; captures this from the callsite; generated logical extensions may share it.
 (s/def :ext/source-nses (s/coll-of symbol? :kind vector?))
@@ -520,7 +517,7 @@
 ;; set it explicitly; for the common categorical cases (extensions
 ;; that only contribute providers / channels / persistence backends)
 ;; the `extension` builder auto-derives it.
-(s/def :ext/kind non-blank-string?)
+(s/def :ext/kind util/non-blank-string?)
 ;; Guard evaluated at each turn boundary. (fn [env] -> bool).
 ;; Default: (constantly true).
 (s/def :ext/activation-fn fn?)
@@ -625,7 +622,7 @@
 
 (s/def :ext.hook/id keyword?)
 
-(s/def :ext.hook/doc non-blank-string?)
+(s/def :ext.hook/doc util/non-blank-string?)
 
 (s/def :ext.hook/phase (s/and keyword? hook-phase?))
 
@@ -639,18 +636,18 @@
 
 (s/def :ext/hooks (s/coll-of ::hook :kind vector?))
 
-(s/def :ext.hook.return/text non-blank-string?)
+(s/def :ext.hook.return/text util/non-blank-string?)
 
 (s/def :ext.hook.return/importance keyword?)
 
 (s/def ::iteration-start-hint
   (s/keys :req-un [:ext.hook.return/text] :opt-un [:ext.hook.return/importance]))
 
-(s/def :ext.hook.return/hint non-blank-string?)
+(s/def :ext.hook.return/hint util/non-blank-string?)
 
 (s/def :ext.hook.return/reject true?)
 
-(s/def :ext.hook.return/message non-blank-string?)
+(s/def :ext.hook.return/message util/non-blank-string?)
 
 (s/def ::answer-validation-reject
   (s/keys :req-un [:ext.hook.return/reject]
@@ -697,13 +694,13 @@
 ;; `:parent ["workspace"]`, etc.). The canonical full path of a slash
 ;; is `(conj parent name)`. `register-extension!` refuses two
 ;; extensions declaring the same `[parent name]`.
-(s/def :slash/name non-blank-string?)
+(s/def :slash/name util/non-blank-string?)
 
-(s/def :slash/parent (s/coll-of non-blank-string? :kind vector?))
+(s/def :slash/parent (s/coll-of util/non-blank-string? :kind vector?))
 
-(s/def :slash/doc non-blank-string?)
+(s/def :slash/doc util/non-blank-string?)
 
-(s/def :slash/usage non-blank-string?)
+(s/def :slash/usage util/non-blank-string?)
 
 (s/def :slash/run-fn ifn?)
 
@@ -711,7 +708,7 @@
 
 (s/def :slash/availability-fn ifn?)
 
-(s/def :slash/subcommands (s/coll-of non-blank-string? :kind vector?))
+(s/def :slash/subcommands (s/coll-of util/non-blank-string? :kind vector?))
 
 (s/def ::slash
   (s/keys :req [:slash/name]
@@ -729,9 +726,9 @@
 ;; Optional extension-owned environment declarations. These name OS-style
 ;; variables an extension reads; values come from the process environment or the
 ;; working directory's `.env`, never from Vis config or the TUI.
-(s/def :ext.env/name non-blank-string?)
+(s/def :ext.env/name util/non-blank-string?)
 
-(s/def :ext.env/label non-blank-string?)
+(s/def :ext.env/label util/non-blank-string?)
 
 (s/def :ext.env/description string?)
 
@@ -750,11 +747,11 @@
 ;; buckets.
 (s/def :ext.setting/key
   (s/or :keyword keyword?
-        :string non-blank-string?))
+        :string util/non-blank-string?))
 
 (s/def :ext.setting/type #{:toggle :choice :action})
 
-(s/def :ext.setting/label non-blank-string?)
+(s/def :ext.setting/label util/non-blank-string?)
 
 (s/def :ext.setting/description string?)
 
@@ -772,18 +769,18 @@
 ;; string-key settings here for channels to adapt.
 (s/def :ext/theme theme/extension-theme-map?)
 ;; Semver version string, e.g. "1.0.0", "0.3.1-SNAPSHOT".
-(s/def :ext/version non-blank-string?)
+(s/def :ext/version util/non-blank-string?)
 ;; Author name or org - the entity that *created* the extension
 ;; (e.g. "Blockether", "Acme Corp.").
-(s/def :ext/author non-blank-string?)
+(s/def :ext/author util/non-blank-string?)
 ;; Owner of the *package* - the project / distribution that ships
 ;; this extension. For everything bundled in this repo: "vis".
 ;; Third-party packages set their own owner (often the same as
 ;; `:ext/author`, but they're independent: a Blockether-authored
 ;; extension can be vendored by a downstream distribution).
-(s/def :ext/owner non-blank-string?)
+(s/def :ext/owner util/non-blank-string?)
 ;; SPDX license identifier.
-(s/def :ext/license non-blank-string?)
+(s/def :ext/license util/non-blank-string?)
 ;; Surface slots
 ;; CLI commands exported by this extension.
 (s/def :ext/cli (s/coll-of :com.blockether.vis.internal.registry/command :kind vector?))
@@ -804,7 +801,7 @@
     (s/and map?
            #(not (contains? % :provider/prompt-fn))
            #(keyword? (:provider/id %))
-           #(non-blank-string? (:provider/label %))
+           #(util/non-blank-string? (:provider/label %))
            (or-nil-or-fn :provider/status-fn)
            (or-nil-or-fn :provider/logout-fn)
            (or-nil-or-fn :provider/detect-fn)
@@ -894,13 +891,13 @@
 ;;                     and are embedded in the native image by build.clj's
 ;;                     `-H:IncludeResources=vis-shims/.*`; an extension shipping
 ;;                     its own must embed its own resource pattern the same way.
-(s/def :shim/name non-blank-string?)
+(s/def :shim/name util/non-blank-string?)
 
-(s/def :shim/imports (s/coll-of non-blank-string? :kind vector? :distinct true))
+(s/def :shim/imports (s/coll-of util/non-blank-string? :kind vector? :distinct true))
 
-(s/def :shim/globals (s/coll-of non-blank-string? :kind vector? :distinct true))
+(s/def :shim/globals (s/coll-of util/non-blank-string? :kind vector? :distinct true))
 
-(s/def :shim/docs non-blank-string?)
+(s/def :shim/docs util/non-blank-string?)
 
 (s/def :shim/bindings
   (s/or :map (s/map-of string? ifn?)
@@ -910,7 +907,7 @@
 ;; Declaring them is how a shim says who frees them and when — the engine wires
 ;; it at install, so there is no per-shim bookkeeping to forget. See
 ;; `internal.sandbox-resources`.
-(s/def :resource/label non-blank-string?)
+(s/def :resource/label util/non-blank-string?)
 
 (s/def :resource/release ifn?) ; (fn [handle value]) — frees ONE entry
 
@@ -921,7 +918,7 @@
 ;; Keys are namespaced to the shim that owns them, so two shims cannot collide.
 (s/def :shim/resources (s/map-of qualified-keyword? ::shim-resource))
 
-(s/def :shim/source non-blank-string?)
+(s/def :shim/source util/non-blank-string?)
 
 (s/def ::sandbox-shim
   (s/keys :req [:shim/name :shim/source]
@@ -956,19 +953,19 @@
 ;; and stamped onto tool-result info.
 (s/def ::alias symbol?)
 
-(s/def ::name non-blank-string?)
+(s/def ::name util/non-blank-string?)
 
-(s/def ::description non-blank-string?)
+(s/def ::description util/non-blank-string?)
 
-(s/def ::kind non-blank-string?)
+(s/def ::kind util/non-blank-string?)
 
-(s/def ::version non-blank-string?)
+(s/def ::version util/non-blank-string?)
 
-(s/def ::author non-blank-string?)
+(s/def ::author util/non-blank-string?)
 
-(s/def ::owner non-blank-string?)
+(s/def ::owner util/non-blank-string?)
 
-(s/def ::license non-blank-string?)
+(s/def ::license util/non-blank-string?)
 
 (s/def ::source-paths (s/coll-of string? :kind vector?))
 
@@ -1086,7 +1083,7 @@
          al
          (or (:arglists opts) (:arglists m) (when (:raw? opts) '([& args])))]
 
-     (when-not (non-blank-string? doc)
+     (when-not (util/non-blank-string? doc)
        (anomaly/incorrect! (str "Var " v
                                 " is missing a docstring; extension symbols inherit "
                                 ":doc from the underlying defn (no side maps).")
@@ -1327,7 +1324,7 @@
   ([sym-name val opts]
    ;; Test-only direct-construction arity. `:doc` comes from opts.
    (let [doc (:doc opts)]
-     (when-not (non-blank-string? doc)
+     (when-not (util/non-blank-string? doc)
        (anomaly/incorrect! (str "3-arg value '" sym-name "' missing :doc in opts.")
                            {:type :extension/missing-doc :symbol sym-name}))
      (validate-symbol-entry! #:ext.symbol{:symbol sym-name :val val :doc doc}))))
@@ -1437,7 +1434,7 @@
         header-notes
         (vec (remove nil?
                [(when alias-sym (str "use " alias-sym "/ prefix"))
-                (when (non-blank-string? usage-note) usage-note)]))
+                (when (util/non-blank-string? usage-note) usage-note)]))
 
         extra-lines
         (cond (nil? notes) []
@@ -2062,8 +2059,7 @@
   [answer]
   (cond (string? answer) (when-not (str/blank? answer) {:reason answer})
         (map? answer) (let [reason (or (:reason answer) (:hint answer))]
-                        (when (and (string? reason) (not (str/blank? reason)))
-                          (assoc answer :reason reason)))
+                        (when (util/non-blank-string? reason) (assoc answer :reason reason)))
         :else nil))
 
 (defn gate-hooked?
@@ -2290,7 +2286,7 @@
           (or (:ext.symbol/presenter sym-entry) :generic)
 
           started-at-ms
-          (now-ms)
+          (util/now-ms)
 
           details
           {:operation operation
@@ -2495,24 +2491,6 @@
       (validate!)))
 ;; Extension source markers
 ;; Hash + mtime primitives.
-(defn- sha256-digest ^MessageDigest [] (MessageDigest/getInstance "SHA-256"))
-
-(defn- bytes->hex
-  ^String [^bytes b]
-  (let [sb (StringBuilder. (* 2 (alength b)))]
-    (dotimes [i (alength b)]
-      (let [v (bit-and (aget b i) 0xff)]
-        (when (< v 16) (.append sb \0))
-        (.append sb (Integer/toString v 16))))
-    (.toString sb)))
-
-(defn sha256-hex
-  "Hex SHA-256 of a string (UTF-8). The ONE string-digest helper —
-   loop's replay-dedup key and the source-marker hashing share it
-   instead of re-rolling MessageDigest + hex folds."
-  ^String [s]
-  (bytes->hex (.digest (sha256-digest) (.getBytes (str s) "UTF-8"))))
-
 (defn- read-stream-bytes
   ^bytes [^InputStream in]
   (with-open [out (ByteArrayOutputStream.)]
@@ -2673,7 +2651,7 @@
             (long (reduce max 0 (map :mtime entries)))
 
             digest
-            (sha256-digest)
+            (util/sha256-digest)
 
             _
             (doseq [^SourceEntry e entries]
@@ -2684,7 +2662,7 @@
             (.digest digest)
 
             hash-hex
-            (bytes->hex hash-bytes)]
+            (util/bytes->hex hash-bytes)]
 
         {:source-paths paths :source-mtime-max mtime-max :source-hash-sha256 hash-hex}))))
 
@@ -3324,7 +3302,7 @@
           (and (string? prose) result)
           (str "\n\nRaw result: " result))]
 
-    (when (and (string? text) (not (str/blank? text))) text)))
+    (when (util/non-blank-string? text) text)))
 (defn sandbox-symbol-signatures
   "Map `{sandbox-symbol -> python-parameter-list}` for every engine-bound
    callable across the registered extensions, from `symbol-signature`. The

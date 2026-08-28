@@ -39,6 +39,7 @@
             [com.blockether.vis.internal.python-extensions :as python-extensions]
             [com.blockether.vis.internal.slash :as slash]
             [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.voice :as voice]
             [reitit.ring :as rr]
             [ring.adapter.jetty9 :as jetty]
@@ -178,8 +179,7 @@
   []
   (when-let [state @server-state]
     (let [before (:clients state)
-          {:keys [clients dead duplicates expired]}
-          (compact-client-leases before (System/currentTimeMillis))
+          {:keys [clients dead duplicates expired]} (compact-client-leases before (util/now-ms))
           ;; An expired lease IS a dead owner - the pid it would have been judged by
           ;; lives on another machine.
           gone (+ (long dead) (long expired))
@@ -262,10 +262,9 @@
             (str host ":" port))
 
         raw
-        (.digest (MessageDigest/getInstance "SHA-256")
-                 (.getBytes ^String seed StandardCharsets/UTF_8))]
+        (util/sha256-hex seed)]
 
-    (subs (.formatHex (java.util.HexFormat/of) ^bytes raw) 0 16)))
+    (subs raw 0 16)))
 
 (defn- status-map
   []
@@ -327,8 +326,7 @@
   (let [{:keys [managed? saw-client? started-at-ms]} @server-state]
     (and managed?
          (or saw-client?
-             (>= (- (System/currentTimeMillis) (long (or started-at-ms 0)))
-                 (long STARTUP_IDLE_GRACE_MS))))))
+             (>= (- (util/now-ms) (long (or started-at-ms 0))) (long STARTUP_IDLE_GRACE_MS))))))
 
 (defn- note-turn-progress!
   "Sample how far the turns this daemon still counts as running have advanced,
@@ -340,7 +338,7 @@
         (state/running-turn-progress)
 
         now
-        (System/currentTimeMillis)]
+        (util/now-ms)]
 
     (swap! turn-progress-watch (fn [prev]
                                  (if (and prev (= marker (:marker prev)))
@@ -358,8 +356,7 @@
   (let [{:keys [marker since]} @turn-progress-watch]
     (boolean (and marker
                   (pos? (long (:turns marker)))
-                  (>= (- (System/currentTimeMillis) (long (or since 0)))
-                      (long STUCK_TURN_IDLE_MS))))))
+                  (>= (- (util/now-ms) (long (or since 0))) (long STUCK_TURN_IDLE_MS))))))
 
 (defn- idle-shutdown-reason
   "Why this managed daemon may stop itself right now, or nil to keep serving.
@@ -439,7 +436,7 @@
     (step! "client-leases" reap-client-leases!)
     (step! "sse-clients" reap-sse-clients!)
     (step! "turn-progress" note-turn-progress!)
-    (step! "uploads" #(reap-uploads! (System/currentTimeMillis)))
+    (step! "uploads" #(reap-uploads! (util/now-ms)))
     (step! "refcount-shutdown" maybe-stop-when-idle!)))
 
 (defn- ensure-idle-reaper!
@@ -486,9 +483,7 @@
            (catch UnsupportedOperationException _
              ;; Non-POSIX filesystem: create without the perm attribute.
              (Files/createFile path (make-array FileAttribute 0))))
-      (Files/write path
-                   (.getBytes token StandardCharsets/UTF_8)
-                   ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
+      (Files/write path (util/utf8 token) ^"[Ljava.nio.file.OpenOption;" (make-array OpenOption 0))
       token)))
 
 ;; Ring helpers
@@ -580,7 +575,7 @@
           :else (let [^bytes bytes (.readNBytes ^InputStream (:body request) (inc limit))]
                   (if (> (alength bytes) limit)
                     (error-response 413 :attachment-too-large "attachment exceeds the upload limit")
-                    (let [now (System/currentTimeMillis)
+                    (let [now (util/now-ms)
                           upload-id (str (UUID/randomUUID))
                           upload {:sid sid
                                   :filename filename
@@ -833,7 +828,7 @@
                  :current_turn_id (some-> tid
                                           str)
                  :is_live (some? tid)
-                 :server_time_ms (System/currentTimeMillis)}
+                 :server_time_ms (util/now-ms)}
           (pos? latest-iteration)
           (assoc :latest-iteration latest-iteration))]
 
@@ -1005,23 +1000,21 @@
                                     (assoc :saw-client? true)
                                     (assoc-in [:sse-clients sub-id]
                                               {:pid owner-pid :close! close!}))))
-          (try (when proxied? (sse-proxy-pad! out))
-               ;; Ready BEFORE the sink is attached: a client reads its cold
-               ;; window on this frame, so the read and the deltas that follow
-               ;; cannot cross and leave the list describing two different
-               ;; instants.
-               (write! {"schema" 1
-                        "type" "subscription.ready"
-                        "scope" "fleet"
-                        "seq" 0
-                        "ts" (System/currentTimeMillis)})
-               (state/subscribe-fleet! sub-id sink)
-               (pump-sse! out queue dead? write!)
-               (catch Throwable _ nil)
-               (finally (state/unsubscribe-fleet! sub-id)
-                        (swap! server-state update :sse-clients dissoc sub-id)
-                        (maybe-stop-when-idle!)
-                        (try (.close out) (catch Throwable _ nil))))))))
+          (try
+            (when proxied? (sse-proxy-pad! out))
+            ;; Ready BEFORE the sink is attached: a client reads its cold
+            ;; window on this frame, so the read and the deltas that follow
+            ;; cannot cross and leave the list describing two different
+            ;; instants.
+            (write!
+              {"schema" 1 "type" "subscription.ready" "scope" "fleet" "seq" 0 "ts" (util/now-ms)})
+            (state/subscribe-fleet! sub-id sink)
+            (pump-sse! out queue dead? write!)
+            (catch Throwable _ nil)
+            (finally (state/unsubscribe-fleet! sub-id)
+                     (swap! server-state update :sse-clients dissoc sub-id)
+                     (maybe-stop-when-idle!)
+                     (try (.close out) (catch Throwable _ nil))))))))
 
 (defn- multi-events-handler
   "GET /v1/events?sids=a:10,b,c:3 — ONE SSE stream carrying every listed
@@ -1165,7 +1158,7 @@
         (str (java.util.UUID/randomUUID))
 
         lease
-        (let [now (System/currentTimeMillis)]
+        (let [now (util/now-ms)]
           {:pid pid :kind kind :connected-at now :last-seen-at now})
 
         replacement-stats
@@ -1987,9 +1980,7 @@
    (`server_time_ms`) — two answers may differ in bytes while rendering
    identically, which is exactly the case a 304 exists for."
   ^String [parts]
-  (let [raw (.digest (MessageDigest/getInstance "SHA-256")
-                     (.getBytes ^String (wire/json-str parts) StandardCharsets/UTF_8))]
-    (str "W/\"" (subs (.formatHex (java.util.HexFormat/of) ^bytes raw) 0 32) "\"")))
+  (str "W/\"" (subs (util/sha256-hex (wire/json-str parts)) 0 32) "\""))
 
 (defn- sessions-etag
   "Conditional-GET validator for a session-list ANSWER: SHA-256 over the rows
@@ -4109,10 +4100,7 @@
    once auth is enabled (non-loopback); `MessageDigest/isEqual` compares in
    constant time. nil-safe — a missing header never matches."
   [^String a ^String b]
-  (boolean (and a
-                b
-                (MessageDigest/isEqual (.getBytes a StandardCharsets/UTF_8)
-                                       (.getBytes b StandardCharsets/UTF_8)))))
+  (boolean (and a b (MessageDigest/isEqual (util/utf8 a) (util/utf8 b)))))
 
 (defn- wrap-auth
   "Token gate (§3). Skipped entirely when [[auth-required?]] is false
@@ -4434,7 +4422,7 @@
    request never reaches it, so no stranger can keep a lease warm."
   [handler]
   (fn [request]
-    (touch-client-lease! (get-in request [:headers "x-vis-client-id"]) (System/currentTimeMillis))
+    (touch-client-lease! (get-in request [:headers "x-vis-client-id"]) (util/now-ms))
     (handler request)))
 
 (defn- app
@@ -4555,8 +4543,7 @@
 
     (let [outcome (try {:server (jetty/run-jetty handler opts)}
                        (catch Throwable t
-                         (if (and (bind-failure? t)
-                                  (< (System/currentTimeMillis) (long deadline-ms)))
+                         (if (and (bind-failure? t) (< (util/now-ms) (long deadline-ms)))
                            ::retry
                            (throw t))))]
       (if (= outcome ::retry) (do (Thread/sleep 150) (recur)) (:server outcome)))))
@@ -4713,7 +4700,7 @@
          (reset! server-state {:token token
                                :require-token? require-token?
                                :managed? (boolean managed?)
-                               :started-at-ms (System/currentTimeMillis)})
+                               :started-at-ms (util/now-ms)})
 
          _
          (rebuild-app!)
@@ -4768,7 +4755,7 @@
                              :virtual-threads? true
                              :send-server-version? false
                              :configurator (gateway-configurator (when mirror-loopback? port))}
-                            (+ (System/currentTimeMillis) 6000))
+                            (+ (util/now-ms) 6000))
               (catch Throwable t (reset! server-state nil) (reset! live-app nil) (throw t)))]
 
      (when-not (= host DEFAULT_HOST)
@@ -4789,7 +4776,7 @@
                            :client-duplicates-reaped-total 0
                            :require-token? require-token?
                            :managed? (boolean managed?)
-                           :started-at-ms (System/currentTimeMillis)
+                           :started-at-ms (util/now-ms)
                            :saw-client? false})
      ;; The gateway's own control-plane port is reserved so a jailed child can NEVER reach
      ;; it through the proxy, even though loopback egress is allowed by default (SSRF floor).
@@ -4819,13 +4806,11 @@
   "Block up to `GRACEFUL_DRAIN_MS` for running turns to reach zero, polling
    every 100ms. Returns the residual running-turn count (0 = fully drained)."
   []
-  (let [deadline (+ (System/currentTimeMillis) (long GRACEFUL_DRAIN_MS))]
+  (let [deadline (+ (util/now-ms) (long GRACEFUL_DRAIN_MS))]
     (loop []
 
       (let [n (long (running-turn-count))]
-        (if (or (zero? n) (>= (System/currentTimeMillis) deadline))
-          n
-          (do (Thread/sleep 100) (recur)))))))
+        (if (or (zero? n) (>= (util/now-ms) deadline)) n (do (Thread/sleep 100) (recur)))))))
 
 (defn stop!
   "Stop the gateway server if running. Idempotent."

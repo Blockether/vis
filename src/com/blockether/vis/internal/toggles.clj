@@ -42,7 +42,8 @@
        prior metadata; the live VALUE in `state` is left alone so a
        user override survives a reload."
   (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util]))
 
 ;; Specs
 
@@ -71,8 +72,7 @@
    over-long copy are rejected at the registry boundary, the same way a
    non-canonical id is, so a settings UI never has to truncate."
   [v]
-  (and (string? v)
-       (not (str/blank? v))
+  (and (util/non-blank-string? v)
        (nil? (re-find #"[\r\n]" v))
        (<= (count v) (long max-description-length))))
 

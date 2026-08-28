@@ -24,7 +24,8 @@
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.human-input.live :as live]
             [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.header :as header]))
+            [com.blockether.vis.internal.header :as header]
+            [com.blockether.vis.internal.util :as util]))
 
 ;; ---------------------------------------------------------------------------
 ;; Channels we know how to enumerate. Derived from the global channel
@@ -214,7 +215,7 @@
   [turn]
   (or (:duration-ms turn)
       (when-let [created (:created-at turn)]
-        (try (- (System/currentTimeMillis)
+        (try (- (util/now-ms)
                 (long (cond (inst? created) (inst-ms created)
                             (integer? created) (long created)
                             :else 0)))
@@ -231,7 +232,7 @@
    the boundary-crossing failure map. Keeping idiomatic keyword access
    here does not put a keyword on the wire."
   [text]
-  (when (and (string? text) (not (str/blank? text)))
+  (when (util/non-blank-string? text)
     (try (let [parsed (json/read-json text :key-fn keyword)]
            (when (map? parsed) parsed))
          (catch Throwable _ nil))))

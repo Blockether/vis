@@ -11,6 +11,7 @@
    a possibly-partial result; on a small repo the result is exact.
 
    No third-party deps. Reflection-clean."
+  (:require [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
            (java.nio.file FileVisitResult Files Path SimpleFileVisitor)
            (java.nio.file.attribute BasicFileAttributes)))
@@ -209,19 +210,18 @@
          (long-array 1 0)
 
          deadline
-         (+ (System/currentTimeMillis) (long deadline-ms))
+         (+ (util/now-ms) (long deadline-ms))
 
          truncated
          (boolean-array 1 false)
 
          start-ms
-         (System/currentTimeMillis)
+         (util/now-ms)
 
          visitor
          (proxy [SimpleFileVisitor] []
            (preVisitDirectory [^Path dir ^BasicFileAttributes _attrs]
-             (cond (> (System/currentTimeMillis) deadline) (do (aset truncated 0 true)
-                                                               FileVisitResult/TERMINATE)
+             (cond (> (util/now-ms) deadline) (do (aset truncated 0 true) FileVisitResult/TERMINATE)
                    ;; The root itself is never skipped even
                    ;; if its name matches skip-directories
                    ;; (e.g. running inside `target/`).
@@ -229,7 +229,7 @@
                    :else (dir-decision dir)))
            (visitFile [^Path file ^BasicFileAttributes attrs]
              (let [count* (aget visited 0)]
-               (cond (or (>= count* (long max-files)) (> (System/currentTimeMillis) deadline))
+               (cond (or (>= count* (long max-files)) (> (util/now-ms) deadline))
                      (do (aset truncated 0 true) FileVisitResult/TERMINATE)
                      (.isRegularFile attrs)
                      (do (aset visited 0 (inc count*))
@@ -262,7 +262,7 @@
            (long (reduce + 0 (map :bytes rolled)))
 
            elapsed
-           (- (System/currentTimeMillis) start-ms)]
+           (- (util/now-ms) start-ms)]
 
        {:total-files total-files
         :total-bytes total-bytes
