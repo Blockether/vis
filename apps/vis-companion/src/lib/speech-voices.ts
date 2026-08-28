@@ -14,7 +14,7 @@ export interface DeviceVoice {
   isLocal?: boolean;
 }
 
-/** Three premium-ranked alternatives plus System default keep the device picker deliberate. */
+/** Other platforms keep three ranked alternatives beside System default. */
 export const BEST_DEVICE_VOICE_LIMIT = 3;
 
 export const IOS_VOICE_DOWNLOAD_GUIDANCE =
@@ -39,7 +39,7 @@ function normalizedLanguage(value: string | undefined): string {
   return (value ?? "").replaceAll("_", "-").toLowerCase();
 }
 
-function languageRank(voice: DeviceVoice, preferred: string[]): number {
+function languageRank(voice: DeviceVoice, preferred: readonly string[]): number {
   const language = normalizedLanguage(voice.language);
   if (!language) return preferred.length * 2;
   const exact = preferred.indexOf(language);
@@ -69,29 +69,24 @@ function preferredDeviceLanguages(): string[] {
     .filter(Boolean);
 }
 
-const IOS_RECOMMENDED_APPLE_VOICES = [
-  { name: "zoe", quality: 500 },
-  { name: "ava", quality: 500 },
-  { name: "samantha", quality: 450 },
-] as const;
-
-function publicAppleVoiceName(voice: DeviceVoice): string {
-  const label = voice.label
-    .replace(/\s+\((?:premium|enhanced)\)\s*$/i, "")
-    .trim();
-  if (label) return label.toLowerCase();
-  return (voice.id.split(".").pop() ?? "").toLowerCase();
+function normalizedPreferredLanguages(values: readonly string[]): string[] {
+  return Array.from(new Set(values.map(normalizedLanguage).filter(Boolean)));
 }
 
-function recommendedIosVoices(voices: DeviceVoice[]): DeviceVoice[] {
-  return IOS_RECOMMENDED_APPLE_VOICES.map(({ name, quality }) =>
-    voices.find(
-      (voice) =>
-        normalizedLanguage(voice.language) === "en-us" &&
-        publicAppleVoiceName(voice) === name &&
-        voiceQuality(voice) === quality,
-    ),
-  ).filter((voice): voice is DeviceVoice => voice !== undefined);
+function sortedDeviceVoices(
+  voices: DeviceVoice[],
+  preferred: readonly string[],
+): DeviceVoice[] {
+  return [...voices].sort((left, right) => {
+    const byLanguage = languageRank(left, preferred) - languageRank(right, preferred);
+    if (byLanguage !== 0) return byLanguage;
+    const byQuality = voiceQuality(right) - voiceQuality(left);
+    if (byQuality !== 0) return byQuality;
+    const byLocal = localRank(right) - localRank(left);
+    if (byLocal !== 0) return byLocal;
+    if (!!left.isDefault !== !!right.isDefault) return left.isDefault ? -1 : 1;
+    return left.label.localeCompare(right.label);
+  });
 }
 
 function rankedDeviceVoices(
@@ -99,9 +94,7 @@ function rankedDeviceVoices(
   selectedId: string | null,
   preferredLanguages: readonly string[],
 ): DeviceVoice[] {
-  const preferred = Array.from(
-    new Set(preferredLanguages.map(normalizedLanguage).filter(Boolean)),
-  );
+  const preferred = normalizedPreferredLanguages(preferredLanguages);
   const matchesPreferred = (voice: DeviceVoice) => {
     const language = normalizedLanguage(voice.language);
     if (!language || preferred.length === 0) return true;
@@ -112,16 +105,7 @@ function rankedDeviceVoices(
   };
   const matching = voices.filter(matchesPreferred);
   const pool = matching.some((voice) => voice.language) ? matching : voices;
-  const ranked = [...pool].sort((left, right) => {
-    const byLanguage = languageRank(left, preferred) - languageRank(right, preferred);
-    if (byLanguage !== 0) return byLanguage;
-    const byQuality = voiceQuality(right) - voiceQuality(left);
-    if (byQuality !== 0) return byQuality;
-    const byLocal = localRank(right) - localRank(left);
-    if (byLocal !== 0) return byLocal;
-    if (!!left.isDefault !== !!right.isDefault) return left.isDefault ? -1 : 1;
-    return left.label.localeCompare(right.label);
-  });
+  const ranked = sortedDeviceVoices(pool, preferred);
   const result = ranked.slice(0, BEST_DEVICE_VOICE_LIMIT);
   const selected = selectedId ? voices.find((voice) => voice.id === selectedId) : undefined;
   if (!selected || result.some((voice) => voice.id === selected.id)) return result;
@@ -129,10 +113,9 @@ function rankedDeviceVoices(
 }
 
 /**
- * Up to three installed voices worth putting in front of a person. iOS exposes only
- * Premium and Enhanced voices as explicit choices: its Standard/Compact fallbacks sound
- * mechanical and remain available through System default. Other platforms rank directly
- * by device language, quality and availability.
+ * iOS exposes every installed Premium and Enhanced voice as an explicit choice,
+ * ranked with this device's languages first. Its automatic voice remains System default.
+ * Other platforms keep a short list ranked by language, quality and availability.
  */
 export function bestDeviceVoices(
   voices: DeviceVoice[],
@@ -150,20 +133,13 @@ export function bestDeviceVoices(
   // iOS already exposes each language's `isDefault` voice through the automatic
   // System default row. Listing that same identifier again creates two controls
   // which speak with the same voice.
-  const explicit = unique.filter((voice) => !voice.isDefault);
-  const recommended = recommendedIosVoices(explicit);
-  if (recommended.length >= BEST_DEVICE_VOICE_LIMIT) return recommended;
-  const recommendedNames = new Set(recommended.map(publicAppleVoiceName));
-  const alternatives = rankedDeviceVoices(
-    explicit.filter(
-      (voice) =>
-        voiceQuality(voice) >= 450 &&
-        !recommendedNames.has(publicAppleVoiceName(voice)),
-    ),
-    selectedId,
-    preferredLanguages,
+  const explicit = unique.filter(
+    (voice) => !voice.isDefault && voiceQuality(voice) >= 450,
   );
-  return [...recommended, ...alternatives].slice(0, BEST_DEVICE_VOICE_LIMIT);
+  return sortedDeviceVoices(
+    explicit,
+    normalizedPreferredLanguages(preferredLanguages),
+  );
 }
 
 /**

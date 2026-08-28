@@ -66,7 +66,9 @@ describe("best device voices", () => {
     expect(chosen.some((voice) => voice.id.includes("compact"))).toBe(false);
   });
 
-  it("offers only the three recommended public Apple voices on iOS", () => {
+  // Regression, Vis session 26e737d2-a64b-4d91-9aa9-889cec313202: iOS capped the
+  // picker at three hard-coded voices and hid other downloaded Premium and Enhanced voices.
+  it("offers every public Premium and Enhanced Apple voice on iOS", () => {
     const chosen = bestDeviceVoices(
       [
         { id: "com.apple.voice.premium.en-US.Zoe", label: "Zoe (Premium)", language: "en-US", quality: 500 },
@@ -76,6 +78,7 @@ describe("best device voices", () => {
         { id: "com.apple.voice.enhanced.en-IE.Moira", label: "Moira (Enhanced)", language: "en-IE", quality: 450 },
         { id: "com.apple.voice.premium.en-US.Samantha", label: "Samantha (Premium)", language: "en-US", quality: 500 },
         { id: "com.apple.voice.enhanced.en-US.Evan", label: "Evan (Enhanced)", language: "en-US", quality: 450 },
+        { id: "com.apple.voice.premium.fr-FR.Amelie", label: "Amélie (Premium)", language: "fr-FR", quality: 500 },
       ],
       "com.apple.voice.premium.en-GB.Serena",
       ["en-US"],
@@ -83,57 +86,20 @@ describe("best device voices", () => {
     );
 
     expect(chosen.map((voice) => voice.id)).toEqual([
-      "com.apple.voice.premium.en-US.Zoe",
       "com.apple.voice.premium.en-US.Ava",
+      "com.apple.voice.premium.en-US.Samantha",
+      "com.apple.voice.premium.en-US.Zoe",
+      "com.apple.voice.enhanced.en-US.Evan",
       "com.apple.voice.enhanced.en-US.Samantha",
+      "com.apple.voice.premium.en-GB.Serena",
+      "com.apple.voice.enhanced.en-IE.Moira",
+      "com.apple.voice.premium.fr-FR.Amelie",
     ]);
   });
 
-  // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: iOS showed only the one
-  // hard-coded recommendation installed on the phone and hid every other usable system voice.
-  it("fills an incomplete iOS recommendation list with installed voices", () => {
-    const chosen = bestDeviceVoices(
-      [
-        {
-          id: "com.apple.voice.enhanced.en-US.Samantha",
-          label: "Samantha (Enhanced)",
-          language: "en-US",
-          quality: 450,
-        },
-        {
-          id: "com.apple.voice.premium.en-US.Serena",
-          label: "Serena (Premium)",
-          language: "en-US",
-          quality: 500,
-        },
-        {
-          id: "com.apple.voice.enhanced.en-US.Evan",
-          label: "Evan (Enhanced)",
-          language: "en-US",
-          quality: 450,
-        },
-        {
-          id: "com.apple.voice.compact.en-US.Fred",
-          label: "Fred",
-          language: "en-US",
-          quality: 300,
-        },
-      ],
-      null,
-      ["en-US"],
-      "ios",
-    );
-
-    expect(chosen.map((voice) => voice.label)).toEqual([
-      "Samantha (Enhanced)",
-      "Serena (Premium)",
-      "Evan (Enhanced)",
-    ]);
-  });
-
-  // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: filling missing
-  // recommendations with standard Apple voices exposed robotic choices as desirable voices.
-  it("does not pad iOS choices with standard-quality voices", () => {
+  // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: iOS exposed
+  // robotic standard voices beside downloaded natural voices.
+  it("does not show standard-quality voices on iOS", () => {
     const chosen = bestDeviceVoices(
       [
         {
