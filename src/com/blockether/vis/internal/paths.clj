@@ -112,7 +112,16 @@
   ^long []
   (.pid (java.lang.ProcessHandle/current)))
 
-(def ^:private log-roles #{"gateway" "tui" "vis"})
+(def ^:private process-roles
+  "What a vis PROCESS may call itself: the TUI, the gateway daemon, or the
+   short-lived CLI."
+  #{"gateway" "tui" "vis"})
+
+(def ^:private log-roles
+  "Every writer whose diagnostics land in `~/.vis/logs`. `pasta` is not a vis
+   process: it is the network-jail helper `process-jail` spawns, and vis owns the
+   file it hands it."
+  (conj process-roles "pasta"))
 
 (def ^:private process-start-stamp
   ;; Delayed for native-image: forcing this at namespace initialization would put
@@ -126,15 +135,15 @@
    Accepted roles are `tui`, `gateway`, and `vis` (short-lived CLI work)."
   [role]
   (let [role (name role)]
-    (when-not (contains? log-roles role)
-      (throw (ex-info (str "unknown log role: " role) {:role role :allowed log-roles})))
+    (when-not (contains? process-roles role)
+      (throw (ex-info (str "unknown log role: " role) {:role role :allowed process-roles})))
     (System/setProperty "vis.log.role" role)
     role))
 
 (defn- current-log-role
   []
   (let [role (System/getProperty "vis.log.role")]
-    (if (contains? log-roles role) role "vis")))
+    (if (contains? process-roles role) role "vis")))
 
 (defn log-file
   "Diagnostic log file for this process. The name carries its role, UTC start

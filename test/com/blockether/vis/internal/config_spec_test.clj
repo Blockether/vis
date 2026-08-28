@@ -39,13 +39,21 @@
                  "extra_body" {"temperature" 0}
                  "is_stateless" true
                  ;; Provider-level veto: this endpoint refuses image content parts.
-                 "is_image_input" false}]
+                 "is_image_input" false
+                 ;; Per-provider transport budget, narrowing the root `network`
+                 ;; block for this one endpoint.
+                 "network" {"timeout_ms" 120000
+                            "ttft_timeout_ms" 30000
+                            "first_byte_timeout_ms" 30000
+                            "idle_timeout_ms" 60000
+                            "semantic_timeout_ms" 90000}}]
    "router" {"rate_limit" {"same_provider_delays_ms" [1000 2000]
                            "fallback_after_ms" 30000
                            "is_respect_retry_after" true
                            "is_fallback_provider" true}
              "network" {"timeout_ms" 300000
                         "ttft_timeout_ms" 30000
+                        "first_byte_timeout_ms" 30000
                         "idle_timeout_ms" 45000
                         "semantic_timeout_ms" 120000
                         "max_retries" 5

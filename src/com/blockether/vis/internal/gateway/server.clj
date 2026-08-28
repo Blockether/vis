@@ -1627,8 +1627,9 @@
 (defn- remove-provider-handler
   "DELETE /v1/providers/:provider-id — drop it from the fleet and run its
    registered logout, so removing a provider never leaves a credential behind.
-   Idempotent: removing what is not there answers `is_removed` false, never an
-   error."
+   Idempotent, and `is_removed` answers the OUTCOME: true once nothing by that
+   name is in the fleet, whether this call removed it or it was never there.
+   Never an error."
   [request]
   (let [provider-id
         (some-> (get-in request [:path-params :provider-id])

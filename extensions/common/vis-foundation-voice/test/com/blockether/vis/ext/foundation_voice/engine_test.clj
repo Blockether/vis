@@ -2,10 +2,17 @@
   "The two ways the local Parakeet engine used to need a RESTART instead of a retry:
    a download that failed once, and a native library the JVM could not link."
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.foundation-voice.asr :as asr]
             [com.blockether.vis.ext.foundation-voice.engine :as engine]
             [com.blockether.vis.ext.foundation-voice.sherpa :as sherpa]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [around-each defdescribe expect it set-ns-context!]]))
+
+;; `call-native` RECORDS a terminal linker failure in the host's capability registry, and that
+;; verdict is process-wide BY DESIGN: a class whose static initializer failed can never load again
+;; in this JVM. The last test here drives exactly that path, so without this every later voice test
+;; sharing the JVM met the verdict it left behind instead of provisioning its own runtime.
+(set-ns-context! [(around-each [f] (try (f) (finally (vis/capability-forget-verdicts!))))])
 
 (defn- wav-path
   "A REAL (empty) 16-bit PCM WAV on disk, deleted when the JVM exits.

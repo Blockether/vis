@@ -236,7 +236,11 @@
 (import-vars [capability-ensure! capability/ensure!]
              [capability-verdict capability/verdict]
              [capability-fail! capability/fail!]
-             [capability-terminal-error? capability/terminal-error?])
+             [capability-terminal-error? capability/terminal-error?]
+             ;; A pack that RECORDS a terminal verdict must be able to drop it again in its own
+             ;; tests: the registry is process-wide by design, so one such test would otherwise
+             ;; answer every later test in that JVM from memory.
+             [capability-forget-verdicts! capability/forget-verdicts!])
 ;; Feature toggles (channels + extensions read this; TUI settings flips it)
 (import-vars [register-toggle! toggles/register-toggle!]
              [register-toggles! toggles/register-toggles!]

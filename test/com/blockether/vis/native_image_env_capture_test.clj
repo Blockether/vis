@@ -285,30 +285,32 @@
          (f)
          (finally (System/setProperty "user.home" original)))))
 
-(defdescribe runtime-paths-follow-this-process-test
-             (it "config paths resolve against the RUNNING process' home"
-                 (with-home "/tmp/vis-home-probe"
-                            (fn []
-                              (expect (= "/tmp/vis-home-probe/.vis" (config/config-dir)))
-                              (expect (= "/tmp/vis-home-probe/.vis/state.yml" (config/state-path)))
-                              (expect (= "/tmp/vis-home-probe/.vis/vis.mdb" (config/db-path)))
-                              (expect (= {:backend :sqlite :path "/tmp/vis-home-probe/.vis/vis.mdb"}
-                                         (config/default-db-spec)))
-                              ;; Per-process by construction (`paths/log-file`): the
-                              ;; DIRECTORY follows this process' home, the name carries
-                              ;; the pid so two vis processes never rotate one file.
-                              (expect (= (str "/tmp/vis-home-probe/.vis/logs/vis-"
-                                              (.pid (java.lang.ProcessHandle/current))
-                                              ".log")
-                                         (config/log-path))))))
-             (it "dotenv defaults resolve against the working directory when consulted"
-                 (expect (= (str (System/getProperty "user.dir") "/.env")
-                            (#'config/dotenv-path :cwd "/.env")))
-                 (expect (= (str (System/getProperty "user.dir") "/.env.local")
-                            (#'config/dotenv-path :cwd "/.env.local")))
-                 ;; An explicit binding still wins, and nil still means "no file".
-                 (expect (= "/tmp/other.env" (#'config/dotenv-path "/tmp/other.env" "/.env")))
-                 (expect (nil? (#'config/dotenv-path nil "/.env")))))
+(defdescribe
+  runtime-paths-follow-this-process-test
+  (it "config paths resolve against the RUNNING process' home"
+      (with-home "/tmp/vis-home-probe"
+                 (fn []
+                   (expect (= "/tmp/vis-home-probe/.vis" (config/config-dir)))
+                   (expect (= "/tmp/vis-home-probe/.vis/state.yml" (config/state-path)))
+                   (expect (= "/tmp/vis-home-probe/.vis/vis.mdb" (config/db-path)))
+                   (expect (= {:backend :sqlite :path "/tmp/vis-home-probe/.vis/vis.mdb"}
+                              (config/default-db-spec)))
+                   ;; Per-process by construction (`paths/log-file`): the
+                   ;; DIRECTORY follows this process' home, and the NAME carries
+                   ;; the role, this process' UTC start stamp and its pid, so two
+                   ;; vis processes never rotate one file.
+                   (expect (re-matches (re-pattern (str "/tmp/vis-home-probe/\\.vis/logs/"
+                                                        "(?:gateway|tui|vis)-\\d{8}T\\d{6}Z-pid"
+                                                        (.pid (java.lang.ProcessHandle/current))
+                                                        "\\.log"))
+                                       (config/log-path))))))
+  (it "dotenv defaults resolve against the working directory when consulted"
+      (expect (= (str (System/getProperty "user.dir") "/.env") (#'config/dotenv-path :cwd "/.env")))
+      (expect (= (str (System/getProperty "user.dir") "/.env.local")
+                 (#'config/dotenv-path :cwd "/.env.local")))
+      ;; An explicit binding still wins, and nil still means "no file".
+      (expect (= "/tmp/other.env" (#'config/dotenv-path "/tmp/other.env" "/.env")))
+      (expect (nil? (#'config/dotenv-path nil "/.env")))))
 
 (defdescribe
   color-is-decided-at-runtime-test

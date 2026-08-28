@@ -218,6 +218,7 @@
 (def router-network-schema
   {"timeout_ms" positive-int?
    "ttft_timeout_ms" positive-int?
+   "first_byte_timeout_ms" positive-int?
    "idle_timeout_ms" positive-int?
    "semantic_timeout_ms" positive-int?
    "max_retries" positive-int?

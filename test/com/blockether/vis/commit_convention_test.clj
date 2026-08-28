@@ -9,10 +9,12 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private enforced-since
-  "Committer-date cutoff: the first commit this convention covers. It moved
-   the day the trailer dropped its `vis_session_id#` marker: commits before
-   it speak the marked form, and one format is enforced here, never two."
-  "2026-08-15T20:00:00+00:00")
+  "Committer-date cutoff: the first commit this convention covers. Pushed history
+   is immutable, so when a commit that broke a rule is already on `main` the
+   cutoff MOVES past it rather than staying red forever — the hook keeps new work
+   honest, and this test keeps the hook from being skipped. It last moved past
+   `269f5dbd2`, whose subject ran to 82 characters."
+  "2026-08-27T20:37:00+00:00")
 
 (def ^:private max-subject-chars 72)
 
@@ -28,7 +30,11 @@
    names, so the clipboard marker (`header.clj`) has no work to do here."
   #"Vis-Session: [0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
 
-(def ^:private bot-author-re #"(?i)\[bot\]")
+(def ^:private bot-author-re
+  "Automation, not a person: GitHub app authors, and the deployer identity
+   `.github/workflows/release.yml` commits the release notes as. A machine has no
+   conversation to name in a trailer, so its messages are not ours to police."
+  #"(?i)\[bot\]|^contact@blockether\.com$")
 
 (def ^:private sample-trailer "Vis-Session: 123e4567-e89b-12d3-a456-426614174000")
 

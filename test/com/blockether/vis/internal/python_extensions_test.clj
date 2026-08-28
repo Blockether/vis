@@ -1447,7 +1447,7 @@ vis.extension(
 (def ^:private shell-provider-py
   "The ONE shelling-provider fixture. Both process-boundary cases load it — the
    session jail and the user's `shell` toggle — so the two cannot drift apart."
-  "import vis\ndef detect():\n    handle = vis.shell({'command': 'printf regular-shell'})\n    result = handle.wait(30)\n    for _ in range(3):\n        if not result.get('timed_out'):\n            break\n        result = handle.wait(30)\n    return {'token': result['stdout'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])")
+  "import vis\ndef detect():\n    handle = vis.shell({'command': 'printf regular-shell'})\n    result = handle.wait(30)\n    for _ in range(3):\n        if not result.get('timed_out'):\n            break\n        result = handle.wait(30)\n    return {'token': result['out'], 'source': 'shell'}\nvis.extension(name='shell-provider', description='shell provider', providers=[vis.provider(id='shell-provider', label='Shell provider', detect_fn=detect)])")
 
 (def ^:private popen-probe-py
   "Issue #142's own reproduction as an extension: start a child, hand the pid
@@ -1566,16 +1566,16 @@ vis.extension(
           ;; for IPv6") and neither `--quiet` nor `--log-file` reaches that banner.
           ;; What this test is about is the POLICY the spawn read, not the jail's
           ;; own greeting.
-          (expect (str/ends-with? (str (get (jail-wait first-run) "stdout")) "latest-policy"))
+          (expect (str/ends-with? (str (get (jail-wait first-run) "out")) "latest-policy"))
           ;; The SECOND spawn re-reads config and finds it invalid, so it refuses.
-          (expect (not= "must-not-run" (get second-run "stdout")))
+          (expect (not= "must-not-run" (get second-run "out")))
           (expect (re-find #"Invalid Vis configuration" (str (get second-run "note"))))
           (expect (= 2 @loads))))))
   (it
     "keeps the latest and session-snapshot jail APIs distinct"
     (with-loaded
       {"jail.py"
-       "import vis\ndef latest():\n    \"Use the latest jail.\"\n    return vis.jailed_shell({'command':'echo latest'})['stdout']\ndef session():\n    \"Use the session jail.\"\n    return vis.jailed_shell_session({'command':'echo session'}).wait(20)['stdout']\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(latest), vis.symbol(session)])"}
+       "import vis\ndef latest():\n    \"Use the latest jail.\"\n    return vis.jailed_shell({'command':'echo latest'})['out']\ndef session():\n    \"Use the session jail.\"\n    return vis.jailed_shell_session({'command':'echo session'}).wait(20)['out']\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(latest), vis.symbol(session)])"}
       (fn [_ _]
         (let [ext
               (registered "jail")
@@ -1594,7 +1594,7 @@ vis.extension(
 
           (with-redefs [shell/jailed-shell (fn [actual-env opts]
                                              (swap! seen conj [actual-env opts])
-                                             {"stdout" "latest"})]
+                                             {"out" "latest"})]
             (expect (= "latest" (:result (latest))))
             (expect (try (shell/session-jailed-shell nil {"command" "echo refused"})
                          false
@@ -1614,7 +1614,7 @@ vis.extension(
     ;; :result" — blaming the extension for the framework's own payload.
     (with-loaded
       {"jail.py"
-       "import vis\ndef run():\n    \"Shell out.\"\n    r = vis.jailed_shell({'command': 'echo hi'})\n    return [r['stdout'], r['stage'], sorted(r.keys())]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
+       "import vis\ndef run():\n    \"Shell out.\"\n    r = vis.jailed_shell({'command': 'echo hi'})\n    return [r['out'], r['stage'], sorted(r.keys())]\nvis.extension(name='jail', description='jail', alias='j', symbols=[vis.symbol(run)])"}
       (fn [_ _]
         (let [run
               (symbol-fn (registered "jail") 'run)
@@ -1623,13 +1623,13 @@ vis.extension(
               {:session-id "session-1" :jail-policy-fn (constantly {:disabled? true})}]
 
           (with-redefs [shell/jailed-shell (fn [_env opts]
-                                             (extension/success
-                                               {:result {"stdout" (get opts "command") "stage" :run}
-                                                :op :shell
-                                                :metadata {:duration-ms 1}}))]
+                                             (extension/success {:result {"out" (get opts "command")
+                                                                          "stage" :run}
+                                                                 :op :shell
+                                                                 :metadata {:duration-ms 1}}))]
             (binding [extension/*current-environment* env]
               ;; Python sees the UNWRAPPED, deep-stringified `:result` only.
-              (expect (= ["echo hi" "run" ["stage" "stdout"]] (:result (run))))))))))
+              (expect (= ["echo hi" "run" ["out" "stage"]] (:result (run))))))))))
   (it
     "hands an extension the SAME live handle the sandbox gets, not a raw dict"
     ;; Regression, handle audit: `__VisShell__` was applied only in the model's

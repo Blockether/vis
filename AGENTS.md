@@ -81,7 +81,7 @@ Reproduce from the report's own steps first; if it does not reproduce, that IS t
 
 ### Commit messages
 
-One conventional line, a body only where the WHY is missing, and the session that made it — enforced by `test/com/blockether/vis/commit_convention_test.clj` for every commit after 2026-08-15T20:00Z.
+One conventional line, a body only where the WHY is missing, and the session that made it — enforced by `test/com/blockether/vis/commit_convention_test.clj` for every commit after its `enforced-since` cutoff (the test names the commit the cutoff last moved past).
 
 - **Subject** — `type(scope): imperative summary` under 72 chars, no trailing period. Type is one of `feat fix docs refactor perf test build ci chore revert`; scope is the one-word area (`gateway`, `companion`, `tui`, `cli`, `docs`, `release`).
 - **Body** — optional, at most six non-blank lines, and only the WHY: constraint, trigger, trade-off. The diff already says WHAT; never narrate it.

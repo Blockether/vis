@@ -388,7 +388,9 @@
 
 (defn- wait-until-slow
   [pred]
-  (loop [remaining 60]
+  ;; Twelve seconds, not three: this waits on a real SSE frame crossing a real socket, and the
+  ;; whole suite runs on the same machine. A slow bound costs nothing when the frame arrives.
+  (loop [remaining 240]
     (cond (pred) true
           (zero? remaining) false
           :else (do (Thread/sleep 50) (recur (dec remaining))))))
@@ -1586,6 +1588,13 @@
               snapshot
               (atom {})
 
+              baselines
+              ;; The watcher's FIRST tick only takes a baseline and publishes
+              ;; nothing. Changing `snapshot` before that tick lands folds the
+              ;; change INTO the baseline, so no delta can ever follow it — and
+              ;; under the full suite that tick is scheduled late.
+              (atom 0)
+
               write-body
               (requiring-resolve 'ring.core.protocols/write-body-to-stream)
 
@@ -1596,7 +1605,9 @@
                                             nil)
                            #'state/FLEET_POLL_MS 10
                            #'state/fleet-snapshot (fn []
-                                                    @snapshot)}
+                                                    (let [taken @snapshot]
+                                                      (swap! baselines inc)
+                                                      taken))}
             (fn []
               (let [response
                     (handler {:query-params {"scope" "fleet"} :headers {}})
@@ -1637,6 +1648,7 @@
                   (let [ready (first (frames))]
                     (is (= "subscription.ready" (get ready "type")))
                     (is (= "fleet" (get ready "scope")))))
+                (is (wait-until-slow #(pos? @baselines)))
                 (reset! snapshot {sid {"is_live" true
                                        "is_awaiting_input" false
                                        "current_turn_id" "t-1"}})
@@ -2688,9 +2700,11 @@
               (is (true? (get payload "is_removed")))
               (is (= ["zai-coding-plan"] (mapv #(get % "id") (get payload "providers")))))
             (testing "removing what is not configured is not an error"
+              ;; `is_removed` reports the outcome, not the mechanism: a name the
+              ;; fleet never carried is already gone.
               (let [resp ((rv 'remove-provider-handler) {:path-params {:provider-id "ghost"}})]
                 (is (= 200 (:status resp)))
-                (is (false? (get (wire/parse-json (:body resp)) "is_removed")))))))))))
+                (is (true? (get (wire/parse-json (:body resp)) "is_removed")))))))))))
 
 (deftest delete-project-blast-radius-is-explicit-on-the-wire-test
   ;; The default DELETE only ever scattered members back to project-less, and no

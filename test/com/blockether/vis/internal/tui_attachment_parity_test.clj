@@ -11,7 +11,6 @@
             [com.blockether.vis.internal.attachment-fixtures :as fixtures]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.env-python :as env-python]
-            [com.blockether.vis.internal.gateway.client :as gateway-client]
             [com.blockether.vis.internal.gateway.server :as gateway-server]
             [com.blockether.vis.internal.gateway.state :as gateway-state]
             [com.blockether.vis.internal.loop :as lp]
@@ -267,12 +266,16 @@
           (expect (= "decision.html" (:filename selected)))
           (expect (= 200 (:status response)))
           (expect (= "<html><body>Decision</body></html>" (String. bytes "UTF-8")))
-          (with-redefs [gateway-client/iteration-attachment-bytes
+          ;; The inspector reads bytes through the FACADE (`vis/…`), so that is the
+          ;; var a stub has to occupy: redefining the client behind it changes
+          ;; nothing the TUI can see.
+          (with-redefs [vis/gateway-iteration-attachment-bytes
                         (fn [sid iid idx]
                           (expect (= [(str session-id) (str iteration-id) 0]
                                      [(str sid) (str iid) idx]))
                           bytes)]
             (let [file (artifact-inspector/materialize-artifact! session-id selected)]
+              (expect (some? file) "the produced artifact materialized on disk")
               (try (expect (= "decision.html" (.getName file)))
                    (expect (= "<html><body>Decision</body></html>" (slurp file)))
                    (finally (.delete file) (.delete (.getParentFile file)))))))))))
