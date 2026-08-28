@@ -367,6 +367,91 @@ describe('GatewayClient rolling transcript cache', () => {
       fetched.mock.calls.filter(([url]) => String(url).includes('/active-session/transcript')),
     ).toHaveLength(1);
   });
+
+  // Regression, Vis session 448b3266-8836-4115-9cf5-6ed0679aa2f9: the list painted
+  // NEW as soon as a running row settled, while its finished transcript still needed a
+  // round trip after the row was pressed.
+  it('warms a newly settled transcript before returning its NEW row', async () => {
+    let settled = false;
+    let transcriptReads = 0;
+    let releaseFinished!: (response: Response) => void;
+    const finishedTranscript = new Promise<Response>((resolve) => {
+      releaseFinished = resolve;
+    });
+    const fetched = vi.fn((input: string) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith('/transcript')) {
+        transcriptReads += 1;
+        if (transcriptReads === 1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                turns: [
+                  { id: 'turn-1', status: 'completed' },
+                  { id: 'turn-2', status: 'running' },
+                ],
+                total: 2,
+                offset: 0,
+                has_more: false,
+              }),
+            ),
+          );
+        }
+        if (transcriptReads === 2)
+          return Promise.resolve(new Response('warming failed', { status: 503 }));
+        return finishedTranscript;
+      }
+      const row = {
+        id: 'news-session',
+        title: 'News',
+        live: !settled,
+        status: settled ? 'idle' : 'running',
+        turn_count: 2,
+        modified_at: settled ? '2026-08-15T12:01:00Z' : '2026-08-15T12:00:00Z',
+      };
+      return Promise.resolve(
+        new Response(JSON.stringify({ sessions: [row], total: 1, has_more: false })),
+      );
+    });
+    vi.stubGlobal('fetch', fetched);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
+
+    await client.listSessions();
+    await vi.waitFor(() => expect(client.cachedTranscript('news-session')).not.toBeNull());
+
+    settled = true;
+    const held = await client.listSessions();
+    expect(held[0]?.live).toBe(true);
+    expect(client.cachedTranscript('news-session')?.at(-1)?.status).toBe('running');
+    let listReturned = false;
+    const completedList = client.listSessions().then((rows) => {
+      listReturned = true;
+      return rows;
+    });
+
+    await vi.waitFor(() => expect(transcriptReads).toBe(3));
+    expect(listReturned).toBe(false);
+    expect(client.cachedTranscript('news-session')?.at(-1)?.status).toBe('running');
+
+    releaseFinished(
+      new Response(
+        JSON.stringify({
+          turns: [
+            { id: 'turn-1', status: 'completed' },
+            { id: 'turn-2', status: 'completed' },
+          ],
+          total: 2,
+          offset: 0,
+          has_more: false,
+        }),
+      ),
+    );
+
+    const rows = await completedList;
+    expect(rows[0]?.live).toBe(false);
+    expect(client.cachedTranscript('news-session')?.at(-1)?.status).toBe('completed');
+  });
 });
 
 // Regression: slash discovery used a gateway-global route, so the palette was resolved

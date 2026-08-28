@@ -99,6 +99,35 @@ describe("a session list carried by the fleet stream", () => {
     expect(listReads(view.requests)).toBe(read);
   });
 
+  // Regression, Vis session 448b3266-8836-4115-9cf5-6ed0679aa2f9: a settled fleet
+  // frame painted NEW from metadata alone, before the finished transcript was warm.
+  it("reads the settled row before replacing LIVE with its finished state", async () => {
+    const fleet = fleetHub();
+    const view = oneRow(fleet);
+    restore = view.restore;
+    await settle(50);
+
+    await fleet.emit({
+      type: "session.status",
+      session_id: "s1",
+      is_live: true,
+      is_awaiting_input: false,
+      current_turn_id: "t1",
+    });
+    const read = listReads(view.requests);
+
+    await fleet.emit({
+      type: "session.status",
+      session_id: "s1",
+      is_live: false,
+      is_awaiting_input: false,
+      current_turn_id: null,
+    });
+    await settle(200);
+
+    expect(listReads(view.requests)).toBeGreaterThan(read);
+  });
+
   it("takes a row's new title from the frame alone", async () => {
     const fleet = fleetHub();
     const view = oneRow(fleet);

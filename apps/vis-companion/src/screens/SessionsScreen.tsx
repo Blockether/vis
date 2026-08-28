@@ -43,6 +43,7 @@ import type { ForkPoint, GatewayConn, Session, SessionUsage, SseEvent } from '..
 import { compactProjectPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
+import { forgetReadingPosition } from '../lib/reading-position';
 import { reassertBadge, syncBadge } from '../lib/badge';
 import { assignMachineColors, machineColor } from '../lib/machine-colors';
 import { menuPosition } from '../lib/anchored-menu';
@@ -1081,11 +1082,11 @@ export function SessionsScreen({
     // A connection identity change should preserve the existing frame until its data arrives.
   }, [fleetKey, isVisible, load]);
 
-  // A FLEET frame carries the whole answer for one row: `?scope=fleet` sends the very
-  // status the next window read would have carried, so a row this device already holds
-  // is repainted from the frame and NOTHING is read. Answering false means no machine
-  // holds that session — that is news about MEMBERSHIP, and where a row belongs is the
-  // gateway's arithmetic, never this device's.
+  // A fleet frame normally carries the whole answer for one row, so live and title
+  // changes repaint without a window read. A SETTLED frame is the exception: metadata
+  // can raise NEW before the finished transcript page exists in this device's cache. It
+  // answers false below so the canonical list read warms that page before painting the
+  // finished row. False also covers membership news for a row this window does not hold.
   const applyFleetFrame = useCallback(
     (event: SseEvent): boolean => {
       const sid =
@@ -1098,6 +1099,7 @@ export function SessionsScreen({
       let update: Partial<Session>;
       if (event.type === 'session.status') {
         if (typeof event.is_live !== 'boolean') return false;
+        if (!event.is_live) return false;
         update = {
           live: event.is_live,
           is_awaiting_input: event.is_awaiting_input === true,
@@ -3286,7 +3288,12 @@ const SessionRow = memo(function SessionRow({
           type="button"
           className={`group flex min-h-12 min-w-0 flex-1 items-center py-1.5 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-8 mouse:py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
           data-session-id={session.id}
-          onClick={() => void onOpen(conn, session.id)}
+          onClick={() => {
+            // NEW is a navigation intent to read the answer that raised it, not to
+            // resume an older place. Remove that place before the session mounts.
+            if (unread > 0) forgetReadingPosition(session.id);
+            void onOpen(conn, session.id);
+          }}
         >
         {/* One row of facts, laid out twice from ONE dom order.
             A phone stacks it: what the session IS on the first line, what it has DONE

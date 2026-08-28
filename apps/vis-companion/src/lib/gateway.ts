@@ -381,7 +381,7 @@ const deviceReads = new Map<string, number>();
 /** A device-list read already in the air, so overlapping callers share it. */
 const deviceFlights = new Map<string, Promise<DevicesState>>();
 /** Background transcript reads already in flight, shared by every client instance. */
-const transcriptPrefetches = new Map<string, Promise<void>>();
+const transcriptPrefetches = new Map<string, Promise<boolean>>();
 
 /** Last active-list row a background read completed for, so polls stay cheap. */
 const transcriptPrefetchStamps = new Map<string, string>();
@@ -445,6 +445,21 @@ function transcriptStamp(row: Session | null | undefined): string {
   // constant stamp that both never invalidates and never detects a change.
   if (row.turn_count === undefined && row.modified_at === undefined) return "";
   return `${row.turn_count ?? ""}\u0000${row.modified_at ?? ""}`;
+}
+
+function sessionIsActive(row: Session): boolean {
+  return row.live === true || row.status === "running";
+}
+
+function sessionTurnCount(row: Session): number {
+  const count = Number(row.turn_count ?? 0);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+}
+
+/** Did a known row gain a finished answer since the previous list window? */
+function sessionHasNewAnswer(previous: Session | undefined, next: Session): boolean {
+  if (!previous || sessionIsActive(next)) return false;
+  return sessionIsActive(previous) || sessionTurnCount(next) > sessionTurnCount(previous);
 }
 
 function transcriptPrefetchStamp(row: Session): string {
@@ -2375,41 +2390,69 @@ export class GatewayClient {
   }
 
   /**
-   * Pull every active session visible in a list response into the rolling cache.
-   * The list itself never waits: failures are forgotten and retried by the next
-   * poll, while concurrent polls and an opening screen share the same flight.
+   * Warm one session's newest transcript page. Concurrent list polls and an opening
+   * screen share the same flight; a newer row queues one re-check behind an older one.
    */
+  private prefetchTranscript(row: Session): Promise<boolean> {
+    const key = this.snapshotKey("transcript", row.id);
+    const warming = transcriptPrefetches.get(key);
+    if (warming) return warming.then(() => this.prefetchTranscript(row));
+
+    const held = this.cachedSession(row.id);
+    const merged = reconcileRow(held, row);
+    if (merged !== held) writeSnapshot(this.snapshotKey("session", row.id), merged);
+    const stamp = transcriptPrefetchStamp(merged);
+    // A running placeholder is provisional to an OPEN screen, which must read its
+    // newest trace. It is not permission for the list poll to download that page forever.
+    if (this.cachedTranscript(row.id) !== null && transcriptPrefetchStamps.get(key) === stamp)
+      return Promise.resolve(true);
+
+    const task = this.transcriptIfMoved(row.id, merged).then(
+      () => {
+        transcriptPrefetchStamps.set(key, stamp);
+        return true;
+      },
+      () => false,
+    );
+    transcriptPrefetches.set(key, task);
+    void task.then(() => {
+      if (transcriptPrefetches.get(key) === task) transcriptPrefetches.delete(key);
+    });
+    return task;
+  }
+
+  /** Pull every active session visible in a list response into the rolling cache. */
   private prefetchActiveTranscripts(rows: readonly Session[]): void {
     const selected = new Set<string>();
     for (const row of rows) {
       if (selected.size >= SESSION_CACHE_LIMIT) break;
-      if (!row.id || !(row.live ?? row.status === "running") || selected.has(row.id))
-        continue;
+      if (!row.id || !sessionIsActive(row) || selected.has(row.id)) continue;
       selected.add(row.id);
-
-      const held = this.cachedSession(row.id);
-      const merged = reconcileRow(held, row);
-      if (merged !== held) writeSnapshot(this.snapshotKey("session", row.id), merged);
-
-      const key = this.snapshotKey("transcript", row.id);
-      if (transcriptPrefetches.has(key)) continue;
-      const stamp = transcriptPrefetchStamp(merged);
-      // A running placeholder is provisional to an OPEN screen, which must read
-      // its newest trace. It is not permission for the five-second list poll to
-      // download the same transcript page forever.
-      if (this.cachedTranscript(row.id) !== null && transcriptPrefetchStamps.get(key) === stamp)
-        continue;
-      const task = this.transcriptIfMoved(row.id, merged).then(
-        () => {
-          transcriptPrefetchStamps.set(key, stamp);
-        },
-        () => undefined,
-      );
-      transcriptPrefetches.set(key, task);
-      void task.then(() => {
-        if (transcriptPrefetches.get(key) === task) transcriptPrefetches.delete(key);
-      });
+      void this.prefetchTranscript(row);
     }
+  }
+
+  /**
+   * Do not expose a newly finished row until its newest page is ready to paint. The
+   * NEW badge is therefore a promise that pressing the row needs no transcript read. A
+   * failed warm keeps the previous window visible, and the next poll tries again.
+   */
+  private async prefetchSettledTranscripts(
+    previous: readonly Session[] | null,
+    rows: readonly Session[],
+  ): Promise<boolean> {
+    if (!previous?.length) return true;
+    const before = new Map(previous.map((row) => [row.id, row]));
+    const selected: Session[] = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+      if (selected.length >= SESSION_CACHE_LIMIT) break;
+      if (!row.id || seen.has(row.id) || !sessionHasNewAnswer(before.get(row.id), row)) continue;
+      seen.add(row.id);
+      selected.push(row);
+    }
+    const ready = await Promise.all(selected.map((row) => this.prefetchTranscript(row)));
+    return ready.every(Boolean);
   }
   /** Last queued backlog seen for ONE session. */
   cachedQueuedTurns(sid: string): QueuedTurn[] | null {
@@ -2706,9 +2749,11 @@ export class GatewayClient {
     // complete there, whatever depth this device is holding.
     this.parked = head.awaiting;
     this.overview = head.overview;
-    // Active work must already be warm when its row is opened. This starts the
-    // reads but deliberately does not put them on the list request's critical path.
-    this.prefetchActiveTranscripts(head.rows.concat(head.awaiting));
+    // Active work warms in the background. A row that just FINISHED is different:
+    // wait for its newest page before returning it, so NEW never outruns its transcript.
+    const visible = head.rows.concat(head.awaiting);
+    this.prefetchActiveTranscripts(visible);
+    if (!(await this.prefetchSettledTranscripts(cached, visible))) return cached ?? [];
 
     // AN UNCHANGED WINDOW IS THE SAME ARRAY, NOT AN EQUAL ONE.
     //
