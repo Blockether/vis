@@ -30,11 +30,13 @@ import { App } from '@capacitor/app';
 export type WakeInfo = { awayMs: number };
 
 type WakeListener = (info: WakeInfo) => void;
+type AwayListener = () => void;
 
 /** Collapse the burst of wake signals the platforms fire together. */
 const COALESCE_MS = 250;
 
 const listeners = new Set<WakeListener>();
+const awayListeners = new Set<AwayListener>();
 let installed = false;
 let uninstallNative: (() => void) | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
@@ -57,10 +59,19 @@ function emit(): void {
   }
 }
 
-// Stamp the FIRST away signal only: iOS fires visibilitychange, pagehide and
-// the native pause together, and a later one must not shorten the absence.
+// Stamp and announce the FIRST away signal only: iOS fires visibilitychange,
+// pagehide and native pause together. Subscribers must retire live transports
+// before WebKit freezes them, while a duplicate signal has nothing left to do.
 function markAway(): void {
-  if (sleptAt === null) sleptAt = Date.now();
+  if (sleptAt !== null) return;
+  sleptAt = Date.now();
+  for (const listener of [...awayListeners]) {
+    try {
+      listener();
+    } catch {
+      // One bad subscriber must never starve the others.
+    }
+  }
 }
 
 // `force` is for the NATIVE resume signals. A Capacitor iOS webview reports
@@ -148,6 +159,19 @@ export function onWake(listener: WakeListener): () => void {
   install();
   return () => {
     listeners.delete(listener);
-    if (listeners.size === 0) uninstall();
+    if (listeners.size === 0 && awayListeners.size === 0) uninstall();
+  };
+}
+
+/**
+ * Run `listener` synchronously on the first signal that the app is leaving the
+ * foreground. This is the last safe moment to retire WebKit network streams.
+ */
+export function onAway(listener: AwayListener): () => void {
+  awayListeners.add(listener);
+  install();
+  return () => {
+    awayListeners.delete(listener);
+    if (listeners.size === 0 && awayListeners.size === 0) uninstall();
   };
 }

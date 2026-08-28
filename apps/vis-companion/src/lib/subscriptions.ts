@@ -1,5 +1,5 @@
 import type { GatewayClient } from './gateway';
-import { onWake } from './wake';
+import { onAway, onWake } from './wake';
 import type { SseEvent } from './types';
 
 type SessionListener = (event: SseEvent) => void;
@@ -57,17 +57,20 @@ export class SessionSubscriptionHub {
   private stopStream: (() => void) | null = null;
   private connected = false;
   private disposed = false;
+  private suspended = false;
   private lastResyncAt = 0;
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly stopWake: () => void;
+  private readonly stopAway: () => void;
   private supervisor: ReturnType<typeof setInterval> | null = null;
 
   constructor(client: GatewayClient) {
     this.client = client;
-    // The stream is the app's only push channel, and a backgrounded webview
-    // parks its fetch body reader without ever erroring. Reconnect on every
-    // wake — no screen has to remember to ask, so a frozen socket can never
-    // outlive the resume and force an app restart.
+    // The stream is the app's only push channel. Retire it while the webview is
+    // still live, BEFORE the OS parks its fetch reader; otherwise a gateway that
+    // dies while the app is away leaves WebKit sockets that can block every later
+    // request. Wake then opens fresh streams and catches up from their cursors.
+    this.stopAway = onAway(() => this.suspend());
     this.stopWake = onWake(() => this.resync());
     // Second safety net, for the case wake events cannot cover: the app stays
     // in the foreground on one session and the stream dies anyway.
@@ -182,6 +185,7 @@ export class SessionSubscriptionHub {
    */
   resync(): void {
     if (this.disposed) return;
+    this.suspended = false;
     const now = Date.now();
     if (now - this.lastResyncAt < RESYNC_MIN_INTERVAL_MS) return;
     this.lastResyncAt = now;
@@ -194,8 +198,22 @@ export class SessionSubscriptionHub {
     this.restart({ graceful: true });
   }
 
+  /** Retire transports before the native webview itself is suspended. */
+  private suspend(): void {
+    if (this.disposed) return;
+    this.suspended = true;
+    this.lastResyncAt = 0;
+    this.clearGrace();
+    const stop = this.stopStream;
+    this.stopStream = null;
+    stop?.();
+    this.setConnected(false);
+    this.stopFleet();
+  }
+
   dispose(): void {
     this.disposed = true;
+    this.stopAway();
     this.stopWake();
     if (this.supervisor) clearInterval(this.supervisor);
     this.supervisor = null;
@@ -217,12 +235,18 @@ export class SessionSubscriptionHub {
    * so a dead stream is always detectable instead of looking connected.
    */
   private ensureStream(): void {
-    if (this.disposed || this.stopStream || this.cursors.size === 0) return;
+    if (
+      this.disposed ||
+      this.suspended ||
+      this.stopStream ||
+      this.cursors.size === 0
+    )
+      return;
     this.restart();
   }
 
   private restart({ graceful = false }: { graceful?: boolean } = {}): void {
-    if (this.disposed) return;
+    if (this.disposed || this.suspended) return;
     this.stopStream?.();
     this.stopStream = null;
     this.clearGrace();
@@ -261,7 +285,13 @@ export class SessionSubscriptionHub {
    * of looking connected.
    */
   private ensureFleetStream(): void {
-    if (this.disposed || this.stopFleetStream || this.fleetListeners.size === 0) return;
+    if (
+      this.disposed ||
+      this.suspended ||
+      this.stopFleetStream ||
+      this.fleetListeners.size === 0
+    )
+      return;
     const stop = this.client.streamFleetStatus(
       (event) => {
         for (const listener of [...this.fleetListeners]) listener(event);
