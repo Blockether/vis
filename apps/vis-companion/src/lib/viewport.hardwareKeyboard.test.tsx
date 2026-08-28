@@ -93,7 +93,10 @@ describe("focusing the composer with a keyboard already attached", () => {
     expect(shell.style.height).toBe("");
   });
 
-  it("still pins to the accessory bar the hardware keyboard does raise", () => {
+  // Regression, user report: the hardware keyboard's tiny shortcut-bar event still
+  // shortened the app shell, exposing a translucent keyboard-like strip under the
+  // composer on a desktop-class window even though no software keyboard was present.
+  it("reserves nothing for the hardware keyboard shortcut bar", () => {
     pointing("fine");
     window_(1180, 820);
     render(<ViewportProbe />);
@@ -103,7 +106,7 @@ describe("focusing the composer with a keyboard already attached", () => {
     act(() => composer.focus());
     act(() => native.keyboard.get("keyboardWillShow")?.({ keyboardHeight: 69 }));
 
-    expect(shell).toHaveStyle({ height: "751px" });
+    expect(shell.style.height).toBe("");
   });
 
   // Regression, user report (paraphrased: writing on the desktop still opened a dead

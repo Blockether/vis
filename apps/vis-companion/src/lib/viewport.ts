@@ -87,22 +87,6 @@ function isPlausibleKeyboardHeight(height: number, fullHeight: number): boolean 
   return Number.isFinite(height) && height >= fullHeight * 0.15 && height <= fullHeight * 0.7;
 }
 
-// iPadOS hands over the keyboard's WHOLE frame even when a hardware keyboard parks
-// all but its shortcut bar below the screen, and Capacitor's iPad branch adds that
-// parked part back (`onKeyboardWillShow` reads only `rect.size.height`). A window
-// driven by a Magic Keyboard is therefore told a third of itself is covered while
-// tens of pixels of bar are all that is on screen: reserving the reported band
-// leaves the composer floating above dead background with the system's own bar
-// alone at the bottom edge. A fine pointer is the same evidence the prepin uses —
-// no keys can come up — and the plugin itself calls anything under a fifth of the
-// screen the shortcut bar rather than a keyboard, so above that line the frame is
-// the parked one and covers nothing.
-const HARDWARE_KEYBOARD_BAR_MAX_RATIO = 0.2;
-
-function coversTheWindow(height: number, fullHeight: number): boolean {
-  if (!hasHardwarePointer()) return true;
-  return height > 0 && height < fullHeight * HARDWARE_KEYBOARD_BAR_MAX_RATIO;
-}
 function keyboardHeightForPrepin(
   fullHeight: number,
   orientation = keyboardOrientation(),
@@ -857,12 +841,11 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         )
           return false;
         // A HARDWARE KEYBOARD RAISES NO KEYS. What focus brings up on a Magic
-        // Keyboard iPad — or any desktop-class window — is the accessory bar, tens
-        // of pixels, not the third of the screen this predicts: the estimate would
-        // reserve a keyboard that never comes and leave the composer floating above
-        // a dead band of background until the native event corrected it. The real
-        // `keyboardWillShow` still pins, from a measured height. Rotation is exempt:
-        // it only ever rebuilds the pin of a keyboard already confirmed up.
+        // Keyboard iPad — or any desktop-class window — is at most a native
+        // shortcut-bar callback, not the third of the screen this predicts. Neither
+        // the estimate nor that callback may shorten the app shell. Rotation is
+        // exempt: it only ever rebuilds the pin of a software keyboard already
+        // confirmed up.
         if (!duringRotation && hasHardwarePointer()) return false;
         const metrics = readViewportMetrics();
         const fullHeight = layoutHeight(metrics);
@@ -892,10 +875,11 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
         sync();
       };
       const onWillShow = (info: KeyboardInfo) => {
-        // A frame parked below the screen covers nothing, so there is nothing to
-        // reserve and nothing to cache: reclaim the whole window and keep the home
-        // indicator's inset, which the system's own bar sits in.
-        if (!coversTheWindow(info.keyboardHeight, layoutHeight(readViewportMetrics()))) {
+        // iPadOS can announce either the hidden shortcut bar's tiny frame or the
+        // whole software-keyboard frame parked below a hardware keyboard. A fine
+        // pointer is the evidence that physical keys are attached; neither frame
+        // covers this desktop-class app, regardless of the height UIKit reports.
+        if (hasHardwarePointer()) {
           softKeyboardUp = false;
           keyboardHeight = 0;
           keyboardExpectedAfterRotation = false;
