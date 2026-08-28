@@ -2,8 +2,8 @@ name: Native Release
 
 # Companion to release.yml (which cuts the GitHub Release + Clojars deploy of the
 # libraries/extensions). A dispatch can build one native distribution per
-# requested platform. Linux uses free GitHub runners; the macOS ARM64 image uses
-# the explicitly billed Blacksmith class documented below. Every build is the
+# requested platform. Linux uses free GitHub runners; the macOS ARM64 image is
+# built on our own Apple-silicon runner, documented below. Every build is the
 # community distribution; there is no air-gapped/"corporate" variant:
 #   vis-agent-<os>-<arch>-community.tar.gz — the full distribution: the
 #                         `vis-agent` Bash wrapper plus its private native
@@ -36,7 +36,7 @@ on:
         type: string
         default: ''
       runner:
-        description: "Optional runner-label override for the macOS arm64 job (default: blacksmith-6vcpu-macos-26)"
+        description: "Optional runner-label override for the macOS arm64 job (default: vis-macos-arm64)"
         type: string
         default: ''
       only:
@@ -267,40 +267,55 @@ jobs:
           fail_on_unmatched_files: true
 
   # ── macOS arm64 ────────────────────────────────────────────────────────────
-  # BLACKSMITH'S APPLE-SILICON RUNNER BUILDS THIS, by measurement, not taste.
+  # OUR OWN APPLE-SILICON RUNNER BUILDS THIS, by measurement, not taste.
   # native-image's points-to analysis holds a ~13.7 GiB live set. GitHub's
   # standard ARM64 macOS runner has 7 GiB RAM, and its paid M2 class has 14 GiB;
   # both remain below the analysis before the OS and linker are counted. The
   # standard runner either OOMed in minutes or, after shrinking the build, spent
   # 5 h 51 min in native-image before timing out (release v0.1.40).
   #
-  # Blacksmith's `blacksmith-6vcpu-macos-26` M4 runner supplies 6 vCPU, 24 GiB
-  # RAM and 150 GB disk at $0.08/min. It is Blacksmith's smallest macOS class,
-  # clears the measured live set, and keeps the released binary on ARM64. Pin
-  # macOS 26 rather than `macos-latest` so a native artifact never changes its
-  # build image merely because the vendor advances that alias.
+  # The self-hosted `vis-macos-arm64` runner is a 36 GiB, 14-core Apple-silicon
+  # machine: it clears the measured live set, keeps the released binary on ARM64
+  # and costs nothing per minute. It replaced a billed third-party macOS class,
+  # which rented the same class of machine this project already owns.
   #
-  # HOW THE RUNNER IS TARGETED. Blacksmith's GitHub App must retain access to
-  # this repository; otherwise an exact `blacksmith-*` label queues without a
-  # runner. The optional `runner` dispatch input and VIS_MACOS_ARM64_RUNNER
-  # repository variable are explicit experiment overrides. With both unset,
-  # this one job always uses Blacksmith. `macos-pickup` below catches a missing
-  # app permission or invalid override in minutes instead of waiting 24 hours.
+  # THAT MACHINE IS A WORKSTATION. A build pins every core and ~15 GiB for its
+  # duration, so only STABLE tags route here; betas stay on free hosted Linux and
+  # ship no macOS asset (see beta-native.yml).
+  #
+  # HOW THE RUNNER IS TARGETED. The runner must be registered and online, or an
+  # exact label queues with nothing to take it. The optional `runner` dispatch
+  # input and the VIS_MACOS_ARM64_RUNNER repository variable are explicit
+  # overrides; with both unset this job always uses our own machine.
+  # `macos-pickup` below catches an offline runner or an invalid override in
+  # minutes instead of waiting 24 hours.
   #
   # Last resort, no runner at all: `bin/release-native --tag vX.Y.Z --upload`
   # by hand on any 24 GB+ Apple-silicon Mac produces the identical bundle.
   macos:
     name: native / vis-agent-macos-arm64-community.tar.gz
     if: inputs.only != 'linux'
-    # Default to Blacksmith's smallest macOS class; its 24 GiB clears the
-    # measured analysis live set without routing any other macOS job there.
-    runs-on: ${{ inputs.runner || vars.VIS_MACOS_ARM64_RUNNER || 'blacksmith-6vcpu-macos-26' }}
-    # The image takes ~13 min on a 32 GiB M-series builder. The 120 min cap gives
-    # the 24 GiB Blacksmith class ample room while still returning stalled capacity.
+    # Default to our own Apple-silicon runner; its 36 GiB clears the measured
+    # analysis live set without routing any other macOS job there.
+    runs-on: ${{ inputs.runner || vars.VIS_MACOS_ARM64_RUNNER || 'vis-macos-arm64' }}
+    # The image takes ~13 min on a 32 GiB M-series builder. The 120 min cap still
+    # hands a stalled runner back instead of holding it for 24 h.
     timeout-minutes: 120
     env:
       VIS_ASSET: vis-agent-macos-arm64-community.tar.gz
     steps:
+      # The self-hosted runner's HOME is a person's real home, and this job caches
+      # ~/.m2 and ~/.vis/build-cache and then RUNS the built binary. Give it a
+      # scratch home under the runner's work root -- persistent, so the caches
+      # still survive between releases -- and a release build can never disturb
+      # the workstation's own ~/.vis.
+      - name: Keep this build out of the runner's real home
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          home="$(dirname "$RUNNER_WORKSPACE")/ci-home"
+          mkdir -p "$home"
+          echo "HOME=$home" >> "$GITHUB_ENV"
       # WHERE this build lands, decided once and read by the attach step.
       # A v* ref (a tag push, or a dispatch naming an existing tag) PUBLISHES:
       # the asset is attached to that tag's release, so a CI-only fix can still
@@ -321,7 +336,7 @@ jobs:
           esac
       # The builder's own numbers, and the heap sized FROM them, are printed
       # before anything is downloaded so a failed run is diagnosable immediately.
-      # Blacksmith's default has 24 GiB, so build.clj sizes the heap from the
+      # Our own runner has 36 GiB, so build.clj sizes the heap from the
       # machine's RAM (0.6x, capped at 18g) with no workflow override.
       #
       # Under 16 GiB means an explicit `runner` override selected an undersized
@@ -363,12 +378,14 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
-      # Piper uses espeak-ng's phoneme tables. The clean Blacksmith macOS image
-      # does not preinstall them, so make the native suite dependency explicit.
+      # Piper uses espeak-ng's phoneme tables. A clean macOS image does not
+      # preinstall them, so make the native suite dependency explicit; brew is a
+      # no-op on a runner that already has it.
       - name: Install native test dependencies
         run: brew install espeak-ng
-      # Blacksmith runners are ephemeral. Persist the dependency and build
-      # caches so each release does not download and reconstruct the whole tree.
+      # A hosted runner is ephemeral and a self-hosted one builds under a scratch
+      # HOME, so persist the dependency and build caches either way: no release
+      # should download and reconstruct the whole tree.
       - uses: actions/cache@v6
         with:
           path: |
@@ -430,12 +447,12 @@ jobs:
           tag_name: ${{ inputs.tag || github.ref_name }}
           fail_on_unmatched_files: true
 
-  # ── Blacksmith runner pickup guard ───────────────────────────────────────
-  # Blacksmith normally provisions on demand. A misspelled override or missing
-  # GitHub App permission can still leave the job queued, and GitHub waits up to
-  # 24 h before failing it. Watch from an unrelated free Linux runner and report
-  # the routing problem while the release can still be re-dispatched. This does
-  # not cancel a late build; if provisioning recovers, the asset may still attach.
+  # ── macOS runner pickup guard ──────────────────────────────────────────────
+  # An offline or busy runner, a misspelled override, or a label no machine
+  # carries leaves the job queued, and GitHub waits up to 24 h before failing it.
+  # Watch from an unrelated free Linux runner and report the routing problem while
+  # the release can still be re-dispatched. This does not cancel a late build; if
+  # the runner comes back, the asset may still attach.
   macos-pickup:
     name: native / macOS builder pickup
     if: inputs.only != 'linux'
@@ -450,7 +467,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       # Read through env, never interpolated into the script: a dispatch input
       # is attacker-shaped text and `run:` would evaluate it.
-      MACOS_RUNNER: ${{ inputs.runner || vars.VIS_MACOS_ARM64_RUNNER || 'blacksmith-6vcpu-macos-26' }}
+      MACOS_RUNNER: ${{ inputs.runner || vars.VIS_MACOS_ARM64_RUNNER || 'vis-macos-arm64' }}
       TARGET_REF: ${{ inputs.tag || github.ref_name }}
       DEADLINE_MINUTES: "25"
     steps:
@@ -469,7 +486,7 @@ jobs:
                 ;;
             esac
             if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "::error::No runner labelled ${MACOS_RUNNER} started the macOS build within ${DEADLINE_MINUTES} min, so ${TARGET_REF} is heading for a release with no macOS asset. Verify that the Blacksmith GitHub App can access ${GITHUB_REPOSITORY} and that the label is valid, then re-dispatch with tag=${TARGET_REF} only=macos; use runner=<Apple-silicon label> only for an intentional override."
+              echo "::error::No runner labelled ${MACOS_RUNNER} started the macOS build within ${DEADLINE_MINUTES} min, so ${TARGET_REF} is heading for a release with no macOS asset. Check that the Apple-silicon runner is registered, online and idle in this repository's runner list, then re-dispatch with tag=${TARGET_REF} only=macos; use runner=<Apple-silicon label> only for an intentional override."
               exit 1
             fi
             sleep 15

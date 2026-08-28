@@ -749,15 +749,15 @@
         (expect (str/includes? fallback "-Ob") fallback)
         (expect (str/includes? fallback "steps.target.outputs.publish") fallback)
         ;; One dispatch input can still select a different runner for a targeted
-        ;; experiment without changing the Blacksmith default.
+        ;; experiment without changing the self-hosted default.
         (expect (str/includes? stable "inputs.runner || vars.VIS_MACOS_ARM64_RUNNER") stable)
-        (expect (str/includes? stable "'blacksmith-6vcpu-macos-26'") stable)))
+        (expect (str/includes? stable "'vis-macos-arm64'") stable)))
   ;; Regression, release v0.1.40: GitHub's free hosted Mac spent 5 h 51 min in
   ;; native-image before the timeout killed it, so the tag had no macOS asset.
-  ;; Blacksmith's smallest Apple-silicon runner has the 24 GiB needed by the
-  ;; measured ~13.7 GiB analysis live set.
+  ;; Our own Apple-silicon runner has the 36 GiB that covers the measured
+  ;; ~13.7 GiB analysis live set, and costs nothing per minute.
   (it
-    "builds the macOS asset on Blacksmith, and fails fast if it does not start"
+    "builds the macOS asset on our own Apple-silicon runner, and fails fast if it does not start"
     (let [stable
           (slurp ".github/workflows/native-release.yml")
 
@@ -773,11 +773,14 @@
                (take 25)
                (str/join "\n"))]
 
-      (expect (str/includes? macos-job "vars.VIS_MACOS_ARM64_RUNNER || 'blacksmith-6vcpu-macos-26'")
+      (expect (str/includes? macos-job "vars.VIS_MACOS_ARM64_RUNNER || 'vis-macos-arm64'")
               macos-job)
-      ;; A clean Blacksmith image does not include espeak-ng's phoneme tables;
+      ;; A clean macOS image does not include espeak-ng's phoneme tables;
       ;; without this dependency the built binary reaches test-native and fails.
       (expect (str/includes? macos-job "brew install espeak-ng") macos-job)
+      ;; That builder is somebody's workstation: a release build must never write
+      ;; into the real ~/.vis it finds there.
+      (expect (str/includes? macos-job "runner.environment == 'self-hosted'") macos-job)
       ;; Six hours was the undersized hosted Mac's price for not finishing;
       ;; a stalled cloud build should still return capacity the same morning.
       ;; (The Linux matrix keeps its 6 h cap: a swapping analysis there is slow.)
@@ -791,40 +794,44 @@
       (expect (str/includes? pickup "DEADLINE_MINUTES") pickup)
       (expect (str/includes? stable "::error::No runner labelled") stable)))
   ;; Scope guard: no test, iOS or Linux job should move when the native macOS
-  ;; image moves. Exactly one runs-on directive names a Blacksmith macOS runner.
-  (it
-    "targets Blacksmith macOS only for the native release image"
-    (let [directives (->> (file-seq (io/file ".github/workflows"))
-                          (filter #(str/ends-with? (.getName ^java.io.File %) ".yml"))
-                          (mapcat (fn [workflow]
-                                    (for [line (str/split-lines (slurp workflow))
-                                          :let [directive (str/trim line)]
-                                          :when (and (str/starts-with? directive "runs-on:")
-                                                     (str/includes? directive "blacksmith-")
-                                                     (str/includes? directive "-macos-"))]
+  ;; image moves, and the billed third-party macOS class is gone for good.
+  (it "routes only the native image and CI's macOS leg to our own runner"
+      (let [workflows
+            (->> (file-seq (io/file ".github/workflows"))
+                 (filter #(str/ends-with? (.getName ^java.io.File %) ".yml")))
 
-                                      [(.getName ^java.io.File workflow) directive])))
-                          set)]
-      (expect
-        (=
-          #{["native-release.yml"
-             "runs-on: ${{ inputs.runner || vars.VIS_MACOS_ARM64_RUNNER || 'blacksmith-6vcpu-macos-26' }}"]}
-          directives)
-        (pr-str directives))))
-  ;; Regular CI and iOS releases use GitHub-hosted macOS. The native image is
-  ;; the only macOS workload that needs Blacksmith's larger runner.
-  (it "keeps regular CI and iOS releases on GitHub-hosted macOS"
+            named
+            (->> workflows
+                 (filter #(str/includes? (slurp %) "vis-macos-arm64"))
+                 (map #(.getName ^java.io.File %))
+                 set)
+
+            rented
+            (->> workflows
+                 (filter #(str/includes? (str/lower-case (slurp %)) "blacksmith"))
+                 (map #(.getName ^java.io.File %))
+                 set)]
+
+        (expect (= #{"ci.yml" "native-release.yml"} named) (pr-str named))
+        (expect (empty? rented) (pr-str rented))))
+  ;; CI's macOS leg moved onto our own runner because GitHub's hosted
+  ;; Apple-silicon pool left main without a verdict for hours at a time. A FORK
+  ;; pull request is untrusted code and must stay on the hosted image, and an iOS
+  ;; release still signs on an ephemeral hosted one.
+  (it "keeps fork pull requests and iOS releases on GitHub-hosted macOS"
       (let [ci
             (slurp ".github/workflows/ci.yml")
 
             mobile
             (slurp ".github/workflows/mobile-release.yml")]
 
-        (expect (str/includes? ci "{ name: macos, host: macos-latest }") ci)
-        (expect (not (str/includes? ci "VIS_MACOS_ARM64_RUNNER")) ci)
+        (expect (str/includes? ci "'macos-latest' || 'vis-macos-arm64'") ci)
+        (expect (str/includes? ci "head.repo.full_name != github.repository") ci)
+        ;; A run on the workstation runner may never overwrite the real ~/.vis.
+        (expect (str/includes? ci "runner.environment == 'self-hosted'") ci)
         (expect (str/includes? mobile "runs-on: macos-26") mobile)
         (expect (not (str/includes? mobile "VIS_IOS_RUNNER")) mobile)
-        (expect (not (str/includes? (str ci mobile) "vis-macos-arm64")))))
+        (expect (not (str/includes? mobile "vis-macos-arm64")) mobile)))
   ;; The tuning history in native-release.yml records runs labelled "no extra
   ;; args" that still carried build.clj's computed `-J-Xmx`/`-J-Xms` pair, so
   ;; native-image's OWN sizing has never actually been measured for this image.

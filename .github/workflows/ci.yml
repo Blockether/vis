@@ -24,19 +24,43 @@ jobs:
   # native binary is built with. Never Oracle GraalVM (GFTC) and never a stock JDK.
   # fail-fast false so each OS reports independently. Windows is not supported.
   #
-  # Regular macOS coverage runs on GitHub's standard hosted Apple-silicon image.
-  # These tests do not need the larger Blacksmith runner reserved for native-image,
-  # and no repository variable or event shape may route them to a self-hosted Mac.
+  # macOS coverage runs on OUR OWN Apple-silicon runner, label `vis-macos-arm64`.
+  # GitHub's hosted Apple-silicon pool starved this workflow: on 2026-08-28
+  # fourteen consecutive runs sat queued for hours, no push on main ever got a
+  # verdict, and the dependent aot job could never start. A FORK pull request is
+  # untrusted code and still goes to the hosted image -- it may queue, and that is
+  # the right trade on a public repository. The self-hosted machine is a person's
+  # workstation, so this job moves HOME to a scratch directory: a CI run may never
+  # overwrite the real ~/.vis.
   tests:
     name: tests / ${{ matrix.name }}
     runs-on: ${{ matrix.host }}
+    # One self-hosted runner serves the whole queue: a hung job would block every
+    # later push, so cap it well above the observed suite time (~25 min).
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
           - { name: linux, host: ubuntu-latest }
-          - { name: macos, host: macos-latest }
+          # A fork PR carries untrusted code and stays on the hosted image; it
+          # never reaches the self-hosted Mac.
+          - name: macos
+            host: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) && 'macos-latest' || 'vis-macos-arm64' }}
     steps:
+      # A self-hosted runner's HOME is a person's real home: the seed step below
+      # writes ~/.vis/state.yml, the caches claim ~/.m2 and ~/.vis/native, and the
+      # suite reads all three. Point every later step at a scratch home under the
+      # runner's work root -- persistent, not RUNNER_TEMP, so the dependency cache
+      # still survives between runs -- and the workstation's own provider config
+      # can never be overwritten by CI.
+      - name: Keep this run out of the runner's real home
+        if: runner.environment == 'self-hosted'
+        shell: bash
+        run: |
+          home="$(dirname "$RUNNER_WORKSPACE")/ci-home"
+          mkdir -p "$home"
+          echo "HOME=$home" >> "$GITHUB_ENV"
       - uses: actions/checkout@v7
       # Oracle GraalVM's 25.1 feature train is GDS-token gated (not on the free
       # download channel) and setup-graalvm's CE resolver predates the 25.1
@@ -119,10 +143,10 @@ jobs:
           # pasta enforcement. The test namespace fails if either runner cannot.
           VIS_REQUIRE_MACOS_SANDBOX_E2E: ${{ runner.os == 'macOS' && '1' || '0' }}
           VIS_REQUIRE_LINUX_SANDBOX_E2E: ${{ runner.os == 'Linux' && '1' || '0' }}
-          # Both runners need an explicit heap: GitHub's hosted macOS image has
+          # Every runner needs an explicit heap: GitHub's hosted macOS image has
           # less memory than Linux, whose default quarter-RAM heap also exhausted.
-          # Leave headroom for native allocations and child processes.
-          JAVA_TOOL_OPTIONS: ${{ runner.os != 'macOS' && '-Xmx10g' || '-Xmx5g' }}
+          # Our own Apple-silicon runner has 36 GiB, so it takes the Linux size.
+          JAVA_TOOL_OPTIONS: ${{ (runner.os == 'macOS' && runner.environment == 'github-hosted') && '-Xmx5g' || '-Xmx10g' }}
         run: clojure -M:test
 
   # Every extension must resolve its own deps.edn cleanly — catches stale
