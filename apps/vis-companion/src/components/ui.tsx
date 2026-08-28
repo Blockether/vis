@@ -994,9 +994,9 @@ export function Pill({
  *
  * `@file` and `/command` are the same gesture answered twice, and they were the
  * same forty classes written twice — including the one that matters and is easy
- * to forget: the pointer press is CANCELLED, because a completion list must not
- * take the caret out of the composer it is completing. That is behaviour, so it
- * belongs to the control and not to whoever remembers it.
+ * to forget: the mousedown default is CANCELLED, because a completion list must
+ * not take the caret out of the composer it is completing. That is behaviour, so
+ * it belongs to the control and not to whoever remembers it.
  *
  * `isActive` is the keyboard's position in the list, which is why it is the
  * app's amber and not a hover: a finger and an arrow key are pointing at two
@@ -1013,7 +1013,7 @@ export function OptionRow({
       type="button"
       role="option"
       aria-selected={isActive}
-      onPointerDown={(event) => event.preventDefault()}
+      onMouseDown={(event) => event.preventDefault()}
       className={`grid min-h-9 w-full gap-3 border-t border-dialog-edge px-3 py-1.5 text-left transition-colors duration-150 motion-reduce:transition-none ${
         isActive
           ? 'bg-accent text-accent-foreground'

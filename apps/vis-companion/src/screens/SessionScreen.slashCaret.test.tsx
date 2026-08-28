@@ -10,12 +10,13 @@ import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 // "/" was — inside the freshly written word. The iOS virtual keyboard then sat
 // mid-word, fired autocorrect, and inserted at the wrong spot.
 describe("slash-command completion caret", () => {
-  it("parks the caret at the end of the completed command", async () => {
+  it("parks the caret without refocusing the completed composer", async () => {
     const user = userEvent.setup();
     renderSessionScreen();
 
     const composer = screen.getByLabelText("Message Vis") as HTMLTextAreaElement;
     await user.type(composer, "/relo");
+    const refocus = vi.spyOn(composer, "focus");
     await user.click(await screen.findByText("/reload"));
 
     // The caret is parked inside a frame the completion asks for.
@@ -23,6 +24,9 @@ describe("slash-command completion caret", () => {
       await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
     });
 
+    // Refocusing an already-visible composer makes WKWebView move the transcript.
+    expect(refocus).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(composer);
     expect(composer.value).toBe("/reload ");
     expect(composer.selectionStart).toBe(composer.value.length);
     expect(composer.selectionEnd).toBe(composer.value.length);

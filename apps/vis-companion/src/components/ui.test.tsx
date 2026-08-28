@@ -2853,9 +2853,9 @@ describe("the composer's own controls", () => {
     expect(
       classes(renderToStaticMarkup(<OptionRow>notes.md</OptionRow>)),
     ).toContain("hover:bg-hover");
-    // The pointer press is CANCELLED by the control, not by whoever remembers.
+    // The mousedown default is CANCELLED by the control, not by whoever remembers.
     expect(uiSource).toContain(
-      "onPointerDown={(event) => event.preventDefault()}",
+      "onMouseDown={(event) => event.preventDefault()}",
     );
   });
 

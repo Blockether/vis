@@ -5017,7 +5017,6 @@ export function SessionScreen({
     requestAnimationFrame(() => {
       const element = composerRef.current;
       if (!element) return;
-      element.focus();
       // Park the caret at the end of the completed command. Mirrors completeFile:
       // without this, iOS keeps the native selection where "/" was (inside the
       // freshly written word), so the virtual keyboard fires autocorrect and
@@ -5067,7 +5066,6 @@ export function SessionScreen({
     requestAnimationFrame(() => {
       const element = composerRef.current;
       if (!element) return;
-      element.focus();
       element.setSelectionRange(spliced.caret, spliced.caret);
       setCaret(spliced.caret);
     });
