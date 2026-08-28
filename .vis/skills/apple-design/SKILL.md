@@ -102,8 +102,8 @@ draws it. **Nothing else in `src/**` imports `lucide-react`, and nothing else dr
 - **A glyph is TYPE, not an icon.** `✕ ▾ ▸ ▶ ↓ ↗ ✓ ● ◇` wear the font's weight instead of the control's, do not
   align to the label beside them, cannot take a stroke, and on a phone render in whatever face the OS
   substituted. The TUI is the one surface where a glyph IS the mark (a cell holds a character,
-  `HUMAN_INPUT_CHOICE_MARKS`) — which is exactly why the app never borrows from it.
-  - The composer's send button is the case that proves the rule rather than the exception to it: its mark is
+  `HUMAN_INPUT_CHOICE_MARKS`) — which is why the app never borrows from it.
+  - The composer's send button proves the rule: its mark is
     `SendIcon` — Lucide's `ArrowUp` under the name of the ACT — and `icons.test.tsx` refuses `↑` in shipped
     source exactly as it refuses `✕` and `▾`.
 - **A mark with no call site is deleted, not kept.** `icons.test.tsx` fails on an export nothing draws, so the
@@ -117,7 +117,7 @@ draws it. **Nothing else in `src/**` imports `lucide-react`, and nothing else dr
   | `text-head` 17/24 | 18px | 1.50px | 1.49px |
   | `text-title` 13/20 | 14px (`size-3.5`) | 1.17px | 1.14px |
   | `text-ui` 11/16, `text-chip` | 12px (`size-3`) | 1.00px | 0.96px |
-  | `text-meta` 10/16 | none — the row's mark sits one step up, in the gutter | | |
+  | `text-meta` 10/16 | none — the row's mark sits one step up, in the gutter | — | — |
 
   Scale the BOX, never the path: a re-drawn `d` to "fix" a weight is a second family with one member. The box is
   a `size-*` utility (rem), so at 130% system text scaling the mark grows with its row — and `size-3.5` is a
@@ -209,8 +209,8 @@ already implements it:
 - **The 44px target arrives as invisible slop around that face** — `Button`'s pseudo-element, the
   `SearchField`'s two strips above and below, `NewSessionButton`'s "compact 32px header rhythm
   while `Button` preserves a 44px touch target outside the painted box". **Never inflate the paint
-  to the target.** Four 44px painted boxes in one strip is exactly why a mockup looks fat, and it
-  is what the shipping composer already avoids.
+  to the target.** Four 44px painted boxes in one strip is why a mockup looks fat; the shipping
+  composer already avoids it.
 - Pointer (`mouse:`) targets ≥ 28×28 px, and only the `mouse:` variant may ever make a control
   smaller — an iPad is a ≥ 640px screen driven by a hand.
 - **≥ 8px between two adjacent targets**, and a destructive action is never adjacent to a common
@@ -395,11 +395,11 @@ When asked to review, audit, critique or modernize a design — screenshot, mock
    vocabulary (`ListRow`, `Button variant=…`, a `text-*` step, a palette token — never a raw
    utility), and sequence the work: accessibility, then conventions, then polish.
 
-5. **Score it before you show it**, 1–5, honestly, and print the scores beside the artifact: **hierarchy**
+7. **Score it before you show it**, 1–5, honestly, and print the scores beside the artifact: **hierarchy**
    (exactly one element leads each screen), **fidelity** (every control exists in `src/**`), **restraint**
    (nothing grew because it could), **measurement** (every number checked, not felt), **variety** (two screens
    differ where the product differs). Anything below 3 is a revision, not a caveat.
-6. **The tokens are locked.** No literal hex, no literal `font-family`, no literal px type size anywhere in an
+8. **The tokens are locked.** No literal hex, no literal `font-family`, no literal px type size anywhere in an
    artifact — every colour is a token from `themes.generated.css`, every size a step from `index.css`, every
    mark a name from `icons.tsx`. A value invented mid-render is the most reliable tell of generated UI.
 
@@ -457,9 +457,9 @@ Two derived rules that catch most of the damage:
 A design answer that was never rendered and inspected is a guess, and it will read as one.
 
 **Load the fonts, then prove they loaded.** The frame declares `@font-face` for `Inter Variable` and
-`JetBrains Mono Variable` with the repo's own `.woff2` inlined as base64 (48 KB + 40 KB + italic —
-a `file://` reference is refused by the renderer's origin rules, and naming the family loads
-nothing). Then PROVE it in the rendered page with a width probe, because nothing else reports a silent
+`JetBrains Mono Variable` with the repo's own `.woff2` inlined as base64 — §1 owns the files and the
+naming rule; a `file://` reference is refused by the renderer's origin rules. Then PROVE it in the
+rendered page with a width probe, because nothing else reports a silent
 fallback: paint two off-screen spans holding the same string, one in the family under test and one
 in `system-ui`, and measure both.
 
@@ -473,8 +473,8 @@ Equal widths mean the face never loaded, and a frame that fell back to SF Pro in
 judgement about density and hierarchy in it — SF is narrower than Inter, and JetBrains Mono is
 wider than SF Mono, so every column in the frame measured the wrong product.
 
-1. Build the screens as ONE self-contained HTML file at real device size — iPhone 16 is 393×852pt
-   with a 59px status bar and a 34px home indicator; a frame that omits them lies about the space.
+1. Build the screens as ONE self-contained HTML file at §5's canonical viewport for the surface —
+   a frame that omits the safe areas lies about the space.
    Paint from `themes.generated.css` variables and the `text-*` steps only, both appearances.
 2. Render and crop:
    `spel --session agent-<ts> set viewport 1440 900 && … open file:///… && … get box '#p1' && … screenshot -f /tmp/full.png`
