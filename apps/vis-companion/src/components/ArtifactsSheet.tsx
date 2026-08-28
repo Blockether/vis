@@ -918,7 +918,7 @@ function ArtifactDetail({
           src={url}
           controls
           playsInline
-          preload="metadata"
+          preload="auto"
           className="min-h-0 flex-1 bg-code object-contain"
         />
       </DetailOverlay>

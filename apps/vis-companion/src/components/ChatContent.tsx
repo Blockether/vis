@@ -1863,14 +1863,14 @@ const AttachmentTile = memo(function AttachmentTile({
   ) : !url ? (
     <div className={mediaPendingClass} aria-hidden="true" />
   ) : isVideo ? (
-    // A clip PLAYS in place, with the platform's own controls. It streams from
-    // the same attachment endpoint as the pictures, and `preload="metadata"`
-    // means a transcript full of clips costs a poster frame, not the bytes.
+    // A clip PLAYING from an authenticated artifact URL is already a local Blob: the
+    // client had to fetch every byte before it could make that URL. Safari stops at
+    // readyState 1 with `metadata` and paints a grey plate, so decode the first frame.
     <video
       src={url}
       controls
       playsInline
-      preload="metadata"
+      preload="auto"
       onError={() => setFailed(true)}
       className={mediaContentClass}
     />
@@ -3659,7 +3659,7 @@ export const UserMessage = memo(function UserMessage({
                 src={attachmentSrc(att)}
                 controls
                 playsInline
-                preload="metadata"
+                preload="auto"
                 className={mediaContentClass}
               />
             </MediaPlate>

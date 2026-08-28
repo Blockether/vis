@@ -6018,7 +6018,7 @@ export function SessionScreen({
                         className="size-8 shrink-0 object-cover"
                         muted
                         playsInline
-                        preload="metadata"
+                        preload="auto"
                       />
                     ) : isAudioMediaType(attachment.media_type) ? (
                       // A recording has no thumbnail to show and nothing to draw

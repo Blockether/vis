@@ -1075,6 +1075,30 @@ describe("the attachment rail", () => {
     expect(text(html)).not.toContain("more");
   });
 
+  // Regression, issue vis_session_id#1e754e37-32ff-431c-be7e-bfb8baaebb66: desktop Safari
+  // left a downloaded clip grey until playback began.
+  it("decodes the first frame of a downloaded clip before play", async () => {
+    const view = render(
+      <AttachmentRail
+        client={client}
+        sid="s1"
+        attachments={[
+          {
+            filename: "screen.mov",
+            media_type: "video/quicktime",
+            size: 487_939,
+            iteration_id: "i1",
+            index: 0,
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(view.container.querySelector("video")?.preload).toBe("auto"),
+    );
+    view.unmount();
+  });
   // Regression, user report: "the model attached a document, I commented on it and
   // saved, and now instead of one there are two". Saving files the same filename
   // as the NEXT VERSION of the same artifact; this rail painted a row per
