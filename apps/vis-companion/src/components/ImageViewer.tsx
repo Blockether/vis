@@ -747,8 +747,11 @@ export function ImageViewer({
 
       <div className="absolute inset-x-0 bottom-0 z-20 border-t border-dialog-edge bg-panel pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-2">
         <div className="mx-auto flex max-w-[1400px] items-center gap-2 overflow-x-auto overscroll-x-contain pb-1">
+          {/* One frame, three parts: the segmented group owns the corner and clips
+              it, so its segments stay square and no notch opens where two of them
+              meet. */}
           <div
-            className="flex shrink-0 items-center"
+            className="flex shrink-0 items-center overflow-hidden rounded-control [&>button]:rounded-none"
             aria-label="Zoom controls"
           >
             <Button

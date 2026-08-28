@@ -179,7 +179,7 @@ export const Button = forwardRef<
   return (
     <button
       ref={ref}
-      className={`min-h-7 rounded-none border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${scale} ${joined} ${styles} ${className}`}
+      className={`min-h-7 rounded-control border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${scale} ${joined} ${styles} ${className}`}
       {...props}
     />
   );
@@ -1159,7 +1159,7 @@ export function ComposerButton({
         press.up(event);
       }}
       onClick={press.click}
-      className={`relative grid shrink-0 place-items-center transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
+      className={`relative grid shrink-0 place-items-center overflow-hidden rounded-control transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
       {...props}
     >
       {isHolding && (
@@ -1778,7 +1778,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
     return (
       <input
         ref={ref}
-        className={`min-h-7 w-full rounded-none border border-edge bg-input px-2.5 py-0.5 font-mono text-meta text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${masked} ${className}`}
+        className={`min-h-7 w-full rounded-control border border-edge bg-input px-2.5 py-0.5 font-mono text-meta text-white transition-[border-color,box-shadow] duration-150 placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${masked} ${className}`}
         {...props}
       />
     );
@@ -1788,11 +1788,12 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
 /**
  * The app bar's fleet-wide search.
  *
- * A FIELD is a control, so it wears the vocabulary's own face: flat corners, the
- * app's own border and its type step. It used to be a hand-rolled `<label
- * className="… h-8 rounded border … bg-input">`: a white-filled, rounded slab on
- * paper that carries no other box at rest, so the quietest thing on the bar was
- * also the loudest.
+ * A FIELD is a control, so it wears the vocabulary's own face: the control corner,
+ * the app's own border and its type step. It used to be a hand-rolled `<label
+ * className="… h-8 rounded border … bg-input">`: a white-filled slab, rounder and
+ * taller than every control beside it, so the quietest thing on the bar was also
+ * the loudest. The FILL and the disagreement were the fault — the corner is the
+ * ladder's now, the same 8px `Button` carries.
  *
  * Resting it is PAPER — border only, no fill — and the input surface plus the ring
  * arrive with the caret, which is the same rule the terminal already follows
@@ -1835,7 +1836,7 @@ export const SearchField = forwardRef<
   const own = useRef<HTMLInputElement | null>(null);
   return (
     <label
-      className={`relative flex h-8 min-w-0 items-center gap-2 self-center rounded-none border border-edge-strong bg-transparent px-3 transition-[background-color,border-color,box-shadow] duration-150 before:absolute before:inset-x-0 before:-top-1.5 before:h-1.5 before:content-[''] after:absolute after:inset-x-0 after:-bottom-1.5 after:h-1.5 after:content-[''] focus-within:border-accent focus-within:bg-input focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none mouse:h-6 mouse:before:content-none mouse:after:content-none sm:px-4 ${className}`}
+      className={`relative flex h-8 min-w-0 items-center gap-2 self-center rounded-control border border-edge-strong bg-transparent px-3 transition-[background-color,border-color,box-shadow] duration-150 before:absolute before:inset-x-0 before:-top-1.5 before:h-1.5 before:content-[''] after:absolute after:inset-x-0 after:-bottom-1.5 after:h-1.5 after:content-[''] focus-within:border-accent focus-within:bg-input focus-within:ring-1 focus-within:ring-accent/30 motion-reduce:transition-none mouse:h-6 mouse:before:content-none mouse:after:content-none sm:px-4 ${className}`}
     >
       <SearchIcon className="size-3.5 shrink-0 text-dialog-hint" />
       {/* A SEARCH field, so the phone offers its own search key and stops correcting:
@@ -2316,9 +2317,9 @@ export function DialogFrame({
   const isFitSheet = useContext(IsFitSheet);
   return (
     <section
-      className={`flex min-h-0 flex-1 flex-col overflow-hidden border-t-2 border-accent bg-panel ${
+      className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-t-panel border-t-2 border-accent bg-panel ${
         isFitSheet ? '' : 'pt-[env(safe-area-inset-top)]'
-      } pb-[env(safe-area-inset-bottom)] shadow-none transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:duration-200 sm:starting:translate-y-2 ${className}`}
+      } pb-[env(safe-area-inset-bottom)] shadow-none transition-[opacity,transform,translate,scale,rotate] duration-300 ease-[cubic-bezier(0.22,0.61,0.36,1)] starting:translate-y-full starting:opacity-0 motion-reduce:transition-none sm:rounded-panel sm:border sm:border-dialog-edge sm:pt-0 sm:pb-0 sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:duration-200 sm:starting:translate-y-2 ${className}`}
       role="dialog"
       aria-modal="true"
       aria-label={title}

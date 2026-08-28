@@ -60,6 +60,32 @@
   --text-display--line-height: 30px;
 }
 
+/* Corners. A radius is a promise that a thing can be PRESSED, so it belongs to a
+   control, to the field that holds controls, and to a layer that floats over the
+   page. Never to a PLANE: activity rows, code and result surfaces, transcript
+   bands, list rows and the machine switcher stay square — "definitely there
+   should be no rounded corners" was a report about a pill on a page of square
+   bands, and `ui.test.tsx` still pins it.
+
+   Two lines size every corner. A radius is its box divided by four, capped at
+   16px; and a CONTAINER's radius is its child's radius plus the padding between
+   them. The second line is what makes the composer's send look concentric inside
+   the field instead of parallel to it: an 8px control with a 4px inset around it
+   gives the field 12px. Tailwind's own scale is reset so `rounded-2xl` cannot
+   appear — four rungs, each named after the box it wraps. */
+@theme {
+  --radius-*: initial;
+
+  /* a 24px chip, tile or thumbnail */
+  --radius-chip: 6px;
+  /* the 28-32px control: a button, a field, a composer key */
+  --radius-control: 8px;
+  /* a container of controls: the control's 8px plus the 4px that insets it */
+  --radius-field: 12px;
+  /* a sheet or popover over the page, at the cap */
+  --radius-panel: 16px;
+}
+
 /* Tailwind utilities resolve directly to the shared TUI palette generated above. */
 @theme inline {
   --color-ink: var(--bg);

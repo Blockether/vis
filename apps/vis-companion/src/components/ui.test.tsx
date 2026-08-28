@@ -23,6 +23,7 @@ import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
 import notifyVerdictSource from "../lib/notify-verdict.ts?raw";
+import menuSource from "./Menu.tsx?raw";
 
 import { PlusIcon, ProjectsIcon } from "./icons";
 import { MACHINE_COLORS } from "../lib/machine-colors";
@@ -1890,9 +1891,9 @@ describe("SearchField", () => {
 
   it("wears Button's own face and only lights up when focused", () => {
     expect(uiSource).toContain("export const SearchField");
-    // Same box as `Button`: flat corners, its border and type step.
-    expect(field).toContain("rounded-none");
-    expect(field).not.toContain("rounded ");
+    // Same box as `Button`: the control corner, its border and type step.
+    expect(field).toContain("rounded-control");
+    expect(field).not.toContain("rounded-none");
     // Paper at rest; the input surface and the ring arrive with the caret.
     expect(field).toContain("bg-transparent");
     expect(field).toContain("focus-within:bg-input");
@@ -3731,6 +3732,11 @@ describe("a call site positions, and the component paints", () => {
       ),
     ).toContain("border-x-0");
     expect(imageViewerSource).toContain("isJoined");
+    // ONE frame means one corner: the group carries it and clips it, so no segment
+    // rounds an edge that lands in the middle of the bar.
+    expect(imageViewerSource).toContain(
+      "overflow-hidden rounded-control [&>button]:rounded-none",
+    );
   });
 
   // The trash in "Manage projects" was the one destructive icon in the app that was
@@ -4079,5 +4085,84 @@ describe("SettingsChoiceGroup", () => {
   it("keeps the clusters of one engine on one edge", () => {
     expect(settingsSource).toContain('<SettingsChoiceGroup label="Voices" isNested>');
     expect(settingsSource).toContain('<SettingsChoiceGroup label="Speech rate" isNested>');
+  });
+});
+
+// The corner ladder, and the rule that sizes it. A radius is a promise that a thing
+// can be PRESSED: the control vocabulary carries one, a plane does not, and the size
+// comes from the box rather than from taste. `index.css` states it; this reads it
+// back on a machine with no browser.
+describe("Corners", () => {
+  const everything = import.meta.glob(["../**/*.tsx"], {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+
+  it("writes the ladder's four rungs and no step Tailwind ships", () => {
+    // The rungs are declared in `src/index.css` — chip 6px, control 8px, field 12px,
+    // panel 16px — and the default scale is reset beside them, so a `rounded-2xl`
+    // would be a class that paints nothing. Vitest hands a stylesheet back as an
+    // empty module (`?raw` included), so what is pinned here is every corner the
+    // app actually writes: a rung of the ladder, a dot, or a square.
+    const rungs = new Set(["chip", "control", "field", "panel", "none", "full"]);
+    for (const [path, source] of Object.entries(everything)) {
+      for (const [, rung] of source.matchAll(
+        /\brounded-(?:[tbrlse]-|[tb][lr]-)?([a-z0-9]+)\b/g,
+      )) {
+        expect(rungs.has(rung) ? path : `${path}: rounded-${rung}`).toBe(path);
+      }
+    }
+  });
+
+  it("gives every control that carries paper the same corner", () => {
+    for (const html of [
+      renderToStaticMarkup(<Button>Send</Button>),
+      renderToStaticMarkup(<Input defaultValue="anthropic" />),
+      renderToStaticMarkup(
+        <ComposerButton tone="send" label="Send message">
+          {"↑"}
+        </ComposerButton>,
+      ),
+      renderToStaticMarkup(
+        <SearchField value="" onValue={() => {}} label="Search sessions" />,
+      ),
+    ]) {
+      expect(html).toContain("rounded-control");
+    }
+  });
+
+  it("leaves what is not pressed square", () => {
+    // A row in a list, a tab in the machine track: both are planes of a page made
+    // of square bands, and the report that made them square still holds.
+    expect(
+      renderToStaticMarkup(<ListRow onClick={() => {}}>anthropic</ListRow>),
+    ).not.toContain("rounded");
+    expect(
+      renderToStaticMarkup(
+        <MachineTab isOn onClick={() => {}}>
+          tower
+        </MachineTab>,
+      ),
+    ).not.toContain("rounded");
+  });
+
+  it("measures the composer's field off the control it holds", () => {
+    // An 8px control inside a 4px inset is a 12px field. The two are measured from
+    // each other, so the strip's padding and the field's corner move together.
+    expect(sessionScreenSource).toContain('className="flex items-end gap-1 p-1"');
+    expect(sessionScreenSource).toContain(
+      "rounded-field border border-dialog-edge bg-input",
+    );
+  });
+
+  it("rounds a layer over the page, and a docked sheet only at its free edge", () => {
+    // `DialogFrame` and `AnchoredPanel` are the two surfaces that float: on a phone
+    // they are docked to the bottom edge and round only the top corners; from `sm:`
+    // up they are cards and round all four.
+    for (const source of [uiSource, menuSource]) {
+      expect(source).toContain("rounded-t-panel");
+      expect(source).toContain("sm:rounded-panel");
+    }
   });
 });

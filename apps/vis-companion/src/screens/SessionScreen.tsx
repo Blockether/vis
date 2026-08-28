@@ -5977,13 +5977,13 @@ export function SessionScreen({
             </div>
           )}
 
-          <div className="relative border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
+          <div className="relative rounded-field border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
             {activePastes.length > 0 && (
               <div className="flex gap-1 overflow-x-auto overscroll-x-contain border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]">
                 {activePastes.map((paste) => (
                   <span
                     key={paste.id}
-                    className="inline-flex min-h-7 shrink-0 items-center border border-code-edge bg-code font-mono text-chip"
+                    className="inline-flex min-h-7 shrink-0 items-center overflow-hidden rounded-chip border border-code-edge bg-code font-mono text-chip"
                   >
                     <TextButton
                       isToken
@@ -6009,7 +6009,7 @@ export function SessionScreen({
                 {attachments.map((attachment) => (
                   <div
                     key={attachment.id}
-                    className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 border border-dialog-edge bg-panel pr-8 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+                    className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 overflow-hidden rounded-chip border border-dialog-edge bg-panel pr-8 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
                   >
                     {isVideoMediaType(attachment.media_type) ? (
                       <video
@@ -6153,7 +6153,7 @@ export function SessionScreen({
                       role="menu"
                       aria-label="Attach"
                       onMouseDown={keepKeyboard}
-                      className="absolute bottom-full left-0 z-30 mb-1.5 w-max min-w-40 border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
+                      className="absolute bottom-full left-0 z-30 mb-1.5 w-max min-w-40 overflow-hidden rounded-panel border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
                     >
                       <MenuItem
                         title="Take a photo"
