@@ -65,12 +65,6 @@ packages/vis-benchmark/swebench-harness/
 jobs/
 # Legacy local verification logs may still exist after removing verify.sh.
 .verification/
-dev/benches/4clojure/autoresearch/
-dev/benches/4clojure/.prompt_sizes.cache.json
-dev/benches/4clojure/.system_prompt_chars.cache.json
-# Prompt-regression experiment outputs (traces, fixtures, reports, logs).
-dev/benches/prompt_regression/runs/
-dev/benches/prompt_regression/.pytest_cache/
 # rift/bridge per-directory ULID marker — regenerated at runtime, never source.
 .rift
 # Claude Code local tooling state (machine-local settings + run locks).
