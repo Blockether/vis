@@ -2908,10 +2908,28 @@ describe("the composer's own controls", () => {
     expect(classes(html)).toContain("hover:bg-hover");
   });
 
-  it("floats over the transcript with its own paper and its own lift", () => {
+  // Regression, measured over the transcript on both appearances: the way back to
+  // the newest turn was a square slab wearing a 14px mark beside a 10px label, at
+  // the same 32px face under a cursor as under a finger.
+  it("floats over the transcript on the rung a layer wears", () => {
     const pill = classes(renderToStaticMarkup(<Pill>Latest</Pill>));
     expect(pill).toContain("bg-button");
     expect(pill).toContain("shadow-[4px_4px_0_var(--dialog-shadow)]");
+    // A layer over the page takes the panel rung, which is a capsule at 32px.
+    expect(pill).toContain("rounded-panel");
+    // 32px face on touch, 28 under a pointer, and 44px of target as slop.
+    expect(pill).toContain("min-h-8");
+    expect(pill).toContain("mouse:min-h-7");
+    // React escapes the quotes inside a class attribute, so the strips are what
+    // this reads: 6px above and 6px below a 32px face is the 44px target.
+    expect(pill).toContain("after:-top-1.5");
+    expect(pill).toContain("after:-bottom-1.5");
+    expect(pill).toContain("mouse:after:content-none");
+    // A control's label is `text-ui`; 10px is a step only a pointer may read.
+    expect(pill).toContain("text-ui");
+    expect(pill).toContain("mouse:text-meta");
+    // And the mark is the box that step allows, named where it is drawn.
+    expect(sessionScreenSource).toContain('<ArrowDownIcon className="size-3" />');
   });
 });
 

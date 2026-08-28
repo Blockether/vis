@@ -5769,7 +5769,7 @@ export function SessionScreen({
               className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2"
               onClick={() => scrollToEnd("smooth")}
             >
-              <ArrowDownIcon />
+              <ArrowDownIcon className="size-3" />
               Latest
             </Pill>
           )}

@@ -71,8 +71,12 @@
    16px; and a CONTAINER's radius is its child's radius plus the padding between
    them. The second line is what makes the composer's send look concentric inside
    the field instead of parallel to it: an 8px control with a 4px inset around it
-   gives the field 12px. Tailwind's own scale is reset so `rounded-2xl` cannot
-   appear — four rungs, each named after the box it wraps. */
+   gives the field 12px. A LAYER OVER THE PAGE takes the panel rung whatever its
+   own box is, because it is not standing on the page's grid: on a 32px face that
+   lands on a capsule, the one shape nothing standing on the page wears, which is
+   how the eye reads "Latest" as arriving over the transcript rather than
+   belonging to the band under it. Tailwind's own scale is reset so `rounded-2xl`
+   cannot appear — four rungs, each named after the box it wraps. */
 @theme {
   --radius-*: initial;
 
@@ -82,7 +86,7 @@
   --radius-control: 8px;
   /* a container of controls: the control's 8px plus the 4px that insets it */
   --radius-field: 12px;
-  /* a sheet or popover over the page, at the cap */
+  /* a sheet, a popover, or the one control that floats over the page */
   --radius-panel: 16px;
 }
 

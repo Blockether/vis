@@ -1004,6 +1004,14 @@ export function BackButton({
  * (`starting:`), and the call site decides only WHERE it lands. `Button` cannot
  * be it: a button's face is flat because it sits ON the app's paper, and one
  * that floats has to be told from the sentence it is covering.
+ *
+ * ITS CORNER IS THE FLOATING RUNG, never the control rung: `rounded-panel` is
+ * what a layer over the page wears, and on a 32px face that lands on a capsule —
+ * the one shape nothing standing on the page wears, so the eye reads it as
+ * arriving rather than belonging. The label is a control's label (`text-ui`,
+ * dropping to `text-meta` only where a pointer is), the face rides the app's own
+ * 32/28 rhythm, and the 44px target is slop measured from wherever the call site
+ * put it — which is why that call site's own positioning is not optional.
  */
 export function Pill({
   className = '',
@@ -1013,7 +1021,7 @@ export function Pill({
   return (
     <button
       type="button"
-      className={`inline-flex min-h-8 items-center gap-1.5 border border-dialog-edge bg-button px-3 font-mono text-meta font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate,background-color] duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:scale-[0.97] starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none ${className}`}
+      className={`inline-flex min-h-8 items-center gap-1.5 rounded-panel border border-dialog-edge bg-button px-3 font-mono text-ui font-bold text-button-foreground shadow-[4px_4px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate,background-color] duration-150 after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:scale-[0.97] starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none mouse:min-h-7 mouse:px-2.5 mouse:text-meta mouse:after:content-none ${className}`}
       {...props}
     >
       {children}
