@@ -1131,7 +1131,7 @@
                        (when (= target (vec (concat (:slash/parent s) [(:slash/name s)]))) s))
                      (vis/registered-slashes))]
 
-      (when (#{:navigator :clear-session} (get-in spec [:slash/ui :kind])) spec))))
+      (when (= :navigator (get-in spec [:slash/ui :kind])) spec))))
 
 (defn- prompt-arg-slash-for-input
   "When the typed text is EXACTLY a registered slash that declares
@@ -5766,25 +5766,6 @@
                            (vis/notify! "Session no longer exists"
                                         :level :warn
                                         :ttl-ms copy-success-ttl-ms))))))
-                 ;; `/clear` (a `:slash/ui {:kind :clear-session}` slash):
-                 ;; tear down THIS session (turns + soul + workspace links)
-                 ;; and open a fresh empty one in its place, in the SAME tab
-                 ;; slot (open a fresh focused tab,
-                 ;; drop the old one) so you keep working right where you were.
-                 clear-session! (fn []
-                                  (when-not (:dialog-open? @state/app-db)
-                                    (when-let [config (:config @state/app-db)]
-                                      (let [old-id (current-session-id)
-                                            old-tab-id (:active-tab-id @state/app-db)]
-
-                                        (open-session-tab! (chat/make-session config) true)
-                                        (when old-tab-id (state/dispatch [:close-tab old-tab-id]))
-                                        (when old-id
-                                          (try (vis/gateway-close-session! old-id)
-                                               (catch Throwable _ nil)))
-                                        (vis/notify! "Cleared session"
-                                                     :level :success
-                                                     :ttl-ms copy-success-ttl-ms)))))
                  show-sessions!
                  (fn show-sessions! []
                    (when-not (:dialog-open? @state/app-db)
@@ -7123,10 +7104,6 @@
                               ;; live vs. resume.
                               (= :navigator (get-in cmd-map [:slash/spec :slash/ui :kind]))
                               (when-not (:dialog-open? @state/app-db) (show-sessions!))
-                              ;; `/clear`: wipe this session and start a
-                              ;; fresh one in the same tab.
-                              (= :clear-session (get-in cmd-map [:slash/spec :slash/ui :kind]))
-                              (clear-session!)
                               (and cmd-map (:slash/text cmd-map))
                               (when-not (:dialog-open? @state/app-db)
                                 (let [text (cond-> (:slash/text cmd-map)
@@ -7573,15 +7550,8 @@
                              ;; `exact-command`, so this resolves them by full
                              ;; path against the engine registry.
                              (navigator-slash-for-input state)
-                             (let [kind (get-in (navigator-slash-for-input state)
-                                                [:slash/ui :kind])]
-                               (when-not (:dialog-open? @state/app-db)
-                                 (case kind
-                                   :clear-session
-                                   (clear-session!)
-
-                                   (show-sessions!)))
-                               (state/dispatch [:reset-input]))
+                             (do (when-not (:dialog-open? @state/app-db) (show-sessions!))
+                                 (state/dispatch [:reset-input]))
                              (slash-command-for-input screen state)
                              (let [cmd (slash-command-for-input screen state)]
                                (run-command! cmd (:slash/args cmd))

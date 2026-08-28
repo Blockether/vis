@@ -1309,7 +1309,7 @@
         (is (= 200 (:status response)))
         (is (= 1 @loads))
         (is (= :web (first @seen)))
-        (is (some #(= "/help" (:name %)) (second @seen)))
+        (is (= ["/help" "/new-session" "/sessions"] (mapv :name (second @seen))))
         (is (= (.getCanonicalPath (io/file root)) (nth @seen 2)))
         (is (some #(= "/rename" (get % "name")) (get body "commands")))))))
 ;; Regression, Vis session ae259fdd-2712-4591-8f12-e1cdff30b208: gateway startup

@@ -1259,8 +1259,7 @@
 (def ^:private web-native-slashes
   [{:name "/help" :doc "Show the available slash commands."}
    {:name "/new-session" :doc "Create and open a new session. Optional text starts its first turn."}
-   {:name "/sessions" :doc "Return to the session list."}
-   {:name "/clear" :doc "Start a fresh session without deleting this transcript."}])
+   {:name "/sessions" :doc "Return to the session list."}])
 
 (defn- slashes-handler
   "GET /v1/sessions/:sid/slashes[?channel=web|tui] — load Python extensions in
