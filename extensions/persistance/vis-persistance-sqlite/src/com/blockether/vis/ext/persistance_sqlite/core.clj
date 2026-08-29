@@ -1877,19 +1877,27 @@
 
    `{:turn-count :iteration-count :duration-ms :input-tokens
      :input-regular-tokens :input-cache-write-tokens :input-cache-read-tokens
-     :prompt-cache-reusable-tokens :prompt-cache-reused-tokens :output-tokens
+     :prompt-cache-reusable-tokens :prompt-cache-reused-tokens
+     :prompt-cache-sample-count :prompt-cache-rebuild-count
+     :prompt-cache-expired-count :output-tokens
      :output-reasoning-tokens :cost-usd :first-turn-at :last-turn-at :provider
      :model :tool-call-count :fold-count}`
 
-   Token/cost/iteration facts are SQL aggregates over the turn-state rollups
-   (`session_turn_state`), which the turn writer already maintains — no
-   iteration scan. TOOL and FOLD counts live inside each iteration's Nippy
-   `tool_calls` BLOB: tools are keyed by `:vis/tool-name`; a fold is a successful
-   `fold_session` receipt nested inside a `python_execution` form. `usage-tally`
-   thaws any one row's blob at most ONCE per process and memoises the merged
-   result per session — a re-read costs two skinny id-only queries, a repeat
-   read of an unchanged session costs nothing beyond them, and a live session
-   pays only for iterations added since the last read. It is still an ON-DEMAND
+   Token, cost and cache facts are ONE skinny SQL aggregate over the session's
+   `session_turn_iteration` rows — the LLM calls themselves — and never over the
+   turn rollups. A rollup is written when a turn ENDS, so reading it dropped the
+   tokens and the cost of every interrupted and every still-running turn out of
+   the session total for good, and left the two cache percentages measured over
+   two different populations. Turn COUNT and wall-clock duration stay on the turn
+   states, the only rows that know them.
+
+   TOOL and FOLD counts live inside each iteration's Nippy `tool_calls` BLOB:
+   tools are keyed by `:vis/tool-name`; a fold is a successful `fold_session`
+   receipt nested inside a `python_execution` form. `usage-tally` thaws any one
+   row's blob at most ONCE per process and memoises the merged result per
+   session — a re-read costs two skinny id-only queries, a repeat read of an
+   unchanged session costs nothing beyond them, and a live session pays only for
+   the iterations added since the last read. It is still an ON-DEMAND
    single-session read and never part of `list-sessions`.
 
    Only the TOTALS survive the blob pass: per-tool and per-error rankings had no
@@ -1903,32 +1911,41 @@
           (session-usage-scope soul-id-s)
 
           agg
+          ;; Only what a TURN knows about itself.
           (query-one! db-info
-                      {:select [[[:count :sts.id] :turns] [[:sum :sts.iteration_count] :iterations]
-                                [[:sum :sts.duration_ms] :duration_ms]
-                                [[:sum :sts.input_tokens] :input_tokens]
-                                [[:sum :sts.input_regular_tokens] :input_regular_tokens]
-                                [[:sum :sts.input_cache_write_tokens] :input_cache_write_tokens]
-                                [[:sum :sts.input_cache_read_tokens] :input_cache_read_tokens]
-                                [[:sum :sts.output_tokens] :output_tokens]
-                                [[:sum :sts.output_reasoning_tokens] :output_reasoning_tokens]
-                                [[:sum :sts.total_cost_usd] :cost_usd]
+                      {:select [[[:count :sts.id] :turns] [[:sum :sts.duration_ms] :duration_ms]
                                 [[:min :ts.created_at] :first_at] [[:max :ts.created_at] :last_at]]
                        :from from
                        :join join
                        :where where})
 
-          reuse
-          ;; One skinny aggregate over per-request denominators. It cannot live on
-          ;; session_turn_state: eligibility is decided independently for each LLM call.
+          calls
+          ;; Money and cache facts over the calls themselves, so an interrupted
+          ;; or a live turn still counts and both cache percentages share ONE
+          ;; population. The per-request denominator could never live on
+          ;; session_turn_state anyway: eligibility is decided independently for
+          ;; each LLM call.
           (query-one!
             db-info
-            {:select [[[:sum :qti.prompt_cache_reusable_tokens] :prompt_cache_reusable_tokens]
+            {:select [[[:count :qti.id] :iterations] [[:sum :qti.input_tokens] :input_tokens]
+                      [[:sum :qti.input_regular_tokens] :input_regular_tokens]
+                      [[:sum :qti.input_cache_write_tokens] :input_cache_write_tokens]
+                      [[:sum :qti.input_cache_read_tokens] :input_cache_read_tokens]
+                      [[:sum :qti.output_tokens] :output_tokens]
+                      [[:sum :qti.output_reasoning_tokens] :output_reasoning_tokens]
+                      [[:sum :qti.cost_usd] :cost_usd]
+                      [[:sum :qti.prompt_cache_reusable_tokens] :prompt_cache_reusable_tokens]
                       [[:sum [:min :qti.prompt_cache_reusable_tokens :qti.input_cache_read_tokens]]
-                       :prompt_cache_reused_tokens]]
+                       :prompt_cache_reused_tokens]
+                      [[:sum [:case [:> :qti.prompt_cache_reusable_tokens 0] 1 :else 0]]
+                       :prompt_cache_sample_count]
+                      [[:sum [:case [:= :qti.prompt_cache_continuity "rewrite"] 1 :else 0]]
+                       :prompt_cache_rebuild_count]
+                      [[:sum [:case [:= :qti.prompt_cache_continuity "expired"] 1 :else 0]]
+                       :prompt_cache_expired_count]]
              :from [[:session_turn_iteration :qti]]
              :join (into [[:session_turn_state :sts] [:= :sts.id :qti.session_turn_state_id]] join)
-             :where (conj where [:<> :qti.prompt_cache_reusable_tokens nil])})]
+             :where where})]
 
       (when (pos? (long (or (:turns agg) 0)))
         (let [latest
@@ -1966,17 +1983,20 @@
               (long (or (:folds counts) 0))]
 
           (cond-> {:turn-count (long (or (:turns agg) 0))
-                   :iteration-count (long (or (:iterations agg) 0))
+                   :iteration-count (long (or (:iterations calls) 0))
                    :duration-ms (long (or (:duration_ms agg) 0))
-                   :input-tokens (long (or (:input_tokens agg) 0))
-                   :input-regular-tokens (long (or (:input_regular_tokens agg) 0))
-                   :input-cache-write-tokens (long (or (:input_cache_write_tokens agg) 0))
-                   :input-cache-read-tokens (long (or (:input_cache_read_tokens agg) 0))
-                   :prompt-cache-reusable-tokens (long (or (:prompt_cache_reusable_tokens reuse) 0))
-                   :prompt-cache-reused-tokens (long (or (:prompt_cache_reused_tokens reuse) 0))
-                   :output-tokens (long (or (:output_tokens agg) 0))
-                   :output-reasoning-tokens (long (or (:output_reasoning_tokens agg) 0))
-                   :cost-usd (double (or (:cost_usd agg) 0))
+                   :input-tokens (long (or (:input_tokens calls) 0))
+                   :input-regular-tokens (long (or (:input_regular_tokens calls) 0))
+                   :input-cache-write-tokens (long (or (:input_cache_write_tokens calls) 0))
+                   :input-cache-read-tokens (long (or (:input_cache_read_tokens calls) 0))
+                   :prompt-cache-reusable-tokens (long (or (:prompt_cache_reusable_tokens calls) 0))
+                   :prompt-cache-reused-tokens (long (or (:prompt_cache_reused_tokens calls) 0))
+                   :prompt-cache-sample-count (long (or (:prompt_cache_sample_count calls) 0))
+                   :prompt-cache-rebuild-count (long (or (:prompt_cache_rebuild_count calls) 0))
+                   :prompt-cache-expired-count (long (or (:prompt_cache_expired_count calls) 0))
+                   :output-tokens (long (or (:output_tokens calls) 0))
+                   :output-reasoning-tokens (long (or (:output_reasoning_tokens calls) 0))
+                   :cost-usd (double (or (:cost_usd calls) 0))
                    :tool-call-count (long (reduce + 0 (vals (:tools counts))))
                    :fold-count folds}
             (:first_at agg)
@@ -3319,7 +3339,7 @@
    resumed bubbles don't render the synthetic source as success. The
    model-facing `:forms` envelopes keep the rejection text so context
    carry still teaches the next iter."
-  [{:keys [forms duration-ms prompt-cache-reusable-tokens] :as opts}]
+  [{:keys [forms duration-ms prompt-cache-reusable-tokens prompt-cache-continuity] :as opts}]
   (let [code
         (require-iteration-code! opts)
 
@@ -3343,7 +3363,10 @@
       (assoc :eval_duration_ms (long duration-ms))
 
       (some? prompt-cache-reusable-tokens)
-      (assoc :prompt_cache_reusable_tokens (long prompt-cache-reusable-tokens)))))
+      (assoc :prompt_cache_reusable_tokens (long prompt-cache-reusable-tokens))
+
+      (some? prompt-cache-continuity)
+      (assoc :prompt_cache_continuity (name prompt-cache-continuity)))))
 
 (defn- routing-summary-columns
   [routing]
@@ -4186,6 +4209,9 @@
 
       (some? (:prompt_cache_reusable_tokens row))
       (assoc :prompt-cache-reusable-tokens (long (:prompt_cache_reusable_tokens row)))
+
+      (some? (:prompt_cache_continuity row))
+      (assoc :prompt-cache-continuity (keyword (:prompt_cache_continuity row)))
 
       true
       (assoc :output-tokens (long (or (:output_tokens row) 0)))

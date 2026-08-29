@@ -145,12 +145,18 @@ export interface SessionUsage {
   output_reasoning_tokens?: number;
   /** Provider cache reads over all logical input: the cost-facing denominator. */
   cache_read_share_percent?: number;
-  /** Prior same-route input proven to be an exact reusable prefix. */
+  /** Prior same-route input the previous request could still have left in the cache. */
   prompt_cache_reusable_tokens?: number;
-  /** Provider cache reads capped to those reusable prior prefixes. */
+  /** Provider cache reads capped to that reusable prior input. */
   prompt_cache_reused_tokens?: number;
   /** Reused prefix reads over reusable prior input: the architecture-facing denominator. */
   reusable_prefix_coverage_percent?: number;
+  /** How many of the session's LLM calls carried a reuse denominator — the sample behind it. */
+  prompt_cache_sample_count?: number;
+  /** Calls whose earlier context had been rewritten: a fold or a replaced history. */
+  prompt_cache_rebuild_count?: number;
+  /** Calls whose prefix survived but had aged out of the provider cache. */
+  prompt_cache_expired_count?: number;
   cost_usd?: number;
   duration_ms?: number;
   first_turn_at?: number;

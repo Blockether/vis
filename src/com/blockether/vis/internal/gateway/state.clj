@@ -1000,9 +1000,13 @@
 
    `cache_read_share_percent` is provider cache reads over ALL logical input, so
    it describes cost. `reusable_prefix_coverage_percent` is provider reads over
-   the exact prior same-route prefixes that were eligible, so new tool output
-   cannot make cache architecture look worse. Their token numerators and
-   denominators ride beside both percentages. Never throws."
+   what the previous same-route request could still have left in the cache — a
+   fold, a rewrite or an expiry is CLASSIFIED and stays in that denominator, so
+   the number cannot flatter itself by dropping its own misses, and
+   `prompt_cache_sample_count` says how many calls carried one. Both percentages
+   are measured over ONE population: every LLM call the session made, including
+   the calls an interrupted turn's rollup never recorded. Their token numerators
+   and denominators ride beside both percentages. Never throws."
   [sid]
   (try (when-let [db (lp/db-info)]
          (when-let [u (persistance/db-session-usage-stats db sid)]

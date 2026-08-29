@@ -383,11 +383,21 @@ CREATE TABLE session_turn_iteration (
   input_cache_read_tokens         INTEGER CHECK (
                                     input_cache_read_tokens IS NULL OR input_cache_read_tokens >= 0
                                   ),
-  -- Prior same-route logical input only when its exact message vector is a fresh
-  -- prefix of this request. NULL means no reuse opportunity, not zero quality.
+  -- How much of THIS request the previous same-route request could have left in
+  -- the provider cache: the whole prior input while it is still an exact prefix,
+  -- the surviving share of it after a fold or a rewrite, 0 when nothing was
+  -- recoverable. A miss is CLASSIFIED below, never dropped.
   prompt_cache_reusable_tokens   INTEGER CHECK (
                                     prompt_cache_reusable_tokens IS NULL OR
                                     prompt_cache_reusable_tokens >= 0
+                                  ),
+  -- Why that denominator is what it is: 'initial' first call on the route,
+  -- 'append-only' the whole prior request is still a prefix, 'rewrite' only part
+  -- of it survived, 'expired' it survived but the provider had let it go.
+  prompt_cache_continuity        TEXT CHECK (
+                                    prompt_cache_continuity IS NULL OR
+                                    prompt_cache_continuity IN
+                                      ('initial', 'append-only', 'rewrite', 'expired')
                                   ),
   output_tokens                   INTEGER CHECK (
                                     output_tokens IS NULL OR output_tokens >= 0

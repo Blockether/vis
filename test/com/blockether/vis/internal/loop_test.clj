@@ -246,10 +246,11 @@
 
 (defdescribe
   prompt-cache-reusable-prefix-test
-  "A reuse denominator exists only when the exact prior same-route request is a
-   fresh prefix of the current request. New input must not make cache quality look
-   worse, while a rewritten history or another model must not invent eligibility."
-  (it "records the prior logical input only for an exact reusable prefix"
+  "The reuse denominator is what the previous same-route request could still have
+   left in the provider cache. A fold, a rewrite or an expiry is CLASSIFIED and
+   keeps its denominator: a metric that drops its own misses can only report
+   survivors."
+  (it "counts the whole prior request while it is still an exact prefix"
       (let [history
             (atom {})
 
@@ -257,9 +258,9 @@
             @#'lp/note-prompt-cache-request!]
 
         (expect
-          (nil?
-            (sample! history :openai-codex "gpt-5.6" [{:role "user" :content "one"}] 9463 0 1000)))
-        (expect (= 9463
+          (= {:reusable-tokens 0 :continuity :initial}
+             (sample! history :openai-codex "gpt-5.6" [{:role "user" :content "one"}] 9463 0 1000)))
+        (expect (= {:reusable-tokens 9463 :continuity :append-only}
                    (sample! history
                             :openai-codex
                             "gpt-5.6"
@@ -267,21 +268,47 @@
                             31867
                             9728
                             2000)))
-        (expect (nil? (sample! history
-                               :openai-codex
-                               "gpt-5.6"
-                               [{:role "user" :content "rewritten"}]
-                               12000
-                               0
-                               3000)))
-        (expect (nil? (sample! history
-                               :openai-codex
-                               "gpt-5.6-sol"
-                               [{:role "user" :content "rewritten"}]
-                               12000
-                               0
-                               4000)))))
-  (it "does not call an expired miss reusable but accepts retention proven by a cache read"
+        ;; Another model is another cache, so it starts its own baseline instead
+        ;; of inheriting one it could never have read.
+        (expect (= {:reusable-tokens 0 :continuity :initial}
+                   (sample! history
+                            :openai-codex
+                            "gpt-5.6-sol"
+                            [{:role "user" :content "one"}]
+                            12000
+                            0
+                            3000)))))
+  (it "keeps a fold in the denominator as the share of the prior request that survived"
+      (let [history
+            (atom {})
+
+            sample!
+            @#'lp/note-prompt-cache-request!
+
+            msg
+            (fn [n]
+              {:role "user" :content (str n)})
+
+            four
+            (mapv msg (range 4))]
+
+        (sample! history :anthropic "opus" four 4000 0 0)
+        ;; A fold replaces the tail: half of the prior request survives, so half
+        ;; of its input stays measurable — the case a coverage number must not
+        ;; be allowed to skip.
+        (expect (= {:reusable-tokens 2000 :continuity :rewrite}
+                   (sample! history
+                            :anthropic
+                            "opus"
+                            [(msg 0) (msg 1) {:role "user" :content "folded"}]
+                            2600
+                            1900
+                            1000)))
+        (expect
+          (=
+            {:reusable-tokens 0 :continuity :rewrite}
+            (sample! history :anthropic "opus" [{:role "user" :content "elsewhere"}] 900 0 2000)))))
+  (it "calls an untouched prefix expired when the window passed and nothing came back"
       (let [history
             (atom {})
 
@@ -295,8 +322,11 @@
             (conj one {:role "assistant" :content "two"})]
 
         (sample! history :anthropic "opus" one 1000 0 0)
-        (expect (nil? (sample! history :anthropic "opus" two 1200 0 300001)))
-        (expect (= 1200
+        (expect (= {:reusable-tokens 1000 :continuity :expired}
+                   (sample! history :anthropic "opus" two 1200 0 300001)))
+        ;; The provider proved the prefix is still resident, so age alone must not
+        ;; call it expired.
+        (expect (= {:reusable-tokens 1200 :continuity :append-only}
                    (sample! history
                             :anthropic
                             "opus"

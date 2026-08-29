@@ -3457,6 +3457,10 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
 
   const cacheReadShare = usage?.cache_read_share_percent;
   const reuseCoverage = usage?.reusable_prefix_coverage_percent;
+  // The coverage number is only as good as the calls it was measured on, so the
+  // card prints its sample beside it: a bold percentage over an undisclosed
+  // denominator is the trick this pair exists to refuse.
+  const reuseSamples = usage?.prompt_cache_sample_count;
 
   return (
     <div className={`border-t border-dialog-edge bg-panel-2 py-2.5 ${LIST_EDGE} ${LIST_EDGE_END}`}>
@@ -3498,7 +3502,11 @@ function SessionStats({ session, conn }: { session: Session; conn: GatewayConn }
             <CacheStat
               label="Reuse coverage"
               value={typeof reuseCoverage === 'number' ? `${Math.round(reuseCoverage)}%` : '—'}
-              explanation="Share of reusable prior input recovered from cache"
+              explanation={
+                typeof reuseSamples === 'number'
+                  ? `Share of reusable prior input recovered from cache · ${compactCount(reuseSamples)} of ${compactCount(usage.iteration_count)} calls`
+                  : 'Share of reusable prior input recovered from cache'
+              }
             />
           </dl>
           <dl className="mt-2.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-dialog-edge/40 pt-2">

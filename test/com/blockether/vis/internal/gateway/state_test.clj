@@ -27,14 +27,16 @@
                     (constantly {:input-tokens 259653
                                  :input-cache-read-tokens 209408
                                  :prompt-cache-reusable-tokens 212752
-                                 :prompt-cache-reused-tokens 209408})]
+                                 :prompt-cache-reused-tokens 209408
+                                 :prompt-cache-sample-count 7})]
 
         (expect (= {"cache_read_share_percent" 81
                     "reusable_prefix_coverage_percent" 98
                     "input_tokens" 259653
                     "input_cache_read_tokens" 209408
                     "prompt_cache_reusable_tokens" 212752
-                    "prompt_cache_reused_tokens" 209408}
+                    "prompt_cache_reused_tokens" 209408
+                    "prompt_cache_sample_count" 7}
                    (state/session-usage-info "session"))))))
 
 (def ^:private tool-error

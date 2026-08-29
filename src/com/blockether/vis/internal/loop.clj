@@ -4616,15 +4616,40 @@
     (when (and (<= n (count messages)) (= history (subvec messages 0 n))) (subvec messages n))))
 
 (def ^:private PROMPT_CACHE_REUSE_FRESH_MS
-  "Conservative eligibility window shared with Svar's fresh cache meter. A later
-   provider-reported read proves retention even after this window."
+  "How long a same-route prefix is still expected to be resident in the provider
+   cache. It decides the LABEL a sample carries and never whether the sample
+   exists: excluding a miss would leave a metric that can only report its own
+   successes."
   300000)
 
+(defn- message-weights
+  "Serialized size of each message — the proportional stand-in for the
+   per-message token counts no provider reports."
+  [messages]
+  (mapv #(count (pr-str %)) messages))
+
+(defn- common-prefix-count
+  "How many leading messages two request vectors still share."
+  ^long [left right]
+  (let [n (min (count left) (count right))]
+    (loop [i 0]
+      (if (and (< i n) (= (nth left i) (nth right i))) (recur (inc i)) i))))
+
 (defn- note-prompt-cache-request!
-  "Replace one route's exact request baseline and return its prior logical input
-   when that baseline is a reusable prefix. New suffix tokens are deliberately
-   outside the denominator; rewrites, first calls, route changes, and expired
-   misses return nil."
+  "Replace one route's request baseline and answer `{:reusable-tokens n
+   :continuity kw}`: how much of THIS request the previous same-route request
+   could have left in the provider cache, and why.
+
+   `:initial` — no baseline yet on this route, so nothing was recoverable and the
+   denominator is 0. `:append-only` — the whole prior request is still a prefix,
+   so its entire provider-counted input was reusable. `:rewrite` — a fold, a
+   replaced history or a trimmed tool result kept only part of it, and the
+   denominator is the share of that prior input which survived, so a rewrite
+   that loses cache is MEASURED rather than dropped. `:expired` — the prefix
+   survived, the window passed and the provider read nothing back.
+
+   New suffix tokens stay outside the denominator, but every request answers a
+   sample: a metric that discards its misses reports survivors only."
   [history-atom provider model messages input-tokens cache-read-tokens request-start-ms]
   (when (and history-atom provider model)
     (let [route
@@ -4632,6 +4657,9 @@
 
           messages
           (vec messages)
+
+          weights
+          (message-weights messages)
 
           input
           (long (or input-tokens 0))
@@ -4642,7 +4670,7 @@
           at-ms
           (long request-start-ms)
 
-          reusable
+          sample
           (volatile! nil)]
 
       (swap! history-atom
@@ -4653,18 +4681,48 @@
                 prior-input
                 (long (or (:input-tokens prior) 0))
 
+                prior-messages
+                (:messages prior)
+
+                prior-weights
+                (:weights prior)
+
+                prefix
+                (common-prefix-count prior-messages messages)
+
+                prior-weight
+                (double (reduce + 0 prior-weights))
+
+                prefix-weight
+                (double (reduce + 0 (take prefix prior-weights)))
+
+                exact?
+                (and (pos? prefix) (= prefix (count prior-messages)))
+
+                reusable
+                ;; A long: `pos?` on a boxed cond result is boxed math the lint gate names.
+                (long (cond (or (zero? prior-input) (zero? prefix)) 0
+                            exact? (min prior-input input)
+                            (pos? prior-weight)
+                            (min input
+                                 (long (Math/floor (* prior-input (/ prefix-weight prior-weight)))))
+                            :else 0))
+
                 age-ms
-                (max 0 (- at-ms (long (or (:at-ms prior) at-ms))))
+                (- at-ms (long (or (:at-ms prior) at-ms)))
 
-                exact-prefix?
-                (and prior (some? (session-message-suffix (:messages prior) messages)))
+                expired?
+                (and (pos? reusable) (zero? cached) (> age-ms (long PROMPT_CACHE_REUSE_FRESH_MS)))]
 
-                retained?
-                (or (<= age-ms (long PROMPT_CACHE_REUSE_FRESH_MS)) (pos? cached))]
-
-            (when (and (pos? prior-input) exact-prefix? retained?) (vreset! reusable prior-input))
-            (assoc routes route {:messages messages :input-tokens input :at-ms at-ms}))))
-      @reusable)))
+            (vreset! sample
+                     {:reusable-tokens reusable
+                      :continuity (cond (nil? prior) :initial
+                                        expired? :expired
+                                        exact? :append-only
+                                        :else :rewrite)})
+            (assoc routes
+              route {:messages messages :weights weights :input-tokens input :at-ms at-ms}))))
+      @sample)))
 
 (defn- same-effective-router?
   "True when two hydrated routers carry the same values and reload generation."
@@ -5054,14 +5112,16 @@
           api-usage (ask-result->api-usage ask-result)
           actual-provider (actual-llm-provider resolved-model ask-result)
           actual-model (actual-llm-model resolved-model ask-result)
-          prompt-cache-reusable-tokens (note-prompt-cache-request!
-                                         (:prompt-cache-history-atom environment)
-                                         actual-provider
-                                         actual-model
-                                         messages
-                                         (:input-tokens api-usage)
-                                         (get-in api-usage [:input-tokens-details :cache-read])
-                                         provider-started-at-ms)
+          prompt-cache-sample (note-prompt-cache-request!
+                                (:prompt-cache-history-atom environment)
+                                actual-provider
+                                actual-model
+                                messages
+                                (:input-tokens api-usage)
+                                (get-in api-usage [:input-tokens-details :cache-read])
+                                provider-started-at-ms)
+          prompt-cache-reusable-tokens (:reusable-tokens prompt-cache-sample)
+          prompt-cache-continuity (:continuity prompt-cache-sample)
           reasoning-effort-resolution (:routed/reasoning-effort ask-result)
           ;; The model either CALLS `python_execution`
           ;; (`:stop-reason :tool-calls`) or, with NO tool call
@@ -5402,6 +5462,7 @@
              :api-usage api-usage
              :prompt-cache (:prompt-cache ask-result)
              :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
+             :prompt-cache-continuity prompt-cache-continuity
              :duration-ms (or (:duration-ms ask-result) 0)
              :llm-messages messages
              :llm-provider provider
@@ -5421,6 +5482,7 @@
              :api-usage api-usage
              :prompt-cache (:prompt-cache ask-result)
              :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
+             :prompt-cache-continuity prompt-cache-continuity
              :duration-ms (or (:duration-ms ask-result) 0)
              :llm-messages messages
              :llm-provider provider
@@ -5443,6 +5505,7 @@
          :api-usage api-usage
          :prompt-cache (:prompt-cache ask-result)
          :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
+         :prompt-cache-continuity prompt-cache-continuity
          :duration-ms (or (:duration-ms ask-result) 0)
          :llm-messages messages
          :llm-provider (actual-llm-provider resolved-model ask-result)
@@ -8501,6 +8564,8 @@
                                                                        iteration-result)
                                      :prompt-cache-reusable-tokens (:prompt-cache-reusable-tokens
                                                                      iteration-result)
+                                     :prompt-cache-continuity (:prompt-cache-continuity
+                                                                iteration-result)
                                      :cache-created-tokens (iteration-cache-created-tokens tc)}
                               tc
                               (assoc :tokens

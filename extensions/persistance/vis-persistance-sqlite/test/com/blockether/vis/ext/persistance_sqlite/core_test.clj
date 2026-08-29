@@ -3189,9 +3189,15 @@
         ;; The gap unstarring leaves behind costs nothing: ranks are only compared,
         ;; and the next star still lands last.
         (expect (= 3 (persistance/db-set-session-favorite! s (str a) true))))))
+
+;; Regression, issue #155: session usage was summed from the rollup a turn writes
+;; when it ENDS, so a stopped or still-running turn dropped its tokens and its
+;; cost out of the total for good, and the two cache percentages were measured
+;; over two different populations.
 (defdescribe
   reusable-prefix-usage-rollup-test
-  "Whole-session usage keeps cost share separate from cache architecture quality."
+  "Whole-session usage counts every LLM call and keeps cost share separate from
+   cache architecture quality."
   (it
     "reports 81 percent cached input while recovering 98 percent of reusable prefixes"
     (let [s
@@ -3222,7 +3228,9 @@
                                      :llm-routing {:actual {:provider :openai-codex
                                                             :model "gpt-5.6-sol"}}}
                               eligible
-                              (assoc :prompt-cache-reusable-tokens eligible))))
+                              (assoc :prompt-cache-reusable-tokens
+                                eligible :prompt-cache-continuity
+                                :append-only))))
       (persistance/db-update-session-turn! s
                                            tid
                                            {:status :done
@@ -3235,10 +3243,47 @@
       (expect (= {:input-tokens 259653
                   :input-cache-read-tokens 209408
                   :prompt-cache-reusable-tokens 212752
-                  :prompt-cache-reused-tokens 209408}
+                  :prompt-cache-reused-tokens 209408
+                  :prompt-cache-sample-count 7}
                  (select-keys (persistance/db-session-usage-stats s (str sid))
                               [:input-tokens :input-cache-read-tokens :prompt-cache-reusable-tokens
-                               :prompt-cache-reused-tokens]))))))
+                               :prompt-cache-reused-tokens :prompt-cache-sample-count])))))
+  (it
+    "counts the calls of a turn that was stopped before it could write a rollup"
+    (let [s
+          (h/store)
+
+          sid
+          (h/store-session! s {:channel :api :title "interrupted usage"})
+
+          finished
+          (persistance/db-store-session-turn! s
+                                              {:parent-session-id (str sid) :user-request "first"})
+
+          stopped
+          (persistance/db-store-session-turn! s
+                                              {:parent-session-id (str sid)
+                                               :user-request "second"})]
+
+      (h/store-iteration!
+        s
+        {:session-turn-id finished :code "" :tokens {"input" 1000 "cached" 0 "output" 10}})
+      (persistance/db-update-session-turn!
+        s
+        finished
+        {:status :done :iteration-count 1 :tokens {"input" 1000 "cached" 0 "output" 10}})
+      (h/store-iteration!
+        s
+        {:session-turn-id stopped :code "" :tokens {"input" 4000 "cached" 3000 "output" 20}})
+      (persistance/db-update-session-turn! s stopped {:status :interrupted})
+      (expect (= {:turn-count 2
+                  :iteration-count 2
+                  :input-tokens 5000
+                  :input-cache-read-tokens 3000
+                  :output-tokens 30}
+                 (select-keys (persistance/db-session-usage-stats s (str sid))
+                              [:turn-count :iteration-count :input-tokens :input-cache-read-tokens
+                               :output-tokens]))))))
 
 (defdescribe
   usage-model-survives-an-unstamped-turn-test
