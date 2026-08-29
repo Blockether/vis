@@ -1732,12 +1732,12 @@ export function NotifyConnectionRow({
  *   a mouse: the visible control rides the header rhythm while the invisible room
  *   around it keeps the way out comfortably hittable. A wrapped title can make the
  *   band taller; the target still stretches with it while its face stays round.
- * - A BAND CLOSE IS A RING, NOT A SECOND FILLED VERB. It normally takes the band's
- *   own ink. On Blockether Light's black title paper, the ring and mark take the amber
- *   accent (6.6:1) through the theme variant in `index.css`. The viewer's Share or
- *   Download remains the screen's one filled accent, so navigation never outranks the
- *   artifact. Hover is a wash inside the circle, never a square painted across the
- *   band's last cell.
+ * - A BAND CLOSE IS A COMPACT BRANDED DISC, NOT A SECOND VERB. On Blockether
+ *   Light's black title paper, its face takes the amber fill and paired dark ink. The
+ *   dark theme's amber title band supplies that same paper around the transparent face.
+ *   This one fixed circle may coexist with Share or Download because it identifies the
+ *   way out rather than offering a competing act; it never licenses another filled label
+ *   in chrome. Hover darkens the disc, never paints a square across the band's last cell.
  * - A close inside another control keeps the established hairline and red intent wash.
  *   Its parent already supplies the face, so wrapping that mark in another circle would
  *   be a box inside a box.
@@ -1776,7 +1776,7 @@ export function CloseButton({
       {...props}
     >
       {isBand ? (
-        <span className="grid size-8 place-items-center rounded-full border border-current transition-[background-color,box-shadow,transform] duration-150 blockether-light:text-accent group-hover:bg-current/15 group-focus-visible:ring-2 group-focus-visible:ring-current/60 group-active:scale-[0.94] motion-reduce:transition-none mouse:size-7">
+        <span className="grid size-8 place-items-center rounded-full border border-current transition-[background-color,box-shadow,transform] duration-150 blockether-light:bg-accent blockether-light:text-accent-foreground group-hover:bg-current/15 blockether-light:group-hover:bg-accent-2 group-focus-visible:ring-2 group-focus-visible:ring-current/60 group-active:scale-[0.94] motion-reduce:transition-none mouse:size-7">
           {mark}
         </span>
       ) : (

@@ -171,14 +171,17 @@ faces `ui.tsx` ships; a mockup that repaints them is proposing a change and has 
 | mic while recording | `--warn-surface`, pulsing | `--err` |
 | mic in voice-conversation mode | `--accent` | `--accent-fg` |
 | the project's new-session verb | `--primary` (amber fill) | `--primary-fg` |
+| band close (`CloseButton isBand`) | Blockether Light: compact `--primary` disk; elsewhere the band's paper | `--primary-fg` on Light; elsewhere the band's ink |
 | star on a session | — | `--warning` (never `--warning-border`: 2.9:1) |
 | LIVE / WAITING chip | `--ok-bg` / `--warning-bg` | `--ok` / `--warning`, plus the word |
 
-- **One filled accent per screen** — or one filled VERB, repeated where the object repeats. Amber
+- **One filled primary VERB per screen** — or one verb repeated where the object repeats. Amber
   marks the single most important thing you can start; the project list paints it once per project
   band because the verb belongs to the project, and that is one control repeated, not two competing
-  accents. Two DIFFERENT filled controls in one view is a tie, not a hierarchy. Everything else is
-  ink, hairline and hover.
+  acts. Two DIFFERENT filled verbs in one view are a tie, not a hierarchy. The sole chrome exception
+  is `CloseButton isBand`: a fixed 32px circle (28px on a pointer), carrying only `CloseIcon`, whose
+  amber fill identifies the app's way out on Blockether Light. It may coexist with the primary verb
+  because it is navigation, not another offered act; it never licenses a filled label or rectangle.
 - **Never encode meaning in colour alone.** A green dot and a grey dot are one dot to a
   colour-blind reader and to an 8-colour terminal: the state also needs a glyph, a word, or a
   position.
@@ -286,6 +289,10 @@ argument for the shape, usually written after a bug report; the standing ones:
   paper, a second hairline and a second sticky layer for one heading, 40px of the screen".
 - **Search leads with the glass, inside the box** (ui.tsx:1790), and clear is the app's one
   `CloseButton` at the field's own inset.
+- **A band close is the branded way out** (`CloseButton isBand`, ui.tsx:1740): its 48px touch / 36px
+  pointer target carries a 32px / 28px circle. On Blockether Light that circle is the full amber
+  `--primary` fill with the dark `--primary-fg` `CloseIcon`; this compact navigation identity is the
+  one allowed fill beside a screen's primary verb. A close inside another control remains unfilled.
 - **What the turn will run as is one line under the composer** (`MetaButton`, ui.tsx:1168): model
   and reasoning level, both pressable, the dotted rule marking the one that opens a picker.
 
@@ -296,12 +303,12 @@ If a screenshot review says "this looks wrong", the first question is not "what 
 
 **Mobile (companion on iOS/Android)** — large title that collapses into a 44pt inline bar on
 scroll; search pinned under it; inset-grouped lists; safe areas honoured (notch, home indicator,
-keyboard). **The navigation bar carries navigation, not the screen's verb**: back/close leading, at
-most two trailing items, and they are glyphs in ink — a filled colour block floating in the bar
-outranks the large title it sits above and is the first thing that reads as a template. Two-line
-rows when one line cannot hold title + metadata at ≥ `text-ui`; swipe actions carry ICONS with an
-accessible label, not text; commit-level haptics only. Support system text scaling: nothing may
-clip or overlap at 130%.
+keyboard). **The navigation bar carries navigation, not the screen's verb**: back stays in ink; close
+is the shared compact `CloseButton isBand` disk; at most two trailing items. No other filled colour
+block belongs in the bar — especially no filled label or rectangle that outranks the large title.
+Two-line rows when one line cannot hold title + metadata at ≥ `text-ui`; swipe actions carry ICONS
+with an accessible label, not text; commit-level haptics only. Support system text scaling: nothing
+may clip or overlap at 130%.
 
 **Entering data** (HIG) — pre-gather everything the system already knows; say what is wanted with a
 label or a placeholder, not both; secure fields show a filled dot per character and are never
@@ -358,11 +365,11 @@ Reject on sight, in a mockup or in a diff:
 10. Any placeholder, sample or lorem text left in a shipped screen.
 11. A mockup set in a font we do not ship — `system-ui`/SF Pro because the file only NAMED Inter,
     DejaVu, Arial, PIL's default — or app prose set in the mono family.
-12. A filled accent block floating in a navigation bar, especially above a large title.
+12. A filled accent block floating in a navigation bar, except the compact circular `CloseButton isBand`.
 13. A control that does not exist in the code, drawn without saying it is a proposal — and its
     twin, a control that exists being drawn as something else (a paperclip for the composer `+`).
 14. A painted face inflated to the 44px target: fat strips, a search field taller than its bar.
-15. Two filled accents on one screen.
+15. Two different filled primary verbs on one screen; the compact band-close disk is navigation, not a verb.
 16. Facts deleted to make a screen look calm.
 17. A mark drawn by hand where a name in `icons.tsx` exists — a bespoke `<path>`, a terminal glyph
     (`✓ ✗ ● ◇ → ▾`), or two icon families in one app.
@@ -405,7 +412,8 @@ When asked to review, audit, critique or modernize a design — screenshot, mock
 
 ## 10. Done means
 
-- Contrast recomputed for both themes; no meaning carried by colour alone; one filled accent.
+- Contrast recomputed for both themes; no meaning carried by colour alone; one filled primary verb
+  (the compact `CloseButton isBand` navigation disk is the sole chrome exception).
 - Targets measured on touch AND pointer; the FACE is on the row's rhythm and the target is slop
   around it; nothing shrank on a screen-width query.
 - Type steps, families and palette tokens only — no literal size, no literal colour, no third font.

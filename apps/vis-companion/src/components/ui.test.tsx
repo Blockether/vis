@@ -658,14 +658,15 @@ describe("CloseButton", () => {
   });
 
   // Design request: the full-size target stays part of the band, while the visible
-  // close is a compact circle. Blockether Light draws that circle in its amber ink
-  // rather than adding a second filled accent beside the viewer's primary action.
-  it("puts a round amber face inside a band close target", () => {
+  // close is a compact circle. On Blockether Light that face takes the amber fill and
+  // its paired dark ink; navigation identity is not a second primary verb.
+  it("fills the round close face on Blockether Light", () => {
     const band = html({ isBand: true });
     expect(band).toContain("rounded-full");
     expect(band).toContain("size-8");
     expect(band).toContain("mouse:size-7");
-    expect(band).toContain("blockether-light:text-accent");
+    expect(band).toContain("blockether-light:bg-accent");
+    expect(band).toContain("blockether-light:text-accent-foreground");
     expect(band).not.toContain("border-l");
   });
 

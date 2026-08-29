@@ -102,14 +102,15 @@ describe("ImageViewer", () => {
     expect(header?.querySelector("h2")?.textContent).toBe("chart.png");
 
     // The target still inherits the band's full ink. Its compact face is circular, and
-    // only Blockether Light moves that ring and mark to the readable amber accent.
+    // Blockether Light gives that circle the brand fill with its paired dark ink.
     const close = control("Close chart.png");
     const face = close.querySelector("span");
     expect(header?.className).toContain("text-dialog-title-foreground");
     expect(header?.className).not.toContain("text-dialog-title-foreground/70");
     expect(close.className).toContain("text-current");
     expect(face?.className).toContain("border-current");
-    expect(face?.className).toContain("blockether-light:text-accent");
+    expect(face?.className).toContain("blockether-light:bg-accent");
+    expect(face?.className).toContain("blockether-light:text-accent-foreground");
   });
 
   // Regression, same phone report ("the headline has wrong height"): the title band is
