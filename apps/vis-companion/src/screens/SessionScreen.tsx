@@ -428,6 +428,22 @@ function stringField(event: SseEvent, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+/**
+ * The routing key of the block a frame is about, in whichever shape the wire
+ * gave it. `block_id` carries two honest values: the block's POSITION — a
+ * NUMBER — on the frames that describe a form (`block.preview`,
+ * `block.started`, `block.activity`, `block.output`), and a composed string id
+ * on the streaming frames. Reading it as a string ONLY turned every position
+ * into `""`, so no form frame could find the form it was updating.
+ */
+function blockKey(event: SseEvent): string {
+  const value = event.block_id;
+  if (typeof value === "string") return value;
+  return typeof value === "number" && Number.isFinite(value)
+    ? String(value)
+    : "";
+}
+
 function applyText(current: string, event: SseEvent): string {
   const cumulative = stringField(event, "cumulative");
   return cumulative || current + stringField(event, "text");
@@ -568,7 +584,7 @@ function formFromEvent(event: SseEvent, running = false): TranscriptForm {
     ? (event.cards as TranscriptForm[])
     : undefined;
   return {
-    block_id: stringField(event, "block_id"),
+    block_id: blockKey(event),
     scope: stringField(event, "scope") || undefined,
     code: stringField(event, "code") || undefined,
     display_code: stringField(event, "display_code") || undefined,
@@ -618,8 +634,10 @@ function upsertLiveForm(
   next: TranscriptForm,
 ): TranscriptIteration {
   const forms = [...(iteration.forms ?? [])];
-  const blockId = next.block_id;
-  let index = forms.findIndex((form) => blockId && form.block_id === blockId);
+  const blockId = next.block_id == null ? "" : String(next.block_id);
+  let index = forms.findIndex(
+    (form) => blockId !== "" && String(form.block_id ?? "") === blockId,
+  );
   // Fallback: a completed form supersedes the still-running placeholder for the
   // same scope when block_id didn't line up (gateway replay / a started event
   // that shipped no block_id). Without this the 'Running…' placeholder and the
@@ -674,7 +692,7 @@ export function reduceLiveEvent(
 
   if (type === "content.block.delta") {
     const field = stringField(event, "field");
-    const blockId = stringField(event, "block_id");
+    const blockId = blockKey(event);
     const position = eventIteration(event);
     if (field === "text") {
       const next = updateLiveIteration(turn, position, (iteration) => ({
@@ -758,7 +776,7 @@ export function reduceLiveEvent(
     const position = eventIteration(event);
     return updateLiveIteration(turn, position, (iteration) =>
       upsertLiveForm(iteration, {
-        block_id: stringField(event, "block_id"),
+        block_id: blockKey(event),
         activity,
       }),
     );
@@ -833,7 +851,7 @@ export function coalesceLiveEvents(events: SseEvent[]): SseEvent[] {
       previous?.type === "content.block.delta" &&
       event.type === "content.block.delta" &&
       stringField(previous, "field") === stringField(event, "field") &&
-      stringField(previous, "block_id") === stringField(event, "block_id") &&
+      blockKey(previous) === blockKey(event) &&
       eventIteration(previous) === eventIteration(event);
 
     if (!previous || !sameDelta) {

@@ -4,6 +4,8 @@ import { act, screen, waitFor } from "@testing-library/react";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 import activityFixture from "../lib/activity.fixture.json";
+import { reduceLiveEvent } from "./SessionScreen";
+import type { SseEvent } from "../lib/types";
 
 // Reported from a phone: the message was sent and the session title updated, but
 // the answer rail stayed a bare "Vis" — no phase, no clock, no trace — for the
@@ -276,7 +278,7 @@ describe("a running turn the session read cannot confirm", () => {
               {
                 id: "iteration-41",
                 position: 41,
-                forms: [{ block_id: "b1", source: "inspect_run()" }],
+                forms: [{ block_id: 0, source: "inspect_run()" }],
               },
             ],
           },
@@ -311,7 +313,7 @@ describe("a running turn the session read cannot confirm", () => {
       emit({
         type: "block.activity",
         iteration: 41,
-        block_id: "b1",
+        block_id: 0,
         activity: activityFixture,
       });
     });
@@ -326,13 +328,13 @@ describe("a running turn the session read cannot confirm", () => {
       emit({
         type: "block.activity",
         iteration: 41,
-        block_id: "b1",
+        block_id: 0,
         activity: activityFixture,
       });
       emit({
         type: "block.output",
         iteration: 41,
-        block_id: "b1",
+        block_id: 0,
         code: "inspect_run()",
         result_summary: "done",
         duration_ms: 1_200,
@@ -420,5 +422,34 @@ describe("the wait between a submit and the first token", () => {
     expect(
       (await screen.findAllByText(/Vis is calling claude-opus-5/)).length,
     ).toBeGreaterThan(0);
+  });
+});
+
+// Regression: `block_id` arrives as the block's POSITION — the number 0 — and the
+// reducer read it with a string-only helper, so every form frame saw "". The
+// snapshot matched no form and APPENDED a second one carrying nothing but
+// Activity, so an empty card was painted under every block that ran.
+describe("a form frame's numeric block_id", () => {
+  const frame = (event: Record<string, unknown>) => event as unknown as SseEvent;
+
+  it("puts the running snapshot on the block that is already there", () => {
+    const started = reduceLiveEvent(
+      reduceLiveEvent(null, frame({ type: "turn.started", turn_id: "t-block" })),
+      frame({ type: "block.started", iteration: 1, block_id: 0, code: "grep()" }),
+    );
+    const turn = reduceLiveEvent(
+      started,
+      frame({
+        type: "block.activity",
+        iteration: 1,
+        block_id: 0,
+        activity: activityFixture,
+      }),
+    );
+
+    const forms = turn?.iterations[0]?.forms ?? [];
+    expect(forms).toHaveLength(1);
+    expect(forms[0].code).toBe("grep()");
+    expect(forms[0].activity?.state).toBe("running");
   });
 });
