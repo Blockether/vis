@@ -1310,8 +1310,13 @@ const IsNestedChoice = createContext(false);
  * as much as its own children. A cell with nothing nested beneath it takes `isLeaf`:
  * the name leads, its quiet meta trails on the same line, and the row gives back a
  * line of height. The two-line stack is what a cell keeps when it owns the cluster
- * that follows, and when it is one column of a segmented grid (Theme's modes, speech
- * rate), where there is no width for a trailing meta.
+ * that follows, and when it is one column of a segmented grid (speech rate), where
+ * there is no width for a trailing meta.
+ *
+ * A NAME CAN BE THE WHOLE FACT, and then the cell takes no `sub` at all. Every theme is
+ * called `Blockether Light`, `Solarized Dark`, `Vis Light`, so a trailing `light`/`dark`
+ * restated the last word of its own row down the whole list and answered nothing. Left
+ * out, the row is the name and its mark, and the mark takes the edge the meta held.
  *
  * DEPTH IS NOT THE CELL'S OWN DECISION. Inside a nested `SettingsChoiceGroup` its content
  * steps one notch right — the second channel that draws the tree — while the row itself
@@ -1329,8 +1334,11 @@ export function ChoiceCell({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   title: string;
-  /** The quiet word beside or under the name: a theme's mode, a voice's language. */
-  sub: string;
+  /**
+   * The quiet word beside or under the name — a voice's language, a rate's word. Left out when
+   * the name already carries it.
+   */
+  sub?: string;
   isSelected: boolean;
   /** Nothing nests under this choice: one line, with `sub` trailing instead of stacked. */
   isLeaf?: boolean;
@@ -1370,18 +1378,25 @@ export function ChoiceCell({
       {isLeaf ? (
         <>
           <span className="min-w-0 truncate font-mono text-ui font-bold">{title}</span>
-          <span className="ml-auto min-w-0 truncate font-mono text-chip opacity-55">{sub}</span>
+          {sub && (
+            <span className="ml-auto min-w-0 truncate font-mono text-chip opacity-55">{sub}</span>
+          )}
         </>
       ) : (
         <span className="min-w-0">
           <span className="block truncate font-mono text-ui font-bold">{title}</span>
-          <span className="block truncate font-mono text-chip uppercase tracking-wider opacity-65">
-            {sub}
-          </span>
+          {sub && (
+            <span className="block truncate font-mono text-chip uppercase tracking-wider opacity-65">
+              {sub}
+            </span>
+          )}
         </span>
       )}
       {showSelectionMark && (
-        <span className="shrink-0 font-mono text-meta font-black" aria-hidden="true">
+        <span
+          className={`shrink-0 font-mono text-meta font-black${sub ? '' : ' ml-auto'}`}
+          aria-hidden="true"
+        >
           {isSelected ? '●' : '○'}
         </span>
       )}

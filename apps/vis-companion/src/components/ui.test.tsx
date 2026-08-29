@@ -3079,6 +3079,18 @@ describe("a setting is picked and switched by one control each", () => {
     expect(owner).not.toContain("ml-auto");
   });
 
+  // Reported over the theme list: every row trailed `light` or `dark` beside a name whose
+  // own last word was that very word, so a whole column of the list carried no fact.
+  it("leaves the trailing meta out when the name is already the whole fact", () => {
+    const bare = renderToStaticMarkup(
+      <ChoiceCell title="Blockether Light" isSelected={false} isLeaf />,
+    );
+    expect(bare).not.toContain("text-chip");
+    // Nothing pushes any more, so the choice mark takes the right edge itself.
+    expect(bare).toContain("ml-auto");
+    expect(settingsSource).not.toContain("sub={choice.mode}");
+  });
+
   it("splits engine selection from its independently collapsed settings", () => {
     const closed = renderToStaticMarkup(
       <SettingsChoiceDisclosure

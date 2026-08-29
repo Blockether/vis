@@ -2454,11 +2454,13 @@ export function SettingsDialog({
               meta={`${THEMES.length} available`}
             >
               <div className="grid grid-cols-1 gap-px bg-dialog-edge">
+                {/* NO MODE COLUMN. Every theme is named `Blockether Light`, `Solarized
+                    Dark`, `Vis Light`, so a trailing `light`/`dark` restated the last word
+                    of its own row six times down the list. The name is the whole answer. */}
                 {THEMES.map((choice) => (
                   <ChoiceCell
                     key={choice.id}
                     title={choice.label}
-                    sub={choice.mode}
                     isSelected={pref === choice.id}
                     isLeaf
                     disabled={pending?.startsWith("theme:") ?? false}
