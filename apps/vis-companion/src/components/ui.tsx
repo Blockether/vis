@@ -1695,46 +1695,32 @@ export function NotifyConnectionRow({
  * THE ✕, AND THERE IS EXACTLY ONE OF IT.
  *
  * Eight surfaces were left by three different buttons in five different boxes,
- * measured on an iPhone 14 with the shipped stylesheet: a 36×48 band-ender welded
- * to a dialog title, the same button at 36×44 on a menu band, again at 36×44
- * carrying its own black paper on the artifacts strip, a 28×28 chip-ender on a
- * queued turn, 28×28 with a different hairline on a pasted block, 28×32 hung over
- * an attachment thumbnail, and a 40×30 one inside the fleet search. Three ink
- * rules and four hairlines between them. They had already been made one MARK; they
- * were never one BUTTON, and an eye reads the box before it reads the stroke.
+ * measured on an iPhone 14 with the shipped stylesheet. They had already been made
+ * one MARK; they were never one BUTTON, and an eye reads the face before it reads the
+ * stroke.
  *
  * So there is one, and everything about its face is decided here:
  *
- * - TWO SQUARES, AND THE COMPONENT PICKS WHICH — never the call site. A ✕ is either
- *   the CELL THAT ENDS A BAND (`isBand`: 48×48, 36×36 for a mouse, stretched to the
- *   band's own height so the hairline that welds it runs the whole band) or the MARK
- *   INSIDE ANOTHER CONTROL (32×32, `mouse:size-6`, centred — a composer chip, a
- *   queued row, the fleet search's Clear). Both are squares, both are hung at the
- *   trailing edge where a way out is looked for, and neither is chosen at a call
- *   site, so the five arbitrary boxes this replaced cannot come back. The band cell
- *   is one box and not one per band, because every band that hosts it stands at the
- *   same height (`min-h-12`, `mouse:min-h-9`): the dialog title and the menu heading
- *   alike. The 32px mark used to end those bands too, and it was the wrong box for
- *   a band twice over — a square floating in the middle of a 48px row with its
- *   hairline stopping 8px short at both ends, and a 32×32 target for the one gesture
- *   that leaves a screen, under the app's own 44px minimum.
- * - THE INK OF THE SURFACE IT STANDS ON (`text-current`), and that same ink at 20%
- *   for the hairline that welds it. A band declares its foreground once — a dialog
- *   title bar `text-dialog-title-foreground`, a menu's accent heading, a panel strip
- *   the page ink it inherits anyway — and the way out inherits the same token, so one
- *   entry moves both the words and the ✕. Spelling the page's own `--fg` here instead
- *   put a #f3f4f6 mark on the #ffc420 heading of `blockether-dark` at 1.5:1 while that
- *   band's own words were #0f1117; measured on the live menu, the ✕ disagreed with its
- *   band in five of the six shipped themes and agreed in one by coincidence.
- * - RED ONLY UNDER THE POINTER, and as a wash rather than a fill: closing is not a
- *   destructive act until you mean it. It is the same red `MenuItem`'s danger row
- *   uses, so there is one destructive language in the app.
+ * - TARGET AND FACE ARE DIFFERENT. A ✕ either ends a band (`isBand`) with the band's
+ *   full 48×48 target (36×36 for a mouse), or sits inside another control as a 32px
+ *   mark (`mouse:size-6`). The band target now carries a 32px circular FACE, 28px for
+ *   a mouse: the visible control rides the header rhythm while the invisible room
+ *   around it keeps the way out comfortably hittable. A wrapped title can make the
+ *   band taller; the target still stretches with it while its face stays round.
+ * - A BAND CLOSE IS A RING, NOT A SECOND FILLED VERB. It normally takes the band's
+ *   own ink. On Blockether Light's black title paper, the ring and mark take the amber
+ *   accent (6.6:1) through the theme variant in `index.css`. The viewer's Share or
+ *   Download remains the screen's one filled accent, so navigation never outranks the
+ *   artifact. Hover is a wash inside the circle, never a square painted across the
+ *   band's last cell.
+ * - A close inside another control keeps the established hairline and red intent wash.
+ *   Its parent already supplies the face, so wrapping that mark in another circle would
+ *   be a box inside a box.
  *
  * WHERE it sits is the call site's only business: `className` may POSITION it (the
- * attachment chip hangs it on the chip's right edge) and nothing else. There is no
- * tone, no size and no hairline prop, because those three were the whole difference
- * between the eight buttons this replaces; `isBand` is not a size but a PLACE — it
- * says this ✕ is a band's own last cell rather than a mark inside another control.
+ * attachment chip hangs it on the chip's right edge) and nothing else. `isBand` is not
+ * a size choice but a PLACE — it says this ✕ is a band's own last target rather than a
+ * mark inside another control.
  */
 export function CloseButton({
   label,
@@ -1745,26 +1731,32 @@ export function CloseButton({
   /** Icon-only, so the name is not optional: "Close artifacts", "Remove notes.md". */
   label: string;
   /**
-   * This ✕ IS THE BAND'S LAST CELL — a dialog title, a menu heading — rather than a
-   * mark inside another control. It fills the band's height and stands as wide as
-   * that band is tall, so the way out of a screen is a square you can hit and its
-   * hairline is the band's own full-height edge.
+   * This ✕ IS THE BAND'S LAST TARGET — a dialog title, a menu heading — rather than
+   * a mark inside another control. It fills the band's height; the compact circular
+   * face inside it stays on the control rhythm instead of inflating to the touch target.
    */
   isBand?: boolean;
 }) {
+  const mark = <CloseIcon />;
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
-      className={`grid shrink-0 place-items-center border-l border-current/20 text-current transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current motion-reduce:transition-none ${
+      className={`grid shrink-0 place-items-center text-current motion-reduce:transition-none ${
         isBand
-          ? 'w-12 self-stretch mouse:w-9'
-          : 'size-8 self-center mouse:size-6'
+          ? 'group w-12 self-stretch transition-opacity duration-150 focus-visible:outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-40 mouse:w-9'
+          : 'size-8 self-center border-l border-current/20 transition-colors duration-150 hover:bg-err/15 hover:text-err focus-visible:bg-err/15 focus-visible:text-err focus-visible:outline-none disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-current mouse:size-6'
       } ${className}`}
       {...props}
     >
-      <CloseIcon />
+      {isBand ? (
+        <span className="grid size-8 place-items-center rounded-full border border-current transition-[background-color,box-shadow,transform] duration-150 blockether-light:text-accent group-hover:bg-current/15 group-focus-visible:ring-2 group-focus-visible:ring-current/60 group-active:scale-[0.94] motion-reduce:transition-none mouse:size-7">
+          {mark}
+        </span>
+      ) : (
+        mark
+      )}
     </button>
   );
 }
@@ -2160,7 +2152,10 @@ export function Modal({
  * dead space on both sides to clear a close button that is welded to one of them.
  *
  * The band is the list's own (`min-h-12 mouse:min-h-9`), so a dialog's header and a
- * machine's header are the same height on the same screen.
+ * machine's header are the same height on the same screen. Its top stays flush with the
+ * viewport and its lower edge takes the panel radius: rounding all four corners would
+ * cut paper out of the notch edge, while leaving the lower edge square made the dark
+ * band read as a slab laid over the surface. Child washes are clipped to that curve.
  */
 /**
  * The way out as ONE value: the handler and the name that goes with it, or nothing
@@ -2238,7 +2233,7 @@ export function DialogHeader({
 )) {
   return (
     <header
-      className={`flex min-h-12 shrink-0 items-stretch bg-dialog-title text-dialog-title-foreground mouse:min-h-9 ${
+      className={`flex min-h-12 shrink-0 items-stretch overflow-hidden rounded-b-panel bg-dialog-title text-dialog-title-foreground mouse:min-h-9 ${
         isUnderNotch ? 'box-content pt-[env(safe-area-inset-top)] sm:pt-0' : ''
       } ${isStacked ? 'border-t border-dialog-title-foreground/20' : ''} ${className}`}
     >

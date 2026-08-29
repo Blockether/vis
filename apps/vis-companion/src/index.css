@@ -24,6 +24,10 @@
    desktop rhythm. Layout — which columns exist, how wide the paper is — stays
    on `sm:`, because that really is a question about room. */
 @custom-variant mouse (@media (width >= 40rem) and (pointer: fine));
+/* Blockether Light alone puts dark paper under a dialog close. Its outlined face takes
+   that theme's amber ink without turning navigation into another filled primary act. */
+@custom-variant blockether-light
+  (&:where([data-theme='blockether-light'], [data-theme='blockether-light'] *));
 
 /* Every palette the app ships lives in the generated stylesheet imported above:
    `[data-theme='<id>']` blocks rendered from `theme.clj`, with the default theme

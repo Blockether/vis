@@ -612,7 +612,7 @@ describe("CloseButton", () => {
     // leave paper above and below the way out; it still spells no height of its own.
     expect(/\bh-\d/.test(band), "a height of its own").toBe(false);
     expect(band).not.toContain("self-center");
-    expect(band).not.toContain("size-8");
+    expect(/<button[^>]*class="[^"]*\bsize-8\b/.test(band)).toBe(false);
 
     const mark = html();
     expect(mark).toContain("size-8");
@@ -632,6 +632,18 @@ describe("CloseButton", () => {
     ]) {
       expect(mark, box).not.toContain(box);
     }
+  });
+
+  // Design request: the full-size target stays part of the band, while the visible
+  // close is a compact circle. Blockether Light draws that circle in its amber ink
+  // rather than adding a second filled accent beside the viewer's primary action.
+  it("puts a round amber face inside a band close target", () => {
+    const band = html({ isBand: true });
+    expect(band).toContain("rounded-full");
+    expect(band).toContain("size-8");
+    expect(band).toContain("mouse:size-7");
+    expect(band).toContain("blockether-light:text-accent");
+    expect(band).not.toContain("border-l");
   });
 
   // The band cell is ONE box and not one per band: it can only be a square because

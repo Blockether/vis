@@ -34,6 +34,9 @@ describe("every dialog header is the one dialog header", () => {
     expect(band().className).toContain("min-h-12");
     expect(band().className).toContain("mouse:min-h-9");
     expect(band().className).toContain("bg-dialog-title");
+    expect(band().className).toContain("rounded-b-panel");
+    expect(band().className).toContain("overflow-hidden");
+    expect(band().className).not.toContain("rounded-t-panel");
   });
 
   it("aligns the title left and lets it hold a subtitle", () => {

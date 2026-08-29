@@ -86,7 +86,8 @@ describe("ImageViewer", () => {
     const close = control("Close chart.png");
     expect(close.textContent).toBe("");
     expect(close.querySelector("svg")).not.toBeNull();
-    expect(close.className).toContain("border-l");
+    expect(close.className).not.toContain("border-l");
+    expect(close.querySelector("span")?.className).toContain("rounded-full");
   });
 
   // Regression, user report: the viewer's close looked nothing like the close in a
@@ -100,13 +101,15 @@ describe("ImageViewer", () => {
     expect(header?.className).toContain("items-stretch");
     expect(header?.querySelector("h2")?.textContent).toBe("chart.png");
 
-    // The one ✕: `CloseButton`, inheriting the band's own full ink —
-    // never the faded `/70` every close used to wear, and never an ink of its own.
+    // The target still inherits the band's full ink. Its compact face is circular, and
+    // only Blockether Light moves that ring and mark to the readable amber accent.
     const close = control("Close chart.png");
+    const face = close.querySelector("span");
     expect(header?.className).toContain("text-dialog-title-foreground");
     expect(header?.className).not.toContain("text-dialog-title-foreground/70");
-    expect(close.className).toContain("border-current/20");
     expect(close.className).toContain("text-current");
+    expect(face?.className).toContain("border-current");
+    expect(face?.className).toContain("blockether-light:text-accent");
   });
 
   // Regression, same phone report ("the headline has wrong height"): the title band is
