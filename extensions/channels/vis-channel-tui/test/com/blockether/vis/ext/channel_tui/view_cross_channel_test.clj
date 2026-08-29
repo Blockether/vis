@@ -138,7 +138,9 @@
              (testing "a client that connects late finds the same open request"
                (is (= [rid] (mapv :id (gw/input-views sid)))))
              (testing "the APP's answer releases the run"
-               (is (= {:is-accepted true} (gw/submit! rid {"note" "ship it" "confirm" true})))
+               (is (true? (:is-accepted (gw/action! rid
+                                                    {:action :submit
+                                                     :values {"note" "ship it" "confirm" true}}))))
                (let [result (deref answer 2000 ::timeout)]
                  (is (true? (:is-submitted result)))
                  (is (= "ship it" (get-in result [:values "note"])))
@@ -192,7 +194,7 @@
             (ask! sid rid [{:id "key" :type "plaintext" :label "API key" :is-required true}])]
 
         (try (is (await-true #(tui-open? rid)))
-             (let [app-outcome (gw/submit! rid {"key" "   "})]
+             (let [app-outcome (gw/action! rid {:action :submit :values {"key" "   "}})]
                (testing "the app's blank answer is rejected and the request stays parked"
                  (is (false? (:is-accepted app-outcome)))
                  (is (contains? (:errors app-outcome) "key"))
@@ -230,7 +232,7 @@
         (testing "the app dismisses the request and the terminal dialog goes away"
           (let [answer (ask! sid from-app fields)]
             (try (is (await-true #(tui-open? from-app)))
-                 (is (true? (gw/cancel! from-app)))
+                 (is (true? (:is-accepted (gw/action! from-app {:action :cancel}))))
                  (is (false? (:is-submitted (deref answer 2000 ::timeout))))
                  (is (await-true #(nil? (:human-input @state/app-db))))
                  (finally (engine/cancel! from-app "cleanup")))))
@@ -272,7 +274,8 @@
                ;; The bridge publishes from another thread: poll, never race it.
                (is (await-true #(= 1 (count (events-of seen "view.open" queued-id))))))
              (testing "the app may answer the QUEUED one without disturbing the open dialog"
-               (is (:is-accepted (gw/submit! queued-id {"why" "because"})))
+               (is (:is-accepted (gw/action! queued-id
+                                             {:action :submit :values {"why" "because"}})))
                (is (true? (:is-submitted (deref queued-answer 2000 ::timeout))))
                (is (await-true #(empty? (:human-input-queue @state/app-db))))
                (is (tui-open? open-id))
@@ -370,7 +373,10 @@
             ;; Six phones and a terminal answer the same form in the same instant.
             racers
             (doall (conj (vec (for [i (range 6)]
-                                (future (.await gate) (gw/submit! rid {"user" (str "app-" i)}))))
+                                (future (.await gate)
+                                        (gw/action! rid
+                                                    {:action :submit
+                                                     :values {"user" (str "app-" i)}}))))
                          (future (.await gate) (press! (KeyStroke. KeyType/Escape)))))
 
             _
@@ -391,8 +397,9 @@
           (is (= 1 (count (events-of seen "view.open" rid))))
           (is (await-true #(nil? (:human-input @state/app-db))))
           (is (empty? (gw/input-views sid)))
-          (is (= {:is-accepted false :reason "unknown"} (gw/submit! rid {"user" "late"})))
-          (is (false? (gw/cancel! rid))))))))
+          (is (= {:action :submit :view-id rid :is-accepted false :reason "unknown"}
+                 (gw/action! rid {:action :submit :values {"user" "late"}})))
+          (is (false? (:is-accepted (gw/action! rid {:action :cancel})))))))))
 
 (deftest a-request-that-forbids-cancelling-forbids-it-on-both-surfaces-test
   (with-surfaces!
@@ -427,7 +434,7 @@
                (is (not (realized? answer)))
                (is (empty? (events-of seen "view.close" rid))))
              (testing "and the app is refused the same way"
-               (is (false? (gw/cancel! rid)))
+               (is (false? (:is-accepted (gw/action! rid {:action :cancel}))))
                (is (some? (gw/input-view-of sid rid)))
                (is (not (realized? answer)))
                (is (tui-open? rid)))
@@ -484,7 +491,8 @@
                  ;; can hold a second copy of the rules and drift from it.
                  (is (not (contains? (get by-id "notify") "validate")))))
              (testing "the app's bad answer is refused field by field"
-               (let [outcome (gw/submit! rid {"code" "12ab" "notify" "nope"})]
+               (let [outcome (gw/action! rid
+                                         {:action :submit :values {"code" "12ab" "notify" "nope"}})]
                  (is (false? (:is-accepted outcome)))
                  (is (= {"code" "must be digits only" "notify" "must be an email address"}
                         (:errors outcome)))
@@ -673,7 +681,9 @@
                      (is (= (get-in @state/app-db [:human-input :request]) view))
                      (is (= (:human-input @state/app-db) (hi/init-form view)))))))
              (testing "the APP answering it closes every terminal's form too"
-               (is (= {:is-accepted true} (gw/submit! rid {"note" "ship it" "env" "prod"})))
+               (is (true? (:is-accepted (gw/action! rid
+                                                    {:action :submit
+                                                     :values {"note" "ship it" "env" "prod"}}))))
                (is (true? (:is-submitted (deref answer 2000 ::timeout))))
                (is (await-true #(seq (events-of seen "view.close" rid))))
                (let [[_ event]
@@ -719,19 +729,15 @@
         form
         (hi/init-form (daemon-view "req-remote"))]
 
-    (with-redefs [vis/gateway-submit-input-view!
-                  (fn [sid rid values]
-                    (swap! calls conj [:submit sid rid values])
-                    {:is-accepted true})
-
-                  vis/gateway-cancel-input-view!
-                  (fn [sid rid]
-                    (swap! calls conj [:cancel sid rid])
-                    true)]
-
-      (is (= {:is-accepted true} (#'screen/human-input-answer! form :submit {"note" "hi"})))
-      (is (true? (#'screen/human-input-answer! form :cancel nil)))
-      (is (= [[:submit "s1" "req-remote" {"note" "hi"}] [:cancel "s1" "req-remote"]] @calls)))))
+    (with-redefs [vis/gateway-view-action!
+                  (fn [sid rid action]
+                    (swap! calls conj [sid rid action])
+                    {:action (:action action) :view-id rid :is-accepted true})]
+      (is (true? (:is-accepted (#'screen/human-input-answer! form :submit {"note" "hi"}))))
+      (is (true? (:is-accepted (#'screen/human-input-answer! form :cancel nil))))
+      (is (= [["s1" "req-remote" {:action :submit :values {"note" "hi"}}]
+              ["s1" "req-remote" {:action :cancel}]]
+             @calls)))))
 
 ;; Regression, issue #122: a session can be blocked on MORE than one request at
 ;; a time — several extensions parked in the daemon, or one that asks again
@@ -757,10 +763,10 @@
                       (is (= sid asked))
                       (mapv #(wire/->wire (daemon-view % sid)) rids))
 
-                    vis/gateway-submit-input-view!
-                    (fn [answered-sid rid values]
-                      (swap! calls conj [answered-sid rid values])
-                      {:is-accepted true})]
+                    vis/gateway-view-action!
+                    (fn [answered-sid rid action]
+                      (swap! calls conj [answered-sid rid action])
+                      {:action (:action action) :view-id rid :is-accepted true})]
 
         (#'screen/replay-human-input! sid)
         (testing "all of them, oldest first: one open dialog and the rest queued"
@@ -775,10 +781,10 @@
           (doseq [rid rids]
             (let [form (:human-input @state/app-db)]
               (is (= rid (hi/request-id form)))
-              (is (= {:is-accepted true} (#'screen/human-input-answer! form :submit {"note" rid})))
+              (is (true? (:is-accepted (#'screen/human-input-answer! form :submit {"note" rid}))))
               (state/dispatch [:human-input-close rid])))
           (is (= (mapv (fn [rid]
-                         [sid rid {"note" rid}])
+                         [sid rid {:action :submit :values {"note" rid}}])
                        rids)
                  @calls))
           (is (nil? (:human-input @state/app-db)))
@@ -926,8 +932,10 @@
         (is (= hi-spec/note-chars (ts-number source "LIVE_NOTE_CHARS"))
             "the field the phone types a stop note into ends where the engine cuts it")))
     (when lifecycle-source
-      (testing "the shared lifecycle is closed over kinds and events"
+      (testing "the shared lifecycle and operator seam are closed"
         (is (= (set (keys hi-spec/view-kinds)) (set (ts-strings lifecycle-source "VIEW_KINDS"))))
+        (is (= (set (keys hi-spec/view-actions))
+               (set (ts-strings lifecycle-source "VIEW_ACTIONS"))))
         (is (= [gw/view-open-event gw/view-patch-event gw/view-close-event]
                (mapv (partial ts-literal lifecycle-source)
                      ["VIEW_OPEN_EVENT" "VIEW_PATCH_EVENT" "VIEW_CLOSE_EVENT"])))))))

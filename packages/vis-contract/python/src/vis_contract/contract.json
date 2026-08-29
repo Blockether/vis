@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "ops": [
     {
       "name": "state_get",
@@ -117,6 +117,7 @@
   "view":
   {
     "kinds": ["input","live"],
+    "actions": ["cancel","interrupt","select","submit"],
     "field_types": ["checkbox","multiline","multiselect","otp","password","plaintext","range","select"],
     "text_types": ["multiline","password","plaintext"],
     "choice_types": ["multiselect","select"],

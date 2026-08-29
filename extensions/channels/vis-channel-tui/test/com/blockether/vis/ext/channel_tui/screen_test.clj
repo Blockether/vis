@@ -472,7 +472,7 @@
         (expect (= [[:live-view-minimize "view-1"] [:bump-render-version]
                     [:live-view-restore "view-1"] [:bump-render-version]]
                    @events))))
-  (it "routes a clicked row through shared local or gateway focus"
+  (it "routes a clicked row through the shared local or gateway View action"
       (let [remote-called
             (promise)
 
@@ -488,22 +488,23 @@
         (with-redefs [vis/live-views
                       (constantly [])
 
-                      vis/gateway-focus-live-view!
+                      vis/gateway-view-action!
                       (fn [& args]
                         (deliver remote-called args))]
 
           (expect (true? (activate-live-region! db hit)))
-          (expect (= ["session-1" "view-1" "jobs" ["macos"]]
+          (expect (= ["session-1" "view-1" {:action :select :node-id "jobs" :item-ids ["macos"]}]
                      (deref remote-called 1000 ::timed-out))))
         (with-redefs [vis/live-views
                       (constantly [{:id "view-1"}])
 
-                      vis/focus-live-view!
+                      vis/view-action!
                       (fn [& args]
                         (deliver local-called args))]
 
           (expect (true? (activate-live-region! db hit)))
-          (expect (= ["view-1" "jobs" ["macos"]] (deref local-called 1000 ::timed-out))))))
+          (expect (= ["view-1" {:action :select :node-id "jobs" :item-ids ["macos"]}]
+                     (deref local-called 1000 ::timed-out))))))
   (it "routes Activity focus and evidence through terminal-local pane state"
       (let [events (atom [])]
         (with-redefs [state/dispatch #(swap! events conj %)]

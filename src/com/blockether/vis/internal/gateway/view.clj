@@ -6,10 +6,10 @@
    `view.open`, `view.patch` and `view.close` session events, preserving `:kind` so
    clients choose capability policy without guessing from event names.
 
-   An `:input` View blocks and can be submitted or cancelled. A `:live` View does not
-   block; its patches are coalesced on [[live-flush-ms]] before durable publication,
-   and it can be focused or interrupted. Both kinds replay and resync through the
-   same View owner while their capability-specific REST actions remain explicit."
+   An `:input` View blocks while a `:live` View streams coalesced patches on
+   [[live-flush-ms]]. Operator intent for either kind enters through one [[action!]]
+   and one kind-independent REST resource; the engine owns the closed action
+   vocabulary and capability checks."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
             [com.blockether.vis.internal.gateway.state :as state]
@@ -42,6 +42,13 @@
           str/trim
           not-empty))
 
+(defn view-of
+  "Open View `view-id` when it belongs to session `sid`, as a kind/document
+   descriptor, else nil. This is the ownership gate for the shared action route."
+  [sid view-id]
+  (when-let [{:keys [view] :as descriptor} (view/open-view (str view-id))]
+    (when (= (str sid) (session-of view)) descriptor)))
+
 (defn input-views
   "Input Views session `sid` is BLOCKED on right now, oldest first."
   [sid]
@@ -51,23 +58,14 @@
 (defn input-view-of
   "Input View `view-id` when it is pending in `sid`, else nil."
   [sid view-id]
-  (let [document (view/pending-request (str view-id))]
-    (when (and document (= (str sid) (session-of document))) document)))
+  (let [{:keys [kind view]} (view-of sid view-id)]
+    (when (= :input kind) view)))
 
-(defn submit!
-  "Answer `request-id` with a raw `field id -> value` map. Returns
-   `{:is-accepted true}`, or `{:is-accepted false :errors {field-id message}}`
-   when a value fails validation — the request stays pending so the operator
-   can fix it."
-  [request-id values]
-  (view/submit! (str request-id) values))
-
-(defn cancel!
-  "Cancel `request-id`. Returns true when it was still pending and dismissable:
-   the engine refuses a request declared `is_cancellable false`, so the app is
-   held to exactly the rule the TUI dialog paints."
-  [request-id]
-  (view/cancel! (str request-id) "cancelled"))
+(defn action!
+  "Apply one closed operator action to open View `view-id`. Kind policy and all
+   validation stay in the engine, so every remote surface receives the same verdict."
+  [view-id action]
+  (view/action! (str view-id) action))
 
 ;; --- Live views (a run the human WATCHES) ---
 
@@ -212,11 +210,10 @@
 
 (defn live-view-of
   "Live view `view-id` when it belongs to `sid`, else nil. Every REST answer goes
-   through this: a view id from another session must not be readable or
-   stoppable from here."
+   through this: a view id from another session must not be readable from here."
   [sid view-id]
-  (let [view (view/live-view (str view-id))]
-    (when (and view (= (str sid) (session-of view))) view)))
+  (let [{:keys [kind view]} (view-of sid view-id)]
+    (when (= :live kind) view)))
 
 (def ^:private live-log-page
   "Lines one log page answers: a WINDOW, the same amount a surface holds live
@@ -240,19 +237,6 @@
                   (max 0 (long (or from 0)))
                   (min (long live-log-page) (max 1 (long (or limit live-log-page))))))
 
-(defn focus-live!
-  "Focus `item-ids` in table `node-id` of open live view `view-id`. The engine
-   records and publishes the same patch an extension would write."
-  [view-id node-id item-ids]
-  (view/focus-live! (str view-id) node-id item-ids))
-
-(defn interrupt-live!
-  "Stop live view `view-id` from the app, with `note` — the comment the person
-   leaves with the stop, when they leave one. Returns the verdict, or nil when the
-   view had already ended: a view is ALWAYS stoppable, exactly as Escape always
-   stops the one the TUI is painting."
-  ([view-id] (interrupt-live! view-id nil))
-  ([view-id note] (view/interrupt-live! (str view-id) note)))
 
 (defn on-channel-event!
   "Project one canonical `:app` View event into the session journal."

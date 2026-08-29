@@ -66,10 +66,9 @@ import { PROTOCOL_HEADERS } from "./compat";
 import { withSavedAttachment } from "./artifacts";
 import {
   inputViewsFromWire,
-  type HumanInputOutcome,
   type HumanInputRequest,
-  type HumanInputValues,
 } from "./human-input";
+import type { ViewAction, ViewActionOutcome } from "./view";
 import {
   liveViewsFromWire,
   type LiveLogPage,
@@ -3800,31 +3799,16 @@ export class GatewayClient {
     return inputViewsFromWire(response.requests);
   }
 
-  /**
-   * Answer one open request. Validation is the ENGINE's: a rejected answer comes
-   * back `is_accepted false` with per-field errors and the request stays open,
-   * exactly as it does for the TUI dialog.
-   */
-  submitHumanInput(
+  /** Apply one closed operator action to either View kind. */
+  viewAction(
     sid: string,
-    requestId: string,
-    values: HumanInputValues,
-  ): Promise<HumanInputOutcome> {
-    return this.request<HumanInputOutcome>(
+    viewId: string,
+    action: ViewAction,
+  ): Promise<ViewActionOutcome> {
+    return this.request<ViewActionOutcome>(
       "POST",
-      `/v1/sessions/${encodeURIComponent(sid)}/views/input/${encodeURIComponent(requestId)}/actions/submit`,
-      { values },
-    );
-  }
-
-  /** Dismiss one open request. The blocked extension resumes unanswered. */
-  cancelHumanInput(
-    sid: string,
-    requestId: string,
-  ): Promise<{ is_cancelled: boolean; request_id: string }> {
-    return this.request<{ is_cancelled: boolean; request_id: string }>(
-      "POST",
-      `/v1/sessions/${encodeURIComponent(sid)}/views/input/${encodeURIComponent(requestId)}/actions/cancel`,
+      `/v1/sessions/${encodeURIComponent(sid)}/views/${encodeURIComponent(viewId)}/actions`,
+      action,
     );
   }
 
@@ -3870,38 +3854,6 @@ export class GatewayClient {
     );
   }
 
-  /** Replace one focusable live table's selected row ids in shared engine state. */
-  focusLiveView(
-    sid: string,
-    viewId: string,
-    nodeId: string,
-    itemIds: string[],
-  ): Promise<{ focused_ids: string[]; node_id: string; view_id: string }> {
-    return this.request<{ focused_ids: string[]; node_id: string; view_id: string }>(
-      "POST",
-      `/v1/sessions/${encodeURIComponent(sid)}/views/live/${encodeURIComponent(viewId)}/actions/focus`,
-      { node_id: nodeId, item_ids: itemIds },
-    );
-  }
-
-  /**
-   * Ask one view to stop, with `note` — the comment the person leaves with the
-   * stop, when they leave one. The extension SEES the interruption and ends the
-   * view itself, so this answers whether the ask LANDED, never that the work is
-   * over. A view is always stoppable: nothing is asked of the human by one, so
-   * nothing is left unanswered by stopping it.
-   */
-  interruptLiveView(
-    sid: string,
-    viewId: string,
-    note?: string,
-  ): Promise<{ is_interrupted: boolean; view_id: string }> {
-    return this.request<{ is_interrupted: boolean; view_id: string }>(
-      "POST",
-      `/v1/sessions/${encodeURIComponent(sid)}/views/live/${encodeURIComponent(viewId)}/actions/interrupt`,
-      note ? { note } : undefined,
-    );
-  }
 
   /**
    * Status of ONE turn as the gateway REGISTRY knows it — `null` when this

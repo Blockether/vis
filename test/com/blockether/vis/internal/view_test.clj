@@ -1906,6 +1906,33 @@
                     (expect (true? (:is-completed (hi/close-live! view-id))))
                     (expect (nil? (hi/close-live! view-id)))
                     (expect (nil? (hi/live-view view-id)))))))
+  (it "routes select and interrupt through the one closed View action seam"
+      (recorded
+        (fn []
+          (let [view
+                (hi/open-live! (live-spec {:id "jobs"
+                                           :type "table"
+                                           :is-focusable true
+                                           :focused-ids ["a"]
+                                           :columns [{:id "job" :label "Job"}]
+                                           :rows [{:id "a" :cells ["A"]} {:id "b" :cells ["B"]}]}))
+
+                view-id
+                (:id view)
+
+                selected
+                (hi/action! view-id {"action" "select" "node_id" "jobs" "item_ids" ["b"]})]
+
+            (expect
+              (=
+                {:action :select :view-id view-id :is-accepted true :node-id "jobs" :item-ids ["b"]}
+                selected))
+            (expect (= ["b"] (get-in (hi/live-view view-id) [:nodes 0 :focused-ids])))
+            (expect (throws? clojure.lang.ExceptionInfo
+                             #(hi/action! view-id {:action :submit :values {}})))
+            (expect (= {:action :interrupt :view-id view-id :is-accepted true}
+                       (hi/action! view-id {:action :interrupt :note "enough"})))
+            (expect (nil? (hi/live-view view-id)))))))
   (it "interrupts into a verdict that carries what the human watched, and the words they left"
       (recorded
         (fn []

@@ -1091,7 +1091,7 @@ export function LiveView({
     setStopping(viewId);
     setError(null);
     client
-      .interruptLiveView(sid, viewId, note ?? undefined)
+      .viewAction(sid, viewId, { action: 'interrupt', ...(note ? { note } : {}) })
       .catch(() => setError('That view would not stop. It may have just finished.'))
       .finally(() => setStopping(null));
   };
@@ -1099,7 +1099,7 @@ export function LiveView({
   const focus = (viewId: string, nodeId: string, itemIds: string[]) => {
     setError(null);
     client
-      .focusLiveView(sid, viewId, nodeId, itemIds)
+      .viewAction(sid, viewId, { action: 'select', node_id: nodeId, item_ids: itemIds })
       .catch(() => setError('That job could not be focused. It may have just finished.'));
   };
 

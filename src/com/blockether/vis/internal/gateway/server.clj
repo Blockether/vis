@@ -506,12 +506,6 @@
   (some-> (:body request)
           slurp
           wire/parse-json))
-(defn- optional-body-json
-  "The JSON body of `request` when it HAS one, nil when it is empty or malformed.
-   For routes whose body is an EXTRA rather than the point of the call: a stop
-   must land even when the client sent no body at all."
-  [request]
-  (try (body-json request) (catch Exception _ nil)))
 
 (defn- path-sid
   [request]
@@ -3263,98 +3257,77 @@
                                                :data {:type "test"}})
                     :push (push/status)})))
 
-;; --- Input Views (a run BLOCKED on the operator) ---
+;; --- Views ---
 
-(defn- input-view-404
-  [request-id]
-  (error-response 404
-                  :input-view-not-found "no such pending input View"
-                  :request_id (str request-id)))
+(defn- view-404
+  [view-id]
+  (error-response 404 :view-not-found "no such open View" :view_id (str view-id)))
 
 (defn- list-input-views-handler
   "GET /v1/sessions/:sid/views/input — the typed input requests this session is
    BLOCKED on right now.
 
-   The live `view.open` event is the fast path; this is how a client
-   that connected LATER (cold start, background, reinstall) still finds the
-   open form instead of watching a turn that never moves."
+   The live `view.open` event is the fast path; this is how a client that connected
+   later still finds the open form instead of watching a turn that never moves."
   [request]
   (if-let [sid (path-sid request)]
     (json-response {:requests (gw-view/input-views sid)})
     (session-404 (get-in request [:path-params :sid]))))
 
-(defn- submit-input-view-handler
-  "POST /v1/sessions/:sid/views/input/:request-id/actions/submit — answer one
-   pending request with `{values: {field_id: value}}`.
+(defn- view-action-handler
+  "POST /v1/sessions/:sid/views/:view-id/actions — apply one closed operator
+   action to either View kind.
 
-   Validation stays in the engine, so the app and the TUI accept exactly the
-   same answers: a rejected one comes back `{is_accepted false, errors {…}}`
-   and the request STAYS pending so the operator can fix it."
+   The body names `action`: `submit`, `cancel`, `select`, or `interrupt`, with that
+   action's payload. Kind is a property of the addressed View, never part of the
+   URL. The engine owns validation and capability policy, so every surface receives
+   the same verdict."
   [request]
   (let [sid
         (path-sid request)
 
-        request-id
-        (str (get-in request [:path-params :request-id]))
+        view-id
+        (some-> (get-in request [:path-params :view-id])
+                str
+                not-empty)
 
-        values
-        (get (body-json request) "values")]
-
-    (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
-          (nil? (gw-view/input-view-of sid request-id)) (input-view-404 request-id)
-          (not (map? values)) (error-response 400 :bad-request "values must be an object")
-          :else (let [outcome (gw-view/submit! request-id values)]
-                  (json-response (cond-> {:is_accepted (boolean (:is-accepted outcome))
-                                          :request_id request-id}
-                                   (seq (:errors outcome))
-                                   (assoc :errors (:errors outcome))))))))
-
-(defn- cancel-input-view-handler
-  "POST /v1/sessions/:sid/views/input/:request-id/actions/cancel — dismiss one
-   pending request. The blocked extension resumes with `is_submitted false`.
-   A request declared `is_cancellable false` refuses, exactly as in the TUI."
-  [request]
-  (let [sid
-        (path-sid request)
-
-        request-id
-        (str (get-in request [:path-params :request-id]))
-
-        pending-request
-        (when sid (gw-view/input-view-of sid request-id))]
+        descriptor
+        (when (and sid view-id) (gw-view/view-of sid view-id))]
 
     (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
-          (nil? pending-request) (input-view-404 request-id)
-          (false? (:is-cancellable pending-request))
-          (error-response 409
-                          :input-view-not-cancellable "this input View cannot be cancelled"
-                          :request_id request-id)
-          :else (json-response {:is_cancelled (boolean (gw-view/cancel! request-id))
-                                :request_id request-id}))))
-
-;; --- Live views (a run SHOWING its work) ---
+          (nil? descriptor) (view-404 view-id)
+          :else (try (let [{:keys [is-accepted reason] :as outcome}
+                           (gw-view/action! view-id (body-json request))]
+                       (cond (and (false? is-accepted) (= "unknown" reason)) (view-404 view-id)
+                             (and (false? is-accepted) (= "not_cancellable" reason))
+                             (error-response 409
+                                             :view-action-refused
+                                             "this input View cannot be cancelled"
+                                             :view_id view-id
+                                             :action "cancel")
+                             :else (json-response outcome)))
+                     (catch clojure.lang.ExceptionInfo e
+                       (let [{:keys [type action]} (ex-data e)]
+                         (error-response (if (= :vis/view-action-not-supported type) 409 400)
+                                         (or type :vis/view-action-refused)
+                                         (ex-message e)
+                                         :view_id view-id
+                                         :action (some-> action
+                                                         name))))))))
 
 (defn- path-view-id
-  "The view id in the path, only when it could BE one. Ids are minted by the
-   engine as UUIDs and a record is a file named after one, so anything else is a
-   404 instead of a path this handler tries to open."
+  "The live view id in a file-backed resource path, only when it could BE one."
   [request]
   (some-> (get-in request [:path-params :view-id])
           parse-uuid
           str))
 
-(defn- live-view-404
-  [view-id]
-  (error-response 404 :live-view-not-found "no such live view" :view_id (str view-id)))
-
 (defn- list-live-views-handler
   "GET /v1/sessions/:sid/views/live — the live views this session is showing
    right now, oldest first, each as the picture a surface paints.
 
-   The `view.open` / `view.patch` / `view.close` events are the fast path; this is what a client that
-   connected LATER (cold start, background, reinstall) reads, so it paints the
-   CURRENT picture instead of waiting for the next patch to tell it something is
-   running."
+   The `view.open` / `view.patch` / `view.close` events are the fast path; this is
+   what a client that connected later reads to recover the current picture."
   [request]
   (if-let [sid (path-sid request)]
     (json-response {:views (gw-view/live-views sid)})
@@ -3362,12 +3335,10 @@
 
 (defn- live-view-log-handler
   "GET /v1/sessions/:sid/views/live/:view-id/log/:node-id — one page of a log
-   node, `?from=` (0-based) `&limit=` lines, read from the view's RECORD.
+   node, `?from=` (0-based) `&limit=` lines, read from the view's record.
 
-   A view carries only its window, so this is how a phone scrolls back through
-   output whose patches it never received. It reads the file rather than the
-   registry, so a view that already CLOSED still answers — which is what makes a
-   finished run's log readable at all."
+   A view carries only its window, so this reads the durable file. A view that has
+   already closed still answers, which makes a finished run's log readable."
   [request]
   (let [sid
         (path-sid request)
@@ -3376,70 +3347,13 @@
         (path-view-id request)]
 
     (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
-          (nil? view-id) (live-view-404 (get-in request [:path-params :view-id]))
+          (nil? view-id) (view-404 (get-in request [:path-params :view-id]))
           :else (json-response (gw-view/live-log-range sid
                                                        view-id
                                                        (str (get-in request
                                                                     [:path-params :node-id]))
                                                        (query-long request "from")
                                                        (query-long request "limit"))))))
-
-(defn- focus-live-view-handler
-  "POST /v1/sessions/:sid/views/live/:view-id/actions/focus — focus table
-   rows in the engine's live state, so every surface and the extension itself see
-   the same selection. The body carries node_id and the selected item_ids."
-  [request]
-  (let [sid
-        (path-sid request)
-
-        view-id
-        (path-view-id request)
-
-        view
-        (when (and sid view-id) (gw-view/live-view-of sid view-id))
-
-        body
-        (optional-body-json request)
-
-        node-id
-        (get body "node_id")
-
-        item-ids
-        (get body "item_ids")]
-
-    (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
-          (nil? view) (live-view-404 (get-in request [:path-params :view-id]))
-          :else (try
-                  (gw-view/focus-live! view-id node-id item-ids)
-                  (json-response {:focused_ids (vec item-ids) :node_id node-id :view_id view-id})
-                  (catch clojure.lang.ExceptionInfo e
-                    (error-response 400 (:type (ex-data e) :invalid-live-focus) (ex-message e)))))))
-
-(defn- interrupt-live-view-handler
-  "POST /v1/sessions/:sid/views/live/:view-id/actions/interrupt — stop one
-   live view from the app, with an optional `{note: \"…\"}`: the comment the person
-   leaves with the stop.
-
-   ALWAYS allowed. A view asks nothing, so stopping it leaves nothing unanswered
-   — exactly the rule Escape obeys in the TUI. The extension resumes with an
-   interrupted verdict that says a HUMAN ended it and carries their words."
-  [request]
-  (let [sid
-        (path-sid request)
-
-        view-id
-        (path-view-id request)
-
-        view
-        (when (and sid view-id) (gw-view/live-view-of sid view-id))
-
-        note
-        (get (optional-body-json request) "note")]
-
-    (cond (nil? sid) (session-404 (get-in request [:path-params :sid]))
-          (nil? view) (live-view-404 (get-in request [:path-params :view-id]))
-          :else (json-response {:is_interrupted (some? (gw-view/interrupt-live! view-id note))
-                                :view_id view-id}))))
 (defn- reachable-addresses
   "Every base URL this gateway answers on, most durable first (Tailscale before
    LAN — see [[pairing/candidate-hosts]]).
@@ -4310,12 +4224,9 @@
         [(sid-route "/slashes") {:get slashes-handler}]
         [(sid-route "/release") {:post release-session-handler}]
         [(sid-route "/views/input") {:get list-input-views-handler}]
-        [(sid-route "/views/input/:request-id/actions/submit") {:post submit-input-view-handler}]
-        [(sid-route "/views/input/:request-id/actions/cancel") {:post cancel-input-view-handler}]
         [(sid-route "/views/live") {:get list-live-views-handler}]
         [(sid-route "/views/live/:view-id/log/:node-id") {:get live-view-log-handler}]
-        [(sid-route "/views/live/:view-id/actions/focus") {:post focus-live-view-handler}]
-        [(sid-route "/views/live/:view-id/actions/interrupt") {:post interrupt-live-view-handler}]
+        [(sid-route "/views/:view-id/actions") {:post view-action-handler}]
         [(sid-route "/voice") {:post voice-handler}]
         [(sid-route "/voice/jobs/:job-id") {:get voice-job-handler :delete voice-job-handler}]
         [(sid-route "/voice/jobs/:job-id/events") {:get voice-job-events-handler}]

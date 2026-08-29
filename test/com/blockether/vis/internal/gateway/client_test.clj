@@ -78,18 +78,27 @@
             :else (do (Thread/sleep 10) (recur (dec attempts)))))))
 
 ;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: the TUI had
-;; no canonical client action with which a live job row could change shared focus.
-(deftest focus-live-view-uses-the-shared-action-route
+;; no canonical View action with which a live job row could change shared selection.
+(deftest view-action-uses-the-one-kind-independent-route
   (let [request (atom nil)]
-    (with-redefs-fn {(rv 'send-json!)
-                     (fn [method path body]
-                       (reset! request [method path body])
-                       {"view_id" "view-1" "node_id" "jobs" "focused_ids" ["macos"]})}
+    (with-redefs-fn {(rv 'send-json!) (fn [method path body]
+                                        (reset! request [method path body])
+                                        {"action" "select"
+                                         "view_id" "view-1"
+                                         "is_accepted" true
+                                         "node_id" "jobs"
+                                         "item_ids" ["macos"]})}
       (fn []
-        (is (= {:view-id "view-1" :node-id "jobs" :focused-ids ["macos"]}
-               (client/focus-live-view! "session-1" "view-1" "jobs" ["macos"])))
-        (is (= ["POST" "/v1/sessions/session-1/views/live/view-1/actions/focus"
-                {:node_id "jobs" :focused_ids ["macos"]}]
+        (is (= {:action :select
+                :view-id "view-1"
+                :is-accepted true
+                :node-id "jobs"
+                :item-ids ["macos"]}
+               (client/view-action! "session-1"
+                                    "view-1"
+                                    {:action :select :node-id "jobs" :item-ids ["macos"]})))
+        (is (= ["POST" "/v1/sessions/session-1/views/view-1/actions"
+                {:action "select" :node-id "jobs" :item-ids ["macos"]}]
                @request))))))
 
 (deftest ensure-project-for-root-uses-project-action-route

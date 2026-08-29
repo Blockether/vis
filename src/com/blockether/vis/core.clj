@@ -132,11 +132,8 @@
              [gateway-cancel-current-turn! gateway-client/cancel-current-turn!]
              [gateway-drain-idle! gateway-client/drain-idle!]
              [gateway-input-views gateway-client/input-views]
-             [gateway-submit-input-view! gateway-client/submit-input-view!]
-             [gateway-cancel-input-view! gateway-client/cancel-input-view!]
-             [gateway-focus-live-view! gateway-client/focus-live-view!]
-             [gateway-interrupt-live-view! gateway-client/interrupt-live-view!]
              [gateway-live-views gateway-client/live-views]
+             [gateway-view-action! gateway-client/view-action!]
              [gateway-get-turn gateway-client/get-turn]
              [gateway-list-turns gateway-client/list-turns]
              [gateway-transcript gateway-client/transcript]
@@ -785,15 +782,12 @@
 
 ;; Human input — the typed pause an extension uses to ask the operator
 ;;
-;; `request-human-input!` BLOCKS the calling extension until a channel calls
-;; `submit-human-input!`/`cancel-human-input!`, or the request times out. The
-;; dialog itself is a channel concern: a channel subscribes to the bus above and
-;; renders the `:view/open` event, then answers by request id.
+;; `request-human-input!` BLOCKS the calling extension until an operator action,
+;; timeout, or interruption settles it. Rendering is a channel concern: every
+;; surface receives `:view/open` and answers through the same `view-action!` seam.
 (def request-human-input! (requiring-resolve 'com.blockether.vis.internal.view/request!))
 
-(def submit-human-input! (requiring-resolve 'com.blockether.vis.internal.view/submit!))
-
-(def cancel-human-input! (requiring-resolve 'com.blockether.vis.internal.view/cancel!))
+(def view-action! (requiring-resolve 'com.blockether.vis.internal.view/action!))
 
 (def pending-human-input-request
   (requiring-resolve 'com.blockether.vis.internal.view/pending-request))
@@ -802,21 +796,15 @@
 
 ;; Live views — the picture the human WATCHES while an extension works
 ;;
-;; The same interaction one `:kind` further, and inverted: nothing blocks, the
-;; human only watches — and may stop it at any moment, with a comment saying why
-;; — and the model reads the VERDICT: the same materialized picture both surfaces
-;; painted, handed over as DATA, stamped with whether a PERSON ended it.
+;; The producer opens, patches and closes its picture. Operator selection and
+;; interruption enter through `view-action!`, exactly like input submit/cancel.
 ;; Reach for `with-live-view!`: a run that dies mid-flight would otherwise leave
-;; a picture nobody updates on the human's screen and no markdown for the model.
+;; a picture nobody updates on the human's screen and no verdict for the model.
 (def with-live-view! (requiring-resolve 'com.blockether.vis.internal.view/with-live!))
 
 (def open-live-view! (requiring-resolve 'com.blockether.vis.internal.view/open-live!))
 
 (def patch-live-view! (requiring-resolve 'com.blockether.vis.internal.view/patch-live!))
-
-(def focus-live-view! (requiring-resolve 'com.blockether.vis.internal.view/focus-live!))
-
-(def interrupt-live-view! (requiring-resolve 'com.blockether.vis.internal.view/interrupt-live!))
 
 (def live-view (requiring-resolve 'com.blockether.vis.internal.view/live-view))
 

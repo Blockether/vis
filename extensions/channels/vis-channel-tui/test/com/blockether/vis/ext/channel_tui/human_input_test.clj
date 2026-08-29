@@ -415,22 +415,24 @@
       (expect (false? (#'screen/overlay-locked? @state/app-db))))
   (it "submits the typed values and closes once the engine accepts them"
       (let [submitted (atom nil)]
-        (with-redefs [vis/submit-human-input! (fn [id values]
-                                                (reset! submitted [id values])
-                                                {:is-accepted true})]
+        (with-redefs [vis/view-action! (fn [id action]
+                                         (reset! submitted [id action])
+                                         {:action (:action action) :view-id id :is-accepted true})]
           (reset! state/app-db {:render-version 0})
           (state/dispatch [:human-input-open (hi/init-form (request))])
           (doseq [key [(stroke \b) (stroke \o) (KeyStroke. KeyType/ArrowDown) (stroke \p)
                        (KeyStroke. KeyType/Enter)]]
             (#'screen/human-input-key! @state/app-db key))
           (expect (= "req-1" (first @submitted)))
-          (expect (= "bo" (get-in @submitted [1 "user"])))
-          (expect (= "p" (get-in @submitted [1 "pass"])))
+          (expect (= :submit (get-in @submitted [1 :action])))
+          (expect (= "bo" (get-in @submitted [1 :values "user"])))
+          (expect (= "p" (get-in @submitted [1 :values "pass"])))
           (expect (nil? (:human-input @state/app-db))))))
   (it "keeps the dialog open and shows the engine's errors on a rejected answer"
-      (with-redefs [vis/submit-human-input! (fn [_ _]
-                                              {:is-accepted false
-                                               :errors {"pass" "Password is expired"}})]
+      (with-redefs [vis/view-action!
+                    (fn [_ action]
+                      (expect (= :submit (:action action)))
+                      {:action :submit :is-accepted false :errors {"pass" "Password is expired"}})]
         (reset! state/app-db {:render-version 0})
         (state/dispatch [:human-input-open (hi/init-form (request))])
         ;; Both required fields are filled, so the form's OWN rules pass and the
@@ -442,13 +444,13 @@
         (expect (= {"pass" "Password is expired"} (get-in @state/app-db [:human-input :errors])))))
   (it "cancels the pending request on Escape"
       (let [cancelled (atom nil)]
-        (with-redefs [vis/cancel-human-input! (fn [id]
-                                                (reset! cancelled id)
-                                                true)]
+        (with-redefs [vis/view-action! (fn [id action]
+                                         (reset! cancelled [id action])
+                                         {:action :cancel :view-id id :is-accepted true})]
           (reset! state/app-db {:render-version 0})
           (state/dispatch [:human-input-open (hi/init-form (request))])
           (#'screen/human-input-key! @state/app-db (KeyStroke. KeyType/Escape))
-          (expect (= "req-1" @cancelled))
+          (expect (= ["req-1" {:action :cancel}] @cancelled))
           (expect (nil? (:human-input @state/app-db)))))))
 
 (defn- canonical-row

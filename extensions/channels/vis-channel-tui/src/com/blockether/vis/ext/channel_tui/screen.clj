@@ -635,18 +635,16 @@
         (hi/session-id form)
 
         local?
-        (or (nil? session-id) (some? (vis/pending-human-input-request request-id)))]
+        (or (nil? session-id) (some? (vis/pending-human-input-request request-id)))
 
-    (case op
-      :submit
-      (if local?
-        (vis/submit-human-input! request-id values)
-        (vis/gateway-submit-input-view! session-id request-id values))
+        action
+        (cond-> {:action op}
+          (= :submit op)
+          (assoc :values values))]
 
-      :cancel
-      (if local?
-        (vis/cancel-human-input! request-id)
-        (vis/gateway-cancel-input-view! session-id request-id)))))
+    (if local?
+      (vis/view-action! request-id action)
+      (vis/gateway-view-action! session-id request-id action))))
 
 (defn- error-card-row-geometry?
   "True when a bubble is painted as the failed-turn CARD.
@@ -742,21 +740,23 @@
   [session-id view-id]
   (boolean (or (nil? session-id) (some #(= view-id (:id %)) (vis/live-views)))))
 
-(defn- focus-live-row!
-  "Set one clicked table row as the live view's SHARED focus without blocking input.
+(defn- select-live-row!
+  "Select one clicked table row through the shared View action without blocking input.
 
    The engine publishes the resulting ordinary patch back to every attached surface;
    the TUI keeps no optimistic private selection that could race the extension's next
    GitHub poll."
   [db {:keys [view-id node-id item-id]}]
   (when-let [pane (first (filter #(= view-id (lv/view-id %)) (:live-views db)))]
-    (let [session-id (get-in pane [:view :session-id])]
+    (let [session-id (get-in pane [:view :session-id])
+          action {:action :select :node-id node-id :item-ids [item-id]}]
+
       (future (try
                 (if (local-live-view? session-id view-id)
-                  (vis/focus-live-view! view-id node-id [item-id])
-                  (vis/gateway-focus-live-view! session-id view-id node-id [item-id]))
+                  (vis/view-action! view-id action)
+                  (vis/gateway-view-action! session-id view-id action))
                 (catch Throwable t
-                  (vis/notify! (str "Could not focus that row: " (ex-message t)) :level :error)))))
+                  (vis/notify! (str "Could not select that row: " (ex-message t)) :level :error)))))
     true))
 
 (defn- activate-live-region!
@@ -784,7 +784,7 @@
         true)
 
     :live-focus
-    (do (focus-live-row! db hit) true)
+    (do (select-live-row! db hit) true)
 
     :activity-focus
     (do (state/dispatch [:activity-focus (:view-id hit) (:item-id hit)])
@@ -816,9 +816,12 @@
           session-id (get-in pane [:view :session-id])
           local? (local-live-view? session-id view-id)]
 
-      (try (if local?
-             (vis/interrupt-live-view! view-id note)
-             (vis/gateway-interrupt-live-view! session-id view-id note))
+      (try (let [action (cond-> {:action :interrupt}
+                          (some? note)
+                          (assoc :note note))]
+             (if local?
+               (vis/view-action! view-id action)
+               (vis/gateway-view-action! session-id view-id action)))
            (catch Throwable t
              (vis/notify! (str "Could not stop the view: " (ex-message t)) :level :error))))
     true))

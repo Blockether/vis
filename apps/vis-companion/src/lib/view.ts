@@ -10,6 +10,24 @@ export const VIEW_EVENT_TYPES = [VIEW_OPEN_EVENT, VIEW_PATCH_EVENT, VIEW_CLOSE_E
 
 export type ViewKind = (typeof VIEW_KINDS)[number];
 
+export const VIEW_ACTIONS = ['cancel', 'interrupt', 'select', 'submit'] as const;
+export type ViewActionName = (typeof VIEW_ACTIONS)[number];
+export type ViewAction =
+  | { action: 'submit'; values: Record<string, unknown> }
+  | { action: 'cancel' }
+  | { action: 'select'; node_id: string; item_ids: string[] }
+  | { action: 'interrupt'; note?: string };
+
+export type ViewActionOutcome = {
+  action: ViewActionName;
+  view_id: string;
+  is_accepted: boolean;
+  errors?: Record<string, string>;
+  reason?: string;
+  node_id?: string;
+  item_ids?: string[];
+};
+
 /** Read the CLOSED capability kind without accepting an arbitrary string. */
 export function viewKind(event: SseEvent): ViewKind | null {
   return event.kind === 'input' || event.kind === 'live' ? event.kind : null;

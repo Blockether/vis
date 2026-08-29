@@ -124,13 +124,6 @@ export type HumanInputValue = string | string[] | boolean | number;
 
 export type HumanInputValues = Record<string, HumanInputValue>;
 
-/** `POST .../actions/submit` — the engine's verdict, not the app's. */
-export interface HumanInputOutcome {
-  is_accepted: boolean;
-  request_id: string;
-  /** Field id -> message. Present only when the answer was REJECTED. */
-  errors?: Record<string, string>;
-}
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)

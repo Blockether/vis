@@ -301,19 +301,25 @@ describe('focusing a table row', () => {
     expect(row.getAttribute('aria-selected')).toBe('true');
   });
 
-  it('sends the row through the gateway rather than keeping selection in the component', () => {
+  it('sends the row through the shared View action instead of keeping private selection', () => {
     const view = focusableView();
-    const focusLiveView = vi.fn(async () => ({
-      focused_ids: ['db-2'],
+    const viewAction = vi.fn(async () => ({
+      action: 'select' as const,
+      is_accepted: true,
+      item_ids: ['db-2'],
       node_id: 'hosts',
       view_id: view.id,
     }));
-    const client = { focusLiveView } as unknown as GatewayClient;
+    const client = { viewAction } as unknown as GatewayClient;
 
     render(<LiveViewList views={[view]} client={client} sid="session-1" />);
     fireEvent.click(screen.getByRole('button', { name: 'Focus db-2' }));
 
-    expect(focusLiveView).toHaveBeenCalledWith('session-1', view.id, 'hosts', ['db-2']);
+    expect(viewAction).toHaveBeenCalledWith('session-1', view.id, {
+      action: 'select',
+      node_id: 'hosts',
+      item_ids: ['db-2'],
+    });
   });
 });
 

@@ -100,7 +100,8 @@
                  (is (some? (gw-hi/input-view-of sid rid)))
                  (is (nil? (gw-hi/input-view-of (str (random-uuid)) rid))))
                (testing "the app's answer releases the blocked extension"
-                 (is (= {:is-accepted true} (gw-hi/submit! rid {"confirm" true})))
+                 (is (true? (:is-accepted
+                              (gw-hi/action! rid {:action :submit :values {"confirm" true}}))))
                  (let [result (deref answer 2000 ::timeout)]
                    (is (true? (:is-submitted result)))
                    (is (= true (get-in result [:values "confirm"])))))
@@ -129,12 +130,12 @@
 
     (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
          (testing "validation is the engine's, so app and TUI accept the same answers"
-           (let [outcome (gw-hi/submit! rid {"key" "   "})]
+           (let [outcome (gw-hi/action! rid {:action :submit :values {"key" "   "}})]
              (is (false? (:is-accepted outcome)))
              (is (contains? (:errors outcome) "key")))
            (is (some? (gw-hi/input-view-of sid rid))))
          (testing "cancelling releases the waiter"
-           (is (true? (gw-hi/cancel! rid)))
+           (is (true? (:is-accepted (gw-hi/action! rid {:action :cancel}))))
            (is (false? (:is-submitted (deref answer 2000 ::timeout))))
            (is (nil? (gw-hi/input-view-of sid rid))))
          (finally (hi/cancel! rid "cleanup")))))
@@ -202,9 +203,9 @@
 
 ;; The endpoints the phone actually calls
 ;;
-;; `gw-hi/submit!` is the in-process seam; the app only ever sees the HTTP
-;; handlers and their JSON. These drive the real ring handlers so a routing,
-;; path-param or encoding slip cannot hide behind a green in-process test.
+;; `gw-hi/action!` is the in-process seam; the app only ever sees the shared HTTP
+;; handler and its JSON. These drive the real ring handler so a routing, path-param
+;; or encoding slip cannot hide behind a green in-process test.
 
 (defn- rv
   "Resolve a (private) handler var in the gateway server namespace."
@@ -216,6 +217,11 @@
   (java.io.ByteArrayInputStream. (.getBytes ^String (wire/json-str m) "UTF-8")))
 
 (defn- json-body [response] (wire/parse-json (:body response)))
+
+(defn- view-action-response
+  "Apply one action through the exact shared HTTP handler the Companion calls."
+  [sid view-id action]
+  ((rv 'view-action-handler) {:path-params {:sid sid :view-id view-id} :body (body-stream action)}))
 
 (deftest the-app-answers-a-parked-run-over-http-test
   (gw-hi/install!)
@@ -247,30 +253,29 @@
              (is (= ["note"] (mapv #(get % "id") (get request "fields"))))
              (is (true? (get-in request ["fields" 0 "is_required"])))))
          (testing "the engine's validation answers the app, and the run stays parked"
-           (let [body (json-body ((rv 'submit-input-view-handler)
-                                   {:path-params {:sid sid :request-id rid}
-                                    :body (body-stream {:values {"note" "   "}})}))]
+           (let [body (json-body
+                        (view-action-response sid rid {:action "submit" :values {"note" "   "}}))]
              (is (false? (get body "is_accepted")))
-             (is (= rid (get body "request_id")))
+             (is (= "submit" (get body "action")))
+             (is (= rid (get body "view_id")))
              (is (contains? (get body "errors") "note"))
              (is (some? (gw-hi/input-view-of sid rid)))))
-         (testing "another session may not answer this request"
+         (testing "another session may not answer this View"
            (is (= 404
-                  (:status ((rv 'submit-input-view-handler)
-                             {:path-params {:sid (str (random-uuid)) :request-id rid}
-                              :body (body-stream {:values {"note" "ship"}})})))))
+                  (:status (view-action-response (str (random-uuid))
+                                                 rid
+                                                 {:action "submit" :values {"note" "ship"}})))))
          (testing "an accepted answer releases the blocked extension"
-           (let [body (json-body ((rv 'submit-input-view-handler)
-                                   {:path-params {:sid sid :request-id rid}
-                                    :body (body-stream {:values {"note" "ship it"}})}))]
+           (let [body
+                 (json-body
+                   (view-action-response sid rid {:action "submit" :values {"note" "ship it"}}))]
              (is (true? (get body "is_accepted")))
+             (is (= "submit" (get body "action")))
              (is (= "ship it" (get-in (deref answer 2000 ::timeout) [:values "note"])))))
          (testing "a settled request is gone from the snapshot and answerable no more"
            (is (empty? (get (json-body ((rv 'list-input-views-handler) {:path-params {:sid sid}}))
                             "requests")))
-           (is (= 404
-                  (:status ((rv 'cancel-input-view-handler)
-                             {:path-params {:sid sid :request-id rid}})))))
+           (is (= 404 (:status (view-action-response sid rid {:action "cancel"})))))
          (finally (hi/cancel! rid "cleanup")))))
 
 (deftest the-app-cancels-a-parked-run-over-http-test
@@ -285,10 +290,10 @@
         (future (hi/request! (spec :id rid :session-id sid)))]
 
     (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
-         (let [body (json-body ((rv 'cancel-input-view-handler)
-                                 {:path-params {:sid sid :request-id rid}}))]
-           (is (true? (get body "is_cancelled")))
-           (is (= rid (get body "request_id")))
+         (let [body (json-body (view-action-response sid rid {:action "cancel"}))]
+           (is (true? (get body "is_accepted")))
+           (is (= "cancel" (get body "action")))
+           (is (= rid (get body "view_id")))
            (is (false? (:is-submitted (deref answer 2000 ::timeout))))
            (is (empty? (gw-hi/input-views sid))))
          (finally (hi/cancel! rid "cleanup")))))
@@ -387,7 +392,7 @@
                    hi-spec/group-type)
              (node-types (:fields view)))))))
 
-(deftest the-companion-urls-route-to-the-input-view-handlers-test
+(deftest the-companion-urls-route-to-the-shared-view-action-handler-test
   (testing "the URLs `gateway.ts` builds are the URLs this router serves"
     (let [match-by-path
           (requiring-resolve 'reitit.core/match-by-path)
@@ -411,16 +416,11 @@
 
       (is (= @(rv 'list-input-views-handler)
              (get-in (match (str "/v1/sessions/" sid "/views/input")) [:data :get :handler])))
-      (is (= @(rv 'submit-input-view-handler)
-             (get-in (match (str "/v1/sessions/" sid "/views/input/" encoded "/actions/submit"))
-                     [:data :post :handler])))
-      (is (= @(rv 'cancel-input-view-handler)
-             (get-in (match (str "/v1/sessions/" sid "/views/input/" encoded "/actions/cancel"))
-                     [:data :post :handler])))
-      (testing "and hand the handlers the ids they answer with"
-        (let [m (match (str "/v1/sessions/" sid "/views/input/" encoded "/actions/submit"))]
+      (let [m (match (str "/v1/sessions/" sid "/views/" encoded "/actions"))]
+        (is (= @(rv 'view-action-handler) (get-in m [:data :post :handler])))
+        (testing "and hand the shared handler the View id it acts on"
           (is (= sid (str (get-in m [:path-params :sid]))))
-          (is (= rid (get-in m [:path-params :request-id]))))))))
+          (is (= rid (get-in m [:path-params :view-id]))))))))
 
 (deftest a-hostile-body-cannot-park-or-settle-a-run-test
   (gw-hi/install!)
@@ -437,41 +437,39 @@
                                    :session-id sid
                                    :fields [{:id "note" :type "plaintext" :label "Note"}])))]
 
-    (try
-      (is (await-true #(some? (gw-hi/input-view-of sid rid))))
-      (testing "a malformed body is a 400 — never a 500, never a settled run"
-        (doseq [body [{:values "text"} {:values [1 2]} {:values 42} {:values nil} {}]]
-          (is (= 400
-                 (:status ((rv 'submit-input-view-handler)
-                            {:path-params {:sid sid :request-id rid} :body (body-stream body)})))))
-        (is (= 400
-               (:status ((rv 'submit-input-view-handler)
-                          {:path-params {:sid sid :request-id rid}}))))
-        (is (= 400
-               (:status ((rv 'submit-input-view-handler)
-                          {:path-params {:sid sid :request-id rid}
-                           :body (java.io.ByteArrayInputStream. (.getBytes "not json" "UTF-8"))}))))
-        (is (some? (gw-hi/input-view-of sid rid))))
-      (testing "a structured value is rejected, not stringified into the answer"
-        (let [body (json-body ((rv 'submit-input-view-handler)
-                                {:path-params {:sid sid :request-id rid}
-                                 :body (body-stream {:values {"note" {"a" 1}}})}))]
-          (is (false? (get body "is_accepted")))
-          (is (= "must be text" (get-in body ["errors" "note"])))
-          (is (some? (gw-hi/input-view-of sid rid)))))
-      (testing "the escaped id still routes, and the same handler answers it"
-        (let [match ((requiring-resolve 'reitit.core/match-by-path)
-                      ((rv 'router) "token" [])
-                      (str "/v1/sessions/" sid "/views/input/req%2Fone%20two/actions/submit"))]
-          (is (= rid (get-in match [:path-params :request-id])))
-          (is (= @(rv 'submit-input-view-handler) (get-in match [:data :post :handler])))
-          (is (true? (get (json-body ((rv 'submit-input-view-handler)
-                                       {:path-params (:path-params match)
-                                        :body (body-stream {:values {"note" "typed"}})}))
-                          "is_accepted")))))
-      (is (= {:is-submitted true :reason "submitted" :request-id rid :values {"note" "typed"}}
-             (deref answer 2000 ::stuck)))
-      (finally (hi/cancel! rid)))))
+    (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
+         (testing "a malformed body is a 400 — never a 500, never a settled run"
+           (doseq [body [{:action "submit" :values "text"} {:action "submit" :values [1 2]}
+                         {:action "submit" :values 42} {:action "submit" :values nil}
+                         {:values {"note" "missing action"}} {:action "unknown"} nil]]
+             (is (= 400 (:status (view-action-response sid rid body)))))
+           (is (= 400 (:status ((rv 'view-action-handler) {:path-params {:sid sid :view-id rid}}))))
+           (is (= 400
+                  (:status ((rv 'view-action-handler)
+                             {:path-params {:sid sid :view-id rid}
+                              :body (java.io.ByteArrayInputStream. (.getBytes "not json"
+                                                                              "UTF-8"))}))))
+           (is (some? (gw-hi/input-view-of sid rid))))
+         (testing "a structured value is rejected, not stringified into the answer"
+           (let [body (json-body
+                        (view-action-response sid rid {:action "submit" :values {"note" {"a" 1}}}))]
+             (is (false? (get body "is_accepted")))
+             (is (= "must be text" (get-in body ["errors" "note"])))
+             (is (some? (gw-hi/input-view-of sid rid)))))
+         (testing "the escaped id still routes, and the same handler answers it"
+           (let [match ((requiring-resolve 'reitit.core/match-by-path)
+                         ((rv 'router) "token" [])
+                         (str "/v1/sessions/" sid "/views/req%2Fone%20two/actions"))]
+             (is (= rid (get-in match [:path-params :view-id])))
+             (is (= @(rv 'view-action-handler) (get-in match [:data :post :handler])))
+             (is (true? (get (json-body ((rv 'view-action-handler)
+                                          {:path-params (:path-params match)
+                                           :body (body-stream {:action "submit"
+                                                               :values {"note" "typed"}})}))
+                             "is_accepted")))))
+         (is (= {:is-submitted true :reason "submitted" :request-id rid :values {"note" "typed"}}
+                (deref answer 2000 ::stuck)))
+         (finally (hi/cancel! rid)))))
 
 (deftest a-storm-of-answers-settles-a-parked-run-exactly-once-test
   (gw-hi/install!)
@@ -497,13 +495,17 @@
             (java.util.concurrent.CountDownLatch. 1)
 
             racers
-            (doall (concat (for [i (range 6)]
-                             (future (.await gate)
-                                     [:submit (gw-hi/submit! rid {"note" (str "v" i)})]))
-                           (for [_ (range 3)]
-                             (future (.await gate) [:blank (gw-hi/submit! rid {"note" "   "})]))
-                           (for [_ (range 3)]
-                             (future (.await gate) [:cancel (gw-hi/cancel! rid)]))))
+            (doall
+              (concat
+                (for [i (range 6)]
+                  (future (.await gate)
+                          [:submit
+                           (gw-hi/action! rid {:action :submit :values {"note" (str "v" i)}})]))
+                (for [_ (range 3)]
+                  (future (.await gate)
+                          [:blank (gw-hi/action! rid {:action :submit :values {"note" "   "}})]))
+                (for [_ (range 3)]
+                  (future (.await gate) [:cancel (gw-hi/action! rid {:action :cancel})]))))
 
             _
             (.countDown gate)
@@ -512,8 +514,8 @@
             (mapv deref racers)
 
             winners
-            (filterv (fn [[kind outcome]]
-                       (if (= :cancel kind) (true? outcome) (true? (:is-accepted outcome))))
+            (filterv (fn [[_ outcome]]
+                       (true? (:is-accepted outcome)))
               results)
 
             final
@@ -528,11 +530,11 @@
           (is (= 1 (count (events-of seen "view.open" rid))))
           (is (empty? (gw-hi/input-views sid)))
           (is (nil? (gw-hi/input-view-of sid rid)))
-          (is (= {:is-accepted false :reason "unknown"} (gw-hi/submit! rid {"note" "late"})))
+          (is (= {:action :submit :view-id rid :is-accepted false :reason "unknown"}
+                 (gw-hi/action! rid {:action :submit :values {"note" "late"}})))
           (is (= 404
-                 (:status ((rv 'submit-input-view-handler)
-                            {:path-params {:sid sid :request-id rid}
-                             :body (body-stream {:values {"note" "late"}})})))))))))
+                 (:status
+                   (view-action-response sid rid {:action "submit" :values {"note" "late"}})))))))))
 
 (deftest a-request-that-refuses-cancellation-refuses-the-app-too-test
   (gw-hi/install!)
@@ -550,17 +552,16 @@
 
     (try (is (await-true #(some? (gw-hi/input-view-of sid rid))))
          (testing "the app is refused the escape hatch the TUI dialog also denies"
-           (let [response ((rv 'cancel-input-view-handler)
-                            {:path-params {:sid sid :request-id rid}})]
+           (let [response (view-action-response sid rid {:action "cancel"})]
              (is (= 409 (:status response)))
-             (is (= "input-view-not-cancellable" (get-in (json-body response) ["error" "type"])))
+             (is (= "view-action-refused" (get-in (json-body response) ["error" "type"])))
              (is (false? (:is-cancellable (gw-hi/input-view-of sid rid))))
              (is (some? (gw-hi/input-view-of sid rid)))))
          (testing "answering it is still the way out"
-           (is (true? (get (json-body ((rv 'submit-input-view-handler)
-                                        {:path-params {:sid sid :request-id rid}
-                                         :body (body-stream {:values {"note" "yes"}})}))
-                           "is_accepted")))
+           (is (true? (get
+                        (json-body
+                          (view-action-response sid rid {:action "submit" :values {"note" "yes"}}))
+                        "is_accepted")))
            (is (true? (:is-submitted (deref answer 2000 ::stuck)))))
          (finally (hi/cancel! rid)))))
 
@@ -768,20 +769,20 @@
                  (is (= ["line 6" "line 7" "line 8"] (get body "lines")))))
              (testing "a view id belonging to another session is not stoppable from here"
                (is (= 404
-                      (:status ((rv 'interrupt-live-view-handler)
-                                 {:path-params {:sid (str (random-uuid)) :view-id view-id}})))))
-             (testing "the app's one button stops it, carrying the words typed with the stop"
-               (let [body (json-body ((rv 'interrupt-live-view-handler)
-                                       {:path-params {:sid sid :view-id view-id}
-                                        :body (body-stream {:note "wrong subnet"})}))]
-                 (is (true? (get body "is_interrupted")))
+                      (:status
+                        (view-action-response (str (random-uuid)) view-id {:action "interrupt"})))))
+             (testing "the app's stop action carries the words typed with it"
+               (let [body (json-body (view-action-response sid
+                                                           view-id
+                                                           {:action "interrupt"
+                                                            :note "wrong subnet"}))]
+                 (is (true? (get body "is_accepted")))
+                 (is (= "interrupt" (get body "action")))
                  (is (= view-id (get body "view_id")))
                  (is (nil? (gw-hi/live-view-of sid view-id)))
                  (is (empty? (gw-hi/live-views sid)))))
              (testing "a view that already ended answers 404 instead of pretending to stop again"
-               (is (= 404
-                      (:status ((rv 'interrupt-live-view-handler)
-                                 {:path-params {:sid sid :view-id view-id}})))))
+               (is (= 404 (:status (view-action-response sid view-id {:action "interrupt"})))))
              (testing "and its record still answers, which is what makes a finished log readable"
                (let [body (json-body ((rv 'live-view-log-handler)
                                        {:path-params {:sid sid :view-id view-id :node-id "tail"}}))]
@@ -790,8 +791,8 @@
              (finally (hi/close-live! view-id)))))))
 
 ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: tapping a CI job
-;; had no engine action, so the visible focus and the log could never follow the tap.
-(deftest the-app-focuses-a-live-table-row-over-http-test
+;; had no engine action, so the visible selection and the log could never follow the tap.
+(deftest the-app-selects-a-live-table-row-over-http-test
   (gw-hi/install!)
   (let [sid
         (str (random-uuid))
@@ -809,30 +810,33 @@
         view-id
         (:id view)]
 
-    (try (testing "the focused ids become ordinary durable live state"
-           (let [response
-                 ((rv 'focus-live-view-handler)
-                   {:path-params {:sid sid :view-id view-id}
-                    :body (body-stream {:node_id "jobs" :item_ids ["b"]})})
+    (try
+      (testing "the selected ids become ordinary durable live state"
+        (let [response
+              (view-action-response sid view-id {:action "select" :node_id "jobs" :item_ids ["b"]})
 
-                 body
-                 (json-body response)]
+              body
+              (json-body response)]
 
-             (is (= 200 (:status response)))
-             (is (= ["b"] (get body "focused_ids")))
-             (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :focused-ids])))))
-         (testing "a stale row id is refused without moving the focus"
-           (let [response ((rv 'focus-live-view-handler)
-                            {:path-params {:sid sid :view-id view-id}
-                             :body (body-stream {:node_id "jobs" :item_ids ["missing"]})})]
-             (is (= 400 (:status response)))
-             (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :focused-ids])))))
-         (testing "another session cannot focus this view"
-           (is (= 404
-                  (:status ((rv 'focus-live-view-handler)
-                             {:path-params {:sid (str (random-uuid)) :view-id view-id}
-                              :body (body-stream {:node_id "jobs" :item_ids ["a"]})})))))
-         (finally (hi/close-live! view-id)))))
+          (is (= 200 (:status response)))
+          (is (true? (get body "is_accepted")))
+          (is (= "select" (get body "action")))
+          (is (= ["b"] (get body "item_ids")))
+          (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :focused-ids])))))
+      (testing "a stale row id is refused without moving the selection"
+        (let [response (view-action-response
+                         sid
+                         view-id
+                         {:action "select" :node_id "jobs" :item_ids ["missing"]})]
+          (is (= 400 (:status response)))
+          (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :focused-ids])))))
+      (testing "another session cannot select in this view"
+        (is (= 404
+               (:status (view-action-response
+                          (str (random-uuid))
+                          view-id
+                          {:action "select" :node_id "jobs" :item_ids ["a"]})))))
+      (finally (hi/close-live! view-id)))))
 
 (deftest a-live-view-is-always-stoppable-and-the-stop-carries-its-words-test
   (gw-hi/install!)
@@ -853,11 +857,13 @@
                 (:id view)]
 
             (try (testing "no view refuses the stop: it asks nothing, so nothing is left unanswered"
-                   (let [body (json-body ((rv 'interrupt-live-view-handler)
-                                           {:path-params {:sid sid :view-id view-id}
-                                            :body (body-stream
-                                                    {:note "wrong subnet — I will re-run it"})}))]
-                     (is (true? (get body "is_interrupted")))
+                   (let [body (json-body (view-action-response
+                                           sid
+                                           view-id
+                                           {:action "interrupt"
+                                            :note "wrong subnet — I will re-run it"}))]
+                     (is (true? (get body "is_accepted")))
+                     (is (= "interrupt" (get body "action")))
                      (is (nil? (gw-hi/live-view-of sid view-id)))))
                  (testing "and the run reads WHO stopped it, and why, before it reads the picture"
                    (is (await-true #(seq (live-events-of seen gw-hi/view-close-event view-id))))
@@ -876,19 +882,18 @@
                                      :session-id sid
                                      :nodes [{:id "now" :type "status" :text "Sweeping"}]}))]
 
-            (try (testing
-                   "a stop sent with no body at all still lands, and still says a person sent it"
-                   (is (true? (get (json-body ((rv 'interrupt-live-view-handler)
-                                                {:path-params {:sid sid :view-id bare}}))
-                                   "is_interrupted")))
+            (try (testing "a stop with no note still says a person sent it"
+                   (let [body (json-body (view-action-response sid bare {:action "interrupt"}))]
+                     (is (true? (get body "is_accepted")))
+                     (is (= "interrupt" (get body "action"))))
                    (is (await-true #(seq (live-events-of seen gw-hi/view-close-event bare))))
                    (let [[[_ event]] (live-events-of seen gw-hi/view-close-event bare)]
                      (is (true? (get-in event ["result" "is_from_human"])))
                      (is (nil? (get-in event ["result" "note"])))))
                  (finally (hi/close-live! bare)))))))))
 
-(deftest the-companion-live-urls-route-to-the-live-handlers-test
-  (testing "the URLs a client builds for a live view are the URLs this router serves"
+(deftest view-actions-use-one-kind-independent-route-test
+  (testing "a View kind is policy, not part of the action resource address"
     (let [match-by-path
           (requiring-resolve 'reitit.core/match-by-path)
 
@@ -903,25 +908,24 @@
 
           match
           (fn [path]
-            (match-by-path router path))]
+            (match-by-path router path))
 
-      (is (= @(rv 'list-live-views-handler)
-             (get-in (match (str "/v1/sessions/" sid "/views/live")) [:data :get :handler])))
-      (is (= @(rv 'live-view-log-handler)
-             (get-in (match (str "/v1/sessions/" sid "/views/live/" view-id "/log/tail"))
-                     [:data :get :handler])))
-      (is (= @(rv 'interrupt-live-view-handler)
-             (get-in (match (str "/v1/sessions/" sid "/views/live/" view-id "/actions/interrupt"))
-                     [:data :post :handler])))
-      (is (= @(rv 'focus-live-view-handler)
-             (get-in (match (str "/v1/sessions/" sid "/views/live/" view-id "/actions/focus"))
-                     [:data :post :handler])))
-      ;; `live` is a STATIC segment where a request id also fits: a form route that
-      ;; started resolving to a live handler would answer the wrong run entirely.
-      (testing "and a form route is still a form route"
-        (is (= @(rv 'submit-input-view-handler)
-               (get-in (match (str "/v1/sessions/" sid "/views/input/req%201/actions/submit"))
-                       [:data :post :handler])))))))
+          action-handler
+          (rv 'view-action-handler)
+
+          action-match
+          (match (str "/v1/sessions/" sid "/views/" view-id "/actions"))]
+
+      (is (some? action-handler))
+      (is (some? action-match))
+      (is (= (some-> action-handler
+                     deref)
+             (get-in action-match [:data :post :handler])))
+      (testing "the obsolete kind/action-specific endpoints are gone"
+        (is (nil? (match (str "/v1/sessions/" sid "/views/input/" view-id "/actions/submit"))))
+        (is (nil? (match (str "/v1/sessions/" sid "/views/live/" view-id "/actions/focus"))))
+        (is (nil? (match
+                    (str "/v1/sessions/" sid "/views/live/" view-id "/actions/interrupt"))))))))
 
 ;; The companion's own unit tests parse `live-view.fixture.json`, exactly as they
 ;; parse the form fixture above. That file is not written by hand either: it is

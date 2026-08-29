@@ -35,20 +35,20 @@
   "Wire protocol number THIS build speaks. Monotonic; bump on every BREAKING
    gateway HTTP/SSE change.
 
-   4 — Human Input and live displays share `view.open`, `view.patch`, and
-   `view.close`; the required `kind` field selects input or live policy. Their REST
-   resources moved under `/v1/sessions/:sid/views/{input,live}`."
-  4)
+   5 — every operator command uses the closed `view.action` contract and the one
+   `/v1/sessions/:sid/views/:view-id/actions` resource. View kind is policy carried
+   by the open View, never encoded into an action endpoint."
+  5)
 
 (def min-client-protocol
-  "Oldest CLIENT protocol this gateway serves. Protocol 4 is the first client that
-   understands the shared View lifecycle and routes."
-  4)
+  "Oldest CLIENT protocol this gateway serves. Protocol 5 is the first client that
+   sends every operator command through the shared View action resource."
+  5)
 
 (def min-gateway-protocol
   "Oldest GATEWAY protocol this client accepts: the mirror of
    [[min-client-protocol]]."
-  4)
+  5)
 
 (def protocol-header "Request header carrying the client's own protocol number." "x-vis-protocol")
 

@@ -24,6 +24,20 @@
   "Wire name -> lifecycle kind. Capability policy dispatches on this CLOSED set."
   {"input" :input "live" :live})
 
+(def view-actions
+  "Wire name -> operator action. Every surface sends this CLOSED vocabulary
+   through one `view.action` seam; the View kind and addressed node decide whether
+   the action is supported."
+  {"cancel" :cancel "interrupt" :interrupt "select" :select "submit" :submit})
+
+(def view-action-key-sets
+  "Every key one operator action may carry, selected by `:action`. Keeping these
+   maps closed prevents a misspelled value or selection address from disappearing."
+  {:submit #{:action :values}
+   :cancel #{:action}
+   :select #{:action :node-id :item-ids}
+   :interrupt #{:action :note}})
+
 (def field-types
   "Wire type name -> internal field type. A CLOSED set: an unknown name is
    refused with these listed, never minted into a keyword the surfaces cannot
@@ -350,6 +364,7 @@
    a Python reader gets a rendering of them, never a transcription."
   []
   {:view-kinds (vec (sort (keys view-kinds)))
+   :view-actions (vec (sort (keys view-actions)))
    :field-types (vec (sort (keys field-types)))
    :text-types (mapv clojure.core/name (sort text-types))
    :choice-types (mapv clojure.core/name (sort choice-types))

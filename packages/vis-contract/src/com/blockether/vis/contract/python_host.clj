@@ -193,10 +193,12 @@
 ;; The vocabulary the ENGINE hands in. Specced here because the contract is what
 ;; the package trusts: a surface that drifts is caught rendering the document, not
 ;; by an extension author reading a field type Python has never heard of.
+(s/def :view/view-actions (s/coll-of string? :kind vector? :min-count 1))
 (s/def :contract/view
-  (s/keys :req-un [:view/view-kinds :view/field-types :view/text-types :view/choice-types
-                   :view/secret-types :view/decor-types :view/group-type :view/group-directions
-                   :view/otp :view/range :view/secret-handle-prefix :view/live]))
+  (s/keys :req-un [:view/view-kinds :view/view-actions :view/field-types :view/text-types
+                   :view/choice-types :view/secret-types :view/decor-types :view/group-type
+                   :view/group-directions :view/otp :view/range :view/secret-handle-prefix
+                   :view/live]))
 
 (defn- op->json
   [{:op/keys [name global arity summary outside refusal]}]
@@ -209,14 +211,15 @@
     (assoc "refusal" refusal)))
 
 (defn- view->json
-  [{:keys [view-kinds field-types text-types choice-types secret-types decor-types group-type
-           group-directions otp range secret-handle-prefix live]
+  [{:keys [view-kinds view-actions field-types text-types choice-types secret-types decor-types
+           group-type group-directions otp range secret-handle-prefix live]
     :as vocabulary}]
   (when-not (s/valid? :contract/view vocabulary)
     (throw (ex-info "the View vocabulary handed to the contract is not one"
                     {:type :vis/contract-invalid
                      :explain (s/explain-str :contract/view vocabulary)})))
   (array-map "kinds" view-kinds
+             "actions" view-actions
              "field_types" field-types
              "text_types" text-types
              "choice_types" choice-types

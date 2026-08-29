@@ -3,8 +3,8 @@
    typed human-input pause primitive (`com.blockether.vis.internal.view`).
 
    The engine parks an extension thread and publishes a request VIEW; this
-   namespace turns that view into a form the operator can fill in, and hands
-   the collected values back through `submit-human-input!` / `cancel-human-input!`.
+   namespace turns that view into a form the operator can fill in, and sends
+   `submit` / `cancel` through the shared `view-action!` seam.
 
    Everything except [[paint!]] is PURE: [[init-form]] builds the form model
    from a request view, [[handle-event]] is a reducer over one normalized
@@ -234,7 +234,7 @@
           not-empty))
 
 (defn submit-values
-  "The values map handed to `submit-human-input!` — keyed by field id."
+  "The values map carried by a `submit` View action — keyed by field id."
   [form]
   (:values form))
 

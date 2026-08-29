@@ -113,7 +113,7 @@ export function HumanInputPrompt({
     setBusy(true);
     setError(null);
     client
-      .submitHumanInput(sid, request.id, form.values)
+      .viewAction(sid, request.id, { action: 'submit', values: form.values })
       .then((outcome) => {
         if (outcome?.is_accepted) {
           // The close event drops it too; doing it here as well keeps the
@@ -136,7 +136,7 @@ export function HumanInputPrompt({
     setBusy(true);
     setError(null);
     client
-      .cancelHumanInput(sid, request.id)
+      .viewAction(sid, request.id, { action: 'cancel' })
       .then(() => drop(request.id))
       .catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : 'Could not cancel this request.');

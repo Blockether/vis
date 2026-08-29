@@ -4,14 +4,15 @@
    A View has a CLOSED semantic document, a stable id, and the same `open`, `patch`
    and `close` rail on every channel. Its `:kind` declares the capability policy:
 
-   - `:input` is Human Input — a typed form that BLOCKS until [[submit!]],
-     [[cancel!]], timeout, or interruption;
-   - `:live` is a non-blocking picture driven by its producer and optionally
-     interrupted by the operator.
+   - `:input` is Human Input — a typed form that BLOCKS until a `submit` or
+     `cancel` action, timeout, or interruption;
+   - `:live` is a non-blocking picture driven by its producer and optionally ended
+     by an `interrupt` action.
 
    The distinction belongs in policy, not transport. Both kinds share the pending
-   registry and publish `:view/open` / `:view/patch` / `:view/close` envelopes;
-   renderers dispatch on `:kind` and never infer behavior from an event name.
+   registry, publish `:view/open` / `:view/patch` / `:view/close` envelopes, and
+   receive operator intent through [[action!]]. Renderers dispatch on `:kind` and
+   never infer behavior from an event name or resource path.
 
    This namespace PARSES extension data against the CLOSED vocabulary declared by
    [[com.blockether.vis.internal.view.spec]]. Input answers are coerced and checked
@@ -150,6 +151,18 @@
   (throw (ex-info (str "Invalid input View answer for " request-id ": " message)
                   {:type :vis/view-invalid-answer :request-id request-id :reason message})))
 
+(defn- invalid-view-action!
+  [view-id message]
+  (throw (ex-info (str "Invalid View action for " view-id ": " message)
+                  {:type :vis/view-invalid-action :view-id (str view-id) :reason message})))
+
+(defn- unsupported-view-action!
+  [view-id kind action]
+  (throw
+    (ex-info
+      (str "View action " (name action) " is not supported by " (name kind) " Views")
+      {:type :vis/view-action-not-supported :view-id (str view-id) :kind kind :action action})))
+
 (defn- checked-field
   "`field` once it satisfies the declared contract, else a refusal naming it. The
    parsing below refuses bad INPUT key by key; this refuses a normalized form no
@@ -241,6 +254,10 @@
    `channel_ids` — a one-channel convenience, and the only wire key with no
    counterpart in the normalized form."
   (conj (wire-keys view-spec/request-keys) "channel_id"))
+
+(def ^:private view-action-decl-keys
+  "Every wire/key spelling accepted for each closed operator action."
+  (update-vals view-spec/view-action-key-sets wire-keys))
 
 (defn- accepted-spelling?
   "Two spellings, one meaning: the snake_case STRING a Python/JSON spec writes,
@@ -2155,6 +2172,13 @@
             deref)
     (request->view entry)))
 
+(defn open-view
+  "The open View `view-id` as `{:kind … :view …}`, or nil. The descriptor is for
+   capability policy and routing; renderers still receive the document itself."
+  [view-id]
+  (when-let [entry (get @pending (str view-id))]
+    {:kind (:kind entry) :view (entry->view entry)}))
+
 ;; Registry
 
 (defn pending-requests
@@ -2316,6 +2340,116 @@
    (if (false? (:is-cancellable (get @pending request-id)))
      false
      (force-cancel! request-id reason))))
+
+(defn- normalize-view-action
+  "Normalize one closed operator action written with wire strings or engine keys."
+  [view-id raw]
+  (when-not (map? raw) (invalid-view-action! view-id "an action must be an object"))
+  (let [action
+        (live-term #(invalid-view-action! view-id %)
+                   ":action"
+                   view-spec/view-actions
+                   (pick* raw :action))
+
+        fail!
+        #(invalid-view-action! view-id %)]
+
+    (check-keys! (str (name action) " action") (get view-action-decl-keys action) raw fail!)
+    (case action
+      :submit
+      (let [values (pick* raw :values)]
+        (when-not (map? values) (fail! "submit values must be an object"))
+        {:action action :values values})
+
+      :cancel
+      {:action action}
+
+      :select
+      (let [node-id
+            (live-text fail! "select node_id" (pick* raw :node-id))
+
+            item-ids
+            (pick* raw :item-ids)]
+
+        (when-not (sequential? item-ids) (fail! "select item_ids must be an array"))
+        {:action action
+         :node-id node-id
+         :item-ids (mapv #(live-text fail! "each selected item id" %) item-ids)})
+
+      :interrupt
+      (let [note (pick* raw :note)]
+        (when (coll? note) (fail! "interrupt note must be text"))
+        (cond-> {:action action}
+          (some? note)
+          (assoc :note note))))))
+
+(defn action!
+  "Apply one operator action to open View `view-id` through the shared action seam.
+
+   `submit` and `cancel` are input policy; `select` and `interrupt` are live policy.
+   The action map is closed and accepts snake_case string keys or kebab keywords.
+   Every outcome carries `:action`, `:view-id`, and `:is-accepted`; malformed or
+   kind-incompatible actions are refused before they can mutate the View."
+  [view-id raw]
+  (let [view-id
+        (str view-id)
+
+        {:keys [action values node-id item-ids note]}
+        (normalize-view-action view-id raw)
+
+        entry
+        (get @pending view-id)
+
+        base
+        {:action action :view-id view-id}]
+
+    (if-not entry
+      (assoc base
+        :is-accepted false
+        :reason "unknown")
+      (let [kind
+            (:kind entry)
+
+            supported?
+            (case action
+              (:submit :cancel)
+              (= :input kind)
+
+              (:select :interrupt)
+              (= :live kind))]
+
+        (when-not supported? (unsupported-view-action! view-id kind action))
+        (case action
+          :submit
+          (merge base (submit! view-id values))
+
+          :cancel
+          (if (false? (:is-cancellable entry))
+            (assoc base
+              :is-accepted false
+              :reason "not_cancellable")
+            (let [accepted? (boolean (cancel! view-id))]
+              (cond-> (assoc base :is-accepted accepted?)
+                (not accepted?)
+                (assoc :reason "unknown"))))
+
+          :select
+          (let [patched
+                (focus-live! view-id node-id item-ids)
+
+                node
+                (first (filter #(= node-id (:id %)) (:nodes patched)))]
+
+            (assoc base
+              :is-accepted true
+              :node-id node-id
+              :item-ids (vec (:focused-ids node))))
+
+          :interrupt
+          (let [accepted? (some? (interrupt-live! view-id note))]
+            (cond-> (assoc base :is-accepted accepted?)
+              (not accepted?)
+              (assoc :reason "unknown"))))))))
 
 (defn cancel-all!
   "Cancel every pending request. Returns how many were released. Used when a

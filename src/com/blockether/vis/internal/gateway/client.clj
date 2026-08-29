@@ -1809,61 +1809,43 @@
   [sid]
   (vec (get (send-json! "GET" (str "/v1/sessions/" (enc sid) "/views/live")) "views")))
 
-(defn submit-input-view!
-  "Answer the DAEMON-side request `request-id` of `sid` with a raw
-   `field id -> value` map. Same verdict shape as the in-process
-   `view/submit!`, because the daemon runs the engine's own validation:
-   `{:is-accepted true}`, or `{:is-accepted false :errors {field-id message}}`
-   with the request still pending so the operator can fix it."
-  [sid request-id values]
-  (let [res (send-json!
-              "POST"
-              (str "/v1/sessions/" (enc sid) "/views/input/" (enc request-id) "/actions/submit")
-              {:values (or values {})})]
-    (cond-> {:is-accepted (boolean (get res "is_accepted"))}
-      (seq (get res "errors"))
-      (assoc :errors (get res "errors")))))
+(defn view-action!
+  "Apply one operator action to the DAEMON-side View `view-id` of `sid`.
 
-(defn cancel-input-view!
-  "Dismiss the DAEMON-side request `request-id` of `sid`, releasing the parked
-   run with `is_submitted false`. Returns whether it was still pending and
-   dismissable."
-  [sid request-id]
-  (boolean (get
-             (send-json!
-               "POST"
-               (str "/v1/sessions/" (enc sid) "/views/input/" (enc request-id) "/actions/cancel"))
-             "is_cancelled")))
+   `action` is the closed View map: `{:action :submit :values …}`,
+   `{:action :cancel}`, `{:action :select :node-id … :item-ids …}`, or
+   `{:action :interrupt :note …}`. Kind is resolved by the daemon from the View,
+   never encoded into this route. Returns the engine's canonical action outcome."
+  [sid view-id action]
+  (when-not (map? action)
+    (throw (ex-info "View action must be a map" {:type :vis/view-invalid-action})))
+  (let [action-name
+        (some-> (:action action)
+                name)
 
-(defn focus-live-view!
-  "Focus `item-ids` in focusable table `node-id` of the DAEMON-side live view.
-   Returns the canonical shared selection the action recorded."
-  [sid view-id node-id item-ids]
-  (let [res (send-json!
-              "POST"
-              (str "/v1/sessions/" (enc sid) "/views/live/" (enc view-id) "/actions/focus")
-              {:node_id node-id :focused_ids (vec item-ids)})]
-    {:view-id (get res "view_id")
-     :node-id (get res "node_id")
-     :focused-ids (vec (get res "focused_ids"))}))
+        _
+        (when-not action-name
+          (throw (ex-info "View action needs :action" {:type :vis/view-invalid-action})))
 
-(defn interrupt-live-view!
-  "Stop the DAEMON-side live view `view-id` of `sid`, with `note` — the comment the
-   person typed with the stop, when they typed one. Returns whether a view was
-   still open to stop.
+        res
+        (send-json! "POST"
+                    (str "/v1/sessions/" (enc sid) "/views/" (enc view-id) "/actions")
+                    (assoc action :action action-name))]
 
-   A view is ALWAYS stoppable, so a TUI watching a REMOTE session ends one exactly
-   as it ends a local one: the run resumes with an interrupted verdict that says a
-   HUMAN stopped it."
-  ([sid view-id] (interrupt-live-view! sid view-id nil))
-  ([sid view-id note]
-   (boolean (get (send-json!
-                   "POST"
-                   (str "/v1/sessions/" (enc sid) "/views/live/" (enc view-id) "/actions/interrupt")
-                   (cond-> {}
-                     (not (str/blank? (str note)))
-                     (assoc :note (str note))))
-                 "is_interrupted"))))
+    (cond-> {:action (keyword (get res "action" action-name))
+             :view-id (get res "view_id" (str view-id))
+             :is-accepted (boolean (get res "is_accepted"))}
+      (contains? res "errors")
+      (assoc :errors (get res "errors"))
+
+      (contains? res "reason")
+      (assoc :reason (get res "reason"))
+
+      (contains? res "node_id")
+      (assoc :node-id (get res "node_id"))
+
+      (contains? res "item_ids")
+      (assoc :item-ids (vec (get res "item_ids"))))))
 
 (defn reconcile-running-turns!
   "Clients do not sweep. Only the daemon may reconcile its own startup orphans."

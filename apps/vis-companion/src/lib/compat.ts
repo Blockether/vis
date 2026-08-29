@@ -16,13 +16,13 @@
 import type { GatewayHealth, GatewayProtocol } from './types';
 
 /**
- * Wire protocol number THIS app build speaks. Protocol 4 is the shared View
- * lifecycle: `view.open`, `view.patch`, `view.close`, plus the required `kind`.
+ * Wire protocol number THIS app build speaks. Protocol 5 is the shared View
+ * action resource: kind policy stays in the View instead of its URL.
  */
-export const APP_PROTOCOL = 4;
+export const APP_PROTOCOL = 5;
 
-/** Oldest gateway protocol this app accepts: the shared View contract. */
-export const APP_MIN_GATEWAY_PROTOCOL = 4;
+/** Oldest gateway protocol this app accepts: the shared View action contract. */
+export const APP_MIN_GATEWAY_PROTOCOL = 5;
 
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';
