@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { ComposerButton } from "./ui";
+import { ComposerButton, MetaButton, NewSessionButton } from "./ui";
 import { renderSessionScreen } from "../screens/session-screen-harness";
 
 /**
@@ -114,5 +114,34 @@ describe("the composer's own press", () => {
     tap(send);
 
     expect(held).toEqual(["down", "up", "press"]);
+  });
+});
+
+// Regression, WebKit issue #211179: a touch can end without the synthetic
+// `click` WKWebView normally builds. New session and the response dials then
+// waited for another interaction even though the finger had already released.
+describe("the app controls under a finger", () => {
+  it("starts a new session on a tap that never becomes a click", () => {
+    const press = vi.fn();
+    render(<NewSessionButton machine="alpha" onPress={press} />);
+    const create = screen.getByRole("button", { name: "New session on alpha" });
+
+    tap(create);
+    expect(press).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(create);
+    expect(press).toHaveBeenCalledTimes(1);
+  });
+
+  it("changes a response dial on a tap that never becomes a click", () => {
+    const press = vi.fn();
+    render(<MetaButton onClick={press}>deep</MetaButton>);
+    const dial = screen.getByRole("button", { name: "deep" });
+
+    tap(dial);
+    expect(press).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(dial);
+    expect(press).toHaveBeenCalledTimes(1);
   });
 });

@@ -92,10 +92,15 @@ export const Button = forwardRef<
     density = 'default',
     isJoined = false,
     className = '',
+    disabled = false,
+    onClick,
+    onPointerDown,
+    onPointerUp,
     ...props
   },
   ref,
 ) {
+  const tapPress = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
   // Disabled colours live PER VARIANT, not in the base class: `quiet` has to stay
   // frameless while it is busy, and a shared `disabled:border-edge` would fight it
   // on equal specificity (whoever Tailwind emits last wins).
@@ -179,7 +184,9 @@ export const Button = forwardRef<
   return (
     <button
       ref={ref}
+      disabled={disabled}
       className={`min-h-7 rounded-control border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${scale} ${joined} ${styles} ${className}`}
+      {...tapPress}
       {...props}
     />
   );
@@ -1083,6 +1090,8 @@ export function OptionRow({
 function useTapPress(
   onPress: ((event: MouseEvent<HTMLButtonElement>) => void) | undefined,
   isDisabled: boolean,
+  onPointerDown?: (event: PointerEvent<HTMLButtonElement>) => void,
+  onPointerUp?: (event: PointerEvent<HTMLButtonElement>) => void,
 ) {
   const gesture = useRef<'idle' | 'down' | 'pressed'>('idle');
   const isOver = (event: PointerEvent<HTMLButtonElement>) => {
@@ -1095,10 +1104,12 @@ function useTapPress(
     );
   };
   return {
-    down: () => {
+    onPointerDown: (event: PointerEvent<HTMLButtonElement>) => {
+      onPointerDown?.(event);
       gesture.current = 'down';
     },
-    up: (event: PointerEvent<HTMLButtonElement>) => {
+    onPointerUp: (event: PointerEvent<HTMLButtonElement>) => {
+      onPointerUp?.(event);
       // A release that did not start here is no press at all: `click` only
       // fires when one element saw both halves of the gesture.
       if (gesture.current !== 'down') return;
@@ -1111,7 +1122,7 @@ function useTapPress(
       gesture.current = 'pressed';
       onPress?.(event);
     },
-    click: (event: MouseEvent<HTMLButtonElement>) => {
+    onClick: (event: MouseEvent<HTMLButtonElement>) => {
       const isEcho = gesture.current === 'pressed';
       gesture.current = 'idle';
       if (isEcho) return;
@@ -1164,7 +1175,7 @@ export function ComposerButton({
    */
   isHolding?: boolean;
 }) {
-  const press = useTapPress(onClick, disabled);
+  const press = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
   const overlayFrame =
     surface === 'overlay'
       ? 'size-11 border border-dialog-edge shadow-[4px_4px_0_var(--dialog-shadow)]'
@@ -1196,15 +1207,7 @@ export function ComposerButton({
       type="button"
       aria-label={label}
       disabled={disabled}
-      onPointerDown={(event) => {
-        onPointerDown?.(event);
-        press.down();
-      }}
-      onPointerUp={(event) => {
-        onPointerUp?.(event);
-        press.up(event);
-      }}
-      onClick={press.click}
+      {...press}
       className={`relative grid shrink-0 place-items-center overflow-hidden rounded-control transition-[background-color,color,opacity,transform,translate,scale,rotate] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 active:scale-[0.94] motion-reduce:transition-none ${face} ${className}`}
       {...props}
     >
@@ -1235,11 +1238,18 @@ export function MetaButton({
   isPicker = false,
   className = '',
   children,
+  disabled = false,
+  onClick,
+  onPointerDown,
+  onPointerUp,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & { isPicker?: boolean }) {
+  const press = useTapPress(onClick, disabled, onPointerDown, onPointerUp);
   return (
     <button
       type="button"
+      disabled={disabled}
+      {...press}
       className={`inline-flex items-center gap-1 px-1 py-1 text-left font-mono text-chip font-semibold uppercase tracking-[0.08em] transition-colors duration-150 hover:text-accent-ink focus-visible:text-accent-ink focus-visible:outline-none motion-reduce:transition-none ${
         isPicker
           ? 'text-dialog-hint-key underline decoration-dialog-edge decoration-1 underline-offset-4 hover:decoration-accent'
