@@ -1,0 +1,21 @@
+{
+  "lang": "python",
+  "prompt": "Perform a broad architecture audit of the job lifecycle. Map the workspace, then read every text file under exactly src/, docs/, architecture-notes/, and tests/. Ignore .git and every other path; do not execute code, import project or sandbox modules, or use search as a substitute for those reads. Before the final synthesis, explicitly fold the completed research range once into a self-sufficient gist and continue from it. Call the already-bound fold_session directly as Python, without importing it or narrating the call. Use one compact paragraph for the gist while preserving all ten requested identifiers and exact values. Then give a concise synthesis naming the public entry point, validator, idempotency index, persistence boundary, dispatcher, retry constant, dead-letter sink, attempt metric, database environment key, and default database filename. This is analysis only; do not edit files.",
+  "want": {},
+  "wantnot": {},
+  "want_answer": [
+    "submit_job",
+    "validate_payload",
+    "IdempotencyIndex",
+    "JobStore",
+    "Dispatcher",
+    "MAX_ATTEMPTS",
+    "DeadLetterSink",
+    "job_attempts_total",
+    "VIS_JOB_DB",
+    "jobs.sqlite3"
+  ],
+  "want_forms": [
+    "fold_session("
+  ]
+}

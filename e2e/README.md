@@ -20,14 +20,16 @@ extensions/languages/vis-language-clojure/e2e/scenarios/<id>/   clj editing + re
 extensions/languages/vis-language-python/e2e/scenarios/<id>/    managed Python REPL
 
   <id>/
-    scenario.json   {lang, prompt, want, wantnot, want_answer?, want_tools?}
+    scenario.json   {lang, prompt, want, wantnot, want_answer?, want_tools?, want_forms?}
     files/          real files seeded into a fresh git repo per run
 ```
 
 - **want** / **wantnot** — `{path: [substring, ...]}` checks on the resulting files.
 - **want_answer** — substrings the final answer must contain (REPL / non-file tasks).
-- **want_tools** — tools that MUST have fired (e.g. `repl_eval` proves the model
-  actually used the Python REPL instead of computing by hand).
+- **want_tools** — extension tools that MUST have fired (e.g. `repl_eval` proves
+  the model actually used the Python REPL instead of computing by hand).
+- **want_forms** — source substrings that MUST occur in a top-level sandbox form
+  (e.g. `fold_session(` proves the model explicitly compacted settled research).
 
 ## Run
 

@@ -15,15 +15,18 @@ owns the scenarios that exercise its surface, beside its `test/` dir):
 
     e2e/scenarios/<id>/                                  # foundation, any language
     extensions/languages/<pack>/e2e/scenarios/<id>/      # that pack's surface
-      scenario.json   {lang, prompt, want, wantnot, want_answer?, want_tools?}
+      scenario.json   {lang, prompt, want, wantnot, want_answer?,
+                       want_tools?, want_forms?}
       files/          real files seeded into a fresh git repo before the run
 
 `want`/`wantnot` are {path: [substring, ...]} checks on the resulting files;
 `want_answer` is substrings the final answer must contain (REPL / non-file
-scenarios); `want_tools` are tools that MUST have fired (e.g. repl_eval).
+scenarios); `want_tools` are extension tools that MUST have fired (e.g.
+repl_eval); `want_forms` are source substrings that MUST occur in a top-level
+sandbox form (e.g. fold_session().
 
-Each scenario runs in its own throwaway git repo with the live working-tree source
-(`--dev`). Runs are parallel. Usage:
+Each scenario runs in its own throwaway git repo against the live working-tree
+source (`clojure -M:vis`). Runs are parallel. Usage:
 
     VIS_PROVIDER=zai-coding-plan VIS_MODEL=glm-5.2 python3 run.py [scenario-id ...]
 """
@@ -39,7 +42,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))  # <repo>/e2e
 REPO = os.path.dirname(HERE)
-VIS = os.path.join(REPO, "bin", "vis-agent")
+CLOJURE = os.environ.get("VIS_E2E_CLOJURE", "clojure")
 PROVIDER = os.environ.get("VIS_PROVIDER", "zai-coding-plan")
 MODEL = os.environ.get("VIS_MODEL", "glm-5.2")
 # Cross-validation gate: a scenario passes only if EVERY model passes it.
@@ -106,11 +109,13 @@ def run_one(job):
             subprocess.run(cmd, cwd=work, check=True)
 
         t0 = time.time()
+        exit_code = None
         try:
             p = subprocess.run(
                 [
-                    VIS,
-                    "--dev",
+                    CLOJURE,
+                    f"-J-Duser.dir={work}",
+                    "-M:vis",
                     "--full-trace-json-stream",
                     "--provider",
                     PROVIDER,
@@ -118,12 +123,13 @@ def run_one(job):
                     model,
                     sc["prompt"],
                 ],
-                cwd=work,
+                cwd=REPO,
                 capture_output=True,
                 text=True,
                 timeout=TIMEOUT,
             )
             out = p.stdout
+            exit_code = p.returncode
         except subprocess.TimeoutExpired as e:
             out = (
                 (e.stdout or b"").decode()
@@ -140,6 +146,7 @@ def run_one(job):
         forms = []
         tools = []
         errs = []
+        unparsed = []
         done = False
         answer = ""
         for line in out.splitlines():
@@ -149,13 +156,24 @@ def run_one(job):
             try:
                 o = json.loads(line)
             except ValueError:
+                unparsed.append(line)
                 continue
             ev = o.get("event")
             pl = o.get("payload", {})
             if ev == "result":
                 a = pl.get("answer")
-                answer = a.get("answer", "") if isinstance(a, dict) else str(a or "")
-                if a and not pl.get("error"):
+                if isinstance(a, dict):
+                    answer = a.get("answer", "")
+                elif a is not None:
+                    answer = str(a)
+                elif isinstance(pl.get("content"), list):
+                    answer = "\n".join(
+                        str(block.get("markdown") or block.get("text") or "")
+                        if isinstance(block, dict)
+                        else str(block)
+                        for block in pl["content"]
+                    )
+                if answer and not pl.get("error"):
                     done = True
                 continue
             ph = pl.get("phase")
@@ -172,6 +190,11 @@ def run_one(job):
             elif ph == "iteration-final" and pl.get("done?"):
                 done = True
 
+        if exit_code is None:
+            errs.append(f"vis-agent timed out after {TIMEOUT}s")
+        elif exit_code:
+            suffix = f": {unparsed[0][:120]}" if unparsed else ""
+            errs.append(f"vis-agent exited {exit_code}{suffix}")
         correct = True
         detail = []
         for name, subs in (sc.get("want") or {}).items():
@@ -196,6 +219,10 @@ def run_one(job):
             if s not in answer:
                 correct = False
                 detail.append(f"answer missing {s!r}")
+        for needle in sc.get("want_forms") or []:
+            if not any(needle in form for form in forms):
+                correct = False
+                detail.append(f"form containing {needle!r} not used")
         toolset = {t for t in tools if t}
         for t in sc.get("want_tools") or []:
             if t not in toolset:
