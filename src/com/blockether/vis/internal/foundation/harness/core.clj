@@ -117,10 +117,7 @@
   []
   (mapv (fn [s]
           (cond-> {:name (str "skill:" (:name s))
-                   :description (str "Load skill "
-                                     (:name s)
-                                     (when-let [d (not-empty (str (:description s)))]
-                                       (str " — " (clip d 140))))
+                   :description (clip (:description s) 140)
                    :expand-fn (fn [_env args]
                                 (skill-template-text s args))}
             (:project-root s)

@@ -23,11 +23,11 @@
         (expect (str/includes? text "doc(\"demo\")"))
         (expect (str/includes? text "- /x/ref.md"))
         (expect (str/includes? text "Task: do x"))))
-  (it "names skill slash templates under the skill: namespace"
+  (it "uses the skill description for namespaced slash templates"
       (with-redefs [d/skills (constantly [{:name "demo" :description "Demo skill"}])]
         (let [entry (first (skill-template-entries))]
           (expect (= "skill:demo" (:name entry)))
-          (expect (str/includes? (:description entry) "demo")))))
+          (expect (= "Demo skill" (:description entry))))))
   (it "carries a nested skill's owning project into its prompt template"
       (with-redefs [d/skills (constantly
                                [{:name "demo" :description "d" :project-root "/repo/apps/demo"}])]
