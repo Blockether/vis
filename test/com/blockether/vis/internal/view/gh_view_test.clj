@@ -111,17 +111,17 @@
             jobs
             (:rows jobs-node)]
 
-        ;; The live view starts with every concurrently running job in focus. Interactive-only
+        ;; The live view starts with every concurrently running job selected. Interactive-only
         ;; state is intentionally absent from the budgeted verdict the model reads.
-        (expect (true? (:is-focusable opened-jobs-node)))
-        (expect (= ["95742028721" "95742028781"] (:focused-ids opened-jobs-node)))
+        (expect (true? (:is-selectable opened-jobs-node)))
+        (expect (= ["95742028721" "95742028781"] (:selected-ids opened-jobs-node)))
         (expect (= 6 (count jobs)))
         (expect (= ["95742028721" "95742028770" "95742028781" "95742028809" "95742028943"
                     "95742029230"]
                    (mapv :id jobs)))
         (expect (= :error (:tone (first (filter #(= "95742028770" (:id %)) jobs)))))
         (expect (= [:ok :error :ok :ok :ok :ok] (mapv :tone jobs))))
-      ;; The checklist follows the job in focus: the failing job's steps, not the running one's.
+      ;; The checklist follows the selected job: the failing job's steps, not the running one's.
       (expect (= 10 (count (:steps (node view "steps")))))
       (expect (some #(= :error (:tone %)) (:steps (node view "steps"))))
       ;; The pane exists only while it holds something. GitHub publishes a job's log when
@@ -195,8 +195,8 @@
   ;; Regression, session f8115c8c-b997-49bf-a22b-81816d961fe3: a watch that ran to the end
   ;; died at its own close. The archive pictures an extension seals are the ones `state`
   ;; ANSWERED it — snake_case JSON — and the engine held them to its own kebab-case
-  ;; vocabulary, so every focus snapshot was refused as an invalid live view. The shared
-  ;; golden could not see it: the Python side drops `focus_snapshots` before recording ops.
+  ;; vocabulary, so every selection snapshot was refused as an invalid live view. The shared
+  ;; golden could not see it: the Python side drops `selection_snapshots` before recording ops.
   (it
     "seals the archive pictures the extension builds out of what `state` answered it"
     (let [dir
@@ -224,9 +224,9 @@
                 (seam {"op" "close"
                        "view_id" view-id
                        "ending" {"model_result" "1 of 6 jobs failed"
-                                 "focus_snapshots" [{"node_id" "jobs"
-                                                     "focused_ids" ["95742028770"]
-                                                     "view" picture}]}})]
+                                 "selection_snapshots" [{"node_id" "jobs"
+                                                         "selected_ids" ["95742028770"]
+                                                         "view" picture}]}})]
 
             ;; Archive-only: accepted, and still never folded into what the model reads.
             (expect (false? (get answer "is_open")))

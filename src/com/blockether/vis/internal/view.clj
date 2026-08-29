@@ -1097,12 +1097,13 @@
                                   (live-long node-fail! ":max-rows" bound)
                                   (long (:max-rows view-spec/table-defaults)))
                       :order (normalize-live-order node-fail! (pick* node :order)))
-              (some? (pick* node :is-focusable))
-              (assoc :is-focusable
-                (bool-value node-fail! ":is-focusable" (pick* node :is-focusable) false))
+              (some? (pick* node :is-selectable))
+              (assoc :is-selectable
+                (bool-value node-fail! ":is-selectable" (pick* node :is-selectable) false))
 
-              (some? (pick* node :focused-ids))
-              (assoc :focused-ids (text-items node-fail! ":focused-ids" (pick* node :focused-ids))))
+              (some? (pick* node :selected-ids))
+              (assoc :selected-ids
+                (text-items node-fail! ":selected-ids" (pick* node :selected-ids))))
 
             :link
             (assoc base :links (items :links))))))))
@@ -1254,8 +1255,8 @@
             (text-items fail! ":lines" value))
    :item-ids (fn [fail! value]
                (text-items fail! ":item-ids" value))
-   :focused-ids (fn [fail! value]
-                  (text-items fail! ":focused-ids" value))
+   :selected-ids (fn [fail! value]
+                   (text-items fail! ":selected-ids" value))
    :rows (fn [fail! value]
            (normalize-live-items fail! :rows value))
    :stats (fn [fail! value]
@@ -1739,7 +1740,7 @@
   (into (wire-keys (reduce disj
                            view-spec/live-result-keys
                            #{:view-id :is-completed :view :elided :is-from-human :note}))
-        (wire-keys #{:focus-snapshots :model-result})))
+        (wire-keys #{:selection-snapshots :model-result})))
 
 (defn- live-entry
   "The pending entry of live view `view-id`, or nil when no live view is open
@@ -1872,15 +1873,15 @@
   ([view-id state _settled?]
    (patch-live! view-id {:ops [{:op "set-activity" :activity (activity/presentation state)}]})))
 
-(defn focus-live!
-  "Focus `item-ids` in focusable table `node-id` of open view `view-id`.
+(defn select-live!
+  "Select `item-ids` in selectable table `node-id` of open view `view-id`.
 
    This is an ordinary durable `set` patch, not app-local selection: the writer
    sees the change through `state`, and every TUI or Companion painting the view
-   receives the same new focus. Stale row ids and non-focusable tables are
+   receives the same new selection. Stale row ids and non-selectable tables are
    refused by the materializer without changing the view."
   [view-id node-id item-ids]
-  (patch-live! view-id [{:op :set :node-id node-id :focused-ids item-ids}]))
+  (patch-live! view-id [{:op :set :node-id node-id :selected-ids item-ids}]))
 
 (defn- human-note
   "The comment a human left with their stop: trimmed, and cut to
@@ -2031,7 +2032,7 @@
    closed is a no-op rather than a second result.
 
    `ending` says how it ended: `:reason` (`completed` by default), `:summary`,
-   `:error`, `:artifact-id`, optional archive-only `:focus-snapshots`, and optional
+   `:error`, `:artifact-id`, optional archive-only `:selection-snapshots`, and optional
    compact string `:model-result`. A snapshot's PICTURE is read back from the wire
    spelling first — the only view an extension holds is the one `state` answered it,
    in the JSON it crossed with. The full verdict always remains in the artifact
@@ -2054,36 +2055,40 @@
      ;; it, so the verdict renders the picture the record already ends with.
      (let [cell (:view entry)]
        (locking cell
-         (let [snapshots (mapv (fn [snapshot]
-                                 (let [node-id (trimmed (pick* snapshot :node-id))
-                                       focused-ids (mapv str (or (pick* snapshot :focused-ids) []))
-                                       ;; The picture an extension archives is the one
-                                       ;; `state` ANSWERED it: snake_case keys, wire terms,
-                                       ;; JSON both ways. Read it back the same mechanical
-                                       ;; way every other frame crossing a process boundary
-                                       ;; is read — a no-op for an engine-shaped view — then
-                                       ;; hold it to the spec the materializer answers to.
-                                       snapshot-view (live<-wire (pick* snapshot :view))]
+         (let [snapshots (mapv
+                           (fn [snapshot]
+                             (let [node-id (trimmed (pick* snapshot :node-id))
+                                   selected-ids (mapv str (or (pick* snapshot :selected-ids) []))
+                                   ;; The picture an extension archives is the one
+                                   ;; `state` ANSWERED it: snake_case keys, wire terms,
+                                   ;; JSON both ways. Read it back the same mechanical
+                                   ;; way every other frame crossing a process boundary
+                                   ;; is read — a no-op for an engine-shaped view — then
+                                   ;; hold it to the spec the materializer answers to.
+                                   snapshot-view (live<-wire (pick* snapshot :view))]
 
-                                   (when-not (and node-id (seq focused-ids) (map? snapshot-view))
-                                     (invalid-live-view!
-                                       "each focus snapshot needs node_id, focused_ids and view"))
-                                   (when-let [why (view-spec/live-view-error snapshot-view)]
-                                     (invalid-live-view! (str "invalid focus snapshot: " why)))
-                                   {:node-id node-id :focused-ids focused-ids :view snapshot-view}))
-                               (or (pick* ending :focus-snapshots) []))
+                               (when-not (and node-id (seq selected-ids) (map? snapshot-view))
+                                 (invalid-live-view!
+                                   "each selection snapshot needs node_id, selected_ids and view"))
+                               (when-let [why (view-spec/live-view-error snapshot-view)]
+                                 (invalid-live-view! (str "invalid selection snapshot: " why)))
+                               {:node-id node-id :selected-ids selected-ids :view snapshot-view}))
+                           (or (pick* ending :selection-snapshots) []))
                _ (when (> (count snapshots) 500)
-                   (invalid-live-view! "an artifact holds at most 500 focus snapshots"))
+                   (invalid-live-view! "an artifact holds at most 500 selection snapshots"))
                _ (when (> (count (.getBytes (wire/json-str snapshots)
                                             java.nio.charset.StandardCharsets/UTF_8))
-                          (long view-spec/live-focus-snapshot-bytes))
-                   (invalid-live-view! "focus snapshots exceed the 1000000-byte artifact limit"))
-               verdict
-               (live-result
-                 @cell
-                 (dissoc ending :focus-snapshots :focus_snapshots :model-result :model_result)
-                 human
-                 invalid-live-view!)
+                          (long view-spec/live-selection-snapshot-bytes))
+                   (invalid-live-view!
+                     "selection snapshots exceed the 1000000-byte artifact limit"))
+               verdict (live-result @cell
+                                    (dissoc ending
+                                      :selection-snapshots
+                                      :selection_snapshots
+                                      :model-result
+                                      :model_result)
+                                    human
+                                    invalid-live-view!)
                compact-result (when (or (contains? ending :model-result)
                                         (contains? ending "model_result"))
                                 (or (trimmed (pick* ending :model-result))
@@ -2123,7 +2128,7 @@
                (sink/close! (:file entry)
                             (cond-> artifact-result
                               (seq snapshots)
-                              (assoc :focus-snapshots snapshots)))
+                              (assoc :selection-snapshots snapshots)))
                (deliver (:promise entry) model-result)
                (publish! (:channel-ids entry)
                          (lifecycle-event :view/close entry {:result artifact-result}))
@@ -2435,7 +2440,7 @@
 
           :select
           (let [patched
-                (focus-live! view-id node-id item-ids)
+                (select-live! view-id node-id item-ids)
 
                 node
                 (first (filter #(= node-id (:id %)) (:nodes patched)))]
@@ -2443,7 +2448,7 @@
             (assoc base
               :is-accepted true
               :node-id node-id
-              :item-ids (vec (:focused-ids node))))
+              :item-ids (vec (:selected-ids node))))
 
           :interrupt
           (let [accepted? (some? (interrupt-live! view-id note))]

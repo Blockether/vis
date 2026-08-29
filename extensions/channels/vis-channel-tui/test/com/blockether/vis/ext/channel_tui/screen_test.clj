@@ -483,7 +483,7 @@
             {:live-views [{:view {:id "view-1" :session-id "session-1"}}]}
 
             hit
-            {:kind :live-focus :view-id "view-1" :node-id "jobs" :item-id "macos"}]
+            {:kind :live-select :view-id "view-1" :node-id "jobs" :item-id "macos"}]
 
         (with-redefs [vis/live-views
                       (constantly [])

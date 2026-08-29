@@ -26,9 +26,9 @@
   ;; own contract refuses the half that is behind, in whichever direction it is
   ;; behind, instead of serving a shape neither side maintains.
   (testing "this release serves only the protocol it speaks"
-    (is (= 5 protocol/protocol-version))
-    (is (= 5 protocol/min-client-protocol))
-    (is (= 5 protocol/min-gateway-protocol)))
+    (is (= 6 protocol/protocol-version))
+    (is (= 6 protocol/min-client-protocol))
+    (is (= 6 protocol/min-gateway-protocol)))
   (testing "a gateway rejects an explicitly too-old client"
     (let [verdict
           (protocol/verdict
@@ -65,10 +65,10 @@
         ;; A gateway demanding MORE than this build speaks — the point of the
         ;; case, so the floor has to stay ahead of `protocol-version`.
         body
-        {"status" "ok" "protocol" {"protocol" 6 "min_client" 6 "min_gateway" 2 "version" "6.0.0"}}]
+        {"status" "ok" "protocol" {"protocol" 7 "min_client" 7 "min_gateway" 2 "version" "7.0.0"}}]
 
     (try (is (= body ((client-var 'note-handshake!) body)))
-         (is (= {:protocol 6 :min-client 6 :min-gateway 2 :version "6.0.0" :build nil}
+         (is (= {:protocol 7 :min-client 7 :min-gateway 2 :version "7.0.0" :build nil}
                 @handshake-atom))
          (is (= "client-too-old" (:reason (client/compatibility))))
          (finally (reset! handshake-atom previous)))))

@@ -783,7 +783,7 @@
         (state/dispatch [:bump-render-version])
         true)
 
-    :live-focus
+    :live-select
     (do (select-live-row! db hit) true)
 
     :activity-focus
@@ -6683,7 +6683,7 @@
                                  :live-restore
                                  (activate-live-region! db hit)
 
-                                 :live-focus
+                                 :live-select
                                  (activate-live-region! db hit)
 
                                  :activity-focus
@@ -6841,7 +6841,7 @@
                                  :live-restore
                                  (activate-live-region! db hit)
 
-                                 :live-focus
+                                 :live-select
                                  (activate-live-region! db hit)
 
                                  :activity-focus

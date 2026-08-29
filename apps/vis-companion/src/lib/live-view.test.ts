@@ -182,9 +182,9 @@ describe('a patch frame', () => {
     expect(status.detail).toBe('host 2 of 3');
   });
 
-  it('keeps focused table ids inside the rows that still exist', () => {
+  it('keeps selected table ids inside the rows that still exist', () => {
     const raw = liveViewFromWire({
-      id: 'focus-view',
+      id: 'selection-view',
       title: 'CI',
       nodes: [
         {
@@ -195,24 +195,24 @@ describe('a patch frame', () => {
             { id: 'a', cells: ['A'] },
             { id: 'b', cells: ['B'] },
           ],
-          is_focusable: true,
-          focused_ids: ['b', 'missing', 'b'],
+          is_selectable: true,
+          selected_ids: ['b', 'missing', 'b'],
         },
       ],
     });
-    if (!raw) throw new Error('the focusable table must be paintable');
+    if (!raw) throw new Error('the selectable table must be paintable');
 
-    expect(nodeOfType(raw, 'jobs', 'table').focused_ids).toEqual(['b']);
+    expect(nodeOfType(raw, 'jobs', 'table').selected_ids).toEqual(['b']);
     const selected = patched(raw, 1, [
-      { op: 'set', node_id: 'jobs', focused_ids: ['a', 'b'] },
+      { op: 'set', node_id: 'jobs', selected_ids: ['a', 'b'] },
     ]);
-    expect(nodeOfType(selected, 'jobs', 'table').focused_ids).toEqual(['a', 'b']);
+    expect(nodeOfType(selected, 'jobs', 'table').selected_ids).toEqual(['a', 'b']);
     const removed = patched(selected, 2, [
       { op: 'remove', node_id: 'jobs', item_ids: ['a'] },
     ]);
-    expect(nodeOfType(removed, 'jobs', 'table').focused_ids).toEqual(['b']);
+    expect(nodeOfType(removed, 'jobs', 'table').selected_ids).toEqual(['b']);
     const cleared = patched(removed, 3, [{ op: 'clear', node_id: 'jobs' }]);
-    expect(nodeOfType(cleared, 'jobs', 'table').focused_ids).toEqual([]);
+    expect(nodeOfType(cleared, 'jobs', 'table').selected_ids).toEqual([]);
   });
 
   it('removes named items and leaves the unnamed ones standing', () => {

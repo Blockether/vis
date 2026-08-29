@@ -161,8 +161,8 @@ export interface LiveTableNode extends LiveNodeBase {
   rows: LiveRow[];
   max_rows: number;
   order: LiveOrder;
-  is_focusable: boolean;
-  focused_ids: string[];
+  is_selectable: boolean;
+  selected_ids: string[];
 }
 
 export interface LiveLink {
@@ -516,7 +516,7 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
 }
 
 /** Distinct selected ids which still name a row, in the engine's order. */
-function focusedIds(value: unknown, tableRows: LiveRow[]): string[] {
+function selectedIds(value: unknown, tableRows: LiveRow[]): string[] {
   const existing = new Set(tableRows.map((row) => row.id));
   const seen = new Set<string>();
   return (Array.isArray(value) ? value : [])
@@ -666,7 +666,7 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
       };
     case 'table': {
       const tableRows = keyed(node.rows, rowFromWire);
-      const isFocusable = node.is_focusable === true;
+      const isSelectable = node.is_selectable === true;
       return {
         ...base,
         type: 'table',
@@ -674,8 +674,8 @@ function liveNodeFromWire(raw: unknown): LiveNode | null {
         rows: tableRows,
         max_rows: count(node.max_rows, LIVE_TABLE_MAX_ROWS),
         order: order(node.order),
-        is_focusable: isFocusable,
-        focused_ids: isFocusable ? focusedIds(node.focused_ids, tableRows) : [],
+        is_selectable: isSelectable,
+        selected_ids: isSelectable ? selectedIds(node.selected_ids, tableRows) : [],
       };
     }
     case 'link':
@@ -805,10 +805,10 @@ function applySet(node: LiveLeafNode, op: Record<string, unknown>): LiveNode {
       return {
         ...node,
         label: 'label' in op ? optionalText(op.label) : node.label,
-        focused_ids:
-          'focused_ids' in op && node.is_focusable
-            ? focusedIds(op.focused_ids, node.rows)
-            : node.focused_ids,
+        selected_ids:
+          'selected_ids' in op && node.is_selectable
+            ? selectedIds(op.selected_ids, node.rows)
+            : node.selected_ids,
       };
     case 'link':
       return {
@@ -862,7 +862,7 @@ function applyRemove(node: LiveLeafNode, op: Record<string, unknown>): LiveNode 
       return {
         ...node,
         rows: tableRows,
-        focused_ids: focusedIds(node.focused_ids, tableRows),
+        selected_ids: selectedIds(node.selected_ids, tableRows),
       };
     }
     case 'stat':
@@ -886,7 +886,7 @@ function applyClear(node: LiveLeafNode): LiveNode {
     case 'log':
       return { ...node, lines: [], total_lines: 0 };
     case 'table':
-      return { ...node, rows: [], focused_ids: [] };
+      return { ...node, rows: [], selected_ids: [] };
     case 'stat':
       return { ...node, stats: [] };
     case 'steps':
@@ -1126,9 +1126,9 @@ export function staleLiveViews(views: LiveView[]): LiveView[] {
  * An unreadable line ENDS the fold instead of voiding it — a run killed mid-write
  * still shows everything it managed to record.
  */
-export interface LiveFocusSnapshot {
+export interface LiveSelectionSnapshot {
   node_id: string;
-  focused_ids: string[];
+  selected_ids: string[];
   view: LiveView;
 }
 
@@ -1140,8 +1140,8 @@ export interface LiveRecord {
   is_completed?: boolean;
   /** The comment the human left with a stop, when they left one. */
   note?: string;
-  /** Finished pictures explicitly sealed for rows of a focusable table. */
-  focus_snapshots?: LiveFocusSnapshot[];
+  /** Finished pictures explicitly sealed for rows of a selectable table. */
+  selection_snapshots?: LiveSelectionSnapshot[];
   /** When the record was sealed, epoch ms. */
   ended_at?: number;
 }
@@ -1184,27 +1184,27 @@ export function liveRecordFromText(source: string): LiveRecord | null {
       // The verdict states the reason; `is_completed` is the engine's own answer
       // to "did it finish", and a stop carries the note the human typed into it.
       view = recordedViewFromWire(result.view, view) ?? view;
-      const focusSnapshots = Array.isArray(result.focus_snapshots)
-        ? result.focus_snapshots
+      const selectionSnapshots = Array.isArray(result.selection_snapshots)
+        ? result.selection_snapshots
             .map(record)
             .filter((snapshot): snapshot is Record<string, unknown> => snapshot !== null)
             .map((snapshot) => {
               const snapshotView = liveViewFromWire(snapshot.view);
               const nodeId = text(snapshot.node_id);
-              const ids = Array.isArray(snapshot.focused_ids)
-                ? snapshot.focused_ids.map(text).filter((id) => id !== '')
+              const ids = Array.isArray(snapshot.selected_ids)
+                ? snapshot.selected_ids.map(text).filter((id) => id !== '')
                 : [];
               return snapshotView && nodeId && ids.length > 0
-                ? { node_id: nodeId, focused_ids: ids, view: snapshotView }
+                ? { node_id: nodeId, selected_ids: ids, view: snapshotView }
                 : null;
             })
-            .filter((snapshot): snapshot is LiveFocusSnapshot => snapshot !== null)
+            .filter((snapshot): snapshot is LiveSelectionSnapshot => snapshot !== null)
         : [];
       sealed = {
         reason: optionalText(result.reason),
         is_completed: result.is_completed === true,
         note: optionalText(result.note),
-        focus_snapshots: focusSnapshots,
+        selection_snapshots: selectionSnapshots,
         ended_at: optionalNumber(frame.at),
       };
     }

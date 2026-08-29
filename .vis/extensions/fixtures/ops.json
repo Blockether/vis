@@ -111,8 +111,8 @@
               ]
             }
           ],
-          "is_focusable": true,
-          "focused_ids": [
+          "is_selectable": true,
+          "selected_ids": [
             "95742028721",
             "95742028781"
           ],
@@ -294,7 +294,7 @@
           "node_id": "jobs"
         },
         {
-          "focused_ids": [
+          "selected_ids": [
             "95742028770"
           ],
           "op": "set",

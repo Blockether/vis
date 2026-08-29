@@ -743,7 +743,7 @@ def watch_run(run_id):
 ```
 
 The Vis repository ships the whole version of this as `.vis/extensions/gh.py` — seven nodes,
-selectable job rows, focused steps and logs. Its single `gh_watch_run` entry point accepts either an
+selectable job rows, plus the selected job's steps and logs. Its single `gh_watch_run` entry point accepts either an
 Actions run or `pr=` for aggregate pull-request checks, both through the same mapping. Tests live
 beside it, with a Clojure test replaying captured ops through the engine.
 
@@ -759,7 +759,7 @@ handle only has the verbs its type can honour:
 | `vis.stat(id, stats=[…])` | a strip of counters | `.set(stat_id, value_text, label=, tone=)`, `.remove(*ids)`, `.clear()` |
 | `vis.steps(id, steps=[…])` | a checklist | `.set(step_id, tone=, label=, detail=, value=)`, `.remove(*ids)`, `.clear()` |
 | `vis.output(id, label=…)` | streamed lines | `.write(*lines)`, `.clear()` |
-| `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=, branch=)`, `.focus(*row_ids)`, `.remove(*ids)`, `.clear()` |
+| `vis.table(id, columns=[vis.table_column(…)])` | rows keyed by id | `.upsert(row_id, cells, tone=, branch=)`, `.select(*row_ids)`, `.remove(*ids)`, `.clear()` |
 | `vis.link(id, links=[…])` | pointers a human can open | `.add(link_id, label, target, target_kind=, tone=)` |
 
 `vis.output` builds a `log` node; the builder is named `output` so it never
@@ -769,11 +769,11 @@ shadows `vis.log`, the engine log line — the same reason `vis.slider` builds a
 (the default), `newest-first`, or `{'by': 'duration', 'dir': 'desc'}`. Rows that
 share a non-blank `branch="Release apps"` paint beneath one collapsible parent;
 the first cell may retain the full `Release apps / iOS` identity, while surfaces
-show only `iOS` below that parent. A table declared with `is_focusable=True`
-paints every leaf row as a control; `focused_ids=[…]` is its initial selection.
+show only `iOS` below that parent. A table declared with `is_selectable=True`
+paints every leaf row as a control; `selected_ids=[…]` is its initial selection.
 
-A surface click and `view["jobs"].focus(*row_ids)` write the same shared patch, so the
-extension reads the current selection from `view.state()` before it replaces the focused detail.
+A surface click and `view["jobs"].select(*row_ids)` write the same shared patch, so the
+extension reads the current selection from `view.state()` before it replaces the selected detail.
 
 **Nap with `view.sleep(seconds)`, never `time.sleep`.** A provider's cadence is not the
 human's: `time.sleep(3)` holds the loop for three whole seconds after a click, so the
@@ -841,7 +841,7 @@ host call per window rather than one per iteration. Every read (`view.state()`,
 `view.is_interrupted`) and `view.close(...)` flush first, so nothing you wrote is
 ever behind what you read.
 
-`view.close(reason=…, summary=…, error=…, artifact_id=…, focus_snapshots=…,
+`view.close(reason=…, summary=…, error=…, artifact_id=…, selection_snapshots=…,
 model_result=…)` ends the view. By default it answers **the verdict, as data**:
 `is_completed`, the `reason` it ended, `is_from_human` with the `note` when a
 person stopped it, the finished picture (`view`, plus `elided` counts for
@@ -858,10 +858,10 @@ that intervention. Closing twice answers the first result, so a `finally` cannot
 overwrite it. Used as a context manager, the view closes itself; an exception
 inside closes it `failed` with the error rather than leaving a spinner forever.
 
-A finished artifact has no extension process left to answer a focusable-table
-click. When archived rows must remain inspectable, `focus_snapshots` seals the
+A finished artifact has no extension process left to answer a selectable-table
+click. When archived rows must remain inspectable, `selection_snapshots` seals the
 finite alternatives into the artifact: each item is `{"node_id": "jobs",
-"focused_ids": ["job-id"], "view": view_picture}`. The host accepts at most 500
+"selected_ids": ["job-id"], "view": view_picture}`. The host accepts at most 500
 snapshots and 1 MiB of serialized snapshot data. They are artifact-only — not
 broadcast while live and not included in the model verdict — so extensions
 should produce them only from the final provider state. The surface then switches
@@ -1234,8 +1234,8 @@ recorder = vis.testing.LiveRecorder(vis._host)
 monkeypatch.setattr(vis, "_host", recorder)
 
 run_extension()
-recorder.focus("jobs", ["macos"])       # a human action, not extension output
-assert recorder.node("jobs")["focused_ids"] == ["macos"]
+recorder.select("jobs", ["macos"])       # a human action, not extension output
+assert recorder.node("jobs")["selected_ids"] == ["macos"]
 assert recorder.patched()                # ops the extension itself emitted
 result = recorder.close(reason="interrupted")
 ```
@@ -1243,7 +1243,7 @@ result = recorder.close(reason="interrupted")
 Use `recorder.ops()` for stable envelope goldens and
 `vis.testing.assert_tree(actual, expected)` for an exact nested diff. Provider
 fixtures, polling and provider-specific assertions stay in that extension's test;
-open/patch/state/focus/close materialization belongs to this shared library harness.
+open/patch/state/select/close materialization belongs to this shared library harness.
 
 The report is **per test**: each `test_*` shows ✓/✗ with the failing
 assertion's detail, grouped by file, under a one-line summary

@@ -802,8 +802,8 @@
                         :session-id sid
                         :nodes [{:id "jobs"
                                  :type "table"
-                                 :is-focusable true
-                                 :focused-ids ["a"]
+                                 :is-selectable true
+                                 :selected-ids ["a"]
                                  :columns [{:id "job" :label "Job"}]
                                  :rows [{:id "a" :cells ["A"]} {:id "b" :cells ["B"]}]}]})
 
@@ -822,14 +822,14 @@
           (is (true? (get body "is_accepted")))
           (is (= "select" (get body "action")))
           (is (= ["b"] (get body "item_ids")))
-          (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :focused-ids])))))
+          (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :selected-ids])))))
       (testing "a stale row id is refused without moving the selection"
         (let [response (view-action-response
                          sid
                          view-id
                          {:action "select" :node_id "jobs" :item_ids ["missing"]})]
           (is (= 400 (:status response)))
-          (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :focused-ids])))))
+          (is (= ["b"] (get-in (gw-hi/live-view-of sid view-id) [:nodes 0 :selected-ids])))))
       (testing "another session cannot select in this view"
         (is (= 404
                (:status (view-action-response

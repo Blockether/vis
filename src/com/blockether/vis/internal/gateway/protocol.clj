@@ -35,20 +35,20 @@
   "Wire protocol number THIS build speaks. Monotonic; bump on every BREAKING
    gateway HTTP/SSE change.
 
-   5 — every operator command uses the closed `view.action` contract and the one
-   `/v1/sessions/:sid/views/:view-id/actions` resource. View kind is policy carried
-   by the open View, never encoded into an action endpoint."
-  5)
+   6 — selectable tables use one semantic vocabulary end to end: `is_selectable`,
+   `selected_ids`, and archive-only `selection_snapshots`. The obsolete focus
+   vocabulary is not accepted or emitted."
+  6)
 
 (def min-client-protocol
-  "Oldest CLIENT protocol this gateway serves. Protocol 5 is the first client that
-   sends every operator command through the shared View action resource."
-  5)
+  "Oldest CLIENT protocol this gateway serves. Protocol 6 is the first client that
+   speaks the selectable-table vocabulary."
+  6)
 
 (def min-gateway-protocol
   "Oldest GATEWAY protocol this client accepts: the mirror of
    [[min-client-protocol]]."
-  5)
+  6)
 
 (def protocol-header "Request header carrying the client's own protocol number." "x-vis-protocol")
 

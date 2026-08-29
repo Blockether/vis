@@ -5,7 +5,7 @@
 
    A form is a QUESTION and owns the keyboard until it is answered; a view is a
    PICTURE and leaves the composer focused. The wheel over the band scrolls it, and
-   clicks open links, expand nodes, focus rows in a focusable table, or fold the
+   clicks open links, expand nodes, select rows in a selectable table, or fold the
    live surface down to a compact status line without stopping it. The only key it
    takes is Escape — which ARMS a stop on the newest open view before it interrupts
    the turn: the band then takes one FENCED line for the comment the human types,
@@ -933,7 +933,7 @@
     [{:kind :empty :node-id id :text (empty-text :log)}]))
 
 (defmethod node-rows :table
-  [{:keys [id columns is-focusable focused-ids] :as node}
+  [{:keys [id columns is-selectable selected-ids] :as node}
    {:keys [text-w widths fresh is-expanded is-interactive]}]
   (let [ordered
         (live/ordered-rows node)
@@ -943,11 +943,11 @@
 
         ;; Measured from the painted window and never narrower than last time; the
         ;; FIT is what a cramped terminal does to the paint, and it is deliberately
-        ;; not what the pane remembers. A focusable first cell also carries the same
+        ;; not what the pane remembers. A selectable first cell also carries the same
         ;; two-column ●/○ state mark as the Companion.
         desired
         (cond-> (desired-widths columns shown)
-          (and is-focusable (seq columns))
+          (and is-selectable (seq columns))
           (update 0 + 2))
 
         measured
@@ -961,8 +961,8 @@
         aligns
         (mapv #(or (:align %) :left) columns)
 
-        focused
-        (set focused-ids)
+        selected
+        (set selected-ids)
 
         line
         (fn [cells fg styles]
@@ -984,15 +984,15 @@
                           (let [is-fresh
                                 (contains? fresh (:id row))
 
-                                is-focused
-                                (contains? focused (:id row))
+                                is-selected
+                                (contains? selected (:id row))
 
                                 cells
                                 (cond-> (mapv (fn [col-idx]
                                                 (md-runs (cell-of row col-idx)))
                                               (range (count columns)))
-                                  (and is-focusable (seq columns))
-                                  (update 0 #(into [{:text (if is-focused "● " "○ ")}] %)))]
+                                  (and is-selectable (seq columns))
+                                  (update 0 #(into [{:text (if is-selected "● " "○ ")}] %)))]
 
                             [(when (pos? (long idx)) (rule :mid))
                              (merge {:kind :trow
@@ -1000,13 +1000,13 @@
                                      :item-id (:id row)
                                      :tone (:tone row)
                                      :is-fresh is-fresh
-                                     :is-focusable (boolean (and is-focusable is-interactive))
-                                     :is-focused is-focused}
+                                     :is-selectable (boolean (and is-selectable is-interactive))
+                                     :is-selected is-selected}
                                     (line cells
-                                          (if is-focused
+                                          (if is-selected
                                             t/header-active-tab-accent
                                             (tone-fg (:tone row)))
-                                          (if (or is-fresh is-focused) [p/BOLD] [])))])))
+                                          (if (or is-fresh is-selected) [p/BOLD] [])))])))
                       cat
                       (remove nil?))
                 shown)
@@ -1315,16 +1315,16 @@
   (when-let [note (stopping pane)]
     {:label (str "interrupt " (flat-text (get-in pane [:view :title])) " — why? ") :note note}))
 
-(defn- has-focusable-table?
+(defn- has-selectable-table?
   "True when `pane` carries a live table whose rows change the detail below it."
   [pane]
-  (boolean (some #(and (= :table (:type %)) (:is-focusable %)) (get-in pane [:view :nodes]))))
+  (boolean (some #(and (= :table (:type %)) (:is-selectable %)) (get-in pane [:view :nodes]))))
 
 (defn hint
   "The hint bar under the band. Escape is the ONE key an interruptible view takes,
    and while several are open it says WHICH one it will hit — the newest, the one
    the band is painting. System Activity is read-only: its expanded rail offers only
-   fold/restore controls. A focusable table advertises its click. Once a stop is armed,
+   fold/restore controls. A selectable table advertises its click. Once a stop is armed,
    the bar says the two keys that end typing: Escape or Enter interrupt with whatever
    was written, Backspace on an empty line keeps watching."
   [pane others]
@@ -1342,8 +1342,8 @@
             (and (some? pane) (not (settled? pane)))
             (conj ["click ▾" "minimize"])
 
-            (and (some? pane) (not (settled? pane)) (has-focusable-table? pane))
-            (conj ["click" "focus a row"])
+            (and (some? pane) (not (settled? pane)) (has-selectable-table? pane))
+            (conj ["click" "select a row"])
 
             (and (some? pane) (not (settled? pane)))
             (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
@@ -1489,12 +1489,12 @@
     :trow
     (do (paint-segments! g left row inner-w (:segments entry))
         ;; The full visible table row is the control, not a tiny glyph. Its item id
-        ;; is what the shared focus patch names; the next live patch repaints every
+        ;; is what the shared selection patch names; the next live patch repaints every
         ;; attached TUI and Companion from that one engine state.
-        (when (:is-focusable entry)
+        (when (:is-selectable entry)
           (cr/register! {:bounds
                          {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
-                         :kind :live-focus
+                         :kind :live-select
                          :view-id view-id
                          :node-id (:node-id entry)
                          :item-id (:item-id entry)
@@ -1652,7 +1652,7 @@
 
 (defn activity-focused
   "Move the terminal-local Activity operation focus to `item-id`. This never publishes a
-   shared Live View focus patch: Activity focus only controls its own evidence disclosure."
+   shared Live View selection patch: Activity focus only controls its own evidence disclosure."
   [pane item-id]
   (assoc pane :activity-focused item-id))
 

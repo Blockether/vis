@@ -984,10 +984,10 @@ class Table(_KeyedNode):
             ],
         )
 
-    def focus(self, *item_ids):
-        # Focus is shared engine state. A surface writes it and the extension can
+    def select(self, *item_ids):
+        # Selection is shared engine state. A surface writes it and the extension can
         # observe it through `LiveView.state()` on its next update.
-        return self._op("set", focused_ids=[str(item_id) for item_id in item_ids])
+        return self._op("set", selected_ids=[str(item_id) for item_id in item_ids])
 
 
 class Link(_KeyedNode):
@@ -1188,7 +1188,7 @@ class LiveView:
     def sleep(self, seconds, slice_ms=200):
         """Wait out `seconds`, waking the MOMENT a surface changes the view.
 
-        A tap on a focusable row, an expanded node or a stop is shared state, not
+        A tap on a selectable row, an expanded node or a stop is shared state, not
         provider data: it is already in the view before any provider answers. A
         loop that naps between polls waits here instead of in `time.sleep`, so the
         details a person just asked for are pushed within a slice rather than at
@@ -1357,7 +1357,7 @@ class LiveView:
         summary=None,
         error=None,
         artifact_id=None,
-        focus_snapshots=None,
+        selection_snapshots=None,
         model_result=None,
     ):
         """End the view and answer the result the model reads.
@@ -1366,7 +1366,7 @@ class LiveView:
         full structured verdict. The finished picture and close metadata remain
         in the durable artifact and on human-facing close events.
 
-        ``focus_snapshots`` are finished pictures keyed by a focusable table and
+        ``selection_snapshots`` are finished pictures keyed by a selectable table and
         its selected rows. They are sealed only into the artifact record, so a
         reopened run can still switch rows without keeping its extension alive.
 
@@ -1385,7 +1385,7 @@ class LiveView:
             "summary": summary,
             "error": error,
             "artifact_id": artifact_id,
-            "focus_snapshots": focus_snapshots,
+            "selection_snapshots": selection_snapshots,
             "model_result": model_result,
         }
         answer = self._settle(
@@ -1470,7 +1470,7 @@ class _LiveRecorder:
     """An isolated in-memory live host for testing any extension live view.
 
     ``live`` records only envelopes emitted by the extension. ``host_live`` and
-    the ``focus``/``close`` helpers simulate surface or human actions against the
+    the ``select``/``close`` helpers simulate surface or human actions against the
     same materialized view without publishing fixture data into a Vis session.
     """
 
@@ -1611,8 +1611,8 @@ class _LiveRecorder:
         for node in self._nodes(picture.get("nodes")):
             if node.get("type") == "group":
                 continue
-            node.pop("focused_ids", None)
-            node.pop("is_focusable", None)
+            node.pop("selected_ids", None)
+            node.pop("is_selectable", None)
             leaves.append(node)
         picture["nodes"] = leaves
         return picture
@@ -1669,7 +1669,7 @@ class _LiveRecorder:
         self.said.append(json.loads(envelope_json))
         return self.host_live(envelope_json)
 
-    def focus(self, node_id, focused_ids):
+    def select(self, node_id, selected_ids):
         """Simulate a surface selecting rows without recording extension output."""
         import json
 
@@ -1684,7 +1684,7 @@ class _LiveRecorder:
                                 {
                                     "op": "set",
                                     "node_id": str(node_id),
-                                    "focused_ids": [str(one) for one in focused_ids],
+                                    "selected_ids": [str(one) for one in selected_ids],
                                 }
                             ]
                         },
@@ -1800,7 +1800,7 @@ def output(node_id, **spec):
 def table(node_id, columns=None, **spec):
     # Rows keyed by id. `order` declares how they paint — 'insertion' (the
     # default), 'newest-first', or {'by': 'duration', 'dir': 'desc'}.
-    # `is_focusable=True` makes rows controls; `focused_ids` is shared state.
+    # `is_selectable=True` makes rows controls; `selected_ids` is shared state.
     return _live_node("table", node_id, dict(spec, columns=columns))
 
 

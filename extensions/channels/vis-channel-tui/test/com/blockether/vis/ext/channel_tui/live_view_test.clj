@@ -526,8 +526,8 @@
                (is (empty? (:live-views @state/app-db)))))))
 
 ;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: the live
-;; surface used half the available terminal and its focusable job rows had no control.
-(deftest live-view-height-and-focus-test
+;; surface used half the available terminal and its selectable job rows had no control.
+(deftest live-view-height-and-selection-test
   (testing "a busy live surface takes four fifths of the room above the composer"
     (let [[top bottom]
           (lv/band-rows 96 26 [(pane :rows 20)] 1 3)
@@ -540,9 +540,9 @@
 
       (is (>= (* 5 height) (* 4 available))
           "the watched run, rather than stale transcript, owns most of the terminal")))
-  (testing "a focusable table paints shared focus and makes every visible row clickable"
+  (testing "a selectable table paints shared selection and makes every visible row clickable"
     (let [p
-          (lv/opened (mounted {} (jobs {:is-focusable true :focused-ids ["job-1"]} 8)))
+          (lv/opened (mounted {} (jobs {:is-selectable true :selected-ids ["job-1"]} 8)))
 
           plan
           (lv/plan p 80)
@@ -550,17 +550,17 @@
           table-rows
           (filterv #(= :trow (:kind %)) plan)]
 
-      (is (= [{:item-id "job-0" :is-focusable true :is-focused false}
-              {:item-id "job-1" :is-focusable true :is-focused true}]
-             (mapv #(select-keys % [:item-id :is-focusable :is-focused]) (take 2 table-rows))))
-      (is (some #{["click" "focus a row"]} (lv/hint p []))
+      (is (= [{:item-id "job-0" :is-selectable true :is-selected false}
+              {:item-id "job-1" :is-selectable true :is-selected true}]
+             (mapv #(select-keys % [:item-id :is-selectable :is-selected]) (take 2 table-rows))))
+      (is (some #{["click" "select a row"]} (lv/hint p []))
           "the band advertises the mouse control without taking the composer keyboard")
       (cr/reset!)
       (try (let [text
                  (cap/frame-text (last (:frames (paint-frames [p] 96 80))))
 
                  controls
-                 (filterv #(= :live-focus (:kind %)) (cr/current))]
+                 (filterv #(= :live-select (:kind %)) (cr/current))]
 
              (is (str/includes? text "○ job-0"))
              (is (str/includes? text "● job-1"))

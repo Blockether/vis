@@ -24,8 +24,8 @@ def test_live_recorder_isolates_extension_output_from_surface_actions():
                                 "type": "table",
                                 "label": "Jobs",
                                 "columns": ["Job"],
-                                "is_focusable": True,
-                                "focused_ids": ["linux"],
+                                "is_selectable": True,
+                                "selected_ids": ["linux"],
                                 "rows": [{"id": "linux", "cells": ["Linux"]}],
                             }
                         ],
@@ -35,7 +35,7 @@ def test_live_recorder_isolates_extension_output_from_surface_actions():
         )
     )
 
-    recorder.focus("jobs", ["macos"])
+    recorder.select("jobs", ["macos"])
     state = json.loads(
         recorder.host_live(
             json.dumps(
@@ -47,8 +47,8 @@ def test_live_recorder_isolates_extension_output_from_surface_actions():
         )
     )
 
-    assert recorder.node("jobs")["focused_ids"] == ["macos"]
-    assert state["view"]["nodes"][0]["focused_ids"] == ["macos"]
+    assert recorder.node("jobs")["selected_ids"] == ["macos"]
+    assert state["view"]["nodes"][0]["selected_ids"] == ["macos"]
     assert len(recorder.said) == 1
     assert recorder.ops()[0]["op"] == "open"
 

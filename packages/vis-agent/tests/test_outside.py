@@ -372,8 +372,8 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
                         vis.table_column("job", "Job"),
                         vis.table_column("state", "State"),
                     ],
-                    is_focusable=True,
-                    focused_ids=[],
+                    is_selectable=True,
+                    selected_ids=[],
                 ),
                 vis.stat(
                     "why",
@@ -387,7 +387,7 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
         view.status("Building", tone="running")
         view.row("api", ["deploy / api", "queued"], branch="deploy")
         view.row("api", ["deploy / api", "done"], tone="ok", branch="deploy")
-        view["jobs"].focus("api")
+        view["jobs"].select("api")
         view.write("cloning", "compiling")
         state = view.state()
         nodes = _painted(state["nodes"])
@@ -397,7 +397,7 @@ def test_a_live_view_outside_is_a_transcript_and_a_readable_state(capsys):
         ]
         assert nodes["jobs"]["rows"][0]["tone"] == "ok"
         assert nodes["jobs"]["rows"][0]["branch"] == "deploy"
-        assert nodes["jobs"]["focused_ids"] == ["api"]
+        assert nodes["jobs"]["selected_ids"] == ["api"]
         assert nodes["tail"]["lines"] == ["cloning", "compiling"]
         assert nodes["now"]["text"] == "Building"
         # A row is a node of its own in the state the host holds, and the ops
@@ -561,7 +561,7 @@ def test_a_nap_answers_a_surface_the_moment_it_touches_the_view(monkeypatch):
         now[0] += seconds
         slept.append(seconds)
         if len(slept) == 2:
-            recorder.focus("jobs", ["b"])
+            recorder.select("jobs", ["b"])
 
     monkeypatch.setattr(vis.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(vis.time, "sleep", fake_sleep)
@@ -572,8 +572,8 @@ def test_a_nap_answers_a_surface_the_moment_it_touches_the_view(monkeypatch):
                 "jobs",
                 columns=[vis.table_column("job", "Job")],
                 rows=[vis.table_row("a", ["one"]), vis.table_row("b", ["two"])],
-                is_focusable=True,
-                focused_ids=["a"],
+                is_selectable=True,
+                selected_ids=["a"],
             )
         ],
     )
@@ -584,7 +584,7 @@ def test_a_nap_answers_a_surface_the_moment_it_touches_the_view(monkeypatch):
 
     assert view.sleep(3.0) is True
     assert sum(slept) <= 0.5
-    assert recorder.node("jobs")["focused_ids"] == ["b"]
+    assert recorder.node("jobs")["selected_ids"] == ["b"]
 
     slept.clear()
     assert view.sleep(1.0) is False

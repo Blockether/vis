@@ -229,35 +229,38 @@
 ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: CI job rows painted
 ;; selection as inert text, so choosing a job could not change the steps or log below it.
 (defdescribe
-  focused-table-test
-  (it "accepts focused rows only on a focusable table, and keeps focus inside the rows that remain"
-      (let [focusable
-            (assoc (table-node :insertion)
-              :rows [(row "a" "A" "1") (row "b" "B" "2")]
-              :is-focusable true
-              :focused-ids ["a"])
+  selected-table-test
+  (it
+    "accepts selected rows only on a selectable table, and keeps selection inside the rows that remain"
+    (let [selectable
+          (assoc (table-node :insertion)
+            :rows [(row "a" "A" "1") (row "b" "B" "2")]
+            :is-selectable true
+            :selected-ids ["a"])
 
-            selected
-            (patched (view focusable) {:op :set :node-id "t" :focused-ids ["a" "b"]})
+          selected
+          (patched (view selectable) {:op :set :node-id "t" :selected-ids ["a" "b"]})
 
-            removed
-            (patched selected {:op :remove :node-id "t" :item-ids ["a"]})
+          removed
+          (patched selected {:op :remove :node-id "t" :item-ids ["a"]})
 
-            cleared
-            (patched removed {:op :clear :node-id "t"})]
+          cleared
+          (patched removed {:op :clear :node-id "t"})]
 
-        (expect (nil? (hs/live-node-error focusable)))
-        (expect (some? (hs/live-node-error (assoc (table-node :insertion) :focused-ids []))))
-        (expect (= ["a" "b"] (:focused-ids (node selected "t"))))
-        (expect (= ["b"] (:focused-ids (node removed "t"))))
-        (expect (= [] (:focused-ids (node cleared "t"))))
-        (expect (str/includes? (refusal #(patched (view focusable)
-                                                  {:op :set :node-id "t" :focused-ids ["missing"]}))
-                               "no row missing"))
-        (expect (str/includes? (refusal #(patched (view (assoc (table-node :insertion)
-                                                          :rows [(row "a" "A" "1")]))
-                                                  {:op :set :node-id "t" :focused-ids ["a"]}))
-                               "not focusable")))))
+      (expect (nil? (hs/live-node-error selectable)))
+      (expect (some? (hs/live-node-error (assoc (table-node :insertion) :selected-ids []))))
+      (expect (some? (hs/live-node-error (assoc (table-node :insertion) :is-focusable true))))
+      (expect (some? (hs/live-node-error (assoc (table-node :insertion) :focused-ids []))))
+      (expect (= ["a" "b"] (:selected-ids (node selected "t"))))
+      (expect (= ["b"] (:selected-ids (node removed "t"))))
+      (expect (= [] (:selected-ids (node cleared "t"))))
+      (expect (str/includes? (refusal #(patched (view selectable)
+                                                {:op :set :node-id "t" :selected-ids ["missing"]}))
+                             "no row missing"))
+      (expect (str/includes? (refusal #(patched (view (assoc (table-node :insertion)
+                                                        :rows [(row "a" "A" "1")]))
+                                                {:op :set :node-id "t" :selected-ids ["a"]}))
+                             "not selectable")))))
 
 ;; A table is the one node whose shape the human keeps reading while it moves,
 ;; so the same script is asserted row by row under each declared order.
@@ -431,18 +434,18 @@
       (expect (empty? (:elided (live/picture ci-view))))))
 
 (defdescribe picture-control-state-test
-             (it "leaves table focus controls out of the model picture and its markdown inverse"
-                 (let [focusable
+             (it "leaves table selection controls out of the model picture and its markdown inverse"
+                 (let [selectable
                        (assoc (table-node :insertion)
                          :rows [(row "a" "A" "1")]
-                         :is-focusable true
-                         :focused-ids ["a"])
+                         :is-selectable true
+                         :selected-ids ["a"])
 
                        table
-                       (node (:view (live/picture (view focusable))) "t")]
+                       (node (:view (live/picture (view selectable))) "t")]
 
-                   (expect (not (contains? table :is-focusable)))
-                   (expect (not (contains? table :focused-ids))))))
+                   (expect (not (contains? table :is-selectable)))
+                   (expect (not (contains? table :selected-ids))))))
 
 (defdescribe
   markdown-test

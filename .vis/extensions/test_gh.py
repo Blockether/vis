@@ -151,15 +151,15 @@ def test_a_poll_reads_as_the_seven_answers():
     )
     # The row under a group says only the variant: the group above it already said the rest.
     assert shape["rows"][0]["cells"][0] == "macos-latest"
-    # Every concurrently running job is focused; the elapsed column waits for its end.
-    assert shape["focus_ids"] == ["95742028721", "95742028781"]
-    assert shape["focus"] == "tests · macos-latest + ubuntu-latest"
+    # Every concurrently running job is selected; the elapsed column waits for its end.
+    assert shape["selected_ids"] == ["95742028721", "95742028781"]
+    assert shape["selection"] == "tests · macos-latest + ubuntu-latest"
     assert shape["rows"][0]["cells"][2] == "·"
     assert [one["id"] for one in shape["links"]] == ["run", "95742028770"]
 
 
 def test_the_timeline_folds_to_the_step_under_way():
-    shape = gh.run_shape(fixture("run-mid.json"), focus_ids=["95742028721"])
+    shape = gh.run_shape(fixture("run-mid.json"), selected_ids=["95742028721"])
 
     # Sixty steps is not a timeline, it is a wall. What went before is one named row, and
     # the time it took is on it — so the fold is an answer, not a hidden pile.
@@ -210,16 +210,16 @@ def test_the_head_says_when_the_run_began(monkeypatch):
     )
 
 
-def test_parallel_jobs_are_all_focused_and_an_explicit_focus_wins():
+def test_parallel_jobs_are_all_selected_and_an_explicit_selection_wins():
     mid = fixture("run-mid.json")
     shape = gh.run_shape(mid)
 
     # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: the table looked
     # selectable but always showed the first running job's details and log.
-    assert shape["focus_ids"] == ["95742028721", "95742028781"]
-    selected = gh.run_shape(mid, focus_ids=["95742028770"])
-    assert selected["focus_ids"] == ["95742028770"]
-    assert selected["focus"] == "tests · vis-agent + vis-contract (PyPI packages)"
+    assert shape["selected_ids"] == ["95742028721", "95742028781"]
+    selected = gh.run_shape(mid, selected_ids=["95742028770"])
+    assert selected["selected_ids"] == ["95742028770"]
+    assert selected["selection"] == "tests · vis-agent + vis-contract (PyPI packages)"
 
 
 def test_a_green_run_defaults_to_its_last_job():
@@ -231,19 +231,19 @@ def test_a_green_run_defaults_to_its_last_job():
 
     shape = gh.run_shape(payload)
 
-    assert shape["focus_ids"] == [str(payload["jobs"][-1]["databaseId"])]
+    assert shape["selected_ids"] == [str(payload["jobs"][-1]["databaseId"])]
     # The row drops the parent its group already names; the STATUS says both, because
     # there it is the whole name of the thing being done.
-    assert shape["focus"] == "classpath · extensions/channels/vis-channel-tui"
+    assert shape["selection"] == "classpath · extensions/channels/vis-channel-tui"
 
 
-def test_a_finished_run_focuses_the_job_that_failed():
+def test_a_finished_run_selects_the_job_that_failed():
     shape = gh.run_shape(fixture("run-final.json"))
 
     assert shape["is_over"] is True
     assert shape["tone"] == "error"
-    assert shape["focus"] == "tests · vis-agent + vis-contract (PyPI packages)"
-    assert shape["focus_ids"] == ["95742028770"]
+    assert shape["selection"] == "tests · vis-agent + vis-contract (PyPI packages)"
+    assert shape["selected_ids"] == ["95742028770"]
     assert [(one["label"], one["value_text"]) for one in shape["score"]] == [
         ("failed", "1"),
         ("passed", "5"),
@@ -277,8 +277,8 @@ def test_the_view_opens_declared_from_the_first_poll(watched):
         "link",
     ]
     jobs = node(opened["view"], "jobs")
-    assert jobs["is_focusable"] is True
-    assert jobs["focused_ids"] == ["95742028721", "95742028781"]
+    assert jobs["is_selectable"] is True
+    assert jobs["selected_ids"] == ["95742028721", "95742028781"]
 
 
 def test_only_what_moved_since_the_last_poll_crosses_the_wire(watched):
@@ -295,11 +295,11 @@ def test_only_what_moved_since_the_last_poll_crosses_the_wire(watched):
     assert "95742029230" not in touched
 
 
-def test_the_steps_start_over_when_the_job_in_focus_changes(watched):
+def test_the_steps_start_over_when_the_job_in_selection_changes(watched):
     recorder, _ = watched
     steps = [op for op in recorder.patched() if op.get("node_id") == "steps"]
 
-    # Focus moves from the running job to the one that failed, so the checklist is emptied
+    # Selection moves from the running job to the one that failed, so the checklist is emptied
     # before the new job's steps land — a step of the old job must not linger under the new one.
     assert steps[0]["op"] == "clear"
     assert any(op["op"] != "clear" for op in steps[1:])
@@ -322,12 +322,12 @@ def test_a_running_job_has_no_log_pane_at_all():
     payload = fixture("run-mid.json")
     shape = gh.run_shape(
         payload,
-        focus_ids=["95742028721"],
+        selected_ids=["95742028721"],
         now=gh._timestamp("2026-08-18T14:20:47Z"),
     )
     later = gh.run_shape(
         payload,
-        focus_ids=["95742028721"],
+        selected_ids=["95742028721"],
         now=gh._timestamp("2026-08-18T14:20:50Z"),
     )
 
@@ -336,10 +336,10 @@ def test_a_running_job_has_no_log_pane_at_all():
     # left hundreds of copies of the same placeholder in the log's record.
     # GitHub publishes a job's raw log when the job ENDS. Until then there is nothing to
     # read, and a pane that says so is a line of nothing above everything else.
-    assert gh._focus_log_lines(shape, None, {}, gh.FAILED_TAIL_LINES) == []
+    assert gh._selection_log_lines(shape, None, {}, gh.FAILED_TAIL_LINES) == []
     assert shape["rows"][0]["cells"][2] == "10m 34s"
     assert later["rows"][0]["cells"][2] == "10m 37s"
-    assert gh._focus_signature(shape) == gh._focus_signature(later)
+    assert gh._selection_signature(shape) == gh._selection_signature(later)
 
 
 def test_a_ticking_run_writes_its_log_pane_once_per_change(recorder, monkeypatch):
@@ -355,15 +355,15 @@ def test_a_ticking_run_writes_its_log_pane_once_per_change(recorder, monkeypatch
     gh.watch(TITLE, DESCRIPTION, poll, lambda job_id, lines: failing_log())
     written = [op for op in recorder.patched() if op.get("node_id") == "output"]
 
-    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: elapsed time in the focused
-    # rows made every tick look like a new focus, so the log's record grew by one copy of the
+    # Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: elapsed time in the selected
+    # rows made every tick look like a new selection, so the log's record grew by one copy of the
     # placeholder per tick and the Companion offered hundreds of "earlier lines" of it.
     # Nothing is written until GitHub has published something: five ticks of two running
     # jobs leave the pane unborn, and the failure that ends the run writes it once.
     assert [op["lines"] for op in written if op["op"] == "append"] == [failing_log()]
 
 
-def test_running_focus_waits_while_finished_focus_gets_its_log(watched):
+def test_running_selection_waits_while_finished_selection_gets_its_log(watched):
     recorder, _ = watched
     output = [op for op in recorder.patched() if op.get("node_id") == "output"]
 
@@ -389,11 +389,11 @@ def test_the_settled_pane_is_one_photograph(watched):
     assert added[0]["after"] == "run"
     assert json.loads(result)["run"]["conclusion"] == "failure"
     assert ("95742028770", gh.LOG_TAIL_LINES) in recorder.asked
-    snapshots = recorder.said[-1]["ending"]["focus_snapshots"]
-    assert [one["focused_ids"] for one in snapshots] == [
+    snapshots = recorder.said[-1]["ending"]["selection_snapshots"]
+    assert [one["selected_ids"] for one in snapshots] == [
         [str(job["databaseId"])] for job in fixture("run-final.json")["jobs"]
     ]
-    assert node(snapshots[0]["view"], "jobs")["focused_ids"] == ["95742028721"]
+    assert node(snapshots[0]["view"], "jobs")["selected_ids"] == ["95742028721"]
     assert node(snapshots[-1]["view"], "output")["lines"] == failing_log()
 
 
@@ -429,7 +429,7 @@ def test_an_unpublished_log_is_not_cached_as_if_it_were_final():
     ]
 
 
-def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
+def test_a_human_selection_is_read_back_and_kept_across_the_next_poll(recorder):
     polls = [fixture("run-mid.json"), fixture("run-final.json")]
     selected = "95742028809"
     asked = []
@@ -441,11 +441,11 @@ def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
             return
         clicked = True
         # The generic harness applies this as a surface action, so it changes shared
-        # state without pretending the extension emitted the focus patch.
-        recorder.focus("jobs", [selected])
+        # state without pretending the extension emitted the selection patch.
+        recorder.select("jobs", [selected])
 
     def poll():
-        # Click WHILE the second provider poll is in flight. Reading focus before
+        # Click WHILE the second provider poll is in flight. Reading selection before
         # that poll used to overwrite this choice with the extension's default.
         if len(polls) == 1:
             press_row()
@@ -462,12 +462,12 @@ def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
         log_of,
     )
 
-    focus_ops = [
+    selection_ops = [
         op
         for op in recorder.patched()
-        if op.get("node_id") == "jobs" and "focused_ids" in op
+        if op.get("node_id") == "jobs" and "selected_ids" in op
     ]
-    assert focus_ops[-1]["focused_ids"] == [selected]
+    assert selection_ops[-1]["selected_ids"] == [selected]
     assert json.loads(result)["run"]["conclusion"] == "failure"
     assert node(recorder.picture(), "output")["lines"] == [f"log for {selected}"]
     assert asked[0] == (selected, gh.LOG_TAIL_LINES)
@@ -476,7 +476,9 @@ def test_a_human_focus_is_read_back_and_kept_across_the_next_poll(recorder):
     }
 
 
-def test_a_focus_change_refreshes_details_even_while_github_is_unavailable(recorder):
+def test_a_selection_change_refreshes_details_even_while_github_is_unavailable(
+    recorder,
+):
     """A local selection is live state; a failed provider poll must not freeze its details."""
     first = fixture("run-mid.json")
     selected = "95742028770"
@@ -488,7 +490,7 @@ def test_a_focus_change_refreshes_details_even_while_github_is_unavailable(recor
         if calls == 1:
             return first
         if calls == 2:
-            recorder.focus("jobs", [selected])
+            recorder.select("jobs", [selected])
         raise RuntimeError("GitHub unavailable in regression fixture")
 
     result = gh.watch(
@@ -498,7 +500,7 @@ def test_a_focus_change_refreshes_details_even_while_github_is_unavailable(recor
         lambda job_id, _lines: [f"log for {job_id}"],
     )
 
-    assert recorder.node("jobs")["focused_ids"] == [selected]
+    assert recorder.node("jobs")["selected_ids"] == [selected]
     assert json.loads(result)["ending"]["reason"] == "poll_failure"
     assert node(recorder.picture(), "steps")["steps"][0]["label"] == "Set up job"
     assert node(recorder.picture(), "output")["lines"] == [f"log for {selected}"]
@@ -562,8 +564,8 @@ def test_the_ops_are_the_ones_the_engine_replays(watched):
     recorder, _ = watched
 
     actual = recorder.ops()
-    # Archive-only focus pictures do not change the live operation golden.
-    actual[-1]["ending"].pop("focus_snapshots")
+    # Archive-only selection pictures do not change the live operation golden.
+    actual[-1]["ending"].pop("selection_snapshots")
     assert actual == golden("ops.json", actual)
 
 
@@ -986,7 +988,7 @@ def test_a_tap_during_the_nap_is_answered_before_the_next_poll(recorder, monkeyp
         now[0] += seconds
         slept.append(seconds)
         if len(slept) == 2:
-            recorder.focus("jobs", [selected])
+            recorder.select("jobs", [selected])
 
     monkeypatch.setattr(vis.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(vis.time, "sleep", fake_sleep)

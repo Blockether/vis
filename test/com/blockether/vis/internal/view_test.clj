@@ -1765,9 +1765,9 @@
                            :text)))
             (expect (nil? (:model-result trailer)))))))
   ;; Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: finished
-  ;; focusable rows lost their alternate detail pictures when the live writer exited.
+  ;; selectable rows lost their alternate detail pictures when the live writer exited.
   (it
-    "seals focus snapshots into the artifact record but not the model verdict"
+    "seals selection snapshots into the artifact record but not the model verdict"
     (recorded
       (fn []
         (let [spec
@@ -1775,8 +1775,8 @@
                           :type "table"
                           :columns [{:id "job" :label "Job"}]
                           :rows [{:id "linux" :cells ["Linux"]}]
-                          :is-focusable true
-                          :focused-ids ["linux"]})
+                          :is-selectable true
+                          :selected-ids ["linux"]})
 
               view
               (hi/open-live! spec)
@@ -1785,32 +1785,32 @@
               (:id view)
 
               snapshot
-              {:node-id "jobs" :focused-ids ["linux"] :view view}
+              {:node-id "jobs" :selected-ids ["linux"] :view view}
 
               result
-              (hi/close-live! view-id {:focus-snapshots [snapshot]})
+              (hi/close-live! view-id {:selection-snapshots [snapshot]})
 
               trailer
               (:result (last (live-sink/read-range (live-sink/view-file (:session-id spec) view-id)
                                                    0
                                                    10)))]
 
-          (expect (nil? (:focus-snapshots result)))
+          (expect (nil? (:selection-snapshots result)))
           (expect (= ["linux"]
                      (-> trailer
-                         :focus-snapshots
+                         :selection-snapshots
                          first
-                         :focused-ids)))
+                         :selected-ids)))
           (expect (= view-id
                      (-> trailer
-                         :focus-snapshots
+                         :selection-snapshots
                          first
                          :view
                          :id)))))))
   ;; Regression, session f8115c8c-b997-49bf-a22b-81816d961fe3: the only picture an
   ;; extension can hand back is the snake_case one `state` ANSWERED it with, and the engine
   ;; held that to its own kebab-case vocabulary — so every archive snapshot was refused
-  ;; ("invalid focus snapshot") and a watch that ran to the end died at its own close
+  ;; ("invalid selection snapshot") and a watch that ran to the end died at its own close
   ;; instead of sealing what the human had been reading.
   (it
     "reads an archive snapshot spelled the way the extension holding it reads a view"
@@ -1821,8 +1821,8 @@
                           :type "table"
                           :columns [{:id "job" :label "Job"}]
                           :rows [{:id "linux" :cells ["Linux"] :tone "ok"}]
-                          :is-focusable true
-                          :focused-ids ["linux"]})
+                          :is-selectable true
+                          :selected-ids ["linux"]})
 
               view-id
               (:id (hi/open-live! spec))
@@ -1837,9 +1837,9 @@
               _
               (hi/live-json! (json/write-json-str {"op" "close"
                                                    "view_id" view-id
-                                                   "ending" {"focus_snapshots"
+                                                   "ending" {"selection_snapshots"
                                                              [{"node_id" "jobs"
-                                                               "focused_ids" ["linux"]
+                                                               "selected_ids" ["linux"]
                                                                "view" picture}]}}))
 
               trailer
@@ -1848,10 +1848,10 @@
                   :result)
 
               snapshot
-              (first (:focus-snapshots trailer))]
+              (first (:selection-snapshots trailer))]
 
           (expect (= "jobs" (:node-id snapshot)))
-          (expect (= ["linux"] (:focused-ids snapshot)))
+          (expect (= ["linux"] (:selected-ids snapshot)))
           (expect (= view-id
                      (-> snapshot
                          :view
@@ -1912,8 +1912,8 @@
           (let [view
                 (hi/open-live! (live-spec {:id "jobs"
                                            :type "table"
-                                           :is-focusable true
-                                           :focused-ids ["a"]
+                                           :is-selectable true
+                                           :selected-ids ["a"]
                                            :columns [{:id "job" :label "Job"}]
                                            :rows [{:id "a" :cells ["A"]} {:id "b" :cells ["B"]}]}))
 
@@ -1927,7 +1927,7 @@
               (=
                 {:action :select :view-id view-id :is-accepted true :node-id "jobs" :item-ids ["b"]}
                 selected))
-            (expect (= ["b"] (get-in (hi/live-view view-id) [:nodes 0 :focused-ids])))
+            (expect (= ["b"] (get-in (hi/live-view view-id) [:nodes 0 :selected-ids])))
             (expect (throws? clojure.lang.ExceptionInfo
                              #(hi/action! view-id {:action :submit :values {}})))
             (expect (= {:action :interrupt :view-id view-id :is-accepted true}

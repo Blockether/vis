@@ -56,8 +56,8 @@ import {
   LiveCount,
   ProjectStatusCounts,
   LoadMore,
-  TableFocusButton,
-  TableFocusRow,
+  TableSelectionButton,
+  TableSelectionRow,
   Meter,
   LiveTally,
   LIST_EDGE,
@@ -2356,15 +2356,15 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
     });
   });
 
-  describe("TableFocusButton", () => {
-    const html = (isFocused: boolean) =>
+  describe("TableSelectionButton", () => {
+    const html = (isSelected: boolean) =>
       renderToStaticMarkup(
-        <TableFocusButton isFocused={isFocused} mark={<i data-mark="running" />} aria-label="Focus tests / macos">
+        <TableSelectionButton isSelected={isSelected} mark={<i data-mark="running" />} aria-label="Select tests / macos">
           tests / macos
-        </TableFocusButton>,
+        </TableSelectionButton>,
       );
 
-    it("states focus and keeps a finger-sized row target", () => {
+    it("states selection and keeps a finger-sized row target", () => {
       expect(html(true)).toContain('aria-pressed="true"');
       expect(html(false)).toContain('aria-pressed="false"');
       expect(first(html(true))).toContain("min-h-11");
@@ -2385,10 +2385,10 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       const row = renderToStaticMarkup(
         <table>
           <tbody>
-            <TableFocusRow isFocused>
+            <TableSelectionRow isSelected>
               <td>job</td>
               <td>success</td>
-            </TableFocusRow>
+            </TableSelectionRow>
           </tbody>
         </table>,
       );

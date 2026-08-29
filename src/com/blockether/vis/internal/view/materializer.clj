@@ -68,7 +68,7 @@
    :stat #{:stats}
    :steps #{:steps}
    :log #{:window-lines}
-   :table #{:order :max-rows :focused-ids}
+   :table #{:order :max-rows :selected-ids}
    :link #{:links}})
 
 (def ^:private appendable-key
@@ -225,12 +225,12 @@
                       (str "a " (name (:type node))
                            " node has no " (str/join ", " foreign)
                            " to set; it sets " (str/join ", " (sort (map name allowed))))))
-    (when (contains? given :focused-ids)
-      (when-not (true? (:is-focusable node))
-        (invalid-patch! (:id node) "this table is not focusable"))
+    (when (contains? given :selected-ids)
+      (when-not (true? (:is-selectable node))
+        (invalid-patch! (:id node) "this table is not selectable"))
       (let [row-ids (set (map :id (:rows node)))]
-        (when-let [missing (first (remove row-ids (:focused-ids op)))]
-          (invalid-patch! (:id node) (str "there is no row " missing " to focus")))))
+        (when-let [missing (first (remove row-ids (:selected-ids op)))]
+          (invalid-patch! (:id node) (str "there is no row " missing " to select")))))
     (let [merged (merge node (select-keys op (vec given)))]
       (checked-node (if (contains? given :stats)
                       (assoc merged :stats (checked-count! merged (:stats op)))
@@ -276,25 +276,25 @@
             :total-lines (+ (long (:total-lines node)) (count items))))
         (update node k #(checked-count! node (upsert % items)))))))
 
-(defn- prune-focused
-  "Drop focus ids whose rows no longer exist, without adding focus metadata to a
+(defn- prune-selected
+  "Drop selected ids whose rows no longer exist, without adding selection metadata to a
    table that never declared the control."
   [node]
-  (if (contains? node :focused-ids)
+  (if (contains? node :selected-ids)
     (let [row-ids (set (map :id (:rows node)))]
-      (update node :focused-ids #(filterv row-ids %)))
+      (update node :selected-ids #(filterv row-ids %)))
     node))
 
 (defn- apply-remove
   "A node without the named items. A node with no keyed collection has nothing
-   to remove and says so. Removing table rows also prunes transient focus."
+   to remove and says so. Removing table rows also prunes transient selection."
   [node op]
   (let [{:keys [key]} (spec/item-bounds (:type node))]
     (when (nil? key)
       (invalid-patch! (:id node) (str "a " (name (:type node)) " node holds no removable items")))
     (cond-> (update node key without-ids (:item-ids op))
       (= :table (:type node))
-      prune-focused)))
+      prune-selected)))
 
 (defn- apply-clear
   "A node emptied. Clearing a log empties the WINDOW and starts its RECORD over: the
@@ -312,7 +312,7 @@
         (invalid-patch! (:id node) (str "a " (name (:type node)) " node holds nothing to clear")))
       (cond-> (assoc node key [])
         (= :table (:type node))
-        prune-focused))))
+        prune-selected))))
 
 (defn- insert-after
   "`nodes` with `node` in the slot right after `idx` — where the eye expects it,
@@ -752,7 +752,7 @@
                      (with-meta (-> node
                                     (assoc :rows shown
                                            :order :insertion)
-                                    (dissoc :is-focusable :focused-ids))
+                                    (dissoc :is-selectable :selected-ids))
                        {:elided (- (count rows) (count shown))}))
 
                    node))

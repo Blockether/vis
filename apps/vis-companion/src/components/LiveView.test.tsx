@@ -110,8 +110,8 @@ describe('a live view on the phone', () => {
         rows: [],
         max_rows: 5000,
         order: 'insertion',
-        is_focusable: false,
-        focused_ids: [],
+        is_selectable: false,
+        selected_ids: [],
       }),
     });
     expect(html).toContain('no rows yet');
@@ -231,8 +231,8 @@ describe('a live view on the phone', () => {
   });
 });
 
-describe('focusing a table row', () => {
-  const focusableView = (): LiveView => {
+describe('selecting a table row', () => {
+  const selectableView = (): LiveView => {
     const view = opened();
     const hosts = view.nodes
       .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
@@ -240,34 +240,34 @@ describe('focusing a table row', () => {
     if (!hosts || hosts.type !== 'table') throw new Error('the fixture must hold the hosts table');
     return withNode(view, {
       ...hosts,
-      is_focusable: true,
-      focused_ids: ['db-1', 'db-2'],
+      is_selectable: true,
+      selected_ids: ['db-1', 'db-2'],
     });
   };
 
-  it('shows every default focus and sends a press anywhere in the job row', () => {
-    const onFocus = vi.fn();
-    paint({ view: focusableView(), onFocus });
+  it('shows every default selection and sends a press anywhere in the job row', () => {
+    const onSelect = vi.fn();
+    paint({ view: selectableView(), onSelect });
 
-    const first = screen.getByRole('button', { name: 'Focus db-1' });
-    const second = screen.getByRole('button', { name: 'Focus db-2' });
+    const first = screen.getByRole('button', { name: 'Select db-1' });
+    const second = screen.getByRole('button', { name: 'Select db-2' });
     expect(first.getAttribute('aria-pressed')).toBe('true');
     expect(second.getAttribute('aria-pressed')).toBe('true');
     fireEvent.click(second);
-    expect(onFocus).toHaveBeenCalledWith('hosts', ['db-2']);
+    expect(onSelect).toHaveBeenCalledWith('hosts', ['db-2']);
 
-    onFocus.mockClear();
+    onSelect.mockClear();
     // A middle column appears twice in the DOM on purpose — stacked under the name
     // for a phone, and as its own cell from `sm` — and never both on one screen. The
     // press has to reach the row from the cell that is NOT the button.
     const spelled = screen.getAllByText('critical');
     fireEvent.click(spelled[spelled.length - 1]);
-    expect(onFocus).toHaveBeenCalledWith('hosts', ['db-2']);
+    expect(onSelect).toHaveBeenCalledWith('hosts', ['db-2']);
   });
   // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: matrix jobs repeated
   // their whole parent name as flat peers, making the run hard to scan on a phone.
   it('nests matrix jobs under a collapsible parent', () => {
-    const view = focusableView();
+    const view = selectableView();
     const hosts = view.nodes
       .flatMap((node) => (node.type === 'group' ? node.fields : [node]))
       .find((node) => node.id === 'hosts');
@@ -277,32 +277,32 @@ describe('focusing a table row', () => {
       { id: 'android', cells: ['Release apps / Android', 'running'], tone: 'running', branch: 'Release apps' },
       { id: 'docs', cells: ['Publish docs', 'success'], tone: 'ok' },
     ];
-    hosts.focused_ids = ['android'];
-    paint({ view, onFocus: vi.fn() });
+    hosts.selected_ids = ['android'];
+    paint({ view, onSelect: vi.fn() });
 
     const parent = screen.getByRole('button', { name: 'Release apps' });
     expect(parent.getAttribute('aria-expanded')).toBe('true');
-    expect(screen.getByRole('button', { name: 'Focus Release apps / iOS' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Select Release apps / iOS' })).toBeTruthy();
     expect(screen.getByText('Android')).toBeTruthy();
 
     fireEvent.click(parent);
     expect(parent.getAttribute('aria-expanded')).toBe('false');
-    expect(screen.queryByRole('button', { name: 'Focus Release apps / iOS' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Focus Publish docs' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Select Release apps / iOS' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Select Publish docs' })).toBeTruthy();
   });
   // Regression, session a64d44c2-8228-455f-926e-b3381f19a93b: selecting a job only
   // tinted its first cell, so the table looked like a cell picker instead of a row picker.
   it('paints the selected state across the whole job row', () => {
-    paint({ view: focusableView(), onFocus: vi.fn() });
+    paint({ view: selectableView(), onSelect: vi.fn() });
 
-    const selected = screen.getByRole('button', { name: 'Focus db-2' });
+    const selected = screen.getByRole('button', { name: 'Select db-2' });
     const row = selected.closest('tr') as HTMLTableRowElement;
     expect(row.className).toContain('bg-accent/10');
     expect(row.getAttribute('aria-selected')).toBe('true');
   });
 
   it('sends the row through the shared View action instead of keeping private selection', () => {
-    const view = focusableView();
+    const view = selectableView();
     const viewAction = vi.fn(async () => ({
       action: 'select' as const,
       is_accepted: true,
@@ -313,7 +313,7 @@ describe('focusing a table row', () => {
     const client = { viewAction } as unknown as GatewayClient;
 
     render(<LiveViewList views={[view]} client={client} sid="session-1" />);
-    fireEvent.click(screen.getByRole('button', { name: 'Focus db-2' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select db-2' }));
 
     expect(viewAction).toHaveBeenCalledWith('session-1', view.id, {
       action: 'select',

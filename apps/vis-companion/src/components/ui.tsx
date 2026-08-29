@@ -360,16 +360,16 @@ export const Chip = forwardRef<
  * button in its first cell stays the control; the mark it leads with is the
  * row's STATE, which the caller owns.
  */
-export const TableFocusRow = forwardRef<
+export const TableSelectionRow = forwardRef<
   HTMLTableRowElement,
-  HTMLAttributes<HTMLTableRowElement> & { isFocused?: boolean }
->(function TableFocusRow({ isFocused = false, className = '', ...props }, ref) {
+  HTMLAttributes<HTMLTableRowElement> & { isSelected?: boolean }
+>(function TableSelectionRow({ isSelected = false, className = '', ...props }, ref) {
   return (
     <tr
       ref={ref}
-      aria-selected={isFocused}
+      aria-selected={isSelected}
       className={`transition-colors duration-150 motion-reduce:transition-none ${
-        isFocused ? 'bg-accent/10' : ''
+        isSelected ? 'bg-accent/10' : ''
       } ${className}`}
       {...props}
     />
@@ -383,21 +383,21 @@ export const TableFocusRow = forwardRef<
  *
  * The leading MARK is the caller's, because what a row is doing is the run's
  * statement and not the table's — and a row already says it is selected twice,
- * with the accent edge this button wears and the wash `TableFocusRow` lays over
+ * with the accent edge this button wears and the wash `TableSelectionRow` lays over
  * every cell. The face starts at the TOP of its own box: a row whose second line
  * says what it is doing now must not push its mark and its name into the middle.
  */
-export const TableFocusButton = forwardRef<
+export const TableSelectionButton = forwardRef<
   HTMLButtonElement,
-  ButtonHTMLAttributes<HTMLButtonElement> & { isFocused?: boolean; mark: ReactNode }
->(function TableFocusButton({ isFocused = false, mark, className = '', children, ...props }, ref) {
+  ButtonHTMLAttributes<HTMLButtonElement> & { isSelected?: boolean; mark: ReactNode }
+>(function TableSelectionButton({ isSelected = false, mark, className = '', children, ...props }, ref) {
   return (
     <button
       ref={ref}
       type="button"
-      aria-pressed={isFocused}
+      aria-pressed={isSelected}
       className={`flex min-h-11 w-full min-w-0 items-start gap-2 border-l-2 px-3 py-3.5 text-left font-mono text-ui transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-8 mouse:py-2 ${
-        isFocused
+        isSelected
           ? 'border-accent text-accent-ink'
           : 'border-transparent text-inherit hover:bg-hover'
       } ${className}`}

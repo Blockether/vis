@@ -9,11 +9,11 @@ mediated by private human input before any view opens.
 
 Six nodes answer distinct questions about a run: what the machine is doing RIGHT NOW (`run`), how far
 the steps have got (`progress`), the outcome counts and the wall clock (`score`), the jobs (`jobs`), the
-focused job's timeline (`steps`), and where to open it (`links`). A seventh, the log, is not declared: it
-is ADDED after `run` the moment a focused job has something to read and dropped again when it has not, so
+selected job's timeline (`steps`), and where to open it (`links`). A seventh, the log, is not declared: it
+is ADDED after `run` the moment a selected job has something to read and dropped again when it has not, so
 a phone shows a failure over the fold instead of a permanent line about a log GitHub has not published.
-Job rows are controls: all concurrently running jobs are focused by default; with none running, the last
-failed job (or simply the last job) is focused. A tap replaces that focus in shared live state, so the
+Job rows are controls: all concurrently running jobs are selected by default; with none running, the last
+failed job (or simply the last job) is selected. A tap replaces that selection in shared live state, so the
 extension, terminal, and every Companion agree on the timeline and log below it. One mapping serves all
 nodes: every unfinished status is `running`, `success` is `ok`, `skipped` and `neutral` are `idle`, and
 every unsuccessful conclusion is `error`. Rows are upserted by the job's `databaseId`, so a job that
@@ -170,7 +170,7 @@ def _job_groups(jobs):
     return [prefix if prefix and counts[prefix] > 1 else None for prefix in prefixes]
 
 
-def default_focus_ids(jobs):
+def default_selected_ids(jobs):
     """All running jobs, else the last failed job, else the last job."""
     running = [
         _job_id(job, index)
@@ -201,7 +201,7 @@ def _job_display(job, group=None):
     return name
 
 
-def _focus_name(job, group=None):
+def _selection_name(job, group=None):
     """The name the STATUS uses — parent and variant, joined the way a person says it."""
     variant = _job_display(job, group)
     return f"{group} · {variant}" if group else variant
@@ -300,7 +300,7 @@ def _run_status(payload, jobs, tones, groups, now=None):
         detail.append(f"failed after {took}" if took != "·" else "failed")
         if len(failed) > 1:
             detail.append(f"{len(failed) - 1} more failed")
-        return f"{_focus_name(job, group)} failed", " · ".join(detail)
+        return f"{_selection_name(job, group)} failed", " · ".join(detail)
     if running:
         job, group = running[0]
         step = _current_step(job)
@@ -312,7 +312,7 @@ def _run_status(payload, jobs, tones, groups, now=None):
                 detail.append(f"{moment} in this step")
         if len(running) > 1:
             detail.append(f"{len(running) - 1} other jobs running")
-        return _focus_name(job, group), " · ".join(detail) or "starting"
+        return _selection_name(job, group), " · ".join(detail) or "starting"
     if str(payload.get("status") or "") == "completed":
         passed = sum(1 for tone in tones if tone == "ok")
         ending = str(payload.get("conclusion") or "").replace("_", " ")
@@ -340,7 +340,7 @@ def _span_seconds(item):
 
 
 def _timeline(selected, groups_by_id, is_over, now=None):
-    """The focused job's steps, folded to what is happening while the run is LIVE.
+    """The selected job's steps, folded to what is happening while the run is LIVE.
 
     A job has sixty steps and a person watching wants three: the one that just finished,
     the one under way, and the one coming. The rest are named — `5 earlier steps · 2m07s`
@@ -398,11 +398,11 @@ def _timeline(selected, groups_by_id, is_over, now=None):
     return steps, active_step_ids
 
 
-def run_shape(payload, focus_ids=None, now=None):
+def run_shape(payload, selected_ids=None, now=None):
     """Everything the nodes show, derived from one `gh run view --json` payload.
 
-    Pure: `focus_ids=None` applies the live default; explicit ids are the human's shared
-    selection, pruned to jobs that still exist. The same payload and focus always answer the
+    Pure: `selected_ids=None` applies the live default; explicit ids are the human's shared
+    selection, pruned to jobs that still exist. The same payload and selection always answer the
     same shape, which makes both the mapping and click behavior testable without a network.
     """
     jobs = [job for job in (payload.get("jobs") or []) if isinstance(job, dict)]
@@ -419,16 +419,16 @@ def run_shape(payload, focus_ids=None, now=None):
         job_id: group for (job_id, _), group in zip(indexed, groups, strict=True)
     }
     requested = (
-        default_focus_ids(jobs)
-        if focus_ids is None
-        else [str(one) for one in focus_ids]
+        default_selected_ids(jobs)
+        if selected_ids is None
+        else [str(one) for one in selected_ids]
     )
     selected_ids = []
     for job_id in requested:
         if job_id in by_id and job_id not in selected_ids:
             selected_ids.append(job_id)
     if not selected_ids and jobs:
-        selected_ids = default_focus_ids(jobs)
+        selected_ids = default_selected_ids(jobs)
     selected = [(job_id, by_id[job_id]) for job_id in selected_ids]
     failed = [
         job for job, job_tone in zip(jobs, tones, strict=True) if job_tone == "error"
@@ -437,19 +437,19 @@ def run_shape(payload, focus_ids=None, now=None):
     headline, detail = _run_status(payload, jobs, tones, groups, now)
     done, total = _step_counts(jobs)
     steps, active_step_ids = _timeline(selected, groups_by_id, is_over, now)
-    focus_names = [
+    selection_names = [
         _job_display(job, groups_by_id.get(job_id)) for job_id, job in selected
     ]
-    focus_groups = {groups_by_id.get(job_id) for job_id, _ in selected}
+    selection_groups = {groups_by_id.get(job_id) for job_id, _ in selected}
     if len(selected) == 1:
-        focus = _focus_name(selected[0][1], groups_by_id.get(selected[0][0]))
-    elif len(focus_groups) == 1 and None not in focus_groups:
+        selection = _selection_name(selected[0][1], groups_by_id.get(selected[0][0]))
+    elif len(selection_groups) == 1 and None not in selection_groups:
         # Three legs of one matrix are one thing being done three ways: name the parent
         # once and list the variants, the way a person reads the run out loud.
-        focus = f"{focus_groups.pop()} · " + " + ".join(focus_names)
+        selection = f"{selection_groups.pop()} · " + " + ".join(selection_names)
     else:
-        focus = " + ".join(
-            _focus_name(job, groups_by_id.get(job_id)) for job_id, job in selected
+        selection = " + ".join(
+            _selection_name(job, groups_by_id.get(job_id)) for job_id, job in selected
         )
     counted = {
         "passed": sum(1 for job_tone in tones if job_tone == "ok"),
@@ -526,8 +526,8 @@ def run_shape(payload, focus_ids=None, now=None):
                 zip(jobs, tones, groups, strict=True)
             )
         ],
-        "focus": focus,
-        "focus_ids": selected_ids,
+        "selection": selection,
+        "selected_ids": selected_ids,
         "steps": steps,
         "active_step_ids": active_step_ids,
         "links": [
@@ -548,7 +548,7 @@ def declared_nodes(shape):
     """The six nodes, declared once from the first poll and addressed by id ever after.
 
     The log is NOT among them: it is added after `run` when there is something to read
-    (`_show_focus_logs`), so an empty pane never takes the space above the jobs.
+    (`_show_selection_logs`), so an empty pane never takes the space above the jobs.
     """
     return [
         vis.status(
@@ -571,8 +571,8 @@ def declared_nodes(shape):
                 )
                 for row in shape["rows"]
             ],
-            is_focusable=True,
-            focused_ids=shape["focus_ids"],
+            is_selectable=True,
+            selected_ids=shape["selected_ids"],
         ),
         vis.steps(
             "steps",
@@ -584,7 +584,7 @@ def declared_nodes(shape):
 
 
 def push_changes(view, before, after):
-    """Patch ONLY what moved between two polls — including shared table focus."""
+    """Patch ONLY what moved between two polls — including shared table selection."""
     if (
         before.get("headline") != after["headline"]
         or before.get("tone") != after["tone"]
@@ -606,8 +606,8 @@ def push_changes(view, before, after):
                 row["id"], row["cells"], tone=row["tone"], branch=row.get("branch")
             )
     steps = {one["id"]: one for one in before.get("steps") or []}
-    if before.get("focus_ids") != after["focus_ids"]:
-        view["jobs"].focus(*after["focus_ids"])
+    if before.get("selected_ids") != after["selected_ids"]:
+        view["jobs"].select(*after["selected_ids"])
         steps = {}
         view["steps"].clear()
     # The timeline FOLDS while the run is live, so a step can leave it: the rows that
@@ -986,8 +986,8 @@ def _model_report(payload, log_of, cache, superseded=None, failure=None):
     return json.dumps(report, ensure_ascii=False, separators=(",", ":"))
 
 
-def _focus_signature(shape):
-    """The focused rows and the state that decides whether their logs are ready.
+def _selection_signature(shape):
+    """The selected rows and the state that decides whether their logs are ready.
 
     Deliberately free of anything that TICKS: elapsed time changes every poll, and a
     signature that moved with it rewrote the log pane once per tick.
@@ -995,17 +995,17 @@ def _focus_signature(shape):
     rows = {row["id"]: row for row in shape.get("rows") or []}
     return tuple(
         (job_id, rows.get(job_id, {}).get("tone"))
-        for job_id in shape.get("focus_ids") or []
+        for job_id in shape.get("selected_ids") or []
     )
 
 
-def _focused_ids_from_state(state):
+def _selected_ids_from_state(state):
     """The jobs table selection a surface last wrote into shared live state."""
     pending = list((state or {}).get("nodes") or [])
     while pending:
         node = pending.pop(0)
         if node.get("id") == "jobs" and node.get("type") == "table":
-            return [str(one) for one in node.get("focused_ids") or []]
+            return [str(one) for one in node.get("selected_ids") or []]
         pending[0:0] = list(node.get("fields") or [])
     return []
 
@@ -1023,20 +1023,20 @@ def _job_log_tail(job_id, lines, log_of, cache):
     return cache[key]
 
 
-def _focus_log_lines(shape, log_of, cache, lines):
-    """The raw tail of every focused job GitHub has actually published.
+def _selection_log_lines(shape, log_of, cache, lines):
+    """The raw tail of every selected job GitHub has actually published.
 
     A running job HAS no log — GitHub publishes it when the job ends — and a pane that
     says so is one line of nothing sitting above the jobs for the forty minutes somebody
     is watching. So a job with nothing to read contributes nothing, the caller drops the
     node when this comes back empty, and the pane exists only while it holds something.
 
-    One focused job needs no heading: the node's own label already names it. Several do,
+    One selected job needs no heading: the node's own label already names it. Several do,
     and then each tail is introduced by the job it came from.
     """
     rows = {row["id"]: row for row in shape.get("rows") or []}
     picked = []
-    for job_id in shape.get("focus_ids") or []:
+    for job_id in shape.get("selected_ids") or []:
         row = rows.get(job_id)
         if not row or row["tone"] == "running":
             continue
@@ -1055,27 +1055,27 @@ def _focus_log_lines(shape, log_of, cache, lines):
 def _log_label(shape):
     """The log node's name: one word for what it is, then what it is a log OF."""
     rows = {row["id"]: row for row in shape.get("rows") or []}
-    focused = [
-        rows[job_id] for job_id in shape.get("focus_ids") or [] if job_id in rows
+    selected = [
+        rows[job_id] for job_id in shape.get("selected_ids") or [] if job_id in rows
     ]
-    if not focused:
+    if not selected:
         return "Log"
-    named = " + ".join(row["cells"][0] for row in focused)
-    broke = any(row.get("tone") == "error" for row in focused)
+    named = " + ".join(row["cells"][0] for row in selected)
+    broke = any(row.get("tone") == "error" for row in selected)
     return f"{'Failure' if broke else 'Log'} · {named}"
 
 
-def _show_focus_logs(view, shape, log_of, cache, lines):
-    """Put the focused job's log directly under the status — when there IS one.
+def _show_selection_logs(view, shape, log_of, cache, lines):
+    """Put the selected job's log directly under the status — when there IS one.
 
     A log node declared with the rest spends most of a run saying that GitHub has not
     published anything yet: one line of nothing, above everything the view was opened
     for. So the pane is ADDED when there is something to read, dropped when there is
     not, and it sits after `run` — on a phone that is where the eye already is when
     something breaks. Its label names the job it belongs to, so a new job is a new node
-    rather than a rename, and the callers only reach here when the focus moved.
+    rather than a rename, and the callers only reach here when the selection moved.
     """
-    written = _focus_log_lines(shape, log_of, cache, lines)
+    written = _selection_log_lines(shape, log_of, cache, lines)
     if "output" in view:
         view.drop("output")
     if not written:
@@ -1084,11 +1084,11 @@ def _show_focus_logs(view, shape, log_of, cache, lines):
     view["output"].write(*written)
 
 
-def _archive_focus_snapshots(view, payload, log_of, cache):
+def _archive_selection_snapshots(view, payload, log_of, cache):
     """Finished pictures for every job, without rewriting the live surface.
 
     The artifact owns these after the watcher exits. They are ordinary live-view
-    pictures, so the Companion can switch a focusable table locally while no
+    pictures, so the Companion can switch a selectable table locally while no
     extension process remains to answer a click.
     """
     base = view.state()
@@ -1096,16 +1096,16 @@ def _archive_focus_snapshots(view, payload, log_of, cache):
     snapshots = []
     for index, job in enumerate(jobs):
         job_id = _job_id(job, index)
-        shape = run_shape(payload, focus_ids=[job_id], now=_wall_time())
+        shape = run_shape(payload, selected_ids=[job_id], now=_wall_time())
         picture = json.loads(json.dumps(base))
         nodes = {node["id"]: node for node in picture.get("nodes") or []}
         nodes["run"].update(
             text=shape["headline"], tone=shape["tone"], detail=shape["detail"]
         )
-        nodes["jobs"]["focused_ids"] = [job_id]
+        nodes["jobs"]["selected_ids"] = [job_id]
         if "steps" in nodes:
             nodes["steps"]["steps"] = [dict(step) for step in shape["steps"]]
-        lines = _focus_log_lines(shape, log_of, cache, LOG_TAIL_LINES)
+        lines = _selection_log_lines(shape, log_of, cache, LOG_TAIL_LINES)
         log = vis.output(
             "output", label=_log_label(shape), lines=lines, total_lines=len(lines)
         )
@@ -1116,25 +1116,29 @@ def _archive_focus_snapshots(view, payload, log_of, cache):
             # picture of ONE job always is, so the snapshot declares it in the same
             # place the live one would have taken, under the status.
             picture["nodes"].insert(1, log)
-        snapshots.append({"node_id": "jobs", "focused_ids": [job_id], "view": picture})
+        snapshots.append({"node_id": "jobs", "selected_ids": [job_id], "view": picture})
     return snapshots
 
 
-def _sync_surface_focus(view, payload, shape, manual_focus, log_of, cache, shown_focus):
+def _sync_surface_selection(
+    view, payload, shape, manual_selection, log_of, cache, shown_selection
+):
     """Apply a surface selection from shared state without waiting for GitHub to answer."""
-    selected = _focused_ids_from_state(view.state())
-    if selected == shape["focus_ids"]:
-        return shape, manual_focus, shown_focus
-    manual_focus = selected
-    focused = run_shape(payload, focus_ids=manual_focus, now=_wall_time())
-    push_changes(view, shape, focused)
-    fresh_focus = _focus_signature(focused)
-    if fresh_focus != shown_focus and not focused["is_over"]:
-        _show_focus_logs(view, focused, log_of, cache, FAILED_TAIL_LINES)
-    return focused, manual_focus, fresh_focus
+    selected = _selected_ids_from_state(view.state())
+    if selected == shape["selected_ids"]:
+        return shape, manual_selection, shown_selection
+    manual_selection = selected
+    selected = run_shape(payload, selected_ids=manual_selection, now=_wall_time())
+    push_changes(view, shape, selected)
+    fresh_selection = _selection_signature(selected)
+    if fresh_selection != shown_selection and not selected["is_over"]:
+        _show_selection_logs(view, selected, log_of, cache, FAILED_TAIL_LINES)
+    return selected, manual_selection, fresh_selection
 
 
-def _nap(view, seconds, payload, shape, manual_focus, log_of, cache, shown_focus):
+def _nap(
+    view, seconds, payload, shape, manual_selection, log_of, cache, shown_selection
+):
     """Wait out one tick, answering a surface tap the moment it lands.
 
     GitHub keeps its own cadence; a selection is local shared state, so the steps and
@@ -1145,17 +1149,17 @@ def _nap(view, seconds, payload, shape, manual_focus, log_of, cache, shown_focus
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0 or view.is_interrupted:
-            return shape, manual_focus, shown_focus
+            return shape, manual_selection, shown_selection
         if view.sleep(remaining, slice_ms=NAP_SLICE_S * 1000):
-            shape, manual_focus, shown_focus = _sync_surface_focus(
-                view, payload, shape, manual_focus, log_of, cache, shown_focus
+            shape, manual_selection, shown_selection = _sync_surface_selection(
+                view, payload, shape, manual_selection, log_of, cache, shown_selection
             )
 
 
 def watch(title, description, poll, log_of=None, superseded_by=None):
     """Open a selectable CI view, patch it until the run ends, answer its picture.
 
-    Job focus is shared live state. Each tick reads it before deriving the next shape, so a
+    Job selection is shared live state. Each tick reads it before deriving the next shape, so a
     Companion tap changes the steps and logs the extension writes; absent a tap, all parallel
     running jobs follow together, then the last failed (or last) job becomes the default.
 
@@ -1165,41 +1169,41 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
     payload = poll()
     shape = run_shape(payload, now=_wall_time())
     began = time.monotonic()
-    manual_focus = None
+    manual_selection = None
     log_cache = {}
     superseded = None
     unavailable_attempts = 0
     terminal_failure = None
     with vis.live(title, declared_nodes(shape), description=description) as view:
         try:
-            _show_focus_logs(view, shape, log_of, log_cache, FAILED_TAIL_LINES)
-            shown_focus = _focus_signature(shape)
+            _show_selection_logs(view, shape, log_of, log_cache, FAILED_TAIL_LINES)
+            shown_selection = _selection_signature(shape)
             while not shape["is_over"]:
                 if view.is_interrupted:
                     break
                 try:
                     # The nap is where a tap is ANSWERED: shared state is read every
                     # slice, so a click does not wait out the tick.
-                    shape, manual_focus, shown_focus = _nap(
+                    shape, manual_selection, shown_selection = _nap(
                         view,
                         _tick(time.monotonic() - began),
                         payload,
                         shape,
-                        manual_focus,
+                        manual_selection,
                         log_of,
                         log_cache,
-                        shown_focus,
+                        shown_selection,
                     )
                     # Selection is local shared state, not provider data. Apply it BEFORE a
                     # network call so a slow or unavailable GitHub cannot freeze the details.
-                    shape, manual_focus, shown_focus = _sync_surface_focus(
+                    shape, manual_selection, shown_selection = _sync_surface_selection(
                         view,
                         payload,
                         shape,
-                        manual_focus,
+                        manual_selection,
                         log_of,
                         log_cache,
-                        shown_focus,
+                        shown_selection,
                     )
                 except vis.Interrupted:
                     break
@@ -1215,7 +1219,7 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                             tone="idle",
                             detail="Stopped watching obsolete work after a newer commit started",
                         )
-                        _show_focus_logs(
+                        _show_selection_logs(
                             view, shape, log_of, log_cache, FAILED_TAIL_LINES
                         )
                         target = str(superseded.get("url") or "")
@@ -1248,27 +1252,31 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                     )
                 try:
                     # Read AFTER the network poll: a tap made while `gh` was answering
-                    # must win over the extension's next default-focus patch.
-                    selected = _focused_ids_from_state(view.state())
+                    # must win over the extension's next default-selection patch.
+                    selected = _selected_ids_from_state(view.state())
                 except vis.Interrupted:
                     break
-                if selected != shape["focus_ids"]:
-                    manual_focus = selected
-                fresh = run_shape(payload, focus_ids=manual_focus, now=_wall_time())
+                if selected != shape["selected_ids"]:
+                    manual_selection = selected
+                fresh = run_shape(
+                    payload, selected_ids=manual_selection, now=_wall_time()
+                )
                 push_changes(view, shape, fresh)
-                fresh_focus = _focus_signature(fresh)
-                if fresh_focus != shown_focus and not fresh["is_over"]:
-                    _show_focus_logs(view, fresh, log_of, log_cache, FAILED_TAIL_LINES)
-                    shown_focus = fresh_focus
+                fresh_selection = _selection_signature(fresh)
+                if fresh_selection != shown_selection and not fresh["is_over"]:
+                    _show_selection_logs(
+                        view, fresh, log_of, log_cache, FAILED_TAIL_LINES
+                    )
+                    shown_selection = fresh_selection
                 shape = fresh
             if shape["is_over"]:
-                _show_focus_logs(view, shape, log_of, log_cache, LOG_TAIL_LINES)
+                _show_selection_logs(view, shape, log_of, log_cache, LOG_TAIL_LINES)
         except vis.Interrupted:
             # The human stopped watching. The view already holds its verdict, `close` answers
             # it, and `shape` is the last poll that reached them.
             pass
-        focus_snapshots = (
-            _archive_focus_snapshots(view, payload, log_of, log_cache)
+        selection_snapshots = (
+            _archive_selection_snapshots(view, payload, log_of, log_cache)
             if shape["is_over"]
             else []
         )
@@ -1276,7 +1284,7 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
             return view.close(
                 reason="failed",
                 error=terminal_failure,
-                focus_snapshots=focus_snapshots,
+                selection_snapshots=selection_snapshots,
                 model_result=_model_report(
                     payload, log_of, log_cache, superseded, terminal_failure
                 ),
@@ -1284,11 +1292,11 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
         if superseded:
             return view.close(
                 reason="superseded",
-                focus_snapshots=focus_snapshots,
+                selection_snapshots=selection_snapshots,
                 model_result=_model_report(payload, log_of, log_cache, superseded),
             )
         return view.close(
-            focus_snapshots=focus_snapshots,
+            selection_snapshots=selection_snapshots,
             model_result=_model_report(payload, log_of, log_cache),
         )
 
@@ -1297,7 +1305,7 @@ def gh_watch_run(run=None, repo=None, pr=None):
     """What is this CI activity doing, and how did it end? Watch one run or one PR's checks.
 
     Opens a live view a person can watch (and stop), easing polls from three seconds to eight after
-    five minutes. Job rows are controls: all jobs running in parallel are focused initially; tap one
+    five minutes. Job rows are controls: all jobs running in parallel are selected initially; tap one
     to replace the steps and output below with that job, answered within a fifth of a second
     whatever the poll cadence. The returned string is compact JSON: run
     metadata; a schema-once list of every job with id, outcome, start/end times, and nested step

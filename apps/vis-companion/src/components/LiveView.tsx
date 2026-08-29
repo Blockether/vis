@@ -7,8 +7,8 @@ import {
   LoadMore,
   Meter,
   PROSE,
-  TableFocusButton,
-  TableFocusRow,
+  TableSelectionButton,
+  TableSelectionRow,
 } from './ui';
 import { InlineMarkdown } from './ChatContent';
 import {
@@ -404,32 +404,32 @@ function RowFace({
 
 function TableRows({
   node,
-  onFocus,
+  onSelect,
 }: {
   node: LiveTableNode;
-  onFocus?: (nodeId: string, itemIds: string[]) => void;
+  onSelect?: (nodeId: string, itemIds: string[]) => void;
 }) {
   const rows = orderedRows(node);
   const { valueAt, detailAt } = tableShape(node);
-  const focused = useMemo(() => new Set(node.focused_ids), [node.focused_ids]);
+  const selected = useMemo(() => new Set(node.selected_ids), [node.selected_ids]);
   const grouped = useMemo(() => {
     const counts = new Map<string, number>();
     for (const row of rows) if (row.branch) counts.set(row.branch, (counts.get(row.branch) ?? 0) + 1);
     return counts;
   }, [rows]);
-  const focusedGroups = useMemo(
-    () => new Set(rows.filter((row) => focused.has(row.id) && row.branch).map((row) => row.branch as string)),
-    [rows, focused],
+  const selectedGroups = useMemo(
+    () => new Set(rows.filter((row) => selected.has(row.id) && row.branch).map((row) => row.branch as string)),
+    [rows, selected],
   );
-  const focusedGroupKey = JSON.stringify([...focusedGroups].sort());
-  const [openGroups, setOpenGroups] = useState<Set<string>>(() => focusedGroups);
+  const selectedGroupKey = JSON.stringify([...selectedGroups].sort());
+  const [openGroups, setOpenGroups] = useState<Set<string>>(() => selectedGroups);
   useEffect(() => {
-    if (focusedGroups.size === 0) return;
+    if (selectedGroups.size === 0) return;
     setOpenGroups((was) => {
-      if ([...focusedGroups].every((group) => was.has(group))) return was;
-      return new Set([...was, ...focusedGroups]);
+      if ([...selectedGroups].every((group) => was.has(group))) return was;
+      return new Set([...was, ...selectedGroups]);
     });
-  }, [focusedGroupKey]);
+  }, [selectedGroupKey]);
 
   const visible: Array<{ kind: 'group'; label: string } | { kind: 'row'; row: LiveRow }> = [];
   const seen = new Set<string>();
@@ -504,23 +504,23 @@ function TableRows({
               );
             }
             const row = item.row;
-            const isFocused = focused.has(row.id);
+            const isSelected = selected.has(row.id);
             return (
-              <TableFocusRow
+              <TableSelectionRow
                 key={row.id}
-                isFocused={isFocused}
-                className={`${rowInk(row.tone)} ${node.is_focusable ? 'cursor-pointer' : ''}`}
-                onClick={node.is_focusable ? () => onFocus?.(node.id, [row.id]) : undefined}
+                isSelected={isSelected}
+                className={`${rowInk(row.tone)} ${node.is_selectable ? 'cursor-pointer' : ''}`}
+                onClick={node.is_selectable ? () => onSelect?.(node.id, [row.id]) : undefined}
               >
                 <td className="p-0 align-top">
-                  {node.is_focusable ? (
-                    <TableFocusButton
-                      isFocused={isFocused}
+                  {node.is_selectable ? (
+                    <TableSelectionButton
+                      isSelected={isSelected}
                       mark={<ToneMark tone={row.tone} />}
-                      aria-label={`Focus ${row.cells[0] || row.id}`}
+                      aria-label={`Select ${row.cells[0] || row.id}`}
                     >
                       <RowFace node={node} row={row} isIndented={Boolean(row.branch)} />
-                    </TableFocusButton>
+                    </TableSelectionButton>
                   ) : (
                     <span className="flex min-w-0 items-start gap-2 px-3 py-2">
                       <ToneMark tone={row.tone} />
@@ -541,7 +541,7 @@ function TableRows({
                     <InlineMarkdown>{row.cells[valueAt] ?? ''}</InlineMarkdown>
                   </td>
                 )}
-              </TableFocusRow>
+              </TableSelectionRow>
             );
           })}
         </tbody>
@@ -598,11 +598,11 @@ function LinkRows({ node }: { node: LiveLinkNode }) {
 function NodeCell({
   node,
   load,
-  onFocus,
+  onSelect,
 }: {
   node: LiveNode;
   load?: (nodeId: string, from: number, limit: number) => Promise<LiveLogPage>;
-  onFocus?: (nodeId: string, itemIds: string[]) => void;
+  onSelect?: (nodeId: string, itemIds: string[]) => void;
 }) {
   if (node.type === 'group') {
     return (
@@ -616,7 +616,7 @@ function NodeCell({
           }
         >
           {node.fields.map((child) => (
-            <NodeCell key={child.id} node={child} load={load} onFocus={onFocus} />
+            <NodeCell key={child.id} node={child} load={load} onSelect={onSelect} />
           ))}
         </div>
       </div>
@@ -635,7 +635,7 @@ function NodeCell({
           load={load && ((from, limit) => load(node.id, from, limit))}
         />
       )}
-      {node.type === 'table' && <TableRows node={node} onFocus={onFocus} />}
+      {node.type === 'table' && <TableRows node={node} onSelect={onSelect} />}
       {node.type === 'link' && <LinkRows node={node} />}
     </div>
   );
@@ -836,7 +836,7 @@ function ActivityViewPanel({
 export function LiveViewPanel({
   view,
   onInterrupt,
-  onFocus,
+  onSelect,
   isInterrupting = false,
   error,
   load,
@@ -846,8 +846,8 @@ export function LiveViewPanel({
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
   onInterrupt?: (note: string | null) => void;
-  /** Replace the focused ids of one focusable table in shared engine state. */
-  onFocus?: (nodeId: string, itemIds: string[]) => void;
+  /** Replace the selected ids of one selectable table in shared engine state. */
+  onSelect?: (nodeId: string, itemIds: string[]) => void;
   isInterrupting?: boolean;
   error?: string | null;
   load?: (nodeId: string, from: number, limit: number) => Promise<LiveLogPage>;
@@ -946,7 +946,7 @@ export function LiveViewPanel({
       <ul className="divide-y divide-dialog-edge">
         {view.nodes.map((node) => (
           <li key={node.id} className="min-w-0 px-3 py-2.5">
-            <NodeCell node={node} load={load} onFocus={onFocus} />
+            <NodeCell node={node} load={load} onSelect={onSelect} />
           </li>
         ))}
       </ul>
@@ -1096,11 +1096,11 @@ export function LiveView({
       .finally(() => setStopping(null));
   };
 
-  const focus = (viewId: string, nodeId: string, itemIds: string[]) => {
+  const select = (viewId: string, nodeId: string, itemIds: string[]) => {
     setError(null);
     client
       .viewAction(sid, viewId, { action: 'select', node_id: nodeId, item_ids: itemIds })
-      .catch(() => setError('That job could not be focused. It may have just finished.'));
+      .catch(() => setError('That job could not be selected. It may have just finished.'));
   };
 
   const readLog = (viewId: string) => (nodeId: string, from: number, limit: number) =>
@@ -1115,7 +1115,7 @@ export function LiveView({
           error={stopping === null ? error : null}
           isInterrupting={stopping === view.id}
           onInterrupt={(note) => interrupt(view.id, note)}
-          onFocus={(nodeId, itemIds) => focus(view.id, nodeId, itemIds)}
+          onSelect={(nodeId, itemIds) => select(view.id, nodeId, itemIds)}
           load={readLog(view.id)}
         />
       ))}

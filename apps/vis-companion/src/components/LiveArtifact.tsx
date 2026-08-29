@@ -37,7 +37,7 @@ import { ListRow, overlayLayer, OverlayScreen } from "./ui";
 /** Under this, the whole record is folded patch by patch — the honest replay. */
 export const LIVE_RECORD_FOLD_LIMIT = 1_000_000;
 
-/** One bounded archive-focus trailer plus the ordinary final view. */
+/** One bounded archive-selection trailer plus the ordinary final view. */
 export const LIVE_RECORD_EDGE = 1_250_000;
 
 /**
@@ -148,10 +148,10 @@ export function LiveArtifact({
       <LiveViewPanel
         view={shown}
         isSettled
-        onFocus={(nodeId, itemIds) => {
+        onSelect={(nodeId, itemIds) => {
           const wanted = itemIds.join("\u0000");
-          const snapshot = record.focus_snapshots?.find(
-            (one) => one.node_id === nodeId && one.focused_ids.join("\u0000") === wanted,
+          const snapshot = record.selection_snapshots?.find(
+            (one) => one.node_id === nodeId && one.selected_ids.join("\u0000") === wanted,
           );
           if (snapshot) setShown(snapshot.view);
         }}

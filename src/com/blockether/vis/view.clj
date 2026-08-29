@@ -285,8 +285,8 @@
 (defn table
   "Rows upserted and removed by row id, painted in the `:order` the view
    DECLARES — `columns` are [[table-column]]s, `:rows` seeds it and `:max-rows`
-   bounds it by refusal. `:is-focusable true` turns rows into controls;
-   `:focused-ids` is the shared current selection extensions read from state."
+   bounds it by refusal. `:is-selectable true` turns rows into controls;
+   `:selected-ids` is the shared current selection extensions read from state."
   ([id columns] (table id columns nil))
   ([id columns opts] (live-node "table" id (assoc opts :columns (vec columns)))))
 
