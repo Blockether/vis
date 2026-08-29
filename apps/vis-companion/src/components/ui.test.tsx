@@ -3968,10 +3968,9 @@ describe("iOS voice downloads", () => {
     panel.indexOf("</SettingsChoiceGroup>", panel.indexOf("{voiceDownloadGuidance && (")),
   );
 
-  it("turns the manual system path into a direct settings action", () => {
-    expect(panel).toContain("openIosVoiceSettings");
-    expect(guidance).toContain("Open voice settings");
-    expect(guidance).toContain('density="compact"');
+  it("keeps Apple's voice download path as manual guidance", () => {
+    expect(panel).not.toContain("openIosVoiceSettings");
+    expect(guidance).not.toContain("<Button");
     expect(guidance).toContain("text-meta text-dialog-hint");
     expect(guidance).not.toContain("text-chip text-dialog-hint");
   });

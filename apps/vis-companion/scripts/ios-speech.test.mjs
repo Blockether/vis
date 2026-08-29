@@ -17,10 +17,11 @@ describe('iOS public speech bridge', () => {
     expect(speech).toContain('voice.quality == .enhanced');
   });
 
-  it('opens the system voice catalogue from the app', () => {
-    expect(speech).toContain('CAPPluginMethod(name: "openVoiceSettings"');
-    expect(speech).toContain('App-Prefs:root=ACCESSIBILITY&path=SPEECH_TITLE/QuickSpeakAccents');
-    expect(speech).toContain('UIApplication.shared.open');
+  // Regression, user report: the unsupported route dropped people at the Settings root.
+  it('does not expose an unsupported iOS Settings link', () => {
+    expect(speech).not.toContain('openVoiceSettings');
+    expect(speech).not.toContain('App-Prefs:');
+    expect(speech).not.toContain('UIApplication.shared.open');
   });
 
   it('speaks the exact selected identifier and settles on finish or cancellation', () => {

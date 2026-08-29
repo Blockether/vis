@@ -2,6 +2,116 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (5029) — 2026-08-29
+<!-- commit: 8ea250645d5ea5d75eb14df14651ccd4d895d7d3 -->
+
+- Unify input and live view lifecycle
+- Preload unread session views
+- Stand a fleet rail beside the list on a desk
+- Take UIKit's form accessory bar off the composer
+- Shrink the session heading on a pointer
+- Tell a sent turn apart from a stuck one
+- Hand an abandoned fetch its own rejection
+- Expect the justified prose the ui now paints
+- Size what leads each bar to lead it
+- Retire streams before backgrounding
+
+## 0.1.41 (5009) — 2026-08-28
+<!-- commit: 2f2f49f9b7fcc43da24f3e20e7af7370a3eaac9d -->
+
+- Round and rescale the Latest pill
+- Ignore hardware keyboard shortcut frames
+- Make the session header one row of ink
+- Expose all premium and enhanced iOS voices
+- Restore justified transcript prose
+- Decode downloaded video frames
+- Keep the PDF band still while a page turns
+
+## 0.1.41 (5002) — 2026-08-28
+<!-- commit: 6fe72373c32189db83b45427cf8ac19321745295 -->
+
+- Draw the stop mark, not a coloured box
+- Round what can be pressed
+- Preserve unread state across restarts
+- Move the PDF pager and pen into the file's band
+- Keep completion taps from moving transcript
+- Show skills in bare slash palette
+- Draw every control mark with Lucide, not a character
+- Make the live view read down, not across
+- Say what the run is doing, not how many jobs it has
+- Send the message with an icon, not a character
+- Draw every mark with Lucide
+- Cancel abandoned transcript loads
+- Honor primary machine in session list
+- Open iOS voice download settings
+- Restyle parked share notice
+- Run an attached page's script without asking
+- Reserve nothing for a keyboard parked off-screen
+- Spell the page's top inset once, not twice
+
+## 0.1.41 (4973) — 2026-08-27
+<!-- commit: f462587b680da4bf4dc85fc06471e98b07394b46 -->
+
+- Predict no keyboard a hardware one never raises
+- Send on Enter wherever a keyboard is
+- Keep a row's verbs off the row's own columns
+- Give a mouse no sideways scroll on row verbs
+- Fill desktop viewport cleanly
+- Separate Activity from produced artifacts
+- Isolate Activity from turn rendering
+- Clear stale Latest after resume
+- Remove duplicate system voice
+- Prefer installed premium Apple voices
+- Retry transient Play failures
+- Attach shared HTML files
+- Keep Live View pinned through large updates
+- Withhold an attached page's script until asked
+- Fill incomplete system voice choices
+- Remove retired browser bridge
+- Recover streams after network handoff
+- Upload companion attachments as binary
+- Keep activity and media responsive
+- Align cache metrics with the stat columns
+
+## 0.1.41 (4962) — 2026-08-27
+<!-- commit: 667851f54f5f42d184f28f1850c6e480f5b15429 -->
+
+- Retry transient Play failures
+- Attach shared HTML files
+- Keep Live View pinned through large updates
+
+## 0.1.41 (4959) — 2026-08-27
+<!-- commit: 66a3845446410adf3a208ae1d3e682fa9257ad99 -->
+
+- Withhold an attached page's script until asked
+- Fill incomplete system voice choices
+- Remove retired browser bridge
+- Recover streams after network handoff
+- Upload companion attachments as binary
+- Keep activity and media responsive
+- Align cache metrics with the stat columns
+- Retry artifacts before durable landing
+- Separate prompt cache metrics
+- Restore Latest after native momentum
+- Distinguish cache share from reuse coverage
+- Report session loading progress
+- Make artifact surfaces fill viewport
+- Share artifacts through system sheet
+- Keep terminal handover silent
+- Smooth submitted prompt reveal
+- Present Python cancellations as interruptions
+- Quieter api-key sign-in card, airier password dots
+
+## 0.1.41 (4938) — 2026-08-27
+<!-- commit: 84eb4977304a8754281c4a12c94efe26c58c1523 -->
+
+- Keep automatic address reachable
+- Refine voice preview cells
+- Unify Python execution receipts
+- Align activity receipts with TUI
+- Record TestFlight build 4906
+- Drop DOM focus when the app leaves the foreground
+
 ## 0.1.41 (4906) — 2026-08-26
 <!-- commit: 23004b18d4e24221350a5e41628ec86229bd85ae -->
 

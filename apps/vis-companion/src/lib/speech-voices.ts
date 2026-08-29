@@ -18,21 +18,13 @@ export interface DeviceVoice {
 export const BEST_DEVICE_VOICE_LIMIT = 3;
 
 export const IOS_VOICE_DOWNLOAD_GUIDANCE =
-  "Add natural Apple voices in Settings → Accessibility → Read & Speak (or Spoken Content) → Voices. Download a Premium or Enhanced voice, then return here; this list refreshes automatically.";
+  "In Settings, choose Accessibility → Read & Speak (or Spoken Content) → Voices. Download a Premium or Enhanced voice, then return here; this list refreshes automatically.";
 
 /** Apple exposes no public API for an app to install its system voice assets. */
 export function iosVoiceDownloadGuidance(
   platform: string = Capacitor.getPlatform(),
 ): string | null {
   return platform === "ios" ? IOS_VOICE_DOWNLOAD_GUIDANCE : null;
-}
-
-/** Opens the system-owned Apple voice catalogue; other platforms have no matching route. */
-export async function openIosVoiceSettings(
-  platform: string = Capacitor.getPlatform(),
-): Promise<void> {
-  if (platform !== "ios") return;
-  await nativeSpeech.openVoiceSettings();
 }
 
 function normalizedLanguage(value: string | undefined): string {

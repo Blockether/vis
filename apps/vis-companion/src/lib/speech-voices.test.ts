@@ -157,9 +157,12 @@ describe("best device voices", () => {
     expect(chosen.map((voice) => voice.label)).toEqual(["Ava (Premium)"]);
   });
 
-  it("explains Apple's system-managed voice download path only on iOS", () => {
+  it("shows the manual voice download path only on iOS", () => {
     expect(iosVoiceDownloadGuidance("ios")).toContain(
-      "Settings → Accessibility → Read & Speak",
+      "In Settings, choose Accessibility → Read & Speak",
+    );
+    expect(iosVoiceDownloadGuidance("ios")).not.toContain(
+      "does not let apps open this page directly",
     );
     expect(iosVoiceDownloadGuidance("android")).toBeNull();
     expect(iosVoiceDownloadGuidance("web")).toBeNull();
