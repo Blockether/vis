@@ -4,8 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 import { noteReaderGesture } from "../lib/reader-gesture";
-import { flushParked } from "../lib/parked";
-import { parkedReadingPosition } from "../lib/reading-position";
 
 // Regression, user report ("it was live, I even scrolled all the way down, and
 // it never remembered that I want the new things — it kept putting me back
@@ -117,7 +115,6 @@ describe("a reader reaching the end of a turn that is still being written", () =
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
-    flushParked();
   });
 
   async function readerDrags({
@@ -176,8 +173,6 @@ describe("a reader reaching the end of a turn that is still being written", () =
     // eaten by 300 px of new transcript. They still ARRIVED.
     expect(live.height - viewport.scrollTop - SHELL).toBeGreaterThan(64);
     expect(latestOffered()).toBe(false);
-    // Their place is the newest turn, so nothing is parked to reopen into.
-    expect(parkedReadingPosition("chasing")).toBe(null);
   });
 
   // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: nudging a
@@ -268,7 +263,6 @@ describe("a reader reaching the end of a turn that is still being written", () =
     const gap = live.height - viewport.scrollTop - SHELL;
     expect(gap).toBeGreaterThan(SHELL);
     expect(latestOffered()).toBe(true);
-    expect(parkedReadingPosition("reading")).toBe(gap);
   });
 
   // Regression, session 237a00b5-2c5e-466c-9b2f-c94a9793a499: consecutive

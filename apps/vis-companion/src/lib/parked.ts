@@ -1,33 +1,16 @@
 /**
- * Where a reader was, kept across the RELOAD that used to lose it.
+ * Where the session-list reader was, kept across a reload.
  *
- * `lib/list-scroll` and `lib/reading-position` both park a place in a module
- * variable, which survives a screen unmount and dies with the JavaScript
- * context. That was wrong about one thing a user does constantly: pressing
- * reload. Nothing unmounts, no cleanup runs, the whole context is thrown away —
- * so a reader at the bottom of a list came back at the top of it, on a screen
- * that had just told them their place was remembered.
- *
- * `sessionStorage` is exactly the lifetime those two docstrings describe: it
- * survives a reload of THIS visit and dies when the tab (or the app's webview)
- * goes away, so a genuinely cold start still has no reading position to honour.
- * `localStorage` would outlive the visit and hand someone yesterday's scroll
- * offset for a list that has since changed underneath them.
+ * The list parks its place in a module variable, which survives a screen
+ * unmount but dies with the JavaScript context. `sessionStorage` preserves it
+ * across a reload of this visit and still dies with the tab or app webview.
  *
  * Every access is guarded: private mode, a disabled store and a non-browser
- * (node tests, SSR) all mean "no parked place", never a thrown screen.
+ * all mean “no parked place”, never a thrown screen.
  *
- * WRITES ARE COALESCED, because both readers mark their place from a scroll
- * handler — once per animation frame, for as long as a finger is on the glass —
- * and `sessionStorage.setItem` is synchronous: it serializes the value and, in
- * a webview, hands it to the storage process before returning. Paying that in
- * every frame of the one gesture this module exists to serve is a stutter in
- * exactly the wrong place, and on a long transcript it was one of two things
- * making a live session scroll badly on iOS. The place is kept in memory,
- * written at most once per QUIET_MS, and flushed the moment this page could be
- * thrown away (`pagehide`, plus `visibilitychange` for a webview the OS
- * backgrounds) — which is every path a reload or an app switch takes, so what
- * a reader gets back is unchanged.
+ * Writes are coalesced because list scrolling marks once per animation frame
+ * while `sessionStorage.setItem` is synchronous. Pending state is flushed when
+ * the page can be discarded so a reload or app switch keeps the latest mark.
  */
 
 /** How long a burst of marks may share one store write. */

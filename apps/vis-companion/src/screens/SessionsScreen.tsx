@@ -44,7 +44,6 @@ import { VIEW_CLOSE_EVENT, VIEW_OPEN_EVENT, viewKind } from '../lib/view';
 import { compactProjectPath } from '../lib/path';
 import { onWake } from '../lib/wake';
 import { seedReadMarks, unreadTurnCount, useReadMarks } from '../lib/unread';
-import { forgetReadingPosition } from '../lib/reading-position';
 import { reassertBadge, syncBadge } from '../lib/badge';
 import { assignMachineColors, machineColor } from '../lib/machine-colors';
 import { menuPosition } from '../lib/anchored-menu';
@@ -3291,12 +3290,7 @@ const SessionRow = memo(function SessionRow({
           type="button"
           className={`group flex min-h-12 min-w-0 flex-1 items-center py-1.5 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-8 mouse:py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
           data-session-id={session.id}
-          onClick={() => {
-            // NEW is a navigation intent to read the answer that raised it, not to
-            // resume an older place. Remove that place before the session mounts.
-            if (unread > 0) forgetReadingPosition(session.id);
-            void onOpen(conn, session.id);
-          }}
+          onClick={() => void onOpen(conn, session.id)}
         >
         {/* One row of facts, laid out twice from ONE dom order.
             A phone stacks it: what the session IS on the first line, what it has DONE

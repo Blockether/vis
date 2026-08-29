@@ -34,7 +34,7 @@
  */
 const GESTURE_GRACE_MS = 300;
 
-let lastGestureAt = 0;
+let lastGestureAt = Number.NEGATIVE_INFINITY;
 
 /** Record a real reader gesture. Exported for the screens' own handlers. */
 export function noteReaderGesture(): void {
@@ -70,6 +70,13 @@ function onReaderMove(event: Event): void {
  */
 let touchesDown = 0;
 let draggingUnderTouch = false;
+
+/** A new scroll surface cannot inherit the gesture that owned the previous one. */
+export function releaseReaderScroll(): void {
+  lastGestureAt = Number.NEGATIVE_INFINITY;
+  touchesDown = 0;
+  draggingUnderTouch = false;
+}
 
 function onTouchStart(event: Event): void {
   touchesDown = (event as TouchEvent).touches?.length ?? touchesDown + 1;

@@ -118,20 +118,17 @@ import {
   readPendingVoice,
   savePendingVoice,
 } from "../lib/pending-voice";
-import { readerOwnsScroll } from "../lib/reader-gesture";
 import {
-  applyReadingPosition,
+  readerOwnsScroll,
+  releaseReaderScroll,
+} from "../lib/reader-gesture";
+import {
   arrivedAtEnd,
   followEnd,
-  forgetReadingPosition,
   heightSettler,
   isAtBottom,
   isCorrectionEcho,
-  markReadingPosition,
-  OPENING_QUIET_FRAMES,
-  parkedReadingPosition,
   readerRetreatedFrom,
-  rememberReadingPosition,
   shouldOfferLatest,
 } from "../lib/reading-position";
 import type {
@@ -1737,6 +1734,8 @@ export function SessionScreen({
   // alternative is remounting via `key`, which would also tear down the live SSE
   // subscription mid-stream, so the reset stays explicit here.
   useEffect(() => {
+    // A gesture belongs to the scroller it moved, never the session replacing it.
+    releaseReaderScroll();
     // An artifact overlay only hands itself over to the row that replaces it as a
     // turn settles. Changing session is not that: nothing here may re-open.
     dropOverlayHandovers();
@@ -2062,9 +2061,8 @@ export function SessionScreen({
     };
   }, [scrollToEnd, submitScrollRequest, syncJump]);
 
-  // Opening a session must LAND on the latest turn. The opening layout effect waits
-  // until the mounted window is complete, so this is one correction against the
-  // complete initial DOM rather than a visible sequence of guesses as rows hydrate.
+  // Opening a session must LAND on the latest turn. The opening layout effect
+  // places its first useful paint, then follow carries that pin as rows hydrate.
   const pinToEnd = useCallback(() => {
     scrollToEnd("auto");
   }, [scrollToEnd]);
@@ -2722,7 +2720,6 @@ export function SessionScreen({
         followingRef.current = true;
         aimedEndRef.current = viewport.scrollHeight;
         correctedTopRef.current = viewport.scrollTop;
-        forgetReadingPosition(sid);
       }
       syncJump();
     };
@@ -3718,106 +3715,16 @@ export function SessionScreen({
     revealFrameRef.current = window.requestAnimationFrame(step);
   }, []);
 
-  // A place is asked for against a height that is still ARRIVING. The opening
-  // effect below judges it with `applyReadingPosition`, and a mounted turn is
-  // not a painted one: measured in the shipped app (WebKit, iPhone 14, an
-  // eight-turn window), the transcript climbed 96 -> 1 898 -> 15 884 -> ... ->
-  // 65 976 px across sixteen frames, most of them AFTER the last row had
-  // mounted. A verdict taken on the first of those frames threw away a place
-  // the very next one could hold, so nothing is decided against a height that
-  // is still moving: this asks for one more frame, and the effect re-runs with
-  // fresh state and asks again.
-  const [placeAttempt, setPlaceAttempt] = useState(0);
-  const placeFrameRef = useRef<number | null>(null);
-  const placeSettlerRef = useRef<((height: number) => boolean) | null>(null);
-  const retryPlaceNextFrame = useCallback(() => {
-    if (placeFrameRef.current !== null) return;
-    placeFrameRef.current = window.requestAnimationFrame(() => {
-      placeFrameRef.current = null;
-      setPlaceAttempt((attempt) => attempt + 1);
-    });
-  }, []);
+  // A session visit always starts at its newest turn. Pin as soon as the first
+  // paint is useful; the following branch below keeps carrying that pin while
+  // the rest of the opening window and any deferred layout arrive.
   useLayoutEffect(() => {
     if (
       initialScrollPendingRef.current &&
       turns.length &&
       hydratedTurnCount >= Math.min(FIRST_PAINT_TURNS, turns.length)
     ) {
-      // Where the reader LEFT this session outranks its newest turn: stepping
-      // out to the list or to Machines and coming back must return them to the
-      // place they were reading, not to the bottom.
-      const viewport = scrollRef.current;
-      const parked = parkedReadingPosition(sid);
-      if (parked !== null && viewport) {
-        // Correct ONCE, against the COMPLETE window. Older turns are still
-        // ramping in ABOVE the viewport, so a place honoured mid-ramp is pushed
-        // down by every chunk that lands after it — the same reason the pin to
-        // the newest turn waits for the whole window.
-        if (hydratedTurnCount < Math.min(visibleTurnCount, turns.length)) return;
-        // ... and against the transcript this visit will actually SHOW. Until
-        // the gateway's answer lands, `turns` is whatever the cache happened to
-        // hold — measured live, a single cached turn makes every place look
-        // impossible, and a place refused there is gone before the real
-        // transcript arrives.
-        if (!turnsFresh) {
-          applyReadingPosition(viewport, parked);
-          correctedTopRef.current = viewport.scrollTop;
-          return;
-        }
-        // ... and against a height that has STOPPED MOVING. A place is a
-        // distance from the end, so it can only be measured off a transcript
-        // that has finished arriving: hold the place best-effort while the
-        // pixels land, and take no verdict — neither honoured nor refused —
-        // until the same height has come back frame after frame. Refusing a
-        // place throws it away, so that verdict waits twice as long as the veil
-        // does for the same transcript.
-        const settled = (placeSettlerRef.current ??= heightSettler(
-          OPENING_QUIET_FRAMES * 2,
-        ));
-        if (!settled(viewport.scrollHeight)) {
-          applyReadingPosition(viewport, parked);
-          correctedTopRef.current = viewport.scrollTop;
-          retryPlaceNextFrame();
-          return;
-        }
-        if (applyReadingPosition(viewport, parked)) {
-          placeSettlerRef.current = null;
-          followingRef.current = false;
-          // This IS a correction: the scroll events it echoes back while history
-          // keeps landing are not the reader changing their mind.
-          correctedTopRef.current = viewport.scrollTop;
-          syncJump();
-        } else if (visibleTurnCount < turns.length) {
-          // Held still, and the place still does not fit — but there is more
-          // history in hand. A place is a distance from the END, and every visit
-          // rebuilds the same INITIAL_VISIBLE_TURNS however far back the reader
-          // had pulled the history in, so a place taken after "Load earlier"
-          // addresses a transcript longer than the one standing here and
-          // `applyReadingPosition` clamps it to the TOP. Measured in the shipped
-          // app (WebKit, iPhone 14, a 25-turn session): a place 91 349 px above
-          // the end of a 159 160 px transcript reopened a 74 555 px window at
-          // scrollTop 0 — the session's first turn, 73 921 px from its newest
-          // one, follow off, "Latest" offered, and every later visit landed
-          // there again. Reveal a page more of what is already loaded and ask
-          // for the place again on the next pass.
-          placeSettlerRef.current = null;
-          setVisibleTurnCount((count) =>
-            Math.min(turns.length, count + INITIAL_VISIBLE_TURNS),
-          );
-          return;
-        } else {
-          // Nothing left to reveal, against a height that has stopped moving:
-          // this visit cannot hold that place. The newest turn is the only
-          // honest answer — the top is the one place the reader never was — and
-          // the place goes with it, so the next visit opens clean instead of
-          // landing here again.
-          placeSettlerRef.current = null;
-          forgetReadingPosition(sid);
-          pinToEnd();
-        }
-      } else {
-        pinToEnd();
-      }
+      pinToEnd();
       initialScrollPendingRef.current = false;
       // Reveal one frame after the opening window is placed — but only when it
       // is already WHOLE. A session whose ramp is still running is revealed by
@@ -3842,50 +3749,10 @@ export function SessionScreen({
     visibleTurnCount,
     hydratedTurnCount,
     liveTurn?.id,
-    sid,
     scrollToEnd,
     pinToEnd,
-    syncJump,
-    turnsFresh,
-    placeAttempt,
-    retryPlaceNextFrame,
+    revealWhenSettled,
   ]);
-
-  // The place the reader LEAVES with, taken as they leave.
-  //
-  // Every other mark is made from a scroll event, so what a session parks is
-  // whatever the last event happened to measure — and under a turn that is being
-  // written, the end it measured against has moved since. Leaving is the one
-  // moment the answer is certain, so it is taken here: someone who leaves from
-  // the newest turn parks nothing and reopens there, whatever the last scroll
-  // event said. A scroller already gone from the document can no longer say
-  // anything, and the marks made while it was on screen stand.
-  useLayoutEffect(() => {
-    return () => {
-      // Whatever this visit was still trying to place is over with the screen.
-      if (placeFrameRef.current !== null) {
-        window.cancelAnimationFrame(placeFrameRef.current);
-        placeFrameRef.current = null;
-      }
-      placeSettlerRef.current = null;
-      const viewport = scrollRef.current;
-      if (!viewport?.isConnected || viewport.clientHeight <= 0) return;
-      // A screen torn down before it PLACED itself says nothing about the
-      // reader. React's development double-invoke unmounts every effect the
-      // instant it mounts, and measured live that cleanup ran against 708 px of
-      // an unpainted transcript sitting at its own end: it read "the newest
-      // turn", erased the place, and the opening effect a frame later found
-      // nothing to return to. The place a reader left with is only the place
-      // this visit had actually reached.
-      if (initialScrollPendingRef.current) return;
-      rememberReadingPosition(
-        sid,
-        followingRef.current || isAtBottom(viewport)
-          ? null
-          : markReadingPosition(viewport),
-      );
-    };
-  }, [sid]);
 
   // Fill the render window back up to the turns ACTUALLY in hand, a chunk per
   // frame. Waiting on the network is not hydration: advancing to the requested
@@ -4025,9 +3892,8 @@ export function SessionScreen({
         readerOwnsScroll()
       )
         return;
-      // The opening correction owns the scroller until it has placed its first
-      // paint window, and a reader with a parked position is not following the
-      // end even while the flag still says so.
+      // The opening correction owns the scroller until it places the first useful
+      // paint, so a viewport correction must not race it.
       if (initialScrollPendingRef.current || !box) return;
       // Keep a followed viewport pinned when its own box changes size. Transcript
       // growth belongs exclusively to the content observer above; letting this
@@ -4972,25 +4838,6 @@ export function SessionScreen({
       else if (arrivedAtEnd(viewport, aimedEndRef.current))
         followingRef.current = true;
       else if (readerOwns) followingRef.current = false;
-      // The reader's place, kept for the next time this session is opened.
-      // A reader who ARRIVED parks nothing: their place is the newest turn, and
-      // a distance frozen while that turn was still being written would reopen
-      // the session in the middle of it.
-      // Not while this screen is still placing ITSELF. Opening pins, ramps and
-      // corrects the scroller, and every one of those movements arrives here as
-      // a scroll event on a transcript that is still a fraction of its height.
-      // Measured live (WebKit, iPhone 14): two such events landed on a 3 226 px
-      // transcript before the opening effect had even read the parked place,
-      // both measured "at the end", and both erased where the reader actually
-      // was — so re-entering a session could never return them to it. Until the
-      // opening correction is done the place is an INPUT, not an output.
-      if (!initialScrollPendingRef.current)
-        rememberReadingPosition(
-          sid,
-          arrivedAtEnd(viewport, aimedEndRef.current)
-            ? null
-            : markReadingPosition(viewport),
-        );
       syncJump();
       // Keep the rotation anchor fresh: iOS can deliver the orientation signal
       // AFTER the reflow, and by then the top-most turn is already unreadable.

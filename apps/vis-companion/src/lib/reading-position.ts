@@ -1,27 +1,9 @@
 /**
- * Where a transcript was being READ, across the unmount that loses it.
+ * Geometry and follow-state decisions for a mounted transcript.
  *
- * Leaving a session tears the whole screen down, so coming back mounts a fresh
- * scroller and the opening correction pins it to the newest turn. Someone forty
- * turns up — reading what the agent did an hour ago, stepping out to the list or
- * to Machines and back — lost their place every single time.
- *
- * The place is remembered as a DISTANCE FROM THE BOTTOM, not as a pixel from the
- * top: this screen hydrates its history upward (older turns keep arriving ABOVE
- * the viewport for as long as the ramp runs), so the top pixel means something
- * different on every frame while the bottom one holds still.
- *
- * A reader who was AT the bottom parks nothing: the newest turn is their place,
- * and reopening must land there.
- *
- * The place outlives the screen in a module map and outlives a RELOAD in
- * `sessionStorage` (see `lib/parked`): reload runs no cleanup and unmounts
- * nothing, so a place kept only in memory was lost by the one gesture a reader
- * repeats all day. It still dies with the visit, which is right — a cold start
- * has no reading position to honour.
+ * Every session visit starts at its newest turn. These helpers govern manual
+ * movement and live growth only while that screen remains mounted.
  */
-
-import { readParked, writeParked } from './parked';
 
 /** Minimal view of a scroll container; a real element satisfies it. */
 export interface ScrollBox {
@@ -30,37 +12,8 @@ export interface ScrollBox {
   readonly clientHeight: number;
 }
 
-// The same slack `handleScroll` calls "following": within this of the end, the
-// reader is at the bottom and has no position worth restoring.
+// The same slack `handleScroll` calls “following”: within this, the end is on screen.
 const AT_BOTTOM_PX = 64;
-
-const PARKED_KEY = 'vis.readingPositions';
-
-function revivePlaces(raw: unknown): Map<string, number> | null {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const places = new Map<string, number>();
-  for (const [sid, distance] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof distance === 'number' && Number.isFinite(distance)) places.set(sid, distance);
-  }
-  return places;
-}
-
-// Read on first ASK, never at import: a module that touches storage while it is
-// being loaded runs before a test (or a webview) has one.
-let parked = new Map<string, number>();
-let hydrated = false;
-
-function places(): Map<string, number> {
-  if (!hydrated) {
-    hydrated = true;
-    parked = revivePlaces(readParked(PARKED_KEY, (raw) => raw)) ?? new Map();
-  }
-  return parked;
-}
-
-function persist(): void {
-  writeParked(PARKED_KEY, Object.fromEntries(places()));
-}
 
 function distanceFromEnd(box: ScrollBox): number {
   return box.scrollHeight - box.scrollTop - box.clientHeight;
@@ -110,42 +63,6 @@ export function readerRetreatedFrom(
 export function arrivedAtEnd(box: ScrollBox, aimed: number): boolean {
   const end = aimed > 0 ? Math.min(aimed, box.scrollHeight) : box.scrollHeight;
   return box.scrollTop + box.clientHeight >= end - AT_BOTTOM_PX;
-}
-
-/** How far above the end `box` sits, or `null` when it is at the bottom. */
-export function markReadingPosition(box: ScrollBox | null): number | null {
-  if (!box) return null;
-  const distance = distanceFromEnd(box);
-  return distance <= AT_BOTTOM_PX ? null : distance;
-}
-
-export function rememberReadingPosition(sid: string, distance: number | null): void {
-  if (distance === null) places().delete(sid);
-  else places().set(sid, distance);
-  persist();
-}
-
-export function parkedReadingPosition(sid: string): number | null {
-  return places().get(sid) ?? null;
-}
-
-export function forgetReadingPosition(sid: string): void {
-  places().delete(sid);
-  persist();
-}
-
-/**
- * Put `distance` back into `box`.
- *
- * Returns whether the position was actually recovered. `false` means the
- * transcript is still shorter than the place we are aiming for — rows are still
- * hydrating — so the caller should keep the mark and try again on the next paint.
- */
-export function applyReadingPosition(box: ScrollBox, distance: number): boolean {
-  const maximum = Math.max(0, box.scrollHeight - box.clientHeight);
-  if (maximum <= 0) return false;
-  box.scrollTop = Math.max(0, maximum - distance);
-  return maximum >= distance;
 }
 
 /**
