@@ -3358,9 +3358,10 @@ export function ProjectStatusCounts({
  * with a rule, so the phone spent 2px of ink down the glass to say which of one. So it
  * paints only when `isFleet`, and otherwise the projects under it simply ARE the list.
  *
- * On a desk it draws nothing either: the projects are sheets with their own edges there,
- * and a 2px hue running down the page beside them would be the frame of a card that is
- * no longer drawn.
+ * On a desk it draws nothing: a fleet there gets the index rail down the side of the
+ * page, naming its machines in words. On the glass the hue runs in the 12px lane the
+ * sheets stand in, beside cards that already carry an edge of their own — never as a
+ * second frame around one.
  */
 export function MachineRail({
   color,

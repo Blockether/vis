@@ -2272,11 +2272,15 @@ export function SessionsScreen({
             At `sm` the card detaches from the viewport edges but still fills the
             available height. Its list owns overflow; the document never grows a second
             scrollbar or leaves an intrinsic-height strip above empty desktop paper. */}
-        {/* AND ON A DESK IT IS NOT A CARD AT ALL: it is the PAGE the project sheets
-            stand on. It keeps no frame there — a container that holds objects with
-            their own edges is not itself an object — and takes the derived page
-            paper, one step under the sheet in either palette. */}
-        <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-panel sm:mx-0 sm:max-h-full sm:border-0 sm:bg-page">
+        {/* AND IT IS NEVER A CARD ITSELF: it is the PAGE the project sheets stand on,
+            on the glass exactly as on the desk. It keeps no frame — a container that
+            holds objects with their own edges is not itself an object — and takes the
+            derived page paper, one step under the sheet in either palette. THAT STEP
+            IS WHAT A CORNER IS CUT OUT OF: for as long as this card carried the
+            sheet's own paper on a phone, a round there would have cut paper out of
+            the same paper, so the projects were square on the glass and sheets on the
+            desk for no reason a reader could see. */}
+        <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-page sm:max-h-full sm:border-0">
         {/* The pull reports itself while it happens: the card clips the band until a
             finger brings it down over the list's first header. */}
         <PullToSearchHint phase={pullPhase} ref={hintRef} />
@@ -2288,7 +2292,7 @@ export function SessionsScreen({
           </div>
         )}
 
-        <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] sm:px-3 sm:pb-3">
+        <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] py-3 sm:px-3 sm:pt-0">
         {/* Pinned above the list, and it does not scroll away with a machine's
             section: the demand belongs to the whole fleet in view. */}
         <NeedsYou
@@ -3088,13 +3092,16 @@ const ProjectGroup = memo(function ProjectGroup({
     {/* The rail's index finds this band by the two facts that identify it, and the
         only two a jump can be sure of: which machine, and which root. */}
     <section
-      /* THE PROJECT IS A SHEET, and only on a desk. One 16px panel corner — the rung
+      /* THE PROJECT IS A SHEET, on every screen. One 16px panel corner — the rung
          for a layer standing OVER the page — one hairline, and the card's own paper
          on the derived page behind it. `overflow-clip` and NOT `overflow-hidden`:
          clip rounds the corners without making the sheet a scroll container, so the
-         band inside it still sticks to the list's own scrollport. A phone draws none
-         of it, because there the card IS the page and does not breathe. */
-      className="sm:overflow-clip sm:rounded-panel sm:border sm:border-dialog-edge sm:bg-panel"
+         band inside it still sticks to the list's own scrollport. The lane it stands
+         in is 12px either way and only the source of it differs: the desk takes it
+         from the scroller, which has the empty states and a machine's own words
+         standing in it too, and the phone takes it here, so a fleet's hue keeps the
+         page beside the sheets instead of becoming a second frame around them. */
+      className="mx-3 overflow-clip rounded-panel border border-dialog-edge bg-panel sm:mx-0"
       aria-label={`${project} sessions`}
       data-machine={machineKey(conn)}
       data-project-root={root}

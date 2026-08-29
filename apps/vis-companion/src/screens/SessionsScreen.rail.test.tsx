@@ -192,10 +192,10 @@ describe("the desk's fleet rail", () => {
     await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
 
     const sheet = document.querySelector('section[data-project-root]');
-    expect(sheet?.className).toContain('sm:rounded-panel');
+    expect(sheet?.className).toContain('rounded-panel');
     // Clip and not hidden: hidden would make the sheet a scroll container of its
     // own, and the band inside it would stick to the sheet instead of to the list.
-    expect(sheet?.className).toContain('sm:overflow-clip');
+    expect(sheet?.className).toContain('overflow-clip');
     expect(sheet?.className).not.toContain('overflow-hidden');
 
     // The lane is padding on the scroller, and behind the sheets standing inside it
@@ -204,8 +204,45 @@ describe("the desk's fleet rail", () => {
     const list = document.querySelector('.overscroll-contain');
     expect(list?.className).toContain('sm:px-3');
     const page = list?.parentElement;
-    expect(page?.className).toContain('sm:bg-page');
+    expect(page?.className).toContain('bg-page');
     expect(page?.className).toContain('sm:border-0');
+  });
+
+  // Regression, user report (paraphrased: why are the projects on mobile not rounded
+  // the way they are on the desktop): the corner, the paper and the hairline of the
+  // sheet were all gated behind `sm:`, and the card behind them wore the SHEET's own
+  // paper on the glass — so a phone had nothing for a corner to be cut out of, and
+  // the same object read as a slab there and as a card on a desk.
+  it('stands that same sheet on the glass, in a lane of its own', async () => {
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: 'visgw',
+          sessions: [
+            listSession({ id: 'a1', title: 'First', workspace: { root: '/Users/dev/alpha' } }),
+          ],
+        },
+      ],
+    });
+    restore = () => {
+      view.unmount();
+      view.restore();
+    };
+
+    await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
+
+    const sheet = document.querySelector('section[data-project-root]');
+    expect(sheet?.className).toContain('rounded-panel');
+    expect(sheet?.className).toContain('mx-3');
+    // Nothing about the sheet waits for a desk any more.
+    expect(sheet?.className).not.toContain('sm:rounded-panel');
+    expect(sheet?.className).not.toContain('sm:bg-panel');
+
+    // And the card holding it is the page here too, one step under the sheet's own
+    // paper: that step is the difference a corner is visible against.
+    const page = document.querySelector('.overscroll-contain')?.parentElement;
+    expect(page?.className).toContain('bg-page');
+    expect(page?.className).not.toContain('bg-panel');
   });
 });
 
