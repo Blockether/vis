@@ -60,6 +60,25 @@ describe("ImageViewer", () => {
     expect(control("Reset zoom").textContent).toBe("100%");
   });
 
+  it("draws the picture actions as named icons, not toolbar words", () => {
+    const actions = [
+      control("Draw on image"),
+      control("Trim to view"),
+      control("Copy image"),
+    ];
+    const handoff = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Share image"], button[aria-label="Save image"]',
+    );
+    if (!handoff) throw new Error("no image handoff control");
+    actions.push(handoff);
+
+    for (const action of actions) {
+      expect(action.textContent).toBe("");
+      expect(action.querySelector("svg")).not.toBeNull();
+      expect(action.title).toBe(action.getAttribute("aria-label"));
+    }
+  });
+
   // Regression, user report ("the close buttons, instead of being just the X mark,
   // are shown as `Close`"): the image viewer's header carried a secondary text button
   // where every other surface wears the app's one `CloseButton`.
@@ -147,7 +166,7 @@ describe("ImageViewer", () => {
   // share and apply all act on that region instead of the page around it.
   it("offers Trim beside Draw, and says so when there is nothing to trim", () => {
     const trim = control("Trim to view");
-    expect(trim.textContent).toBe("Trim");
+    expect(trim.textContent).toBe("");
     expect(document.querySelector('[aria-label="Undo trim"]')).toBeNull();
     expect(
       document.querySelector('[aria-live="polite"]')?.textContent,
@@ -165,9 +184,9 @@ describe("ImageViewer", () => {
   // A stroke in flight owns the picture: cropping under the pen would flatten
   // half a mark and leave the other half pointing at pixels that are gone.
   it("holds Trim while the pen is out", () => {
-    act(() => named("Draw").click());
+    act(() => control("Draw on image").click());
     expect(control("Trim to view").disabled).toBe(true);
-    act(() => named("Draw").click());
+    act(() => control("Draw on image").click());
     expect(control("Trim to view").disabled).toBe(false);
   });
 
@@ -177,8 +196,8 @@ describe("ImageViewer", () => {
     expect(canvas?.getAttribute("data-annotation")).toBe("idle");
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
 
-    act(() => named("Draw").click());
-    expect(named("Draw").getAttribute("aria-pressed")).toBe("true");
+    act(() => control("Draw on image").click());
+    expect(control("Draw on image").getAttribute("aria-pressed")).toBe("true");
     expect(
       document.querySelector("canvas")?.getAttribute("data-annotation"),
     ).toBe("active");
@@ -190,7 +209,7 @@ describe("ImageViewer", () => {
       tools?.parentElement,
     );
 
-    act(() => named("Draw").click());
+    act(() => control("Draw on image").click());
     expect(document.querySelector('[aria-label="Drawing tools"]')).toBeNull();
   });
 
@@ -200,7 +219,7 @@ describe("ImageViewer", () => {
     expect(
       document.querySelector('[aria-live="polite"]')?.textContent,
     ).toContain("to zoom");
-    act(() => named("Draw").click());
+    act(() => control("Draw on image").click());
     expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe(
       "Draw on the image, then copy or share it.",
     );
@@ -243,13 +262,13 @@ it("keeps the ink through one Save in the band, one cell from the way out", () =
   expect(save.nextElementSibling).toBe(control("Close chart.png"));
 
   // The strip never grows a second way to finish: pressed IS drawing.
-  act(() => named("Draw").click());
-  expect(named("Draw").getAttribute("aria-pressed")).toBe("true");
+  act(() => control("Draw on image").click());
+  expect(control("Draw on image").getAttribute("aria-pressed")).toBe("true");
   expect([...document.querySelectorAll("button")].map((b) => b.textContent)).not.toContain("Done");
 
   // And Save puts the pen down: it is the end of drawing, not a step beside it.
   act(() => save.click());
-  expect(named("Draw").getAttribute("aria-pressed")).toBe("false");
+  expect(control("Draw on image").getAttribute("aria-pressed")).toBe("false");
 });
 
 // Regression, user report: pressing Save on an untouched shared picture started a
@@ -336,7 +355,7 @@ it("still pinch-zooms with a second finger while a stroke is in progress", () =>
   Element.prototype.setPointerCapture = vi.fn();
   // Draw resets the transform to fitted, so zoom AFTER entering drawing mode
   // or the reset — not the pinch — would be the only thing this proves.
-  act(() => named("Draw").click());
+  act(() => control("Draw on image").click());
   act(() => control("Zoom in").click());
   expect(control("Reset zoom").textContent).toBe("135%");
 
@@ -385,7 +404,7 @@ it("still pinch-zooms with a second finger while a stroke is in progress", () =>
 // across the picture. A second finger means pinch — the mark is abandoned.
 it("abandons the stroke in progress when a second finger starts a pinch", () => {
   Element.prototype.setPointerCapture = vi.fn();
-  act(() => named("Draw").click());
+  act(() => control("Draw on image").click());
   const canvas = document.querySelector("canvas");
   if (!canvas) throw new Error("annotation canvas not found");
   canvas.width = 400;
@@ -440,7 +459,7 @@ it("abandons the stroke in progress when a second finger starts a pinch", () => 
 // point where ink should have appeared.
 it("draws a stroke that starts beside the picture and crosses onto it", () => {
   Element.prototype.setPointerCapture = vi.fn();
-  act(() => named("Draw").click());
+  act(() => control("Draw on image").click());
   const viewport = document.querySelector<HTMLDivElement>(
     '[role="dialog"] .cursor-grab',
   );

@@ -71,6 +71,7 @@ import {
   CircleSlash,
   CircleX,
   Copy,
+  Crop,
   Download,
   Ellipsis,
   Folder,
@@ -87,6 +88,7 @@ import {
   Plus,
   Search,
   Settings,
+  Share2,
   Square,
   Star,
   Trash2,
@@ -264,9 +266,19 @@ export function VoiceLoopIcon({ className }: { className?: string }) {
   return <Mark icon={MicVocal} className={className} />;
 }
 
+/** Draw directly on a picture. */
+export function DrawIcon({ className }: { className?: string }) {
+  return <Mark icon={Pencil} className={className} />;
+}
+
 /** Rename. */
 export function PencilIcon({ className }: { className?: string }) {
   return <Mark icon={Pencil} className={className} />;
+}
+
+/** Keep only the part of a picture inside the frame. */
+export function TrimIcon({ className }: { className?: string }) {
+  return <Mark icon={Crop} className={className} />;
 }
 
 /** Delete. The row swipe's own mark, and the only way "delete" is ever drawn. */
@@ -396,6 +408,11 @@ export function DotsIcon({ className }: { className?: string }) {
  */
 export function CopyIcon({ className }: { className?: string }) {
   return <Mark icon={Copy} className={className} />;
+}
+
+/** Hand a picture to the platform share sheet. */
+export function ShareIcon({ className }: { className?: string }) {
+  return <Mark icon={Share2} className={className} />;
 }
 
 /** DONE. The tick that answers a press — the copy chip's second face. */

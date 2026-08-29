@@ -37,7 +37,8 @@ import {
   PenToolbar,
   type AnnotationSurface,
 } from "./AnnotationLayer";
-import { BandButton, Button, DialogHeader } from "./ui";
+import { CopyIcon, DownloadIcon, DrawIcon, ShareIcon, TrimIcon } from "./icons";
+import { BandButton, Button, DialogHeader, IconButton } from "./ui";
 import { useGalleryStep, type GalleryPicture } from "../lib/gallery";
 import { useStickyOverlay } from "../lib/sticky-overlay";
 
@@ -779,8 +780,10 @@ export function ImageViewer({
             </Button>
           </div>
 
-          <Button
+          <IconButton
             variant={drawing ? "primary" : "secondary"}
+            label="Draw on image"
+            title="Draw on image"
             onClick={() => {
               resetTransform();
               setDrawing((current) => !current);
@@ -790,17 +793,18 @@ export function ImageViewer({
           >
             {/* One toggle, one state: pressed IS drawing, so it never renames itself
                 into a finish verb that competes with the band's Save. */}
-            Draw
-          </Button>
+            <DrawIcon />
+          </IconButton>
 
-          <Button
+          <IconButton
             variant="secondary"
+            label="Trim to view"
+            title="Trim to view"
             onClick={trimToView}
             disabled={drawing || busy !== null}
-            aria-label="Trim to view"
           >
-            {busy === "trim" ? "Trimming…" : "Trim"}
-          </Button>
+            <TrimIcon />
+          </IconButton>
 
           {trimmed && (
             <Button
@@ -819,8 +823,10 @@ export function ImageViewer({
           )}
 
           <div className="ml-auto flex shrink-0 items-center gap-2">
-            <Button
+            <IconButton
               variant="secondary"
+              label="Copy image"
+              title="Copy image"
               onClick={() =>
                 run("copy", "Could not copy image", (blob) =>
                   copyImage(blob, shown.name),
@@ -828,13 +834,15 @@ export function ImageViewer({
               }
               disabled={busy !== null}
             >
-              {busy === "copy" ? "Copying…" : "Copy"}
-            </Button>
+              <CopyIcon />
+            </IconButton>
             {/* The strip's one primary is share. The picture's way BACK is the band's
                 own cell up top, which wears the band's ink instead of claiming a rank
                 down here, so exactly one primary button stands on the screen. */}
-            <Button
+            <IconButton
               variant="primary"
+              label={`${shareAction} image`}
+              title={`${shareAction} image`}
               onClick={() =>
                 run("share", "Could not share image", (blob) =>
                   shareImage(blob, shown.name),
@@ -842,8 +850,8 @@ export function ImageViewer({
               }
               disabled={busy !== null}
             >
-              {busy === "share" ? `${shareAction}…` : shareAction}
-            </Button>
+              {shareAction === "Share" ? <ShareIcon /> : <DownloadIcon />}
+            </IconButton>
           </div>
         </div>
 
