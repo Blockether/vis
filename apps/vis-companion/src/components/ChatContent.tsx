@@ -2367,7 +2367,7 @@ function buildSegments(
 // re-rendering settled cards.
 //
 // Identity alone is not that boundary while a turn STREAMS. One delta hands the
-// screen a new `iterations` array (`reduceLiveEvent` rebuilds it to grow the
+// screen a new `iterations` array (`reduceRunningTurnEvent` rebuilds it to grow the
 // tail), `buildSegments` runs again, and every segment it returns is a fresh
 // object — so a `memo` comparing identity re-rendered the whole trace on every
 // flush, ~7 times a second, for a turn whose settled iterations cannot change.
@@ -2508,7 +2508,7 @@ export const IterationTrace = memo(function IterationTrace({
    *
    * The ramp below buys a short frame when a trace arrives on a screen that has
    * none of it yet. A trace that REPLACES one already painted has no such frame
-   * to protect — the live bubble drew these very segments a moment ago — and
+   * to protect — the running-turn bubble drew these very segments a moment ago — and
    * ramping again is pure subtraction: the transcript drops back to
    * `SEGMENT_FIRST_PAINT` segments for a frame and grows the rest back over the
    * next few. Measured on the live-to-settled handover of a short turn, 102 DOM
@@ -2547,7 +2547,7 @@ export const IterationTrace = memo(function IterationTrace({
   );
 
   // `whole` also arrives LATE, and it has to count then too. WHICH reconcile
-  // tick retires the live bubble is not this trace's business: the settled row
+  // tick retires the running-turn bubble is not this trace's business: the settled row
   // can mount a tick BEFORE the bubble is dropped — the registry still calls the
   // turn running when its finished row lands — and read only as the initial
   // state, `whole` changed nothing for exactly those handovers. The collapse
@@ -2890,7 +2890,7 @@ function runningTurnPhase(turn: TranscriptTurn): string {
  * stop SAYING what it is. Silence there is what put a bare "Vis" — no phase, no
  * clock, no trace — under a message that had just been sent.
  */
-function LiveProgress({
+function TurnPhaseLine({
   phase,
   startedAt,
   still = false,
@@ -2900,7 +2900,7 @@ function LiveProgress({
   /** When the work in `phase` began. Without it the slot carries NO clock. */
   startedAt?: number;
   still?: boolean;
-  /** A final phase keeps the same slot but has no activity punctuation. */
+  /** A final phase keeps the same slot but has no in-progress punctuation. */
   terminal?: boolean;
 }) {
   const [now, setNow] = useState(() => Date.now());
@@ -3272,20 +3272,20 @@ function useMeasuredPaintSkip(live: boolean) {
 export const AssistantMessage = memo(function AssistantMessage({
   turn,
   streaming = false,
-  activity,
+  progressLabel,
   pending,
   startedAt,
   settled = false,
   whole = false,
   client,
   sid,
-  livePanel,
+  liveViewPanel,
   onOpenAttachment,
 }: {
   turn: TranscriptTurn;
   streaming?: boolean;
-  activity?: string;
-  /** A settled live bubble is waiting for its authoritative transcript row. */
+  progressLabel?: string;
+  /** A settled running-turn bubble is waiting for its authoritative transcript row. */
   pending?: string;
   startedAt?: number;
   /** This row's trace is already on screen — see `IterationTrace`'s `whole`. */
@@ -3301,8 +3301,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   settled?: boolean;
   client?: GatewayClient;
   sid?: string;
-  /** Live work belongs after its tool/prose trace and before the phase ticker. */
-  livePanel?: ReactNode;
+  /** Host-owned Live Views follow the turn trace and precede its phase ticker. */
+  liveViewPanel?: ReactNode;
   /** Opens the artifact named by a safe `attachment://<uuid>` answer link. */
   onOpenAttachment?: OpenAttachment;
 }) {
@@ -3330,7 +3330,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   const fallbackNote = meta && !cancelled ? turnFallbackNote(turn) : null;
 
   // A finished turn is one skippable paint box, sized by `useMeasuredPaintSkip`
-  // from its own measured height. The live turn is never skipped: it is the row
+  // from its own measured height. The running turn is never skipped: it is the row
   // being read, and its height is still moving. The box is a `flow-root` so that
   // arming it cannot change the height it was armed with.
   const paintSkip = useMeasuredPaintSkip(streaming);
@@ -3375,22 +3375,22 @@ export const AssistantMessage = memo(function AssistantMessage({
             turn.status !== "completed" &&
             turn.status !== "running" && <span>{turn.status ?? "No response"}</span>}
         </div>
-        {livePanel}
+        {liveViewPanel}
         {streaming ? (
-          <LiveProgress
-            phase={activity ?? "Vis is working"}
+          <TurnPhaseLine
+            phase={progressLabel ?? "Vis is working"}
             startedAt={startedAt}
           />
         ) : cancelled ? (
-          <LiveProgress phase="Cancelled by user." terminal />
+          <TurnPhaseLine phase="Cancelled by user." terminal />
         ) : pending ? (
-          <LiveProgress phase={pending} />
+          <TurnPhaseLine phase={pending} />
         ) : turn.status === "running" ? (
           // A row this screen has stopped following still reads `running`, so it
           // still says so: the spinner and the elapsed clock go (they are what
           // made a finished turn look alive), the words stay. Rendering nothing
           // here left the reader a bare "Vis" for the whole turn.
-          <LiveProgress
+          <TurnPhaseLine
             phase={runningTurnPhase(turn)}
             startedAt={turn.created_at}
             still={settled}

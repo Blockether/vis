@@ -53,7 +53,7 @@ export function renderSessionScreen({
     setSetting: () => Promise.resolve(null),
     createSession: () => Promise.resolve(session),
     noteSessionModel: () => {},
-    rememberLiveTurn: () => {},
+    rememberRunningTurn: () => {},
     rememberSentAttachments: () => {},
     forgetQueuedTurn: () => {},
     onArtifactRevision: () => () => {},

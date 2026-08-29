@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { settledTranscriptCoversLiveTurn } from "./live-turn-handover";
+import { settledTranscriptCoversRunningTurn } from "./running-turn-handover";
 
 const now = 1_700_000_000_000;
 
 describe("settled transcript handover", () => {
   it("does not retire visible output against an unrelated new settled row", () => {
     expect(
-      settledTranscriptCoversLiveTurn(
+      settledTranscriptCoversRunningTurn(
         [
           {
             id: "engine-previous",
@@ -28,7 +28,7 @@ describe("settled transcript handover", () => {
 
   it("hands over when the engine row has the same request but a different id", () => {
     expect(
-      settledTranscriptCoversLiveTurn(
+      settledTranscriptCoversRunningTurn(
         [
           {
             id: "engine-current",
@@ -58,7 +58,7 @@ describe("settled transcript handover", () => {
     };
 
     expect(
-      settledTranscriptCoversLiveTurn([placeholder], new Set(), {
+      settledTranscriptCoversRunningTurn([placeholder], new Set(), {
         id: "gateway-current",
         request: "the current voice turn",
         startedAt: now,
@@ -67,7 +67,7 @@ describe("settled transcript handover", () => {
     ).toBe(false);
 
     expect(
-      settledTranscriptCoversLiveTurn(
+      settledTranscriptCoversRunningTurn(
         [
           {
             ...placeholder,
@@ -98,7 +98,7 @@ describe("settled transcript handover", () => {
     };
 
     expect(
-      settledTranscriptCoversLiveTurn([reasoningOnly], new Set(), {
+      settledTranscriptCoversRunningTurn([reasoningOnly], new Set(), {
         id: "gateway-current",
         request: "the current voice turn",
         startedAt: now,
@@ -108,7 +108,7 @@ describe("settled transcript handover", () => {
     ).toBe(false);
 
     expect(
-      settledTranscriptCoversLiveTurn(
+      settledTranscriptCoversRunningTurn(
         [
           {
             ...reasoningOnly,
@@ -135,7 +135,7 @@ describe("settled transcript handover", () => {
 
   it("accepts an exact persisted id without depending on request projection", () => {
     expect(
-      settledTranscriptCoversLiveTurn(
+      settledTranscriptCoversRunningTurn(
         [{ id: "same", status: "completed", created_at: now }],
         new Set(),
         { id: "same", request: "display form", startedAt: now },

@@ -1228,7 +1228,7 @@ describe("a turn that has not answered yet", () => {
     expect(text(html)).not.toMatch(/\d/);
   });
 
-  it("says when a finished live turn is waiting for its transcript row", () => {
+  it("says when a finished running turn is waiting for its transcript row", () => {
     const html = renderToStaticMarkup(
       <AssistantMessage
         turn={{ ...running, status: "completed" }}
@@ -1249,7 +1249,7 @@ describe("a turn that has not answered yet", () => {
 // segments painted, and the rest came back a chunk per frame. Measured on the
 // handover of a short turn, the scroller lost 102 nodes and 378 px and got them
 // back 8 ms later; on a long answer that is most of the transcript.
-describe("the trace a settled row inherits from the live bubble", () => {
+describe("the trace a settled row inherits from the running-turn bubble", () => {
   const iterations = Array.from({ length: 20 }, (_, index) => ({
     id: `i${index}`,
     assistant_prose: `step ${index}`,

@@ -133,21 +133,21 @@ export function answeredTurnCount(session: Session | null | undefined): number {
 }
 
 /**
- * Answers the reader can currently see, including a settled live bubble whose
+ * Answers the reader can currently see, including a settled running-turn bubble whose
  * transcript row has not reached the gateway response yet.
  */
 export function visibleAnsweredTurnCount(
   session: Session | null | undefined,
   turns: readonly TranscriptTurn[],
-  liveStatus: string | null | undefined,
+  runningTurnStatus: string | null | undefined,
 ): number {
   const settledTranscriptTurns = turns.filter(
     (turn) => turn.status !== 'running' && turn.status !== 'pending',
   ).length;
-  const settledLiveTurn = liveStatus != null && liveStatus !== 'running' ? 1 : 0;
+  const settledRunningTurn = runningTurnStatus != null && runningTurnStatus !== 'running' ? 1 : 0;
   return Math.max(
     answeredTurnCount(session),
-    settledTranscriptTurns + settledLiveTurn,
+    settledTranscriptTurns + settledRunningTurn,
   );
 }
 

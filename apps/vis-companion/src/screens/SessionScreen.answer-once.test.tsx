@@ -42,7 +42,7 @@ describe("an answer that arrives more than once", () => {
     let emit: (event: SseEvent) => void = () => {};
     renderSessionScreen({
       client: {
-        cachedLiveTurn: () => ({ turn: bubble, seq: 5 }),
+        cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
         cachedTranscript: () => [],
         transcript: () => Promise.resolve([settledRow]),
       },
@@ -113,7 +113,7 @@ describe("an answer that arrives more than once", () => {
     });
 
     // Long enough for the settle poll to have read the transcript and swapped the
-    // live bubble for the persisted row.
+    // running-turn bubble for the persisted row.
     await linger(600);
     expect(painted(ANSWER)).toBe(1);
   });

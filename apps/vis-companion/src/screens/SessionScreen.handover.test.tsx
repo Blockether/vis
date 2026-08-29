@@ -84,7 +84,7 @@ describe("the message just sent", () => {
 });
 
 // Regression, same report: "the turn finished — I saw it done — but on the
-// transition between the live bubble and its persisted row the ANSWER (just the
+// transition between the running-turn bubble and its persisted row the ANSWER (just the
 // answer) was removed". Completion overtakes the 150 ms body queue, so the
 // terminal frame's own `content` is regularly the whole answer; the handover
 // guard sampled what the bubble held BEFORE that frame was applied, decided it
@@ -114,7 +114,7 @@ describe("a finished turn handed to its persisted row", () => {
     const events = hub();
     renderSessionScreen({
       client: {
-        cachedLiveTurn: () => ({ turn: bubble, seq: 5 }),
+        cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
         cachedTranscript: () => [],
         transcript: () => Promise.resolve([proseFreeRow]),
       },
@@ -157,7 +157,7 @@ describe("a turn cancelled from this screen", () => {
 
     renderSessionScreen({
       client: {
-        cachedLiveTurn: () => ({ turn: bubble, seq: 5 }),
+        cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
         cachedTranscript: () => [],
         transcript: () => persisted.promise,
       },
@@ -221,7 +221,7 @@ describe("a handover the registry vetoed once", () => {
     let reads = 0;
     renderSessionScreen({
       client: {
-        cachedLiveTurn: () => ({ turn: bubble, seq: 5 }),
+        cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
         cachedTranscript: () => [],
         session: () =>
           Promise.resolve(
@@ -324,7 +324,7 @@ describe("the wait for a finished turn's persisted row", () => {
 
     renderSessionScreen({
       client: {
-        cachedLiveTurn: () => ({ turn: bubble, seq: 5 }),
+        cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
         cachedTranscript: () => [],
         // The row this handover is waiting for never arrives.
         transcript: () => Promise.resolve([]),

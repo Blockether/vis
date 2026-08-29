@@ -150,7 +150,7 @@ describe("composer height", () => {
     renderSessionScreen({
       session: sessionFixture({ id: "busy", status: "running" }),
       client: {
-        cachedLiveTurn: () => ({
+        cachedRunningTurn: () => ({
           turn: {
             id: "t1",
             request: "check the logs",

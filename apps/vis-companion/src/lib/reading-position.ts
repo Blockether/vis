@@ -36,7 +36,7 @@ export function bottomOf(box: ScrollBox): number {
  *
  * `previousBottom` is where that end WAS: the largest `scrollTop` the box could
  * hold at the last measurement. Two ordinary events lower it and neither is a
- * gesture — content LEAVES (a collapsing Activity card, a live bubble replaced
+ * gesture — content LEAVES (a collapsing Activity card, a running-turn bubble replaced
  * by its shorter persisted row), or the viewport GROWS, which is exactly what
  * the iOS keyboard does on the way down: 274 px of a 568 px screen handed back
  * to the scroller, whose maximum offset drops by that much and takes the reader
@@ -58,7 +58,7 @@ export function readerRetreatedFrom(
  * Whether the reader ARRIVED at the end — with `aimed` as the end they were
  * reaching for, not the one the transcript has now.
  *
- * A live turn grows under the finger: a flush every 150 ms, hundreds of pixels
+ * A running turn grows under the finger: a flush every 150 ms, hundreds of pixels
  * at a time. Judged against the end as it stands, a reader dragging down is
  * always short of an end that keeps moving, so the follow never re-engages and
  * the newest turn is never carried to them again. Measured on the simulator

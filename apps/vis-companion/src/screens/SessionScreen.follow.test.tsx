@@ -7,7 +7,7 @@ import { noteReaderGesture } from "../lib/reader-gesture";
 
 // Regression, user report ("it was live, I even scrolled all the way down, and
 // it never remembered that I want the new things — it kept putting me back
-// somewhere in the middle of the live turn"): a turn being written grows the
+// somewhere in the middle of the running turn"): a turn being written grows the
 // transcript every flush, so a reader dragging down is measured against an end
 // that moved while they were reaching for it. On an iPhone 17 Pro simulator,
 // six hard drags at a streaming session ended 512 px above the end, the follow
@@ -16,7 +16,7 @@ import { noteReaderGesture } from "../lib/reader-gesture";
 
 /** The scroller, with the transcript's height in one mutable place. */
 const SHELL = 800;
-/** What one flush of a live turn adds while the finger is on the glass. */
+/** What one flush of a running turn adds while the finger is on the glass. */
 const FLUSH = 300;
 
 function transcript() {
@@ -348,7 +348,7 @@ describe("a reader reaching the end of a turn that is still being written", () =
   // Regression, session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25: collapsing a card — or
   // the keyboard changing the shell's height — shrinks the transcript, and the browser
   // CLAMPS scrollTop to the new end. Read as an upward gesture, that dropped follow
-  // under a finger that had only tapped, and the live turn stopped being carried.
+  // under a finger that had only tapped, and the running turn stopped being carried.
   it("keeps following when shrinking content clamps the scroller", async () => {
     const paint = installFrames();
     const resize = installObserver();
@@ -381,7 +381,7 @@ describe("a reader reaching the end of a turn that is still being written", () =
     fireEvent.scroll(viewport);
     await paint();
 
-    // The next flush of the live turn must still be carried to them.
+    // The next flush of the running turn must still be carried to them.
     now += 301;
     live.height += 40;
     act(() => resize(content));

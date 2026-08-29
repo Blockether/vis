@@ -4,7 +4,7 @@
  * A full-screen artifact — a picture in the image viewer, a document in the doc
  * overlay — is opened from a row INSIDE the transcript, and the row keeps the
  * "is it open" bit. That is fine until the transcript re-parents the row under
- * it: the session screen paints a streaming answer in its own live bubble and,
+ * it: the session screen paints a streaming answer in its own running-turn bubble and,
  * the moment the turn settles, drops that bubble and renders the very same
  * content as a settled transcript row. React sees two different subtrees, so
  * the live one unmounts — taking the reader's open artifact with it and putting

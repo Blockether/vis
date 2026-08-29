@@ -56,7 +56,7 @@ function iteration(position: number, thinking: string): TranscriptIteration {
 /** The settled iterations keep their identity across a flush, as the reducer leaves them. */
 const settled = [iteration(0, "first"), iteration(1, "second")];
 
-/** What `updateLiveIteration` hands the screen for one `content.block.delta`. */
+/** What `updateRunningIteration` hands the screen for one `content.block.delta`. */
 function streamed(tick: number): TranscriptIteration[] {
   return [...settled, iteration(2, `thinking${".".repeat(tick)}`)];
 }

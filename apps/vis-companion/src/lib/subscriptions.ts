@@ -101,7 +101,7 @@ export class SessionSubscriptionHub {
   /**
    * Has the turn this session was streaming already reached a terminal frame?
    *
-   * A screen seeding its live bubble from a cache needs to know that the answer
+   * A screen seeding its running-turn bubble from a cache needs to know that the answer
    * it remembers has since finished — the settled row is in the transcript, and
    * repainting the bubble would render it twice.
    */
@@ -360,7 +360,7 @@ export class SessionSubscriptionHub {
       const buffered = [...(this.buffers.get(sid) ?? []), event];
       if (buffered.length > MAX_BUFFERED_EVENTS) {
         // Trim from the front, but NEVER evict the head `turn.started`: that is
-        // the frame which RESETS a replaying screen's live bubble. Drop it and a
+        // the frame which RESETS a replaying screen's running-turn bubble. Drop it and a
         // reconnect replays this turn's deltas onto content the screen already
         // rendered, i.e. the same answer twice.
         const head = buffered[0];

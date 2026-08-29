@@ -4,13 +4,13 @@ import { act, screen, waitFor } from "@testing-library/react";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 import activityFixture from "../lib/activity.fixture.json";
-import { reduceLiveEvent } from "./SessionScreen";
+import { reduceRunningTurnEvent } from "../lib/running-turn";
 import type { SseEvent } from "../lib/types";
 
 // Reported from a phone: the message was sent and the session title updated, but
 // the answer rail stayed a bare "Vis" — no phase, no clock, no trace — for the
 // whole turn. A running turn was adopted ONLY from the session read, so that one
-// failed request left `running` false and the live bubble null: the freshly
+// failed request left `running` false and the running-turn bubble null: the freshly
 // persisted `running` row was then painted as a finished one, and every delta
 // that arrived had no bubble to land in.
 describe("a running turn the session read cannot confirm", () => {
@@ -139,7 +139,7 @@ describe("a running turn the session read cannot confirm", () => {
 
     renderSessionScreen({
       client: {
-        cachedLiveTurn: () => ({ turn: visible, seq: 42 }),
+        cachedRunningTurn: () => ({ turn: visible, seq: 42 }),
         cachedTranscript: () => [emptySettledRow],
         transcript: () => new Promise(() => {}),
       },
@@ -165,7 +165,7 @@ describe("a running turn the session read cannot confirm", () => {
 
     renderSessionScreen({
       client: {
-        cachedLiveTurn: () => ({ turn: visible, seq: 42 }),
+        cachedRunningTurn: () => ({ turn: visible, seq: 42 }),
         cachedTranscript: () => [],
         // Keep the persisted handover pending for the duration of the assertion.
         transcript: () => new Promise(() => {}),
@@ -196,7 +196,7 @@ describe("a running turn the session read cannot confirm", () => {
 
     renderSessionScreen({
       client: {
-        cachedLiveTurn: () => ({ turn: justSent, seq: 7 }),
+        cachedRunningTurn: () => ({ turn: justSent, seq: 7 }),
         cachedTranscript: () => [],
         transcript: () => Promise.resolve([runningRow]),
       },
@@ -267,7 +267,7 @@ describe("a running turn the session read cannot confirm", () => {
     const listeners = new Set<(event: Record<string, unknown>) => void>();
     renderSessionScreen({
       client: {
-        cachedLiveTurn: () => ({
+        cachedRunningTurn: () => ({
           turn: {
             id: "activity-turn",
             request: "inspect the run",
@@ -433,11 +433,11 @@ describe("a form frame's numeric block_id", () => {
   const frame = (event: Record<string, unknown>) => event as unknown as SseEvent;
 
   it("puts the running snapshot on the block that is already there", () => {
-    const started = reduceLiveEvent(
-      reduceLiveEvent(null, frame({ type: "turn.started", turn_id: "t-block" })),
+    const started = reduceRunningTurnEvent(
+      reduceRunningTurnEvent(null, frame({ type: "turn.started", turn_id: "t-block" })),
       frame({ type: "block.started", iteration: 1, block_id: 0, code: "grep()" }),
     );
-    const turn = reduceLiveEvent(
+    const turn = reduceRunningTurnEvent(
       started,
       frame({
         type: "block.activity",

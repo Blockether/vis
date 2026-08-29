@@ -2649,7 +2649,7 @@ export class GatewayClient {
   }
 
   /**
-   * The live bubble of ONE session, as it was last painted.
+   * The running-turn bubble of ONE session, as it was last painted.
    *
    * MEMORY ONLY, on purpose: this is written on every streamed delta, and
    * `writeSnapshot` re-serialises the whole store to `localStorage`. It also has
@@ -2662,13 +2662,13 @@ export class GatewayClient {
    * `seq` is the gateway's per-session journal cursor of the newest event folded
    * into `turn`, so the reader can drop a replay it has already applied.
    */
-  cachedLiveTurn<T>(sid: string): { turn: T; seq: number } | null {
-    const cached = snapshots.get(this.snapshotKey("live", sid));
+  cachedRunningTurn<T>(sid: string): { turn: T; seq: number } | null {
+    const cached = snapshots.get(this.snapshotKey("running-turn", sid));
     return (cached as { turn: T; seq: number } | undefined) ?? null;
   }
 
-  rememberLiveTurn(sid: string, turn: unknown, seq: number): void {
-    const key = this.snapshotKey("live", sid);
+  rememberRunningTurn(sid: string, turn: unknown, seq: number): void {
+    const key = this.snapshotKey("running-turn", sid);
     if (turn === null) snapshots.delete(key);
     else snapshots.set(key, { turn, seq });
   }
@@ -2683,7 +2683,7 @@ export class GatewayClient {
    * the screen: that is why images sent to a still-running turn came back empty
    * after stepping out of the session and back in.
    *
-   * Memory only and bounded, like the live bubble: base64 pixels have no
+   * Memory only and bounded, like the running-turn bubble: base64 pixels have no
    * business in `localStorage`, and a turn this far back is settled anyway —
    * from then on the persisted row owns its images.
    */
@@ -2788,7 +2788,7 @@ export class GatewayClient {
     snapshots.delete(this.snapshotKey("session", sid));
     dropSnapshot(transcriptKey);
     snapshots.delete(this.snapshotKey("queued", sid));
-    snapshots.delete(this.snapshotKey("live", sid));
+    snapshots.delete(this.snapshotKey("running-turn", sid));
     snapshots.delete(this.snapshotKey("model", sid));
     for (const key of Array.from(this.sentAttachments.keys())) {
       if (key.startsWith(`${sid}\u0000`)) this.sentAttachments.delete(key);
@@ -4077,7 +4077,7 @@ export class GatewayClient {
    * Status of ONE turn as the gateway REGISTRY knows it — `null` when this
    * daemon's live registry has no such row.
    *
-   * This is the transport-independent liveness probe: the live bubble normally
+   * This is the transport-independent liveness probe: the running-turn bubble normally
    * settles on the terminal SSE frame, but a reconnect gap (or a backgrounded
    * tab whose stream was torn down mid-turn) can swallow that one frame, and
    * then the bubble streams forever for a turn the gateway finished minutes
@@ -4120,7 +4120,7 @@ export class GatewayClient {
    * The iterations the gateway has ALREADY PERSISTED for ONE turn — the resume
    * source for a turn that is still running.
    *
-   * The live bubble is normally seeded by the `turn.started` frame, and every
+   * The running-turn bubble is normally seeded by the `turn.started` frame, and every
    * later delta is dropped while it is null. That frame is emitted exactly once
    * and the hub subscribes LIVE-ONLY, so anyone who was not listening at that
    * instant never gets it: a cold open on a session that is already streaming,

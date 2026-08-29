@@ -251,7 +251,7 @@ describe("a finished turn is skipped at its own measured size", () => {
     expect(box.style.containIntrinsicSize).toBe("");
   });
 
-  it("arms a live turn once it finishes", () => {
+  it("arms a running turn once it finishes", () => {
     const { view, box } = mount(true);
     layout(box, 390, 900);
 
