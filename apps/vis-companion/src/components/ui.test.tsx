@@ -325,11 +325,13 @@ describe("MachineRail", () => {
   // border INSIDE the card, one pixel from the card's own border — a grey hairline
   // immediately followed by a coloured one, doing one job twice — and, being a
   // border, it also stole 2px of layout the trailing edge had no match for (left ink
-  // 19px against right ink 17px). It is the card's LEFT FRAME now: the card gives
-  // that side up, both sides are 2px, and the rail simply colours one of them.
+  // 19px against right ink 17px). Above a fleet it is the card's LEFT FRAME: the card
+  // gives that side up, both sides are 2px, and the rail simply colours one of them.
   it("is the frame, in the machine colour", () => {
     const html = renderToStaticMarkup(
-      <MachineRail color={MACHINE_COLORS[3]!}>rows</MachineRail>,
+      <MachineRail color={MACHINE_COLORS[3]!} isFleet>
+        rows
+      </MachineRail>,
     );
     expect(html).toContain("border-l-2");
     expect(html).toContain(MACHINE_COLORS[3]!.rail);
@@ -340,7 +342,9 @@ describe("MachineRail", () => {
   // the enclosing sheet drew an unrelated dark rule underneath the machine.
   it("closes each machine in its own hue instead of the sheet's edge", () => {
     const html = renderToStaticMarkup(
-      <MachineRail color={MACHINE_COLORS[3]!}>rows</MachineRail>,
+      <MachineRail color={MACHINE_COLORS[3]!} isFleet>
+        rows
+      </MachineRail>,
     );
 
     expect(html).toContain("border-b-2");
@@ -352,22 +356,41 @@ describe("MachineRail", () => {
       "overflow-hidden border-y border-dialog-edge",
     );
   });
+
   it("gives two machines two different rails", () => {
     const first = renderToStaticMarkup(
-      <MachineRail color={MACHINE_COLORS[0]!}>a</MachineRail>,
+      <MachineRail color={MACHINE_COLORS[0]!} isFleet>
+        a
+      </MachineRail>,
     );
     const second = renderToStaticMarkup(
-      <MachineRail color={MACHINE_COLORS[1]!}>a</MachineRail>,
+      <MachineRail color={MACHINE_COLORS[1]!} isFleet>
+        a
+      </MachineRail>,
     );
     expect(first).not.toBe(second);
   });
 
-  // Without a hue it still has to PAINT: this is the card's edge, and a frame that
-  // disappears where a colour is missing is a hole in the panel, not a subtlety.
+  // Without a hue it still has to PAINT where it paints at all: above a fleet this is the
+  // card's edge, and a frame that disappears where a colour is missing is a hole in the
+  // panel, not a subtlety.
   it("falls back to the list frame rather than vanishing", () => {
-    const html = renderToStaticMarkup(<MachineRail>rows</MachineRail>);
+    const html = renderToStaticMarkup(<MachineRail isFleet>rows</MachineRail>);
     expect(html).toContain("border-l-2");
     expect(html).toContain("border-dialog-edge");
+  });
+
+  // Regression, user report (paraphrased: no left rail on the phone either — there is only
+  // ever one machine): a colour is a COMPARISON, and with nothing to compare it to the sole
+  // machine still wrapped the whole list in its hue and closed it with a rule.
+  it("wraps a machine standing alone in nothing at all", () => {
+    const html = renderToStaticMarkup(
+      <MachineRail color={MACHINE_COLORS[3]!}>rows</MachineRail>,
+    );
+
+    expect(html).toBe("rows");
+    // The list gives up its left side with it: no chrome band wears that frame either.
+    expect(sessionsListSource).not.toContain("LIST_FRAME");
   });
 });
 

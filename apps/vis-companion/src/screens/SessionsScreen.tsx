@@ -12,7 +12,6 @@ import {
   Input,
   LIST_EDGE,
   LIST_EDGE_END,
-  LIST_FRAME,
   LIST_MARK,
   ProjectStatusCounts,
   LoadMore,
@@ -1945,7 +1944,11 @@ export function SessionsScreen({
   // machine row and three project rows whose own bands stand on the list two pixels
   // to the right of them. It earns that column the moment there is a second machine
   // to choose between; until then the projects verb it hosts stands in the footer.
-  const showRail = isDesk && machines.length > 1;
+  // A MACHINE'S HUE IS A COMPARISON TOO, and the list makes the same call: with one
+  // machine the block of projects it owns wears no rail and no closing rule, on a phone
+  // or anywhere else (`MachineRail`).
+  const isFleet = machines.length > 1;
+  const showRail = isDesk && isFleet;
   // THE RAIL IS BUILT FROM WHAT THE LIST IS ALREADY HOLDING, and only on a desk,
   // because only a desk paints it: one row per machine in the switcher's own order,
   // one per project band on screen.
@@ -2029,17 +2032,16 @@ export function SessionsScreen({
           second hairline on top of it, so the Sessions tab wore a 2px seam while
           Machines (which floats its cards below a gap) wore 1px. Bottom edge only;
           the full box comes back once the panel detaches at `sm`. */}
-      {/* The card owns three sides. Its LEFT edge belongs to whatever is standing
-          there — a neutral 2px rule under the chrome bands, the machine's own hue
-          down everything that machine owns — because a rail beside a border is two
-          lines doing one job, and a rail that is a BORDER also steals 2px of layout
-          the trailing edge has no match for. Both sides are 2px now, so the ink
-          lands symmetrically whichever one is painting — which is why the card
-          draws no left border of ITS own: `sm:border-x` laid a hairline one pixel
-          outside the 2px rule already standing there and the seam measured 3px
-          against the trailing edge's 2. The bottom is the card's own from `sm` up:
-          the rail beside it closes with a rule, and a box that closes on three
-          sides is a box that came apart. */}
+      {/* THE CARD OWNS ITS TOP EDGE ON A PHONE, AND NOTHING ELSE. Its left side used to
+          be a frame: a neutral 2px rule under the chrome bands, the machine's own hue
+          down everything that machine owned — because a rail beside a border is two lines
+          doing one job, and a rail that is a BORDER also steals 2px of layout the trailing
+          edge has no match for. Reported (paraphrased: no left rail on the phone either,
+          there is only ever one machine): with a fleet of one that frame ran the height of
+          the glass to say which of one. The hue is a comparison and paints only above a
+          fleet now, so under it the phone card is paper with rows on it, and the rows keep
+          the 2px the frame used to take. From `sm` up there is no card at all — the
+          projects are sheets standing on the page. */}
       {/* THE SWITCHER STANDS OUTSIDE WHAT IT SWITCHES, AND IT IS ONE OBJECT.
           The chips used to sit inside the machine card's own header, so the control
           that picks a machine looked like part of that machine's own answer. They are
@@ -2262,9 +2264,11 @@ export function SessionsScreen({
             row) and the whole screen jumped; its two side rules also stole 12px of a
             390px glass for nothing. Full bleed, no vertical rules, and `h-full` keep the
             frame fixed while the rows scroll inside it. Its bottom is not a dark rule
-            across the sheet: every machine closes itself in its own rail, exactly where
-            that machine's content ends. The section's own `env(safe-area-inset-bottom)`
-            keeps the last row and the pager clear of the home indicator.
+            across the sheet: a fleet closes each machine in that machine's own rail,
+            exactly where its content ends, and a sole machine simply stops — a closing
+            rule under a list nobody is comparing it to closes nothing. The section's own
+            `env(safe-area-inset-bottom)` keeps the last row and the pager clear of the
+            home indicator.
             At `sm` the card detaches from the viewport edges but still fills the
             available height. Its list owns overflow; the document never grows a second
             scrollbar or leaves an intrinsic-height strip above empty desktop paper. */}
@@ -2279,7 +2283,7 @@ export function SessionsScreen({
         {/* A create that failed has no button left to speak from once the order's own
             popover is gone, so the word lands on the paper the list is about to fill. */}
         {createError && (
-          <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME} sm:border-l-0`}>
+          <div className="border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4">
             <Banner kind="err">{createError}</Banner>
           </div>
         )}
@@ -2322,7 +2326,7 @@ export function SessionsScreen({
         {sessions === null ? (
           <NavigatorSkeleton />
         ) : visible?.length === 0 && sections.every(({ groups }) => groups.length === 0) ? (
-          <div className={`px-5 py-16 text-center ${LIST_FRAME} sm:border-l-0`}>
+          <div className="px-5 py-16 text-center">
             {/* A query whose answer has not come back yet is not a dead end, and
                 saying "No matching sessions" while every gateway is still reading
                 its transcripts is the screen lying about a result it does not
@@ -2358,14 +2362,15 @@ export function SessionsScreen({
               const color = machineColor(machineColors, key);
               return (
                 <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
-                  {/* Every machine keeps its own named panel and landmark, even when it is
-                      the only machine in the fleet. */}
-                  {/* Everything one machine owns hangs off ITS rail, and that rail IS
-                      the card's left frame here — a project boundary is a hairline, a
-                      machine boundary is a colour change, so where `tower` ends is seen
-                      before it is read. The panel is always rendered for the machine
-                      whose projects follow, fleet view or scoped view alike. */}
-                  <MachineRail color={color} isFlat={true}>
+                  {/* Every machine keeps its own named panel and landmark, even when it
+                      is the only one in the fleet: the landmark is a NAME, not ink. */}
+                  {/* THE HUE EXISTS TO TELL TWO COMPUTERS APART. Above a fleet everything
+                      one machine owns hangs off ITS rail, and that rail is the phone
+                      card's left frame — a project boundary is a hairline, a machine
+                      boundary is a colour change, so where `tower` ends is seen before it
+                      is read. With one machine there is nothing to tell it apart from, so
+                      nothing is drawn and its projects are simply the list. */}
+                  <MachineRail color={color} isFleet={isFleet}>
                   {/* Where one computer ends is a colour change AND a trough, so the
                       first project of the second machine can never read as the fifth
                       project of the first one. */}
@@ -2443,7 +2448,7 @@ export function SessionsScreen({
             the control that produced it said nothing was the same fact in the wrong
             place, and the third copy of it on the screen. */}
         {sessions === null && (
-          <footer className={`hidden items-center justify-end border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint sm:flex sm:border-l-0 sm:bg-page sm:px-4 ${LIST_FRAME}`}>
+          <footer className="hidden items-center justify-end border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint sm:flex sm:bg-page sm:px-4">
             <span>Reading sessions...</span>
           </footer>
         )}
@@ -2451,7 +2456,7 @@ export function SessionsScreen({
             fleet search (`App`), and both counts are the gateway's. A window this size
             can hold a footer without spending a row of the list on it. */}
         {isDesk && (
-          <footer className={`flex items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-4 py-1.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint sm:border-l-0 sm:bg-page ${LIST_FRAME}`}>
+          <footer className="flex items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-4 py-1.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint sm:bg-page">
             <span className="flex items-center gap-1.5">
               <kbd className="border border-dialog-edge px-1 font-mono text-chip normal-case">/</kbd>
               Search the fleet
@@ -3687,7 +3692,7 @@ function SkeletonBar({
 
 function NavigatorSkeleton() {
   return (
-    <div role="status" aria-live="polite" aria-label="Loading sessions" className={`${LIST_FRAME} sm:border-l-0`}>
+    <div role="status" aria-live="polite" aria-label="Loading sessions">
       <div className="animate-pulse motion-reduce:animate-none" aria-hidden="true">
         {SKELETON_GROUPS.map((rows, group) => (
           <div key={group}>

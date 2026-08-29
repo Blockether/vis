@@ -208,3 +208,51 @@ describe("the desk's fleet rail", () => {
     expect(page?.className).toContain('sm:border-0');
   });
 });
+
+// Regression, user report (paraphrased: no left rail on the phone either — there is only
+// ever one machine): the machine that owns everything still wrapped its whole block in 2px
+// of its own hue and closed it with a rule, so the phone spent the height of the glass
+// saying which of one.
+describe('the machine rail inside the list', () => {
+  const alone = {
+    machines: [
+      {
+        label: 'visgw',
+        sessions: [
+          listSession({ id: 'a1', title: 'First', workspace: { root: '/Users/dev/alpha' } }),
+        ],
+      },
+    ],
+  };
+
+  it('wraps a machine that stands alone in nothing at all', async () => {
+    const view = renderSessionsScreen(alone);
+    restore = () => {
+      view.unmount();
+      view.restore();
+    };
+
+    await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
+
+    // The landmark stays — it is a NAME, not ink — and its projects are simply the list.
+    const block = screen.getByLabelText('visgw projects');
+    const first = block.firstElementChild;
+    expect(first?.className ?? '').not.toContain('border-l-2');
+    expect(first?.className ?? '').not.toContain('border-b-2');
+    expect(block.querySelector('section[data-project-root]')).toBeTruthy();
+  });
+
+  it('paints the hue again the moment there is a second machine', async () => {
+    const view = renderSessionsScreen(fleet());
+    restore = () => {
+      view.unmount();
+      view.restore();
+    };
+
+    await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
+
+    const rail = screen.getByLabelText('visgw projects').firstElementChild;
+    expect(rail?.className ?? '').toContain('border-l-2');
+    expect(rail?.className ?? '').toContain('border-b-2');
+  });
+});

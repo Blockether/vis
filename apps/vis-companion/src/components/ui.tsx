@@ -2680,14 +2680,18 @@ export const PROSE =
 export const LIST_EDGE_END = 'pr-3 sm:pr-4';
 
 /**
- * THE LEFT EDGE OF THE LIST, worn by whatever is standing there.
+ * THE LEFT EDGE OF A PANEL THAT HANGS OFF THE ROW ABOVE IT.
  *
- * The card gives this side up entirely so that a machine's rail can BE the frame
- * rather than stand beside it: a coloured 2px line one pixel inside a grey one is
- * two lines doing one job, which is what the rail was removed for. Chrome bands wear
- * it in the edge ink; a machine block wears it in its own hue (`MachineRail`). Both
- * are 2px, and the card's right edge is 2px too, so the ink lands symmetrically
- * whichever of them is painting.
+ * A machine's settings open UNDER its row rather than on a screen of their own, so the
+ * panel has to say whose they are: 2px down its leading edge ties it to the row that
+ * opened it, at the width the list uses for every other frame.
+ *
+ * The sessions list wore this too — the card gave its whole left side up so that a
+ * machine's rail could BE the frame rather than stand beside it, and the chrome bands
+ * carried the same rule in edge ink between machines. Reported (paraphrased: no left
+ * rail on the phone either, there is only ever one machine): with a fleet of one that
+ * frame was 2px of ink saying which of one, the full height of the glass. The card
+ * draws no left edge at all now, and the hue paints only above a fleet (`MachineRail`).
  */
 export const LIST_FRAME = 'border-l-2 border-dialog-edge';
 
@@ -2761,8 +2765,9 @@ export function SectionHeader({
  * two sessions inside one project — one pixel of grey asked to mean both "next row"
  * and "different repository". A boundary that matters is seen before it is read, so
  * it is 8px of the machine's own paper (`bg-level-machine`, `L 0.905` against the
- * card's `0.96`): each project reads as a slab standing ON its machine's rail, and
- * the rail's hue runs through the gap because the machine owns both sides of it.
+ * card's `0.96`): each project reads as a slab cut from the paper its machine owns, and
+ * above a fleet that machine's hue runs down the side of the gap, because it owns both
+ * sides of it.
  *
  * It is 8px and not a margin: a gap collapses, a slab does not, and this one has to
  * PAINT to be a boundary at all. On a desk it paints the PAGE instead: the projects
@@ -3311,34 +3316,36 @@ export function ProjectStatusCounts({
 }
 
 /**
- * THE RAIL OF A MACHINE: 2px of its own hue down everything it owns and across
- * the edge that closes it. A project boundary is a hairline and a machine boundary is
- * a colour change, so where one computer ends is seen before it is read — and, unlike
- * a band at the top of the block, the rail is still on screen after the reader scrolls
- * past that band.
+ * THE RAIL OF A MACHINE: 2px of its own hue down everything it owns and across the edge
+ * that closes it — and a machine standing alone is not wrapped in anything.
  *
- * It is the card's LEFT AND BOTTOM FRAME, not a line inside it — see `LIST_FRAME`.
- * A grey bottom rule on the enclosing phone sheet used to close the whole fleet while
- * the coloured rail simply stopped, making the machine look unfinished. The machine
- * owns that edge now: one 2px border paints both sides in the same hue, and the sheet
- * draws neither a duplicate left line nor an unrelated closing line on the phone. On
- * a desk it draws nothing at all: the projects are sheets with their own edges there,
- * and a 2px hue running down the page beside them would be the frame of a card that
- * is no longer drawn.
+ * A COLOUR IS A COMPARISON. Above a fleet the rail says which computer these rows are
+ * on before a word is read; a project boundary is a hairline and a machine boundary is a
+ * colour change, and unlike a band at the top of the block the rail is still on screen
+ * after the reader scrolls past that band. Above a fleet of ONE it answers a question
+ * nobody can ask. Reported (paraphrased: no left rail on the phone either, there is only
+ * ever one machine): the sole machine wrapped the whole list in its hue and closed it
+ * with a rule, so the phone spent 2px of ink down the glass to say which of one. So it
+ * paints only when `isFleet`, and otherwise the projects under it simply ARE the list.
+ *
+ * On a desk it draws nothing either: the projects are sheets with their own edges there,
+ * and a 2px hue running down the page beside them would be the frame of a card that is
+ * no longer drawn.
  */
 export function MachineRail({
   color,
-  isFlat,
+  isFleet,
   children,
 }: {
   color?: MachineColor;
-  /** It is on a desk, where every sheet under it carries its own edge. */
-  isFlat?: boolean;
+  /** There is a second machine, so the hue is telling the reader something. */
+  isFleet?: boolean;
   children: ReactNode;
 }) {
+  if (!isFleet) return <>{children}</>;
   return (
     <div
-      className={`border-b-2 border-l-2 ${color ? color.rail : 'border-dialog-edge'}${isFlat ? ' sm:border-0' : ''}`}
+      className={`border-b-2 border-l-2 sm:border-0 ${color ? color.rail : 'border-dialog-edge'}`}
     >
       {children}
     </div>
