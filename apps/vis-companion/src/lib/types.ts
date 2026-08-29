@@ -2,6 +2,10 @@
 // src/com/blockether/vis/internal/gateway/server.clj). Only the fields the
 // companion reads are typed; unknown fields are preserved but ignored.
 
+// Type-only, so it is erased at compile time and the `live-view` -> `types`
+// import stays the one real edge between these two modules.
+import type { ActivityProjection } from './live-view';
+
 export interface GatewayConn {
   /** Base URL, e.g. http://100.64.0.10:7890 (LAN, Tailscale, or cloudflared). */
   url: string;
@@ -476,13 +480,6 @@ export interface IterationAttachment {
   transcription_status?: string;
   /** Stable live-view identity used to replace the live Activity in place. */
   view_id?: string;
-  classification?: "activity";
-  /** Zero-based Python form coordinates owned by the host Activity projection. */
-  activity_anchor?: {
-    evaluation_id: string;
-    iteration: number;
-    form_index: number;
-  };
 }
 
 /**
@@ -919,6 +916,18 @@ export interface TranscriptForm {
   op?: string;
   silent?: boolean;
   duration_ms?: number;
+  /**
+   * WHAT THIS FORM DID, and protocol 7 is why it lives here.
+   *
+   * Activity used to be a classified Live View standing beside the transcript,
+   * addressed by an `activity_anchor` that named the form from a distance. It
+   * belongs to the form that produced it: a running form's bounded snapshot
+   * arrives on the transient `block.activity` frame and is REPLACED whole (a
+   * saturated queue may drop one, so last-one-wins is the only safe reading),
+   * and the settled value rides the terminal `block.output` — which is what a
+   * reader who missed every transient frame ends on, and what the archive keeps.
+   */
+  activity?: ActivityProjection;
   [key: string]: unknown;
 }
 

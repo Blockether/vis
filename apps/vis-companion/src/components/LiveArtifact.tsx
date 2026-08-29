@@ -182,71 +182,6 @@ export function liveRunName(filename?: string): string {
   return name.replace(/\.live\.ndjson$/i, "") || "run";
 }
 
-export function ActivityRecord({
-  client,
-  sid,
-  attachment,
-  children,
-}: {
-  client: GatewayClient;
-  sid: string;
-  attachment: IterationAttachment;
-  children: (state: {
-    view?: LiveRecord["view"];
-    status: "loading" | "failed" | "ready";
-  }) => ReactNode;
-}) {
-  const iterationId = attachment.iteration_id ?? '';
-  const index = attachment.index ?? 0;
-  const [record, setRecord] = useState<LiveRecord | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    if (!sid || !iterationId) return;
-    let alive = true;
-    const release = client.retainAttachment(sid, iterationId, index);
-    client.attachmentUrl(sid, iterationId, index)
-      .then(readLiveRecord)
-      .then((next) => {
-        if (!alive) return;
-        setRecord(next);
-        setFailed(next === null);
-      })
-      .catch(() => {
-        if (alive) setFailed(true);
-      });
-    return () => {
-      alive = false;
-      release();
-    };
-  }, [client, sid, iterationId, index]);
-
-  const view = record?.view.classification === 'activity' ? record.view : undefined;
-  return <>{children({ view, status: view ? 'ready' : failed ? 'failed' : 'loading' })}</>;
-}
-
-function ActivityReceipt({
-  client,
-  sid,
-  attachment,
-}: {
-  client: GatewayClient;
-  sid: string;
-  attachment: IterationAttachment;
-}) {
-  return (
-    <ActivityRecord client={client} sid={sid} attachment={attachment}>
-      {({ view, status }) => view ? (
-        <LiveViewPanel view={view} isSettled />
-      ) : (
-        <p className="border border-dialog-edge bg-panel px-3 py-2 font-mono text-chip text-dialog-hint">
-          {status === 'failed' ? 'Activity receipt could not be read.' : 'Loading Activity…'}
-        </p>
-      )}
-    </ActivityRecord>
-  );
-}
-
 /**
  * A SETTLED RUN, IN THE TRANSCRIPT WHERE IT HAPPENED — one row, and it opens.
  *
@@ -279,7 +214,6 @@ export const LiveRunRow = memo(function LiveRunRow({
   attachment: IterationAttachment;
 }) {
   const name = liveRunName(attachment.filename);
-  const isActivity = name.toLowerCase() === 'activity';
   const iterationId = attachment.iteration_id ?? "";
   const index = attachment.index ?? 0;
   // Keyed by the RECORD, not by this row: a turn settling re-mounts the row
@@ -311,7 +245,6 @@ export const LiveRunRow = memo(function LiveRunRow({
   const sizeLabel = attachmentBytes(attachment.size);
 
   if (!iterationId) return null;
-  if (isActivity) return <ActivityReceipt client={client} sid={sid} attachment={attachment} />;
 
   return (
     <>

@@ -733,8 +733,9 @@
 ;; bytes the sandbox reader refuses.
 (defdescribe
   read-session-excludes-presentation-test
-  "`read_session` is the MODEL's read of a session: painted card IR and the host's own
-   Activity receipt never cross it, while the human transcript keeps both."
+  "`read_session` is the MODEL's read of a session: painted card IR never crosses it,
+   while the human transcript keeps the picture. Activity is no longer among the
+   things to exclude here — protocol 7 keeps it on the form, not in an attachment."
   (it
     "drops block card IR and the Activity receipt, keeping the semantic live record"
     (let [s (vis/db-create-connection! :memory)]
@@ -753,15 +754,10 @@
                                               :tag :observation
                                               :src "await grep(...)"
                                               :stdout "python-only\n"}]
+                                     ;; Protocol 7 files no Activity attachment: the
+                                     ;; receipt is a value on the form, so the only
+                                     ;; live record here is a semantic one.
                                      :attachments [{:tool-call-id "call_A"
-                                                    :kind :live-record
-                                                    :media-type live-media
-                                                    :filename "activity.live.ndjson"
-                                                    :classification :activity
-                                                    :view-id "view-activity"
-                                                    :base64 b64
-                                                    :size (alength blob)}
-                                                   {:tool-call-id "call_A"
                                                     :kind :live-record
                                                     :media-type live-media
                                                     :filename "ci-run.live.ndjson"
@@ -781,10 +777,10 @@
           (expect (empty? (filter #(contains? % "result_render") blocks)))
           (expect (empty? (filter #(contains? % "result_summary") blocks)))
           (expect (empty? (filter #(contains? % "op") blocks)))
-          ;; Activity is presentation; a semantic live record is still model context.
+          ;; A semantic live record is still model context.
           (expect (= ["ci-run.live.ndjson"] (mapv #(get % "filename") attachments)))
-          ;; The shared projection - what a person reopens - keeps both.
+          ;; The shared projection - what a person reopens - keeps the picture.
           (expect (some? (:result-render (first (:blocks human-iteration)))))
-          (expect (= #{"activity.live.ndjson" "ci-run.live.ndjson"}
+          (expect (= #{"ci-run.live.ndjson"}
                      (set (map :filename (:attachments human-iteration))))))
         (finally (vis/db-dispose-connection! s))))))

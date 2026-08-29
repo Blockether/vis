@@ -16,13 +16,16 @@
 import type { GatewayHealth, GatewayProtocol } from './types';
 
 /**
- * Wire protocol number THIS app build speaks. Protocol 6 names selectable-table
- * state as `is_selectable`, `selected_ids`, and `selection_snapshots`.
+ * Wire protocol number THIS app build speaks. Protocol 7 gives Activity to the
+ * form that produced it: it arrives as `activity` on the transient
+ * `block.activity` frame and on the terminal block event, and the Live View rail
+ * no longer carries it — `set-activity`, the `activity` view classification and
+ * the attachment's `classification`/`activity_anchor` are gone.
  */
-export const APP_PROTOCOL = 6;
+export const APP_PROTOCOL = 7;
 
-/** Oldest gateway protocol this app accepts: the selectable-table vocabulary. */
-export const APP_MIN_GATEWAY_PROTOCOL = 6;
+/** Oldest gateway protocol this app accepts: Activity on the form. */
+export const APP_MIN_GATEWAY_PROTOCOL = 7;
 
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';

@@ -22,7 +22,6 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.foundation.transcript :as transcript]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.header :as header]
             [com.blockether.vis.internal.util :as util]))
@@ -1204,11 +1203,9 @@
 
 (defn- model-iteration
   "One transcript iteration with the presentation-only rows taken out: the painted
-   card IR off every block, and the host's own Activity receipt off `:attachments`,
-   which disappears when that receipt was all it held - the shape the projection
-   already produces for an iteration that made no artifact."
+   card IR off every block."
   [iteration]
-  (let [attachments (vec (remove live/activity-attachment? (:attachments iteration)))]
+  (let [attachments (vec (:attachments iteration))]
     (cond-> (dissoc iteration :attachments)
       (contains? iteration :blocks)
       (update :blocks (partial mapv #(apply dissoc % painted-block-keys)))

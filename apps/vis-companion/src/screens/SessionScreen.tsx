@@ -10,7 +10,6 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
-  activityFitsIterations,
   AssistantMessage,
   transcriptEnterClass,
   UserMessage,
@@ -57,7 +56,7 @@ import {
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
 import { LiveView, useLiveViews } from "../components/LiveView";
-import { isLiveViewEvent, type LiveView as LiveViewModel } from "../lib/live-view";
+import { activityProjectionFromWire, isLiveViewEvent } from "../lib/live-view";
 import { speechOutput } from "../lib/speech";
 import { markSessionId } from "../lib/session-id";
 import { settledTranscriptCoversLiveTurn } from "../lib/live-turn-handover";
@@ -341,38 +340,6 @@ function rowId(turn: TranscriptTurn): string {
   return String(turn.id ?? turn.turn_id ?? "");
 }
 
-function activityMatchesReceipt(
-  activity: LiveViewModel,
-  attachment: NonNullable<TranscriptIteration["attachments"]>[number],
-): boolean {
-  if (attachment.classification !== "activity") return false;
-  if (attachment.view_id === activity.id) return true;
-  const filed = attachment.activity_anchor;
-  const live = activity.activity?.anchor;
-  if (!filed || !live || typeof live !== "object") return false;
-  const anchor = live as Record<string, unknown>;
-  return (
-    typeof filed.evaluation_id === "string" &&
-    filed.evaluation_id === anchor.evaluation_id &&
-    filed.iteration === anchor.iteration &&
-    filed.form_index === anchor.form_index
-  );
-}
-
-function filedActivitiesForTurn(
-  turn: TranscriptTurn,
-  activities: readonly LiveViewModel[],
-): LiveViewModel[] {
-  const receipts = (turn.iterations ?? []).flatMap(
-    (iteration) => iteration.attachments ?? [],
-  );
-  return activities.filter(
-    (activity) =>
-      activityFitsIterations(activity, turn.iterations ?? []) &&
-      receipts.some((attachment) => activityMatchesReceipt(activity, attachment)),
-  );
-}
-
 /**
  * The turn the TRANSCRIPT itself says is still in flight, if any.
  *
@@ -619,6 +586,11 @@ function formFromEvent(event: SseEvent, running = false): TranscriptForm {
     silent: event.silent === true,
     duration_ms:
       typeof event.duration_ms === "number" ? event.duration_ms : undefined,
+    // The SETTLED Activity, carried by the terminal frame and nowhere else.
+    // `undefined` when the event has none, because `upsertLiveForm` merges only
+    // defined keys — so a `block.started` never wipes the transient snapshot a
+    // `block.activity` frame already put on this form.
+    activity: activityProjectionFromWire(event.activity) ?? undefined,
   };
 }
 
@@ -772,6 +744,23 @@ export function reduceLiveEvent(
       upsertLiveForm(iteration, form),
     );
     return { ...next, activity: undefined };
+  }
+
+  // One RUNNING form's bounded Activity snapshot. Transient: the gateway is
+  // allowed to drop it under load, so it is a full replacement and never a
+  // delta, and it is routed by `block_id` — the block's POSITION, the same
+  // coordinate `block.started` and `block.output` already carry. It settles on
+  // the terminal frame, so nothing here has to persist.
+  if (type === "block.activity") {
+    const activity = activityProjectionFromWire(event.activity);
+    if (!activity) return turn;
+    const position = eventIteration(event);
+    return updateLiveIteration(turn, position, (iteration) =>
+      upsertLiveForm(iteration, {
+        block_id: stringField(event, "block_id"),
+        activity,
+      }),
+    );
   }
 
   if (type === "block.started" || type === "block.output") {
@@ -5025,14 +5014,6 @@ export function SessionScreen({
     void loadTranscript();
   }, [loadTranscript]);
   const liveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
-  const liveActivities = useMemo(
-    () => liveViews.filter((view) => view.classification === "activity"),
-    [liveViews],
-  );
-  const ordinaryLiveViews = useMemo(
-    () => liveViews.filter((view) => view.classification !== "activity"),
-    [liveViews],
-  );
   const watching = liveViews.filter((view) => !view.is_settled).at(-1)?.title ?? null;
   // The sender's own copy of the pictures dies with the process. Ask the gateway
   // for the bytes of a live turn that has none in hand — a restarted app, or a
@@ -5060,38 +5041,10 @@ export function SessionScreen({
     };
   }, [client, sid, liveTurnId, liveTurnAttachments]);
 
-  // One Activity ID has one transcript owner. A filed receipt wins before the
-  // optimistic row is considered, because iteration/form coordinates restart in
-  // each turn and would otherwise reuse a settled panel in the next live trace.
-  const filedActivityOwners = useMemo(() => {
-    const byTurn = new Map<TranscriptTurn, LiveViewModel[]>();
-    const claimedIds = new Set<string>();
-    for (const turn of visibleTurns) {
-      const owned = filedActivitiesForTurn(turn, liveActivities).filter(
-        (activity) => !claimedIds.has(activity.id),
-      );
-      if (!owned.length) continue;
-      byTurn.set(turn, owned);
-      for (const activity of owned) claimedIds.add(activity.id);
-    }
-    return { byTurn, claimedIds };
-  }, [visibleTurns, liveActivities]);
-  const liveTurnActivities = useMemo(
-    () =>
-      liveTurn
-        ? liveActivities.filter(
-            (activity) =>
-              !filedActivityOwners.claimedIds.has(activity.id) &&
-              activityFitsIterations(activity, liveTurn.iterations),
-          )
-        : [],
-    [liveTurn, liveActivities, filedActivityOwners],
-  );
   const turnRows = useMemo(
     () =>
       visibleTurns.map((turn, index) => {
         const request = turn.user_request ?? turn.request ?? "";
-        const activities = filedActivityOwners.byTurn.get(turn) ?? [];
         // A turn skips its own paint, in `AssistantMessage`
         // (`useMeasuredPaintSkip`), never from this wrapper: the size a skip
         // stands in for has to be the one that turn MEASURED, and a wrapper
@@ -5117,7 +5070,6 @@ export function SessionScreen({
               whole={handedOverRowId !== "" && rowId(turn) === handedOverRowId}
               client={client}
               sid={sid}
-              liveActivities={activities}
               onOpenAttachment={openLinkedArtifact}
             />
           </div>
@@ -5130,28 +5082,12 @@ export function SessionScreen({
       handedOverRowId,
       client,
       sid,
-      filedActivityOwners,
       openLinkedArtifact,
     ],
   );
-  const anchoredActivityIds = useMemo(
-    () =>
-      new Set([
-        ...filedActivityOwners.claimedIds,
-        ...liveTurnActivities.map((activity) => activity.id),
-      ]),
-    [filedActivityOwners, liveTurnActivities],
-  );
-  // Only a panel with no row-owned Python slot belongs below the transcript.
-  const detachedLiveViews = useMemo(
-    () =>
-      liveViews.filter(
-        (view) =>
-          view.classification !== "activity" || !anchoredActivityIds.has(view.id),
-      ),
-    [liveViews, anchoredActivityIds],
-  );
-
+  // Every live view is now a view. Protocol 7 gave Activity to the form that
+  // produced it, so no picture below the transcript is a Python slot's twin and
+  // nothing has to be held back from the rail to avoid painting it twice.
   // A terminal frame already carries the complete answer. Waiting for its persisted
   // replacement row is internal bookkeeping and must not look like another response
   // phase; keep the settled bubble still while the handover runs in the background.
@@ -5204,12 +5140,11 @@ export function SessionScreen({
           startedAt={liveTurn.startedAt}
           client={client}
           sid={sid}
-          liveActivities={liveTurnActivities}
           onOpenAttachment={openLinkedArtifact}
           livePanel={
-            ordinaryLiveViews.length > 0 ? (
+            liveViews.length > 0 ? (
               <div className="mt-5">
-                <LiveView views={ordinaryLiveViews} client={client} sid={sid} />
+                <LiveView views={liveViews} client={client} sid={sid} />
               </div>
             ) : undefined
           }
@@ -5227,8 +5162,6 @@ export function SessionScreen({
     session?.workspace?.repo_root,
     watching,
     liveViews,
-    liveTurnActivities,
-    ordinaryLiveViews,
     openLinkedArtifact,
   ]);
   // Rows are about to land ABOVE the viewport. Stopping the follow is all this
@@ -5608,9 +5541,9 @@ export function SessionScreen({
                 {/* A view can outlive the optimistic running row during resync. In that
                   narrow gap it still paints at the transcript end; otherwise the row owns
                   it so the phase line follows, rather than precedes, the live panel. */}
-                {!liveRow && detachedLiveViews.length > 0 && (
+                {!liveRow && liveViews.length > 0 && (
                   <div className="mt-5">
-                    <LiveView views={detachedLiveViews} client={client} sid={sid} />
+                    <LiveView views={liveViews} client={client} sid={sid} />
                   </div>
                 )}
               </>

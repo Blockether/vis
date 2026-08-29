@@ -31,23 +31,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.view.spec :as spec]))
 
-;; The host's own view
-
-(defn activity-attachment?
-  "True only for the host-owned Activity receipt among persisted live-view
-   artifacts — a `session_attachment` row, its wire descriptor, or a transcript
-   projection of either, in the keyword or the string spelling.
-
-   CLASSIFICATION is the boundary and the filename never is: `activity` is the one
-   classification an extension cannot declare ([[spec/live-classifications]]), so it
-   is how the host's own presentation stream is recognized everywhere that stream
-   must NOT cross into the model — the sandbox attachment reader, the iteration
-   context and `read_session` ask this and nothing else."
-  [attachment]
-  (= :activity
-     (get spec/live-classifications
-          (some-> (or (:classification attachment) (get attachment "classification"))
-                  name))))
 ;; The materializer
 
 (defn- invalid-patch!
@@ -374,11 +357,6 @@
   "The view after ONE operation."
   [view op]
   (case (:op op)
-    :set-activity
-    (if (= :activity (:classification view))
-      (assoc view :activity (:activity op))
-      (invalid-patch! nil "set-activity only applies to the host Activity view"))
-
     :add-node
     (apply-add-node view op)
 
@@ -760,10 +738,7 @@
 
      {:view (cond-> {:title (:title view) :nodes budgeted}
               (:description view)
-              (assoc :description (:description view))
-
-              (:activity view)
-              (assoc :activity (:activity view)))
+              (assoc :description (:description view)))
       :elided (into []
                     (keep (fn [node]
                             (let [items (long (or (:elided (meta node)) 0))]

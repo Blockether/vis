@@ -29,6 +29,10 @@
                        (or returning `:vis/silent`) keep their `:silent?`
                        flag so channels can toggle visibility.
 
+     :form-activity    One running block's bounded Activity snapshot — what it
+                       has DONE so far, beside what it will return. A full
+                       REPLACEMENT into the form slot `:position` names, so a
+                       dropped frame costs a repaint and never a wrong picture.
      :iteration-final  Iteration is complete. Carries `:final` (nil
                        when the turn isn't done yet) and `:done?`
                        (true when this iteration produced the
@@ -68,7 +72,8 @@
                    :duration-ms     int
                    :success?        bool
                    :silent?         bool
-                   :started-at-ms   int-or-nil} ...]
+                    :started-at-ms   int-or-nil
+                    :activity        map-or-nil        ;; bounded tool-call trace} ...]
       :provider-fallbacks [map ...]   ;; routed provider fallback notices
       :activity           nil-or-keyword ;; live coarse phase (:provider-call/:response-parse)
       :elided-form-idxs   #{int ...}  ;; original loop indices hidden from :forms
@@ -240,6 +245,9 @@
        :result-kind (form-result-kind chunk)
        :result-detail (form-result-detail chunk)
        :error (:error chunk)
+       ;; What the form DID. The terminal chunk is authoritative: a late live
+       ;; frame must not edit the picture the settler froze.
+       :activity (:activity chunk)
        :success? (not errored?)
        :silent? (and (not errored?) (silent-chunk? chunk))})))
 
@@ -437,6 +445,20 @@
           (display-form-idx entry' (:position chunk))]
 
       (assoc (assoc-form entry' display-idx (chunk->form-start chunk)) :activity nil))
+
+    :form-activity
+    ;; Live Activity for a running form. It updates the SAME slot the settled
+    ;; snapshot lands in, so live and history are one view, and it leaves the
+    ;; coarse ticker alone.
+    (let [display-idx
+          (display-form-idx entry (:position chunk))
+
+          form
+          (get (:forms entry) display-idx)]
+
+      (if (map? form)
+        (assoc-form entry display-idx (assoc form :activity (:activity chunk)))
+        entry))
 
     :form-result
     (let [silent? (structurally-silent-chunk? chunk)]

@@ -20,7 +20,6 @@ import {
 } from "../lib/media-frame";
 import { speechOutput } from "../lib/speech";
 import type { IterationAttachment, TranscriptTurn } from "../lib/types";
-import type { LiveView as LiveViewModel } from "../lib/live-view";
 
 /** Visible text of a rendered chunk: tags out, entities back. */
 const text = (html: string) =>
@@ -746,31 +745,32 @@ describe("a Python evaluation without detected Activity", () => {
     const receipt = painted.getByRole("button", { name: "Expand execution trace" });
     expect(painted.container.textContent).toContain("RUNNING · PYTHON");
 
-    const detected = {
-      id: "detected-activity",
-      title: "Activity",
-      classification: "activity",
-      seq: 1,
-      activity: {
-        schema_version: 1,
-        anchor: { iteration: 41, form_index: 0 },
-        state: "running",
-        counts: { running: 1, succeeded: 0, failed: 0, cancelled: 0 },
-        rows: [{
-          id: "grep-1",
-          sequence: 1,
-          operation: "grep",
-          state: "running",
-          summary: "searching",
-          resources: [],
-          evidence: [],
-        }],
-        omitted: { rows: 0, by_classification: {} },
-      },
-      nodes: [],
-    } as unknown as LiveViewModel;
+    // Protocol 7: the snapshot arrives ON the form, from `block.activity`.
     painted.rerender(
-      <AssistantMessage turn={runningTurn} streaming liveActivities={[detected]} />,
+      <AssistantMessage
+        turn={turnWith(
+          {
+            source: "answer = search()",
+            activity: {
+              schema_version: 1,
+              state: "running",
+              counts: { running: 1, succeeded: 0, failed: 0, cancelled: 0 },
+              rows: [{
+                id: "grep-1",
+                sequence: 1,
+                operation: "grep",
+                state: "running",
+                summary: "searching",
+                resources: [],
+                evidence: [],
+              }],
+              omitted: { rows: 0, by_classification: {} },
+            },
+          },
+          "running",
+        )}
+        streaming
+      />,
     );
 
     expect(painted.getByRole("button", { name: "Expand execution trace" })).toBe(receipt);
@@ -778,28 +778,20 @@ describe("a Python evaluation without detected Activity", () => {
   });
 
   it("does not invent Activity when an empty projection settles", () => {
-    const emptyActivity = {
-      id: "empty-activity",
-      title: "Activity",
-      classification: "activity",
-      seq: 0,
-      is_settled: true,
-      created_at: 1_000,
-      ended_at: 1_029,
-      activity: {
-        schema_version: 1,
-        anchor: { iteration: 41, form_index: 0 },
-        state: "succeeded",
-        counts: { running: 0, succeeded: 0, failed: 0, cancelled: 0 },
-        rows: [],
-        omitted: { rows: 0, by_classification: {} },
-      },
-      nodes: [],
-    } as unknown as LiveViewModel;
     const painted = render(
       <AssistantMessage
-        turn={turnWith({ source: "answer = 42", result: 42 })}
-        liveActivities={[emptyActivity]}
+        turn={turnWith({
+          source: "answer = 42",
+          result: 42,
+          duration_ms: 29,
+          activity: {
+            schema_version: 1,
+            state: "succeeded",
+            counts: { running: 0, succeeded: 0, failed: 0, cancelled: 0 },
+            rows: [],
+            omitted: { rows: 0, by_classification: {} },
+          },
+        })}
       />,
     );
 
@@ -812,70 +804,36 @@ describe("a Python evaluation without detected Activity", () => {
 
 // Regression, issue td-cc41a1: Activity was appended after the entire assistant
 // row, so a multi-form iteration could not show which complete Python form owned it.
+// Protocol 7 answers that structurally: the snapshot IS a field of the form, so
+// there is no anchor to resolve and no way for it to land under the wrong one.
 describe("Activity owns the slot after its Python form and result", () => {
-  const client = {
-    attachmentUrl: async () => "blob:none",
-    retainAttachment: () => () => {},
-  } as unknown as GatewayClient;
-  const attachment: IterationAttachment = {
-    index: 0,
-    iteration_id: "iteration-1",
-    view_id: "activity-view",
-    classification: "activity",
-    activity_anchor: {
-      evaluation_id: "evaluation-1",
-      iteration: 41,
-      form_index: 1,
-    },
-    kind: "file",
-    media_type: "application/vnd.vis.live+ndjson",
-    filename: "activity.live.ndjson",
+  const rows = [
+    { id: "call-1", sequence: 1, operation: "grep", presenter: "observation", signal: "observation", state: "succeeded", summary: "18 matches", resources: [], evidence: [] },
+    { id: "call-2", sequence: 2, operation: "run_tests", presenter: "tests", signal: "verification", state: "running", summary: "companion suite", resources: [], evidence: [] },
+  ];
+  const runningActivity = {
+    schema_version: 1,
+    state: "running",
+    counts: { running: 1, succeeded: 1, failed: 0, cancelled: 0 },
+    rows,
+    omitted: { rows: 0, by_classification: {} },
   };
-  const firstAttachment: IterationAttachment = {
-    ...attachment,
-    index: 1,
-    view_id: "first-activity-view",
-    activity_anchor: { ...attachment.activity_anchor!, form_index: 0 },
-  };
-  const runningActivity: LiveViewModel = {
-    id: "activity-view",
-    title: "Activity",
-    classification: "activity",
-    seq: 0,
-    activity: {
-      schema_version: 1,
-      anchor: { iteration: 41, form_index: 1 },
-      state: "running",
-      counts: { running: 1, succeeded: 1, failed: 0, cancelled: 0 },
-      rows: [
-        { id: "call-1", sequence: 1, operation: "grep", presenter: "observation", signal: "observation", state: "succeeded", summary: "18 matches", resources: [], evidence: [] },
-        { id: "call-2", sequence: 2, operation: "run_tests", presenter: "tests", signal: "verification", state: "running", summary: "companion suite", resources: [], evidence: [] },
-      ],
-      omitted: { rows: 0, by_classification: {} },
-    },
-    nodes: [],
-  };
-  const turn: TranscriptTurn = {
-    id: "activity-turn",
-    status: "completed",
-    iterations: [
-      {
-        id: "iteration-1",
-        position: 41,
-        forms: [
-          { source: "first_form()", result_summary: "first result" },
-          {
-            source: "second_form()",
-            result_render: "```\nsecond result\n```",
-          },
-        ],
-        attachments: [firstAttachment, attachment],
-      },
-    ],
-  };
+  const turnOf = (forms: Record<string, unknown>[]): TranscriptTurn =>
+    ({
+      id: "activity-turn",
+      status: "completed",
+      iterations: [{ id: "iteration-1", position: 41, forms }],
+    }) as unknown as TranscriptTurn;
 
-  it("puts a historical receipt under only its anchored form", () => {
-    const painted = render(<AssistantMessage turn={turn} client={client} sid="s1" />);
+  it("puts each receipt under only its own form", () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnOf([
+          { source: "first_form()", result_summary: "first result" },
+          { source: "second_form()", result_render: "```\nsecond result\n```" },
+        ])}
+      />,
+    );
     const receipts = painted.getAllByRole("button", { name: "Expand execution trace" });
 
     expect(receipts).toHaveLength(2);
@@ -887,26 +845,29 @@ describe("Activity owns the slot after its Python form and result", () => {
     fireEvent.click(receipts[1]);
     expect(painted.container.textContent).toContain("second_form()");
     expect(painted.container.textContent).toContain("RESULT");
-    expect(painted.container.textContent).not.toContain("second result");
-    expect(painted.container.textContent?.match(/Loading Activity/g)).toHaveLength(2);
+    // Nothing is fetched for a receipt any more, so there is no loading state.
+    expect(painted.container.textContent).not.toContain("Loading Activity");
   });
 
-  // Regression, issue td-65cdf6: a production 1-based iteration anchor was
-  // compared with the iteration's array index, so the running panel vanished.
-  it("replaces the filed receipt with the same live view without duplicating it", () => {
-    const rendered = text(
-      renderToStaticMarkup(
-        <AssistantMessage
-          turn={turn}
-          client={client}
-          sid="s1"
-          liveActivities={[runningActivity]}
-        />,
-      ),
+  // Regression, issue td-65cdf6: a 1-based iteration anchor was compared with the
+  // iteration's array index, so the running panel vanished — and the same anchor
+  // could place a second copy. One field on one form cannot do either.
+  it("paints exactly one Activity for the form that owns it", () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnOf([
+          { source: "first_form()", result_summary: "first result" },
+          { source: "second_form()", activity: runningActivity },
+        ])}
+      />,
     );
-    expect(rendered.match(/ACTIVITY/g)).toHaveLength(1);
-    expect(rendered).toContain("RUNNING");
-    expect(rendered.match(/Loading Activity/g) ?? []).toHaveLength(0);
+    const receipts = painted.getAllByRole("button", { name: "Expand execution trace" });
+    expect(receipts).toHaveLength(2);
+    // Only the SECOND form carries a snapshot, so only its receipt says so.
+    expect(painted.container.textContent).toContain("RUNNING · RUN_TESTS · companion suite");
+    receipts.forEach((receipt) => fireEvent.click(receipt));
+    expect(painted.container.textContent?.match(/ACTIVITY/g)).toHaveLength(1);
+    expect(painted.container.textContent).not.toContain("Loading Activity");
   });
 
   // Regression, issue td-f9035e: Python, Result, and Activity each painted an
@@ -914,18 +875,15 @@ describe("Activity owns the slot after its Python form and result", () => {
   it.each([320, 390, 768, 1440])(
     "collapses one honest execution receipt and opens its three evidence bands at %ipx",
     (width) => {
-    const focused = { ...runningActivity, activity: { ...runningActivity.activity!, anchor: { iteration: 41, form_index: 0 } } };
-    const focusedTurn: TranscriptTurn = {
-      ...turn,
-      iterations: [{
-        ...turn.iterations![0],
-        forms: [{ source: "line_1()\nline_2()\nline_3()\nline_4()\nline_5()\nline_6()", result_render: "```\nresult body\n```" }],
-        attachments: [],
-      }],
-    };
     const painted = render(
       <div style={{ width }}>
-        <AssistantMessage turn={focusedTurn} liveActivities={[focused]} />
+        <AssistantMessage
+          turn={turnOf([{
+            source: "line_1()\nline_2()\nline_3()\nline_4()\nline_5()\nline_6()",
+            result_render: "```\nresult body\n```",
+            activity: runningActivity,
+          }])}
+        />
       </div>,
     );
     expect(painted.container.firstElementChild).toHaveStyle({ width: `${width}px` });
@@ -944,61 +902,44 @@ describe("Activity owns the slot after its Python form and result", () => {
     expect(painted.container.textContent).toContain("18 matches");
   });
 
-  // Regression, issue td-5b6b08: the filed Companion receipt omitted its
-  // primary operation and elapsed time and retained the old terminal copy.
+  // Regression, issue td-5b6b08: the filed Companion receipt omitted its primary
+  // operation and elapsed time. The elapsed time is the FORM's duration now — the
+  // very number the terminal frame measured.
   it("keeps terminal Activity copy and elapsed time at the transcript boundary", () => {
-    const settled = {
-      ...runningActivity,
-      is_settled: true,
-      created_at: 1_000,
-      ended_at: 13_600,
-      activity: {
-        ...runningActivity.activity!,
-        anchor: { iteration: 41, form_index: 0 },
-        state: "succeeded" as const,
-        counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
-        rows: runningActivity.activity!.rows.map((row) => ({ ...row, state: "succeeded" as const })),
-      },
-    };
-    const settledTurn: TranscriptTurn = {
-      ...turn,
-      iterations: [{
-        ...turn.iterations![0],
-        forms: [{ source: "work()", result_summary: "done" }],
-        attachments: [],
-      }],
-    };
-
     const rendered = text(renderToStaticMarkup(
-      <AssistantMessage turn={settledTurn} liveActivities={[settled]} />,
+      <AssistantMessage
+        turn={turnOf([{
+          source: "work()",
+          result_summary: "done",
+          duration_ms: 12_600,
+          activity: {
+            ...runningActivity,
+            state: "succeeded",
+            counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
+            rows: rows.map((row) => ({ ...row, state: "succeeded" })),
+          },
+        }])}
+      />,
     ));
 
     expect(rendered).toContain("DONE · GREP and more · 2 activities · 12.6s");
   });
 
   it("uses only the actual terminal Activity count after settlement", () => {
-    const settled = {
-      ...runningActivity,
-      is_settled: true,
-      activity: {
-        ...runningActivity.activity!,
-        anchor: { iteration: 41, form_index: 0 },
-        state: "failed" as const,
-        counts: { running: 0, succeeded: 5, failed: 1, cancelled: 0 },
-        rows: [],
-        omitted: { rows: 6, by_classification: { observation: 6 } },
-      },
-    };
-    const settledTurn: TranscriptTurn = {
-      ...turn,
-      iterations: [{
-        ...turn.iterations![0],
-        forms: [{ source: "work()", result_summary: "done" }],
-        attachments: [],
-      }],
-    };
     const rendered = text(renderToStaticMarkup(
-      <AssistantMessage turn={settledTurn} liveActivities={[settled]} />,
+      <AssistantMessage
+        turn={turnOf([{
+          source: "work()",
+          result_summary: "done",
+          activity: {
+            ...runningActivity,
+            state: "failed",
+            counts: { running: 0, succeeded: 5, failed: 1, cancelled: 0 },
+            rows: [],
+            omitted: { rows: 6, by_classification: { observation: 6 } },
+          },
+        }])}
+      />,
     ));
 
     expect(rendered).toContain("FAILED · 6 activities");
@@ -1006,30 +947,14 @@ describe("Activity owns the slot after its Python form and result", () => {
   });
 
   it("does not attach Activity to a print-only form", () => {
-    const printOnly: TranscriptTurn = {
-      ...turn,
-      iterations: [
-        {
-          ...turn.iterations![0],
-          forms: [{ result_render: "```\nprinted\n```" }],
-          attachments: [
-            {
-              ...attachment,
-              activity_anchor: {
-                ...attachment.activity_anchor!,
-                form_index: 0,
-              },
-            },
-          ],
-        },
-      ],
-    };
     const rendered = text(
       renderToStaticMarkup(
-        <AssistantMessage turn={printOnly} client={client} sid="s1" />,
+        <AssistantMessage
+          turn={turnOf([{ result_render: "```\nprinted\n```", activity: runningActivity }])}
+        />,
       ),
     );
-    expect(rendered).not.toContain("Activity");
+    expect(rendered).not.toContain("ACTIVITY");
   });
 });
 // Every tile in this rail fetches its own bytes on first paint, so an iteration

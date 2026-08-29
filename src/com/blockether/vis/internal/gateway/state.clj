@@ -21,7 +21,6 @@
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.git :as git]
             [com.blockether.vis.internal.view :as view]
-            [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.session-model :as smodel]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.gateway.bus :as bus]
@@ -1267,7 +1266,7 @@
         (map-indexed
           (fn [idx
                {:keys [id tool-call-id kind media-type filename size audience version transcription
-                       transcription-status view-id classification activity-anchor]}]
+                       transcription-status view-id]}]
             (cond-> {:index idx
                      :iteration_id (str iteration-id)
                      :tool_call_id tool-call-id
@@ -1285,12 +1284,6 @@
 
               view-id
               (assoc :view_id (str view-id))
-
-              classification
-              (assoc :classification (name classification))
-
-              activity-anchor
-              (assoc :activity_anchor (wire/->wire activity-anchor))
 
               ;; TRANSCRIPTION: a recording's own words, transcribed on the way
               ;; in. It rides the DESCRIPTOR rather than the bytes so a client
@@ -1411,6 +1404,23 @@
          (some? label)
          (assoc :label (str label)))])))
 
+(defn- form-activity-chunk->event
+  "TRANSIENT `block.activity` frame `[type store? payload]` carrying one running
+   form's bounded Activity snapshot, or nil.
+
+   The snapshot is a full REPLACEMENT, never a delta: this frame is transient, so a
+   saturated queue is allowed to drop it, and last-one-wins is the only reading a
+   client that missed one can trust. Routing belongs to the envelope alone —
+   `block_id` is the block's POSITION, the very coordinate `block.started` and
+   `block.output` already carry — and the snapshot itself names no owner. Nothing
+   persists here: the terminal `block.output` carries the settled value."
+  [{:keys [phase position activity iteration]}]
+  (when (and (= phase :form-activity) (map? activity))
+    ["block.activity" false
+     (cond-> {:block_id position :activity activity}
+       (some? iteration)
+       (assoc :iteration iteration))]))
+
 (defn- chunk->event
   "Translate one phased iteration chunk (progress.clj contract) into a
    `[type store? payload]` wire event triple. Model text phases
@@ -1427,6 +1437,7 @@
   ;; `block.output` once lost their forms.
   (or
     (activity-chunk->event chunk)
+    (form-activity-chunk->event chunk)
     (let [payload
           (case phase
             (:tool-preview :form-start)
@@ -1444,17 +1455,24 @@
               ;; The card fields (pre-rendered body + headline + the printed
               ;; result's own op) — projected from ONE canonical list.
               (form/->display (form/with-display chunk))
-              {:block_id position
-               :code code
-               :result result
-               :stdout (when-let [s (:stdout chunk)]
-                         (wire/bounded-str s RESULT_PR_LIMIT))
-               :error (when (some? error)
-                        (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-               :silent (boolean (or silent? (and (nil? error) (contains? #{"vis_silent"} result))))
-               :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
-                              (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
-                                (max 0 (- (long finished-at-ms) (long started-at-ms)))))})
+              (cond-> {:block_id position
+                       :code code
+                       :result result
+                       :stdout (when-let [s (:stdout chunk)]
+                                 (wire/bounded-str s RESULT_PR_LIMIT))
+                       :error (when (some? error)
+                                (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+                       :silent (boolean (or silent?
+                                            (and (nil? error) (contains? #{"vis_silent"} result))))
+                       :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
+                                      (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
+                                        (max 0 (- (long finished-at-ms) (long started-at-ms)))))}
+                ;; The form LANDED: what it returned, what it printed, and what it
+                ;; DID. The settled Activity rides here and only here — a running
+                ;; frame is transient, and a client that missed every one of them
+                ;; still ends on the same picture the database keeps.
+                (map? (:activity chunk))
+                (assoc :activity (:activity chunk))))
 
             ;; Live thinking, on its OWN wire event so a client paints it as the
             ;; thinking trace — distinct from prose. `:text` is the INCREMENT
@@ -2234,41 +2252,37 @@
    ([[user-iteration-attachments]]), and a user's own uploaded image is not an
    artifact the model produced, so it is not here either."
   [sid]
-  (try
-    (let [db
-          (lp/db-info)
+  (try (let [db
+             (lp/db-info)
 
-          ordinal
-          (into {}
-                (map-indexed (fn [i turn]
-                               [(str (:id turn)) (inc (long i))]))
-                (persistance/db-list-session-turns db sid))
+             ordinal
+             (into {}
+                   (map-indexed (fn [i turn]
+                                  [(str (:id turn)) (inc (long i))]))
+                   (persistance/db-list-session-turns db sid))
 
-          rows
-          (->> (persistance/db-list-session-attachments-meta db sid)
-               (filter :iteration-id)
-               (remove attachments/hidden-from-user?))]
+             rows
+             (->> (persistance/db-list-session-attachments-meta db sid)
+                  (filter :iteration-id)
+                  (remove attachments/hidden-from-user?))]
 
-      (->> (group-by #(str (:iteration-id %)) rows)
-           (mapcat (fn [[iid group]]
-                     ;; `(tool_call_id, position)` is the order
-                     ;; `db-list-iteration-attachments-meta` serves, so index N is
-                     ;; the same N the byte endpoint resolves.
-                     (let [ordered (vec (sort-by (juxt #(str (:tool-call-id %))
-                                                       #(or (:position %) 0))
-                                                 group))]
-                       (map (fn [descriptor row]
-                              (assoc descriptor :turn (get ordinal (str (:turn-soul-id row)) 0)))
-                            (attachment-descriptors iid ordered)
-                            ordered))))
-           ;; Activity receipts remain in the transcript for execution-trace restore,
-           ;; but the produced-artifacts gallery must never list host presentation state.
-           (remove live/activity-attachment?)
-           (sort-by (juxt :turn :iteration_id :index))
-           vec))
-    (catch Throwable t
-      (tel/log! :warn ["gateway: session artifacts read failed" (str sid) (ex-message t)])
-      [])))
+         (->> (group-by #(str (:iteration-id %)) rows)
+              (mapcat (fn [[iid group]]
+                        ;; `(tool_call_id, position)` is the order
+                        ;; `db-list-iteration-attachments-meta` serves, so index N is
+                        ;; the same N the byte endpoint resolves.
+                        (let [ordered (vec (sort-by (juxt #(str (:tool-call-id %))
+                                                          #(or (:position %) 0))
+                                                    group))]
+                          (map (fn [descriptor row]
+                                 (assoc descriptor :turn (get ordinal (str (:turn-soul-id row)) 0)))
+                               (attachment-descriptors iid ordered)
+                               ordered))))
+              (sort-by (juxt :turn :iteration_id :index))
+              vec))
+       (catch Throwable t
+         (tel/log! :warn ["gateway: session artifacts read failed" (str sid) (ex-message t)])
+         [])))
 
 (defn- hydrated-turn-trace
   "Canonical persisted iteration rows for `turn-id`."

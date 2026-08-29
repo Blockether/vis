@@ -1,66 +1,53 @@
 {
-  "id": "activity-fixture-1",
-  "title": "Activity",
-  "classification": "activity",
-  "seq": 0,
-  "activity": {
-    "schema_version": 1,
-    "anchor": {
-      "evaluation_id": "fixture-evaluation",
-      "iteration": 0,
-      "form_index": 0
-    },
-    "state": "running",
-    "counts": {
-      "running": 1,
-      "succeeded": 1,
-      "failed": 0,
-      "cancelled": 0
-    },
-    "rows": [
-      {
-        "id": "call-1",
-        "sequence": 1,
-        "operation": "grep",
-        "presenter": "observation",
-        "signal": "observation",
-        "state": "succeeded",
-        "summary": "18 matches",
-        "duration_ms": 41,
-        "resources": [],
-        "evidence": [
-          {
-            "kind": "arguments",
-            "text": "[{query: needle}]"
-          },
-          {
-            "kind": "result",
-            "text": "18 matches"
-          }
-        ]
-      },
-      {
-        "id": "call-2",
-        "sequence": 2,
-        "operation": "run_tests",
-        "presenter": "tests",
-        "signal": "verification",
-        "state": "running",
-        "summary": "suite",
-        "result_summary": "24 passed",
-        "resources": [],
-        "evidence": [
-          {
-            "kind": "arguments",
-            "text": "suite"
-          }
-        ]
-      }
-    ],
-    "omitted": {
-      "rows": 0,
-      "by_classification": {}
-    }
+  "state": "running",
+  "counts": {
+    "running": 1,
+    "succeeded": 1,
+    "failed": 0,
+    "cancelled": 0
   },
-  "nodes": []
+  "rows": [
+    {
+      "id": "call-1",
+      "sequence": 1,
+      "operation": "grep",
+      "presenter": "observation",
+      "signal": "observation",
+      "state": "succeeded",
+      "summary": "18 matches",
+      "duration_ms": 41,
+      "resources": [],
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "[{query: needle}]"
+        },
+        {
+          "kind": "result",
+          "text": "18 matches"
+        }
+      ]
+    },
+    {
+      "id": "call-2",
+      "sequence": 2,
+      "operation": "run_tests",
+      "presenter": "tests",
+      "signal": "verification",
+      "state": "running",
+      "summary": "suite",
+      "result_summary": "24 passed",
+      "resources": [],
+      "evidence": [
+        {
+          "kind": "arguments",
+          "text": "suite"
+        }
+      ]
+    }
+  ],
+  "omitted": {
+    "rows": 0,
+    "by_classification": {}
+  }
 }

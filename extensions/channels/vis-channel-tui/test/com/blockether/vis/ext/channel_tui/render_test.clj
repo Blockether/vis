@@ -1065,10 +1065,10 @@
             (strip-ansi (str/join "\n" (:lines payload)))]
 
         (expect (str/includes? body "Vis is parsing model response (iter 1)"))))
-  (it "paints a running Activity receipt inside the live bubble, anchored to its form"
+  (it "paints a running Activity receipt inside the live bubble, owned by its form"
       ;; Regression, td-821868: run receipts landed on the loading placeholder's
       ;; `:runs` but `progress->lines-data` never read them, so Activity was
-      ;; invisible until the turn settled.
+      ;; invisible until the turn settled. Activity now rides the form itself.
       (render/invalidate-cache!)
       (let [iter
             {:forms [{:code "(+ 1 1)"
@@ -1078,60 +1078,26 @@
                       :error nil
                       :started-at-ms nil
                       :duration-ms 10
-                      :success? true
-                      :silent? false}]}
-
-            run
-            {:view-id "v1"
-             :title "Evaluation activity"
-             :reason nil
-             :lines 0
-             :elapsed-ms 1200
-             :is-reopened false
-             :is-activity true
-             :status-text "RUNNING · SHELL · npm test · and more"
-             :status-tone :running
-             :anchor {:iteration-index 0 :form-index 0}}
+                      :silent? false
+                      :activity
+                      {:state "running"
+                       :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
+                       :rows
+                       [{:id "one" :operation "shell" :summary "npm test" :state "running"}
+                        {:id "two" :operation "grep" :summary "18 matches" :state "succeeded"}]
+                       :omitted {:rows 0 :by-classification {}}}}]}
 
             payload
-            (render/progress->lines-data
-              {:iterations [iter]}
-              80
-              {:show-thinking true :show-iterations true}
-              {:now-ms 1000 :turn-start-ms 0 :session-id "s1" :runs [run]})
+            (render/progress->lines-data {:iterations [iter]}
+                                         80
+                                         {:show-thinking true :show-iterations true}
+                                         {:now-ms 1000 :turn-start-ms 0 :session-id "s1"})
 
             body
             (strip-sentinels (strip-ansi (str/join "\n" (:lines payload))))]
 
         (expect (not (str/includes? body "ACTIVITY")))
         (expect (str/includes? body "▸ RUNNING · SHELL · npm test · and more"))))
-  (it "paints an unanchored Activity receipt after the live trace, never dropping it"
-      ;; Regression, td-821868: same gap, receipt without a form anchor.
-      (render/invalidate-cache!)
-      (let [run
-            {:view-id "v2"
-             :title "Evaluation activity"
-             :reason nil
-             :lines 0
-             :elapsed-ms 800
-             :is-reopened false
-             :is-activity true
-             :status-text "RUNNING · running activity · and more"
-             :status-tone :running}
-
-            payload
-            (render/progress->lines-data
-              {:iterations []}
-              80
-              {:show-thinking true :show-iterations true}
-              {:now-ms 1000 :turn-start-ms 0 :session-id "s1" :runs [run]})
-
-            body
-            (strip-sentinels (strip-ansi (str/join "\n" (:lines payload))))]
-
-        (expect (str/includes? body "ACTIVITY"))
-        (expect (str/includes? body "RUNNING · running activity · and more"))
-        (expect (str/includes? body "Vis is calling the provider"))))
   (it
     "uses the same trace renderer for live progress and cancelled bubbles"
     (let [;; Tool output paints purely as the program's stdout — both live
@@ -4924,25 +4890,20 @@
         (expect (str/includes? (render-row false) "▸ RUN CI"))
         (expect (str/includes? (render-row true) "▾ RUN CI"))
         (expect (str/includes? (render-row false) "▸ RUN CI"))))
-  ;; Regression, issue td-7bb5f7: Python, Result, and Activity rendered as three
-  ;; independent receipts, and the Activity headline claimed a predicted denominator.
   (it
     "renders one collapsed execution receipt and opens its evidence hierarchy"
     (render/invalidate-cache!)
     (let [trace
-          [{:forms [{:code "grep({...})" :result "18 matches" :success? true}]}]
-
-          run
-          {:view-id "activity-1"
-           :title "Activity"
-           :is-activity true
-           :status-text "RUNNING · RUN_TESTS · companion suite · and more"
-           :status-tone :running
-           :activity-view {:classification :activity :nodes []}
-           :activity-rows
-           [{:id "one" :operation "grep" :summary "18 matches" :state "succeeded"}
-            {:id "two" :operation "test evidence" :summary "companion suite" :state "running"}]
-           :anchor {:iteration-index 0 :form-index 0}}
+          [{:forms
+            [{:code "grep({...})"
+              :result "18 matches"
+              :activity
+              {:state "running"
+               :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
+               :rows
+               [{:id "one" :operation "grep" :summary "18 matches" :state "succeeded"}
+                {:id "two" :operation "test evidence" :summary "companion suite" :state "running"}]
+               :omitted {:rows 0 :by-classification {}}}}]}]
 
           render-row
           (fn [width detail-expansions]
@@ -4953,7 +4914,7 @@
                   nil
                   nil
                   false
-                  {:session-id "s1" :runs [run] :detail-expansions detail-expansions})
+                  {:session-id "s1" :session-turn-id "turn-1" :detail-expansions detail-expansions})
                 :text
                 strip-ansi
                 strip-sentinels))
@@ -4964,11 +4925,11 @@
           expanded
           (render-row 80 {:vis.channel-tui/expand-all-details? true})]
 
-      (expect (str/includes? collapsed "▸ RUNNING · RUN_TESTS · companion suite · and more"))
+      (expect (str/includes? collapsed "▸ RUNNING · TEST EVIDENCE · companion suite · and more"))
       (expect (not (str/includes? collapsed "grep({...})")))
       (expect (not (str/includes? collapsed "18 matches")))
       (expect (not (str/includes? collapsed "ACTIVITY")))
-      (expect (str/includes? expanded "▾ RUNNING · RUN_TESTS · companion suite · and more"))
+      (expect (str/includes? expanded "▾ RUNNING · TEST EVIDENCE · companion suite · and more"))
       (expect (< (.indexOf ^String expanded "PYTHON")
                  (.indexOf ^String expanded "grep({...})")
                  (.indexOf ^String expanded "18 matches")
@@ -5022,31 +4983,36 @@
     "renders compact terminal copy and elapsed time before close"
     (render/invalidate-cache!)
     (let [trace
-          [{:forms
-            [{:code "print(result[\"out\"])" :stdout "## main...origin/main" :success? true}]}]
+          [{:forms [{:code "print(result[\"out\"])"
+                     :stdout "## main...origin/main"
+                     :success? true
+                     :duration-ms 4800
+                     :activity {:state "succeeded"
+                                :counts {:running 0 :succeeded 6 :failed 0 :cancelled 0}
+                                :rows (mapv (fn [n]
+                                              {:id (str "op-" n)
+                                               :operation (if (zero? (long n)) "run_tests" "grep")
+                                               :summary (str "operation " (inc (long n)))
+                                               :state "succeeded"})
+                                            (range 6))
+                                :omitted {:rows 0 :by-classification {}}}}]}]
 
-          run
-          {:view-id "activity-settled"
-           :is-activity true
-           :reason nil
-           :elapsed-ms 4800
-           :status-text "DONE · RUN_TESTS and more · 6 activities"
-           :status-tone :ok
-           :activity-view {:classification :activity :nodes []}
-           :activity-rows []
-           :anchor {:iteration-index 0 :form-index 0}}
+          render-row
+          (fn [detail-expansions]
+            (-> (render/format-answer-with-thinking-data
+                  "Done."
+                  trace
+                  80
+                  nil
+                  nil
+                  false
+                  {:session-id "s1" :session-turn-id "turn-1" :detail-expansions detail-expansions})
+                :text
+                strip-ansi
+                strip-sentinels))
 
           collapsed
-          (-> (render/format-answer-with-thinking-data "Done."
-                                                       trace
-                                                       80
-                                                       nil
-                                                       nil
-                                                       false
-                                                       {:session-id "s1" :runs [run]})
-              :text
-              strip-ansi
-              strip-sentinels)
+          (render-row {})
 
           collapsed-lines
           (str/split-lines collapsed)
@@ -5057,19 +5023,7 @@
                    collapsed-lines))
 
           expanded
-          (-> (render/format-answer-with-thinking-data
-                "Done."
-                trace
-                80
-                nil
-                nil
-                false
-                {:session-id "s1"
-                 :runs [(assoc run :is-reopened true)]
-                 :detail-expansions {:vis.channel-tui/expand-all-details? true}})
-              :text
-              strip-ansi
-              strip-sentinels)
+          (render-row {:vis.channel-tui/expand-all-details? true})
 
           expanded-lines
           (str/split-lines expanded)
@@ -5096,31 +5050,17 @@
   (it
     "keeps several expanded Activity receipts inline after their Python results"
     (render/invalidate-cache!)
-    (let [trace
-          [{:forms [{:code "first()" :result "FIRST RESULT" :success? true}
-                    {:code "second()" :result "SECOND RESULT" :success? true}]}]
-
-          activity-rows
+    (let [activity
           (fn [label]
-            [{:id label :operation (str label " OPERATION") :summary "" :state "running"}])
+            {:state "running"
+             :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
+             :rows [{:id label :operation (str label " OPERATION") :summary "" :state "running"}
+                    {:id (str label "-2") :operation "grep" :summary "" :state "succeeded"}]
+             :omitted {:rows 0 :by-classification {}}})
 
-          runs
-          [{:view-id "activity-1"
-            :is-activity true
-            :is-reopened true
-            :status-text "RUNNING · FIRST OPERATION · and more"
-            :status-tone :running
-            :activity-view {:classification :activity :nodes []}
-            :activity-rows (activity-rows "FIRST")
-            :anchor {:iteration-index 0 :form-index 0}}
-           {:view-id "activity-2"
-            :is-activity true
-            :is-reopened true
-            :status-text "RUNNING · SECOND OPERATION · and more"
-            :status-tone :running
-            :activity-view {:classification :activity :nodes []}
-            :activity-rows (activity-rows "SECOND")
-            :anchor {:iteration-index 0 :form-index 1}}]
+          trace
+          [{:forms [{:code "first()" :result "FIRST RESULT" :activity (activity "FIRST")}
+                    {:code "second()" :result "SECOND RESULT" :activity (activity "SECOND")}]}]
 
           body
           (-> (render/format-answer-with-thinking-data
@@ -5131,7 +5071,7 @@
                 nil
                 false
                 {:session-id "s1"
-                 :runs runs
+                 :session-turn-id "turn-1"
                  :detail-expansions {:vis.channel-tui/expand-all-details? true}})
               :text
               strip-ansi
@@ -5174,6 +5114,31 @@
     (let [long-command
           (str "clojure -M:test " (str/join " " (repeat 12 "very-long-target")))
 
+          ;; Protocol 7: the snapshot rides the FORM that produced it. There is no
+          ;; separate run to place beside the trace and no anchor to place it by.
+          activity
+          {:state "succeeded"
+           :counts {:running 0 :succeeded 3 :failed 0 :cancelled 0}
+           :omitted {:rows 0}
+           :rows [{:id "shell-1"
+                   :sequence 1
+                   :operation "shell"
+                   :summary "running: npm test"
+                   :state "succeeded"
+                   :duration-ms 120}
+                  {:id "shell-2"
+                   :sequence 2
+                   :operation "shell"
+                   :summary (str "cmd: " long-command)
+                   :state "succeeded"
+                   :duration-ms 230}
+                  {:id "tests"
+                   :sequence 3
+                   :operation "run_tests"
+                   :summary "run_tests"
+                   :state "succeeded"
+                   :duration-ms 1400}]}
+
           trace
           [{:forms [{:code "a = 1
 b = 2
@@ -5187,31 +5152,9 @@ h = 8"
                      :result-kind :value
                      :duration-ms 1
                      :silent? false
-                     :success? true}]}]
+                     :success? true
+                     :activity activity}]}]
 
-          run
-          {:view-id "activity-shells"
-           :is-activity true
-           :is-reopened true
-           :status-text "DONE · SHELL and more · 3 activities"
-           :status-tone :ok
-           :activity-view {:nodes []}
-           :activity-rows [{:id "shell-1"
-                            :operation "shell"
-                            :summary "running: npm test"
-                            :state "succeeded"
-                            :duration-ms 120}
-                           {:id "shell-2"
-                            :operation "shell"
-                            :summary (str "cmd: " long-command)
-                            :state "succeeded"
-                            :duration-ms 230}
-                           {:id "tests"
-                            :operation "run_tests"
-                            :summary "run_tests"
-                            :state "succeeded"
-                            :duration-ms 1400}]
-           :anchor {:iteration-index 0 :form-index 0}}
 
           collapsed-rendered
           (render/format-answer-with-thinking-data* "Done."
@@ -5220,17 +5163,12 @@ h = 8"
                                                     {:show-thinking true :show-iterations true}
                                                     nil
                                                     false
-                                                    {:session-id "s1" :runs [run]})
+                                                    {:session-id "s1"})
 
           collapsed-text
           (-> (:text collapsed-rendered)
               strip-ansi
               strip-sentinels)
-
-          result-toggle-meta
-          (some (fn [[line meta]]
-                  (when (str/includes? (strip-sentinels (str line)) "RESULT") meta))
-                (map vector (:lines collapsed-rendered) (:line-meta collapsed-rendered)))
 
           rendered
           (render/format-answer-with-thinking-data* "Done."
@@ -5240,7 +5178,6 @@ h = 8"
                                                     nil
                                                     false
                                                     {:session-id "s1"
-                                                     :runs [run]
                                                      :detail-expansions
                                                      {:vis.channel-tui/expand-all-details? true}})
 
@@ -5248,6 +5185,14 @@ h = 8"
           (-> (:text rendered)
               strip-ansi
               strip-sentinels)
+
+          ;; A form carrying Activity collapses to ONE row — its verdict — so the
+          ;; RESULT disclosure is read from the opened receipt, which is where it
+          ;; now stands. It still has to BE a disclosure: that is td-794deb.
+          result-toggle-meta
+          (some (fn [[line meta]]
+                  (when (str/includes? (strip-sentinels (str line)) "RESULT") meta))
+                (map vector (:lines rendered) (:line-meta rendered)))
 
           message
           {:role :assistant
@@ -5281,15 +5226,15 @@ h = 8"
           [python-row python-line]
           (row-with "PYTHON")
 
-          [activity-row activity-line]
-          (row-with "ACTIVITY")
-
           [result-row result-line]
           (row-with "RESULT")
 
+          ;; Protocol 7 folded Activity into the form that produced it: the timeline
+          ;; rows stand directly under RESULT with no band label of their own, so the
+          ;; first SHELL row is where the timeline starts.
           [first-row first-line]
           (first (filter (fn [[row line]]
-                           (and (> (long row) (long activity-row)) (str/includes? line "SHELL")))
+                           (and (> (long row) (long result-row)) (str/includes? line "SHELL")))
                          (keep-indexed (fn [row line]
                                          (when (str/includes? line "SHELL") [row line]))
                                        lines)))
@@ -5306,37 +5251,33 @@ h = 8"
 
       ;; Regression, issue td-794deb: Activity forced RESULT open, removed its toggle,
       ;; lost its top surface pad, and painted the timeline outside the execution box.
-      (expect (str/includes? collapsed-text "▸ RESULT"))
+      (expect (str/includes? collapsed-text "▸ DONE · SHELL and more · 3 activities")
+              "a collapsed form carrying Activity states its verdict in one row")
       (expect (= :toggle-details (:kind result-toggle-meta))
-              "the collapsed RESULT row remains an interactive disclosure")
+              "the RESULT row remains an interactive disclosure")
       (expect (not (str/includes? collapsed-text "result-value")) "RESULT is collapsed by default")
       (expect (str/includes? expanded-text "▾ RESULT"))
       (expect (str/includes? expanded-text "result-value")
               "RESULT remains independently expandable")
       (expect (= (get-in frame [(dec python-row) 1 :bg]) (get-in frame [python-row 1 :bg]))
               "the execution box has one tinted padding row above PYTHON")
-      (expect (= (get-in frame [activity-row 1 :bg])
-                 (get-in frame [python-row 1 :bg])
+      (expect (= (get-in frame [python-row 1 :bg])
                  (get-in frame [first-row 1 :bg])
                  (get-in frame [tests-row 1 :bg])
                  (get-in frame [(inc tests-row) 1 :bg]))
               "Activity and its bottom padding stay inside the execution box")
-      (expect (= (.indexOf ^String activity-line "ACTIVITY")
-                 (.indexOf ^String python-line "PYTHON")
-                 (.indexOf ^String result-line "RESULT"))
+      (expect (= (.indexOf ^String python-line "PYTHON") (.indexOf ^String result-line "RESULT"))
               "section labels share one visual column")
       (expect (< (long status-row)
                  (long python-row)
                  (long result-row)
-                 (long activity-row)
                  (long first-row)
                  (long second-row)
                  (long tests-row))
               "summary, execution surface, timeline, and commands retain canonical order")
       (expect (not= (get-in frame [status-row 1 :bg]) (get-in frame [result-row 1 :bg]))
               "the outer verdict remains outside the execution surface")
-      (expect (= (get-in frame [activity-row 1 :bg])
-                 (get-in frame [first-row 1 :bg])
+      (expect (= (get-in frame [first-row 1 :bg])
                  (get-in frame [second-row 1 :bg])
                  (get-in frame [tests-row 1 :bg]))
               "Activity owns one quiet timeline surface")

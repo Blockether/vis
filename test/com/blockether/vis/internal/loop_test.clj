@@ -1197,11 +1197,13 @@
   python-tool-activity-lifecycle-test
   ;; Regression, issue td-3614f0: opening Activity lifted the evaluation wall,
   ;; so a tool that hung after its start event never timed out or settled.
-  ;; Regression, issue td-1ec00e: settlement marked Activity closed before its
-  ;; close succeeded, so one storage failure stranded a running receipt forever.
   ;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: the presentation-only
   ;; Activity receipt was appended to Python stdout and therefore shown twice and
   ;; sent back to the model as though the block had printed it.
+  ;; Protocol 7 retired td-1ec00e with the shape that caused it: a settled receipt
+  ;; is a value ON the form, so there is no live view to close and no attachment to
+  ;; strand when a close fails. The redef below stays only to prove the retry path
+  ;; is never entered.
   (it
     "pairs a real guest tool call and settles its Activity receipt on timeout"
     (let [env {:activity/evaluation-id "00000000-0000-4000-8000-000000000007"
@@ -1242,8 +1244,8 @@
                           (set (map :evaluation-id @events)))) (expect (= #{4}
                                                                           (set (map :form-index
                                                                                     @events))))
-               (expect (= [2 ["activity.live.ndjson"]]
-                          [@close-attempts (mapv :filename (:attachments result))]))
+               ;; No close, and no receipt filed: Activity rides the form now.
+               (expect (= [0 []] [@close-attempts (vec (:attachments result))]))
                (expect (= "python-only\n" (:stdout result)))
                ;; Python returns semantics only; the host derives this display after it exits.
                (expect (not (contains? result :result-render))) (expect (str/includes?
@@ -1262,7 +1264,7 @@
              ;; Regression, issue td-74427c: concurrent callbacks could reduce S2 before
              ;; publishing stale S1, while a slow listener blocked the tool callback itself.
              (it "publishes snapshots FIFO without blocking their callback threads"
-                 (let [[dispatch! drain! shutdown!]
+                 (let [[dispatch! shutdown!]
                        (#'lp/serial-activity-dispatcher)
 
                        release-first
@@ -1274,11 +1276,20 @@
                        snapshots
                        (atom [])
 
+                       ;; `dispatch!` answers the Future the settler waits on, so the
+                       ;; drain is deref-ing what was submitted rather than a third
+                       ;; function the dispatcher no longer hands out.
+                       submitted
+                       (atom [])
+
                        submit
                        (fn [n]
-                         (dispatch! (fn []
-                                      (when (= 1 n) (deliver entered-first true) @release-first)
-                                      (swap! snapshots conj n))))]
+                         (swap! submitted conj
+                                (dispatch! (fn []
+                                             (when (= 1 n)
+                                               (deliver entered-first true)
+                                               @release-first)
+                                             (swap! snapshots conj n)))))]
 
                    (try (submit 1)
                         @entered-first
@@ -1287,7 +1298,7 @@
                           (submit 3)
                           (expect (< (/ (- (System/nanoTime) started) 1e6) 100.0)))
                         (deliver release-first true)
-                        (drain!)
+                        (run! deref @submitted)
                         (expect (= [1 2 3] @snapshots))
                         (finally (shutdown!))))))
 
@@ -1383,8 +1394,6 @@
         (expect (= [{:scope "t2/i1/f1" :src "rg({...})"}] (:results (second out)))))))
   ;; Regression, reported from the app: interrupt filed the record after the
   ;; iteration had settled, but the next request's resumed context omitted it.
-  ;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: the same replay path
-  ;; treated host Activity as a semantic live view and sent its receipt to the model.
   (it
     "carries a late live-view record into the next model request"
     (with-redefs [persistance/db-list-session-turns
@@ -1403,14 +1412,11 @@
                   persistance/db-list-iterations-attachments-meta
                   (fn [_db ids]
                     (expect (= ["i1"] (mapv str ids)))
+                    ;; Protocol 7 files no Activity attachment, so there is no
+                    ;; classified sibling here for the replay path to exclude.
                     {"i1" [{:id "record-1"
                             :tool-call-id "call-1"
                             :filename "native.live.ndjson"
-                            :media-type "application/vnd.vis.live+ndjson"}
-                           {:id "activity-1"
-                            :tool-call-id "call-1"
-                            :filename "activity.live.ndjson"
-                            :classification "activity"
                             :media-type "application/vnd.vis.live+ndjson"}]})]
 
       (let [results
@@ -3477,8 +3483,6 @@
           (expect (str/includes? (get-in m [:content 0 :content]) "hello"))))
     ;; Regression, reported from the app: a live view interrupted after its tool
     ;; block returned filed a record, but the next model request was never told.
-    ;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: host Activity used
-    ;; that same semantic replay rail and leaked a presentation receipt into context.
     (it "puts only semantic live-view records back into the model's tool result"
         (let [m
               (irm {:forms-vec [{:scope "t1/i1/f1"
@@ -3486,14 +3490,11 @@
                                  :stdout "watching"
                                  :result-render "PRESENTATION-ONLY-SENTINEL"}]
                     :tool-calls [{:id "c1"}]
+                    ;; Protocol 7 files no Activity attachment, so the only record
+                    ;; this rail can meet is a semantic one.
                     :attachments [{:id "record-1"
                                    :tool-call-id "c1"
                                    :filename "native.live.ndjson"
-                                   :media-type "application/vnd.vis.live+ndjson"}
-                                  {:id "activity-1"
-                                   :tool-call-id "c1"
-                                   :filename "activity.live.ndjson"
-                                   :classification :activity
                                    :media-type "application/vnd.vis.live+ndjson"}]})
 
               body
@@ -3502,7 +3503,6 @@
           (expect (str/includes? body "native.live.ndjson"))
           (expect (str/includes? body "record-1"))
           (expect (str/includes? body "read_attachment"))
-          (expect (not (str/includes? body "activity.live.ndjson")))
           (expect (not (str/includes? body "PRESENTATION-ONLY-SENTINEL")))))
     (it "no summaries ⇒ trailer-iters unchanged"
         (let [tis [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "x"}]}]]]
@@ -6890,43 +6890,6 @@
         (expect (not (contains? d :iteration-id)))
         (expect (not (contains? d :tool-call-id))))))
 
-;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: the sandbox attachment
-;; reader listed host Activity beside user artifacts, exposing presentation state to
-;; Python even after it stopped being appended to stdout.
-(defdescribe
-  activity-attachment-is-presentation-only-test
-  (it
-    "keeps Activity out of Python's attachment API"
-    (let [env {:db-info ::db
-               :session-id "session-activity-attachments"
-               :workspace/root (System/getProperty "user.dir")
-               :workspace {:root (System/getProperty "user.dir")
-                           :repo-root (System/getProperty "user.dir")}}]
-      (tpc/with-own
-        [pc (extension/builtin-sandbox-bindings (constantly env))]
-        (with-redefs [persistance/db-list-session-attachments-meta
-                      (fn [_ _]
-                        [{:id "semantic-1"
-                          :source :tool
-                          :filename "semantic.json"
-                          :media-type "application/json"
-                          :turn-soul-id "turn-1"}
-                         {:id "activity-1"
-                          :source :tool
-                          :filename "activity.live.ndjson"
-                          :classification "activity"
-                          :media-type "application/vnd.vis.live+ndjson"
-                          :turn-soul-id "turn-1"}])]
-          (let
-            [result
-             (#'lp/run-python-code
-              pc
-              "print([a['filename'] for a in list_attachments()])\ntry:\n    get_attachment('activity-1')\nexcept LookupError:\n    print('activity-id-hidden')"
-              :env
-              env)]
-            (expect (str/includes? (:stdout result) "semantic.json"))
-            (expect (str/includes? (:stdout result) "activity-id-hidden"))
-            (expect (not (str/includes? (:stdout result) "activity.live.ndjson")))))))))
 (def ^:private cache-key (deref #'lp/cache-key))
 
 (def ^:private acquire-turn-lock! (deref #'lp/acquire-turn-lock!))

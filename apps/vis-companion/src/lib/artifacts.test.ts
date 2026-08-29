@@ -29,7 +29,7 @@ import {
   isPdfMedia,
 } from "./artifacts";
 import type { SessionArtifact } from "./artifacts";
-import type { IterationAttachment, SessionArtifactRow, TranscriptTurn } from "./types";
+import type { IterationAttachment, TranscriptTurn } from "./types";
 
 describe("document media types", () => {
   it("recognises the types the app can open", () => {
@@ -250,26 +250,8 @@ describe("collecting what a session produced", () => {
     );
   });
 
-  // Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: host Activity receipts
-  // filled the produced-artifacts gallery even though they belong inside execution traces.
-  it("keeps host Activity receipts out of the produced-artifacts gallery", () => {
-    const activity = {
-      index: 7,
-      iteration_id: "activity-iteration",
-      filename: "activity.live.ndjson",
-      media_type: LIVE_ARTIFACT_MEDIA,
-      classification: "activity",
-      turn: 2,
-    } satisfies SessionArtifactRow;
-    const transcript = [{
-      id: "activity-turn",
-      iterations: [{ id: "activity-iteration", attachments: [activity] }],
-    }] as TranscriptTurn[];
-
-    expect(collectArtifacts(transcript)).toEqual([]);
-    expect(artifactsFromIndex([activity])).toEqual([]);
-  });
-
+  // The gallery no longer has to exclude host Activity receipts: protocol 7 files
+  // none, so there is nothing of the sort for `collectArtifacts` to meet.
   it("finds the exact cut named by an attachment link", () => {
     const current = collectArtifacts(turns).find(
       (entry) => entry.name === "revenue.png",

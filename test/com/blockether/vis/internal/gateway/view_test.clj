@@ -658,40 +658,6 @@
                 (is (= ["now" "tail"]
                        (mapv #(get % "id") (get-in event ["result" "view" "nodes"]))))
                 (is (nil? (get-in event ["result" "markdown"])))))))))))
-;; Regression, session 3d6dc388-a21c-4005-b498-87c02668cb34: every Activity
-;; replacement survived the gateway flush, duplicating the growing snapshot on SSE and
-;; making the phone process and repaint obsolete intermediate pictures.
-(deftest activity-flush-keeps-only-the-latest-picture-test
-  (gw-hi/install!)
-  (recorded
-    (fn []
-      (unhurried
-        (fn []
-          (with-events
-            (fn [seen]
-              (let [sid
-                    (str (random-uuid))
-
-                    state
-                    (activity/empty-state
-                      {:evaluation-id (str (random-uuid)) :iteration 1 :form-index 0})
-
-                    view
-                    (hi/open-activity! {:session-id sid :state state})
-
-                    view-id
-                    (:id view)]
-
-                (try (hi/patch-activity! view-id state)
-                     (hi/patch-activity! view-id state)
-                     (gw-hi/flush-live-patches!)
-                     (let [[[_ event]] (live-events-of seen gw-hi/view-patch-event view-id)]
-                       (is (= 1 (count (live-events-of seen gw-hi/view-patch-event view-id))))
-                       (is (= 1 (get event "first_seq")))
-                       (is (= 2 (get-in event ["patch" "seq"])))
-                       (is (= ["set-activity"]
-                              (mapv #(get % "op") (get-in event ["patch" "ops"])))))
-                     (finally (hi/close-live! view-id)))))))))))
 
 ;; The bridge holds a view's patches for one flush window, so a gateway that goes
 ;; away mid-stream would swallow whatever the window still had. `stop!` in
@@ -1029,9 +995,7 @@
 
 (deftest the-app-activity-fixture-is-the-host-projection-test
   (let [state
-        {:schema-version 1
-         :anchor {:evaluation-id "fixture-evaluation" :iteration 0 :form-index 0}
-         :state :running
+        {:state :running
          :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
          :rows [{:id "call-1"
                  :sequence 1
@@ -1066,7 +1030,5 @@
 
     (is (some? file))
     (when fixture
-      (is (= "activity" (get fixture "classification")))
-      (is (= [] (get fixture "nodes")))
-      (is (= (wire/parse-json (wire/json-str (activity/presentation state)))
-             (get fixture "activity"))))))
+      ;; Activity does not know its owner: the fixture IS the whole snapshot.
+      (is (= (wire/parse-json (wire/json-str (activity/presentation state))) fixture)))))

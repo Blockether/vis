@@ -16,7 +16,6 @@ import {
 } from './LiveArtifact';
 import liveArtifactSource from './LiveArtifact.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
-import activityFixture from '../lib/activity.fixture.json';
 import { liveViewFromWire, type LiveRecord } from '../lib/live-view';
 import type { GatewayClient } from '../lib/gateway';
 import type { IterationAttachment } from '../lib/types';
@@ -294,65 +293,8 @@ describe('the settled run in the transcript', () => {
     expect(liveRunName(undefined)).toBe('run');
   });
 
-  // `757e158a refactor(companion): quiet Activity receipts` deleted the loud
-  // `ActivityDiff` figure — and the matching LiveView cases with it — but this
-  // one was left behind still asking for it. Structured diff evidence is still
-  // PARSED and still rides a settled record, so the case keeps its subject: the
-  // artifact must replay such a row rather than fall over the shape it no
-  // longer paints.
-  it('replays a settled Activity row carrying structured diff evidence', async () => {
-    const activity = {
-      ...activityFixture,
-      activity: {
-        ...activityFixture.activity,
-        state: 'succeeded',
-        rows: [
-          {
-            ...activityFixture.activity.rows[0],
-            presenter: 'patch',
-            signal: 'mutation',
-            operation: 'patch',
-            state: 'succeeded',
-            evidence: [
-              {
-                kind: 'diff',
-                text: 'fixture.clj',
-                lines: [
-                  { kind: 'deletion', text: 'before' },
-                  { kind: 'addition', text: 'after' },
-                ],
-                additions: 0,
-                deletions: 0,
-                modifications: 1,
-                omitted_lines: 0,
-                is_truncated: false,
-                is_redacted: false,
-              },
-            ],
-          },
-        ],
-      },
-    };
-    serve(
-      [
-        JSON.stringify({ kind: 'open', at: 1, view: activity }),
-        closeLine({ reason: 'completed', is_completed: true, view: activity }),
-      ].join('\n'),
-    );
-    const { client: c } = rowClient();
-    render(
-      <LiveRunRow
-        client={c}
-        sid="s1"
-        attachment={{ ...record(), filename: 'activity.live.ndjson' }}
-      />,
-    );
-    await waitFor(() => expect(screen.getByText('ACTIVITY')).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    expect(screen.getByRole('region', { name: 'Activity' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Collapse Activity' })).toBeTruthy();
-    // The receipt is quiet by design now: the diff is data the row carries, not
-    // a figure it paints.
-    expect(screen.queryByRole('figure', { name: 'Diff fixture.clj' })).toBeNull();
-  });
+  // The Activity-receipt replay case that stood here is gone with the shape it
+  // tested: protocol 7 files no Activity attachment, so `activity.live.ndjson` is
+  // not a thing `LiveRunRow` can be handed. Structured diff evidence is still
+  // parsed, and `live-view.test.ts` is where that contract is now pinned.
 });

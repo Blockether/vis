@@ -33,10 +33,10 @@ export const LIVE_TONES = ['idle', 'running', 'ok', 'warn', 'error'] as const;
 /**
  * Everything a patch can do to a view (`live-ops`). CLOSED.
  *
- * The first four address ONE node by id, the next two change the view's SHAPE,
- * and `set-activity` replaces the host-owned Activity projection that stands
- * beside a view's ordinary nodes — which is why `applyOp` answers it before it
- * ever looks for a `node_id`.
+ * The first four address ONE node by id and the last two change the view's
+ * SHAPE. There is no seventh: protocol 7 took Activity off the Live View rail
+ * and gave it to the form that produced it, so a view no longer carries a
+ * projection for a patch to replace.
  */
 export const LIVE_OPS = [
   'set',
@@ -45,7 +45,6 @@ export const LIVE_OPS = [
   'clear',
   'add-node',
   'remove-node',
-  'set-activity',
 ] as const;
 
 /** What a link POINTS AT (`live-link-targets`). CLOSED. */
@@ -202,7 +201,6 @@ export type LiveLeafNode =
 /** A node either paints something, or arranges the nodes it holds. */
 export type LiveNode = LiveLeafNode | LiveGroupNode;
 
-export const ACTIVITY_SCHEMA_VERSION = 1;
 export const ACTIVITY_PRESENTERS = [
   'generic',
   'shell',
@@ -269,9 +267,13 @@ export interface ActivityRow {
   is_truncated?: boolean;
 }
 
+/**
+ * One form's bounded execution picture. Protocol 7 carries no `schema_version`
+ * and no `anchor`: the wire protocol number already gates the shape — that is
+ * what the compatibility handshake is for — and a snapshot that lives ON its
+ * form has nothing left to point at.
+ */
 export interface ActivityProjection {
-  schema_version: typeof ACTIVITY_SCHEMA_VERSION;
-  anchor?: Record<string, unknown>;
   state: ActivityState;
   counts: Record<'running' | 'succeeded' | 'failed' | 'cancelled', number>;
   rows: ActivityRow[];
@@ -290,8 +292,6 @@ export interface LiveView {
   seq: number;
   created_at?: number;
   source?: string;
-  classification?: 'activity';
-  activity?: ActivityProjection;
   /** Local reconnect marker, never sent on the wire. */
   is_stale?: boolean;
   /** Local close handoff marker: the terminal Activity picture is no longer live. */
@@ -478,7 +478,11 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
 
 export function activityProjectionFromWire(value: unknown): ActivityProjection | null {
   const raw = record(value);
-  if (!raw || raw.schema_version !== ACTIVITY_SCHEMA_VERSION) return null;
+  if (!raw) return null;
+  // The retired vocabulary is refused rather than ignored: a payload still
+  // wearing it came from a gateway the compatibility gate should already have
+  // turned away.
+  if (raw.schema_version !== undefined || raw.anchor !== undefined) return null;
   const state = activityEnum(raw.state, ACTIVITY_STATES);
   const countsRaw = record(raw.counts);
   const omittedRaw = record(raw.omitted);
@@ -506,8 +510,6 @@ export function activityProjectionFromWire(value: unknown): ActivityProjection |
     return null;
   }
   return {
-    schema_version: ACTIVITY_SCHEMA_VERSION,
-    ...(record(raw.anchor) ? { anchor: record(raw.anchor)! } : {}),
     state,
     counts: counts as ActivityProjection['counts'],
     rows: parsedRows as ActivityRow[],
@@ -696,15 +698,15 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
   const id = text(view.id);
   const title = text(view.title).trim();
   if (id === '' || title === '') return null;
-  const classification = optionalText(view.classification);
-  const activity = classification === 'activity';
-  if (classification !== undefined && !activity) return null;
+
+  // Protocol 7 emits no classified view and no `activity` key on one. A frame
+  // still carrying either is an OLDER gateway's shape reaching a client that
+  // cannot paint it, and the compatibility gate has already refused that
+  // gateway — so this is a contract violation, not a variant to tolerate.
+  if (view.classification !== undefined || view.activity !== undefined) return null;
 
   const nodes = liveNodesFromWire(view.nodes);
-  if (nodes.length === 0 && !activity) return null;
-
-  const activityProjection = activityProjectionFromWire(view.activity);
-  if ((activity && !activityProjection) || (!activity && view.activity !== undefined)) return null;
+  if (nodes.length === 0) return null;
 
   return {
     id,
@@ -714,8 +716,6 @@ export function liveViewFromWire(raw: unknown): LiveView | null {
     seq: count(view.seq, 0),
     created_at: optionalNumber(view.created_at),
     source: optionalText(view.source),
-    ...(activity ? { classification: 'activity' as const } : {}),
-    ...(activityProjection ? { activity: activityProjection } : {}),
   };
 }
 
@@ -974,10 +974,6 @@ function applyOp(view: LiveView, raw: unknown): LiveView {
   const op = record(raw);
   if (!op) return view;
   const name = text(op.op);
-  if (name === 'set-activity') {
-    const activity = activityProjectionFromWire(op.activity);
-    return view.classification === 'activity' && activity ? { ...view, activity } : view;
-  }
   if (name === 'add-node') {
     const node = liveNodeFromWire(op.node_spec);
     if (!node) return view;
@@ -1066,29 +1062,16 @@ export function applyLiveViewEvent(views: LiveView[], event: SseEvent): LiveView
     if (viewId === '') return views;
     const at = views.findIndex((view) => view.id === viewId);
     if (at < 0) return views;
-    const current = views[at];
-    if (current.classification === 'activity') {
-      const result = record(event.result);
-      const terminal =
-        result?.view === undefined ? current : recordedViewFromWire(result.view, current);
-      if (terminal?.classification === 'activity') {
-        const merged = views.slice();
-        merged[at] = {
-          ...terminal,
-          is_settled: true,
-          ended_at: optionalNumber(event.ts),
-        };
-        return merged;
-      }
-    }
+    // A closed view is GONE. Protocol 7 has no classified Activity view to keep
+    // as a settled record here — the form that produced the work carries its own
+    // terminal snapshot, so nothing survives its own close frame any more.
     const kept = views.filter((view) => view.id !== viewId);
     return kept.length === views.length ? views : kept;
   }
   if (event.type === VIEW_OPEN_EVENT) {
     const view = liveViewFromWire(event.view);
     if (!view) return views;
-    const current =
-      view.classification === 'activity' ? views.filter((open) => !open.is_settled) : views;
+    const current = views;
     const at = current.findIndex((open) => open.id === view.id);
     if (at < 0) return [...current, view];
     const merged = current.slice();
@@ -1155,7 +1138,6 @@ function recordedViewFromWire(raw: unknown, declared: LiveView | null): LiveView
     ...declared,
     ...partial,
     id: declared.id,
-    classification: declared.classification,
   });
 }
 

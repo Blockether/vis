@@ -11,7 +11,6 @@
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
-            [com.blockether.vis.ext.channel-tui.live-view :as lv]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
@@ -21,10 +20,7 @@
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.terminals :as term]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
-            [com.blockether.vis.view :as hi]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.view :as engine]
-            [com.blockether.vis.internal.view.materializer :as live]
             [lazytest.core :refer [defdescribe it expect]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
@@ -504,19 +500,7 @@
 
           (expect (true? (activate-live-region! db hit)))
           (expect (= ["view-1" {:action :select :node-id "jobs" :item-ids ["macos"]}]
-                     (deref local-called 1000 ::timed-out))))))
-  (it "routes Activity focus and evidence through terminal-local pane state"
-      (let [events (atom [])]
-        (with-redefs [state/dispatch #(swap! events conj %)]
-          (expect (true? (activate-live-region!
-                           {}
-                           {:kind :activity-focus :view-id "activity-1" :item-id "op-2"})))
-          (expect (true? (activate-live-region!
-                           {}
-                           {:kind :activity-evidence :view-id "activity-1" :item-id "op-2"}))))
-        (expect (= [[:activity-focus "activity-1" "op-2"] [:bump-render-version]
-                    [:activity-evidence "activity-1" "op-2"] [:bump-render-version]]
-                   @events)))))
+                     (deref local-called 1000 ::timed-out)))))))
 
 (defdescribe drag-coalescing-test
              (it "coalesces drag bursts and keeps last drag event + first non-drag"
@@ -2367,19 +2351,12 @@ therapy line 2"
           rows
           40
 
-          pane
-          (-> (hi/view {:title "Activity" :classification :activity}
-                       (hi/status "now" "Polling the run" {:label "Now" :tone :running})
-                       (hi/steps "operations"
-                                 [{:id "op-1" :label "Inspect source" :tone :running}]))
-              engine/normalize-live-view
-              live/materialize
-              (assoc :id "activity-scroll"
-                     :seq 0
-                     :created-at (System/currentTimeMillis)
-                     :classification :activity)
-              lv/opened
-              lv/reopened)
+          activity
+          {:state "succeeded"
+           :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+           :rows
+           [{:id "op-1" :operation "Inspect source" :summary "Polling the run" :state "succeeded"}]
+           :omitted {:rows 0 :by-classification {}}}
 
           db
           {:config nil
@@ -2390,22 +2367,19 @@ therapy line 2"
                        :text (str/join " " (map #(str "context" %) (range 200)))}
                       {:id "anchor-answer"
                        :role :assistant
-                       :text (str/join " " (map #(str "answer" %) (range 120)))
-                       :traces [{:forms [{:code "grep({...})" :success? true}]}]
-                       :runs [{:view-id "activity-scroll"
-                               :title "Activity"
-                               :is-activity true
-                               :status-text "finished 0/1 · running"
-                               :status-tone :running
-                               :is-reopened true
-                               :activity-view (:view pane)
-                               :anchor {:iteration-index 0 :form-index 0}}]}]
+                       ;; Short enough that the receipt AND the surface it opens both
+                       ;; fit one 40-row frame: protocol 7 gives the form its own
+                       ;; verdict row above PYTHON, so the block is three rows taller
+                       ;; than the anchored-run layout this test was written against.
+                       :text (str/join " " (map #(str "answer" %) (range 40)))
+                       :traces [{:forms
+                                 [{:code "grep({...})" :success? true :activity activity}]}]}]
            :scroll scroll/follow
            :input (input/empty-input)
            :settings {}
            :pending-sends []
-           :detail-expansions {}
-           :live-views [pane]
+           :detail-expansions {:vis.channel-tui/expand-all-details? true}
+           :live-views []
            :loading? false
            :cancelling? false
            :progress nil
@@ -2469,10 +2443,10 @@ therapy line 2"
               (:layout @state/app-db)
 
               before-receipt
-              (row-containing @before-grid "▾ finished 0/1 · running")
+              (row-containing @before-grid "▾ DONE · INSPECT SOURCE · 1 activity")
 
               after-receipt
-              (row-containing @after-grid "▾ finished 0/1 · running")
+              (row-containing @after-grid "▾ DONE · INSPECT SOURCE · 1 activity")
 
               before-surface
               (row-containing @before-grid "PYTHON")

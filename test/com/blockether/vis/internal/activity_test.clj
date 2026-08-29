@@ -53,8 +53,7 @@
             (assoc a-end* :event-sequence 4)
 
             state
-            (activity/replay {:evaluation-id (:evaluation-id ctx) :iteration 4 :form-index 1}
-                             [a-start b-start b-end a-end])]
+            (activity/replay [a-start b-start b-end a-end])]
 
         (expect (= [:grep :run_tests] (mapv :operation (:rows state))))
         (expect (= [:succeeded :succeeded] (mapv :state (:rows state))))
@@ -80,7 +79,7 @@
                          {:presenter :patch :classification :mutation})]
 
             state
-            (activity/replay {:evaluation-id (:evaluation-id ctx)} (mapcat identity pairs))]
+            (activity/replay (mapcat identity pairs))]
 
         (expect (= [:generic :tests :patch] (mapv :presenter (:rows state))))
         (expect (= [:observation :mutation :mutation] (mapv :classification (:rows state))))
@@ -88,9 +87,6 @@
   (it "exports the current bounded semantic projection without channel markup"
       (let [ctx
             (event/context {})
-
-            anchor
-            {:evaluation-id (:evaluation-id ctx) :iteration 3 :form-index 1}
 
             events
             (mapcat identity
@@ -101,26 +97,23 @@
                                  {:presenter :patch :classification :mutation})])
 
             presentation
-            (activity/presentation (activity/replay anchor events))
+            (activity/presentation (activity/replay events))
 
             row
             (first (:rows presentation))]
 
-        (expect (= 1 (:schema-version presentation)))
-        (expect (= anchor (:anchor presentation)))
+        ;; Activity does not know its owner: no version, no anchor, no parent ids.
+        (expect (= #{:state :counts :rows :omitted} (set (keys presentation))))
         (expect (= "patch" (:presenter row)))
         (expect (= "mutation" (:signal row)))
         (expect (= "succeeded" (:state row)))
         (expect (= [:arguments :result] (mapv (comp keyword :kind) (:evidence row))))
         (expect (nil? (activity/presentation-error presentation)))
-        (expect (= "unknown Activity schema version"
-                   (activity/presentation-error (assoc presentation :schema-version 2))))))
+        (expect (= "Activity presentation has unknown keys"
+                   (activity/presentation-error (assoc presentation :anchor {}))))))
   (it "preserves structured patch evidence through the presentation boundary"
       (let [ctx
             (event/context {})
-
-            anchor
-            {:evaluation-id (:evaluation-id ctx) :iteration 0 :form-index 0}
 
             events
             (event-pair ctx
@@ -134,7 +127,7 @@
                                                            {"added" 0 "removed" 0 "modified" 1}}}})
 
             presentation
-            (activity/presentation (activity/replay anchor events))
+            (activity/presentation (activity/replay events))
 
             evidence
             (last (get-in presentation [:rows 0 :evidence]))]
@@ -151,9 +144,7 @@
             (event-pair ctx :grep :succeeded {:matches 3})
 
             state
-            (activity/settle-running (activity/reduce-event (activity/empty-state
-                                                              {:evaluation-id (:evaluation-id ctx)})
-                                                            started)
+            (activity/settle-running (activity/reduce-event activity/empty-state started)
                                      :cancelled
                                      "Evaluation timed out")]
 
@@ -173,7 +164,7 @@
                   (range 150))
 
             state
-            (activity/replay {:evaluation-id (:evaluation-id ctx)} (mapcat identity pairs))
+            (activity/replay (mapcat identity pairs))
 
             snapshot
             (activity/snapshot state)]
@@ -193,9 +184,7 @@
                   (range activity/max-rows))
 
             state
-            (last (rest (reductions activity/reduce-event
-                                    (activity/empty-state {:evaluation-id (:evaluation-id ctx)})
-                                    starts)))
+            (last (rest (reductions activity/reduce-event activity/empty-state starts)))
 
             presentation
             (activity/presentation state)]
@@ -228,8 +217,7 @@
                        {:args ["build-1" 30] :presenter :shell})]
 
           snapshot
-          (activity/snapshot (activity/replay {:evaluation-id (:evaluation-id ctx)}
-                                              (mapcat identity pairs)))
+          (activity/snapshot (activity/replay (mapcat identity pairs)))
 
           group
           (first (:rows snapshot))]
@@ -263,8 +251,7 @@
                          {:group-token "inspect" :presenter :observation})]
 
             rows
-            (:rows (activity/snapshot (activity/replay {:evaluation-id (:evaluation-id ctx)}
-                                                       (mapcat identity pairs))))]
+            (:rows (activity/snapshot (activity/replay (mapcat identity pairs))))]
 
         (expect (= 3 (count rows)))
         (expect (= :observations (:operation (first rows))))
@@ -278,9 +265,6 @@
             events
             (vec (mapcat identity
                          [(event-pair ctx :grep :succeeded {:matches 1})
-                          (event-pair ctx :patch :failed "refused")]))
+                          (event-pair ctx :patch :failed "refused")]))]
 
-            anchor
-            {:evaluation-id (:evaluation-id ctx) :iteration 2 :form-index 0}]
-
-        (expect (= (activity/replay anchor events) (activity/replay anchor events))))))
+        (expect (= (activity/replay events) (activity/replay events))))))

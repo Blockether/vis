@@ -141,7 +141,7 @@
     {
       "node_types": ["link","log","progress","stat","status","steps","table"],
       "link_targets": ["attachment","path","url"],
-      "ops": ["add-node","append","clear","remove","remove-node","set","set-activity"],
+      "ops": ["add-node","append","clear","remove","remove-node","set"],
       "tones": ["error","idle","ok","running","warn"],
       "orders": ["insertion","newest-first"],
       "aligns": ["left","right"],

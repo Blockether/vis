@@ -300,7 +300,20 @@
    Cost, measured on that store: 3.7 s for the table rewrite, a transient WAL
    the size of the table, and 372 MB handed back to the freelist — SQLite reuses
    those pages, and only a `VACUUM` shrinks the file itself."
-  [["session_turn_iteration" "llm_assistant_message"]])
+  [["session_turn_iteration" "llm_assistant_message"] ["session_attachment" "classification"]
+   ["session_attachment" "activity_anchor"]])
+
+(def ^:private retired-rows
+  "Rows DELETED before the column that identifies them is retired, as
+   `[table column predicate]`.
+
+   A retired column takes its rows' identity with it: once
+   `session_attachment.classification` is gone, nothing can tell the host's own
+   Activity receipts from the artifacts a person actually made. Activity is no
+   longer an attachment at all — it rides the iteration's form — so those rows are
+   the obsolete rail itself, and leaving them behind would fill every historical
+   gallery with `.live.ndjson` files no surface can open."
+  [["session_attachment" "classification" "classification = 'activity'"]])
 
 (defn- word-end
   "Index just past the identifier that starts at `i`."
@@ -448,6 +461,21 @@
                (catch Throwable _ (try (.rollback conn) (catch Throwable _ nil)))
                (finally (try (.setAutoCommit conn auto) (catch Throwable _ nil)))))))))
 
+(defn- delete-retired-rows!
+  "Delete every `retired-rows` entry a store still carries.
+
+   Runs BEFORE the columns are dropped, because the predicate is written in terms
+   of a column retirement is about to remove. Best effort: a store that already
+   dropped it has nothing left to identify."
+  [^DataSource ds]
+  (with-open [conn (.getConnection ds)]
+    (doseq [[^String table ^String column ^String predicate] retired-rows
+            :when (contains? (existing-columns conn table) (str/lower-case column))]
+
+      (try (with-open [st (.createStatement conn)]
+             (.executeUpdate st (str "DELETE FROM " table " WHERE " predicate)))
+           (catch Throwable _ nil)))))
+
 (defn migrate!
   "Install the single canonical V1 schema.
 
@@ -484,5 +512,6 @@
         (catch Throwable e
           (if (repairable-validation-error? e) (do (.repair flyway) (.migrate flyway)) (throw e)))))
     (reconcile-canonical-columns! ds locs)
+    (delete-retired-rows! ds)
     (drop-retired-columns! ds locs)
     ds))

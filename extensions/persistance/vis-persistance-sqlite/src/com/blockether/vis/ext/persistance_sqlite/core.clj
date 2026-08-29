@@ -2708,21 +2708,7 @@
   [att]
   (cond-> {}
     (:view-id att)
-    (assoc :view_id (str (:view-id att)))
-
-    (:classification att)
-    (assoc :classification (name (:classification att)))
-
-    (:activity-anchor att)
-    (assoc :activity_anchor (->json (:activity-anchor att)))))
-
-(defn- stored-activity-anchor
-  "Decode the closed Activity coordinates from one attachment row."
-  [row]
-  (when-let [anchor (<-json (:activity_anchor row))]
-    {:evaluation-id (get anchor "evaluation-id")
-     :iteration (get anchor "iteration")
-     :form-index (get anchor "form-index")}))
+    (assoc :view_id (str (:view-id att)))))
 
 (defn- turn-session-soul-id
   "The SESSION soul a turn belongs to, resolved `session_turn_soul -> session_state
@@ -2892,12 +2878,7 @@
    is a `user` image (no enum column to drift). `:id` is the bare row uuid;
    read-back knocks the single table directly by it, no prefix, no dispatch."
   [row]
-  (let [^bytes bs
-        (:bytes row)
-
-        anchor
-        (stored-activity-anchor row)]
-
+  (let [^bytes bs (:bytes row)]
     (cond-> {:id (:id row)
              :source (if (:session_turn_iteration_id row) :tool :user)
              :tool-call-id (:tool_call_id row)
@@ -2920,13 +2901,7 @@
              :size (long (or (:size_bytes row) (when bs (alength bs)) 0))
              :base64 (when bs (.encodeToString (java.util.Base64/getEncoder) bs))}
       (:view_id row)
-      (assoc :view-id (:view_id row))
-
-      (:classification row)
-      (assoc :classification (keyword (:classification row)))
-
-      anchor
-      (assoc :activity-anchor anchor))))
+      (assoc :view-id (:view_id row)))))
 
 
 (defn db-list-turn-attachments
@@ -3025,8 +3000,8 @@
    payload: `SELECT *` over a 20-figure iteration reads megabytes off disk and
    then base64-ENCODES every one of them into a String the caller throws away."
   [:id :session_turn_soul_id :session_turn_iteration_id :tool_call_id :position :kind :media_type
-   :filename :view_id :classification :activity_anchor :version :audience :storage_uri :size_bytes
-   :transcription [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
+   :filename :view_id :version :audience :storage_uri :size_bytes :transcription
+   [[:case [:= :bytes nil] 0 :else 1] :has_bytes]])
 
 (defn- row->attachment-meta
   "[[row->attachment]] for a bytes-free row: the same envelope minus `:base64`,
@@ -3145,8 +3120,7 @@
   (into [[:a.id :id] [:a.session_turn_soul_id :session_turn_soul_id]
          [:a.session_turn_iteration_id :session_turn_iteration_id] [:a.tool_call_id :tool_call_id]
          [:a.position :position] [:a.kind :kind] [:a.media_type :media_type] [:a.filename :filename]
-         [:a.view_id :view_id] [:a.classification :classification]
-         [:a.activity_anchor :activity_anchor] [:a.version :version] [:a.audience :audience]
+         [:a.view_id :view_id] [:a.version :version] [:a.audience :audience]
          [:a.storage_uri :storage_uri] [:a.transcription :transcription] [:a.size_bytes :size_bytes]
          [[:case [:= :a.bytes nil] 0 :else 1] :has_bytes]]
         [[:ts.position :turn_position] [:ts.session_state_id :turn_state_id]]))

@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import fixture from './live-view.fixture.json';
 import {
+  activityProjectionFromWire,
   applyLivePatch,
   applyLiveViewEvent,
   isLiveViewEvent,
@@ -60,7 +61,6 @@ const ids = (view: LiveView) => view.nodes.map((node) => node.id);
 const activityProjection = (
   state: 'running' | 'succeeded' | 'failed' | 'cancelled' = 'running',
 ) => ({
-  schema_version: 1,
   state,
   counts: {
     running: state === 'running' ? 1 : 0,
@@ -343,103 +343,9 @@ describe('the three session events', () => {
     expect(moved).not.toBe(views);
   });
 
-  it.each(['succeeded', 'failed', 'cancelled'] as const)(
-    'keeps the authoritative %s Activity close picture through record filing',
-    (state) => {
-      const raw = {
-        id: 'activity-1',
-        title: 'Activity',
-        classification: 'activity',
-        seq: 0,
-        activity: activityProjection(),
-        nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
-      };
-      const running = liveViewFromWire(raw)!;
-      const views = applyLiveViewEvent([running], {
-        type: VIEW_CLOSE_EVENT, kind: 'live',
-        view_id: running.id,
-        ts: 99,
-        result: {
-          view: {
-            title: 'Activity',
-            activity: activityProjection(state),
-            nodes: [{ id: 'status', type: 'status', text: state, tone: 'ok' }],
-          },
-        },
-      });
-
-      expect(views).toHaveLength(1);
-      expect(views[0]).toMatchObject({
-        id: running.id,
-        classification: 'activity',
-        is_settled: true,
-        ended_at: 99,
-        activity: { state, counts: { running: 0 } },
-        nodes: [{ text: state }],
-      });
-    },
-  );
-
-  // Checked against a real gateway's sessions: all 258 closes carried a picture
-  // byte-identical to what `open` + patches had already produced. A gateway that
-  // stops sending the copy must settle the pane, never drop it.
-  it('settles the patched Activity picture when the close carries no view', () => {
-    const running = liveViewFromWire({
-      id: 'activity-1',
-      title: 'Activity',
-      classification: 'activity',
-      activity: activityProjection(),
-      nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
-    })!;
-    const views = applyLiveViewEvent([running], {
-      type: VIEW_CLOSE_EVENT, kind: 'live',
-      view_id: running.id,
-      ts: 42,
-      result: { is_completed: true, reason: 'completed' },
-    });
-    expect(views).toHaveLength(1);
-    expect(views[0]).toMatchObject({
-      id: running.id,
-      classification: 'activity',
-      is_settled: true,
-      ended_at: 42,
-      nodes: [{ text: 'running' }],
-    });
-  });
-
-  it('drops an Activity close whose terminal picture is not paintable', () => {
-    const running = liveViewFromWire({
-      id: 'activity-1',
-      title: 'Activity',
-      classification: 'activity',
-      activity: activityProjection(),
-      nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
-    })!;
-    expect(
-      applyLiveViewEvent([running], {
-        type: VIEW_CLOSE_EVENT, kind: 'live',
-        view_id: running.id,
-        result: { view: { activity: { state: 'succeeded' } } },
-      }),
-    ).toEqual([]);
-  });
-
-  it('replaces the prior settled Activity when the next one opens', () => {
-    const raw = {
-      id: 'activity-2',
-      title: 'Activity',
-      classification: 'activity',
-      activity: activityProjection(),
-      nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
-    };
-    const next = applyLiveViewEvent(
-      [{ ...liveViewFromWire({ ...raw, id: 'activity-1' })!, is_settled: true }],
-      { type: VIEW_OPEN_EVENT, kind: 'live', view_id: raw.id, view: raw },
-    );
-    expect(next).toHaveLength(1);
-    expect(next[0]).toMatchObject({ id: 'activity-2' });
-    expect(next[0].is_settled).toBeUndefined();
-  });
+  // Protocol 7 retired the settled-Activity-view lifecycle these cases covered: a
+  // close frame now simply drops its view, because the form that produced the work
+  // carries the terminal snapshot and nothing has to outlive its own close.
 });
 
 describe('what a table and a progress state', () => {
@@ -585,27 +491,26 @@ describe('the record of a settled view', () => {
     expect(log.total_lines).toBe(1);
   });
 
-  // Regression, issue td-03e5cf: the settled Activity receipt kept its opening
-  // "running" projection because close views intentionally omit immutable metadata.
+  // Regression, issue td-03e5cf: a settled receipt kept its opening projection
+  // because close views intentionally omit immutable metadata. The hydration is
+  // what fixes that, and it belongs to every view — protocol 7 left it in place
+  // and only took away the classified Activity view it was first reported on.
   it('hydrates a partial close view from the opening declaration', () => {
     const running = {
-      id: 'activity-1',
-      title: 'Activity',
-      classification: 'activity',
+      id: 'run-1',
+      title: 'Build',
       seq: 0,
-      activity: activityProjection(),
       nodes: [{ id: 'status', type: 'status', text: 'running', tone: 'running' }],
     };
     const record = liveRecordFromText(
       [
         JSON.stringify({ kind: 'open', at: 1, view: running }),
         closeLine({
-          view_id: 'activity-1',
+          view_id: 'run-1',
           reason: 'completed',
           is_completed: true,
           view: {
-            title: 'Activity',
-            activity: activityProjection('succeeded'),
+            title: 'Build',
             nodes: [{ id: 'status', type: 'status', text: 'succeeded', tone: 'ok' }],
           },
         }),
@@ -613,8 +518,7 @@ describe('the record of a settled view', () => {
     );
 
     expect(record?.view).toMatchObject({
-      id: 'activity-1',
-      classification: 'activity',
+      id: 'run-1',
       nodes: [{ text: 'succeeded', tone: 'ok' }],
     });
   });
@@ -626,23 +530,11 @@ describe('the record of a settled view', () => {
 });
 
 describe('the current Activity wire contract', () => {
-  const raw = {
-    id: 'activity-1',
-    title: 'Activity',
-    classification: 'activity',
-    activity: activityProjection(),
-    nodes: [],
-  };
-
-  // Regression, issue td-1e6086: the Companion rejected Activity after the host
-  // removed its duplicate status/stat/steps nodes.
-  it('keeps host Activity as the sole paintable projection', () => {
-    const view = liveViewFromWire(raw);
-    expect(view).toMatchObject({
-      classification: 'activity',
-      activity: { schema_version: 1 },
-      nodes: [],
-    });
+  // Protocol 7 took Activity off the Live View rail: it is no longer a classified
+  // view with a projection hanging off it, so the projection is parsed on its own
+  // — from the transient `block.activity` frame and from the terminal block event.
+  it('reads a bare projection off the wire', () => {
+    expect(activityProjectionFromWire(activityProjection())).toMatchObject({ state: 'running' });
   });
 
   it('reads structured diff evidence and rejects incomplete lines', () => {
@@ -663,45 +555,41 @@ describe('the current Activity wire contract', () => {
       is_redacted: true,
     };
     const withDiff = {
-      ...raw,
-      activity: {
-        ...projection,
-        rows: [{ ...projection.rows[0], evidence: [diff] }],
-      },
+      ...projection,
+      rows: [{ ...projection.rows[0], evidence: [diff] }],
     };
-    expect(liveViewFromWire(withDiff)?.activity?.rows[0].evidence[0]).toEqual(diff);
+    expect(activityProjectionFromWire(withDiff)?.rows[0].evidence[0]).toEqual(diff);
     expect(
-      liveViewFromWire({
+      activityProjectionFromWire({
         ...withDiff,
-        activity: {
-          ...withDiff.activity,
-          rows: [
-            {
-              ...withDiff.activity.rows[0],
-              evidence: [{ ...diff, lines: [{ kind: 'addition' }] }],
-            },
-          ],
-        },
+        rows: [
+          {
+            ...withDiff.rows[0],
+            evidence: [{ ...diff, lines: [{ kind: 'addition' }] }],
+          },
+        ],
       }),
     ).toBeNull();
   });
 
-  it('rejects missing, malformed, and unknown Activity projection versions', () => {
-    expect(liveViewFromWire({ ...raw, activity: undefined })).toBeNull();
-    expect(liveViewFromWire({ ...raw, activity: { ...activityProjection(), schema_version: 2 } })).toBeNull();
-    expect(liveViewFromWire({ ...raw, activity: { ...activityProjection(), rows: [{ id: 'broken' }] } })).toBeNull();
+  it('rejects a missing, malformed, or retired Activity projection', () => {
+    expect(activityProjectionFromWire(undefined)).toBeNull();
+    expect(activityProjectionFromWire({ ...activityProjection(), rows: [{ id: 'broken' }] })).toBeNull();
+    // Protocol 7 dropped both: a payload still wearing either came from a gateway
+    // the compatibility gate should already have refused.
+    expect(activityProjectionFromWire({ ...activityProjection(), schema_version: 1 })).toBeNull();
+    expect(
+      activityProjectionFromWire({ ...activityProjection(), anchor: { iteration: 1, form_index: 0 } }),
+    ).toBeNull();
   });
 
-  it('replaces semantic Activity data atomically', () => {
-    const running = liveViewFromWire(raw)!;
-    const settled = activityProjection('succeeded');
-    const next = applyLivePatch(running, frame(running, 1, [{ op: 'set-activity', activity: settled }]));
-    expect(next.activity).toMatchObject({ state: 'succeeded', counts: { running: 0, succeeded: 1 } });
-    expect(next.nodes).toEqual([]);
+  // The gate that refuses an older gateway has already run by the time a frame is
+  // parsed, so a view still wearing the retired vocabulary is a contract violation
+  // rather than a shape to tolerate.
+  it('refuses a view still carrying the retired Activity vocabulary', () => {
+    const view = { id: 'v-1', title: 'Build', nodes: [{ id: 'n1', type: 'status', text: 'go', tone: 'running' }] };
+    expect(liveViewFromWire(view)).toMatchObject({ id: 'v-1' });
+    expect(liveViewFromWire({ ...view, classification: 'activity' })).toBeNull();
+    expect(liveViewFromWire({ ...view, activity: activityProjection() })).toBeNull();
   });
-
-  it('rejects unknown classifications', () => {
-    expect(liveViewFromWire({ ...raw, classification: 'extension' })).toBeNull();
-  });
-
 });

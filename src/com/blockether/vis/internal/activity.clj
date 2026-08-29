@@ -9,12 +9,12 @@
 
 (def max-rows 128)
 (def max-receipt-bytes (* 64 1024))
-(defn empty-state
-  "Initial rendered Activity state."
-  [anchor]
-  {:schema-version event/schema-version
-   :anchor anchor
-   :state :idle
+(def empty-state
+  "Initial rendered Activity state.
+
+   Ownerless: the form that contains this snapshot is its only identity, so no
+   interaction, iteration, form, tool-call or view coordinate appears inside it."
+  {:state :idle
    :rows []
    :counts {:running 0 :succeeded 0 :failed 0 :cancelled 0}
    :omitted {:rows 0 :by-classification {}}})
@@ -193,10 +193,20 @@
           (assoc-in [:counts :running] 0)
           (update-in [:counts outcome] (fnil + 0) running)))))
 
+(defn detected?
+  "True once at least one invocation was observed.
+
+   A form that ran no tool carries no `:activity` at all — an empty panel is not
+   the same statement as a form that did nothing."
+  [state]
+  (boolean (or (seq (:rows state))
+               (pos? (long (get-in state [:omitted :rows] 0)))
+               (some #(pos? (long %)) (vals (:counts state))))))
+
 (defn replay
   "Reduce a lifecycle event stream into one deterministic snapshot."
-  [anchor events]
-  (reduce reduce-event (empty-state anchor) events))
+  [events]
+  (reduce reduce-event empty-state events))
 
 (defn byte-size ^long [snapshot] (long (event/utf8-bytes (wire/json-str snapshot))))
 
@@ -381,16 +391,17 @@
     (assoc :is-truncated true)))
 
 (defn presentation
-  "Versioned bounded Activity data shared by TUI, Companion, and settled replay.
+  "Bounded Activity data shared by TUI, Companion, and settled replay.
 
-   It contains semantic values only. Channel markup stays in each painter, while
+   It contains semantic values only, and no key naming its owner: the form that
+   carries it supplies that. Channel markup stays in each painter, while
    presenter and signal names arrive as strings so cross-process readers never
-   infer them from operation names."
+   infer them from operation names. Every collection is realized here, because
+   this value is persisted inside the form and a lazy seq would settle as a
+   placeholder instead of the picture the human watched."
   [state]
   (let [state (snapshot state)]
-    {:schema-version event/schema-version
-     :anchor (:anchor state)
-     :state (enum-name (:state state))
+    {:state (enum-name (:state state))
      :counts (:counts state)
      :rows (mapv presentation-row (:rows state))
      :omitted (:omitted state)}))
@@ -484,9 +495,8 @@
   "Nil for the current bounded Activity projection, otherwise its refusal."
   [value]
   (cond (not (map? value)) "Activity presentation must be a map"
-        (not (closed? #{:schema-version :anchor :state :counts :rows :omitted} value))
+        (not (closed? #{:state :counts :rows :omitted} value))
         "Activity presentation has unknown keys"
-        (not= event/schema-version (:schema-version value)) "unknown Activity schema version"
         (not (contains? presentation-states (:state value))) "unknown Activity state"
         (not (counts? (:counts value))) "Activity counts are malformed"
         (not (vector? (:rows value))) "Activity rows must be a vector"

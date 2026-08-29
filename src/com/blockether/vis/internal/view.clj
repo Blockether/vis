@@ -25,7 +25,6 @@
    and is readable only through [[reveal-secret]] from the trusted extension side."
   (:require [charred.api :as json]
             [clojure.string :as str]
-            [com.blockether.vis.internal.activity :as activity]
             [com.blockether.vis.internal.channel-events :as channel-events]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.gateway.wire :as wire]
@@ -61,10 +60,6 @@
   (zero? (long (or timeout-ms no-timeout-ms))))
 
 (defonce ^:private pending (atom {}))
-
-(def ^:private ^:dynamic *system-live-declaration*
-  "True only while the host declares its own non-interruptible Activity view."
-  false)
 
 (defonce ^:private secrets (atom {}))
 
@@ -1165,11 +1160,7 @@
         (mapv #(live-node invalid-live-view! %) raw-nodes)
 
         _
-        (when (and (empty? nodes)
-                   (not= "activity"
-                         (some-> (trimmed (pick* view :classification))
-                                 str/lower-case)))
-          (invalid-live-view! ":nodes must not be empty"))
+        (when (empty? nodes) (invalid-live-view! ":nodes must not be empty"))
 
         _
         (when-not (or (empty? nodes) (apply distinct? (mapv :id nodes)))
@@ -1177,57 +1168,24 @@
                                    (str/join ", " (sort (mapv :id nodes))))))
 
         session-id
-        (or (trimmed (pick* view :session-id)) (ambient-session-id))
+        (or (trimmed (pick* view :session-id)) (ambient-session-id))]
 
-        classification
-        (some-> (trimmed (pick* view :classification))
-                str/lower-case)
+    (checked-live-view (cond-> {:id (str (random-uuid))
+                                :title title
+                                :nodes nodes
+                                :timeout-ms
+                                (normalize-timeout view no-timeout-ms invalid-live-view!)
+                                :channel-ids (normalize-channel-ids view invalid-live-view!)
+                                :seq 0
+                                :created-at (util/now-ms)}
+                         session-id
+                         (assoc :session-id session-id)
 
-        activity?
-        (= "activity" classification)
+                         (trimmed (pick* view :description))
+                         (assoc :description (trimmed (pick* view :description)))
 
-        activity-presentation
-        (pick* view :activity)
-
-        _
-        (when (and activity? (not *system-live-declaration*))
-          (invalid-live-view!
-            "Activity views are host-owned and cannot be declared by an extension"))
-
-        _
-        (when (and activity? (nil? activity-presentation))
-          (invalid-live-view! "host Activity needs its versioned :activity projection"))
-
-        _
-        (when (and (not activity?) (some? activity-presentation))
-          (invalid-live-view! ":activity only exists on the host Activity view"))
-
-        _
-        (when-let [reason (and activity-presentation
-                               (activity/presentation-error activity-presentation))]
-          (invalid-live-view! reason))]
-
-    (checked-live-view
-      (cond-> {:id (str (random-uuid))
-               :title title
-               :nodes nodes
-               :timeout-ms (normalize-timeout view no-timeout-ms invalid-live-view!)
-               :channel-ids (normalize-channel-ids view invalid-live-view!)
-               :seq 0
-               :created-at (util/now-ms)}
-        session-id
-        (assoc :session-id session-id)
-
-        (trimmed (pick* view :description))
-        (assoc :description (trimmed (pick* view :description)))
-
-        (trimmed (pick* view :source))
-        (assoc :source (trimmed (pick* view :source)))
-
-        activity?
-        (assoc :classification
-          :activity :activity
-          activity-presentation)))))
+                         (trimmed (pick* view :source))
+                         (assoc :source (trimmed (pick* view :source)))))))
 
 (def ^:private live-op-value
   "How ONE key of a patch operation is normalized, by key. A table rather than a
@@ -1265,10 +1223,6 @@
             (normalize-live-items fail! :steps value))
    :links (fn [fail! value]
             (normalize-live-items fail! :links value))
-   :activity (fn [fail! value]
-               (if-let [reason (activity/presentation-error value)]
-                 (fail! reason)
-                 value))
    :node-spec (fn [fail! value]
                 (live-node fail! value))})
 
@@ -1641,8 +1595,7 @@
    :align view-spec/live-aligns
    :direction view-spec/group-directions
    :target-kind view-spec/link-targets
-   :reason view-spec/live-reasons
-   :classification view-spec/live-classifications})
+   :reason view-spec/live-reasons})
 
 (defn- live<-wire
   "One decoded live value as the engine holds it: canonical keys back to their
@@ -1788,7 +1741,6 @@
 
         entry
         {:kind :live
-         :is-system *system-live-declaration*
          :id view-id
          :view (atom view)
          :file (sink/open! view)
@@ -1821,24 +1773,6 @@
                            "and it still ends in the verdict the model reads")}))
     view))
 
-(defn open-activity!
-  "Open one host-owned Activity projection through the ordinary Live View rail."
-  [{:keys [session-id state]}]
-  (binding [*system-live-declaration*
-            true
-
-            ;; Activity reports work inside the enclosing evaluation; unlike an
-            ;; extension-owned watch view, it must never disable that watchdog.
-            rt/*blocking-wall-hold*
-            nil]
-
-    (open-live! (cond-> {:title "Activity"
-                         :classification "activity"
-                         :activity (activity/presentation state)
-                         :nodes []}
-                  session-id
-                  (assoc :session-id session-id)))))
-
 (defn patch-live!
   "Apply `patch` to live view `view-id` and return the view it made.
 
@@ -1861,17 +1795,9 @@
             (materializer/apply-patch @cell applied)]
 
         (reset! cell patched)
-        ;; Activity replacement patches are ephemeral; its final verdict already
-        ;; carries the bounded materialized picture used for restore.
-        (when-not (:is-system entry) (sink/append! (:file entry) applied))
+        (sink/append! (:file entry) applied)
         (publish! (:channel-ids entry) (lifecycle-event :view/patch entry {:patch applied}))
         patched))))
-
-(defn patch-activity!
-  "Replace a running Activity's sole bounded semantic projection."
-  ([view-id state] (patch-activity! view-id state false))
-  ([view-id state _settled?]
-   (patch-live! view-id {:ops [{:op "set-activity" :activity (activity/presentation state)}]})))
 
 (defn select-live!
   "Select `item-ids` in selectable table `node-id` of open view `view-id`.
@@ -1983,11 +1909,6 @@
                  :storage-uri (sink/record-uri (:session-id view) (:view-id result))
                  :size size
                  :line-count line-count}
-          (= :activity (:classification view))
-          (assoc :classification
-            :activity :activity-anchor
-            (get-in view [:activity :anchor]))
-
           (<= (long size) (long view-spec/live-artifact-inline-bytes))
           (assoc :base64
             (.encodeToString (java.util.Base64/getEncoder)
@@ -2142,15 +2063,10 @@
                model-result))))))))
 
 (defn interrupt-live!
-  "End an extension-owned live view because a human stopped watching. Host-owned
-   Activity has no independent stop control; cancelling its enclosing evaluation
-   remains authoritative."
+  "End an extension-owned live view because a human stopped watching."
   ([view-id] (interrupt-live! view-id nil))
   ([view-id note]
-   (when-let [entry (live-entry view-id)]
-     (when (:is-system entry)
-       (invalid-live-view! "Activity cannot be stopped independently; cancel its evaluation"))
-     (close-live! view-id {:reason :interrupted} {:note note}))))
+   (when (live-entry view-id) (close-live! view-id {:reason :interrupted} {:note note}))))
 
 (defn with-live!
   "Open the view `view` declares, hand its id to `body`, and CLOSE it — on a

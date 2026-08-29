@@ -939,22 +939,13 @@
       (:iteration-id a) :tool-call-id
       (:tool-call-id a))))
 
-(defn- envelope-with-view-records
-  "Attach settled live-view records to an execution envelope without changing its
-   model-facing result. Host Activity uses this presentation-only path: its receipt
-   is available to channels, but its rendered snapshot is neither Python stdout nor
-   model context."
-  [envelope attachments]
-  (if (seq attachments) (update envelope :attachments (fnil into []) attachments) envelope))
-
 (defn- envelope-with-settled-views
   "Fold the semantic live views a Python block ABANDONED onto its envelope.
 
    These are user-authored `vis.live` views, whose close verdict is a documented
    model result. Their records ride as `:attachments`, while the picture they ended
    on is appended to stdout because the interrupted block never returned that result
-   itself. Host Activity is only an observer and MUST use
-   [[envelope-with-view-records]] instead."
+   itself."
   [envelope swept]
   (if-not swept
     envelope
@@ -962,18 +953,31 @@
                              (mapv (fn [verdict]
                                      (live/->markdown (:view verdict) {:result verdict}))
                                    (:verdicts swept)))]
-      (cond-> (envelope-with-view-records envelope (:attachments swept))
+      (cond-> envelope
+        (seq (:attachments swept))
+        (update :attachments (fnil into []) (:attachments swept))
+
         (not (str/blank? document))
         (update :stdout
                 (fn [printed]
                   (if (str/blank? (str printed)) document (str printed "\n\n" document))))))))
 
+(def ^:private activity-coalesce-ms
+  "Floor between two live Activity publications from one block.
+
+   A running snapshot is a convenience, not the record: it rides the bus as a
+   TRANSIENT frame a full queue may drop, and every publication also costs a line
+   of the turn's journal, which is truncated whole once it passes its file cap. The
+   settled snapshot on the form is what persists, so a tool storm coalesces here
+   instead of spending the turn's replay budget on pictures nobody reads."
+  120)
+
 (defn- serial-activity-dispatcher
   "Run Activity lifecycle transitions FIFO off the tool-callback threads.
 
-   Returns `[dispatch! drain! shutdown!]`. `dispatch!` captures the caller's
-   dynamic bindings, `drain!` waits for every transition already submitted, and
-   the daemon worker owns no process lifetime."
+   Returns `[dispatch! shutdown!]`. `dispatch!` captures the caller's dynamic
+   bindings and answers the Future the settler waits on; the daemon worker owns
+   no process lifetime."
   []
   (let [executor
         (java.util.concurrent.Executors/newSingleThreadExecutor
@@ -985,13 +989,9 @@
         dispatch!
         (fn [f]
           (let [^java.util.concurrent.Callable task (bound-fn [] (f))]
-            (.submit ^ExecutorService executor task)))
+            (.submit ^ExecutorService executor task)))]
 
-        drain!
-        (fn []
-          (.get ^Future (dispatch! (constantly nil))))]
-
-    [dispatch! drain! #(.shutdown ^ExecutorService executor)]))
+    [dispatch! #(.shutdown ^ExecutorService executor)]))
 
 (defn- run-python-code
   "Run an agent code block through the embedded GraalPy sandbox. Wraps the
@@ -1010,32 +1010,31 @@
                                                     (str (random-uuid)))
                                  :form-index (long (or (:activity/form-index env) 0))})
 
+        [dispatch-activity! shutdown-activity!]
+        (serial-activity-dispatcher)
+
+        ;; Ownerless: the form this block becomes is the snapshot's only identity.
         activity-state
-        (atom (activity/empty-state {:evaluation-id (:evaluation-id activity-context)
-                                     :iteration (:activity/iteration env)
-                                     :form-index (:form-index activity-context)}))
+        (atom activity/empty-state)
 
-        activity-view-id
-        (atom nil)
-
+        ;; `:open` until the settler freezes the picture. A tool callback that lands
+        ;; after that is dropped rather than allowed to edit a snapshot already
+        ;; handed to the wire and the database.
         activity-phase
         (atom :open)
 
-        [dispatch-activity! _drain-activity! shutdown-activity!]
-        (serial-activity-dispatcher)
+        activity-published-at
+        (atom 0)
 
-        close-activity-view!
-        (fn [settlement]
-          (when-let [view-id @activity-view-id]
-            (when-not (= :closed @activity-phase)
-              (reset! activity-phase :closing)
-              (try (view/patch-activity! view-id @activity-state true)
-                   (let [result (view/close-live! view-id settlement nil)]
-                     (reset! activity-phase :closed)
-                     result)
-                   (catch Throwable t
-                     (reset! activity-phase (if (view/live-view view-id) :open :closed))
-                     (throw t))))))
+        publish-activity!
+        (fn [state]
+          (when-let [emit! (:activity/on-snapshot env)]
+            (let [now (util/now-ms)]
+              (when (and (activity/detected? state)
+                         (>= (- (long now) (long @activity-published-at))
+                             (long activity-coalesce-ms)))
+                (reset! activity-published-at now)
+                (try (emit! (activity/presentation state)) (catch Throwable _ nil))))))
 
         cancel-token
         (:cancel-token env)
@@ -1049,8 +1048,7 @@
 
               model-attachments
               (fn []
-                (remove live/activity-attachment?
-                  (persistance/db-list-session-attachments-meta d sid)))]
+                (persistance/db-list-session-attachments-meta d sid))]
 
           (when (and d sid)
             {:list (fn []
@@ -1078,18 +1076,8 @@
           (try (dispatch-activity! (fn []
                                      (when (= :open @activity-phase)
                                        (activity-event/accept! activity-collector event)
-                                       (let [state (swap! activity-state activity/reduce-event
-                                                     event)]
-                                         (when (:session-id env)
-                                           (if-let [view-id @activity-view-id]
-                                             (view/patch-activity! view-id state)
-                                             (reset! activity-view-id
-                                               (:id (view/open-activity!
-                                                      {:session-id (:session-id env)
-                                                       :iteration-id (:iteration-id env)
-                                                       :iteration (:activity/iteration env)
-                                                       :form-index (:form-index activity-context)
-                                                       :state state})))))))
+                                       (publish-activity!
+                                         (swap! activity-state activity/reduce-event event)))
                                      (when tool-event-fn (tool-event-fn event))))
                (catch java.util.concurrent.RejectedExecutionException _ nil)))
 
@@ -1194,51 +1182,38 @@
 
         settle-activity!
         (fn [envelope]
-          (let [settlement
-                (cond (:timeout? envelope) {:reason :timeout :summary "Evaluation timed out"}
-                      (:error envelope) {:reason :failed
-                                         :error (or (:message (:error envelope))
-                                                    "Evaluation failed")}
-                      :else {:reason :completed :summary "Evaluation activity"})
-
-                outcome
+          (let [outcome
                 (cond (:timeout? envelope) :cancelled
                       (:error envelope) :failed
                       :else :cancelled)
 
-                sink
-                (atom [])
+                summary
+                (cond (:timeout? envelope) "Evaluation timed out"
+                      (:error envelope) (or (:message (:error envelope)) "Evaluation failed")
+                      :else "Evaluation activity")
 
-                result
-                (binding [mpl-capture/*attachment-sink* sink]
-                  (let [attempt! (fn []
-                                   (try {:result
-                                         (.get ^Future
-                                               (dispatch-activity!
-                                                 (fn []
-                                                   (binding [mpl-capture/*attachment-sink* sink]
-                                                     (swap! activity-state activity/settle-running
-                                                       outcome
-                                                       (or (:summary settlement)
-                                                           (:error settlement)))
-                                                     (close-activity-view! settlement)))))}
-                                        (catch ExecutionException e {:error (.getCause e)})))
-                        first-attempt (attempt!)
-                        final-attempt (if (:error first-attempt) (attempt!) first-attempt)]
-
-                    (when-let [error (:error final-attempt)]
-                      (tel/log! {:level :warn
-                                 :id ::activity-settlement-failed
-                                 :error error
-                                 :msg "Activity settlement failed after retry"}))
-                    (:result final-attempt)))]
+                ;; FIFO behind every transition already submitted: the settler sees
+                ;; the last state the reducer reached, then closes the gate.
+                final
+                (try (.get ^Future
+                           (dispatch-activity!
+                             (fn []
+                               (reset! activity-phase :settled)
+                               (swap! activity-state activity/settle-running outcome summary))))
+                     (catch ExecutionException e
+                       (tel/log! {:level :warn
+                                  :id ::activity-settlement-failed
+                                  :error (.getCause e)
+                                  :msg "Activity settlement failed"})
+                       @activity-state))]
 
             (shutdown-activity!)
-            (if result
-              ;; Activity is a presentation observer. File its receipt for channels,
-              ;; but never reinterpret its final picture as Python output.
-              (envelope-with-view-records envelope (mpl-capture/drain sink))
-              envelope)))
+            ;; Activity is what the block DID, beside what it returned. It rides the
+            ;; form itself: never Python stdout, never model context, and never a
+            ;; second artifact a client would have to fetch.
+            (cond-> envelope
+              (activity/detected? final)
+              (assoc :activity (activity/presentation final)))))
 
         timeout-sentinel
         (Object.)
@@ -2126,11 +2101,9 @@
 (def ^:private live-record-media-type "application/vnd.vis.live+ndjson")
 
 (defn- model-live-record?
-  "True for a semantic extension-owned live-view record. Host Activity uses the
-   same storage rail for presentation, but never becomes model context."
+  "True for a semantic extension-owned live-view record."
   [attachment]
-  (and (= live-record-media-type (or (:media-type attachment) (:media_type attachment)))
-       (not (live/activity-attachment? attachment))))
+  (= live-record-media-type (or (:media-type attachment) (:media_type attachment))))
 (defn- live-record-context-line
   "Tell a later model where one settled live-view record can be reopened."
   [att]
@@ -5241,7 +5214,20 @@
                               r (let [activity-env (assoc environment
                                                      :activity/evaluation-id activity-evaluation-id
                                                      :activity/iteration iteration-position
-                                                     :activity/form-index idx)]
+                                                     :activity/form-index idx
+                                                     ;; Live Activity belongs to the ITERATION
+                                                     ;; protocol and routes on the block's own
+                                                     ;; position — the very coordinate
+                                                     ;; `block.started`/`block.output` already carry.
+                                                     :activity/on-snapshot
+                                                     (when (and on-chunk (not suppress-form-start?))
+                                                       (fn [snapshot]
+                                                         (on-chunk {:phase :form-activity
+                                                                    :iteration iteration-position
+                                                                    :position idx
+                                                                    :count total-blocks
+                                                                    :scope scope
+                                                                    :activity snapshot}))))]
                                   (if tool-event-fn
                                     (execute-code activity-env expr :tool-event-fn tool-event-fn)
                                     (execute-code activity-env expr)))]
@@ -5334,6 +5320,10 @@
                      :envelope (:envelope result*)
                      :role (:role result*)
                      :timeout? (boolean (:timeout? result*))
+                     ;; What the block DID, beside what it returned. The terminal
+                     ;; form event is the one authoritative carrier: a running
+                     ;; snapshot is transient and may be dropped.
+                     :activity (:activity result*)
                      :repaired? (boolean (:repaired? result*))}))
                 {:block expr
                  :result result*
@@ -5402,6 +5392,12 @@
 
                       (:vis/silent result)
                       (assoc :vis/silent true)
+
+                      ;; The settled Activity snapshot travels ON the block, so the
+                      ;; form envelope, the wire and the stored iteration all carry
+                      ;; the one value the settler froze.
+                      (some? (:activity result))
+                      (assoc :activity (:activity result))
 
                       ;; Tool-call identity rides onto the block so
                       ;; `blocks->forms` stamps each form envelope with the

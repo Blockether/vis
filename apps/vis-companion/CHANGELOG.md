@@ -2,6 +2,37 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (5061) — 2026-08-29
+<!-- commit: a45da30c17e23de30ca9f157c85c627d26caa8de -->
+
+- Stand the project sheets on the glass too
+- Stop offering Latest to a reader who taps the composer
+- Mirror the filled close face into Blockether Dark
+- Give the dock's boxes the composer's corner
+- Fill the Blockether Light close circle
+- Reuse downloaded artifact bytes
+- Make touch controls act on release
+- Drop the light/dark column from the theme list
+- Stop wrapping a sole machine in its own rail
+- Round dialog headers
+- Give the project band air again
+
+## 0.1.41 (5049) — 2026-08-29
+<!-- commit: 1abdb07bf86bd9744ad9f4b15520bfb77813b554 -->
+
+- Correlate requests across app wake
+- Round the machine switcher off its own box
+- Stand each desk project on its own sheet
+- Show image actions as icons
+- Add exportable app diagnostics
+- Give the desk rail's column back to the list
+- Stand the desk list on one grid
+- Open sessions at latest turn
+- Count every LLM call in session usage
+- Remove empty response placeholder
+- Remove mismatch recovery buttons
+- Record build 5033
+
 ## 0.1.41 (5033) — 2026-08-29
 <!-- commit: d667f47b63696b1c0f268289a2a73ac2ff9ebb38 -->
 

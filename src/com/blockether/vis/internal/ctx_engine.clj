@@ -1126,7 +1126,7 @@
    1-based position and the engine cursor into the form envelope shape
    (one block = one form, 1:1):
 
-     {:scope :tag :src :duration-ms :result :error :stdout}
+     {:scope :tag :src :duration-ms :result :error :stdout :activity}
 
    `:src` carries the block's source text. `:tag` is derived from the source via
    `classify-form-tag`. `:result` is included only when the block has
@@ -1203,7 +1203,13 @@
            ;; The op-card HEADLINE (tool-authored summary) so a restored trace titles
            ;; the card the same way the live stream did — not a first-line body slice.
            (some? (:result-summary block))
-           (assoc :result-summary (:result-summary block)))]
+           (assoc :result-summary (:result-summary block))
+
+           ;; This projection is a WHITELIST: a key with no branch here is dropped
+           ;; in silence. Activity — what the form DID, beside what it returned —
+           ;; needs its own, or it survives the reducer and dies at the envelope.
+           (some? (:activity block))
+           (assoc :activity (:activity block)))]
 
      ;; The display BODY is a PURE PROJECTION of what the envelope already carries,
      ;; so it is NOT stored: `form/result-render` re-derives the same string on the

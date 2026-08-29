@@ -15,7 +15,6 @@
    envelopes and checks the five boundary seams once, never per keystroke."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [com.blockether.vis.internal.activity :as activity]
             [com.blockether.vis.internal.util :as util]))
 
 ;; The closed vocabulary
@@ -164,16 +163,14 @@
   {"attachment" :attachment "path" :path "url" :url})
 
 (def live-ops
-  "What one patch operation DOES. The first four address ONE node BY ID, the next
-   two change the view's SHAPE, and `set-activity` replaces the host-owned bounded
-   semantic projection beside Activity's ordinary nodes. CLOSED."
+  "What one patch operation DOES. The first four address ONE node BY ID, and the
+   last two change the view's SHAPE. CLOSED."
   {"set" :set           ; replace a node's own state (status text, progress value …)
    "append" :append     ; add lines to a log; upsert rows, steps, stats, links by id
    "remove" :remove     ; drop keyed ITEMS by id
    "clear" :clear       ; empty a log, table, step list, stat strip or link list
    "add-node" :add-node ; add a WHOLE node mid-run (a second table, a per-device log)
-   "remove-node" :remove-node ; drop a whole node, its items with it
-   "set-activity" :set-activity}) ; replace host Activity semantics atomically
+   "remove-node" :remove-node}) ; drop a whole node, its items with it
 
 (def live-tones
   "How a surface COLOURS one line, row, step or stat. CLOSED."
@@ -190,11 +187,6 @@
   {"left" :left "right" :right})
 
 (def live-sort-dirs "Which way a `{:by …}` order runs. CLOSED." {"asc" :asc "desc" :desc})
-
-(def live-classifications
-  "Who owns the view's SPECIALIZATION. CLOSED: `activity` is the host's own
-   projection and extensions cannot declare it (enforced at declare time)."
-  {"activity" :activity})
 
 (def live-reasons
   "Why a view ended. CLOSED, and the only vocabulary an extension branches on."
@@ -277,8 +269,7 @@
 
 (def live-view-keys
   "Every key a live view may carry, engine stamps included."
-  (into #{:title :description :source :session-id :channel-ids :nodes :timeout-ms :classification
-          :activity}
+  (into #{:title :description :source :session-id :channel-ids :nodes :timeout-ms}
         live-view-stamp-keys))
 
 (def live-picture-keys
@@ -286,7 +277,7 @@
    bookkeeping (`:id`, `:session-id`, `:channel-ids`, the stamps) left behind. It
    is what the verdict hands the model and what a parsed document answers, so one
    shape crosses in both directions."
-  #{:title :description :nodes :activity})
+  #{:title :description :nodes})
 
 (def live-elided-keys
   "Every key one elision carries: which node a budget cut and how many items it
@@ -306,8 +297,7 @@
    :remove #{:op :node-id :item-ids}
    :clear #{:op :node-id}
    :add-node #{:op :node-spec :after}
-   :remove-node #{:op :node-id}
-   :set-activity #{:op :activity}})
+   :remove-node #{:op :node-id}})
 
 (def live-op-keys
   "Every key any patch operation may carry — the union the parser derives its
@@ -356,7 +346,7 @@
    (`:storage-uri`, `:size`, `:line-count`, and `:base64` only under
    [[live-artifact-inline-bytes]])."
   #{:id :view-id :session-id :title :media-type :audience :ended-at :reason :view :storage-uri :size
-    :line-count :base64 :classification :activity-anchor})
+    :line-count :base64})
 (defn contract-vocabulary
   "This vocabulary as DATA, for `com.blockether.vis.contract.python-host` to render
    into `vis_contract/contract.json` — the document every surface that cannot
@@ -670,13 +660,6 @@
 (s/def ::cancel-label util/non-blank-string?)
 (s/def ::is-cancellable boolean?)
 (s/def ::timeout-ms nat-int?)
-(s/def ::classification (set (vals live-classifications)))
-(s/def ::activity-anchor
-  (s/and map?
-         #(= #{:evaluation-id :iteration :form-index} (set (keys %)))
-         #(util/non-blank-string? (:evaluation-id %))
-         #(nat-int? (:iteration %))
-         #(nat-int? (:form-index %))))
 
 (s/def ::channel-ids
   ;; One id twice would open the same dialog twice and answer it once.
@@ -1036,23 +1019,11 @@
          #(<= (count (live-tree %)) (long (:max-nodes view-defaults)))
          #(or (empty? %) (apply distinct? (map :id (live-tree %))))))
 
-(s/def ::activity (s/and map? #(nil? (activity/presentation-error %))))
-
-(defn- activity-payload-matches-classification?
-  [{:keys [classification activity]}]
-  (if (= :activity classification) (map? activity) (nil? activity)))
-
-(defn- nodes-match-classification?
-  "Only host Activity is data without generic Live View nodes; extension views still paint one."
-  [{:keys [classification nodes]}]
-  (or (= :activity classification) (seq nodes)))
-
 (s/def ::live-view
   (s/and #(closed? live-view-keys %)
          (s/keys :req-un [::id ::title ::channel-ids ::nodes ::timeout-ms ::seq ::created-at]
-                 :opt-un [::description ::source ::session-id ::classification ::activity])
-         activity-payload-matches-classification?
-         nodes-match-classification?))
+                 :opt-un [::description ::source ::session-id])
+         #(seq (:nodes %))))
 
 ;; One patch. `:seq` is monotonic PER VIEW, so a surface that sees a gap re-reads
 ;; the snapshot instead of painting a torn view.
@@ -1073,7 +1044,6 @@
 (defmethod live-op-form :clear [_] (s/keys :req-un [::op ::node-id]))
 (defmethod live-op-form :add-node [_] (s/keys :req-un [::op ::node-spec] :opt-un [::after]))
 (defmethod live-op-form :remove-node [_] (s/keys :req-un [::op ::node-id]))
-(defmethod live-op-form :set-activity [_] (s/keys :req-un [::op ::activity]))
 
 (s/def ::live-op
   (s/and #(closed? (get live-op-key-sets (:op %) #{}) %) (s/multi-spec live-op-form :op)))
@@ -1116,9 +1086,7 @@
   (s/and #(closed? live-artifact-keys %)
          (s/keys :req-un [::id ::view-id ::session-id ::title ::media-type ::audience ::ended-at
                           ::reason ::view ::storage-uri ::size ::line-count]
-                 :opt-un [::base64 ::classification ::activity-anchor])
-         #(= (contains? % :classification) (contains? % :activity-anchor))
-         #(or (not (contains? % :classification)) (= :activity (:classification %)))
+                 :opt-un [::base64])
          #(live-reason? (:reason %))
          ;; Inlining is a SIZE decision, never a preference: past the floor the
          ;; bytes stay on disk, which is the whole point of addressing the record.

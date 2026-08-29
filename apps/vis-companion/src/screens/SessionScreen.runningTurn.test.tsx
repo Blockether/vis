@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { act, fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 import activityFixture from "../lib/activity.fixture.json";
@@ -252,54 +252,17 @@ describe("a running turn the session read cannot confirm", () => {
     expect(panel.compareDocumentPosition(phase) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
-  function activityScenario(settled = false) {
-    const activity = {
-      ...activityFixture,
-      id: "live-activity-view",
-      is_settled: settled,
-      activity: {
-        ...activityFixture.activity,
-        anchor: { evaluation_id: "evaluation-1", iteration: 41, form_index: 0 },
-      },
-    };
-    const filedRow = {
-      id: "activity-turn",
-      user_request: "inspect the run",
-      status: "running",
-      created_at: Date.now(),
-      iterations: [
-        {
-          id: "iteration-41",
-          position: 41,
-          forms: [{ source: "inspect_run()", result_summary: "done" }],
-          attachments: [
-            {
-              index: 0,
-              iteration_id: "iteration-41",
-              view_id: "activity-view",
-              classification: "activity",
-              activity_anchor: {
-                evaluation_id: "evaluation-1",
-                iteration: 41,
-                form_index: 0,
-              },
-              kind: "file",
-              media_type: "application/vnd.vis.live+ndjson",
-              filename: "activity.live.ndjson",
-            },
-          ],
-        },
-      ],
-    };
-    return { activity, filedRow };
-  }
-
-  // Regression, issue td-65cdf6: while the optimistic row overlapped its persisted
-  // receipt, iOS painted Activity in both rows and placed the anchored copy between
-  // PYTHON and RESULT. Android exposed only the detached copy from its older bundle.
-  it("keeps one live Activity after its filed Python result during handoff", async () => {
-    const { activity, filedRow } = activityScenario();
-
+  // Protocol 7 deleted the whole anchoring problem these cases guarded (td-65cdf6:
+  // one Activity claimed by two rows, an anchor reused across turns, an unanchored
+  // copy stranded in a detached rail). A snapshot is a field of the form that
+  // produced it, so it cannot be claimed twice, placed wrongly, or orphaned. What
+  // is left to prove is that the frames carrying it land on the right form.
+  // The frames land through the real subscription, the same way the screen sees
+  // them in production.
+  const withLiveBlock = async (
+    frames: (emit: (event: Record<string, unknown>) => void) => void,
+  ) => {
+    const listeners = new Set<(event: Record<string, unknown>) => void>();
     renderSessionScreen({
       client: {
         cachedLiveTurn: () => ({
@@ -309,99 +272,78 @@ describe("a running turn the session read cannot confirm", () => {
             answer: "",
             status: "running",
             startedAt: Date.now(),
-            iterations: filedRow.iterations,
+            iterations: [
+              {
+                id: "iteration-41",
+                position: 41,
+                forms: [{ block_id: "b1", source: "inspect_run()" }],
+              },
+            ],
           },
           seq: 42,
         }),
-        transcript: () => Promise.resolve([filedRow]),
-        liveViews: () => Promise.resolve([activity]),
-      },
-    });
-
-    await screen.findByText(/RUN_TESTS · suite/);
-    expect(screen.getAllByRole("button", { name: "Expand execution trace" })).toHaveLength(1);
-    fireEvent.click(screen.getByRole("button", { name: "Expand execution trace" }));
-    const panelLabel = await screen.findByText("ACTIVITY");
-    const python = screen.getAllByText("inspect_run()")[0]!;
-    const result = screen.getAllByText("done")[0]!;
-    expect(screen.getAllByText("ACTIVITY")).toHaveLength(1);
-    expect(screen.queryByText("Loading Activity…")).toBeNull();
-    expect(
-      python.compareDocumentPosition(result) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0);
-    expect(
-      result.compareDocumentPosition(panelLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0);
-  });
-
-  // Regression, issue td-65cdf6: a settled Activity already owned by its filed
-  // receipt was also reused in the next optimistic row when anchor coordinates reset.
-  it("does not reuse a filed Activity in the next optimistic row", async () => {
-    const { activity, filedRow } = activityScenario(true);
-    filedRow.status = "completed";
-    const nextRow = {
-      id: "next-turn",
-      request: "continue",
-      answer: "",
-      status: "running" as const,
-      startedAt: Date.now(),
-      iterations: filedRow.iterations.map((iteration) => ({
-        ...iteration,
-        id: "next-iteration-41",
-        forms: [{ source: "next_step()", result_summary: "next done" }],
-        attachments: [],
-      })),
-    };
-
-    renderSessionScreen({
-      client: {
-        cachedLiveTurn: () => ({ turn: nextRow, seq: 43 }),
-        transcript: () => Promise.resolve([filedRow]),
-        liveViews: () => Promise.resolve([activity]),
-      },
-    });
-
-    await screen.findByText(/RUN_TESTS · suite/);
-    const receipts = screen.getAllByRole("button", { name: "Expand execution trace" });
-    expect(receipts).toHaveLength(2);
-    receipts.forEach((receipt) => fireEvent.click(receipt));
-    const filedPython = await screen.findByText("inspect_run()");
-    const nextPython = await screen.findByText("next_step()");
-    const panel = screen.getAllByText("ACTIVITY")[0]!;
-    expect(screen.getAllByText("ACTIVITY")).toHaveLength(1);
-    expect(
-      filedPython.compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0);
-    expect(
-      panel.compareDocumentPosition(nextPython) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).not.toBe(0);
-  });
-  it("keeps a genuinely unanchored Activity in the detached fallback", async () => {
-    const activity = {
-      ...activityFixture,
-      id: "unanchored-activity",
-      activity: {
-        ...activityFixture.activity,
-        anchor: { evaluation_id: "evaluation-2", iteration: 99, form_index: 0 },
-      },
-    };
-
-    renderSessionScreen({
-      client: {
         transcript: () => Promise.resolve([]),
-        liveViews: () => Promise.resolve([activity]),
+      },
+      subscriptions: {
+        subscribeConnection: (on: (live: boolean) => void) => {
+          on(true);
+          return () => {};
+        },
+        subscribeSession: (
+          _sid: string,
+          on: (event: Record<string, unknown>) => void,
+        ) => {
+          listeners.add(on);
+          return () => listeners.delete(on);
+        },
       },
     });
+    await waitFor(() => expect(listeners.size).toBeGreaterThanOrEqual(1));
+    act(() => {
+      frames((event) => {
+        for (const listener of listeners) listener(event);
+      });
+    });
+  };
 
-    expect(await screen.findByText("ACTIVITY")).toBeInTheDocument();
+  it("puts a running Activity snapshot on the block that produced it", async () => {
+    await withLiveBlock((emit) => {
+      emit({
+        type: "block.activity",
+        iteration: 41,
+        block_id: "b1",
+        activity: activityFixture,
+      });
+    });
+
+    expect(
+      (await screen.findAllByRole("button", { name: "Expand execution trace" })).length,
+    ).toBe(1);
+  });
+
+  it("replaces a running snapshot with the settled one the terminal frame carries", async () => {
+    await withLiveBlock((emit) => {
+      emit({
+        type: "block.activity",
+        iteration: 41,
+        block_id: "b1",
+        activity: activityFixture,
+      });
+      emit({
+        type: "block.output",
+        iteration: 41,
+        block_id: "b1",
+        code: "inspect_run()",
+        result_summary: "done",
+        duration_ms: 1_200,
+        activity: { ...activityFixture, state: "succeeded" },
+      });
+    });
+
+    await waitFor(() => expect(screen.queryByText(/RUNNING · RUN_TESTS/)).toBeNull());
   });
 });
 
-// Regression, reported as "I send it and nothing happens, I wait and it looks
-// like it hung": between the submit and the first token the wire carries exactly
-// ONE event, so the rail repeated a single frozen sentence for the whole wait
-// (measured on one machine: 6.4s median to the first painted token, 10.5s at
-// p90, never under a second).
 describe("the wait between a submit and the first token", () => {
   it("says the message is sent, then names the model it waits on", async () => {
     const listeners = new Set<(event: Record<string, unknown>) => void>();

@@ -35,20 +35,22 @@
   "Wire protocol number THIS build speaks. Monotonic; bump on every BREAKING
    gateway HTTP/SSE change.
 
-   6 — selectable tables use one semantic vocabulary end to end: `is_selectable`,
-   `selected_ids`, and archive-only `selection_snapshots`. The obsolete focus
-   vocabulary is not accepted or emitted."
-  6)
+   7 — Activity belongs to the form that produced it. It arrives as `activity` on
+   the running `block.activity` frame and on the terminal block event, and is
+   stored inside the iteration's form. The Live View rail no longer carries it:
+   `set-activity`, the `activity` view classification and the attachment's
+   `classification`/`activity_anchor` fields are gone."
+  7)
 
 (def min-client-protocol
-  "Oldest CLIENT protocol this gateway serves. Protocol 6 is the first client that
-   speaks the selectable-table vocabulary."
-  6)
+  "Oldest CLIENT protocol this gateway serves. Protocol 7 is the first client that
+   reads Activity off the form instead of fetching an artifact."
+  7)
 
 (def min-gateway-protocol
   "Oldest GATEWAY protocol this client accepts: the mirror of
    [[min-client-protocol]]."
-  6)
+  7)
 
 (def protocol-header "Request header carrying the client's own protocol number." "x-vis-protocol")
 

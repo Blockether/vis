@@ -13,9 +13,9 @@ import {
 import Prism from "prismjs";
 import { DataTable } from "./DataTable";
 import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
-import { ActivityRecord, LiveRunRow } from "./LiveArtifact";
-import { activityReceiptText, LiveViewPanel } from "./LiveView";
-import type { LiveView as LiveViewModel } from "../lib/live-view";
+import { LiveRunRow } from "./LiveArtifact";
+import { ActivityPanel, activityReceiptText } from "./LiveView";
+import type { ActivityProjection } from "../lib/live-view";
 import { AlertIcon, ArrowOutIcon, ChevronIcon, PauseIcon, PlayIcon } from "./icons";
 import {
   attachmentBytes,
@@ -1449,7 +1449,7 @@ const CardGrid = memo(function CardGrid({
 function pythonReceiptText(
   form: TranscriptForm,
   live: boolean,
-  activityState?: NonNullable<LiveViewModel["activity"]>["state"],
+  activityState?: ActivityProjection["state"],
   activityDurationMs?: number,
 ): string {
   const interrupted = interruptedPython(form);
@@ -1485,13 +1485,9 @@ function pythonReceiptText(
 const FormTrace = memo(function FormTrace({
   form,
   live = false,
-  activity,
-  activityStatus,
 }: {
   form: TranscriptForm;
   live?: boolean;
-  activity?: LiveViewModel;
-  activityStatus?: "loading" | "failed" | "ready";
 }) {
   const [expanded, setExpanded] = useState(false);
   if (hiddenForm(form)) return null;
@@ -1502,25 +1498,24 @@ const FormTrace = memo(function FormTrace({
   const codeLabel = "PYTHON";
   const comment = showCode && form.comment?.trim();
 
-  const activityElapsed =
-    activity?.created_at != null && activity?.ended_at != null
-      ? Math.max(0, activity.ended_at - activity.created_at)
-      : undefined;
+  // Activity rides the form itself now, so there is no artifact to fetch and no
+  // loading or unavailable state to paint: either this form did something and
+  // carries the record of it, or it did not. The form's own `duration_ms` is
+  // the elapsed time — the projection no longer keeps window timestamps of its
+  // own, and the settled duration is exactly what the terminal frame measured.
+  const activity = form.activity;
   const detectedActivity = Boolean(
-    activity?.activity &&
-      (activity.activity.rows.length > 0 ||
-        activity.activity.omitted.rows > 0 ||
-        Object.values(activity.activity.counts).some((count) => count > 0)),
+    activity &&
+      (activity.rows.length > 0 ||
+        activity.omitted.rows > 0 ||
+        Object.values(activity.counts).some((count) => count > 0)),
   );
+  const activitySettled = activity != null && activity.state !== "running" && activity.state !== "idle";
   const receipt = detectedActivity
-    ? activityReceiptText(activity?.activity, activityElapsed)
-    : activityStatus === "failed" && !activity
-      ? "ACTIVITY · unavailable"
-      : activityStatus && !activity
-        ? "ACTIVITY · loading"
-        : pythonReceiptText(form, live, activity?.activity?.state, activityElapsed);
+    ? activityReceiptText(activity, form.duration_ms)
+    : pythonReceiptText(form, live, activity?.state, form.duration_ms);
   const running = detectedActivity
-    ? !activity?.is_settled
+    ? !activitySettled
     : receipt.startsWith("RUNNING");
 
   return (
@@ -1559,18 +1554,11 @@ const FormTrace = memo(function FormTrace({
             )}
             <CardGrid cards={cards} bare />
             {detectedActivity && activity && (
-              <LiveViewPanel
-                view={activity}
-                isSettled={activity.is_settled}
-                activityInitiallyExpanded
+              <ActivityPanel
+                activity={activity}
+                isSettled={activitySettled}
+                initiallyExpanded
               />
-            )}
-            {!activity && activityStatus && (
-              <p className="bg-result px-2.5 py-1.5 font-mono text-meta text-dialog-hint">
-                {activityStatus === "failed"
-                  ? "Activity receipt could not be read."
-                  : "Loading Activity…"}
-              </p>
             )}
           </div>
         )}
@@ -2079,9 +2067,7 @@ export const AttachmentRail = memo(function AttachmentRail({
   const runs = collapseAttachmentVersions(
     attachments.filter(
       (entry) =>
-        attachmentIsLive(entry) &&
-        entry.classification !== "activity" &&
-        entry.iteration_id,
+        attachmentIsLive(entry) && entry.iteration_id,
     ),
   ).map((thread) => thread[0]);
   const files = recordedFiles(
@@ -2332,46 +2318,6 @@ type Chunk =
     }
   | { kind: "cards"; key: string; cards: TranscriptForm[] };
 
-function activityAnchor(
-  value: unknown,
-): { iteration: number; formIndex: number } | null {
-  if (!value || typeof value !== "object") return null;
-  const anchor = value as Record<string, unknown>;
-  const iteration = anchor.iteration;
-  const formIndex = anchor.form_index;
-  return typeof iteration === "number" && typeof formIndex === "number"
-    ? { iteration, formIndex }
-    : null;
-}
-
-export function activityFitsIterations(
-  view: LiveViewModel,
-  iterations: readonly TranscriptIteration[],
-): boolean {
-  const anchor = activityAnchor(view.activity?.anchor);
-  if (!anchor) return false;
-  const iteration = iterations.find((candidate) => candidate.position === anchor.iteration);
-  const form = iteration?.forms?.[anchor.formIndex];
-  return form !== undefined && showFormCode(form, formCode(form));
-}
-
-function activityAt(
-  views: LiveViewModel[],
-  iterationPosition: number | undefined,
-  formIndex: number,
-): LiveViewModel | undefined {
-  return views.find((view) => {
-    const anchor = activityAnchor(view.activity?.anchor);
-    return (
-      anchor !== null &&
-      anchor.iteration === iterationPosition &&
-      anchor.formIndex === formIndex
-    );
-  });
-}
-
-const NO_LIVE_ACTIVITIES: LiveViewModel[] = [];
-
 // Consecutive TOOL-ONLY iterations are one run of work, not N bubbles: the model
 // kept calling tools without saying anything in between. Mirrors the TUI
 // (`render/merge-iteration-entries`): a narrated iteration may OPEN a run (its
@@ -2432,7 +2378,6 @@ type TraceSegmentProps = {
   live: boolean;
   client?: GatewayClient;
   sid?: string;
-  liveActivities: LiveViewModel[];
 };
 
 /**
@@ -2456,8 +2401,7 @@ function sameTraceSegment(
   if (
     a.live !== b.live ||
     a.client !== b.client ||
-    a.sid !== b.sid ||
-    a.liveActivities !== b.liveActivities
+    a.sid !== b.sid
   )
     return false;
   const before = a.segment;
@@ -2479,7 +2423,6 @@ const TraceSegment = memo(function TraceSegment({
   live,
   client,
   sid,
-  liveActivities,
 }: TraceSegmentProps) {
   // Inside a segment, adjacent code-less forms pool into ONE grid; a python
   // block keeps its own frame under its source and starts a new pool after it.
@@ -2496,13 +2439,6 @@ const TraceSegment = memo(function TraceSegment({
             form,
             iterationPosition: entry.iteration.position,
             formIndex,
-            attachment: entry.attachments.find(
-              (candidate) =>
-                candidate.classification === "activity" &&
-                candidate.activity_anchor?.iteration ===
-                  entry.iteration.position &&
-                candidate.activity_anchor?.form_index === formIndex,
-            ),
           });
           return;
         }
@@ -2540,40 +2476,6 @@ const TraceSegment = memo(function TraceSegment({
         <div className="grid min-w-0 gap-2.5">
           {chunks.map((chunk) => {
             if (chunk.kind === "code") {
-              const liveActivity = activityAt(
-                liveActivities,
-                chunk.iterationPosition,
-                chunk.formIndex,
-              );
-              if (liveActivity) {
-                return (
-                  <FormTrace
-                    key={chunk.key}
-                    form={chunk.form}
-                    live={live}
-                    activity={liveActivity}
-                  />
-                );
-              }
-              if (client && sid && chunk.attachment) {
-                return (
-                  <ActivityRecord
-                    key={chunk.key}
-                    client={client}
-                    sid={sid}
-                    attachment={chunk.attachment}
-                  >
-                    {({ view, status }) => (
-                      <FormTrace
-                        form={chunk.form}
-                        live={live}
-                        activity={view}
-                        activityStatus={status}
-                      />
-                    )}
-                  </ActivityRecord>
-                );
-              }
               return <FormTrace key={chunk.key} form={chunk.form} live={live} />;
             }
             return (
@@ -2596,7 +2498,6 @@ export const IterationTrace = memo(function IterationTrace({
   whole = false,
   client,
   sid,
-  liveActivities = NO_LIVE_ACTIVITIES,
 }: {
   iterations: TranscriptIteration[];
   /** Prose the ANSWER band already paints — see `answeredProse`. */
@@ -2619,8 +2520,6 @@ export const IterationTrace = memo(function IterationTrace({
   whole?: boolean;
   client?: GatewayClient;
   sid?: string;
-  /** Host Activity views, placed by 1-based iteration and 0-based form anchors. */
-  liveActivities?: LiveViewModel[];
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   // Identity in the ramp queue, so only the bottom-most trace backfills at once.
@@ -2721,7 +2620,6 @@ export const IterationTrace = memo(function IterationTrace({
           live={live}
           client={client}
           sid={sid}
-          liveActivities={liveActivities}
         />
       ))}
     </div>
@@ -3382,7 +3280,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   sid,
   livePanel,
-  liveActivities,
   onOpenAttachment,
 }: {
   turn: TranscriptTurn;
@@ -3406,8 +3303,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   sid?: string;
   /** Live work belongs after its tool/prose trace and before the phase ticker. */
   livePanel?: ReactNode;
-  /** Host Activity belongs to its Python form, not to the detached live rail. */
-  liveActivities?: LiveViewModel[];
   /** Opens the artifact named by a safe `attachment://<uuid>` answer link. */
   onOpenAttachment?: OpenAttachment;
 }) {
@@ -3455,7 +3350,6 @@ export const AssistantMessage = memo(function AssistantMessage({
           whole={whole}
           client={client}
           sid={sid}
-          liveActivities={liveActivities}
         />
         {/* Message prose sits on the SAME canonical step as the trace it grows out of:
             tool results, thinking bands and code cards are all `text-ui` (11px), so an

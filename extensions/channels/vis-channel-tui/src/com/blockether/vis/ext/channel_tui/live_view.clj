@@ -284,31 +284,22 @@
    and this line is the door to it."
   ([pane result] (settled pane result (System/currentTimeMillis)))
   ([pane result ended-at]
-   (let [activity (contains? #{:activity "activity"} (get-in pane [:view :classification]))]
-     (-> pane
-         (dissoc :stop :is-minimized)
-         (update :view merge (:view result))
-         (assoc :settled (-> (select-keys result [:reason :artifact-id :is-from-human])
-                             (assoc :ended-at ended-at))
-                :is-reopened (and activity (boolean (:is-reopened pane))))))))
+   (-> pane
+       (dissoc :stop :is-minimized)
+       (update :view merge (:view result))
+       (assoc :settled (-> (select-keys result [:reason :artifact-id :is-from-human])
+                           (assoc :ended-at ended-at))))))
 
 (defn settled?
   "True when this view has ENDED and the pane is its record."
   [pane]
   (contains? pane :settled))
 
-(defn activity?
-  "True only for the host-owned Activity specialization."
-  [pane]
-  (contains? #{:activity "activity"} (get-in pane [:view :classification])))
-
 (defn dormant?
   "True when a pane belongs in its transcript receipt instead of the live band.
-
-   Activity is always transcript-native, including its independently expanded detail.
-   Generic views move to the transcript after settlement."
+   A view moves to the transcript after it settles."
   [pane]
-  (or (activity? pane) (and (settled? pane) (not (:is-reopened pane)))))
+  (and (settled? pane) (not (:is-reopened pane))))
 
 (defn minimized?
   "True when a still-running pane was folded to its compact status line. This is
@@ -333,202 +324,26 @@
   (dissoc pane :is-minimized))
 
 (defn reopened
-  "Toggle a transcript disclosure into the read-only band.
-
-   Activity is transcript-native from its first event, so it uses this same toggle
-   while running without gaining the generic Live View stop control."
+  "Toggle a settled run's transcript disclosure into the read-only band."
   [pane]
   (cond-> (restored pane)
-    (or (settled? pane) (activity? pane))
+    (settled? pane)
     (-> (update :is-reopened not)
         (assoc :is-following true
                :offset 0))))
 
-(defn- activity-row-tone
-  [state]
-  (case (some-> state
-                name)
-    "failed"
-    :error
-
-    "cancelled"
-    :warn
-
-    "succeeded"
-    :ok
-
-    "running"
-    :running
-
-    :idle))
-
-(defn- activity-row-summary
-  "Return only semantic detail that adds information beyond the operation name.
-   Legacy shell spawn summaries are command evidence, never a live-tense status."
-  [{:keys [operation summary]}]
-  (let [operation
-        (flat-text operation)
-
-        summary
-        (flat-text summary)
-
-        summary
-        (if (and (= "shell" (str/lower-case operation)) (str/starts-with? summary "running: "))
-          (str "cmd: " (subs summary (count "running: ")))
-          summary)]
-
-    (when (and (not (str/blank? summary))
-               (not= (str/lower-case operation) (str/lower-case summary)))
-      summary)))
-
-(defn- activity-row-operation-label [row] (str/upper-case (flat-text (:operation row))))
-
-(defn- activity-row-label
-  [row]
-  (str (activity-row-operation-label row)
-       (when-let [summary (activity-row-summary row)]
-         (str " · " summary))))
-
-(defn- activity-row-detail
-  [{:keys [error-summary result-summary duration-ms]}]
-  (or (not-empty (flat-text error-summary))
-      (not-empty (flat-text result-summary))
-      (when duration-ms (vis/format-duration duration-ms))
-      ""))
-
-(defn- semantic-activity-count
-  "Count the operation rows the Activity disclosure can actually present. Host lifecycle
-   counts include infrastructure follow-ups and therefore are not user-visible operations."
-  [activity]
-  (count (:rows activity)))
-
-(defn- semantic-activity-state-count
-  [activity state]
-  (count (filter #(= (name state)
-                     (some-> (:state %)
-                             name))
-                 (:rows activity))))
-
-(defn- activity-state
-  "The Direction A state word. A close verdict wins; before it arrives, the semantic
-   Activity state prevents terminal invocations from being described as still running."
-  [pane activity]
-  (str/upper-case
-    (case (get-in pane [:settled :reason])
-      nil
-      (case (some-> (:state activity)
-                    name)
-        "succeeded"
-        "done"
-
-        "failed"
-        "failed"
-
-        "cancelled"
-        "cancelled"
-
-        "running"
-        "running"
-
-        "finished")
-
-      :completed
-      "done"
-
-      :failed
-      "failed"
-
-      :timeout
-      "failed"
-
-      :interrupted
-      "cancelled"
-
-      :cancelled
-      "cancelled"
-
-      "finished")))
-
-(defn- activity-status-text
-  "Direction A’s honest sentence: first running invocation while live; terminal total
-   (and the failed invocation when present) as soon as Activity itself is terminal."
-  [pane]
-  (let [activity
-        (get-in pane [:view :activity])
-
-        rows
-        (vec (:rows activity))
-
-        finished
-        (long (semantic-activity-count activity))
-
-        running
-        (long (semantic-activity-state-count activity :running))
-
-        active
-        (some #(when (= "running"
-                        (some-> (:state %)
-                                name))
-                 %)
-              rows)
-
-        failed
-        (some #(when (= "failed"
-                        (some-> (:state %)
-                                name))
-                 %)
-              rows)
-
-        omitted
-        (max 0 (long (get-in activity [:omitted :rows] 0)))
-
-        terminal?
-        (or (some? (get-in pane [:settled :reason]))
-            (and (zero? running)
-                 (contains? #{"succeeded" "failed" "cancelled"}
-                            (some-> (:state activity)
-                                    name))))
-
-        state
-        (activity-state pane activity)
-
-        primary
-        (or (when (= "FAILED" state) failed) (first rows))
-
-        primary-copy
-        (when primary (activity-row-operation-label primary))
-
-        total-copy
-        (str finished " " (if (= 1 finished) "activity" "activities"))]
-
-    (if-not terminal?
-      (str state
-           " · "
-           (if active (activity-row-label active) "running activity")
-           (when (or (> (count rows) 1) (pos? omitted)) " · and more"))
-      (str state
-           (when primary-copy
-             (str " · " primary-copy (when (or (> finished 1) (pos? omitted)) " and more")))
-           " · "
-           total-copy))))
 
 (defn run-row
-  "The transcript receipt for a run or host Activity, anchored at its form.
+  "The transcript receipt for a settled extension run, anchored at its form.
 
-   Activity rows exist while running and are replaced in place by patches. Generic
-   extension runs are filed only after settlement."
+   Activity is NOT one of these: it belongs to the form that produced it and travels
+   on that form's own envelope, so no run row has to carry it."
   [pane]
   (let [{:keys [reason ended-at]}
         (:settled pane)
 
         view
         (:view pane)
-
-        activity
-        (activity? pane)
-
-        activity-data
-        (when activity (:activity view))
 
         lines
         (reduce + 0 (keep #(when (= :log (:type %)) (:total-lines %)) (:nodes view)))
@@ -542,16 +357,6 @@
              :lines (long lines)
              :elapsed-ms (max 0 (- end (long (or (:created-at view) end))))
              :is-reopened (boolean (:is-reopened pane))}
-      activity
-      (assoc :is-activity
-        true :status-text
-        (activity-status-text pane) :status-tone
-        (activity-row-tone (:state activity-data)) :activity-view
-        view :activity-rows
-        (:rows activity-data) :activity-focused
-        (:activity-focused pane) :activity-evidence
-        (set (:activity-evidence pane)))
-
       (:trace-anchor pane)
       (assoc :anchor (:trace-anchor pane)))))
 
@@ -1242,11 +1047,10 @@
 (defn interruptible
   "The pane a stop would hit: the newest open extension view.
 
-   Host Activity reports the enclosing Python evaluation and cannot be stopped
-   independently; the ordinary turn cancel remains authoritative. The footer and
-   abort branch both ask here, so neither can advertise or invoke a false action."
+   The footer and the abort branch both ask here, so neither can advertise or
+   invoke a stop the run cannot honor."
   [panes]
-  (last (remove #(or (settled? %) (activity? %)) panes)))
+  (last (remove settled? panes)))
 
 (defn stopping
   "The note the human is typing into an ARMED stop on `pane` — `\"\"` the moment
@@ -1323,8 +1127,7 @@
 (defn hint
   "The hint bar under the band. Escape is the ONE key an interruptible view takes,
    and while several are open it says WHICH one it will hit — the newest, the one
-   the band is painting. System Activity is read-only: its expanded rail offers only
-   fold/restore controls. A selectable table advertises its click. Once a stop is armed,
+   the band is painting. A selectable table advertises its click. Once a stop is armed,
    the bar says the two keys that end typing: Escape or Enter interrupt with whatever
    was written, Backspace on an empty line keeps watching."
   [pane others]
@@ -1333,26 +1136,24 @@
       (if (str/blank? note)
         [["Esc / ⏎" "interrupt"] ["⌫" "keep watching"]]
         [["Esc / ⏎" "interrupt with the note"] ["⌫" "erase"]])
-      (if (activity? pane)
-        [["click ▴" "close Activity"]]
-        (if (minimized? pane)
-          [["click ▴" "restore live view"]
-           ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]]
-          (cond-> []
-            (and (some? pane) (not (settled? pane)))
-            (conj ["click ▾" "minimize"])
+      (if (minimized? pane)
+        [["click ▴" "restore live view"]
+         ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))]]
+        (cond-> []
+          (and (some? pane) (not (settled? pane)))
+          (conj ["click ▾" "minimize"])
 
-            (and (some? pane) (not (settled? pane)) (has-selectable-table? pane))
-            (conj ["click" "select a row"])
+          (and (some? pane) (not (settled? pane)) (has-selectable-table? pane))
+          (conj ["click" "select a row"])
 
-            (and (some? pane) (not (settled? pane)))
-            (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
+          (and (some? pane) (not (settled? pane)))
+          (conj ["Esc" (str "interrupt " (flat-text (get-in pane [:view :title])))])
 
-            (and (some? pane) (settled? pane))
-            (conj ["click" "close the record"])
+          (and (some? pane) (settled? pane))
+          (conj ["click" "close the record"])
 
-            (seq open)
-            (conj [(str (+ (if pane 1 0) (count open))) "views open"])))))))
+          (seq open)
+          (conj [(str (+ (if pane 1 0) (count open))) "views open"]))))))
 
 ;;; ── Painting ────────────────────────────────────────────────────────────────
 
@@ -1603,140 +1404,27 @@
                              (when (> (long pane-count) 1) (str pane-count " views open"))])))}))
 
 (defn- paint-fold-control!
-  "Paint the title control. Activity closes its transcript disclosure; generic live
-   views retain minimize/restore semantics."
+  "Paint the title control. A running live view retains minimize/restore semantics."
   [g {:keys [left inner-w]} row pane]
-  (when pane
-    (let [activity
-          (activity? pane)
+  (when (and pane (not (settled? pane)))
+    (let [label
+          (if (minimized? pane) " ▴ " " ▾ ")
 
-          generic-running
-          (not (settled? pane))]
+          width
+          (long (p/display-width label))
 
-      (when (or activity generic-running)
-        (let [label
-              (if activity " ▴ " (if (minimized? pane) " ▴ " " ▾ "))
+          col
+          (max (inc (long left)) (- (+ (long left) (long inner-w) 1) width))]
 
-              width
-              (long (p/display-width label))
+      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (p/styled g [p/BOLD] (p/put-str! g col row label))
+      (cr/register! {:bounds {:row row :col col :width width}
+                     :kind (if (minimized? pane) :live-restore :live-minimize)
+                     :view-id (view-id pane)
+                     :enabled? true}))))
 
-              col
-              (max (inc (long left)) (- (+ (long left) (long inner-w) 1) width))]
 
-          (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-          (p/styled g [p/BOLD] (p/put-str! g col row label))
-          (cr/register!
-            {:bounds {:row row :col col :width width}
-             :kind (if activity :live-reopen (if (minimized? pane) :live-restore :live-minimize))
-             :view-id (view-id pane)
-             :enabled? true}))))))
-
-(def ^:private activity-detail-rows
-  "Expanded Activity is a transcript disclosure, not a live dashboard. Its ten-row
-   reservation is stable while patches land, bounded on tall terminals, and yields to
-   the composer on short ones."
-  10)
-
-(defn- anchor-floated-region
-  "REGION lifted so the expanded Activity surface's TOP row sits directly under its
-   collapsed transcript receipt at `anchor-row` (a screen row; nil docks the band
-   above the prompt as before). The surface is the receipt's disclosure, so it must
-   move WITH the receipt as the transcript scrolls, not hang at the bottom of the
-   terminal while its anchor walks away."
-  [region anchor-row]
-  (if (nil? anchor-row)
-    region
-    (assoc region
-      :hint-row (min (long (:hint-row region))
-                     (+ (long anchor-row) 1 (long activity-detail-rows))))))
-
-(defn activity-focused
-  "Move the terminal-local Activity operation focus to `item-id`. This never publishes a
-   shared Live View selection patch: Activity focus only controls its own evidence disclosure."
-  [pane item-id]
-  (assoc pane :activity-focused item-id))
-
-(defn activity-evidence-toggled
-  "Focus one Activity operation and toggle its bounded evidence row."
-  [pane item-id]
-  (-> pane
-      (activity-focused item-id)
-      (update :activity-evidence
-              (fn [ids]
-                (let [ids (set ids)]
-                  (if (contains? ids item-id) (disj ids item-id) (conj ids item-id)))))))
-
-(defn- activity-plan
-  "PURE: the compact Activity presenter plan. It consumes the one semantic Activity
-   projection directly; no generic Live View nodes mirror its status, counts, or rows."
-  [pane _text-w]
-  (let [activity
-        (get-in pane [:view :activity])
-
-        rows
-        (:rows activity)
-
-        focused
-        (or (:activity-focused pane) (:id (first rows)))
-
-        evidence
-        (set (:activity-evidence pane))
-
-        counts
-        (into {}
-              (map (fn [state]
-                     [state (semantic-activity-state-count activity state)]))
-              [:running :succeeded :failed :cancelled])]
-
-    (into [{:kind :activity-status
-            :tone (activity-row-tone (:state activity))
-            :text (activity-status-text pane)}
-           {:kind :activity-counts
-            :text (str/join "   "
-                            (map (fn [[state label]]
-                                   (str label " " (max 0 (long (get counts state 0)))))
-                                 [[:running "Running"] [:succeeded "Succeeded"] [:failed "Failed"]
-                                  [:cancelled "Cancelled"]]))}]
-          (mapcat (fn [{:keys [id state] :as activity-row}]
-                    (let [detail
-                          (activity-row-detail activity-row)
-
-                          row
-                          {:kind :activity-step
-                           :item-id id
-                           :tone (activity-row-tone state)
-                           :text (activity-row-label activity-row)
-                           :detail detail
-                           :is-focused (= focused id)}]
-
-                      (cond-> [row]
-                        (and (contains? evidence id) (seq detail))
-                        (conj {:kind :activity-evidence
-                               :item-id id
-                               :tone (activity-row-tone state)
-                               :text detail}))))
-                  rows))))
-
-(defn- activity-shape
-  "PURE: bounded transcript-native Activity geometry and rows. This intentionally does
-   not call [[band-shape]]: Activity owns neither its four-fifths reservation nor any
-   generic collapsed, stop, rail, or hint-bar furniture."
-  [pane region]
-  (let [available
-        (max 0 (- (long (:hint-row region)) (long (:min-row region))))
-
-        n
-        (min (long activity-detail-rows) available)
-
-        text-w
-        (max 8 (- (long (:inner-w region)) 3))]
-
-    {:pane pane :rows-plan (activity-plan pane text-w) :n n}))
-
-(defn- band-title
-  "The generic Live View title. Activity never reaches this shell."
-  [pane now-ms]
-  (title-line pane now-ms))
+(defn- band-title "The Live View title." [pane now-ms] (title-line pane now-ms))
 
 (defn- band-shape
   "PURE: what the band is made of on `region` — the live panes oldest first, the
@@ -1817,27 +1505,19 @@
      :n n}))
 
 (defn band-rows
-  "The rows an expanded surface covers, inclusive. Activity uses its dedicated fixed
-   transcript-detail bound; ordinary Live Views retain [[band-shape]] geometry. When
-   `anchor-row` names the screen row of the front Activity's collapsed receipt, the
-   surface floats directly under it (see [[anchor-floated-region]])."
-  ([cols rows panes content-top prompt-h] (band-rows cols rows panes content-top prompt-h nil))
-  ([cols rows panes content-top prompt-h anchor-row]
-   (when-let [front (last (remove dormant? panes))]
-     (let [region (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))]
-       (if (activity? front)
-         (let [region (anchor-floated-region region anchor-row)
-               n (:n (activity-shape front region))
-               to (dec (long (:hint-row region)))]
+  "The rows an expanded Live View covers, inclusive."
+  [cols rows panes content-top prompt-h]
+  (when (last (remove dormant? panes))
+    (let [region
+          (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
 
-           (when (pos? (long n)) [(- (inc to) (long n)) to]))
-         (let [{:keys [sep-row foot-row]}
-               (tr/band-geometry region (:n (band-shape panes region)) false)]
-           [(long sep-row) (long foot-row)]))))))
+          {:keys [sep-row foot-row]}
+          (tr/band-geometry region (:n (band-shape panes region)) false)]
+
+      [(long sep-row) (long foot-row)])))
 
 (defn- paint-generic!
-  "Draw the ordinary Live View band. Activity is dispatched by [[paint!]] before this
-   generic four-fifths-height shell, so its geometry can never drift back here."
+  "Draw the Live View band."
   ([g cols rows panes content-top prompt-h]
    (paint-generic! g cols rows panes content-top prompt-h (System/currentTimeMillis)))
   ([g cols rows panes content-top prompt-h now-ms]
@@ -1944,136 +1624,11 @@
               :visible body-visible
               :widths (:widths (meta rows-plan))})))))))
 
-(defn- paint-activity-entry!
-  "Paint one Activity presenter row without borrowing generic Live View body chrome."
-  [g left row width view-id entry]
-  (let [col
-        (+ (long left) 2)
-
-        width
-        (max 1 (- (long width) 2))
-
-        put
-        (fn [fg styles text]
-          (p/set-colors! g fg t/terminal-bg)
-          (p/styled g styles (p/put-str! g col row (p/ellipsize (str text) width))))]
-
-    (case (:kind entry)
-      :activity-status
-      (put (tone-fg (:tone entry))
-           [p/BOLD]
-           (str (or (tone-glyph (:tone entry)) "·") " " (:text entry)))
-
-      :activity-counts
-      (put t/dialog-hint [] (:text entry))
-
-      :activity-step
-      (let [focused?
-            (:is-focused entry)
-
-            marker
-            (if focused? "› " "  ")
-
-            glyph
-            (str (or (tone-glyph (:tone entry)) "·") " ")]
-
-        (put (if focused? t/header-active-tab-accent (tone-fg (:tone entry)))
-             (if focused? [p/BOLD] [])
-             (str marker glyph (:text entry)))
-        (cr/register! {:bounds {:row row :col col :width 2}
-                       :kind :activity-focus
-                       :view-id view-id
-                       :item-id (:item-id entry)
-                       :enabled? true})
-        (when (seq (:detail entry))
-          (cr/register! {:bounds {:row row :col (+ col 2) :width (max 1 (- width 2))}
-                         :kind :activity-evidence
-                         :view-id view-id
-                         :item-id (:item-id entry)
-                         :enabled? true})))
-
-      :activity-evidence
-      (put t/dialog-hint [p/ITALIC] (str "    ↳ " (:text entry)))
-
-      :activity-fallback
-      (put t/dialog-hint [] (str "  · " (:text entry)))
-
-      nil)))
-
-(defn- paint-activity!
-  "Paint one expanded Activity as a bounded transcript disclosure. The semantic rail
-   and concise headline are the only chrome; there are no dialog rails, title rule,
-   stop footer, generic hint bar, or reserved blank dashboard. Body entries retain the
-   existing evidence and focus click contracts."
-  [g cols rows pane content-top prompt-h now-ms anchor-row]
-  (let [{:keys [left inner-w hint-row] :as region}
-        (anchor-floated-region
-          (tr/band-region (long cols) (long rows) (long content-top) (long prompt-h))
-          anchor-row)
-
-        {:keys [rows-plan n]}
-        (activity-shape pane region)]
-
-    (when (pos? (long n))
-      (binding [t/dialog-bg t/terminal-bg]
-        (let [left (long left)
-              inner-w (long inner-w)
-              top (- (long hint-row) (long n))
-              bottom (dec (long hint-row))
-              body-top (inc top)
-              visible (max 0 (dec (long n)))
-              total (count rows-plan)
-              start (offset pane rows-plan visible)
-              shown (subvec (vec rows-plan) (min start total) (min total (+ start visible)))
-              view-id (view-id pane)
-              {:keys [text tone]} (status-summary pane)
-              state (if (settled? pane) "SETTLED" "LIVE")
-              ended-at (long (or (get-in pane [:settled :ended-at]) now-ms))
-              created-at (long (or (get-in pane [:view :created-at]) ended-at))
-              headline (str "▾ ACTIVITY · "
-                            state
-                            (when-not (str/blank? text) (str " · " text))
-                            " · "
-                            (elapsed-text (- ended-at created-at))
-                            (when (> total visible)
-                              (str " · " (inc start) "–" (min total (+ start visible)) "/" total)))]
-
-          (tr/clear-rows! g region top bottom)
-          (p/set-colors! g (tone-fg tone t/header-active-tab-accent) t/terminal-bg)
-          (doseq [row (range top (inc bottom))]
-            (p/set-char! g left row \▎))
-          (p/set-colors! g t/dialog-fg t/terminal-bg)
-          (p/styled g
-                    [p/BOLD]
-                    (p/put-str! g (+ left 2) top (p/ellipsize headline (max 1 (- inner-w 3)))))
-          (cr/register! {:bounds {:row top :col left :width (+ inner-w 1)}
-                         :kind :live-reopen
-                         :view-id view-id
-                         :enabled? true})
-          (doseq [[idx entry] (map-indexed vector shown)]
-            (paint-activity-entry! g left (+ body-top (long idx)) inner-w view-id entry))
-          (doseq [idx (range (count shown) visible)]
-            (paint-activity-entry! g left (+ body-top (long idx)) inner-w view-id nil))
-          (p/clear-styles! g)
-          {:view-id view-id
-           :offset start
-           :anchor (anchor-at rows-plan start)
-           :total total
-           :visible visible
-           :widths (:widths (meta rows-plan))})))))
 
 (defn paint!
-  "Paint the newest expanded surface. Host Activity always takes the dedicated bounded
-   transcript painter; ordinary Live Views keep their established generic painter.
-   `anchor-row` is the screen row of the front Activity's collapsed transcript
-   receipt: the expanded surface floats directly under it instead of docking above
-   the prompt, so scrolling the transcript never separates the pair."
+  "Paint the newest expanded Live View."
   ([g cols rows panes content-top prompt-h]
    (paint! g cols rows panes content-top prompt-h (System/currentTimeMillis)))
   ([g cols rows panes content-top prompt-h now-ms]
-   (paint! g cols rows panes content-top prompt-h now-ms nil))
-  ([g cols rows panes content-top prompt-h now-ms anchor-row]
-   (when-let [front (last (remove dormant? panes))]
-     (if (activity? front)
-       (paint-activity! g cols rows front content-top prompt-h now-ms anchor-row)
-       (paint-generic! g cols rows panes content-top prompt-h now-ms)))))
+   (when (last (remove dormant? panes))
+     (paint-generic! g cols rows panes content-top prompt-h now-ms))))

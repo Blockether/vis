@@ -781,17 +781,25 @@ function ActivityRail({ activity }: { activity?: ActivityProjection }) {
   );
 }
 
-function ActivityViewPanel({
-  view,
+/**
+ * ACTIVITY, PAINTED WHERE IT BELONGS — inside the form that produced it.
+ *
+ * It takes the projection itself, not a view: protocol 7 stopped shipping
+ * Activity as a classified Live View addressed from a distance by an anchor, so
+ * there is no longer a record to unwrap and no `classification` to branch on.
+ * The paint is unchanged, which is the point — the rail, the faces and the
+ * receipt were never the problem with the old shape.
+ */
+export function ActivityPanel({
+  activity,
   isSettled,
   initiallyExpanded = false,
 }: {
-  view: LiveViewModel;
+  activity?: ActivityProjection;
   isSettled: boolean;
   initiallyExpanded?: boolean;
 }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
-  const activity = view.activity;
   const state = activity?.state ?? 'idle';
   const face = ACTIVITY_FACE[state];
   const preview = activityPreview(activity);
@@ -841,7 +849,6 @@ export function LiveViewPanel({
   error,
   load,
   isSettled = false,
-  activityInitiallyExpanded = false,
 }: {
   view: LiveViewModel;
   /** Stop the view, carrying the comment the human left — `null` when they left none. */
@@ -857,8 +864,6 @@ export function LiveViewPanel({
    * itself to a screen reader as one that can.
    */
   isSettled?: boolean;
-  /** Activity is already inside an opened execution receipt, so expose its rail. */
-  activityInitiallyExpanded?: boolean;
 }) {
   // The stop is ARMED before it is sent, exactly as Escape arms it in the
   // terminal: the comment travels WITH the interrupt, so the run reads WHY it
@@ -873,16 +878,6 @@ export function LiveViewPanel({
     setNote(null);
     send(typed.trim() === '' ? null : typed.trim());
   };
-  if (view.classification === 'activity') {
-    return (
-      <ActivityViewPanel
-        view={view}
-        isSettled={isSettled}
-        initiallyExpanded={activityInitiallyExpanded}
-      />
-    );
-  }
-
   return (
     <section
       className="overflow-hidden border border-dialog-edge bg-panel"

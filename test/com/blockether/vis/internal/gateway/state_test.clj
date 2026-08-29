@@ -986,24 +986,6 @@
    hold. The transcript is read newest-page-first, so a long session listed only
    the artifacts the reader had already scrolled back to. This index answers the
    WHOLE session in one metadata read."
-  (it "carries an Activity record's stable identity and form anchor"
-      (let [anchor
-            {:evaluation-id "eval-1" :iteration 2 :form-index 1}
-
-            rows
-            (@#'state/attachment-descriptors
-             "iteration-2"
-             [{:view-id "activity-view"
-               :classification :activity
-               :activity-anchor anchor
-               :kind "file"
-               :media-type "application/vnd.vis.live+ndjson"
-               :filename "activity.live.ndjson"}])]
-
-        (expect (= [{"evaluation_id" "eval-1" "iteration" 2 "form_index" 1}]
-                   (mapv :activity_anchor rows)))
-        (expect (= ["activity-view"] (mapv :view_id rows)))
-        (expect (= ["activity"] (mapv :classification rows)))))
   (it
     "indexes every produced artifact with the turn that made it"
     (let [sid
@@ -1039,13 +1021,6 @@
                                 :turn-soul-id "soul-2"
                                 :iteration-id "i9"
                                 :tool-call-id "call_C"})
-                          ;; Host Activity is durable transcript state, not a produced artifact.
-                          (att {:filename "activity.live.ndjson"
-                                :classification :activity
-                                :media-type "application/vnd.vis.live+ndjson"
-                                :turn-soul-id "soul-2"
-                                :iteration-id "i9"
-                                :tool-call-id "call_0_activity"})
                           (att {:filename "late.png"
                                 :turn-soul-id "soul-2"
                                 :iteration-id "i9"
@@ -1058,8 +1033,10 @@
             ;; client never has to hold the earlier pages to name it.
             (expect (= [1 1 3] (mapv :turn rows)))
             ;; `(tool_call_id, position)` is the byte endpoint's own order, so
-            ;; index N names the same artifact everywhere.
-            (expect (= [0 1 1] (mapv :index rows)))
+            ;; index N names the same artifact everywhere — and that endpoint drops
+            ;; model-only rows BEFORE it numbers what is left, so `late.png` is i9's
+            ;; index 0 even though `hidden.png` sorts ahead of it.
+            (expect (= [0 1 0] (mapv :index rows)))
             (expect (= ["i1" "i1" "i9"] (mapv :iteration_id rows)))
             (expect (= 3 (:version (last rows)))))))))
   (it "is empty, never an exception, when the read fails"

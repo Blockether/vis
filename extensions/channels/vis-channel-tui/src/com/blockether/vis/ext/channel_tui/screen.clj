@@ -673,27 +673,6 @@
   ^long [message ^long text-top ^long top]
   (+ text-top top 1 (if (or (= :user (:role message)) (error-card-row-geometry? message)) 1 0)))
 
-(defn- live-front-anchor-row
-  "Screen row of the collapsed transcript receipt (the `:live-reopen` line) the
-   FRONT Activity pane was expanded from, or nil when that row is off screen. The
-   expanded surface floats directly under this row, so the pair reads as one
-   disclosure however far the transcript scrolls."
-  [layout panes text-top]
-  (when-let [front (last (remove lv/dormant? panes))]
-    (when (lv/activity? front)
-      (let [vid (str (lv/view-id front))
-            text-top (long text-top)]
-
-        (first (for [{:keys [top projected]} (:visible layout)
-                     :let [line-meta (:line-meta projected)
-                           content-top (bubble-content-top projected text-top (long top))]
-                     :when (sequential? line-meta)
-                     i (range (count line-meta))
-                     :let [m (nth line-meta i nil)]
-                     :when (and (map? m) (= :live-reopen (:kind m)) (= vid (str (:view-id m))))]
-
-                 (+ content-top (long i))))))))
-
 (defn- live-band-pane
   "The live view the pointer at terminal row `my` is over — the one the band is
    painting right now — or nil when the pointer is on the transcript.
@@ -710,11 +689,7 @@
                                (long (or (:rows ly) 0))
                                panes
                                content-top
-                               prompt-h
-                               (live-front-anchor-row ly
-                                                      panes
-                                                      (+ (long content-top)
-                                                         (long render/MESSAGE_MARGIN_TOP))))]
+                               prompt-h)]
 
         (when (and span (<= (long (first span)) (long my) (long (second span)))) (last panes))))))
 
@@ -785,16 +760,6 @@
 
     :live-select
     (do (select-live-row! db hit) true)
-
-    :activity-focus
-    (do (state/dispatch [:activity-focus (:view-id hit) (:item-id hit)])
-        (state/dispatch [:bump-render-version])
-        true)
-
-    :activity-evidence
-    (do (state/dispatch [:activity-evidence (:view-id hit) (:item-id hit)])
-        (state/dispatch [:bump-render-version])
-        true)
 
     false))
 
@@ -2930,8 +2895,7 @@
                                    (:live-views db)
                                    messages-top
                                    composer-h
-                                   (System/currentTimeMillis)
-                                   (live-front-anchor-row layout (:live-views db) text-top))]
+                                   (System/currentTimeMillis))]
           (state/dispatch [:live-view-painted (:view-id geom) geom])))
       (cr/commit-frame!)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
@@ -6686,12 +6650,6 @@
                                  :live-select
                                  (activate-live-region! db hit)
 
-                                 :activity-focus
-                                 (activate-live-region! db hit)
-
-                                 :activity-evidence
-                                 (activate-live-region! db hit)
-
                                  :artifact
                                  (open-produced-artifact! (:session-id hit) (:artifact hit))
 
@@ -6842,12 +6800,6 @@
                                  (activate-live-region! db hit)
 
                                  :live-select
-                                 (activate-live-region! db hit)
-
-                                 :activity-focus
-                                 (activate-live-region! db hit)
-
-                                 :activity-evidence
                                  (activate-live-region! db hit)
 
                                  :artifact

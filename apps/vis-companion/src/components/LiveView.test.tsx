@@ -5,14 +5,22 @@
 // and reads the document that landed.
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { activityReceiptText, LiveView as LiveViewList, LiveViewPanel, useLiveViews } from './LiveView';
+import {
+  ActivityPanel,
+  activityReceiptText,
+  LiveView as LiveViewList,
+  LiveViewPanel,
+  useLiveViews,
+} from './LiveView';
 import liveViewSource from './LiveView.tsx?raw';
 import fixture from '../lib/live-view.fixture.json';
 import activityFixture from '../lib/activity.fixture.json';
 import type { GatewayClient } from '../lib/gateway';
 import {
+  activityProjectionFromWire,
   LIVE_NOTE_CHARS,
   liveViewFromWire,
+  type ActivityProjection,
   type LiveNode,
   type LiveView,
 } from '../lib/live-view';
@@ -28,10 +36,21 @@ function opened(): LiveView {
   return view;
 }
 
-function activityView(): LiveView {
-  const view = liveViewFromWire(activityFixture);
-  if (!view) throw new Error('the engine Activity fixture must be paintable');
-  return view;
+/**
+ * The engine's own Activity fixture, parsed. Protocol 7 ships it as a bare
+ * projection on the form that produced it, not as a classified view, so the
+ * panel takes the snapshot itself.
+ */
+function activityProjection(): ActivityProjection {
+  const projection = activityProjectionFromWire(activityFixture);
+  if (!projection) throw new Error('the engine Activity fixture must be paintable');
+  return projection;
+}
+
+function paintActivity(props: Partial<Parameters<typeof ActivityPanel>[0]> = {}) {
+  const { activity = activityProjection(), isSettled = false, ...rest } = props;
+  render(<ActivityPanel activity={activity} isSettled={isSettled} {...rest} />);
+  return document.body.innerHTML;
 }
 
 /** The same view with ONE node replaced, wherever a row put it — a run in a different moment. */
@@ -147,7 +166,7 @@ describe('a live view on the phone', () => {
   });
   it('uses the first in-progress task as the collapsed Activity preview', () => {
     const onInterrupt = vi.fn();
-    paint({ view: activityView(), onInterrupt });
+    paintActivity();
 
     expect(screen.getByText('ACTIVITY')).toBeTruthy();
     expect(screen.getByText('Running')).toBeTruthy();
@@ -169,7 +188,7 @@ describe('a live view on the phone', () => {
   });
 
   it('matches the compact result-band height without a leading status mark', () => {
-    paint({ view: activityView() });
+    paintActivity();
     const receipt = screen.getByLabelText('Activity');
     const header = receipt.querySelector('header');
     const disclosure = screen.getByRole('button', { name: 'Expand Activity' });
@@ -187,28 +206,23 @@ describe('a live view on the phone', () => {
   // Regression, issue td-5b6b08: settled Companion receipts said SUCCEEDED,
   // omitted the operation and elapsed time, and retained "activities run".
   it('matches the settled TUI receipt grammar and durations', () => {
-    const view = activityView();
+    const projection = activityProjection();
     const settled = {
-      ...view,
-      created_at: 1_000,
-      ended_at: 13_600,
-      activity: {
-        ...view.activity!,
+      ...projection,
+      state: 'succeeded' as const,
+      counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
+      rows: projection.rows.map((row: ActivityProjection['rows'][number], index: number) => ({
+        ...row,
         state: 'succeeded' as const,
-        counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
-        rows: view.activity!.rows.map((row, index) => ({
-          ...row,
-          state: 'succeeded' as const,
-          ...(index === 0
-            ? { operation: 'shell', summary: 'running: git status', duration_ms: 66 }
-            : { duration_ms: 12_500 }),
-        })),
-      },
+        ...(index === 0
+          ? { operation: 'shell', summary: 'running: git status', duration_ms: 66 }
+          : { duration_ms: 12_500 }),
+      })),
     };
 
-    paint({ view: settled, isSettled: true });
+    paintActivity({ activity: settled, isSettled: true });
 
-    expect(activityReceiptText(settled.activity, 12_600)).toBe(
+    expect(activityReceiptText(settled, 12_600)).toBe(
       'DONE · SHELL and more · 2 activities · 12.6s',
     );
     expect(screen.getByText('Done')).toBeTruthy();
@@ -222,8 +236,7 @@ describe('a live view on the phone', () => {
   });
 
   it('shows an explicit quiet empty state', () => {
-    const view = activityView();
-    paint({ view: { ...view, activity: { ...view.activity!, state: 'idle', rows: [] } } });
+    paintActivity({ activity: { ...activityProjection(), state: 'idle', rows: [] } });
     expect(screen.getByText('Idle')).toBeTruthy();
     expect(screen.getByText('No operation yet')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
@@ -543,9 +556,9 @@ describe('what a run says about its own layout', () => {
 
   // Regression, user report: Activity patches rendered one-by-one on WKWebView and
   // starved the independent elapsed-time paint, leaving its clock visibly frozen.
-  it('coalesces an Activity patch burst into one phone paint', async () => {
+  it('coalesces a patch burst into one phone paint', async () => {
     let receive: ((event: SseEvent) => void) | null = null;
-    const running = activityView();
+    const running = opened();
     const client = { liveViews: () => Promise.resolve([running]) } as unknown as GatewayClient;
     const subscriptions = {
       subscribeConnection: () => () => undefined,
@@ -623,56 +636,12 @@ describe('what a run says about its own layout', () => {
     }
   });
 
-  it('keeps the terminal Activity picture settled while its record is filed', async () => {
+  // The settled-Activity-close cases that stood here are gone with the lifecycle
+  // they tested: protocol 7 keeps no view alive past its own close, because the
+  // form that produced the work carries the terminal snapshot.
+  it('repairs a sequence gap from the materialized snapshot', async () => {
     let receive: ((event: SseEvent) => void) | null = null;
-    const running = activityView();
-    const client = { liveViews: () => Promise.resolve([running]) } as unknown as GatewayClient;
-    const subscriptions = {
-      subscribeConnection: () => () => undefined,
-      subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
-        receive = listener;
-        return () => undefined;
-      },
-    } as unknown as SessionSubscriptionHub;
-
-    function Probe() {
-      const views = useLiveViews(client, subscriptions, 'session-1');
-      const view = views[0];
-      return (
-        <span>
-          {view?.activity?.state}:{view?.activity?.counts.running}:
-          {view?.is_settled ? 'settled' : 'live'}
-        </span>
-      );
-    }
-
-    render(<Probe />);
-    await waitFor(() => expect(screen.getByText('running:1:live')).toBeTruthy());
-    act(() =>
-      receive?.({
-        type: VIEW_CLOSE_EVENT, kind: 'live',
-        view_id: running.id,
-        ts: 99,
-        result: {
-          view: {
-            title: running.title,
-            nodes: running.nodes,
-            activity: {
-              ...running.activity!,
-              state: 'succeeded',
-              counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
-              rows: running.activity!.rows.map((row) => ({ ...row, state: 'succeeded' })),
-            },
-          },
-        },
-      }),
-    );
-    expect(screen.getByText('succeeded:0:settled')).toBeTruthy();
-  });
-
-  it('repairs an Activity sequence gap from the materialized snapshot', async () => {
-    let receive: ((event: SseEvent) => void) | null = null;
-    const running = activityView();
+    const running = opened();
     const repaired = { ...running, seq: 4 };
     const liveViews = vi
       .fn<() => Promise<LiveView[]>>()
@@ -706,9 +675,9 @@ describe('what a run says about its own layout', () => {
     expect(liveViews).toHaveBeenCalledTimes(2);
   });
 
-  it('replaces an Activity with its reconnect snapshot', async () => {
+  it('replaces a view with its reconnect snapshot', async () => {
     let reconnect: ((connected: boolean) => void) | null = null;
-    const running = activityView();
+    const running = opened();
     const refreshed = { ...running, seq: 2 };
     const liveViews = vi
       .fn<() => Promise<LiveView[]>>()
@@ -735,60 +704,6 @@ describe('what a run says about its own layout', () => {
     expect(liveViews).toHaveBeenCalledTimes(2);
   });
 
-  it('does not let an older reconnect snapshot overwrite an Activity close', async () => {
-    let reconnect: ((connected: boolean) => void) | null = null;
-    let receive: ((event: SseEvent) => void) | null = null;
-    let resolveReload: ((views: LiveView[]) => void) | null = null;
-    const running = activityView();
-    const liveViews = vi
-      .fn<() => Promise<LiveView[]>>()
-      .mockResolvedValueOnce([running])
-      .mockImplementationOnce(
-        () => new Promise<LiveView[]>((resolve) => (resolveReload = resolve)),
-      );
-    const client = { liveViews } as unknown as GatewayClient;
-    const subscriptions = {
-      subscribeConnection: (listener: (connected: boolean) => void) => {
-        reconnect = listener;
-        return () => undefined;
-      },
-      subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
-        receive = listener;
-        return () => undefined;
-      },
-    } as unknown as SessionSubscriptionHub;
-
-    function Probe() {
-      const views = useLiveViews(client, subscriptions, 'session-1');
-      const view = views[0];
-      return <span>{view?.is_settled ? view.activity?.state : 'live'}</span>;
-    }
-
-    render(<Probe />);
-    await waitFor(() => expect(screen.getByText('live')).toBeTruthy());
-    act(() => reconnect?.(true));
-    act(() =>
-      receive?.({
-        type: VIEW_CLOSE_EVENT, kind: 'live',
-        view_id: running.id,
-        result: {
-          view: {
-            title: running.title,
-            nodes: running.nodes,
-            activity: {
-              ...running.activity!,
-              state: 'succeeded',
-              counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
-              rows: running.activity!.rows.map((row) => ({ ...row, state: 'succeeded' })),
-            },
-          },
-        },
-      }),
-    );
-    expect(screen.getByText('succeeded')).toBeTruthy();
-    await act(async () => resolveReload?.([running]));
-    expect(screen.getByText('succeeded')).toBeTruthy();
-  });
 });
 
 describe('the section is built from the closed vocabulary', () => {

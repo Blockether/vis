@@ -86,7 +86,8 @@
                           (let [[pkg & classes] spec]
                             (map #(str pkg "." %) classes))
                           [(str spec)])]
-    (try (.importClass ^clojure.lang.Namespace *ns* (Class/forName cname false (clojure.lang.RT/baseLoader)))
+    (try (.importClass ^clojure.lang.Namespace *ns*
+                       (Class/forName cname false (clojure.lang.RT/baseLoader)))
          (catch Throwable _ nil))))
 
 (defn- establish-context!
@@ -104,25 +105,40 @@
   [form]
   (let [head (when (seq? form) (first form))]
     (case head
-      (ns) (doseq [clause (drop 2 form)
-                   :when (seq? clause)]
-             (let [[kind & specs] clause]
-               (try (case kind
-                      (:require) (apply require specs)
-                      (:use) (apply use specs)
-                      (:import) (run! import-spec! specs)
-                      (:refer-clojure) (apply refer 'clojure.core specs)
-                      nil)
-                    (catch Throwable _ nil))))
+      (ns)
+      (doseq [clause (drop 2 form)
+              :when (seq? clause)]
+
+        (let [[kind & specs] clause]
+          (try (case kind
+                 (:require)
+                 (apply require specs)
+
+                 (:use)
+                 (apply use specs)
+
+                 (:import)
+                 (run! import-spec! specs)
+
+                 (:refer-clojure)
+                 (apply refer 'clojure.core specs)
+
+                 nil)
+               (catch Throwable _ nil))))
+
       ;; A bare top-level `require`/`import`/… names its specs quoted; unquoting
       ;; is all that separates the form from the call it stands for.
-      (require use) (try (apply (if (= 'use head) use require)
-                                (map #(if (and (seq? %) (= 'quote (first %))) (second %) %)
-                                     (rest form)))
-                         (catch Throwable _ nil))
-      (import) (run! import-spec!
-                     (map #(if (and (seq? %) (= 'quote (first %))) (second %) %) (rest form)))
-      (refer-clojure) (try (apply refer 'clojure.core (rest form)) (catch Throwable _ nil))
+      (require use)
+      (try (apply (if (= 'use head) use require)
+             (map #(if (and (seq? %) (= 'quote (first %))) (second %) %) (rest form)))
+           (catch Throwable _ nil))
+
+      (import)
+      (run! import-spec! (map #(if (and (seq? %) (= 'quote (first %))) (second %) %) (rest form)))
+
+      (refer-clojure)
+      (try (apply refer 'clojure.core (rest form)) (catch Throwable _ nil))
+
       nil))
   nil)
 
@@ -220,9 +236,8 @@
             (let [head (when (seq? form) (first form))]
               (try (cond (contains? context-heads head) (establish-context! form)
                          (contains? value-heads head) (eval (compilable form shadow))
-                         :else (clojure.lang.Compiler/analyze
-                                 clojure.lang.Compiler$C/STATEMENT
-                                 (compilable form shadow)))
+                         :else (clojure.lang.Compiler/analyze clojure.lang.Compiler$C/STATEMENT
+                                                              (compilable form shadow)))
                    (catch Throwable _ nil)))
             (recur)))))))
 

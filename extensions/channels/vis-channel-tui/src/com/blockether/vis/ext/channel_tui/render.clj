@@ -2480,7 +2480,17 @@
                                       (p/put-str! g
                                                   (+ (long x) (long (:operation-col meta)))
                                                   y
-                                                  (str (:operation-label meta)))))
+                                                  (str (:operation-label meta))))
+                            ;; An Activity row IS a disclosure: pressing it opens that
+                            ;; invocation's bounded evidence through the one detail
+                            ;; expansion store, so bulk fold and `C-x t` reach it too.
+                            (when (:node-id meta)
+                              (cr/register!
+                                {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                 :kind :toggle-details
+                                 :session-id (:session-id meta)
+                                 :node-id (:node-id meta)
+                                 :collapsed? (:collapsed? meta)})))
 
                         nil))
                     (str/starts-with? line thinking-marker)
@@ -3566,7 +3576,7 @@
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
   [{:keys [code comment display-code display-language render-segments result-render result-summary
-           result-kind result-detail error success? silent? runs]}]
+           result-kind result-detail error success? silent? runs activity]}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments
    (text-fingerprint result-render) (text-fingerprint result-summary) result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
@@ -3574,6 +3584,9 @@
    ;; A settled live view joins this exact form after it closes, and reopening
    ;; changes its chevron. Both transitions must invalidate the iteration cache.
    (mapv #(select-keys % [:view-id :title :reason :lines :elapsed-ms :is-reopened]) runs)
+   ;; The form OWNS its Activity: every published revision replaces the snapshot in
+   ;; place, so the iteration cache has to invalidate on the value itself.
+   activity
    ;; What a RUNNING block paints before its result lands: the formatted code band
    ;; (`:display-code`/`:display-language`). `:code` alone can't stand in for it —
    ;; the block renders differently once the formatted display lands, and without
@@ -5115,10 +5128,90 @@
     "live"
     (when (pos? (long (or duration-ms 0))) (vis/format-duration duration-ms))))
 
+(defn- activity-state-word
+  "The execution word for a form's Activity. The form's OWN verdict wins; before it
+   lands the aggregate Activity state keeps terminal invocations from being described
+   as still running."
+  ^String [activity failed? success?]
+  (str/upper-case (cond failed? "failed"
+                        (some? success?) "done"
+                        :else (case (some-> (:state activity)
+                                            name)
+                                "succeeded"
+                                "done"
+
+                                "failed"
+                                "failed"
+
+                                "cancelled"
+                                "cancelled"
+
+                                "running"
+                                "running"
+
+                                "finished"))))
+
+(defn- activity-status-text
+  "The honest execution sentence: the first running invocation while the form is live,
+   the terminal total (and the failed invocation when there is one) once it lands."
+  ^String [activity failed? success?]
+  (let [rows
+        (vec (:rows activity))
+
+        finished
+        (count rows)
+
+        running
+        (count (filter #(= :running (activity-row-state %)) rows))
+
+        active
+        (first (filter #(= :running (activity-row-state %)) rows))
+
+        failed-row
+        (first (filter #(= :failed (activity-row-state %)) rows))
+
+        omitted
+        (max 0 (long (get-in activity [:omitted :rows] 0)))
+
+        terminal?
+        (or failed?
+            (some? success?)
+            (and (zero? running)
+                 (contains? #{"succeeded" "failed" "cancelled"}
+                            (some-> (:state activity)
+                                    name))))
+
+        state
+        (activity-state-word activity failed? success?)
+
+        primary
+        (or (when (= "FAILED" state) failed-row) (first rows))
+
+        primary-copy
+        (when primary (str/upper-case (str (:operation primary))))
+
+        total-copy
+        (str finished " " (if (= 1 finished) "activity" "activities"))]
+
+    (if-not terminal?
+      (str state
+           " · "
+           (if active
+             (str (str/upper-case (str (:operation active)))
+                  (when-let [summary (activity-row-summary active)]
+                    (str " · " summary)))
+             "running activity")
+           (when (or (> (count rows) 1) (pos? omitted)) " · and more"))
+      (str state
+           (when primary-copy
+             (str " · " primary-copy (when (or (> finished 1) (pos? omitted)) " and more")))
+           " · "
+           total-copy))))
+
 (defn- activity-detail-entries
   "Compact timeline rows for one expanded Activity receipt. The semantic summary is
    invocation evidence, not invented prose; default summaries equal to the operation vanish."
-  [{:keys [view-id activity-rows activity-focused activity-evidence]} max-w session-id]
+  [{:keys [node-id activity-rows activity-evidence]} max-w session-id]
   (let [rows
         (vec activity-rows)
 
@@ -5126,7 +5219,7 @@
         (first (filter #(= :running (activity-row-state %)) rows))
 
         focused-id
-        (or activity-focused (:id running-row) (:id (first rows)))
+        (or (:id running-row) (:id (first rows)))
 
         focused-row
         (some #(when (= focused-id (:id %)) %) rows)
@@ -5154,7 +5247,7 @@
           (str count-copy (when (pos? failures) (str " · " failures " failed"))))
 
         meta-base
-        {:view-id (str view-id) :session-id (str session-id)}
+        {:session-id (str session-id)}
 
         header
         {:line (str activity-marker
@@ -5200,6 +5293,8 @@
                  :meta (merge meta-base
                               {:kind :activity-row
                                :item-id id
+                               :node-id (str node-id ":" id)
+                               :collapsed? (not (contains? evidence id))
                                :status-tone (activity-row-tone row)
                                :status-glyph (activity-row-glyph row)
                                :operation-col 7
@@ -5227,9 +5322,10 @@
                  (vis/format-duration elapsed-ms))])))
 
 (defn- run-row-entries
-  "Transcript-native run disclosures. Activity is present from its first host call;
-   ordinary extension runs appear when finished. Anchored rows sit directly after
-   their executing form and unplaced legacy rows receive one leading margin."
+  "Transcript receipts for the extension runs a form left behind. Activity is not one
+   of them: it belongs to the form and paints from the form's own snapshot. Anchored
+   rows sit directly after their executing form and unplaced legacy rows receive one
+   leading margin."
   ([runs max-w session-id] (run-row-entries runs max-w session-id true))
   ([runs max-w session-id leading-margin?]
    (if (empty? runs)
@@ -5237,7 +5333,7 @@
      (into
        (if leading-margin? [{:line "" :meta nil}] [])
        (mapcat
-         (fn [{:keys [view-id title reason lines elapsed-ms is-reopened is-activity] :as run}]
+         (fn [{:keys [view-id title reason lines elapsed-ms is-reopened]}]
            (let [verdict
                  (some-> reason
                          name)
@@ -5249,27 +5345,16 @@
 
                  parts
                  (remove str/blank?
-                   (if is-activity
-                     [(activity-status-display run)]
-                     [title verdict
-                      (when (pos? (long (or lines 0)))
-                        (str lines (if (= 1 (long lines)) " line" " lines")))
-                      (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))]))
+                   [title verdict
+                    (when (pos? (long (or lines 0)))
+                      (str lines (if (= 1 (long lines)) " line" " lines")))
+                    (when (pos? (long (or elapsed-ms 0))) (vis/format-duration elapsed-ms))])]
 
-                 receipt
-                 {:line (ellipsize-cols (str (if is-activity
-                                               (if is-reopened "  ▾ " "  ▸ ")
-                                               (if is-reopened " ▾ " " ▸ "))
-                                             (if is-activity
-                                               (str (band-label "ACTIVITY") " · ")
-                                               (str (band-label "RUN") " "))
-                                             (str/join " · " parts))
-                                        (max 1 (long max-w)))
-                  :meta {:kind :live-reopen :view-id (str view-id) :session-id (str session-id)}}]
-
-             (if (and is-activity is-reopened)
-               (into [receipt] (activity-detail-entries run max-w session-id))
-               [receipt])))
+             [{:line
+               (ellipsize-cols
+                 (str (if is-reopened " ▾ " " ▸ ") (band-label "RUN") " " (str/join " · " parts))
+                 (max 1 (long max-w)))
+               :meta {:kind :live-reopen :view-id (str view-id) :session-id (str session-id)}}]))
          runs)))))
 
 (defn- place-run-rows
@@ -5536,8 +5621,39 @@
                 is-error?
                 (and (some? success?) (not success?))
 
+                activity
+                (:activity form)
+
+                ;; Activity BELONGS to this form. The bounded snapshot rides the block's
+                ;; own envelope — live revision and settled record alike — so nothing has
+                ;; to be placed here from a separate live record.
+                activity-node-id
+                (when (and session-id (seq (:rows activity)))
+                  (detail-node-id {:session-turn-id session-turn-id
+                                   :iteration-number iteration-number
+                                   :block-number block-number
+                                   :section :iteration
+                                   :kind :activity}))
+
                 activity-run
-                (first (filter :is-activity runs))
+                (when activity-node-id
+                  {:is-activity true
+                   :node-id activity-node-id
+                   :status-text
+                   (activity-status-text activity (boolean (or is-error? error)) success?)
+                   :status-tone (cond (or is-error? error) :error
+                                      (some? success?) :ok
+                                      :else (activity-row-tone activity))
+                   :elapsed-ms duration-ms
+                   :activity-rows (:rows activity)
+                   :activity-evidence (into #{}
+                                            (comp (map :id)
+                                                  (filter #(detail-expanded?
+                                                             detail-expansions
+                                                             session-id
+                                                             (str activity-node-id ":" %)
+                                                             false)))
+                                            (:rows activity))})
 
                 ;; The Python evaluation is the execution even when it produced no
                 ;; detectable host activities. Activity enriches this receipt; it does
@@ -5564,8 +5680,7 @@
 
                 execution-expanded?
                 (and execution-node-id
-                     (or (:is-reopened activity-run)
-                         (get detail-expansions :vis.channel-tui/expand-execution-details?)
+                     (or (get detail-expansions :vis.channel-tui/expand-execution-details?)
                          (detail-expanded? detail-expansions session-id execution-node-id false)))
 
                 ;; BLOCK N header removed per user directive (also gated
@@ -5967,7 +6082,7 @@
                 ;; Python and Result share the compact execution surface. Activity follows as
                 ;; a timeline surface, while the verdict remains transcript text above both.
                 generic-run-entries
-                (run-row-entries (vec (remove :is-activity runs)) fill-w session-id false)
+                (run-row-entries (vec runs) fill-w session-id false)
 
                 execution-body
                 (vec (concat code-block result-block artifact-block generic-run-entries))
