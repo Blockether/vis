@@ -74,10 +74,32 @@ describe("one form's Activity read off the wire", () => {
   it('rejects a missing, malformed, or retired Activity projection', () => {
     expect(activityProjectionFromWire(undefined)).toBeNull();
     expect(activityProjectionFromWire({ ...activityProjection(), rows: [{ id: 'broken' }] })).toBeNull();
-    // Protocol 7 dropped both: a payload still wearing either came from a gateway
+    // Protocol 8 dropped both: a payload still wearing either came from a gateway
     // the compatibility gate should already have refused.
     expect(activityProjectionFromWire({ ...activityProjection(), schema_version: 1 })).toBeNull();
     expect(
       activityProjectionFromWire({ ...activityProjection(), anchor: { iteration: 1, form_index: 0 } }),
     ).toBeNull();
-  });});
+  });
+
+  it('rejects projections outside the one canonical closed shape', () => {
+    const projection = activityProjection();
+    const row = projection.rows[0];
+
+    expect(activityProjectionFromWire({ ...projection, extra: true })).toBeNull();
+    expect(activityProjectionFromWire({ ...projection, counts: { ...projection.counts, total: 1 } })).toBeNull();
+    expect(
+      activityProjectionFromWire({ ...projection, omitted: { ...projection.omitted, total: 0 } }),
+    ).toBeNull();
+    expect(activityProjectionFromWire({ ...projection, rows: [row, { ...row }] })).toBeNull();
+    expect(
+      activityProjectionFromWire({ ...projection, rows: [{ ...row, duration_ms: 1.5 }] }),
+    ).toBeNull();
+    expect(
+      activityProjectionFromWire({
+        ...projection,
+        rows: [{ ...row, resources: [{ type: 'file', id: 'a.clj', extra: true }] }],
+      }),
+    ).toBeNull();
+  });
+});

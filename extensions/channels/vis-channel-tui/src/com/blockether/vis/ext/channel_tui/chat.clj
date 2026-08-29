@@ -636,9 +636,9 @@
         []
         (mapcat
           (fn [q]
-            (let [user-message (assoc (user-message (user-request-with-images
-                                                      (or (get q "user_request") "")
-                                                      (get q "attachments"))
+            (let [user-message (assoc (user-message (user-request-with-images (or (get q "request")
+                                                                                  "")
+                                                                              (get q "attachments"))
                                                     (or (some-> (get q "created_at")
                                                                 long
                                                                 ((fn [^long ms]
@@ -650,7 +650,7 @@
                                  ;; toggle every paste in the session. Stamp the gateway turn id (same one the
                                  ;; assistant message carries) so reloaded paste ids are turn-scoped, exactly
                                  ;; like the live send path scopes them by :client-turn-id.
-                                 :session-turn-id (get q "id"))
+                                 :session-turn-id (get q "turn_id"))
                   ;; `:prior-outcome :cancelled` is how the
                   ;; persistance layer marks an aborted turn (the
                   ;; sweep + cancel paths both write that value).
@@ -658,7 +658,7 @@
                   ;; Persisted history carries the same canonical content blocks as live turns.
                   content-blocks (let [stored (vec (or (get q "content") []))]
                                    (if (and cancelled? (empty? stored))
-                                     [{"id" (str (get q "id") ":cancelled")
+                                     [{"id" (str (get q "turn_id") ":cancelled")
                                        "type" "notice"
                                        "code" "turn_cancelled"
                                        "message" "Cancelled by user."}]
@@ -736,7 +736,7 @@
                                                                                 ms))))
                                                                    (java.util.Date.)))
                                       true
-                                      (assoc :session-turn-id (get q "id"))
+                                      (assoc :session-turn-id (get q "turn_id"))
 
                                       (seq trace)
                                       (assoc :traces trace)
@@ -986,6 +986,9 @@
         block-id
         (event-get event :block-id)
 
+        form-index
+        (event-get event :form-index)
+
         code
         (event-get event :code)
 
@@ -1005,25 +1008,19 @@
         (event-get event :done)
 
         thinking
-        (event-get event :thinking)
-
-        text
-        (event-get event :text)]
+        (event-get event :thinking)]
 
     (case type
       ;; Canonical typed-block delta projected into the TUI's transient progress shape.
-      ;; `text` is the INCREMENT since the gateway's last emit; the tracker's
-      ;; timeline REPLACES per-iteration text (in-process chunks are cumulative),
-      ;; so prefer the bounded `cumulative` the frame also carries — falling back
-      ;; to the increment for older gateways that omit it.
+      ;; The bounded `cumulative` field is the full replace-style value; a skipped frame
+      ;; is therefore subsumed by the next one.
       "content.block.delta"
-      (let [full (let [c (str (event-get event :cumulative))]
-                   (when-not (str/blank? c) c))]
+      (let [full (str (event-get event :cumulative))]
         (cond (= "text" (event-get event :field))
-              {:phase :reasoning :iteration iteration :thinking (or full text)}
+              {:phase :reasoning :iteration iteration :thinking full}
               (str/includes? (str block-id) ":assistant-prose:")
-              {:phase :assistant-prose :iteration iteration :text (or full text)}
-              :else {:phase :content :iteration iteration :content (or full text)}))
+              {:phase :assistant-prose :iteration iteration :text full}
+              :else {:phase :content :iteration iteration :content full}))
 
       "content.block.started"
       nil
@@ -1032,11 +1029,11 @@
       nil
 
       "block.preview"
-      (merge {:phase :tool-preview :iteration iteration :position block-id :code code}
+      (merge {:phase :tool-preview :iteration iteration :position form-index :code code}
              (vis/form<-wire event))
 
       "block.started"
-      (merge {:phase :form-start :iteration iteration :position block-id :code code}
+      (merge {:phase :form-start :iteration iteration :position form-index :code code}
              ;; Read back the display fields the block already carries while it
              ;; RUNS (its formatted source, its pending headline), so the live
              ;; bubble paints the same card it will keep once the block lands.
@@ -1045,7 +1042,7 @@
       "block.output"
       (merge {:phase :form-result
               :iteration iteration
-              :position block-id
+              :position form-index
               ;; Gateway-computed / renamed fields the wire owns:
               ;; bounded stdout + error, the derived silent flag.
               :stdout stdout
@@ -1072,12 +1069,10 @@
       "provider.retry"
       (provider-retry-event->chunk event)
 
-      ;; Coarse live-progress ticker (provider wait, response parse, nested
-      ;; shell/tool call). Project back to the phase the spinner reads so an
-      ;; ATTACHED tab shows "Vis is running: …" like a locally-run turn.
-      "activity"
-      (let [activity
-            (event-get event :activity)
+      ;; Coarse live-progress ticker projected back to the spinner's phase.
+      "turn.progress"
+      (let [progress
+            (event-get event :progress)
 
             cmd
             (event-get event :cmd)
@@ -1088,7 +1083,7 @@
             label
             (event-get event :label)]
 
-        (case (str activity)
+        (case (str progress)
           "provider-call"
           (cond-> {:phase :provider-call :iteration iteration}
             (event-get event :reason)

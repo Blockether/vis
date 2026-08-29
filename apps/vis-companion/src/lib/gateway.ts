@@ -445,15 +445,11 @@ const revisionWatchers = new Map<
 
 function transcriptStamp(row: Session | null | undefined): string {
   if (!row) return "";
-  // Neither fact present = a payload that cannot express movement (an older
-  // gateway's detail row). Return '' so callers FETCH instead of trusting a
-  // constant stamp that both never invalidates and never detects a change.
-  if (row.turn_count === undefined && row.modified_at === undefined) return "";
-  return `${row.turn_count ?? ""}\u0000${row.modified_at ?? ""}`;
+  return `${row.turn_count}\u0000${row.modified_at ?? ""}`;
 }
 
 function sessionIsActive(row: Session): boolean {
-  return row.live === true || row.status === "running";
+  return row.live;
 }
 
 function sessionTurnCount(row: Session): number {
@@ -470,7 +466,7 @@ function sessionHasNewAnswer(previous: Session | undefined, next: Session): bool
 function transcriptPrefetchStamp(row: Session): string {
   return [
     transcriptStamp(row),
-    row.live ?? "",
+    row.live,
     row.status ?? "",
     row.current_turn_id ?? "",
   ].join("\u0000");
@@ -875,7 +871,7 @@ export function queuedTurnFromWire(row: Record<string, unknown>): QueuedTurn {
     };
   });
   return {
-    turnId: String(row.turn_id ?? row.id ?? ""),
+    turnId: String(row.turn_id ?? ""),
     request,
     preview: preview || request,
     attachments,
@@ -3192,24 +3188,13 @@ export class GatewayClient {
       signal,
     );
     const { queued_turns: queuedTurns, ...row } = response;
+    if (includeQueued && !Array.isArray(queuedTurns)) {
+      throw new Error("Gateway response omitted queued_turns");
+    }
     const merged = reconcileRow(this.cachedSession(sid), row as Session);
     writeSnapshot(this.snapshotKey("session", sid), merged);
 
-    if (includeQueued) {
-      if (Array.isArray(queuedTurns)) {
-        this.storeQueuedTurns(sid, queuedTurns);
-      } else {
-        // Protocol-compatible older gateways ignore the additive `include`
-        // query. Only they pay the legacy second request.
-        try {
-          await this.queuedTurns(sid, signal);
-        } catch (error) {
-          if (signal?.aborted) throw error;
-          // Keep metadata usable when only the optional queue read failed,
-          // matching the former pair of independent screen requests.
-        }
-      }
-    }
+    if (includeQueued) this.storeQueuedTurns(sid, queuedTurns as SubmittedTurn[]);
     return merged;
   }
 
@@ -3338,12 +3323,12 @@ export class GatewayClient {
   ): TranscriptTurn[] {
     if (!previous?.length) return incoming;
     if (!incoming.length) return previous;
-    const index = new Map(previous.map((turn, at) => [turn.id, at]));
+    const index = new Map(previous.map((turn, at) => [turn.turn_id, at]));
     const merged = previous.slice();
     const fresh: TranscriptTurn[] = [];
     let changed = false;
     for (const turn of incoming) {
-      const at = index.get(turn.id);
+      const at = index.get(turn.turn_id);
       if (at === undefined) {
         fresh.push(turn);
         changed = true;

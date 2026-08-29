@@ -7,26 +7,20 @@ import activityFixture from "../lib/activity.fixture.json";
 import { reduceRunningTurnEvent } from "../lib/running-turn";
 import type { SseEvent } from "../lib/types";
 
-// Reported from a phone: the message was sent and the session title updated, but
-// the answer rail stayed a bare "Vis" — no phase, no clock, no trace — for the
-// whole turn. A running turn was adopted ONLY from the session read, so that one
-// failed request left `running` false and the running-turn bubble null: the freshly
-// persisted `running` row was then painted as a finished one, and every delta
-// that arrived had no bubble to land in.
-describe("a running turn the session read cannot confirm", () => {
+// A transcript row is durable content, not a liveness lease. If the canonical
+// session read fails, the client must not invent a running turn from stale SQL.
+describe("a running transcript row without canonical session state", () => {
   const runningRow = {
-    id: "t1",
-    user_request: "check the logs",
+    turn_id: "t1",
+    request: "check the logs",
     status: "running",
     created_at: Date.now(),
     iterations: [],
   };
 
-  it("reports the work the transcript says is under way", async () => {
+  it("renders the row as history without creating live work", async () => {
     renderSessionScreen({
       client: {
-        // The registry read is the request that fails on a phone's link; the
-        // transcript is the witness that does not go through the registry.
         session: () => Promise.reject(new Error("network down")),
         transcript: () => Promise.resolve([runningRow]),
       },
@@ -39,9 +33,9 @@ describe("a running turn the session read cannot confirm", () => {
     });
 
     expect(await screen.findByText("check the logs")).toBeInTheDocument();
-    expect(
-      (await screen.findAllByText(/Vis sent your message/)).length,
-    ).toBeGreaterThan(0);
+    await waitFor(() =>
+      expect(document.querySelector('[data-live="true"]')).toBeNull(),
+    );
   });
 
   // Regression, issue reported in session 78b0c0b5-f5ba-453f-97ee-af0a85f72d25:
@@ -118,40 +112,6 @@ describe("a running turn the session read cannot confirm", () => {
     expect(screen.getAllByText(/\(iter 420\)/).length).toBeGreaterThan(0);
   });
 
-  it("does not hand painted output to a matching but still empty settled row", async () => {
-    const now = Date.now();
-    const visible = {
-      id: "gateway-turn",
-      request: "current voice turn",
-      answer: "This answer must never blink away.",
-      iterations: [],
-      startedAt: now,
-      status: "completed" as const,
-    };
-    const emptySettledRow = {
-      id: "gateway-turn",
-      user_request: "current voice turn",
-      status: "completed",
-      created_at: now,
-      content: [],
-      iterations: [],
-    };
-
-    renderSessionScreen({
-      client: {
-        cachedRunningTurn: () => ({ turn: visible, seq: 42 }),
-        cachedTranscript: () => [emptySettledRow],
-        transcript: () => new Promise(() => {}),
-      },
-      subscriptions: {
-        hasEndedTurn: () => true,
-      },
-    });
-
-    expect(
-      await screen.findByText("This answer must never blink away."),
-    ).toBeInTheDocument();
-  });
 
   it("keeps an already painted answer when its terminal arrived while away", async () => {
     const visible = {
@@ -195,6 +155,12 @@ describe("a running turn the session read cannot confirm", () => {
     };
 
     renderSessionScreen({
+      session: sessionFixture({
+        status: "running",
+        live: true,
+        current_turn_id: "t1",
+        running_request: "check the logs",
+      }),
       client: {
         cachedRunningTurn: () => ({ turn: justSent, seq: 7 }),
         cachedTranscript: () => [],
@@ -209,8 +175,8 @@ describe("a running turn the session read cannot confirm", () => {
       },
     });
 
-    // The transcript's own running row is what says there is work, and it says
-    // so out loud instead of leaving the reader a nameless "Vis".
+    // Canonical gateway state names the active turn; the empty optimistic bubble
+    // cannot claim an older terminal frame.
     expect(await screen.findByText("check the logs")).toBeInTheDocument();
     expect(
       (await screen.findAllByText(/Vis sent your message/)).length,
@@ -221,6 +187,12 @@ describe("a running turn the session read cannot confirm", () => {
   // filling in and offering an Interrupt — a hang, in the one place the answer was.
   it("names the live panel instead of saying Vis is thinking", async () => {
     renderSessionScreen({
+      session: sessionFixture({
+        status: "running",
+        live: true,
+        current_turn_id: "t1",
+        running_request: "check the logs",
+      }),
       client: {
         transcript: () =>
           Promise.resolve([
@@ -254,7 +226,7 @@ describe("a running turn the session read cannot confirm", () => {
     expect(panel.compareDocumentPosition(phase) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   });
 
-  // Protocol 7 deleted the whole anchoring problem these cases guarded (td-65cdf6:
+  // Protocol 8 deleted the whole anchoring problem these cases guarded (td-65cdf6:
   // one Activity claimed by two rows, an anchor reused across turns, an unanchored
   // copy stranded in a detached rail). A snapshot is a field of the form that
   // produced it, so it cannot be claimed twice, placed wrongly, or orphaned. What
@@ -313,7 +285,7 @@ describe("a running turn the session read cannot confirm", () => {
       emit({
         type: "block.activity",
         iteration: 41,
-        block_id: 0,
+        form_index: 0,
         activity: activityFixture,
       });
     });
@@ -328,13 +300,13 @@ describe("a running turn the session read cannot confirm", () => {
       emit({
         type: "block.activity",
         iteration: 41,
-        block_id: 0,
+        form_index: 0,
         activity: activityFixture,
       });
       emit({
         type: "block.output",
         iteration: 41,
-        block_id: 0,
+        form_index: 0,
         code: "inspect_run()",
         result_summary: "done",
         duration_ms: 1_200,
@@ -408,10 +380,10 @@ describe("the wait between a submit and the first token", () => {
 
     act(() => {
       emit({
-        type: "activity",
+        type: "turn.progress",
         session_id: "s1",
         turn_id: "t-live",
-        activity: "provider-call",
+        progress: "provider-call",
         iteration: 1,
         reason: "user-submit",
         model: "claude-opus-5",
@@ -425,24 +397,23 @@ describe("the wait between a submit and the first token", () => {
   });
 });
 
-// Regression: `block_id` arrives as the block's POSITION — the number 0 — and the
-// reducer read it with a string-only helper, so every form frame saw "". The
-// snapshot matched no form and APPENDED a second one carrying nothing but
-// Activity, so an empty card was painted under every block that ran.
-describe("a form frame's numeric block_id", () => {
+// Regression: `form_index` is a number, and the reducer once read the form
+// coordinate with a string-only helper. Every frame then saw no owner, and a second
+// form carrying nothing but Activity was painted under the code block.
+describe("a form frame's numeric form_index", () => {
   const frame = (event: Record<string, unknown>) => event as unknown as SseEvent;
 
   it("puts the running snapshot on the block that is already there", () => {
     const started = reduceRunningTurnEvent(
       reduceRunningTurnEvent(null, frame({ type: "turn.started", turn_id: "t-block" })),
-      frame({ type: "block.started", iteration: 1, block_id: 0, code: "grep()" }),
+      frame({ type: "block.started", iteration: 1, form_index: 0, code: "grep()" }),
     );
     const turn = reduceRunningTurnEvent(
       started,
       frame({
         type: "block.activity",
         iteration: 1,
-        block_id: 0,
+        form_index: 0,
         activity: activityFixture,
       }),
     );

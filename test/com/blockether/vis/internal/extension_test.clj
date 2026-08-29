@@ -316,7 +316,7 @@
 
           ext
           {:ext/name "one-context-probe"
-           :ext/hooks [(phase-hook :turn.answer/validate) (phase-hook :turn.iteration/start)]
+           :ext/hooks [(phase-hook :turn.answer/validate)]
            :ext/ctx-fn (fn [_env]
                          (snap :ext/ctx-fn)
                          {})
@@ -333,12 +333,10 @@
           {:session-id "sid-one-context" :workspace/root root :extensions (atom [ext])}]
 
       (vis-loop/final-answer-gate-error env 1 [] "an answer" [ext])
-      (#'vis-loop/collect-iteration-start-hints env [ext] {:environment env})
       (extension/ctx-contributions env [ext])
       (prompt/active-extensions env)
       (#'prompt/extensions-prompt-block env [ext])
-      (expect (= #{:turn.answer/validate :turn.iteration/start :ext/ctx-fn :ext/prompt-fn
-                   :ext/activation-fn}
+      (expect (= #{:turn.answer/validate :ext/ctx-fn :ext/prompt-fn :ext/activation-fn}
                  (set (map :site @seen))))
       ;; ONE context: same session, same workspace, same identity, every site.
       (expect (every? (fn [s]

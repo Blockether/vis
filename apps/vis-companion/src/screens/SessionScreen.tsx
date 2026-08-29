@@ -60,7 +60,6 @@ import { reduceRunningTurnEvent, type RunningTurn } from "../lib/running-turn";
 import { eventString, sessionEventBatch } from "../lib/session-stream";
 import { speechOutput } from "../lib/speech";
 import { markSessionId } from "../lib/session-id";
-import { settledTranscriptCoversRunningTurn } from "../lib/running-turn-handover";
 import {
   VoiceTurnOwnership,
   type VoiceModeLease,
@@ -299,89 +298,18 @@ function isSettledRow(turn: TranscriptTurn): boolean {
 }
 
 function rowId(turn: TranscriptTurn): string {
-  return String(turn.id ?? turn.turn_id ?? "");
+  return turn.turn_id;
 }
 
-/**
- * The turn the TRANSCRIPT itself says is still in flight, if any.
- *
- * `live` / `current_turn_id` are read from the gateway's in-memory registry, and
- * that registry can be wrong in the one direction that hurts: the stall watchdog
- * and the cancel backstop clear `:current-turn` while the engine keeps
- * iterating, so `/v1/sessions/:sid` answers `idle`, `live: false`,
- * `current_turn_id: null` about a turn on its 430th iteration. Believing that
- * flag is how this screen sat on "Vis is waiting for an update" for two hours:
- * nothing was adopted, so `reduceRunningTurnEvent` dropped every delta that WAS
- * arriving, while `/transcript` held the whole turn the entire time.
- *
- * The persisted row is the second witness and it does not go through the
- * registry: the row is written `running` when the turn is accepted and only
- * patched at the terminal frame, so an unsettled row means work. Its id is the
- * same turn id `/turns/:tid/trace` resumes from, which makes it enough to adopt
- * from. Only one turn runs per session, so the LAST unsettled row — scanning
- * back over queued rows, stopping at the first settled one — is that turn.
- */
-function inFlightRow(
+
+/** The settled durable row for this exact canonical turn id. */
+function settledTurnRow(
   turns: readonly TranscriptTurn[] | null,
+  turnId: string,
 ): TranscriptTurn | null {
-  if (!turns?.length) return null;
-  for (let index = turns.length - 1; index >= 0; index -= 1) {
-    const turn = turns[index];
-    if (isSettledRow(turn)) return null;
-    if (isRunningRow(turn)) return turn;
-  }
-  return null;
-}
-
-/**
- * WHICH settled transcript row has REPLACED the streamed running turn, if any?
- *
- * Identity alone cannot answer this. The terminal SSE frame carries the GATEWAY
- * turn id (`turn-terminal-payload` is the lean `{turn_id, status}`), while the
- * transcript rows are the ENGINE's own rows under ids the engine mints inside
- * `send!` — "the gateway's `tid` is NOT the engine's persisted row id". So an
- * id test either never matches (the bubble lingers, then duplicates) or matches
- * the still-`running` placeholder — and dropping the bubble against THAT is how
- * a whole finished turn, with every iteration the user watched, vanished from
- * the screen: the placeholder carries no content and `visibleTurns` filters it.
- *
- * A safe handover requires a SETTLED row that was not present before this live
- * turn and that identifies the same request (or has the exact same id).
- * `created_at` then guards against an ancient page passing as the replacement.
- * Never drop an already painted trace merely because some unrelated turn landed.
- *
- * The ROW, not a yes/no: the screen has to hand that row the trace the bubble
- * was painting (`whole` in `ChatContent`), so it must know which one took over.
- * An exact id match wins outright; otherwise the NEWEST accepted row is the
- * answer, because a page of recent history can put several inside the slack
- * window and only the last of them can be this turn's.
- */
-function runningTurnSettledRow(
-  turns: TranscriptTurn[] | null,
-  before: Set<string>,
-  finishedId: string,
-  startedAt?: number,
-  request?: string,
-  requireOutput = false,
-  requireProse = false,
-): TranscriptTurn | null {
-  if (!turns?.length) return null;
-  const covers = (turn: TranscriptTurn): boolean =>
-    settledTranscriptCoversRunningTurn([turn], before, {
-      id: finishedId,
-      request,
-      startedAt,
-      requireOutput,
-      requireProse,
-    });
-  if (finishedId) {
-    const named = turns.find((turn) => rowId(turn) === finishedId);
-    if (named && covers(named)) return named;
-  }
-  for (let index = turns.length - 1; index >= 0; index -= 1) {
-    if (covers(turns[index])) return turns[index];
-  }
-  return null;
+  if (!turnId || !turns?.length) return null;
+  const row = turns.find((turn) => rowId(turn) === turnId);
+  return row && isSettledRow(row) ? row : null;
 }
 
 
@@ -635,23 +563,10 @@ function CopyableId({ id, className }: { id: string; className: string }) {
  * `rememberRunningTurn`), so re-entry can start exactly where it left off and take
  * only NEW frames on top.
  *
- * A remembered bubble remains authoritative until a settled transcript row for
- * that same request replaces it. If the terminal frame arrived while this screen
- * was away, retain the painted output but locally stop its running state; the hub
- * has discarded the terminal turn's replay buffer and persistence may still lag.
+ * A remembered bubble remains authoritative until the settled transcript row with
+ * the same canonical id replaces it. If the terminal frame arrived while this
+ * screen was away, retain the painted output until that row lands.
  */
-function runningTurnCarriesProse(turn: RunningTurn | null): boolean {
-  return Boolean(
-    turn &&
-      (turn.answer.trim() ||
-        turn.content?.some(
-          (block) => block.type === "prose" && Boolean(block.markdown?.trim()),
-        ) ||
-        turn.iterations.some((iteration) =>
-          Boolean(iteration.assistant_prose?.trim()),
-        ))
-  );
-}
 
 function runningTurnCarriesOutput(turn: RunningTurn | null): boolean {
   return Boolean(
@@ -677,19 +592,8 @@ function seedRunningTurn(
   const cached = client.cachedRunningTurn<RunningTurn>(sid);
   if (!cached) return null;
 
-  // A settled transcript row is the only safe replacement for pixels the user
-  // already saw. This check matters for BOTH kinds of cached bubble below.
-  const persisted = client.cachedTranscript(sid);
-  if (
-    settledTranscriptCoversRunningTurn(persisted, new Set(), {
-      id: cached.turn.id,
-      request: cached.turn.request,
-      startedAt: cached.turn.startedAt,
-      requireOutput: runningTurnCarriesOutput(cached.turn),
-      requireProse: runningTurnCarriesProse(cached.turn),
-    })
-  )
-    return null;
+  // A settled row with this exact id is the canonical replacement for cached pixels.
+  if (cached.turn.id && settledTurnRow(client.cachedTranscript(sid), cached.turn.id)) return null;
 
   if (cached.turn.status === "running") {
     if (!subscriptions.hasEndedTurn(sid)) return cached;
@@ -1287,23 +1191,6 @@ export function SessionScreen({
   // it was reported from.
   const submitsInFlightRef = useRef(0);
   const turnsRef = useRef<TranscriptTurn[]>([]);
-  // Ids of every transcript row that existed BEFORE the current running turn — the
-  // baseline `runningTurnSettledRow` measures "a new settled row landed" against.
-  // Frozen for as long as a running-turn bubble is on screen (see the mirror effect).
-  //
-  // Seeded here rather than left empty: when the screen re-enters a streaming
-  // session the bubble exists on the very first render, so the mirror effect
-  // never gets a chance to take the baseline and every cached row would count as
-  // "landed after this turn started".
-  const [preRunningTurnIdsSeed] = useState(
-    () =>
-      new Set(
-        (client.cachedTranscript(sid) ?? [])
-          .filter((turn) => !isRunningRow(turn))
-          .map(rowId),
-      ),
-  );
-  const preRunningTurnIdsRef = useRef<Set<string>>(preRunningTurnIdsSeed);
   const cancelRef = useRef<() => void>(() => undefined);
   // A cold open stays covered until its first transcript page has been placed. A
   // cached re-entry still runs the same positioning pass, but paints immediately.
@@ -1313,21 +1200,6 @@ export function SessionScreen({
   useEffect(() => {
     runningRef.current = running;
     turnsRef.current = turns;
-    // No running-turn bubble ⇒ whatever is on screen IS the baseline. Once one appears
-    // this stops updating, so the snapshot describes the transcript as it was
-    // when the turn started.
-    //
-    // STILL-RUNNING rows are excluded on purpose. The gateway persists a
-    // `running` placeholder for a turn the moment it is accepted, so a refetch
-    // that lands between the POST and `turn.started` puts THIS turn's row into
-    // the baseline. `runningTurnSettledRow` then rejects that very row as "already
-    // there" once it settles, the running-turn bubble is never retired, and the answer
-    // renders twice — settled row plus bubble — until the screen is remounted.
-    if (!runningTurnRef.current) {
-      preRunningTurnIdsRef.current = new Set(
-        turns.filter((turn) => !isRunningRow(turn)).map(rowId),
-      );
-    }
     cancelRef.current = () => void cancel();
   });
 
@@ -1375,11 +1247,6 @@ export function SessionScreen({
     runningTurnRef.current = seed?.turn ?? null;
     lastRunningTurnSeqRef.current = seed?.seq ?? -1;
     runningTurnSidRef.current = sid;
-    preRunningTurnIdsRef.current = new Set(
-      (cachedTranscript ?? [])
-        .filter((turn) => !isRunningRow(turn))
-        .map(rowId),
-    );
     setSession(client.cachedSession(sid));
     setAttachments([...peekDraftMessage(draftMessageId).attachments]);
     setPastes(new Map());
@@ -1937,68 +1804,25 @@ export function SessionScreen({
       signal?: AbortSignal,
       rows?: readonly TranscriptTurn[] | null,
     ) => {
-      // NO SESSION ROW IS NOT "NOTHING IS RUNNING". That read is one request on
-      // a phone's link and it fails on its own; the transcript is the second
-      // witness and it never goes through the registry (see `inFlightRow`).
-      // Bailing here left `running` false and the running-turn bubble null for the
-      // whole turn — `reduceRunningTurnEvent` then drops every delta that arrives, so the
-      // freshly persisted `running` row sat there with nothing under it.
-      const gatewayRunning = row?.live ?? row?.status === "running";
-      const claimed = row?.current_turn_id ?? "";
-      // The registry answers FIRST — exact, free, no round trip. But when it says
-      // nothing is running, that is not taken as "nothing is running": the
-      // transcript is asked instead (see `inFlightRow`). A registry that dropped
-      // `:current-turn` under a running turn is precisely the state where the seed
-      // frame can never arrive, so refusing to adopt there is what pins the
-      // screen to the placeholder, counting minutes, for the rest of the turn.
-      const running = inFlightRow(rows ?? turnsRef.current);
-      // Identity stays the REGISTRY's id whenever it has one: the terminal SSE
-      // frame carries that id and `ownsTerminal` settles this very bubble by
-      // matching it. Only a registry that has LOST the turn hands identity to the
-      // row — there is no other id left, and the reconcile tick's coverage check
-      // retires it when the row finally settles.
-      const tid =
-        gatewayRunning && claimed !== "" ? claimed : running ? rowId(running) : "";
-      if (tid === "") return;
-      // Either witness is enough, and neither cost a round trip: a turn IS running.
-      // Claiming it here rather than after `turnTrace` matters — until `running`
-      // is set, `turnsSettled` treats the persisted `running` placeholder as a
-      // finished row, so opening a streaming session painted that row with no
-      // "Vis is running …" ticker for the whole length of the trace fetch.
+      const tid = row?.live ? (row.current_turn_id ?? "") : "";
+      if (!tid) return;
+      const persisted =
+        (rows ?? turnsRef.current)?.find((turn) => rowId(turn) === tid) ?? null;
+
       setRunning(true);
-      // A bubble that is still streaming OWNS the turn: it holds deltas newer
-      // than any persisted trace, so replacing it would visibly rewind it. Only
-      // a missing (or already settled) bubble is adopted into.
+      // A streaming bubble owns deltas newer than the durable row. Adopt only when
+      // no running bubble for this canonical id is already painted.
       const held = runningTurnRef.current;
       if (held && (held.status === "running" || held.id === tid)) return;
-      // WHICH id the trace is read under is not the same question as which id this
-      // bubble carries. `/turns/:tid/trace` resolves the ENGINE's turn id — the
-      // persisted row's — and answers 200 with ZERO iterations for the gateway
-      // registry's `current_turn_id` (measured against a live daemon: registry id
-      // -> 0, row id -> every iteration so far). Reading by the registry id is why
-      // a resumed session adopted an EMPTY bubble and only filled from the next
-      // delta onwards, losing everything the turn had already done.
-      //
-      // With the row in hand there is nothing left to ask: `/transcript` inlines
-      // the running row's `iterations`, byte-for-byte what `/turns/<row id>/trace`
-      // answers for that id (both measured on a live daemon). The endpoint stays
-      // for the two cases that have no row — a registry claim the transcript has
-      // not caught up with, and a daemon too old to inline. An EMPTY inline trace
-      // is an answer, not a miss (a row whose first iteration has not persisted
-      // yet), so a missing key is the only thing that may fall through to it.
-      const inlineTrace = running?.iterations;
+
+      const inlineTrace = persisted?.iterations;
       let iterations: TranscriptIteration[];
       if (inlineTrace != null) {
         iterations = inlineTrace;
       } else {
         try {
-          iterations = await client.turnTrace(
-            sid,
-            running ? rowId(running) : tid,
-            signal,
-          );
+          iterations = await client.turnTrace(sid, tid, signal);
         } catch {
-          // Older gateway, or a flaky link. The next reconcile tick retries.
           return;
         }
       }
@@ -2013,21 +1837,14 @@ export function SessionScreen({
         row?.running_started_at != null && row.server_time_ms != null
           ? Date.now() -
             Math.max(0, row.server_time_ms - row.running_started_at)
-          : // Adopted off the transcript there is no `running_started_at` to rebase
-            // — the row's own stamp is the only start there is, and without it a
-            // turn that began two hours ago would restart its clock at 0s.
-            typeof running?.created_at === "number" &&
-              Number.isFinite(running.created_at)
-            ? running.created_at -
+          : typeof persisted?.created_at === "number" &&
+              Number.isFinite(persisted.created_at)
+            ? persisted.created_at -
               (row?.server_time_ms != null ? row.server_time_ms - Date.now() : 0)
             : Date.now();
       const adopted: RunningTurn = {
         id: tid,
-        request:
-          row?.running_request ??
-          running?.user_request ??
-          running?.request ??
-          "",
+        request: row?.running_request ?? persisted?.request ?? "",
         answer: "",
         iterations,
         startedAt,
@@ -2123,14 +1940,6 @@ export function SessionScreen({
       // been dropped. If the persisted turn now exists, drop the running-turn bubble; if
       // the gateway is idle but we still show work, do the same.
       const runningTurnId = runningTurnRef.current?.id ?? "";
-      const runningTurnStartedAt = runningTurnRef.current?.startedAt;
-      const runningTurnRequest = runningTurnRef.current?.request;
-      // Mobile foregrounding runs this reconcile path after WebKit may have
-      // suspended the SSE stream. Preserve the SAME painted-content contract as
-      // terminal settle: a tool/reasoning-only persisted shell cannot replace
-      // answer prose the user has already seen.
-      const runningTurnHadOutput = runningTurnCarriesOutput(runningTurnBefore);
-      const runningTurnHadProse = runningTurnCarriesProse(runningTurnBefore);
       let nextTurns: TranscriptTurn[] | null = null;
       try {
         // Gated on the row this tick just read: an idle session costs one tiny
@@ -2140,32 +1949,8 @@ export function SessionScreen({
         nextTurns = null;
       }
       if (cancelled) return;
-      // The ENGINE's witness, taken from the rows on screen right now: a persisted
-      // `running` row outlives any registry hiccup (see `inFlightRow`). Every
-      // verdict below that used to trust `gatewayRunning` alone now needs both to
-      // agree before it retires work the user is watching.
       const rowsNow = nextTurns ?? turnsRef.current;
-      const persistedRunning = inFlightRow(rowsNow);
-      // Decided and applied BEFORE the queue round-trip below: with the clear
-      // sitting after another await, the settled transcript row and the running-turn
-      // bubble both painted for that window (the same turn twice).
-      //
-      // Measured against the rows we HOLD, not only the ones this tick fetched.
-      // A revalidation answers `null` for a transcript that did not move, so a
-      // handover judged only inside `if (nextTurns)` got exactly ONE chance: if
-      // the verdict that tick was "still running" (the registry lags the
-      // terminal frame by a moment, or the read failed), nothing ever asked
-      // again and the stale bubble stayed on screen — hiding the persisted
-      // answer behind it — until the session was closed and reopened.
-      const landedRow = runningTurnSettledRow(
-        rowsNow,
-        preRunningTurnIdsRef.current,
-        runningTurnId,
-        runningTurnStartedAt,
-        runningTurnRequest,
-        runningTurnHadOutput,
-        runningTurnHadProse,
-      );
+      const landedRow = settledTurnRow(rowsNow, runningTurnId);
       const covered = landedRow !== null;
       if (nextTurns) {
         setTurns(nextTurns);
@@ -2175,21 +1960,12 @@ export function SessionScreen({
         // height and the new tail sits below the fold.
         if (resumePinRef.current) requestAnimationFrame(() => pinToEnd());
       }
-      // Only the very bubble this coverage verdict is about — a turn started
-      // since the read must keep streaming.
-      //
-      // And never against the turn the GATEWAY says it is running right now: the
-      // transcript verdict is a heuristic (an id that never matches plus a 60 s
-      // created_at window), and right after a queued row drains, the PREVIOUS
-      // turn's freshly persisted row falls inside that window. One tick then
-      // retired a running-turn bubble mid-stream. The registry row is not a
-      // heuristic.
-      // The persisted row counts too: while it is still `running` the turn is
-      // demonstrably alive, whatever the registry currently believes.
+      // Retire only the bubble named by the durable row, and never while the
+      // canonical gateway state still reports that exact turn as running.
       const stillRunningThis =
         runningTurnId !== "" &&
-        ((gatewayRunning && (next.current_turn_id ?? "") === runningTurnId) ||
-          (persistedRunning !== null && rowId(persistedRunning) === runningTurnId));
+        gatewayRunning &&
+        (next.current_turn_id ?? "") === runningTurnId;
       if (
         landedRow &&
         !stillRunningThis &&
@@ -2220,16 +1996,12 @@ export function SessionScreen({
           runningTurnBefore !== null &&
           (currentRunningTurn.id ?? "") === runningTurnIdBefore) ||
         (runningRef.current && runningBefore);
-      // `persistedRunning` vetoes this: "idle" from a registry that lost the turn
-      // is not idleness, and freezing the ticker there is the same wrong answer in
-      // a quieter costume. A submit still on the wire vetoes it from the other
-      // end — sampled before this tick's read, or answered after it, the registry
-      // was never asked about the turn the composer is holding.
+      // A submit still on the wire may not have reached the gateway yet, so it is
+      // the only client-side veto to an idle canonical session state.
       const submitPending = submitBefore || submitsInFlightRef.current > 0;
       if (
         !covered &&
         !gatewayRunning &&
-        !persistedRunning &&
         !submitPending &&
         showsWork
       ) {
@@ -2254,46 +2026,11 @@ export function SessionScreen({
         });
       }
       if (cancelled) return;
-      // Gateway idle, engine still writing: nothing will be PUSHED into the bubble
-      // either — the hub's liveness comes from the same registry — so repair it
-      // from the row this tick ALREADY read. `/transcript` inlines the running
-      // row's `iterations`, so this costs no request at all; pulling
-      // `/turns/:tid/trace` on top of it would re-download the entire turn every
-      // few seconds, for as long as a stall that can run for hours.
-      if (!gatewayRunning && persistedRunning) {
-        const painted = runningTurnRef.current;
-        // Two mints, one turn: a bubble seeded by `turn.started` carries the
-        // GATEWAY's id, this row carries the ENGINE's, and the frozen bubble in
-        // the incident is exactly one of those. Letting that mismatch veto the
-        // repair would leave the only case this branch exists for unhandled, so
-        // the submitted text stands as the second witness when the ids differ.
-        const rowRequest = (
-          persistedRunning.user_request ??
-          persistedRunning.request ??
-          ""
-        ).trim();
-        const traced = persistedRunning.iterations;
-        // Never shrink: deltas that did land are newer than any persisted row, and
-        // a row read before them is no evidence that they never came.
-        const grown: RunningTurn | null =
-          painted?.status === "running" &&
-          (painted.id === rowId(persistedRunning) ||
-            (rowRequest !== "" && painted.request.trim() === rowRequest)) &&
-          traced != null &&
-          traced.length > painted.iterations.length
-            ? { ...painted, iterations: traced }
-            : null;
-        if (grown) {
-          runningTurnRef.current = grown;
-          setRunningTurn(grown);
-        }
-      }
-      // Last, against the row this tick read: the gateway is running a turn we
-      // are not painting. That is every way the seed frame can be missed — a
-      // webview the OS reloaded while backgrounded, a turn another client
-      // started, a stream that reconnected past it. Free when the transcript
-      // carries the row; it costs a request only when the registry claims a turn
-      // the transcript has not caught up with.
+      // Last, against the canonical gateway claim this tick read: adopt a turn we are
+      // not painting. That covers a webview the OS reloaded while backgrounded, a turn
+      // another client started, or a stream that reconnected past `turn.started`.
+      // A matching transcript row supplies an inline trace; otherwise the canonical
+      // turn id addresses the gateway trace directly.
       await adoptRunningTurn(next, undefined, nextTurns ?? turnsRef.current);
       // Consumed either way: with no new turns the wake's own pin was enough.
       resumePinRef.current = false;
@@ -2381,7 +2118,7 @@ export function SessionScreen({
     const stopReady = subscriptions.subscribeSession(
       sid,
       (event) => {
-        if (event.type !== "subscription.ready") return;
+        if (event.type !== "subscription.ready" || typeof event.is_live !== "boolean") return;
         const currentRunningTurn = runningTurnRef.current;
         const painted =
           currentRunningTurn?.status === "running" ? currentRunningTurn.id : "";
@@ -2406,9 +2143,7 @@ export function SessionScreen({
         } else if (event.is_live === false) {
           latestReplayHeadRef.current = null;
         }
-        // An older daemon omits the state entirely; then the frame degrades to
-        // "reconcile on every reconnect", which is merely one extra read.
-        if (typeof event.is_live === "boolean" && running === painted) return;
+        if (running === painted) return;
         const now = Date.now();
         if (now - lastReadyReconcileAt < READY_RECONCILE_MIN_MS) return;
         lastReadyReconcileAt = now;
@@ -2809,41 +2544,12 @@ export function SessionScreen({
       // to completion into a bubble nobody was painting: an empty "Vis" until the
       // whole thing persisted. This is the same rule the reconcile tick already
       // applies before it clears a bubble.
-      const claimedId = eventString(event, "turn_id");
-      const finishedId = claimedId || runningTurnRef.current?.id || "";
-      // A bubble with NO id is this device's OPTIMISTIC one: the POST that will
-      // name it has not answered yet. A frame that NAMES a turn is therefore
-      // about a turn this screen holds no id for, and claiming it stamped a
-      // brand-new bubble `completed` with nothing in it — the bare "Vis" that
-      // then never streamed again, because `reduceRunningTurnEvent` drops every delta
-      // once a bubble has stopped running. The id lands within the same second
-      // (`submitTurn`'s answer, or `turn.started`); a bubble whose OWN terminal
-      // frame was genuinely missed is settled by the reconcile tick and the
-      // liveness probe instead, which is what they are for.
-      const ownsTerminal = (turn: RunningTurn | null) =>
-        !!turn &&
-        (turn.id === finishedId || (!claimedId && (turn.id ?? "") === ""));
-      const held = ownsTerminal(runningTurnRef.current) ? runningTurnRef.current : null;
+      const finishedId = eventString(event, "turn_id");
+      if (!finishedId) return;
+      const ownsTerminal = (turn: RunningTurn | null) => turn?.id === finishedId;
       const terminalBlocks = Array.isArray(event.content)
         ? (event.content as ContentBlock[])
         : undefined;
-      // What the reader is looking at once THIS frame is applied, never what
-      // stood there before it. Completion routinely overtakes the 150 ms body
-      // queue, so the terminal frame's own `content` is very often the whole
-      // answer; sampling ahead of it told the coverage test the bubble carried
-      // no prose, and the bubble was then handed over to a persisted row that
-      // carried none either — the answer the reader had just watched arrive,
-      // deleted on the way to its own transcript row.
-      const settledBubble: RunningTurn | null = held
-        ? {
-            ...held,
-            content: terminalBlocks?.length ? terminalBlocks : held.content,
-          }
-        : null;
-      const finishedStartedAt = held?.startedAt;
-      const finishedRequest = held?.request;
-      const finishedHadOutput = runningTurnCarriesOutput(settledBubble);
-      const finishedHadProse = runningTurnCarriesProse(settledBubble);
       const voiceOwned = voiceOwnershipRef.current.settle(finishedId);
       if (type === "turn.completed" && voiceConversationRef.current && voiceOwned) {
         const spoken = terminalBlocks
@@ -2893,12 +2599,11 @@ export function SessionScreen({
       // Keep the streamed running turn on screen until the finished turn is
       // actually persisted in the transcript, otherwise it vanishes for a frame
       // (the persisted row lags the terminal event) and the view jumps.
-      // (`finishedId` / `finishedStartedAt` were captured above, before the awaits.)
+      // `finishedId` was captured above, before the awaits.
       // Fetch the finished transcript WITHOUT touching state, then apply the
       // turns and drop the running-turn bubble in ONE synchronous (React-batched) update.
-      // The persisted finished turn carries the engine's row id, not the live
-      // turn's gateway id, so `visibleTurns` can't filter it out — if `setTurns`
-      // rendered before `setRunningTurn(null)`, both would show for a frame (dup).
+      // The durable row and streamed bubble share one id, so the swap below can
+      // identify exactly which row replaces which bubble.
       let next: TranscriptTurn[] | null = null;
       // Refresh the meta row alongside the transcript: the transcript read stamps
       // itself with the freshest row it can see, so the next reconcile tick knows
@@ -2930,15 +2635,7 @@ export function SessionScreen({
         next = null;
       }
       const coveringRow = (turns: TranscriptTurn[] | null) =>
-        runningTurnSettledRow(
-          turns,
-          preRunningTurnIdsRef.current,
-          finishedId,
-          finishedStartedAt,
-          finishedRequest,
-          finishedHadOutput,
-          finishedHadProse,
-        );
+        settledTurnRow(turns, finishedId);
       // The persisted row lags the terminal frame by however long the engine's
       // write takes. Poll for it on a short escalating backoff instead of
       // sleeping one flat 300 ms and asking once: the common case (the row is
@@ -2983,19 +2680,6 @@ export function SessionScreen({
           setHandedOverRowId(rowId(landed));
           setRunningTurn(null);
           runningTurnRef.current = null;
-        } else if (landed) {
-          // A queued row drained into the rail while we were fetching. THIS turn's
-          // answer is now persisted, so it is old news for the bubble that is
-          // streaming — fold it into the baseline. The baseline is frozen for as
-          // long as ANY bubble is up (see the mirror effect), so without this the
-          // reconcile tick reads "the running turn has landed" off the PREVIOUS turn's
-          // row (`runningTurnSettledRow`'s 60 s created_at slack accepts it) and
-          // deletes a bubble that is still streaming — the same blank "Vis", one
-          // tick later.
-          preRunningTurnIdsRef.current = new Set([
-            ...preRunningTurnIdsRef.current,
-            ...next.filter((turn) => !isRunningRow(turn)).map(rowId),
-          ]);
         }
       }
       if (type === "turn.failed") {
@@ -4175,7 +3859,7 @@ export function SessionScreen({
           extraBody: turnExtraBody,
           turnFeatures: voiceProjection ? { voice_projection: true } : undefined,
         });
-        const queuedId = submitted.turn_id ?? submitted.id;
+        const queuedId = submitted.turn_id;
         if (voiceProjection)
           voiceOwnershipRef.current.claim(queuedId, voiceLease);
         rememberSent(queuedId, sent);
@@ -4263,7 +3947,7 @@ export function SessionScreen({
         extraBody: turnExtraBody,
         turnFeatures: voiceProjection ? { voice_projection: true } : undefined,
       });
-      const submittedId = submitted.turn_id ?? submitted.id;
+      const submittedId = submitted.turn_id;
       if (voiceProjection)
         voiceOwnershipRef.current.claim(submittedId, voiceLease);
       rememberSent(submittedId, sent);
@@ -4592,12 +4276,8 @@ export function SessionScreen({
         // transcript confirmed against the gateway this visit may show one.
         if (isRunningRow(turn) && !turnsFresh) return false;
         if (!runningTurn) return true;
-        const id = turn.id ?? turn.turn_id;
-        // Same turn by id — the running-turn bubble owns it.
-        if (runningTurnId && id === runningTurnId) return false;
-        // The persisted 'running' row is the very turn being streamed live, even
-        // when its id can't be matched (e.g. turn.started replayed without a
-        // turn_id). Only one turn runs per session, so drop it to avoid a dup.
+        // The running-turn bubble owns the one persisted row with its canonical id.
+        if (runningTurnId && turn.turn_id === runningTurnId) return false;
         if (isRunningRow(turn)) return false;
         return true;
       }),
@@ -4607,26 +4287,11 @@ export function SessionScreen({
   // (prompt/caret state), so React bails out of the whole transcript subtree
   // instead of re-reconciling every turn wrapper on each keypress — that
   // reconciliation was what made `/` and `@` completion typing lag.
-  // A persisted turn row may still read `status: 'running'` — the gateway writes
-  // that row at submit and the transcript we hold can predate the terminal frame.
-  // Rendered naively it keeps a "Vis is thinking…" ticker (and its elapsed clock)
-  // alive under a turn that ended. Once this session is no longer live, nothing
-  // in the transcript is running: settle every row. Same rule as the TUI, which
-  // treats the terminal frame — not the persisted status — as the end of a turn.
-  // A running-turn bubble that ALREADY settled (terminal frame in, persisted row not yet
-  // fetched) is not work in flight: treating it as such kept every persisted
-  // 'running' row spinning with its elapsed clock until the refetch landed.
-  // The rows the gateway just handed us are the second witness, and they do not
-  // go through the registry (see `inFlightRow`): while one still reads `running`
-  // there IS work, whatever this screen's own latch believes. Without it a turn
-  // whose bubble never arrived — the session read failed, the POST timed out, the
-  // seed frame was missed — settled its own live row and painted no phase, no
-  // clock and no trace for as long as it ran.
-  const persistedInFlight = turnsFresh ? inFlightRow(turns) : null;
+  // A persisted row can be stale relative to the gateway terminal frame. The
+  // gateway's current-turn state is the sole liveness authority; transcript rows
+  // are durable content and never keep work alive on their own.
   const turnsSettled =
-    !running &&
-    persistedInFlight === null &&
-    (!runningTurn || runningTurn.status !== "running");
+    !running && (!runningTurn || runningTurn.status !== "running");
   // What the composer may advertise as in-flight. `running` on its own is a latch:
   // set optimistically at submit, cleared by the terminal frame or the 5s
   // reconcile. Pairing it with the bubble's own status means a settled turn can
@@ -4677,7 +4342,7 @@ export function SessionScreen({
   const turnRows = useMemo(
     () =>
       visibleTurns.map((turn, index) => {
-        const request = turn.user_request ?? turn.request ?? "";
+        const request = turn.request ?? "";
         // A turn skips its own paint, in `AssistantMessage`
         // (`useMeasuredPaintSkip`), never from this wrapper: the size a skip
         // stands in for has to be the one that turn MEASURED, and a wrapper
@@ -4687,7 +4352,7 @@ export function SessionScreen({
         return (
           <div
             className={index === 0 ? "" : "mt-10"}
-            key={turn.id ?? turn.turn_id}
+            key={turn.turn_id}
           >
             {(request || (turn.attachments?.length ?? 0) > 0) && (
               <UserMessage attachments={turn.attachments}>{request}</UserMessage>
@@ -4747,7 +4412,7 @@ export function SessionScreen({
         )}
         <AssistantMessage
           turn={{
-            id: runningTurn.id ?? "live",
+            turn_id: runningTurn.id ?? "live",
             request: runningTurn.request,
             status: runningTurn.status,
             iterations: runningTurn.iterations,

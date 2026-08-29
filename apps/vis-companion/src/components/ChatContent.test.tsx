@@ -271,7 +271,7 @@ describe("Markdown attachment links", () => {
     const view = render(
       <AssistantMessage
         turn={{
-          id: "t1",
+          turn_id: "t1",
           status: "completed",
           content: [
             {
@@ -501,7 +501,7 @@ describe("collapsed tool results", () => {
   it("does not mount result bodies before a card is opened", () => {
     const bodySentinel = "UNMOUNTED_TOOL_RESULT_BODY";
     const turn: TranscriptTurn = {
-      id: "large-trace",
+      turn_id: "large-trace",
       status: "completed",
       iterations: [
         {
@@ -552,7 +552,7 @@ describe("a turn declares no size it has not measured", () => {
     const html = renderToStaticMarkup(
       <AssistantMessage
         turn={{
-          id: "paint",
+          turn_id: "paint",
           status: "completed",
           iterations: [
             {
@@ -574,7 +574,7 @@ describe("a card wears no op badge, but its band has a name", () => {
       renderToStaticMarkup(
         <AssistantMessage
           turn={{
-            id: "titles",
+            turn_id: "titles",
             status: "completed",
             iterations: [{ id: "iteration-1", forms: [form] }],
           }}
@@ -619,9 +619,9 @@ describe("a command turn shows its answer, never a program", () => {
     renderToStaticMarkup(
       <AssistantMessage
         turn={{
-          id: "command",
+          turn_id: "command",
           status: "completed",
-          user_request: "/reload",
+          request: "/reload",
           iterations: [{ id: "iteration-1", forms: [form] }],
           content: [
             { id: "block-1", type: "prose", markdown: "Reloaded — configuration" },
@@ -809,7 +809,7 @@ describe("Activity owns the slot after its Python form and result", () => {
   };
   const turnOf = (forms: Record<string, unknown>[]): TranscriptTurn =>
     ({
-      id: "activity-turn",
+      turn_id: "activity-turn",
       status: "completed",
       iterations: [{ id: "iteration-1", position: 41, forms }],
     }) as unknown as TranscriptTurn;
@@ -1193,7 +1193,7 @@ describe("a markdown table", () => {
 // at all, so the reader had no word that work had even started.
 describe("a turn that has not answered yet", () => {
   const running = {
-    id: "t1",
+    turn_id: "t1",
     request: "check the logs",
     status: "running",
     iterations: [],
@@ -1255,7 +1255,7 @@ describe("the trace a settled row inherits from the running-turn bubble", () => 
     assistant_prose: `step ${index}`,
   })) as unknown as TranscriptTurn["iterations"];
   const finished = {
-    id: "t1",
+    turn_id: "t1",
     request: "do the long thing",
     status: "completed",
     iterations,

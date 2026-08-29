@@ -193,7 +193,7 @@ describe("attachment classification", () => {
 
 const turns: TranscriptTurn[] = [
   {
-    id: "t1",
+    turn_id: "t1",
     iterations: [
       {
         id: "i1",
@@ -218,7 +218,7 @@ const turns: TranscriptTurn[] = [
     ],
   },
   {
-    id: "t2",
+    turn_id: "t2",
     iterations: [
       { id: "i2" },
       {

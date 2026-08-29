@@ -145,7 +145,7 @@ function layout(box: HTMLElement, width: number, height: number): void {
 }
 
 const turn: TranscriptTurn = {
-  id: "turn-1",
+  turn_id: "turn-1",
   status: "completed",
   iterations: [
     { id: "iteration-1", forms: [{ op: "shell", result_summary: "ok" }] },
@@ -444,7 +444,7 @@ describe("the turn beside the one being read is never skipped", () => {
     const view = render(
       <>
         <AssistantMessage turn={turn} />
-        <AssistantMessage turn={{ ...turn, id: "turn-2" }} />
+        <AssistantMessage turn={{ ...turn, turn_id: "turn-2" }} />
       </>,
     );
     const [above, reading] = [

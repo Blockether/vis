@@ -118,7 +118,22 @@ describe('GatewayClient session-list validators', () => {
     expect(secondFetch).toHaveBeenCalledOnce();
   });
 });
+describe('GatewayClient canonical queued turn state', () => {
+  it('rejects an incomplete session response without caching it or making a fallback request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 'session-1', title: 'Session' })),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient(conn);
 
+    await expect(client.session('session-1', undefined, true)).rejects.toThrow(
+      'Gateway response omitted queued_turns',
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(client.cachedSession('session-1')).toBeNull();
+  });
+});
 // The one fact about its own list the gateway cannot know is which sessions are
 // holding words typed on THIS device. It is SENT — and a window whose ETag was
 // issued while the overlay said one thing must never answer a list asked for
@@ -669,13 +684,16 @@ describe('GatewayClient transcript revalidation', () => {
     const answered = {
       id: 'session-1',
       title: 'Cached session',
+      live: false,
+      current_turn_id: null,
       turn_count: 2,
+      server_time_ms: 0,
       modified_at: '2026-08-14T03:00:02Z',
     };
-    const stale = [{ id: 'turn-1', user_request: 'first', status: 'completed' }];
+    const stale = [{ turn_id: 'turn-1', request: 'first', status: 'completed' }];
     const fresh = [
       ...stale,
-      { id: 'turn-2', user_request: 'second', status: 'completed' },
+      { turn_id: 'turn-2', request: 'second', status: 'completed' },
     ];
     let turns = stale;
     vi.stubGlobal(

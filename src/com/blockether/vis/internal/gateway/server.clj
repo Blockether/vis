@@ -792,9 +792,8 @@
    flushed frame so a client paints iteration 420 immediately, then fills its
    details from the chronological replay without visibly counting 1…420.
 
-   `is_live` is what keeps 'the session is idle' distinguishable from 'this
-   daemon is too old to say': a client that sees no `is_live` must treat the
-   frame as no verdict at all and fall back to asking.
+   `is_live` is the required canonical verdict; protocol negotiation rejects a client
+   or daemon that cannot exchange it.
 
    EVERY SSE endpoint emits it for EVERY session it serves — single-session and
    multiplexed alike — so no client has to special-case which endpoint it is

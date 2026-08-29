@@ -2982,17 +2982,6 @@ describe("the session screen and the settings dialog spell no control out", () =
     );
   });
 
-  it("keeps painted answer prose through mobile wake reconciliation", () => {
-    expect(sessionScreenSource).toContain(
-      "const runningTurnHadProse = runningTurnCarriesProse(runningTurnBefore)",
-    );
-    expect(sessionScreenSource).toContain(
-      "const runningTurnHadOutput = runningTurnCarriesOutput(runningTurnBefore)",
-    );
-    expect(sessionScreenSource).toMatch(
-      /runningTurnSettledRow\([\s\S]*?runningTurnRequest,[\s\S]*?runningTurnHadOutput,[\s\S]*?runningTurnHadProse,[\s\S]*?\)/,
-    );
-  });
 
   it("holds one Android audio route for the whole voice conversation", () => {
     expect(sessionScreenSource).toContain("await beginVoiceAudioSession()");

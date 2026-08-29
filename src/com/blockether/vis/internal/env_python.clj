@@ -848,7 +848,7 @@
    and foundation tools are (re)installed via this fn AFTER the context's own
    defer pass — without deferring here they'd stay raw/synchronous and the
    `await` the prompt teaches would fail. The compaction verbs
-   (`fold_session`/`session_drop`/`__vis_par__`) are bound via `create-python-context`, not
+   (`fold_session`/`__vis_par__`) are bound via `create-python-context`, not
    here, so they stay direct. No-op when the async preamble isn't installed
    (the printer/parser helper contexts never bind tools)."
   [python-context sym val]
@@ -2296,7 +2296,7 @@
     ;; ASYNC-BY-DEFAULT runtime: install the trampoline + `gather`, then DEFER
     ;; every tool binding (so `await grep(x)` / `gather(grep(x), grep(y))` work).
     ;; `__vis_par__` (the bounded host platform pool) is wired as a binding above;
-    ;; the compaction verbs (`fold_session`/`session_drop`) stay direct (never deferred).
+    ;; the compaction verb (`fold_session`) stays direct (never deferred).
     ;; Eval'd before the snapshot so all `__vis_*` names land in the baseline.
     (.eval ctx "python" async-runtime-python)
     ;; Auto-import `re` so the model can use regex without writing `import re`.

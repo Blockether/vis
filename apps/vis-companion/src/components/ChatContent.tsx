@@ -1056,7 +1056,7 @@ function assistantUsage(turn: TranscriptTurn): boolean {
 }
 
 function commandTurn(turn: TranscriptTurn): boolean {
-  const request = (turn.user_request ?? turn.request ?? "").trimStart();
+  const request = (turn.request ?? "").trimStart();
   return request.startsWith("/") || request.startsWith("!");
 }
 
@@ -2866,7 +2866,7 @@ function fallbackAnswer(turn: TranscriptTurn): string {
 function runningTurnPhase(turn: TranscriptTurn): string {
   const iterations = turn.iterations ?? [];
   const iteration = iterations.length;
-  const request = (turn.user_request ?? turn.request ?? "").trim();
+  const request = (turn.request ?? "").trim();
   if (iteration === 0) {
     if (request.startsWith("!&")) return "Vis is starting a command";
     if (request.startsWith("!")) return "Vis is running a command";

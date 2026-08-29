@@ -107,10 +107,7 @@
         (expect (= "patch" (:presenter row)))
         (expect (= "mutation" (:signal row)))
         (expect (= "succeeded" (:state row)))
-        (expect (= [:arguments :result] (mapv (comp keyword :kind) (:evidence row))))
-        (expect (nil? (activity/presentation-error presentation)))
-        (expect (= "Activity presentation has unknown keys"
-                   (activity/presentation-error (assoc presentation :anchor {}))))))
+        (expect (= [:arguments :result] (mapv (comp keyword :kind) (:evidence row))))))
   (it "preserves structured patch evidence through the presentation boundary"
       (let [ctx
             (event/context)
@@ -134,8 +131,7 @@
 
         (expect (= "diff" (:kind evidence)))
         (expect (= ["hunk" "deletion" "addition"] (mapv :kind (:lines evidence))))
-        (expect (= 1 (:modifications evidence)))
-        (expect (nil? (activity/presentation-error presentation)))))
+        (expect (= 1 (:modifications evidence)))))
   (it "terminalizes rows still running when the evaluation is killed"
       (let [ctx
             (event/context)
@@ -189,8 +185,7 @@
             presentation
             (activity/presentation state)]
 
-        (expect (= activity/max-rows (count (:rows presentation))))
-        (expect (nil? (activity/presentation-error presentation)))))
+        (expect (= activity/max-rows (count (:rows presentation))))))
   ;; Regression, issues td-1ccd13 and td-574cf3: shell-handle groups replaced the
   ;; command with a generic count or froze its transient `running` phrase into the
   ;; settled Activity receipt.

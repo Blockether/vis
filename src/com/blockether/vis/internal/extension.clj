@@ -549,76 +549,19 @@
 ;; torn down on deregister.
 (s/def :ext/network-filters (s/coll-of ifn?))
 
-;; Hooks: the single mechanism extensions use to plug into the turn lifecycle.
-;; A hook is a named callback that fires at a declared `:phase`; its `:fn`
-;; receives a phase-shaped context map.
-;;
-;; Canonical phase keywords:
-;;   :turn.iteration/start — every iteration, BEFORE the model call. Returns
-;;                           nil | {:text :importance?}; text flows into
-;;                           `(get-in ctx [:session :hints])`.
-;;   :turn.answer/validate — when a `(done ...)` form produced a candidate
-;;                           final answer. Return nil to accept or
-;;                           {:reject true :message ... :hint ...} to reject.
-;;
-;; Legacy / unused phases are intentionally rejected. No compatibility shim hides
-;; stale extension code.
-;;
-;; Every hook declares :id, :doc, :phase, :fn — the contract is explicit
-;; and the failure surface reviewable. One extension can ship many
-;; independent hooks as a flat vector. Exceptions thrown in :fn are
-;; caught + logged via Telemere; a misbehaving hook never blocks the
-;; loop or starves siblings.
-;;
-;; Start hooks do NOT block evaluation. They emit advisory
-;; `(get-in ctx [:session :hints])` entries. For HARD final-answer
-;; rejection, use :turn.answer/validate.
+;; Hooks: the single mechanism extensions use to validate a candidate final answer.
+;; A hook is a named callback whose `:fn` receives a phase-shaped context map.
+;; `:turn.answer/validate` returns nil to accept or
+;; `{:reject true :message ... :hint ...}` to reject. Unused phases are refused;
+;; no compatibility shim hides stale extension code.
 (def canonical-hook-phases
   "Canonical namespaced lifecycle phases accepted by `:ext/hooks`."
-  #{:turn.iteration/start :turn.answer/validate})
+  #{:turn.answer/validate})
 
 (defn hook-phase?
   "True when `phase` is a canonical namespaced hook phase."
   [phase]
   (contains? canonical-hook-phases phase))
-
-(def canonical-hook-lifetimes
-  "Hook-task lifetime policies. Controls how long an emitted hook-task
-   lingers in `:session/tasks` after the hint stops firing.
-
-     :session    Default. Task survives across turns and is GC'd by the
-                 standard TTL machinery (`TTL-TASK-DONE`/
-                 `TTL-TASK-CANCELLED` turns after terminal status). Right
-                 for cross-turn concerns like
-                 `:vis.foundation/session-title` whose work product (the
-                 session title) is itself session-scoped.
-
-     :turn       Ephemeral. Task is dropped from `:session/tasks` at
-                 `advance-turn` regardless of status. If the originating
-                 hint condition still holds, the next iter recreates the
-                 task; if not, it stays gone. Right for transient signals
-                 like `:vis.foundation/context-pressure` whose advisory
-                 value evaporates the moment the next request's input
-                 size drops below threshold. Prevents the cargo-cult
-                 pattern where a stale `:done :validated? false` task
-                 keeps showing up in the CTX render for 6 turns and the
-                 model keeps re-emitting `(task-set! … :done)` to silence
-                 it.
-
-     :iteration  Hyper-transient. Task is dropped at `advance-iter`
-                 (every iter boundary), not just turn boundary. Right
-                 for hints whose firing condition is recomputed from
-                 per-iter state (e.g. a one-iter retry-shape warning,
-                 an in-flight tool-call status banner). The next iter's
-                 hook fire is the single source of truth; if the
-                 condition still holds the task re-materialises
-                 immediately."
-  #{:iteration :turn :session})
-
-(defn hook-lifetime?
-  "True when `lifetime` is one of the canonical hook-task lifetimes."
-  [lifetime]
-  (contains? canonical-hook-lifetimes lifetime))
 
 (s/def :ext.hook/id keyword?)
 
@@ -628,11 +571,7 @@
 
 (s/def :ext.hook/fn fn?)
 
-(s/def :ext.hook/lifetime (s/and keyword? hook-lifetime?))
-
-(s/def ::hook
-  (s/keys :req-un [:ext.hook/id :ext.hook/doc :ext.hook/phase :ext.hook/fn]
-          :opt-un [:ext.hook/lifetime]))
+(s/def ::hook (s/keys :req-un [:ext.hook/id :ext.hook/doc :ext.hook/phase :ext.hook/fn]))
 
 (s/def :ext/hooks (s/coll-of ::hook :kind vector?))
 

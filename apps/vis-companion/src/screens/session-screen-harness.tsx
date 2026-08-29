@@ -9,10 +9,26 @@
 import { render } from "@testing-library/react";
 
 import { SessionScreen } from "./SessionScreen";
-import type { Session } from "../lib/types";
+import type { Session, SseEvent } from "../lib/types";
 
 /** The parts of the gateway client and hub this screen touches. */
 type Fake = Record<string, unknown>;
+
+/** A subscription hub that broadcasts every frame to every mounted listener. */
+export function subscriptionHub() {
+  const listeners = new Set<(event: SseEvent) => void>();
+  return {
+    subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    emit: (event: SseEvent) => {
+      for (const listener of [...listeners]) listener(event);
+    },
+  };
+}
 
 export function sessionFixture(overrides: Partial<Session> = {}): Session {
   return {

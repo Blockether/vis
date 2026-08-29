@@ -21,8 +21,8 @@ const KEYBOARD = 274;
 
 function transcript() {
   return [1, 2, 3].map((position) => ({
-    id: `t${position}`,
-    user_request: `question ${position}`,
+    turn_id: `t${position}`,
+    request: `question ${position}`,
     status: "completed",
     iterations: [
       {

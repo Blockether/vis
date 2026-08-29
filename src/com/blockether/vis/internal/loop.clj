@@ -727,9 +727,9 @@
   (and (map? v) (string? (:answer v))))
 
 (defn answer-markdown
-  "Disposable text projection of a final answer. Canonical typed content remains
-   structured; this projection exists only for legacy text-only model context and
-   will not be transported as a second answer shape."
+  "Disposable model-facing text projection of a final typed answer. Canonical
+   content remains structured and this projection is never transported as a
+   second answer shape."
   [answer]
   (let [v (:result answer answer)]
     (cond (needs-input-answer? v) (:answer/text v)
@@ -771,6 +771,10 @@
 (defn- persist-turn-outcome!
   "THE terminal write for one turn: the row that says HOW the turn ended.
 
+   When `claim!` is present it must win the turn's terminal claim before any write.
+   A watchdog or cancellation backstop that already owns the terminal therefore
+   prevents a thawed worker from changing durable state.
+
    Never let the write that RECORDS an outcome be the write that LOSES it. A
    turn's own payload is the least trustworthy value in the process -- a runtime
    error can quote the whole document that broke it, and SQLite refuses any
@@ -781,10 +785,13 @@
    On a throw the outcome is re-written from a MINIMAL payload: the same status
    and counters, plus a bounded error naming the persistence failure, carrying
    neither `:ctx` nor the answer content that could not be stored. Returns true
-   when either write landed, false when the outcome could not be recorded at
-   all."
-  [db-info session-turn-id opts]
-  (try (persistance/db-update-session-turn! db-info session-turn-id opts)
+   when this path owns the terminal and either write landed, false otherwise."
+  ([db-info session-turn-id opts] (persist-turn-outcome! db-info session-turn-id opts nil))
+  ([db-info session-turn-id opts claim!]
+   (if (and claim! (not (claim!)))
+     false
+     (try
+       (persistance/db-update-session-turn! db-info session-turn-id opts)
        true
        (catch Throwable t
          (tel/log! {:level :warn
@@ -812,7 +819,7 @@
                   (tel/log! {:level :error
                              :id ::turn-outcome-lost
                              :data {:session-turn-id (str session-turn-id) :error (ex-message t2)}})
-                  false))))))
+                  false))))))))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 
@@ -1181,7 +1188,9 @@
         settle-activity!
         (fn [envelope]
           (let [outcome
-                (cond (:timeout? envelope) :cancelled
+                (cond (or (:timeout? envelope)
+                          (= :vis/interrupted (get-in envelope [:error :type])))
+                      :cancelled
                       (:error envelope) :failed
                       :else :cancelled)
 
@@ -1622,12 +1631,6 @@
   [_environment]
   {})
 
-(defn- def-display-result
-  "Pass-through seam for future display tweaks. Silent system-call
-   elision now happens explicitly on progress chunks (`:silent?`) and
-   via the `:vis/silent` return sentinel for quiet host effects; normal value-bearing forms remain visible."
-  [_environment _code result]
-  result)
 
 ;; Parsed form helpers
 
@@ -1897,74 +1900,6 @@
       (swap! turn-state-atom assoc :best-answer {:value value :answer-markdown answer-text}))
     value))
 
-(defn- iteration-start-hook-hit
-  "Normalize the value returned by a `:turn.iteration/start` hook.
-
-   Iteration-start hooks are currently advisory only; this compatibility path
-   still validates/normalizes legacy hook maps for extensions that return them,
-   but no model-facing context tasks are emitted."
-  [ext id lifetime hit]
-  (cond
-    (nil? hit) nil
-    (not (map? hit))
-    (do
-      (tel/log!
-        {:level :warn
-         :id ::iteration-start-hook-invalid-return
-         :data {:ext (:ext/name ext) :hook id :returned hit}}
-        "Extension :turn.iteration/start hook returned non-map value; expected nil or hook-task map")
-      nil)
-    :else (let [title
-                (:title hit)
-
-                emit
-                (when (map? (:emit hit)) (:emit hit))
-
-                hook-task?
-                (util/non-blank-string? title)]
-
-            (cond
-              ;; Pure-emit hook: no hook-task body, only :emit payload.
-              (and emit (not hook-task?)) {:id id :task nil :emit emit}
-              (not hook-task?)
-              (do (tel/log!
-                    {:level :warn
-                     :id ::iteration-start-hook-missing-title
-                     :data {:ext (:ext/name ext) :hook id :returned hit}}
-                    "Hook returned map without non-blank :title (and no :emit payload); dropping")
-                  nil)
-              :else (cond-> {:id id
-                             :task (cond-> {:title title :status :todo :source :hook :hook-id id}
-                                     (:importance hit)
-                                     (assoc :importance (:importance hit))
-
-                                     lifetime
-                                     (assoc :lifetime lifetime))}
-                      emit
-                      (assoc :emit emit))))))
-
-(defn- iteration-start-hook-error-hit
-  [ext id t]
-  (tel/log! {:level :warn
-             :id ::iteration-start-hook-threw
-             :data {:ext (:ext/name ext) :hook id :error (ex-message t)}}
-            "Extension :turn.iteration/start hook threw")
-  nil)
-
-(defn- collect-iteration-start-hints
-  "Run active `:turn.iteration/start` hooks. Legacy hook-task output is ignored;
-   this currently returns an empty vector after preserving hook validation/logging."
-  [environment active-extensions ctx]
-  (vec (mapcat (fn [ext]
-                 (keep (fn [{:keys [id phase lifetime] hook-fn :fn}]
-                         (when (= :turn.iteration/start phase)
-                           (extension/with-context
-                             {:ext ext :env environment}
-                             (try (iteration-start-hook-hit ext id lifetime (hook-fn ctx))
-                                  (catch Throwable t (iteration-start-hook-error-hit ext id t))))))
-                       (or (:ext/hooks ext) [])))
-               active-extensions)))
-
 (defn- session-turn-position
   [environment session-turn-id]
   (or (try (when-let [session-id (:session-id environment)]
@@ -1992,24 +1927,17 @@
 
 (defn- prior-turn-scope-index
   "Lean per-form scope index for ONE prior turn's `forms`, reshaped by the model's
-   fold/drop `summaries` — the cross-process RESUME view. Folds are recorded at
+   fold summaries — the cross-process RESUME view. Folds are recorded at
    ITERATION granularity (`tN/iN`) but forms carry FORM scopes (`tN/iN/fN`), so
-   each form's scope is normalized via `iter-of-scope` before matching. (This is
-   the fix for the latent bug where a raw form-scope lookup against the
-   iteration-keyed drop/gist sets NEVER hit — so folds silently failed to apply
-   in resume context.)
+   each form scope is normalized via `iter-of-scope` before matching.
 
-   Both a fold and a drop collapse to ONE breadcrumb per distinct GIST/reason —
-   NOT one per form and NOT one per covered iteration. One `fold_session` over 40
-   iterations carries one gist, so repeating that gist 40 times is 40x the tokens
-   for zero information; every later request (and every message queued behind a
-   running turn) paid it. Dedup therefore keys on the breadcrumb TEXT: a fold →
-   `{:scope tN/iN :gist g}`, a drop → `{:scope tN/iN :dropped? true :note why}`
-   (the reason is kept so introspection never loses what went or why), `:scope`
-   being the FIRST iteration the summary covers. Every other live form keeps its
-   `{:scope tN/iN/fN :src …}` line. `:drop?` — not gist presence — picks the
-   label. An open-start (`-tN/iK`) range cursor is resolved against this turn's
-   own iteration scopes. Pure."
+   Each fold collapses to ONE breadcrumb, not one per form or covered iteration.
+   Dedup keys on breadcrumb content: a fold with a gist becomes
+   `{:scope tN/iN :gist g}`; a gist-less fold becomes
+   `{:scope tN/iN :dropped? true :note why}`. `:scope` is the first covered
+   iteration. Every uncovered form keeps its `{:scope tN/iN/fN :src …}` line.
+   An open-start (`-tN/iK`) range is resolved against this turn's iterations.
+   Pure."
   [forms summaries]
   (let [universe
         (distinct (keep #(iter-of-scope (:scope %)) forms))
@@ -2017,23 +1945,23 @@
         sums
         (ctx-engine/supersede-summaries (ctx-engine/expand-through (or summaries []) universe))
 
-        ;; Summary intents are STRING-KEYED ({"scopes" "gist" "drop" "through"})
-        ;; — they persist inside the ctx nippy blob, and the DB is strings-only.
+        ;; Summary intents are string-keyed because they persist in the ctx blob.
+        ;; A canonical gist-less fold is a drop; there is no second flag.
         drop-of
         (into {}
               (mapcat (fn [s]
-                        (when (get s "drop")
+                        (when (nil? (get s "gist"))
                           (map (fn [sc]
-                                 [sc (get s "gist")])
+                                 [sc (get s "note")])
                                (get s "scopes"))))
                       sums))
 
         gist-of
         (into {}
               (mapcat (fn [s]
-                        (when (and (not (get s "drop")) (get s "gist"))
+                        (when-let [gist (get s "gist")]
                           (map (fn [sc]
-                                 [sc (get s "gist")])
+                                 [sc gist])
                                (get s "scopes"))))
                       sums))]
 
@@ -2210,20 +2138,16 @@
             universe (into [] (comp (mapcat :iter-scopes) (distinct)) turn-data)
             resolved (ctx-engine/supersede-summaries (ctx-engine/expand-through (or summaries [])
                                                                                 universe))
-            ;; A whole-turn fold removes turn T's Q/A recap ONLY when it was issued
-            ;; in a LATER turn — one that actually SAW T's answer. A whole-turn
-            ;; selector issued DURING turn T (`issued_turn` = T) resolves to cover
-            ;; T against next request's now-complete universe, but must NOT erase the
-            ;; answer T produced AFTER the fold was recorded; it degrades to the
-            ;; enumerated path (Q/A recap kept, only the settled result lines fold on
-            ;; the trailer). A later broader re-fold supersedes it with its own
-            ;; higher `issued_turn`, legitimately re-enabling removal. Legacy
-            ;; summaries with no `issued_turn` keep the prior unconditional behavior.
+            ;; A whole-turn fold removes turn T's Q/A recap only when a later
+            ;; turn issued it and therefore saw T's completed answer. A fold issued
+            ;; during T may collapse settled results but cannot summarize the answer
+            ;; produced afterward. Canonical fold intents always carry issued_turn.
             covering-summary (fn [{:keys [turn]}]
                                (last (filter (fn [summary]
-                                               (and (contains? (set (get summary "turns")) turn)
-                                                    (let [it (get summary "issued_turn")]
-                                                      (or (nil? it) (> (long it) (long turn))))))
+                                               (let [issued-turn (get summary "issued_turn")]
+                                                 (and (contains? (set (get summary "turns")) turn)
+                                                      (integer? issued-turn)
+                                                      (> (long issued-turn) (long turn)))))
                                              resolved)))]
 
         (some->>
@@ -2586,48 +2510,6 @@
 
 ;; run-iteration
 
-(defn- token-number
-  [tokens ks]
-  (some (fn [k]
-          (let [v (get tokens k)]
-            (when (number? v) v)))
-        ks))
-
-(defn- ask-result->api-usage
-  "Return svar's canonical usage map, falling back to its flat public `:tokens`
-   projection for older/custom providers. svar 0.7 uses keyword token keys
-   (`:cache-created`, not the wire-only `\"cache_created\"`), so normalizing the
-   flat fallback here prevents a silent all-zero turn when `:api-usage` is
-   absent."
-  [{:keys [api-usage tokens]}]
-  (or api-usage
-      (when (map? tokens)
-        (let [input
-              (long (or (token-number tokens [:input "input"]) 0))
-
-              output
-              (long (or (token-number tokens [:output "output"]) 0))
-
-              cached
-              (long (or (token-number tokens [:cached "cached"]) 0))
-
-              cache-created
-              (long (or (token-number tokens [:cache-created :cache_created "cache_created"]) 0))
-
-              input-regular
-              (long (or (token-number tokens [:input-regular :input_regular "input_regular"])
-                        (max 0 (- input cached cache-created))))
-
-              reasoning
-              (token-number tokens [:reasoning "reasoning"])]
-
-          (cond-> {:input-tokens input
-                   :output-tokens output
-                   :input-tokens-details
-                   {:regular input-regular :cache-write cache-created :cache-read cached}
-                   :total-tokens (long (+ input output))}
-            (some? reasoning)
-            (assoc :output-tokens-details {:reasoning (long reasoning)}))))))
 
 (defn reasoning-effort-configurable?
   "True when a model accepts a CALLER-selected reasoning effort.
@@ -2910,22 +2792,15 @@
        :reasoning-effort {:requested requested :iterations iterations}})))
 
 (defn- compatible-preserved-thinking-trailer-iters
-  "Keep only iterations whose provider-native thinking may be replayed into
-   the next provider call.
-
-   Cross-turn trailer seeds explicitly carry
-   `:preserved-thinking/replay? false`; those iterations remain visible in
-   persisted iterations as durable evidence, but their opaque provider-native thinking
-   state is not replayed into a different user turn. Within a live turn,
-   freshly-produced iterations opt in by setting the flag to true. Historical
-   in-memory test fixtures that omit the flag are treated as replayable for
-   backward compatibility."
+  "Keep only explicitly replayable iterations whose provider-native thinking is
+   compatible with the next provider call. Cross-turn seeds opt out; fresh
+   live-turn iterations opt in. Missing ownership is never replay consent."
   [trailer-iters target]
   (let [{target-provider :provider target-model :model} target]
     (filterv (fn [[_
                    {:keys [assistant-message llm-provider llm-model]
                     replay? :preserved-thinking/replay?}]]
-               (and (not= false replay?)
+               (and (true? replay?)
                     assistant-message
                     (= target-provider llm-provider)
                     (= target-model llm-model)
@@ -2987,12 +2862,10 @@
     to union several — disjoint RANGES included (a list of key strings works
     too). Anything that is not a step key, or that resolves to no settled step,
     is refused BY NAME with the
-    grammar. The gist is OPTIONAL: pass it to KEEP a one-line takeaway, OMIT it
-    to simply DISCARD the step (this replaces the old `session_drop`; a
-    gist-less fold collapses the step with no summary line). What it RECORDS is
-    string-keyed and persists inside the ctx nippy blob (strings-only DB);
-    `ctx-engine/expand-through` owns that recorded shape, and `apply-summaries`
-    still renders legacy persisted drops."
+    grammar. The gist is OPTIONAL: pass it to KEEP a one-line takeaway; OMIT it
+    to discard the step with no summary line. Recorded intents are string-keyed
+    because they persist inside the ctx blob; `ctx-engine/expand-through` owns
+    their shape and `apply-summaries` renders them."
   [ctx-atom & [session-rebase-atom]]
   (let [normalize-key
         (fn [value]
@@ -3422,20 +3295,15 @@
 
 
 (defn- apply-summaries
-  "Wire-only rewrite of `trailer-iters` applying the model's `fold_session`/
-   `session_drop` intents at ITERATION granularity. Each summary is
-   `{\"scopes\" #{\"tN/iN\" …} \"gist\" <string|nil>}` (drop = nil gist), or a range
-   `{\"through\" \"tN/iN\" …}` (several windows ride in `\"ranges\"`) which
-   `expand-through` resolves to the trailer's own iteration scopes ≤ the cursor.
-   Every iteration whose `tN/iN` scope is
-   summarized COLLAPSES: its output is removed and it's tagged `:collapsed? true`
-   so `conversation-suffix` drops its assistant + tool_result pair entirely; at
-   the EARLIEST iteration of each group one gist form is injected, rendered as
-   `# -- tN/iN … -- summarized: <gist>` (or `-- dropped`). Real compaction: the
-   whole iteration leaves the wire, replaced by one line.
+  "Wire-only rewrite of `trailer-iters` applying `fold_session` intents at
+   iteration granularity. A summary carries concrete `scopes`, an optional
+   `gist`, and its owning `at_turn`; a gist-less intent is a drop. Range intents
+   are resolved by `expand-through` against the trailer's iteration scopes.
 
-   Pure and deterministic (same summaries → same output → prefix-cacheable).
-   Operates on a COPY; persisted iter-records are untouched."
+   Every covered iteration collapses: its output and assistant/tool-result pair
+   leave the wire. The earliest covered iteration receives one synthetic form
+   containing the gist or a dropped marker. Pure and deterministic; persisted
+   iteration records are untouched. Real compaction, not presentation."
   [trailer-iters summaries]
   (if (empty? summaries)
     (vec trailer-iters)
@@ -3443,74 +3311,28 @@
           (fn [rec]
             (some iter-of-scope (keep :scope (:forms-vec rec))))
 
-          ;; Turn this trailer belongs to. A fold intent is a POINT-IN-TIME
-          ;; statement, but its range cursor is RE-RESOLVED on every later request
-          ;; — so a cursor that outlives its own turn numbering (a session now at
-          ;; t103 still carrying `{"through" "t113"}` from an earlier numbering)
-          ;; expands over EVERY live iteration, collapses the whole turn, and the
-          ;; model goes blind: it re-issues the identical call every iteration
-          ;; because its own results never reach the wire. A summary may collapse
-          ;; LIVE-turn iterations only when it belongs to this turn: `"at_turn"`
-          ;; (stamped when recorded) decides it; for legacy intents with no stamp,
-          ;; a cursor pointing at a turn NEWER than the live one is stale by
-          ;; construction. Prior-turn scopes are never affected.
-          live-turn
-          (some->> (map second trailer-iters)
-                   (keep iter-scope-of)
-                   (keep (fn [s]
-                           (first (ctx-engine/scope-key s))))
-                   seq
-                   (apply max))
+          ;; Resolve ranges against this trailer, then keep only scopes owned by
+          ;; the intent's canonical at_turn. A turn may fold its own settled work
+          ;; and every prior turn, never a future turn; unstamped intents own nothing.
+          scope-turn
+          (fn [scope]
+            (or (first (ctx-engine/scope-key scope)) (ctx-engine/turn-key scope)))
 
-          cursor-turn-of
-          (fn [s]
-            (let [turns (into []
-                              (comp (mapcat (fn [r]
-                                              (vals (select-keys r
-                                                                 ["through" "to" "from" "since"]))))
-                                    (keep (fn [c]
-                                            (or (first (ctx-engine/scope-key c))
-                                                (ctx-engine/turn-key c)))))
-                              (ctx-engine/intent-ranges s))]
-              (when-let [turns (seq turns)]
-                (apply max turns))))
-
-          stale-for-live-turn?
-          (fn [s]
-            (when live-turn
-              (let [at
-                    (let [v (get s "at_turn")]
-                      (cond (integer? v) (long v)
-                            (string? v) (parse-long (str/trim v))
-                            :else nil))
-
-                    cursor
-                    (cursor-turn-of s)]
-
-                (if at
-                  (< (long at) (long live-turn))
-                  (boolean (and cursor (> (long cursor) (long live-turn))))))))
-
-          ;; Resolve any `:through` range cursor against THIS trailer's live
-          ;; iteration scopes before matching, so a range fold collapses every
-          ;; step at or before the cursor; then supersede covered summaries so a
-          ;; broader re-fold replaces the finer one (one breadcrumb, not two).
           summaries
-          (->> summaries
-               (mapv (fn [s]
-                       (assoc s "__stale_live" (boolean (stale-for-live-turn? s)))))
-               (#(ctx-engine/expand-through % (keep iter-scope-of (map second trailer-iters))))
+          (->> (ctx-engine/expand-through summaries (keep iter-scope-of (map second trailer-iters)))
                (keep (fn [summary]
-                       (let [scopes (into #{}
-                                          (remove (fn [s]
-                                                    (and (get summary "__stale_live")
-                                                         (= live-turn
-                                                            (first (ctx-engine/scope-key s))))))
-                                          (get summary "scopes"))]
-                         (when (seq scopes)
-                           (-> summary
-                               (dissoc "__stale_live")
-                               (assoc "scopes" scopes))))))
+                       (let [owner
+                             (get summary "at_turn")
+
+                             scopes
+                             (when (integer? owner)
+                               (into #{}
+                                     (filter (fn [scope]
+                                               (when-let [turn (scope-turn scope)]
+                                                 (<= (long turn) (long owner)))))
+                                     (get summary "scopes")))]
+
+                         (when (seq scopes) (assoc summary "scopes" scopes)))))
                (ctx-engine/supersede-summaries))
 
           summarized
@@ -3528,7 +3350,7 @@
                         idx
                         (fnil conj [])
                         {:gist (get s "gist")
-                         :drop? (get s "drop")
+                         :drop? (nil? (get s "gist"))
                          :summary-iters (vec (sort (get s "scopes")))
                          :note (get s "note")})
                 m))
@@ -3663,12 +3485,11 @@
                       (or (seq (:forms b)) [b]))
                     (:blocks iter-record)))
 
-        ;; `fold_session(...)` / `session_drop(...)` folds (synthetic forms
-        ;; apply-summaries injected) render FIRST as one Python comment naming the
-        ;; iteration scopes they replaced. `:summary-drop?` picks the label; the
-        ;; gist carries the takeaway (fold) or the reason (drop):
+        ;; Synthetic forms injected by apply-summaries render first as one Python
+        ;; comment naming the replaced scopes. A gist-less fold uses the dropped
+        ;; label; a fold with a gist carries its takeaway:
         ;;   # ⋯ folded t1/i1-i2 · <gist>
-        ;;   # ⋯ dropped t1/i3 · <why>
+        ;;   # ⋯ dropped t1/i3 · <note>
         summary-lines
         (keep (fn [f]
                 (when (:summary? f)
@@ -3747,17 +3568,15 @@
         ;; A semantic live view may close on a gateway thread AFTER its block returned.
         ;; Its record is then appended to the iteration, not to the already-frozen form
         ;; output. Reintroduce that durable descriptor into later model context so the
-        ;; next request knows the interrupted picture exists and can open it. Host
-        ;; Activity shares the presentation storage rail but is filtered here.
+        ;; next request knows the interrupted picture exists and can open it.
         live-records
         (filter model-live-record? (:attachments iter-record))
 
         tool-calls
         (seq (:tool-calls iter-record))
 
-        ;; Forms grouped by the tool_use they answer. A form with no id (a
-        ;; summarize/drop fold form, or a legacy unpaired form) folds onto the
-        ;; FIRST call so nothing is lost.
+        ;; Forms grouped by the tool_use they answer. Ownerless summarize/drop fold
+        ;; forms belong to the iteration and ride on its first call.
         forms-by-id
         (group-by :svar/tool-call-id forms)
 
@@ -3797,7 +3616,7 @@
 
             (str/join "\n\n" (remove str/blank? [body (when (zero? (long idx)) ctx-diff)]))))
 
-        ;; Legacy text fallback (a record with NO tool calls): all forms joined.
+        ;; Text-only iteration with no tool calls: join its forms.
         fallback-content
         (let [lines
               (concat (keep form-output forms) (map live-record-context-line live-records))
@@ -3862,7 +3681,7 @@
                  errored?
                  (assoc :is_error true))))
            tool-calls))}
-      ;; Legacy text fallback (no tool calls on this record).
+      ;; Text-only iteration with no tool calls.
       (not (str/blank? fallback-content)) {:role "user" :content fallback-content})))
 
 
@@ -4159,8 +3978,8 @@
                    (into (vec msgs) img))]
 
              (cond
-               ;; Collapse WINS over provenance: a `fold_session`/`session_drop`
-               ;; that covered this iteration removes its whole assistant +
+               ;; Collapse wins over provenance: a `fold_session` that covered
+               ;; this iteration removes its whole assistant +
                ;; tool_result pair AND its generated image. The figure's vision
                ;; visibility TRACKS its iteration's textual visibility (one
                ;; invariant), so a folded step keeps only its one-line gist
@@ -5080,7 +4899,7 @@
                                 :tokens (:tokens ask-result)
                                 :thinking thinking}
                                code-observation))
-          api-usage (ask-result->api-usage ask-result)
+          api-usage (:api-usage ask-result)
           actual-provider (actual-llm-provider resolved-model ask-result)
           actual-model (actual-llm-model resolved-model ask-result)
           prompt-cache-sample (note-prompt-cache-request!
@@ -5197,8 +5016,8 @@
                          :op :vis/guard}
                         (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
                                               (fn [tool-event]
-                                                ;; The legacy ticker consumes starts only. Terminal
-                                                ;; truth feeds Activity without changing that stream.
+                                                ;; Turn progress consumes starts only. Terminal truth
+                                                ;; feeds Activity without changing that stream.
                                                 (when (= :start (:phase tool-event))
                                                   (on-chunk {:phase :tool-start
                                                              :iteration iteration-position
@@ -5247,17 +5066,14 @@
 
                              (:auto-repaired raw-result)
                              (assoc :repaired? true))
-                    display-result (def-display-result environment expr result)
-                    ;; def-display-result is now a pass-through; kept on the
-                    ;; call path so future display-tweaks have a single seam.
-                    block-role (eval-block-role display-result)
+                    block-role (eval-block-role result)
                     envelope (eval-envelope turn-prefix
                                             iteration-position
                                             idx
                                             total-blocks
-                                            display-result
+                                            result
                                             block-role)
-                    result* (assoc display-result
+                    result* (assoc result
                               :envelope envelope
                               :role block-role)
                     ;; The rendered human display `{:summary :body}` (native-tool
@@ -5378,9 +5194,7 @@
                              ;; can disclose the diff and the model can
                              ;; correct itself if the repair was wrong.
                              :repaired-source (:repaired-source result)}
-                      ;; Per-block render breakdown for channel display.
-                      ;; Legacy channels that only read :code fall
-                      ;; back to the full block source.
+                      ;; Render metadata is optional; `:code` remains the canonical source.
                       (seq segments)
                       (assoc :render-segments segments)
 
@@ -7951,35 +7765,6 @@
                                                            (assoc :request routing))}
                                          (:error llm-provider)
                                          (assoc :error (:error llm-provider)))
-                 iteration-position (inc (long iteration))
-                 current-session (session-snapshot)
-                 _iteration-hints (collect-iteration-start-hints
-                                    environment
-                                    active-exts
-                                    {:environment environment
-                                     :phase :turn.iteration/start
-                                     :session current-session
-                                     :iteration iteration-position
-                                     :session-title (:title current-session)
-                                     ;; Title setup is host-owned by `maybe-auto-title!`.
-                                     ;; Keep the model-facing title hook quiet.
-                                     :title-refresh? false
-                                     :turn-position turn-position
-                                     ;; Use `:last-iter-input` so the hint reflects the SIZE OF
-                                     ;; THE NEXT REQUEST instead of the cumulative-turn total.
-                                     ;; `:input-tokens` (cumulative) is kept on the snapshot for
-                                     ;; budget-aware extensions that want to surface turn-level
-                                     ;; spend separately. Falls back to the previous persisted
-                                     ;; request on iter 0 (before this turn has provider usage)
-                                     ;; so first-iter hints are not gated on a missing sample.
-                                     :input-tokens (let [u @usage-atom]
-                                                     (if (pos? (long (:iter-count u)))
-                                                       (long (:last-iter-input u))
-                                                       (long (:previous-request-input u))))
-                                     :cumulative-input-tokens (:input-tokens @usage-atom)
-                                     :cumulative-reasoning-tokens (:reasoning-tokens @usage-atom)
-                                     :iter-count (:iter-count @usage-atom)
-                                     :context-limit effective-context-limit})
                  ;; Stamp :engine/utilization onto the ctx so the next
                  ;; render surfaces :session/utilization (how much of
                  ;; the window the LAST request used). :engine/* is
@@ -8876,13 +8661,24 @@
       reason
       (assoc "slash/reason" (name reason)))))
 
-(defn- apply-slash-mutations!
-  "Compatibility hook for slash results that used to mutate context state.
-   No slash-driven context mutations are currently supported."
-  [_env _slash-result]
-  ;; No-op: slash results no longer mutate context.
-  nil)
 
+(defn- cost-with-route
+  "Attach the selected root route to a turn cost map once, for both durable history
+   and the public terminal result. Numeric cost remains the sum of actual serving routes."
+  [cost model provider]
+  (let [cost (or cost {})]
+    (cond-> cost
+      (and model (not (get cost "model")))
+      (assoc "model" (str model))
+
+      (and provider (not (get cost "provider")))
+      (assoc "provider" (if (keyword? provider) (name provider) (str provider))))))
+
+(defn- turn-store-opts
+  [env user-request loop-opts]
+  (cond-> {:parent-session-id (:session-id env) :user-request user-request :status :running}
+    (some? (:session-turn-id loop-opts))
+    (assoc :session-turn-id (:session-turn-id loop-opts))))
 (defn- run-slash-turn!
   "Persist a slash-only turn: one `session_turn_soul` + state + ONE
    synthetic `session_turn_iteration` whose forms vec carries the slash
@@ -8890,8 +8686,7 @@
    any LLM round-trip. Returns the same shape `iteration-loop` would
    have produced (so callers don't special-case slash turns).
 
-   Slash context mutations are no longer applied; the synthetic iter row is
-   persisted for audit/history only."
+   The synthetic iteration row is persisted for audit/history."
   [env user-request slash-result loop-opts]
   (let [db-info
         (:db-info env)
@@ -8916,9 +8711,7 @@
                             :data {:slash slash-label :error (ex-message t)}}))))
 
         turn-id
-        (persistance/db-store-session-turn!
-          db-info
-          {:parent-session-id (:session-id env) :user-request user-request :status :running})
+        (persistance/db-store-session-turn! db-info (turn-store-opts env user-request loop-opts))
 
         turn-pos
         (or (session-turn-position env turn-id) 1)]
@@ -8932,7 +8725,6 @@
                               :turn-position turn-pos
                               :iteration 1
                               :form-idx 0)
-    (apply-slash-mutations! env slash-result)
     (let [scope
           (str "t" turn-pos "/i1/f1")
 
@@ -8946,10 +8738,8 @@
           answer-md
           (slash-result->answer-markdown slash-result)
 
-          ;; Snapshot the CTX as it stands AFTER the slash mutations
-          ;; so resume picks up the spec/task/fact writes. Mirrors
-          ;; run-normal-turn!'s ctx-snapshot path: gc-pass + strip
-          ;; cursor + drop ephemerals before Nippy-encoding.
+          ;; Persist the canonical cursor state just like a normal turn: gc-pass,
+          ;; strip cursor metadata, then drop ephemerals before Nippy-encoding.
           ctx-snapshot
           (when-let [ca (:ctx-atom env)]
             (let [stamped (ctx-loop/stamp-cursor env @ca)
@@ -8981,7 +8771,8 @@
                               :duration-ms 0
                               :status :success
                               :prior-outcome :complete
-                              :ctx ctx-snapshot})
+                              :ctx ctx-snapshot}
+                             (get-in loop-opts [:hooks :claim-terminal!]))
       {:session-turn-id turn-id
        :answer answer-md
        :iteration-count 1
@@ -9066,7 +8857,7 @@
         session-turn-id
         (persistance/db-store-session-turn!
           (:db-info env)
-          (cond-> {:parent-session-id (:session-id env) :user-request user-request :status :running}
+          (cond-> (turn-store-opts env user-request loop-opts)
             (seq turn-attachments)
             (assoc :attachments (attachment-storage/offload-attachments turn-attachments))))
 
@@ -9130,27 +8921,34 @@
             clean))
 
         turn-content
-        ;; A FAILED turn's fallback answer may not be answer-shaped (a
-        ;; provider-exhaustion turn hands back a raw error value, not prose). NEVER
-        ;; let `answer-content` throw here: an unguarded throw propagates out of
-        ;; `send!` and MASKS the real provider failure — the 529/overload or
-        ;; rate-limit that actually killed the turn, preserved in `:trace` — with
-        ;; the misleading "Final answer must be canonical content or Markdown
-        ;; prose". On a throw, persist no content; the gateway rebuilds honest
-        ;; content from the trace error (see gateway/state).
-        (try (content/answer-content (:answer result)) (catch Throwable _ []))
+        ;; A failed turn's fallback may be a raw provider value instead of answer
+        ;; content. Persist the diagnostic reconstructed from its trace rather than
+        ;; letting answer validation hide the failure or leave history blank.
+        (failed-turn-content (:answer result) (:trace result))
+
+        turn-error
+        (or (turn-error-data (:answer result)) (turn-error-data turn-content))
+
+        root-route
+        (resolve-effective-model (:router env))
+
+        turn-cost
+        (cost-with-route (:cost result) (:name root-route) (:provider root-route))
 
         _
         (persist-turn-outcome! (:db-info env)
                                session-turn-id
-                               {:content turn-content
-                                :iteration-count (:iteration-count result)
-                                :duration-ms (:duration-ms result)
-                                :status (or (:status result) :success)
-                                :tokens (:tokens result)
-                                :cost (:cost result)
-                                :prior-outcome prior-outcome
-                                :ctx ctx-snapshot})]
+                               (cond-> {:content turn-content
+                                        :iteration-count (:iteration-count result)
+                                        :duration-ms (:duration-ms result)
+                                        :status (or (:status result) :success)
+                                        :tokens (:tokens result)
+                                        :cost turn-cost
+                                        :prior-outcome prior-outcome
+                                        :ctx ctx-snapshot}
+                                 turn-error
+                                 (assoc :error turn-error))
+                               (get-in loop-opts [:hooks :claim-terminal!]))]
 
     (assoc result
       :session-turn-id session-turn-id
@@ -9223,9 +9021,7 @@
         (:db-info env)
 
         turn-id
-        (persistance/db-store-session-turn!
-          db-info
-          {:parent-session-id (:session-id env) :user-request user-request :status :running})
+        (persistance/db-store-session-turn! db-info (turn-store-opts env user-request loop-opts))
 
         turn-pos
         (or (session-turn-position env turn-id) 1)
@@ -9400,7 +9196,8 @@
                             :duration-ms (- t1 t0)
                             :status :success
                             :prior-outcome :complete
-                            :ctx ctx-snapshot})
+                            :ctx ctx-snapshot}
+                           (get-in loop-opts [:hooks :claim-terminal!]))
     {:session-turn-id turn-id
      :answer answer-md
      :iteration-count 1
@@ -9943,14 +9740,14 @@
      :merge-cost! merge-cost!}))
 
 (defn- finalize-turn-result
-  "Updates DB turn record, builds result map.
+  "Build the public terminal result after `run-turn!` performed the turn's one
+   durable outcome write.
 
-   `:provider` and `:model` are both attached to the persisted cost
-   map so the web footer / meta layer can render `provider/model / N
-   iteration / duration / tokens / $total` after a restart."
-  [{:keys [db-info root-model root-provider reasoning-effort]}
-   {:keys [session-turn-id start-time iteration-count status status-id trace locals answer
-           confidence reasoning utilization total-tokens-atom total-cost-atom]}]
+   `:provider` and `:model` are attached to the returned cost map so the web
+   footer can render `provider/model / N iteration / duration / tokens / $total`."
+  [{:keys [root-model root-provider reasoning-effort]}
+   {:keys [start-time iteration-count status status-id trace locals answer confidence reasoning
+           utilization total-tokens-atom total-cost-atom]}]
   (let [duration-ms
         (svar-util/elapsed-since start-time)
 
@@ -9958,39 +9755,13 @@
         (turn-eval-evidence reasoning-effort trace)
 
         cost-with-model
-        (cond-> @total-cost-atom
-          (and root-model (not (get @total-cost-atom "model")))
-          (assoc "model" (str root-model))
-
-          (and root-provider (not (get @total-cost-atom "provider")))
-          (assoc "provider"
-            (if (keyword? root-provider) (name root-provider) (str root-provider))))]
+        (cost-with-route @total-cost-atom root-model root-provider)]
 
     (if status
-      ;; failure path - surface the fallback answer (built by the loop for
-      ;; :error) to the caller. Leaving
-      ;; :answer nil here meant the web bubble rendered blank even though
-      ;; we had diagnostic text ready.
       (do (log-stage! :turn/complete
                       0
                       {:duration-ms duration-ms :iteration-count iteration-count :status status})
-          (let [fallback-answer
-                (:result answer answer)
-
-                failure-content
-                (failed-turn-content fallback-answer trace)]
-
-            (persist-turn-outcome! db-info
-                                   session-turn-id
-                                   {:content failure-content
-                                    ;; First-class structured error for a failed turn.
-                                    :error (or (turn-error-data fallback-answer)
-                                               (turn-error-data failure-content))
-                                    :iteration-count iteration-count
-                                    :duration-ms duration-ms
-                                    :status status
-                                    :tokens @total-tokens-atom
-                                    :cost cost-with-model})
+          (let [fallback-answer (:result answer answer)]
             (cond-> {:answer fallback-answer
                      :status status
                      :status-id status-id
@@ -10004,20 +9775,11 @@
 
               (some? locals)
               (assoc :locals locals))))
-      ;; success path
       (do (log-stage! :turn/complete
                       0
                       {:duration-ms duration-ms
                        :iteration-count iteration-count
                        :cost (str (get cost-with-model "total_cost"))})
-          (persist-turn-outcome! db-info
-                                 session-turn-id
-                                 {:content (content/answer-content answer)
-                                  :iteration-count iteration-count
-                                  :duration-ms duration-ms
-                                  :status :success
-                                  :tokens @total-tokens-atom
-                                  :cost cost-with-model})
           (cond-> {:answer answer
                    :trace trace
                    :iteration-count iteration-count
@@ -10479,10 +10241,8 @@
             ;;     (`-tN/iM` everything through it, `tN/iM-` everything since it, `tN`
             ;;     a whole turn, commas union several). See `ctx-engine/fold-key` for
             ;;     the grammar.
-            ;;   fold_session("tN/iM")  — the gist is OPTIONAL: OMIT it to just
-            ;;     DISCARD the step outright (an approach you abandoned, a read you
-            ;;     misread) where keeping even a summary would mislead. Replaces the
-            ;;     old `session_drop`.
+            ;;   fold_session("tN/iM")  — omit the optional gist to discard the
+            ;;     step outright when even a summary would mislead.
             ;;
             ;; It records a `:session/summaries` intent the wire applies via
             ;; apply-summaries, and RETURNS a visible confirmation (not the silent
@@ -10585,16 +10345,8 @@
                            ;; closure capture.
                            :db-info db-info
                            :session-id session-id}
-            ;; The current human turn text and engine context flow through ctx.
-            ;; Introspect verbs reach archived entries + any past turn snapshot
-            ;; via the soul/state chain. History loader is a thunk so the
-            ;; per-call DB read only happens when the model actually invokes
-            ;; one of the verbs.
-            ;;
-            ;; The cross-turn snapshot history loader is gone — rewind/lens/
-            ;; grep read the LIVE ctx-atom + per-form DB rows directly, not a
-            ;; {turn → ctx} history map. The loader arg is kept nil for
-            ;; call-site compatibility.
+            ;; The current human turn and engine context flow through ctx. Introspection
+            ;; reads archived entries and per-form rows directly from the database.
             env-bindings (merge
                            ;; BUILT-IN extension kernel (`foundation`):
                            ;; cat/ls/rg/patch/… interned BARE into the

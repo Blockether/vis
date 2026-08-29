@@ -10,11 +10,13 @@ describe('session read mark', () => {
     const session = {
       id: 'race',
       live: true,
+      current_turn_id: 'running',
       status: 'running',
       turn_count: 2,
+      server_time_ms: 0,
     } satisfies Session;
     const persistedTurns = [
-      { id: 'previous', status: 'completed' },
+      { turn_id: 'previous', status: 'completed' },
     ] satisfies TranscriptTurn[];
 
     expect(visibleAnsweredTurnCount(session, persistedTurns, 'running')).toBe(1);

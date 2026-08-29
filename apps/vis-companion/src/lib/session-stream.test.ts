@@ -19,4 +19,18 @@ describe("Activity stream isolation", () => {
       ]).map((frame) => frame.type),
     ).toEqual(["turn.started", "content.block.delta"]);
   });
+
+  it("keeps only the newest canonical cumulative delta for one stream", () => {
+    const first = {
+      ...event("content.block.delta", 1),
+      iteration: 1,
+      block_id: "t:content:1",
+      field: "markdown",
+      text: "a",
+      cumulative: "a",
+    };
+    const second = { ...first, seq: 2, text: "b", cumulative: "ab" };
+
+    expect(sessionEventBatch([first, second])).toEqual([second]);
+  });
 });

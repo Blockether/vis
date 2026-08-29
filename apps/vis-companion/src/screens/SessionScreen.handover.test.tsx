@@ -2,7 +2,11 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 
-import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
+import {
+  renderSessionScreen,
+  sessionFixture,
+  subscriptionHub,
+} from "./session-screen-harness";
 import type { SseEvent } from "../lib/types";
 
 function deferred<T>() {
@@ -15,23 +19,6 @@ function deferred<T>() {
 
 const linger = (ms: number) => new Promise((done) => setTimeout(done, ms));
 
-// The real hub broadcasts to EVERY listener. A single-slot stub hands the events
-// to whichever effect subscribed LAST, so the screen's own listener silently
-// loses them the moment a second one (the live-view hook) is mounted beside it.
-function hub() {
-  const listeners = new Set<(event: SseEvent) => void>();
-  return {
-    subscribeSession: (_sid: string, listener: (event: SseEvent) => void) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    emit: (event: SseEvent) => {
-      for (const listener of [...listeners]) listener(event);
-    },
-  };
-}
 
 function live(): string {
   return document.querySelector('[data-live="true"]')?.textContent ?? "";
@@ -46,7 +33,7 @@ function live(): string {
 // that arrives after it.
 describe("the message just sent", () => {
   it("keeps streaming when the previous turn's terminal frame lands first", async () => {
-    const events = hub();
+    const events = subscriptionHub();
     const posted = deferred<unknown>();
 
     renderSessionScreen({
@@ -83,13 +70,9 @@ describe("the message just sent", () => {
   });
 });
 
-// Regression, same report: "the turn finished — I saw it done — but on the
-// transition between the running-turn bubble and its persisted row the ANSWER (just the
-// answer) was removed". Completion overtakes the 150 ms body queue, so the
-// terminal frame's own `content` is regularly the whole answer; the handover
-// guard sampled what the bubble held BEFORE that frame was applied, decided it
-// carried no prose, and retired it against a persisted row that carried none
-// either.
+// Regression, same report: a terminal answer disappeared while the running bubble
+// handed over to its durable row. Protocol 8 makes both carriers the same canonical
+// turn, so the durable row and terminal frame carry the same final prose.
 describe("a finished turn handed to its persisted row", () => {
   const bubble = {
     id: "gw-1",
@@ -99,24 +82,22 @@ describe("a finished turn handed to its persisted row", () => {
     startedAt: Date.now(),
     status: "running" as const,
   };
-  // The engine writes the row before the answer block is flushed onto it: the
-  // trace is already there, the answer is not.
-  const proseFreeRow = {
-    id: "engine-row-1",
-    user_request: "explain the failure",
+  const settledRow = {
+    turn_id: "gw-1",
+    request: "explain the failure",
     status: "completed",
     created_at: Date.now(),
-    content: [],
+    content: [{ id: "b1", type: "prose", markdown: "THE FINAL ANSWER" }],
     iterations: [{ position: 0, thinking: "weighing it up" }],
   };
 
-  it("keeps the answer the terminal frame itself delivered", async () => {
-    const events = hub();
+  it("keeps one canonical answer through terminal handover", async () => {
+    const events = subscriptionHub();
     renderSessionScreen({
       client: {
         cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
         cachedTranscript: () => [],
-        transcript: () => Promise.resolve([proseFreeRow]),
+        transcript: () => Promise.resolve([settledRow]),
       },
       subscriptions: {
         subscribeSession: events.subscribeSession,
@@ -133,8 +114,7 @@ describe("a finished turn handed to its persisted row", () => {
     } as unknown as SseEvent);
 
     expect(await screen.findByText("THE FINAL ANSWER")).toBeInTheDocument();
-    // Long enough for the settle poll to have read the transcript and offered
-    // that prose-free row as the replacement.
+    // Long enough for the settle poll to swap in that same canonical row.
     await linger(600);
     expect(screen.queryByText("THE FINAL ANSWER")).not.toBeNull();
   });
@@ -144,7 +124,7 @@ describe("a finished turn handed to its persisted row", () => {
 // for the handover and shrank again when its persisted row arrived.
 describe("a turn cancelled from this screen", () => {
   it("keeps one stable cancellation status while the transcript catches up", async () => {
-    const events = hub();
+    const events = subscriptionHub();
     const persisted = deferred<never[]>();
     const bubble = {
       id: "gw-cancel",
@@ -208,8 +188,8 @@ describe("a handover the registry vetoed once", () => {
     status: "running" as const,
   };
   const answered = {
-    id: "engine-row-9",
-    user_request: "explain the failure",
+    turn_id: "gw-9",
+    request: "explain the failure",
     status: "done",
     created_at: Date.now(),
     content: [{ id: "b9", type: "prose", markdown: "THE FINAL ANSWER" }],
@@ -311,7 +291,7 @@ describe("a message whose POST is still on the wire", () => {
 // act on that bookkeeping, and the terminal frame already carries the whole answer.
 describe("the wait for a finished turn's persisted row", () => {
   it("keeps an already complete answer free of handover loading furniture", async () => {
-    const events = hub();
+    const events = subscriptionHub();
     const bubble = {
       id: "gw-slow",
       request: "explain the failure",

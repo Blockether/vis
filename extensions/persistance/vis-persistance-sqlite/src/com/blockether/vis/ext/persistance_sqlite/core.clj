@@ -2815,13 +2815,13 @@
    deleted.
 
    Returns the session-turn-soul UUID."
-  [db-info {:keys [parent-session-id user-request status attachments]}]
+  [db-info {:keys [parent-session-id session-turn-id user-request status attachments]}]
   (when (ds db-info)
     (sqlite-write-tx!
       db-info
       (fn [tx-info]
         (let [soul-id
-              (new-uuid)
+              (or session-turn-id (new-uuid))
 
               state-id
               (new-uuid)
@@ -3213,15 +3213,23 @@
                             new-id))))))
 
 (defn db-update-session-turn!
-  "Update the latest session_turn_state with final outcome.
+  "Settle the latest running session_turn_state exactly once.
+
+   Terminal writes compare-and-set from `running`; a late worker cannot replace the
+   outcome already chosen by a watchdog, cancellation backstop, or another terminal
+   path. Only keys present in `opts` are changed, so a sparse forced terminal does
+   not erase counters or metadata already on the row. Returns true when this call
+   settled the row, false when the row is absent or already terminal.
 
    When `:prior-outcome` is provided (one of `:complete`, `:cancelled`,
    `:error`), it lands in the dedicated `prior_outcome` column so the next turn's handover digest can read
    it without scanning every iteration. The column is bounded by a
    CHECK constraint at the schema level."
   [db-info session-turn-id
-   {:keys [content iteration-count duration-ms status tokens cost prior-outcome ctx error]}]
-  (when (and (ds db-info) session-turn-id)
+   {:keys [content iteration-count duration-ms status tokens cost prior-outcome ctx error]
+    :as opts}]
+  (if-not (and (ds db-info) session-turn-id)
+    false
     (sqlite-write-tx!
       db-info
       (fn [tx-info]
@@ -3231,60 +3239,73 @@
               state
               (latest-session-turn-state tx-info soul-id-s)]
 
-          (when state
-            (execute!
-              tx-info
-              {:update :session_turn_state
-               :set (cond-> {:status (normalize-status (or status :done))
-                             :iteration_count (long (or iteration-count 0))
-                             :duration_ms (long (or duration-ms 0))
-                             ;; Phase B canonical columns. :input is TOTAL
-                             ;; (Anthropic-additive raw values summed at the
-                             ;; canonical-normalizer boundary in svar 0.6+).
-                             ;; The :input-regular subset is derived from the
-                             ;; invariant when the upstream map omits it
-                             ;; (older accumulators don't track it explicitly):
-                             ;;   regular = input - cache-write - cache-read
-                             :input_tokens (long (or (get tokens "input") 0))
-                             :input_regular_tokens
-                             (long (or (get tokens "input_regular")
-                                       (max 0
-                                            (- (long (or (get tokens "input") 0))
-                                               (long (or (get tokens "cache_created") 0))
-                                               (long (or (get tokens "cached") 0))))))
-                             :input_cache_write_tokens (long (or (get tokens "cache_created") 0))
-                             :input_cache_read_tokens (long (or (get tokens "cached") 0))
-                             :output_tokens (long (or (get tokens "output") 0))
-                             :output_reasoning_tokens (long (or (get tokens "reasoning") 0))
-                             :total_cost_usd (double (or (get cost "total_cost") 0.0))}
-                      (get cost "model")
-                      (assoc :llm_root_model (str (get cost "model")))
+          (if-not state
+            false
+            (let [columns
+                  (cond-> {:status (normalize-status (or status :done))}
+                    (contains? opts :iteration-count)
+                    (assoc :iteration_count (long (or iteration-count 0)))
 
-                      (get cost "provider")
-                      (assoc :llm_root_provider (name (->kw (get cost "provider"))))
+                    (contains? opts :duration-ms)
+                    (assoc :duration_ms (long (or duration-ms 0)))
 
-                      (some? content)
-                      ;; The shared column codec, like every other JSON column
-                      ;; here: raw `write-json-str` throws on a value charred
-                      ;; refuses (int map keys, NaN) and takes the whole final
-                      ;; outcome row — the settled answer — down with it.
-                      (assoc :content_json (->json content))
+                    ;; Phase B canonical columns. :input is TOTAL
+                    ;; (Anthropic-additive raw values summed at the
+                    ;; canonical-normalizer boundary in svar 0.6+).
+                    ;; The :input-regular subset follows the invariant:
+                    ;;   regular = input - cache-write - cache-read
+                    (contains? opts :tokens)
+                    (assoc :input_tokens
+                      (long (or (get tokens "input") 0)) :input_regular_tokens
+                      (long (or (get tokens "input_regular")
+                                (max 0
+                                     (- (long (or (get tokens "input") 0))
+                                        (long (or (get tokens "cache_created") 0))
+                                        (long (or (get tokens "cached") 0))))))
+                      :input_cache_write_tokens
+                      (long (or (get tokens "cache_created") 0)) :input_cache_read_tokens
+                      (long (or (get tokens "cached") 0)) :output_tokens
+                      (long (or (get tokens "output") 0)) :output_reasoning_tokens
+                      (long (or (get tokens "reasoning") 0)))
 
-                      prior-outcome
-                      (assoc :prior_outcome (name prior-outcome))
+                    (contains? opts :cost)
+                    (assoc :total_cost_usd (double (or (get cost "total_cost") 0.0)))
 
-                      ;; Nippy-encode the CTX snapshot as of end-of-turn.
-                      ;; Live CTX = this row's ctx on the latest turn-state
-                      ;; for the latest turn-soul; history = walking the
-                      ;; soul chain.
-                      (some? ctx)
-                      (assoc :ctx (->blob (freeze-safe ctx)))
+                    (get cost "model")
+                    (assoc :llm_root_model (str (get cost "model")))
 
-                      ;; First-class STRUCTURED terminal error (queryable),
-                      ;; nippy-encoded like ctx — an error is not an answer.
-                      (some? error)
-                      (assoc :error (->blob (freeze-safe error))))
-               :where [:= :id (:id state)]})))))))
+                    (get cost "provider")
+                    (assoc :llm_root_provider (name (->kw (get cost "provider"))))
+
+                    (some? content)
+                    ;; The shared column codec, like every other JSON column
+                    ;; here: raw `write-json-str` throws on a value charred
+                    ;; refuses (int map keys, NaN) and takes the whole final
+                    ;; outcome row — the settled answer — down with it.
+                    (assoc :content_json (->json content))
+
+                    prior-outcome
+                    (assoc :prior_outcome (name prior-outcome))
+
+                    ;; Nippy-encode the CTX snapshot as of end-of-turn.
+                    ;; Live CTX = this row's ctx on the latest turn-state
+                    ;; for the latest turn-soul; history = walking the
+                    ;; soul chain.
+                    (some? ctx)
+                    (assoc :ctx (->blob (freeze-safe ctx)))
+
+                    ;; First-class STRUCTURED terminal error (queryable),
+                    ;; nippy-encoded like ctx — an error is not an answer.
+                    (some? error)
+                    (assoc :error (->blob (freeze-safe error))))
+
+                  result
+                  (execute! tx-info
+                            {:update :session_turn_state
+                             :set columns
+                             :where [:and [:= :id (:id state)] [:= :status "running"]]})]
+
+              (pos? (long (or (:next.jdbc/update-count (first result)) 0))))))))))
 
 ;; Extra workflow persistence removed.
 
@@ -3586,8 +3607,7 @@
   ;; unused-binding lint while staying documented here.
   [db-info
    {:keys [session-turn-id thinking assistant-prose answer llm-full-duration-ms error llm-routing
-           cache-created-tokens llm-provider llm-model llm-returned-empty-code? tokens cost-usd
-           attachments]
+           cache-created-tokens llm-returned-empty-code? tokens cost-usd attachments]
     :as opts}]
   (when (ds db-info)
     (sqlite-write-tx!
@@ -3627,20 +3647,8 @@
                                  :where [:= :session_turn_state_id session-turn-state-id-s]}))
                   1)
 
-              ;; When the caller hands us only legacy :llm-provider /
-              ;; :llm-model (no routing summary), synthesise an `actual`
-              ;; routing record so the typed `llm_actual_*` columns stay
-              ;; populated. This is the canonical landing spot for
-              ;; "what provider/model answered".
               routing
-              (or llm-routing
-                  (when (or llm-provider llm-model)
-                    (cond-> {}
-                      llm-provider
-                      (assoc-in [:actual :provider] (->kw llm-provider))
-
-                      llm-model
-                      (assoc-in [:actual :model] (str llm-model)))))
+              llm-routing
 
               ;; 1. Iteration row - includes the single-form code payload inline.
               ;;    Hard cut: callers pass :code + :forms (Nippy vec of per-form envelopes).
@@ -4214,26 +4222,12 @@
                  :order-by [[:position :asc]]})))
 
 (defn db-list-session-turn-iterations
+  "List the latest state's iterations for canonical turn soul `session-turn-id`."
   [db-info session-turn-id]
-  ;; `session-turn-id` arrives as EITHER a `session_turn_soul` id (the
-  ;; canonical turn id `row->turn`/`db-turn-history` expose, the one history
-  ;; views carry) OR a concrete `session_turn_state` id (the engine's
-  ;; `:session-turn-id` run result, surfaced to the web as `:engine_turn_id`
-  ;; on freshly-finished live turns). Resolve soul -> latest state first; if
-  ;; no soul matches (or it has no iterations), treat the id AS a state id.
-  ;; The two id spaces are independent random UUIDs, so this never crosses
-  ;; wires — it just makes machinery restore work for both callers.
   (if (and (ds db-info) session-turn-id)
-    (let [id-s
-          (->ref session-turn-id)
-
-          state
-          (latest-session-turn-state db-info id-s)
-
-          via-soul
-          (when state (iterations-for-state-id db-info (:id state)))]
-
-      (if (seq via-soul) via-soul (iterations-for-state-id db-info id-s)))
+    (if-let [state (latest-session-turn-state db-info (->ref session-turn-id))]
+      (iterations-for-state-id db-info (:id state))
+      [])
     []))
 
 ;; `db-list-iteration-vars`, `db-latest-var-registry`, `db-var-history*`,

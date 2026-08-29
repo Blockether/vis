@@ -22,8 +22,8 @@ describe("returning to a cached session", () => {
       client: {
         cachedTranscript: () => [
           {
-            id: "cached-turn",
-            user_request: "Already in memory",
+            turn_id: "cached-turn",
+            request: "Already in memory",
             status: "completed",
             iterations: [],
           },
@@ -49,8 +49,8 @@ describe("opening a session", () => {
         transcript: () =>
           Promise.resolve([
             {
-              id: "t1",
-              user_request: "Rename the machine tag",
+              turn_id: "t1",
+              request: "Rename the machine tag",
               status: "completed",
               iterations: [],
             },
@@ -70,8 +70,8 @@ describe("opening a session", () => {
   // faded through a briefly empty-looking frame while the scroll position caught up.
   it("reports opening progress and reveals the placed transcript atomically", async () => {
     let resolveTranscript!: (turns: Array<{
-      id: string;
-      user_request: string;
+      turn_id: string;
+      request: string;
       status: string;
       iterations: never[];
     }>) => void;
@@ -89,8 +89,8 @@ describe("opening a session", () => {
 
     resolveTranscript(
       Array.from({ length: 8 }, (_, index) => ({
-        id: `t${index + 1}`,
-        user_request: `Turn ${index + 1}`,
+        turn_id: `t${index + 1}`,
+        request: `Turn ${index + 1}`,
         status: "completed",
         iterations: [],
       })),
@@ -105,20 +105,44 @@ describe("opening a session", () => {
   // occupying the transport that a later New session request needed.
   it("discards a transcript response from the session already left", async () => {
     type Turn = {
-      id: string;
-      user_request: string;
+      turn_id: string;
+      request: string;
       status: string;
       iterations: never[];
     };
     const resolvers = new Map<string, (turns: Turn[]) => void>();
     const signals = new Map<string, AbortSignal | undefined>();
     const view = renderSessionScreen({
-      session: { id: "first", title: "First", status: "idle" },
+      session: {
+        id: "first",
+        title: "First",
+        status: "idle",
+        live: false,
+        current_turn_id: null,
+        turn_count: 0,
+        server_time_ms: 0,
+      },
       client: {
-        cachedSession: (sid: string) => ({ id: sid, title: sid, status: "idle" }),
+        cachedSession: (sid: string) => ({
+          id: sid,
+          title: sid,
+          status: "idle",
+          live: false,
+          current_turn_id: null,
+          turn_count: 0,
+          server_time_ms: 0,
+        }),
         cachedTranscript: () => null,
         session: (sid: string) =>
-          Promise.resolve({ id: sid, title: sid, status: "idle" }),
+          Promise.resolve({
+            id: sid,
+            title: sid,
+            status: "idle",
+            live: false,
+            current_turn_id: null,
+            turn_count: 0,
+            server_time_ms: 0,
+          }),
         transcript: (sid: string, signal?: AbortSignal) => {
           signals.set(sid, signal);
           return new Promise<Turn[]>((resolve) => resolvers.set(sid, resolve));
@@ -133,8 +157,8 @@ describe("opening a session", () => {
     await act(async () => {
       resolvers.get("second")?.([
         {
-          id: "second-turn",
-          user_request: "The current session",
+          turn_id: "second-turn",
+          request: "The current session",
           status: "completed",
           iterations: [],
         },
@@ -145,8 +169,8 @@ describe("opening a session", () => {
     await act(async () => {
       resolvers.get("first")?.([
         {
-          id: "first-turn",
-          user_request: "The session already left",
+          turn_id: "first-turn",
+          request: "The session already left",
           status: "completed",
           iterations: [],
         },
@@ -168,8 +192,8 @@ describe("opening a session", () => {
         transcript: () =>
           Promise.resolve([
             {
-              id: "t-short",
-              user_request: "Give me the short answer",
+              turn_id: "t-short",
+              request: "Give me the short answer",
               status: "completed",
               iterations: [],
             },

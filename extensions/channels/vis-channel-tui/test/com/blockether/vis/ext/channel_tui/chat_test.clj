@@ -15,8 +15,13 @@
 ;; canonical transcript shape a channel actually sees — in-process AND over HTTP.
 (defn- compose-transcript
   [sid]
-  (wire/canonical (mapv #(assoc %
-                           :iterations (vec (vis/db-list-session-turn-iterations :db (:id %))))
+  (wire/canonical (mapv (fn [turn]
+                          (-> turn
+                              (assoc :turn-id (:id turn)
+                                     :request (:user-request turn)
+                                     :iterations
+                                     (vec (vis/db-list-session-turn-iterations :db (:id turn))))
+                              (dissoc :id :user-request)))
                         (vis/db-list-session-turns :db sid))))
 
 (defdescribe rebuild-history-test)
@@ -515,14 +520,14 @@
                (it "block.started carries the raw code straight through"
                    (let [chunk (g->c {"type" "block.started"
                                       "iteration" 1
-                                      "block_id" 0
+                                      "form_index" 0
                                       "code" "git_status()\nprint(42)"})]
                      (expect (= :form-start (:phase chunk)))
                      (expect (= "git_status()\nprint(42)" (:code chunk)))))
                (it "block.output carries the raw code + stdout straight through"
                    (let [chunk (g->c {"type" "block.output"
                                       "iteration" 1
-                                      "block_id" 0
+                                      "form_index" 0
                                       "code" "git_status()"
                                       "stdout" "ok"})]
                      (expect (= :form-result (:phase chunk)))
@@ -533,14 +538,15 @@
                                       "iteration" 2
                                       "block_id" "t1:reasoning:2"
                                       "field" "text"
-                                      "text" "pondering"})]
+                                      "text" "ponder"
+                                      "cumulative" "pondering"})]
                      (expect (= :reasoning (:phase chunk)))
                      (expect (= 2 (:iteration chunk)))
                      (expect (= "pondering" (:thinking chunk)))))
                (it "block.preview remains a block preview rather than reasoning/content"
                    (let [chunk (g->c {"type" "block.preview"
                                       "iteration" 1
-                                      "block_id" 0
+                                      "form_index" 0
                                       "code" "print(4"
                                       "op" "grep"
                                       "result_summary" "12 results"
@@ -551,42 +557,43 @@
                      (expect (= "call_1" (:svar/tool-call-id chunk)))))))
 
 (defdescribe
-  activity-event-chunk-test
-  ;; A coarse `activity` wire event (provider wait, response parse, nested
+  turn-progress-event-chunk-test
+  ;; A coarse `turn.progress` wire event (provider wait, response parse, nested
   ;; shell/tool call) projects back to the phase the live spinner reads, so an
   ;; ATTACHED tab shows "Vis is running: …" like a locally-run turn.
   (let [g->c @#'chat/gateway-event->chunk]
-    (it "a nested tool activity keeps the precise live label"
+    (it "a nested tool progress event keeps the precise live label"
         (expect
           (= {:phase :tool-start :iteration 2 :tool-event {:op "shell" :label "clojure -M:test"}}
-             (g->c {"type" "activity"
-                    "activity" "tool"
+             (g->c {"type" "turn.progress"
+                    "progress" "tool"
                     "op" "shell"
                     "label" "clojure -M:test"
                     "iteration" 2}))))
-    (it "a shell-run activity projects to :shell-run with its command"
-        (expect
-          (= {:phase :shell-run :iteration 1 :cmd "clojure -M:test"}
-             (g->c
-               {"type" "activity" "activity" "shell-run" "cmd" "clojure -M:test" "iteration" 1}))))
-    (it "a provider-call activity projects to :provider-call"
+    (it "a shell-run progress event projects to :shell-run with its command"
+        (expect (= {:phase :shell-run :iteration 1 :cmd "clojure -M:test"}
+                   (g->c {"type" "turn.progress"
+                          "progress" "shell-run"
+                          "cmd" "clojure -M:test"
+                          "iteration" 1}))))
+    (it "a provider-call progress event projects to :provider-call"
         (expect (= {:phase :provider-call :iteration 1}
-                   (g->c {"type" "activity" "activity" "provider-call" "iteration" 1}))))
+                   (g->c {"type" "turn.progress" "progress" "provider-call" "iteration" 1}))))
     ;; Regression, reported as "I send and nothing happens": this marker is the only
     ;; thing on the wire during the longest silence of a turn, so the spinner can
     ;; name WHO it is waiting on only if the model rides along with it.
-    (it "a provider-call activity carries the model it is calling"
+    (it "a provider-call progress event carries the model it is calling"
         (expect (= {:phase :provider-call :iteration 1 :model "claude-opus-5"}
-                   (g->c {"type" "activity"
-                          "activity" "provider-call"
+                   (g->c {"type" "turn.progress"
+                          "progress" "provider-call"
                           "iteration" 1
                           "model" "claude-opus-5"}))))
     ;; Regression, issue #120: the reason a provider request exists never reached an
     ;; attached tab, so a tool-result continuation read like a fresh user submit.
-    (it "a provider-call activity carries its continuation reason"
+    (it "a provider-call progress event carries its continuation reason"
         (expect (= {:phase :provider-call :iteration 3 :reason :tool-result}
-                   (g->c {"type" "activity"
-                          "activity" "provider-call"
+                   (g->c {"type" "turn.progress"
+                          "progress" "provider-call"
                           "iteration" 3
                           "reason" "tool-result"}))))))
 

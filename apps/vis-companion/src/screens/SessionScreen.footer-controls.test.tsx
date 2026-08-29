@@ -25,8 +25,8 @@ describe("composer response controls", () => {
   // session composer footer even though the session-list disclosure owns those details.
   it("leaves cumulative usage out of the composer footer", () => {
     const turn = {
-      id: "turn-with-usage",
-      user_request: "Count this",
+      turn_id: "turn-with-usage",
+      request: "Count this",
       status: "completed",
       created_at: Date.now(),
       content: [],

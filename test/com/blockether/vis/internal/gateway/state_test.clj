@@ -311,7 +311,8 @@
                                     :stream-delta "first\nsecond\nthird"})]
         (expect (= "content.block.delta" type))
         (expect store?)
-        (expect (= "first\nsecond\nthird" (:text payload)))))
+        (expect (= "first\nsecond\nthird" (:text payload)))
+        (expect (= "first\nsecond\nthird" (:cumulative payload)))))
   (it "normalizes iteration-boundary thinking for pinned session history"
       (let [[type store? payload]
             (#'state/chunk->event
@@ -319,21 +320,21 @@
         (expect (= "iteration.completed" type))
         (expect store?)
         (expect (= "alpha.\n beta.\n gamma." (:thinking payload)))))
-  (it "normalizes persisted transcript thinking the same way as live events"
+  (it "projects one canonical persisted turn shape"
       (with-redefs [persistance/db-list-session-turns
                     (fn [_ sid]
-                      [{:id sid :status :success}])
+                      [{:id sid :user-request "hello" :status :success}])
 
                     persistance/db-list-session-turn-iterations
                     (fn [_ _]
                       [{:thinking " alpha.\n\n beta.  \n"}])]
 
-        (expect (= "alpha.\n beta."
-                   (-> (state/transcript :session-1)
-                       first
-                       (get "iterations")
-                       first
-                       (get "thinking")))))))
+        (let [turn (first (state/transcript "session-1"))]
+          (expect (= "session-1" (get turn "turn_id")))
+          (expect (= "hello" (get turn "request")))
+          (expect (not (contains? turn "id")))
+          (expect (not (contains? turn "user_request")))
+          (expect (= "alpha.\n beta." (get-in turn ["iterations" 0 "thinking"])))))))
 
 (defdescribe transcript-bubble-footer-test
              (it "ships the exact shared TUI footer and routing note to remote channels"
@@ -416,27 +417,28 @@
         (expect (= "rg spec has unknown keys: spec." (:error payload))))))
 
 (defdescribe
-  activity-wire-event-test
+  turn-progress-wire-event-test
   "Coarse live-progress phases (provider wait, response parse, nested shell/tool
-   call) ship as an EPHEMERAL `activity` event (store? false) so a long call
+   call) ship as an EPHEMERAL `turn.progress` event (store? false) so a long call
    never leaves the bubble frozen; nothing persists into the durable trace."
-  (it "a nested tool-start ships an ephemeral activity event with its precise label"
+  (it "a nested tool-start ships an ephemeral progress event with its precise label"
       (let [[type store? payload]
             (#'state/chunk->event
              {:phase :tool-start :iteration 2 :tool-event {:op :shell :label "clojure -M:test"}})]
-        (expect (= "activity" type))
+        (expect (= "turn.progress" type))
         (expect (false? store?))
-        (expect (= {:activity "tool" :iteration 2 :op "shell" :label "clojure -M:test"} payload))))
-  (it "provider-call and shell-run project to ephemeral activity events"
-      (expect (= ["activity" false {:activity "provider-call" :iteration 1}]
+        (expect (= {:progress "tool" :iteration 2 :op "shell" :label "clojure -M:test"} payload))))
+  (it "provider-call and shell-run project to ephemeral progress events"
+      (expect (= ["turn.progress" false {:progress "provider-call" :iteration 1}]
                  (#'state/chunk->event {:phase :provider-call :iteration 1})))
-      (expect (= ["activity" false {:activity "shell-run" :iteration 1 :cmd "clojure -M:test"}]
+      (expect (= ["turn.progress" false {:progress "shell-run" :iteration 1 :cmd "clojure -M:test"}]
                  (#'state/chunk->event {:phase :shell-run :iteration 1 :cmd "clojure -M:test"}))))
-  ;; Regression, issue #120: the activity ticker never said WHY a provider request
+  ;; Regression, issue #120: the progress ticker never said WHY a provider request
   ;; was being made, so an attached client could not tell a tool-result
   ;; continuation from the human's own submit.
   (it "a provider call ships the continuation reason that opened it"
-      (expect (= ["activity" false {:activity "provider-call" :iteration 3 :reason "tool-result"}]
+      (expect (= ["turn.progress" false
+                  {:progress "provider-call" :iteration 3 :reason "tool-result"}]
                  (#'state/chunk->event {:phase :provider-call :iteration 3 :reason :tool-result}))))
   ;; Regression, reported as "I send and nothing happens for seconds": this marker
   ;; is the ONLY event on the wire between a submit and the first token (measured
@@ -445,13 +447,13 @@
   ;; only repeat one frozen sentence for the whole wait.
   (it "a provider call names the model the router resolved to"
       (expect
-        (= ["activity" false
-            {:activity "provider-call" :iteration 1 :reason "user-submit" :model "claude-opus-5"}]
+        (= ["turn.progress" false
+            {:progress "provider-call" :iteration 1 :reason "user-submit" :model "claude-opus-5"}]
            (#'state/chunk->event
             {:phase :provider-call :iteration 1 :reason :user-submit :model "claude-opus-5"}))))
-  (it "response-parse :done does NOT emit an activity event (the parse finished)"
+  (it "response-parse :done does NOT emit a progress event (the parse finished)"
       (let [[type] (#'state/chunk->event {:phase :response-parse :iteration 1 :status :done})]
-        (expect (not= "activity" type)))))
+        (expect (not= "turn.progress" type)))))
 
 (defdescribe provider-retry-wire-event-test
              (it "ships structured retry metadata instead of an opaque detail string"
@@ -487,18 +489,20 @@
   ;; event — `make-progress-tracker` DROPS any chunk with no iteration, which is
   ;; how `block.started` / `block.output` once lost their forms and the live
   ;; bubble showed reasoning but no code.
-  (it "block.started carries :iteration on the wire"
+  (it "block.started carries its iteration and form index on the wire"
       (let [[type _ payload] (#'state/chunk->event
                               {:phase :form-start :iteration 1 :position 0 :code "import hashlib"})]
         (expect (= "block.started" type))
-        (expect (= 1 (:iteration payload)))))
-  (it "block.output carries :iteration on the wire"
+        (expect (= 1 (:iteration payload)))
+        (expect (= 0 (:form_index payload)))))
+  (it "block.output carries its iteration and form index on the wire"
       (let [[type _ payload]
             (#'state/chunk->event
              {:phase :form-result :iteration 3 :position 0 :code "print(42)" :stdout "42"})]
         (expect (= "block.output" type))
-        (expect (= 3 (:iteration payload)))))
-  ;; Protocol 7: Activity belongs to the form that produced it. The running frame is
+        (expect (= 3 (:iteration payload)))
+        (expect (= 0 (:form_index payload)))))
+  ;; Protocol 8: Activity belongs to the form that produced it. The running frame is
   ;; TRANSIENT — a saturated queue may drop it — so the settled snapshot must ride the
   ;; terminal event, and a client that missed every live frame still ends on the
   ;; picture the database keeps.
@@ -515,7 +519,7 @@
 
         (expect (= "block.activity" type))
         (expect (false? store?))
-        (expect (= {:block_id 2 :iteration 3 :activity snapshot} payload))))
+        (expect (= {:form_index 2 :iteration 3 :activity snapshot} payload))))
   (it "the settled Activity rides block.output, and only when the form has one"
       (let [snapshot
             {:state :succeeded
@@ -543,7 +547,8 @@
         (expect (= 2 (:iteration payload)))
         (expect (= "t1:reasoning:2" (:block_id payload)))
         (expect (= "text" (:field payload)))
-        (expect (= "hmm" (:text payload)))))
+        (expect (= "hmm" (:text payload)))
+        (expect (= "hmm" (:cumulative payload)))))
   (it "iteration-final carries :iteration and complete assistant prose on the wire"
       (let [[type _ payload] (#'state/chunk->event
                               {:phase :iteration-final
@@ -564,7 +569,7 @@
         (expect (= "block.preview" type))
         (expect store?)
         (expect (= 1 (:iteration payload)))
-        (expect (= 0 (:block_id payload)))
+        (expect (= 0 (:form_index payload)))
         (expect (= "print(4" (:code payload)))
         ;; The preview names no tool: there is exactly one, and a
         ;; card's identity is the printed result's own `op`.
@@ -683,20 +688,15 @@
 
 (defdescribe
   list-turns-dedup-test
-  "A refreshed web page hydrates from gateway/list-turns. Once the engine DB row
-  exists, the completed gateway overlay row must disappear; otherwise the last
-  request/response pair renders twice and the transient duplicate has no DB
-  iterations disclosure."
+  "The live overlay and durable row share one turn id. A running durable placeholder
+   yields to the live paint; a settled durable row replaces it exactly."
   (it
-    "prefers the persisted row over a matching completed live row with engine id"
+    "prefers the settled durable row with the same id"
     (let [sid
-          (java.util.UUID/randomUUID)
+          (str (random-uuid))
 
-          gateway-id
-          "gateway-turn"
-
-          engine-id
-          (java.util.UUID/randomUUID)
+          tid
+          (str (random-uuid))
 
           registry
           @#'state/registry
@@ -705,147 +705,83 @@
           @registry]
 
       (try (reset! registry {sid {:next-seq 0
-                                  :turn-order [gateway-id]
-                                  :turns {gateway-id {:turn_id gateway-id
-                                                      :engine_turn_id (str engine-id)
-                                                      :session_id (str sid)
-                                                      :status "completed"
-                                                      :request "hello"
-                                                      :content
-                                                      [{"id" "b1" "type" "prose" "markdown" "hi"}]
-                                                      :started_at 1000}}}})
+                                  :turn-order [tid]
+                                  :turns {tid {:turn_id tid
+                                               :session_id sid
+                                               :status "completed"
+                                               :request "hello"
+                                               :content
+                                               [{"id" "live" "type" "prose" "markdown" "hi"}]}}}})
            (with-redefs [persistance/db-list-session-turns
                          (fn [_ _]
-                           [{:id engine-id
+                           [{:id tid
                              :status :success
                              :user-request "hello"
-                             :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
+                             :content [{"id" "stored" "type" "prose" "markdown" "hi"}]
                              :iteration-count 2
-                             :input-tokens 1200
-                             :input-regular-tokens 500
-                             :input-cache-write-tokens 100
-                             :input-cache-read-tokens 600
-                             :output-tokens 150
-                             :output-reasoning-tokens 80
-                             :total-cost 0.0123
-                             :provider :openai
-                             :model "gpt-4o"
                              :created-at (java.util.Date. 1010)}])]
              (let [turns (state/list-turns sid)]
                (expect (= 1 (count turns)))
-               (let [turn (first turns)]
-                 (expect (= (str engine-id) (get turn "turn_id")))
-                 (expect (= 2 (get turn "iteration_count")))
-                 (expect (= {"input" 1200
-                             "input_regular" 500
-                             "cache_created" 100
-                             "cached" 600
-                             "output" 150
-                             "reasoning" 80}
-                            (get turn "tokens")))
-                 (expect (= {"total_cost" 0.0123 "provider" "openai" "model" "gpt-4o"}
-                            (get turn "cost"))))))
+               (expect (= tid (get (first turns) "turn_id")))
+               (expect (= "hello" (get (first turns) "request")))
+               (expect (not (contains? (first turns) "id")))
+               (expect (not (contains? (first turns) "user_request")))
+               (expect (= 2 (get (first turns) "iteration_count")))
+               (expect (= "stored" (get-in (first turns) ["content" 0 "id"])))))
            (finally (reset! registry saved)))))
-  (it
-    "prefers the persisted row over a matching completed live row with no engine id"
-    (let [sid
-          (java.util.UUID/randomUUID)
+  (it "prefers the live paint while the same durable row is running"
+      (let [sid
+            (str (random-uuid))
 
-          gateway-id
-          "gateway-turn"
+            tid
+            (str (random-uuid))
 
-          engine-id
-          (java.util.UUID/randomUUID)
+            registry
+            @#'state/registry
 
-          started
-          1000
+            saved
+            @registry]
 
-          registry
-          @#'state/registry
+        (try
+          (reset! registry {sid {:next-seq 0
+                                 :turn-order [tid]
+                                 :turns {tid {:turn_id tid
+                                              :session_id sid
+                                              :status "running"
+                                              :request "live request"
+                                              :content
+                                              [{"id" "live" "type" "prose" "markdown" "now"}]}}}})
+          (with-redefs [persistance/db-list-session-turns
+                        (fn [_ _]
+                          [{:id tid :status :running :user-request "stored request" :content []}])]
+            (let [turn (first (state/list-turns sid))]
+              (expect (= "streaming" (get turn "status")))
+              (expect (= "live request" (get turn "request")))))
+          (finally (reset! registry saved))))))
 
-          saved
-          @registry]
+;; Regression, issue td-75dad4: trace lookup used a second identity and could
+;; resolve a settled execution to no iterations.
+(defdescribe canonical-turn-trace-id-test
+             (it "reads the persisted trace by the submitted turn id"
+                 (let [sid
+                       (random-uuid)
 
-      (try (reset! registry {sid {:next-seq 0
-                                  :turn-order [gateway-id]
-                                  :turns {gateway-id {:turn_id gateway-id
-                                                      :session_id (str sid)
-                                                      :status "completed"
-                                                      :request "hello"
-                                                      :content
-                                                      [{"id" "b1" "type" "prose" "markdown" "hi"}]
-                                                      :started_at started}}}})
-           (with-redefs [persistance/db-list-session-turns
-                         (fn [_ s]
-                           (expect (= sid s))
-                           [{:id engine-id
-                             :status :success
-                             :user-request "hello"
-                             :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
-                             :iteration-count 2
-                             :created-at (java.util.Date. (+ started 10))}])]
-             (let [turns (state/list-turns sid)]
-               (expect (= 1 (count turns)))
-               (expect (= (str engine-id) (get (first turns) "turn_id")))
-               (expect (= 2 (get (first turns) "iteration_count")))))
-           (finally (reset! registry saved))))))
+                       tid
+                       (random-uuid)]
 
-;; Regression, issue td-75dad4: the settled TUI asked for a trace with the
-;; gateway queue id, so the persisted execution receipt resolved to no iterations.
-(defdescribe
-  gateway-turn-trace-id-resolution-test
-  (it
-    "resolves a completed gateway row to its matching persisted turn trace"
-    (let [sid
-          (java.util.UUID/randomUUID)
+                   (with-redefs [lp/db-info
+                                 (constantly :db)
 
-          gateway-id
-          (str (java.util.UUID/randomUUID))
+                                 persistance/db-list-session-turn-iterations
+                                 (fn [_ turn-id]
+                                   (expect (= tid turn-id))
+                                   [{:id (random-uuid) :forms [{:src "attach(page)"}]}])
 
-          engine-id
-          (java.util.UUID/randomUUID)
+                                 persistance/db-list-iterations-attachments
+                                 (constantly {})]
 
-          started
-          1000
-
-          registry
-          @#'state/registry
-
-          saved
-          @registry]
-
-      (try (reset! registry {(str sid) {:turns {gateway-id {:turn_id gateway-id
-                                                            :session_id (str sid)
-                                                            :status "completed"
-                                                            :request "make report"
-                                                            :content [{"id" "gateway-block"
-                                                                       "type" "prose"
-                                                                       "markdown" "attached"}]
-                                                            :started_at started}}}})
-           (with-redefs [lp/db-info
-                         (constantly :db)
-
-                         persistance/db-list-session-turns
-                         (fn [_ s]
-                           (expect (= sid s))
-                           [{:id engine-id
-                             :status :success
-                             :user-request "make report"
-                             :content [{"id" "engine-block" "type" "prose" "markdown" "attached"}]
-                             :created-at (java.util.Date. (+ started 10))}])
-
-                         persistance/db-list-session-turn-iterations
-                         (fn [_ turn-id]
-                           (if (= engine-id turn-id)
-                             [{:id (java.util.UUID/randomUUID) :forms [{:src "attach(page)"}]}]
-                             []))
-
-                         persistance/db-list-iterations-attachments
-                         (constantly {})]
-
-             (expect (= "attach(page)"
-                        (get-in (state/turn-trace sid gateway-id) [0 "forms" 0 "src"]))))
-           (finally (reset! registry saved))))))
+                     (expect (= "attach(page)"
+                                (get-in (state/turn-trace sid tid) [0 "forms" 0 "src"])))))))
 
 (defdescribe
   list-queued-turns-test
@@ -1228,46 +1164,9 @@
                    (#'state/replace-last-user-message-content messages "queued new"))))))
 
 (defdescribe
-  persisted-duplicate-of-live-test
-  ;; Terminal identity is request + status + timestamps; content blocks belong
-  ;; to the durable row and are not duplicated onto terminal events.
-  (let [dup?
-        #'state/persisted-duplicate-of-live?
-
-        at
-        (fn [ms]
-          (java.util.Date. (long ms)))]
-
-    (it "dedups an error turn whose live row has no answer to compare"
-        (expect
-          (dup?
-            {:engine_turn_id nil :status "error" :request "add zprint" :content [] :started_at 1000}
-            {:id "soul-1"
-             :user-request "add zprint"
-             :content
-             [{"id" "e1" "type" "error" "code" "failed" "message" "Could not reach provider"}]
-             :created-at (at 2000)})))
-    (it "does NOT over-dedup two distinct completed answers with the same request"
-        (expect (not (dup? {:engine_turn_id nil
-                            :status "completed"
-                            :request "hi"
-                            :content [{"id" "a" "type" "prose" "markdown" "answer A"}]
-                            :started_at 1000}
-                           {:id "soul-2"
-                            :user-request "hi"
-                            :content [{"id" "b" "type" "prose" "markdown" "answer B"}]
-                            :created-at (at 2000)}))))
-    (it "still matches on the engine-turn-id primary key"
-        (expect (dup? {:engine_turn_id "eng-9" :status "completed"} {:id "eng-9"})))))
-
-(defdescribe
   mirror-turn-row-test
-  "A turn running in a SIBLING process arrives only as bus-mirrored events. To
-   render it like a locally-started turn (user bubble + running chip, not bare
-   deltas leaking under the previous answer), `ingest-mirrored-event!` must
-   materialize a running row in :turns/:turn-order on `turn.started` and mark it
-   terminal on `turn.completed`/`turn.failed`/`turn.cancelled` — carrying :engine_turn_id so
-   list-turns can dedup it against the durable DB row once persisted."
+  "A turn running in a sibling process materializes under the producer's canonical
+   id and settles that same row."
   (let [reg
         @#'state/registry
 
@@ -1296,11 +1195,10 @@
            (#'state/ingest-mirrored-event!
             sid
             false
-            {"type" "turn.completed" "turn_id" "T1" "status" "completed" "engine_turn_id" "E1"})
+            {"type" "turn.completed" "turn_id" "T1" "status" "completed"})
            (let [done (get @reg sid)]
              (expect (nil? (:current-turn done)))
-             (expect (= "completed" (get-in done [:turns "T1" :status])))
-             (expect (= "E1" (get-in done [:turns "T1" :engine_turn_id]))))
+             (expect (= "completed" (get-in done [:turns "T1" :status]))))
            (swap! reg assoc sid {:next-seq 0})
            (#'state/ingest-mirrored-event!
             sid
@@ -2827,6 +2725,49 @@
              (expect (nil? (state/running-turn-start-cursor sid)))
              (finally (reset! registry saved))))))
 
+(defdescribe
+  running-form-activity-resume-test
+  "A reconnect replays the latest Activity snapshot, not the transient stream that led to it."
+  (it
+    "materializes one current snapshot until block.output takes ownership"
+    (let [sid
+          (str (java.util.UUID/randomUUID))
+
+          tid
+          "turn-activity"
+
+          registry
+          @#'state/registry
+
+          saved
+          @registry]
+
+      (with-redefs [bus/publish! (fn [& _])]
+        (try (reset! registry {sid {:next-seq 0 :current-turn tid :turns {tid {:turn_id tid}}}})
+             (state/append-event! sid "turn.started" {:turn_id tid :request "Inspect"})
+             (state/append-event! sid "block.started" {:turn_id tid :iteration 1 :form_index 0})
+             (state/append-event! sid
+                                  "block.activity"
+                                  {:turn_id tid :iteration 1 :form_index 0 :activity {:revision 1}}
+                                  {:store? false})
+             (state/append-event! sid
+                                  "block.activity"
+                                  {:turn_id tid :iteration 1 :form_index 0 :activity {:revision 2}}
+                                  {:store? false})
+             (let [replay (state/subscribe! sid
+                                            "activity-resume"
+                                            (fn [_])
+                                            (state/running-turn-start-cursor sid))
+                   activities (filterv #(= "block.activity" (get % "type")) replay)]
+
+               (expect (= 1 (count activities)))
+               (expect (= 2 (get-in activities [0 "activity" "revision"]))))
+             (state/append-event! sid
+                                  "block.output"
+                                  {:turn_id tid :iteration 1 :form_index 0 :activity {:revision 3}})
+             (expect (empty? (filter #(= "block.activity" (get % "type"))
+                                     (state/events-since sid 0))))
+             (finally (state/unsubscribe! sid "activity-resume") (reset! registry saved)))))))
 
 (defdescribe
   queue-failure-pause-test
@@ -3340,7 +3281,10 @@
           (str (random-uuid))
 
           tid
-          (str (random-uuid))]
+          (str (random-uuid))
+
+          seen-opts
+          (atom nil)]
 
       (swap! @#'state/registry assoc
         sid
@@ -3352,6 +3296,7 @@
          :current-turn tid})
       (with-redefs [lp/send!
                     (fn [_ _ opts]
+                      (reset! seen-opts opts)
                       (let [on-chunk (get-in opts [:hooks :on-chunk])]
                         (on-chunk {:phase :reasoning :iteration 1 :thinking "alpha."})
                         (on-chunk
@@ -3360,7 +3305,8 @@
                         (on-chunk
                           {:phase :iteration-final :iteration 2 :thinking "beta." :done? true}))
                       {:status :ok :answer nil})]
-        (#'state/run-turn! sid tid "hi" {}))
+        (#'state/run-turn! sid tid "hi" {})
+        (expect (= tid (:session-turn-id @seen-opts))))
       (let [types
             (mapv #(get % "type") (:events (get @@#'state/registry sid)))
 
@@ -3391,6 +3337,53 @@
         (expect (< (long (completed-idx 1)) (long (second started-idxs))))
         (expect (< (long (completed-idx 2)) (long terminal-idx)))))))
 
+(defdescribe
+  late-terminal-chunk-test
+  (it
+    "drops chunks from a worker after its terminal landed"
+    (let [sid
+          (str (random-uuid))
+
+          tid
+          (str (random-uuid))
+
+          token
+          (cancellation/cancellation-token)
+
+          on-chunk
+          (atom nil)
+
+          registry
+          @#'state/registry]
+
+      (try (swap! registry assoc
+             sid
+             {:next-seq 0
+              :events []
+              :subscribers {}
+              :turns {tid {:turn_id tid :status "running" :cancel-token token}}
+              :turn-order [tid]
+              :current-turn tid})
+           (with-redefs [lp/send!
+                         (fn [_ _ opts]
+                           (reset! on-chunk (get-in opts [:hooks :on-chunk]))
+                           (when-let [claim! (get-in opts [:hooks :claim-terminal!])]
+                             (claim!))
+                           {:status :ok :answer nil})
+
+                         state/emit-context-updated!
+                         (fn [_]
+                           nil)
+
+                         state/after-turn-terminal!
+                         (fn [& _]
+                           nil)]
+
+             (#'state/run-turn! sid tid "hi" {:cancel-token token}))
+           (let [before (:events (get @registry sid))]
+             (@on-chunk {:phase :reasoning :iteration 2 :thinking "too late"})
+             (expect (= before (:events (get @registry sid)))))
+           (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid))))))
 (defdescribe
   cancel-terminal-backstop-test
   "A cancelled turn ALWAYS lands a terminal, even when its worker cannot.
@@ -3590,22 +3583,17 @@
 
 (defdescribe
   list-turns-dedup-scale-test
-  "Hydration dedups live gateway rows against persisted engine rows by an exact
-   id match, so the persisted ids belong in a SET. The old `some` rescanned every
-   persisted row for every live row, and its fallback arm deep-compares whole
-   `:content` vectors — 800 live against 800 persisted measured 14.1 ms, versus
-   0.19 ms for the set. A non-blank engine id decides it outright, because the
-   fallback arm REQUIRES a blank one and can never fire."
+  "Exact canonical ids keep hydration linear even with a long transcript."
   (it
-    "drops the live row a persisted id owns and keeps the one none owns"
+    "replaces only the live row owned by a settled durable id"
     (let [sid
-          (java.util.UUID/randomUUID)
+          (random-uuid)
 
-          dup-engine
-          (str (java.util.UUID/randomUUID))
+          duplicate-id
+          (str (random-uuid))
 
-          own-engine
-          (str (java.util.UUID/randomUUID))
+          live-only-id
+          (str (random-uuid))
 
           registry
           @#'state/registry
@@ -3614,33 +3602,28 @@
           @registry
 
           live
-          (fn [tid engine-id]
+          (fn [tid]
             {:turn_id tid
-             :engine_turn_id engine-id
              :session_id (str sid)
              :status "completed"
-             :request "hello"
-             :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
-             :started_at 1000})
+             :content [{"id" "live" "type" "prose" "markdown" "hi"}]})
 
           persisted
           (conj (mapv (fn [i]
                         {:id (str "row-" i)
                          :status :success
-                         :user-request (str "q" i)
                          :content []
                          :created-at (java.util.Date. (+ 1000 (long i)))})
                       (range 200))
-                {:id dup-engine
+                {:id duplicate-id
                  :status :success
-                 :user-request "hello"
-                 :content [{"id" "b1" "type" "prose" "markdown" "hi"}]
+                 :content [{"id" "stored" "type" "prose" "markdown" "hi"}]
                  :created-at (java.util.Date. 1500)})]
 
       (try (reset! registry {(str sid) {:next-seq 0
-                                        :turn-order ["gateway-dup" "gateway-own"]
-                                        :turns {"gateway-dup" (live "gateway-dup" dup-engine)
-                                                "gateway-own" (live "gateway-own" own-engine)}}})
+                                        :turn-order [duplicate-id live-only-id]
+                                        :turns {duplicate-id (live duplicate-id)
+                                                live-only-id (live live-only-id)}}})
            (with-redefs [persistance/db-list-session-turns
                          (fn [_ _]
                            persisted)
@@ -3649,10 +3632,15 @@
                          (fn [_ _]
                            {})]
 
-             (let [ids (set (map #(get % "turn_id") (state/list-turns sid)))]
-               (expect (contains? ids dup-engine))
-               (expect (not (contains? ids "gateway-dup")))
-               (expect (contains? ids "gateway-own"))))
+             (let [turns
+                   (state/list-turns sid)
+
+                   ids
+                   (mapv #(get % "turn_id") turns)]
+
+               (expect (= 202 (count turns)))
+               (expect (= 1 (count (filter #{duplicate-id} ids))))
+               (expect (some #{live-only-id} ids))))
            (finally (reset! registry saved))))))
 
 (defdescribe
@@ -3741,11 +3729,10 @@
 ;; own answer. The sweep was not even scoped to the cancelled turn — it stamped
 ;; EVERY :running row of the session.
 (defdescribe
-  cancel-persists-no-turn-row-test
-  "A user cancel touches NO durable turn row. The wire terminal is the only thing
-   that settles a turn; a process killed mid-cancel is repaired at startup by
-   `loop/db-sweep-orphaned-running-turns!`, which owns exactly that case."
-  (it "writes nothing durable while the cancelled turn is still live"
+  cancel-request-does-not-settle-turn-test
+  "The cancel request only fires the token. Whichever terminal path wins the claim —
+   worker, cancellation backstop, or startup sweep — settles the one canonical row."
+  (it "does not race the terminal owner while the cancelled turn is still live"
       (let [sid
             (str "cancel-persist-" (java.util.UUID/randomUUID))
 
@@ -3841,6 +3828,62 @@
                  (expect (true? (deref closed 5000 false))))))
            (finally (deliver release true) (swap! registry dissoc sid))))))
 
+(defdescribe
+  forced-terminal-persistence-test
+  (it
+    "creates and settles a missing row under the canonical turn id"
+    (let [sid
+          "forced-session"
+
+          tid
+          "forced-turn"
+
+          registry
+          @#'state/registry
+
+          updates
+          (atom [])
+
+          stores
+          (atom [])
+
+          attachments
+          [{:media-type "text/plain" :data "receipt"}]]
+
+      (try (swap! registry assoc
+             sid
+             {:turns {tid {:turn_id tid
+                           :status "running"
+                           :request "stop this turn"
+                           :attachments attachments}}})
+           (with-redefs [lp/db-info
+                         (constantly ::db)
+
+                         persistance/db-update-session-turn!
+                         (fn [db turn-id opts]
+                           (swap! updates conj [db turn-id opts])
+                           (= 2 (count @updates)))
+
+                         persistance/db-store-session-turn!
+                         (fn [db opts]
+                           (swap! stores conj [db opts])
+                           tid)]
+
+             (expect (true? (#'state/persist-forced-terminal!
+                             sid
+                             tid
+                             {:status :interrupted :content [] :prior-outcome :cancelled}))))
+           (expect (= [[::db
+                        {:parent-session-id sid
+                         :session-turn-id tid
+                         :user-request "stop this turn"
+                         :status :running
+                         :attachments attachments}]]
+                      @stores))
+           (expect (= [tid tid] (mapv second @updates)))
+           (expect (= :interrupted (get-in @updates [1 2 :status])))
+           (finally (swap! registry dissoc sid))))))
+
 ;; Wedged session: `turn.started` with no terminal (issue #105)
 
 (defdescribe
@@ -3871,6 +3914,9 @@
           (atom [])
 
           events
+          (atom [])
+
+          persisted
           (atom [])]
 
       (try (swap! registry assoc
@@ -3884,6 +3930,9 @@
                                                     (when (= type "turn.started")
                                                       (throw (ex-info "wire fan-out blew up" {})))
                                                     nil)
+                            #'state/persist-forced-terminal! (fn [s t opts]
+                                                               (swap! persisted conj [s t opts])
+                                                               true)
                             #'state/finish-turn! (fn [_sid _tid _patch]
                                                    nil)
                             #'state/emit-context-updated! (fn [_sid]
@@ -3895,7 +3944,11 @@
                (expect (nil? (#'state/launch-turn-worker! sid tid "hello" {:cancel-token token})))))
            ;; armed BEFORE the turn was announced, so the orphan window is covered
            (expect (= [tid] @armed))
-           ;; and the turn ends in a terminal instead of pinning the session
+           ;; and the turn ends durably instead of pinning the session
+           (expect (= [[sid tid :error]]
+                      (mapv (fn [[s t opts]]
+                              [s t (:status opts)])
+                            @persisted)))
            (expect (= ["turn.started" "turn.failed"] @events))
            (finally (swap! registry dissoc sid) (#'state/release-turn-terminal-claim! sid tid))))))
 
@@ -3922,7 +3975,10 @@
           (cancellation/cancellation-token)
 
           armed
-          (atom nil)]
+          (atom nil)
+
+          persisted
+          (atom [])]
 
       (try (swap! registry assoc
              sid
@@ -3931,15 +3987,29 @@
                             (fn [s t tok grace-ms land!]
                               (reset! armed
                                 {:sid s :tid t :token tok :grace-ms grace-ms :land land!})
-                              nil)}
+                              nil)
+                            #'state/persist-forced-terminal! (fn [s t opts]
+                                                               (swap! persisted conj [s t opts])
+                                                               true)
+                            #'state/append-event! (fn [& _]
+                                                    nil)
+                            #'state/emit-context-updated! (fn [& _]
+                                                            nil)
+                            #'state/after-turn-terminal! (fn [& _]
+                                                           nil)}
              (fn []
-               (expect (= {:status "cancelling"} (state/cancel-turn! sid tid :test-stop)))))
+               (expect (= {:status "cancelling"} (state/cancel-turn! sid tid :test-stop)))
+               ((:land @armed) sid tid token)))
            (expect (cancellation/cancelled? token))
            (expect (= sid (:sid @armed)))
            (expect (= tid (:tid @armed)))
            (expect (identical? token (:token @armed)))
            (expect (pos? (long (:grace-ms @armed))))
            (expect (ifn? (:land @armed)))
+           (expect (= [[sid tid :interrupted]]
+                      (mapv (fn [[s t opts]]
+                              [s t (:status opts)])
+                            @persisted)))
            (finally (swap! registry dissoc sid))))))
 
 

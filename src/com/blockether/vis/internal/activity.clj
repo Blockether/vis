@@ -4,8 +4,7 @@
    Wrapper-entry sequence owns row placement and terminal events update rows in place."
   (:require [com.blockether.vis.internal.activity.event :as event]
             [com.blockether.vis.internal.activity.presenter :as presenter]
-            [com.blockether.vis.internal.gateway.wire :as wire]
-            [com.blockether.vis.internal.util :as util]))
+            [com.blockether.vis.internal.gateway.wire :as wire]))
 
 (def max-rows 128)
 (def max-receipt-bytes (* 64 1024))
@@ -405,105 +404,3 @@
      :counts (:counts state)
      :rows (mapv presentation-row (:rows state))
      :omitted (:omitted state)}))
-
-(def ^:private presentation-states #{"idle" "running" "succeeded" "failed" "cancelled"})
-(def ^:private presentation-presenters (set (map name presenter/presenters)))
-(def ^:private presentation-signals #{"generic" "observation" "mutation" "verification"})
-(def ^:private evidence-kinds #{"arguments" "result" "error" "diff"})
-(def ^:private diff-line-kinds #{"header" "hunk" "context" "addition" "deletion"})
-(def ^:private row-required-keys
-  #{:id :sequence :operation :presenter :signal :state :summary :resources :evidence})
-(def ^:private row-optional-keys
-  #{:group-token :duration-ms :result-summary :error-summary :children :is-truncated})
-
-(defn- non-negative-integer? [value] (and (integer? value) (not (neg? (long value)))))
-
-(defn- closed? [allowed value] (and (map? value) (every? allowed (keys value))))
-
-(defn- resource?
-  [value]
-  (and (closed? #{:type :id} value)
-       (= #{:type :id} (set (keys value)))
-       (util/non-blank-string? (:type value))
-       (util/non-blank-string? (:id value))))
-
-(defn- diff-line?
-  [value]
-  (and (closed? #{:kind :text :is-redacted} value)
-       (= #{:kind :text} (set (keys (dissoc value :is-redacted))))
-       (contains? diff-line-kinds (:kind value))
-       (string? (:text value))
-       (or (not (contains? value :is-redacted)) (true? (:is-redacted value)))))
-
-(defn- evidence?
-  [value]
-  (and (contains? evidence-kinds (:kind value))
-       (string? (:text value))
-       (if (= "diff" (:kind value))
-         (and (closed? #{:kind :text :lines :additions :deletions :modifications :omitted-lines
-                         :is-truncated :is-redacted}
-                       value)
-              (= #{:kind :text :lines :additions :deletions :modifications :omitted-lines
-                   :is-truncated :is-redacted}
-                 (set (keys value)))
-              (vector? (:lines value))
-              (every? diff-line? (:lines value))
-              (every? non-negative-integer?
-                      ((juxt :additions :deletions :modifications :omitted-lines) value))
-              (boolean? (:is-truncated value))
-              (boolean? (:is-redacted value)))
-         (and (closed? #{:kind :text} value) (= #{:kind :text} (set (keys value)))))))
-
-(defn- presentation-row?
-  [value depth]
-  (and (<= (long depth) 2)
-       (closed? (into row-required-keys row-optional-keys) value)
-       (every? #(contains? value %) row-required-keys)
-       (util/non-blank-string? (:id value))
-       (non-negative-integer? (:sequence value))
-       (util/non-blank-string? (:operation value))
-       (contains? presentation-presenters (:presenter value))
-       (contains? presentation-signals (:signal value))
-       (contains? presentation-states (:state value))
-       (string? (:summary value))
-       (vector? (:resources value))
-       (<= (long (count (:resources value))) (long event/max-resources))
-       (every? resource? (:resources value))
-       (vector? (:evidence value))
-       (every? evidence? (:evidence value))
-       (or (nil? (:duration-ms value)) (non-negative-integer? (:duration-ms value)))
-       (or (nil? (:is-truncated value)) (true? (:is-truncated value)))
-       (or (nil? (:children value))
-           (and (vector? (:children value))
-                (every? #(presentation-row? % (inc (long depth))) (:children value))))))
-
-(defn- counts?
-  [value]
-  (and (closed? #{:running :succeeded :failed :cancelled} value)
-       (= #{:running :succeeded :failed :cancelled} (set (keys value)))
-       (every? non-negative-integer? (vals value))))
-
-(defn- omitted?
-  [value]
-  (and (closed? #{:rows :by-classification} value)
-       (= #{:rows :by-classification} (set (keys value)))
-       (non-negative-integer? (:rows value))
-       (map? (:by-classification value))
-       (every? non-negative-integer? (vals (:by-classification value)))))
-
-(defn presentation-error
-  "Nil for the current bounded Activity projection, otherwise its refusal."
-  [value]
-  (cond (not (map? value)) "Activity presentation must be a map"
-        (not (closed? #{:state :counts :rows :omitted} value))
-        "Activity presentation has unknown keys"
-        (not (contains? presentation-states (:state value))) "unknown Activity state"
-        (not (counts? (:counts value))) "Activity counts are malformed"
-        (not (vector? (:rows value))) "Activity rows must be a vector"
-        (> (long (count (:rows value))) (long max-rows)) "Activity exceeds its row bound"
-        (not (every? #(presentation-row? % 0) (:rows value))) "Activity rows are malformed"
-        (and (seq (:rows value)) (not (apply distinct? (map :id (:rows value)))))
-        "Activity row ids must be distinct"
-        (not (omitted? (:omitted value))) "Activity omission counts are malformed"
-        (> (byte-size value) (long max-receipt-bytes)) "Activity exceeds its byte bound"
-        :else nil))

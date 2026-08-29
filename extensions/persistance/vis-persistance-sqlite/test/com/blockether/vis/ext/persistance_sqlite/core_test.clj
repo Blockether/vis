@@ -94,6 +94,22 @@
         (expect (= #{"test.ext.alpha" "test.ext.beta"}
                    (set (map :extension-id
                              (vis/db-list-extension-aggregates s {:kind :cache/value})))))))
+  (it "uses the caller's turn id as the durable identity"
+      (let [s
+            (h/store)
+
+            cid
+            (h/store-session! s {:channel :cli})
+
+            tid
+            (random-uuid)]
+
+        (expect (= tid
+                   (vis/db-store-session-turn! s
+                                               {:parent-session-id cid
+                                                :session-turn-id tid
+                                                :user-request "canonical identity"})))
+        (expect (= [(str tid)] (mapv (comp str :id) (vis/db-list-session-turns s cid))))))
   (it "stores iteration block scope and indexes it"
       (let [s
             (h/store)
@@ -1899,7 +1915,45 @@
               {:parent-session-id cid :user-request "x" :status :running})]
 
         (vis/db-update-session-turn! s qid {:status :error})
-        (expect (= :error (:status (first (vis/db-list-session-turns s cid))))))))
+        (expect (= :error (:status (first (vis/db-list-session-turns s cid)))))))
+  (it
+    "keeps the first terminal outcome"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :tui})
+
+          qid
+          (vis/db-store-session-turn!
+            s
+            {:parent-session-id cid :user-request "race" :status :running})]
+
+      (vis/db-update-session-turn! s
+                                   qid
+                                   {:status :error
+                                    :iteration-count 3
+                                    :duration-ms 40
+                                    :tokens {"input" 7 "output" 5}
+                                    :cost {"total_cost" 1.25}})
+      (vis/db-update-session-turn! s
+                                   qid
+                                   {:status :success
+                                    :iteration-count 9
+                                    :duration-ms 90
+                                    :tokens {"input" 70 "output" 50}
+                                    :cost {"total_cost" 9.25}})
+      (let [row (first (raw-query s
+                                  {:select [:status :iteration_count :duration_ms :input_tokens
+                                            :output_tokens :total_cost_usd]
+                                   :from :session_turn_state}))]
+        (expect (= {:status "error"
+                    :iteration_count 3
+                    :duration_ms 40
+                    :input_tokens 7
+                    :output_tokens 5
+                    :total_cost_usd 1.25}
+                   row))))))
 
 ;; Dedicated ctx stores (task/fact/archive) — write-through + per-session id
 
@@ -2264,8 +2318,6 @@
                               {:session-turn-id qid
                                :code ""
                                :duration-ms 5
-                               :llm-provider :p2
-                               :llm-model "m2"
                                :llm-routing {:selected {:provider :p1 :model "m1"}
                                              :actual {:provider :p2 :model "m2"}
                                              :fallback? true

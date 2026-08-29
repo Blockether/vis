@@ -2163,7 +2163,7 @@
                        (into {} (filter (comp some? val)) (select-keys event wire/turn-meta-keys)))
                 (assoc "content" blocks
                        "iteration_count" (or (get message "iteration_count") 1)
-                       "session_turn_id" (or (get message "engine_turn_id") turn-id)))
+                       "session_turn_id" turn-id))
       needs-input?
       (assoc "status" "needs_input")
 

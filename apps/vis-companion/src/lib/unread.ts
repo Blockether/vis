@@ -128,7 +128,7 @@ export function answeredTurnCount(session: Session | null | undefined): number {
   if (!session) return 0;
   const count = Number(session.turn_count ?? 0);
   const total = Number.isFinite(count) && count > 0 ? count : 0;
-  const inFlight = session.live === true || session.status === 'running' ? 1 : 0;
+  const inFlight = session.live ? 1 : 0;
   return Math.max(0, total - inFlight);
 }
 
@@ -195,7 +195,7 @@ export function hasSessionReadMark(sid: string): boolean {
  * flagging it would make the badge mean "busy" instead of "unread".
  */
 function isSessionUnread(session: Session): boolean {
-  if (session.live === true || session.status === 'running') return false;
+  if (session.live) return false;
   const seen = load()[session.id];
   if (seen === undefined) return false;
   return answeredTurnCount(session) > seen;

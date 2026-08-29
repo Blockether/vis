@@ -3,13 +3,12 @@
  *
  * Running turns, form-owned Activity snapshots, and host-owned Live Views are
  * separate models. This reducer owns only the first. A `block.activity` frame
- * replaces `forms[i].activity`; the older top-level `activity` wire frame is a
- * short-lived progress hint and is normalized to `progress` here so the two
- * concepts cannot be confused inside the app.
+ * replaces `forms[i].activity`; `turn.progress` is only the turn ticker.
  */
 import { activityProjectionFromWire, type ActivityProjection } from "./activity";
 import {
   eventBlockKey,
+  eventFormKey,
   eventIterationPosition,
   eventString,
 } from "./session-stream";
@@ -51,9 +50,8 @@ export interface RunningTurn {
   content?: ContentBlock[];
 }
 
-function applyText(current: string, event: SseEvent): string {
-  const cumulative = eventString(event, "cumulative");
-  return cumulative || current + eventString(event, "text");
+function applyText(_current: string, event: SseEvent): string {
+  return eventString(event, "cumulative");
 }
 
 function updateRunningIteration(
@@ -83,7 +81,7 @@ function formFromEvent(event: SseEvent, running = false): TranscriptForm {
     ? (event.cards as TranscriptForm[])
     : undefined;
   return {
-    block_id: eventBlockKey(event),
+    block_id: eventFormKey(event),
     scope: eventString(event, "scope") || undefined,
     code: eventString(event, "code") || undefined,
     display_code: eventString(event, "display_code") || undefined,
@@ -138,7 +136,7 @@ function applyFormActivity(
   );
   if (iterationIndex < 0) return turn;
 
-  const key = eventBlockKey(event);
+  const key = eventFormKey(event);
   const forms = [...(turn.iterations[iterationIndex].forms ?? [])];
   const formIndex = forms.findIndex(
     (form) => String(form.block_id ?? "") === key,
@@ -265,9 +263,8 @@ export function reduceRunningTurnEvent(
     };
   }
 
-  // Historical wire name: this is a ticker hint, not a form's Activity snapshot.
-  if (type === "activity") {
-    const kind = eventString(event, "activity");
+  if (type === "turn.progress") {
+    const kind = eventString(event, "progress");
     const rawIteration = event.iteration;
     const iteration =
       typeof rawIteration === "number"

@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.vis.internal.activity :as activity]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]
@@ -72,9 +73,6 @@
 
 (def ^:private provider-error-explanation perr/provider-error-explanation)
 
-(def ^:private collect-iteration-start-hints (deref #'lp/collect-iteration-start-hints))
-
-(def ^:private ask-result->api-usage (deref #'lp/ask-result->api-usage))
 
 (def ^:private turn-eval-evidence (deref #'lp/turn-eval-evidence))
 
@@ -1062,16 +1060,6 @@
                    (expect (not (contains? envelope :result-render)))
                    (expect (nil? (form/result-display envelope))))))
 
-;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: a host-authored
-;; `result-render` survived the model-envelope projection even though it belongs
-;; exclusively to channels and is derived only after Python has returned.
-(defdescribe model-form-envelope-excludes-presentation-test
-             (it "keeps result-render out of the model contract"
-                 (expect (= {:scope "t1/i1" :src "print('python-only')" :stdout "python-only\n"}
-                            (eng/model-form-envelope {:scope "t1/i1"
-                                                      :src "print('python-only')"
-                                                      :stdout "python-only\n"
-                                                      :result-render "**presentation only**"})))))
 (defdescribe guest-interrupt-on-eval-timeout-test
              ;; REGRESSION: an eval timeout (and Esc cancel) only did `Future.cancel(true)`.
              ;; GraalPy does NOT observe `Thread.interrupt` inside guest code, so a model
@@ -1346,6 +1334,44 @@
                           (expect (nil? (:error form-res)))
                           (expect (str/includes? (str (:stdout form-res)) "42"))))
                       (finally (lp/dispose-environment! env))))))
+(defdescribe
+  activity-ownership-boundary-test
+  (it
+    "uses one final Activity value for the terminal event and persisted form"
+    (let [env
+          (lp/create-environment ::router {:db :memory})
+
+          chunks
+          (atom [])]
+
+      (try (with-redefs [svar/ask-code!
+                         (fn [_router _opts]
+                           {:stop-reason :tool-calls
+                            :tool-calls [{:id "call_activity"
+                                          :name "python_execution"
+                                          :input
+                                          {:code
+                                           "grep({'query': 'defproject', 'paths': ['deps.edn']})"}}]
+                            :content nil
+                            :reasoning "checking"
+                            :tokens {}})]
+             (let [result (lp/run-iteration env
+                                            []
+                                            {:iteration 0
+                                             :resolved-model {:provider :zai-coding-plan
+                                                              :name "glm-5.1"}
+                                             :on-chunk #(swap! chunks conj %)})
+                   block (first (:blocks result))
+                   terminal (first (filter #(= :form-result (:phase %)) @chunks))
+                   forms (eng/blocks->forms (:blocks result) {:turn 1 :iter 1})
+                   activity (:activity block)]
+
+               (expect (seq (filter #(= :form-activity (:phase %)) @chunks)))
+               (expect (= activity (:activity terminal) (:activity (first forms))))
+               (expect (= "succeeded" (:state activity)))
+               (expect (seq (:rows activity)))
+               (expect (empty? (:attachments block)))))
+           (finally (lp/dispose-environment! env))))))
 
 
 
@@ -1465,44 +1491,40 @@
 
         (let [env {:session-id "s1" :db-info ::db :ctx-atom (atom {})}]
           (expect (= (previous-turn-context env "t9") (previous-turn-context env "t9"))))))
-  (it
-    "is summary-aware at ITERATION granularity: session_drop leaves a dropped breadcrumb, fold_session collapses to one gist"
-    ;; Folds are recorded at iteration scope (tN/iN) — what the prompt instructs
-    ;; and what the live wire (apply-summaries) matches. Each form carries a FORM
-    ;; scope (tN/iN/fN); prior-turn-scope-index normalizes form→iteration before
-    ;; matching (the path-A fix). :drop? — not gist presence — picks the label. A
-    ;; dropped iteration collapses to ONE `dropped` audit line (keeping the why);
-    ;; a folded iteration with multiple forms collapses to ONE gist line.
-    (with-redefs [persistance/db-list-session-turns
-                  (constantly [{:id "t1"
-                                :status :done
-                                :position 1
-                                :user-request "q"
-                                :content [(content/prose "a")]}])
+  (it "is summary-aware at ITERATION granularity: gist-less folds drop, gists summarize"
+      ;; Folds are recorded at iteration scope (tN/iN) — what the prompt instructs
+      ;; and what the live wire (apply-summaries) matches. Each form carries a FORM
+      ;; scope (tN/iN/fN); prior-turn-scope-index normalizes form→iteration before
+      ;; matching. A gist-less fold collapses to ONE `dropped` audit line; a fold
+      ;; with a gist collapses multiple forms to ONE gist line.
+      (with-redefs [persistance/db-list-session-turns
+                    (constantly [{:id "t1"
+                                  :status :done
+                                  :position 1
+                                  :user-request "q"
+                                  :content [(content/prose "a")]}])
 
-                  persistance/db-list-session-turn-iterations
-                  (constantly [{:status :done
-                                :position 1
-                                :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}} ; iter i1 → dropped
-                                        {:scope "t1/i2/f1" :src "cat(b)" :result {:k 2}} ; iter i2 → folded
-                                        {:scope "t1/i2/f2" :src "cat(c)" :result {:k 3}}]}])]
+                    persistance/db-list-session-turn-iterations
+                    (constantly [{:status :done
+                                  :position 1
+                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}
+                                          {:scope "t1/i2/f1" :src "cat(b)" :result {:k 2}}
+                                          {:scope "t1/i2/f2" :src "cat(c)" :result {:k 3}}]}])]
 
-      ; (same iter, 2nd form)
-      (let [env
-            {:session-id "s1"
-             :db-info ::db
-             :ctx-atom (atom {"session_summaries"
-                              [{"scopes" #{"t1/i1"} "drop" true "gist" "wrong file"} ; drop i1
-                               {"scopes" #{"t1/i2"} "gist" "b pinned"}]})}
+        (let [env
+              {:session-id "s1"
+               :db-info ::db
+               :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "note" "wrong file"}
+                                                     {"scopes" #{"t1/i2"} "gist" "b pinned"}]})}
 
-            ; fold i2
-            results
-            (:results (first (previous-turn-context env "t9")))]
+              ; fold i2
+              results
+              (:results (first (previous-turn-context env "t9")))]
 
-        (expect (= 2 (count results))) ; i1 dropped-line + i2 gist (each deduped)
-        (let [by-scope (into {} (map (juxt :scope identity)) results)]
-          (expect (= {:scope "t1/i1" :dropped? true :note "wrong file"} (get by-scope "t1/i1")))
-          (expect (= {:scope "t1/i2" :gist "b pinned"} (get by-scope "t1/i2")))))))
+          (expect (= 2 (count results))) ; i1 dropped-line + i2 gist (each deduped)
+          (let [by-scope (into {} (map (juxt :scope identity)) results)]
+            (expect (= {:scope "t1/i1" :dropped? true :note "wrong file"} (get by-scope "t1/i1")))
+            (expect (= {:scope "t1/i2" :gist "b pinned"} (get by-scope "t1/i2")))))))
   (it "returns nil when every prior turn is current/running/blank-answer"
       (with-redefs [persistance/db-list-session-turns
                     (constantly [{:id "t1"
@@ -1567,6 +1589,7 @@
                  :db-info ::db
                  :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "fine detail"}
                                                        {"through" "t2/i1"
+                                                        "issued_turn" 3
                                                         "gist" "one durable checkpoint"}]})}]
         (expect (nil? (previous-turn-context env "t3"))))))
   (it "a gist-less whole-turn fold of a no-iteration turn leaves a visible tombstone checkpoint"
@@ -1586,8 +1609,8 @@
 
         (let [out (previous-turn-context {:session-id "s1"
                                           :db-info ::db
-                                          :ctx-atom (atom {"session_summaries" [{"scopes"
-                                                                                 #{"t1"}}]})}
+                                          :ctx-atom (atom {"session_summaries"
+                                                           [{"scopes" #{"t1"} "issued_turn" 2}]})}
                                          "t2")]
           (expect (= 1 (count out)))
           (expect (:checkpoint? (first out)))
@@ -1639,15 +1662,30 @@
                                 :position 1
                                 :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
 
-      (let [out (previous-turn-context
-                  {:session-id "s1"
-                   :db-info ::db
-                   :ctx-atom (atom {"session_summaries"
-                                    [{"scopes" #{"t1"} "issued_turn" 1 "gist" "folded so far"}]})}
-                  "t2")]
+      (let [env-base
+            {:session-id "s1" :db-info ::db}
+
+            out
+            (previous-turn-context
+              (assoc env-base
+                :ctx-atom (atom {"session_summaries"
+                                 [{"scopes" #{"t1"} "issued_turn" 1 "gist" "folded so far"}]}))
+              "t2")
+
+            unstamped-out
+            (previous-turn-context (assoc env-base
+                                     :ctx-atom (atom {"session_summaries"
+                                                      [{"scopes" #{"t1"}
+                                                        "gist" "invalid unstamped fold"}]}))
+                                   "t2")]
+
         (expect (= 1 (count out)))
         (expect (= "keep my question" (:user-request (first out))))
-        (expect (= "keep my answer" (:answer (first out)))))))
+        (expect (= "keep my answer" (:answer (first out))))
+        ;; Canonical fold intents always carry issued_turn. Missing ownership
+        ;; cannot erase a complete prior Q/A recap.
+        (expect (= "keep my question" (:user-request (first unstamped-out))))
+        (expect (= "keep my answer" (:answer (first unstamped-out)))))))
   (it "a whole-turn fold ISSUED IN A LATER turn still removes the target turn's Q/A recap"
       ;; The normal prior-turn case: turn 2 folds turn 1 (issued_turn 2 > 1) — it
       ;; actually saw turn 1's answer, so removal is safe and the trailer owns the
@@ -1796,7 +1834,7 @@
                [2 {:forms-vec [{:scope "t1/i3/f1" :result "c"}]}]]
 
               out
-              (apply-summaries trailer [{"through" "t1/i2" "gist" "early"}])]
+              (apply-summaries trailer [{"through" "t1/i2" "gist" "early" "at_turn" 1}])]
 
           (expect (true? (:collapsed? (second (nth out 0)))))
           (expect (true? (:collapsed? (second (nth out 1)))))
@@ -1810,7 +1848,8 @@
                [1 {:forms-vec [{:scope "t1/i2/f1" :result (apply str (repeat 400 "y"))}]}]]
 
               ca
-              (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "already folded"}]})
+              (atom {"session_summaries"
+                     [{"scopes" #{"t1/i1"} "gist" "already folded" "at_turn" 1}]})
 
               wire
               (apply-summaries trailer (get @ca "session_summaries"))]
@@ -1878,6 +1917,15 @@
         (expect (every? (fn [[_ rec]]
                           (nil? (:collapsed? rec)))
                         out))))
+    (it "an unstamped fold cannot collapse live-turn iterations"
+        (let [trailer
+              [[0 {:forms-vec [{:scope "t96/i1/f1" :result "a"}]}]
+               [1 {:forms-vec [{:scope "t96/i2/f1" :result "b"}]}]]
+
+              out
+              (apply-summaries trailer [{"scopes" #{"t96/i1" "t96/i2"} "gist" "unstamped"}])]
+
+          (expect (= trailer out))))
     (it "a fold recorded in THIS turn still collapses its own live iterations"
         (let [trailer
               [[0 {:forms-vec [{:scope "t96/i1/f1" :result "a"}]}]
@@ -1943,21 +1991,20 @@
                                   {"scopes" #{"t1/i3" "t1/i4"} "gist" "B"}])]
 
           (expect (= [{:scope "t1/i1" :gist "A"} {:scope "t1/i3" :gist "B"}] out))))
-    (it
-      "prior-turn-scope-index: a dropped iteration collapses to ONE dropped breadcrumb keeping the why"
-      (let [forms
-            [{:scope "t1/i1/f1" :result "a" :src "(cat)"}
-             {:scope "t1/i1/f2" :result "b" :src "(rg)"} ; same dropped iter → still ONE line
-             {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
+    (it "prior-turn-scope-index: a gist-less fold emits ONE dropped breadcrumb"
+        (let [forms
+              [{:scope "t1/i1/f1" :result "a" :src "(cat)"}
+               {:scope "t1/i1/f2" :result "b" :src "(rg)"}
+               {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
 
-            out
-            (prior-scope-index forms [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])]
+              out
+              (prior-scope-index forms [{"scopes" #{"t1/i1"} "note" " · saved ~1 token"}])]
 
-        ;; the iteration's forms collapse to a single audit line, not per-form, not vanished
-        (expect (= {:scope "t1/i1" :dropped? true :note "misread"} (first (filter :dropped? out))))
-        (expect (= 1 (count (filter :dropped? out))))
-        (expect (not-any? #(re-find #"^t1/i1/" (str (:scope %))) out)) ; no raw forms from i1
-        (expect (some #(= "t1/i2/f1" (:scope %)) out))))
+          (expect (= {:scope "t1/i1" :dropped? true :note " · saved ~1 token"}
+                     (first (filter :dropped? out))))
+          (expect (= 1 (count (filter :dropped? out))))
+          (expect (not-any? #(re-find #"^t1/i1/" (str (:scope %))) out))
+          (expect (some #(= "t1/i2/f1" (:scope %)) out))))
     (it "supersede-summaries collapses summary-of-summary (subset dropped, superset/newer wins)"
         (let [supersede (var-get #'eng/supersede-summaries)]
           ;; proper subset is covered by the broader fold → only the superset survives
@@ -2192,15 +2239,19 @@
                                first
                                :thinking))
                          replays)))))
-  (it "drops iterations explicitly flagged :preserved-thinking/replay? false"
-      ;; Cross-turn trailer seeds carry the opt-out flag so historical
-      ;; iterations stay visible in transcripts but their opaque thinking
-      ;; state is not replayed into a new user turn.
+  (it "replays only iterations explicitly opted in"
+      ;; Cross-turn seeds opt out and live iterations opt in. Missing ownership is
+      ;; not interpreted as consent to replay provider-native state.
       (let [target
             {:provider :zai-coding-plan :model "glm-5.1"}
 
+            missing-flag
+            (-> (stub-iter {:id 0})
+                second
+                (dissoc :preserved-thinking/replay?))
+
             trailer
-            [(stub-iter {:id 1 :replay? false}) (stub-iter {:id 2 :replay? true})]
+            [[0 missing-flag] (stub-iter {:id 1 :replay? false}) (stub-iter {:id 2 :replay? true})]
 
             compat
             (compatible-preserved-thinking-trailer-iters trailer target)
@@ -2519,8 +2570,8 @@
                      (mapv #(get-in % [:image_url :url]) (:content (last mixed)))))))
     (it "drops the image when fold_session collapsed the iteration"
         ;; The invariant: a figure's vision visibility TRACKS its iteration's
-        ;; textual visibility. Once fold_session/session_drop collapses the
-        ;; step, its image bytes leave the wire with it — never re-billed.
+        ;; textual visibility. Once fold_session collapses the step, its image
+        ;; bytes leave the wire with it and are never re-billed.
         (let [target {:provider :anthropic-coding-plan :model "claude-opus-4-8"}
               [pos rec] (stub-tool-iter {:id 1 :attachments [att]})
               suffix (conversation-suffix [[pos (assoc rec :collapsed? true)]] target)]
@@ -3012,41 +3063,31 @@
 ;; mode yields <=1 block, so multi-fence merge + fence-dropped diagnostics are
 ;; unreachable). See refactor "remove dead fenced-era code-block machinery".
 
-(defdescribe
-  token-usage-normalization-test
-  (let [canonical {:input-tokens 8889
-                   :output-tokens 69
-                   :input-tokens-details {:regular 112 :cache-write 8777 :cache-read 0}
-                   :total-tokens 8958}]
-    (it "uses svar's canonical api-usage without reshaping it"
-        (expect (= canonical (ask-result->api-usage {:api-usage canonical}))))
-    (it "normalizes current svar keyword token maps when canonical usage is absent"
-        (expect (= canonical
-                   (ask-result->api-usage
-                     {:tokens
-                      {:input 8889 :output 69 :cached 0 :cache-created 8777 :input-regular 112}}))))
-    (it "keeps the legacy string-key token fallback working"
-        (expect
-          (= canonical
-             (ask-result->api-usage
-               {:tokens
-                {"input" 8889 "output" 69 "cached" 0 "cache_created" 8777 "input_regular" 112}}))))
-    (it "applies an explicit service-tier cost multiplier to every billed token class"
-        (let [estimate (deref #'lp/estimate-token-cost)
-              usage {:input-tokens 8298 :output-tokens 6}
-              standard (estimate "gpt-5.6-sol" 8298 6 {:api-usage usage})
-              priority (estimate "gpt-5.6-sol" 8298 6 {:api-usage usage :cost-multiplier 2.0})]
+(defdescribe token-cost-test
+             (it "applies an explicit service-tier cost multiplier to every billed token class"
+                 (let [estimate
+                       (deref #'lp/estimate-token-cost)
 
-          (doseq [k ["input_cost" "output_cost" "total_cost"]]
-            (expect (< (Math/abs (- (* 2.0 (double (get standard k))) (double (get priority k))))
-                       1.0E-12)))))
-    (it "recognizes Priority pricing only for the Codex provider"
-        (let [multiplier (deref (ns-resolve 'com.blockether.vis.internal.loop
-                                            'codex-fast-cost-multiplier))]
-          (expect (= 2.0 (multiplier {:service_tier "priority"} :openai-codex)))
-          (expect (= 2.0 (multiplier {"service_tier" "PRIORITY"} "openai-codex")))
-          (expect (= 1.0 (multiplier {:service_tier "priority"} :openai)))
-          (expect (= 1.0 (multiplier {} :openai-codex)))))))
+                       usage
+                       {:input-tokens 8298 :output-tokens 6}
+
+                       standard
+                       (estimate "gpt-5.6-sol" 8298 6 {:api-usage usage})
+
+                       priority
+                       (estimate "gpt-5.6-sol" 8298 6 {:api-usage usage :cost-multiplier 2.0})]
+
+                   (doseq [k ["input_cost" "output_cost" "total_cost"]]
+                     (expect (< (Math/abs (- (* 2.0 (double (get standard k)))
+                                             (double (get priority k))))
+                                1.0E-12)))))
+             (it "recognizes Priority pricing only for the Codex provider"
+                 (let [multiplier (deref (ns-resolve 'com.blockether.vis.internal.loop
+                                                     'codex-fast-cost-multiplier))]
+                   (expect (= 2.0 (multiplier {:service_tier "priority"} :openai-codex)))
+                   (expect (= 2.0 (multiplier {"service_tier" "PRIORITY"} "openai-codex")))
+                   (expect (= 1.0 (multiplier {:service_tier "priority"} :openai)))
+                   (expect (= 1.0 (multiplier {} :openai-codex))))))
 
 (defdescribe ask-code-block-observation-test
              (it "reports the block count (lenient mode: only the count is meaningful)"
@@ -3057,49 +3098,7 @@
                  (expect (= {:form-count 0} (ask-code-block-observation {})))))
 
 (defdescribe
-  iteration-start-hook-test
-  (it
-    "collects active :turn.iteration/start hooks as hook-task descriptors (D12)"
-    (let [seen
-          (atom nil)
-
-          ext
-          {:ext/name "test.hooks"
-           :ext/hooks [{:id :test/title
-                        :doc "title"
-                        :phase :turn.iteration/start
-                        :fn (fn [ctx]
-                              (reset! seen ctx)
-                              {:title "set title" :importance :warn})}
-                       {:id :test/answer
-                        :doc "answer"
-                        :phase :turn.answer/validate
-                        :fn (fn [_]
-                              {:reject true})}
-                       {:id :test/no-title
-                        :doc "missing title—rejected"
-                        :phase :turn.iteration/start
-                        :fn (fn [_]
-                              {:importance :warn})}]}
-
-          ctx
-          {:session-title nil :title-refresh? true :turn-position 1}
-
-          hits
-          (collect-iteration-start-hints {} [ext] ctx)]
-
-      ;; Only the title-bearing :turn.iteration/start hook materialises;
-      ;; the :turn.answer/validate hook is the wrong phase and the
-      ;; title-less hook is dropped. Self-asserted done means no
-      ;; validator-fn and no :specs in the hook-task descriptor.
-      (expect (= [{:id :test/title
-                   :task {:title "set title"
-                          :status :todo
-                          :source :hook
-                          :hook-id :test/title
-                          :importance :warn}}]
-                 hits))
-      (expect (= ctx @seen))))
+  auto-title-test
   (it "does NOT re-title when a real title already exists (generate once, never re-title)"
       (let [env (lp/create-environment {:providers []} {:db :memory :title "Old focus"})]
         (try
@@ -3462,7 +3461,7 @@
                [2 {:forms-vec [{:scope "t1/i2/f1" :stdout "keep me"}]}]]
 
               out
-              (apply-summaries tis [{"scopes" #{"t1/i1"} "gist" "did the thing"}])
+              (apply-summaries tis [{"scopes" #{"t1/i1"} "gist" "did the thing" "at_turn" 1}])
 
               r1
               (second (first out))
@@ -3474,10 +3473,10 @@
           (expect (nil? (:collapsed? r2)))
           ;; collapsed → plain-text gist line (NOT a tool_result)
           (expect (= "# ⋯ folded t1/i1 · did the thing" (:content (irm r1))))))
-    (it "session_drop collapses to a `⋯ dropped <scopes> · <why>` line (reason kept)"
+    (it "a gist-less fold collapses to a `⋯ dropped <scopes> · <note>` line"
         (let [out (apply-summaries [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "big"}]}]]
-                                   [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])]
-          (expect (= "# ⋯ dropped t1/i1 · misread" (:content (irm (second (first out))))))))
+                                   [{"scopes" #{"t1/i1"} "note" " · saved ~1 token" "at_turn" 1}])]
+          (expect (= "# ⋯ dropped t1/i1 · saved ~1 token" (:content (irm (second (first out))))))))
     (it "a live step renders as a tool_result tagged with its # tN/iN handle"
         (let [m (irm {:forms-vec [{:scope "t1/i1/f1" :stdout "hello"}] :tool-calls [{:id "c1"}]})]
           (expect (= "c1" (get-in m [:content 0 :tool_use_id])))
@@ -6584,29 +6583,40 @@
   ;; on disk that nothing pointed at.
   (describe
     "a stopped block still hands over what it was SHOWING"
-    (it "answers the record and the picture of the view a cancel killed"
-        (let [[result left]
+    (it
+      "answers the record and the picture of the view a cancel killed"
+      (let [outcomes
+            (atom [])
+
+            settle-running
+            activity/settle-running
+
+            [result left]
+            (with-redefs [activity/settle-running (fn [state outcome summary]
+                                                    (swap! outcomes conj outcome)
+                                                    (settle-running state outcome summary))]
               (cancelled-watching-block
-                (str (open-a-view) "import time\n" "print('polled once')\n" "time.sleep(30)\n"))
+                (str (open-a-view) "import time\n" "print('polled once')\n" "time.sleep(30)\n")))
 
-              row
-              (first (:attachments result))]
+            row
+            (first (:attachments result))]
 
-          (expect (= [] left))
-          ;; Cancellation is presentation, not a Python/JVM failure: the
-          ;; persisted form names it without leaking the host wait stack.
-          (expect (= {:message "Python execution was interrupted" :type :vis/interrupted}
-                     (:error result)))
-          ;; The human's half: the record is a ROW, so the gallery and the
-          ;; database hold what they watched.
-          (expect (= 1 (count (:attachments result))))
-          (expect (= "file" (:kind row)))
-          (expect (str/ends-with? (str (:filename row)) ".live.ndjson"))
-          ;; The model's half: the picture the view ended on, and the lines
-          ;; the block printed before the stop.
-          (expect (str/includes? (str (:stdout result)) "# Watching"))
-          (expect (str/includes? (str (:stdout result)) "did not finish"))
-          (expect (str/includes? (str (:stdout result)) "polled once"))))))
+        (expect (= [] left))
+        ;; Cancellation is presentation, not a Python/JVM failure: the
+        ;; persisted form names it without leaking the host wait stack.
+        (expect (= {:message "Python execution was interrupted" :type :vis/interrupted}
+                   (:error result)))
+        (expect (= [:cancelled] @outcomes))
+        ;; The human's half: the record is a ROW, so the gallery and the
+        ;; database hold what they watched.
+        (expect (= 1 (count (:attachments result))))
+        (expect (= "file" (:kind row)))
+        (expect (str/ends-with? (str (:filename row)) ".live.ndjson"))
+        ;; The model's half: the picture the view ended on, and the lines
+        ;; the block printed before the stop.
+        (expect (str/includes? (str (:stdout result)) "# Watching"))
+        (expect (str/includes? (str (:stdout result)) "did not finish"))
+        (expect (str/includes? (str (:stdout result)) "polled once"))))))
 
 (defdescribe normalize-tool-input-strings-only-test
              (describe "model-drift and extension EDN are stringified, keys AND values"
@@ -7179,20 +7189,33 @@
   (it "reports failure instead of throwing when even the minimal outcome is refused"
       (let [{:keys [calls result]} (outcome-writes (constantly true) failed-turn-outcome)]
         (expect (false? result))
-        (expect (= 2 (count calls))))))
+        (expect (= 2 (count calls)))))
+  (it "does not write after another terminal path owns the turn"
+      (let [writes
+            (atom [])
 
-;; Regression (vis session 26af5650): an upstream stream timeout killed a turn
-;; and the UI showed NOTHING - no answer, no error card, no counters, duration 0.
-;; The failure branch ran the non-answer-shaped fallback through `answer-content`
-;; unguarded, so its validation throw escaped `send!` BEFORE the terminal write
-;; ran: the turn was never recorded and "Final answer must be canonical content
-;; or Markdown prose" masked the provider failure that actually killed it.
+            claimed
+            (atom 0)]
+
+        (with-redefs-fn {#'persistance/db-update-session-turn! (fn [& args]
+                                                                 (swap! writes conj args))}
+          #(expect (false? (#'lp/persist-turn-outcome!
+                            {}
+                            "turn-1"
+                            failed-turn-outcome
+                            (fn []
+                              (swap! claimed inc)
+                              false)))))
+        (expect (= 1 @claimed))
+        (expect (empty? @writes)))))
+
+ ;; Regression (vis session 26af5650): an upstream stream timeout killed a turn
+ ;; and history showed no answer, error card, counters, or duration. Persisting a
+ ;; raw provider fallback through answer validation masked the real failure.
 (defdescribe
-  failed-turn-finalization-test
-  "A failed turn ALWAYS records its outcome: content rebuilt from the trace's
-   provider failure, never a throw out of the finalizer."
+  failed-turn-persistence-test
   (it
-    "records the outcome and the provider failure when the fallback is not answer-shaped"
+    "records one terminal outcome with the provider diagnostic"
     (let [writes
           (atom [])
 
@@ -7202,63 +7225,54 @@
             :error {:message "Stream idle timeout (300000ms with no bytes): closed"
                     :data {:type :svar.core/stream-idle-timeout :idle-timeout-ms 300000}}}]
 
-          result
-          (with-redefs-fn {#'persistance/db-update-session-turn! (fn [_db _id o]
-                                                                   (swap! writes conj o)
-                                                                   :written)}
-            #(#'lp/finalize-turn-result
-               {:db-info {} :root-model "m" :root-provider :p}
-               {:session-turn-id "turn-1"
-                :start-time (System/nanoTime)
-                :iteration-count 2
-                :status :error
-                :trace trace
-                :answer {:overloaded true :status 529}
-                :total-tokens-atom (atom {})
-                :total-cost-atom (atom {})}))
+          env
+          {:db-info ::db
+           :session-id "session-1"
+           :router {:providers [{:id :openai :models [{:name "gpt-canonical"}]}]}
+           :turn-state-atom (ctx-loop/make-turn-state-atom)}]
 
-          written
-          (first @writes)
+      (with-redefs [persistance/db-store-session-turn!
+                    (fn [_db _opts]
+                      "turn-1")
 
-          card
-          (first (:content written))]
+                    persistance/db-update-session-turn!
+                    (fn [_db turn-id opts]
+                      (swap! writes conj [turn-id opts])
+                      true)
 
-      ;; the terminal write happened at all - the whole point
-      (expect (= 1 (count @writes)))
-      (expect (= :error (:status written)))
-      (expect (= 2 (:iteration-count written)))
-      ;; content is the real provider failure, never the validation string
-      (expect (= "error" (get card "type")))
-      (expect (nil? (re-find #"(?i)canonical content" (pr-str (:content written)))))
-      (expect (some? (:error written)))
-      (expect (= :error (:status result)))))
-  (it "keeps the answer's own blocks when the fallback IS answer-shaped"
-      (let [writes
-            (atom [])
+                    lp/session-turn-position
+                    (fn [_env _turn-id]
+                      1)
 
-            answer
-            [(content/error "provider_error" "upstream refused" false)]
+                    lp/iteration-loop
+                    (fn [_env _request _opts]
+                      {:answer {:overloaded true :status 529}
+                       :status :error
+                       :iteration-count 2
+                       :duration-ms 17
+                       :trace trace
+                       :tokens {}
+                       :cost {"total_cost" 0.25}})]
 
-            _
-            (with-redefs-fn {#'persistance/db-update-session-turn! (fn [_db _id o]
-                                                                     (swap! writes conj o)
-                                                                     :written)}
-              #(#'lp/finalize-turn-result
-                 {:db-info {}}
-                 {:session-turn-id "turn-2"
-                  :start-time (System/nanoTime)
-                  :iteration-count 1
-                  :status :error
-                  :trace []
-                  :answer answer
-                  :total-tokens-atom (atom {})
-                  :total-cost-atom (atom {})}))
+        (let [result
+              (run-normal-turn! env "explain the failure" {})
 
-            written
-            (first @writes)]
+              [written-id written]
+              (first @writes)
 
-        (expect (= 1 (count @writes)))
-        (expect (= "upstream refused" (get (first (:content written)) "message"))))))
+              card
+              (first (:content written))]
+
+          (expect (= 1 (count @writes)))
+          (expect (= "turn-1" written-id))
+          (expect (= :error (:status written)))
+          (expect (= 2 (:iteration-count written)))
+          (expect (= "error" (get card "type")))
+          (expect (str/includes? (get card "message") "Stream went quiet"))
+          (expect (= {"total_cost" 0.25 "model" "gpt-canonical" "provider" "openai"}
+                     (:cost written)))
+          (expect (= card (:error written)))
+          (expect (= :error (:status result))))))))
 
 
 ;; Regression: `set-provider!` handed `save-config!` a map holding ONLY

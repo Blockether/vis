@@ -59,9 +59,9 @@ export interface Session {
    */
   favorite_rank?: number | null;
   status?: "idle" | "running" | "suspended" | string;
-  /** Canonical gateway liveness; older gateways are inferred from status. */
-  live?: boolean;
-  current_turn_id?: string | null;
+  /** The gateway's canonical liveness verdict; never infer it from paint status. */
+  live: boolean;
+  current_turn_id: string | null;
   /**
    * The run is PARKED on a human-input request nobody has answered yet — the
    * gateway's machine-wide fact, so a session blocked inside another process
@@ -72,8 +72,8 @@ export interface Session {
   /** In-flight facts and same-response gateway clock for clock-safe attachment. */
   running_request?: string;
   running_started_at?: number;
-  server_time_ms?: number;
-  turn_count?: number;
+  server_time_ms: number;
+  turn_count: number;
   created_at?: string;
   modified_at?: string;
   workspace?: {
@@ -952,9 +952,7 @@ export interface TranscriptIteration {
 }
 
 export interface TranscriptTurn {
-  id: string;
-  turn_id?: string;
-  user_request?: string;
+  turn_id: string;
   request?: string;
   status?: string;
   prior_outcome?: string;
@@ -1000,8 +998,7 @@ export interface TranscriptTurn {
 }
 
 export interface SubmittedTurn {
-  id?: string;
-  turn_id?: string;
+  turn_id: string;
   request?: string;
   status?: string;
   started_at?: number;
@@ -1041,15 +1038,12 @@ export interface SseEvent {
   /** Gateway epoch sampled when this event was emitted. */
   ts?: number;
   /**
-   * The turn the daemon is running for this session, and an explicit liveness flag so
-   * an idle session is distinguishable from an older daemon that omits both.
+   * The turn the daemon is running for this session, and its required liveness verdict.
    *
-   * On `subscription.ready` this is the verdict at the moment the daemon accepted the
+   * On `subscription.ready` this is the state at the moment the daemon accepted the
    * (re)subscribe, before any replay: it lets a reconnecting screen decide whether the
-   * turn it paints is still real without a round trip — its own cursor cannot answer
-   * that (the replay ring is process memory and dies with the daemon). On a fleet
-   * `session.status` frame it is the same verdict for a session NOBODY has opened,
-   * which is what lets a list repaint a row instead of re-reading its window.
+   * turn it paints is still real without a round trip. On a fleet `session.status` frame
+   * it is the same verdict for a session nobody has opened.
    */
   current_turn_id?: string | null;
   is_live?: boolean;

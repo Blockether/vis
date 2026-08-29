@@ -324,9 +324,9 @@ export function searchOrder(
   return rows.map((row) => row.session);
 }
 
-/** A turn is running in this session right now. */
+/** Read the gateway's canonical liveness verdict. */
 export function sessionIsLive(session: Session): boolean {
-  return session.live ?? session.status === 'running';
+  return session.live;
 }
 
 /**

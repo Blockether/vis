@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
 
-import { renderSessionScreen } from "./session-screen-harness";
+import {
+  renderSessionScreen,
+  sessionFixture,
+  subscriptionHub,
+} from "./session-screen-harness";
 import type { SseEvent } from "../lib/types";
 
 const linger = (ms: number) => new Promise((done) => setTimeout(done, ms));
@@ -30,8 +34,8 @@ describe("an answer that arrives more than once", () => {
   };
   // The row the engine persists for that same turn, carrying the answer again.
   const settledRow = {
-    id: "engine-row-1",
-    user_request: "explain the failure",
+    turn_id: "gw-1",
+    request: "explain the failure",
     status: "completed",
     created_at: Date.now(),
     content: [{ id: "b1", type: "prose", markdown: ANSWER }],
@@ -39,28 +43,34 @@ describe("an answer that arrives more than once", () => {
   };
 
   function mount() {
-    let emit: (event: SseEvent) => void = () => {};
+    const events = subscriptionHub();
+    let persisted: (typeof settledRow)[] = [];
     renderSessionScreen({
+      session: sessionFixture({
+        live: true,
+        status: "running",
+        current_turn_id: "gw-1",
+        running_request: "explain the failure",
+      }),
       client: {
         cachedRunningTurn: () => ({ turn: bubble, seq: 5 }),
         cachedTranscript: () => [],
-        transcript: () => Promise.resolve([settledRow]),
+        transcript: () => Promise.resolve(persisted),
       },
-      subscriptions: {
-        subscribeSession: (
-          _sid: string,
-          listener: (event: SseEvent) => void,
-        ) => {
-          emit = listener;
-          return () => {};
-        },
-      },
+      subscriptions: { subscribeSession: events.subscribeSession },
     });
-    return (event: Record<string, unknown>) => emit(event as unknown as SseEvent);
+    return {
+      emit: (event: Record<string, unknown>) => {
+        act(() => events.emit(event as unknown as SseEvent));
+      },
+      land: () => {
+        persisted = [settledRow];
+      },
+    };
   }
 
   it("paints it once when the terminal frame repeats the streamed prose", async () => {
-    const emit = mount();
+    const { emit } = mount();
     expect(await screen.findByText("explain the failure")).toBeInTheDocument();
 
     // The last iteration writes no code, so its prose streams on the TURN's own
@@ -92,7 +102,7 @@ describe("an answer that arrives more than once", () => {
   });
 
   it("still paints it once after the persisted row takes the bubble's place", async () => {
-    const emit = mount();
+    const { emit, land } = mount();
     expect(await screen.findByText("explain the failure")).toBeInTheDocument();
     emit({
       type: "content.block.delta",
@@ -104,6 +114,7 @@ describe("an answer that arrives more than once", () => {
       text: ANSWER,
       cumulative: ANSWER,
     });
+    land();
     emit({
       type: "turn.completed",
       turn_id: "gw-1",
@@ -127,8 +138,8 @@ describe("an answer that arrives more than once", () => {
 describe("an answer its own trace repeats", () => {
   const ANSWER = "The change is in state.clj and the suite is green.";
   const narratedRow = {
-    id: "engine-row-2",
-    user_request: "summarize the fix",
+    turn_id: "engine-row-2",
+    request: "summarize the fix",
     status: "completed",
     created_at: Date.now(),
     content: [{ id: "b2", type: "prose", markdown: ANSWER }],
@@ -174,8 +185,8 @@ describe("an answer promoted out of a content-less row", () => {
   }
 
   const promotedRow = {
-    id: "engine-row-3",
-    user_request: "did anything else move",
+    turn_id: "engine-row-3",
+    request: "did anything else move",
     status: "completed",
     created_at: Date.now(),
     iterations: [
@@ -201,7 +212,7 @@ describe("an answer promoted out of a content-less row", () => {
     const commentary = "The suite is green, and the pin is unchanged.";
     mountRow({
       ...promotedRow,
-      id: "engine-row-4",
+      turn_id: "engine-row-4",
       iterations: [
         { position: 0, assistant_prose: commentary, answer: ANSWER },
       ],

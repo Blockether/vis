@@ -11,13 +11,15 @@ export function eventString(event: SseEvent, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
-/** Normalize the wire's numeric form position and string stream id to one key. */
+/** Read a typed content stream's string block id. */
 export function eventBlockKey(event: SseEvent): string {
-  const value = event.block_id;
-  if (typeof value === "string") return value;
-  return typeof value === "number" && Number.isFinite(value)
-    ? String(value)
-    : "";
+  return typeof event.block_id === "string" ? event.block_id : "";
+}
+
+/** Read a form frame's numeric position as the transcript form key. */
+export function eventFormKey(event: SseEvent): string {
+  const value = event.form_index;
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
 }
 
 export function eventIterationPosition(event: SseEvent): number {
@@ -42,25 +44,7 @@ function coalesceContentDeltas(events: SseEvent[]): SseEvent[] {
       continue;
     }
 
-    const currentCumulative = eventString(event, "cumulative");
-    const previousCumulative = eventString(previous, "cumulative");
-    if (currentCumulative) {
-      merged[merged.length - 1] = event;
-    } else if (previousCumulative) {
-      merged[merged.length - 1] = {
-        ...previous,
-        ...event,
-        cumulative: previousCumulative + eventString(event, "text"),
-        text: "",
-      };
-    } else {
-      merged[merged.length - 1] = {
-        ...previous,
-        ...event,
-        cumulative: "",
-        text: eventString(previous, "text") + eventString(event, "text"),
-      };
-    }
+    merged[merged.length - 1] = event;
   }
   return merged;
 }

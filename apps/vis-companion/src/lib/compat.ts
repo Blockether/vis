@@ -16,16 +16,14 @@
 import type { GatewayHealth, GatewayProtocol } from './types';
 
 /**
- * Wire protocol number THIS app build speaks. Protocol 7 gives Activity to the
- * form that produced it: it arrives as `activity` on the transient
- * `block.activity` frame and on the terminal block event, and the Live View rail
- * no longer carries it — `set-activity`, the `activity` view classification and
- * the attachment's `classification`/`activity_anchor` are gone.
+ * Wire protocol number THIS app build speaks. Protocol 8 gives every turn one
+ * identity from submit through history, names ticker frames `turn.progress`, and
+ * routes form frames by numeric `form_index`.
  */
-export const APP_PROTOCOL = 7;
+export const APP_PROTOCOL = 8;
 
-/** Oldest gateway protocol this app accepts: Activity on the form. */
-export const APP_MIN_GATEWAY_PROTOCOL = 7;
+/** Oldest gateway protocol this app accepts: the canonical protocol 8 shape. */
+export const APP_MIN_GATEWAY_PROTOCOL = 8;
 
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';

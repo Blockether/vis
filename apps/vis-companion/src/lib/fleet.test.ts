@@ -20,6 +20,7 @@ import {
   searchOrder,
   searchTally,
   scopedSessions,
+  sessionIsLive,
   sessionOrder,
   timeLabel,
   withSearchHits,
@@ -32,9 +33,15 @@ const tower: GatewayConn = { url: 'http://tower.local:7890' };
 const vps: GatewayConn = { url: 'http://10.0.0.5:7890', label: 'vps-eu' };
 
 function session(id: string, extra: Partial<Session> = {}): Session {
-  return { id, title: id, ...extra };
+  return { id, title: id, live: false, current_turn_id: null, turn_count: 0, server_time_ms: 0, ...extra };
 }
 
+describe('canonical session liveness', () => {
+  it('never infers a running turn from display status', () => {
+    expect(sessionIsLive(session('s', { status: 'running' }))).toBe(false);
+    expect(sessionIsLive(session('s', { live: true, status: 'idle' }))).toBe(true);
+  });
+});
 function machine(conn: GatewayConn, sessions: Session[] | null, error: string | null = null): FleetMachine {
   return { conn, sessions, error, answered: error === null && sessions !== null };
 }

@@ -76,7 +76,7 @@ describe("Activity ownership inside a running turn", () => {
       event({
         type: "block.started",
         iteration: 1,
-        block_id: 0,
+        form_index: 0,
         scope: "python",
         code: "work()",
       }),
@@ -91,14 +91,14 @@ describe("Activity ownership inside a running turn", () => {
       event({
         type: "block.activity",
         iteration: 1,
-        block_id: 0,
+        form_index: 0,
         activity: activityFixture,
       }),
     );
 
     expect(turn?.iterations).toEqual([]);
 
-    // The iteration exists but owns no such block: the frame must change nothing.
+    // The iteration exists but owns no such form: the frame must change nothing.
     const owner = started();
     expect(
       reduceRunningTurnEvent(
@@ -106,7 +106,7 @@ describe("Activity ownership inside a running turn", () => {
         event({
           type: "block.activity",
           iteration: 1,
-          block_id: 7,
+          form_index: 7,
           activity: activityFixture,
         }),
       ),
@@ -119,15 +119,15 @@ describe("Activity ownership inside a running turn", () => {
       event({
         type: "block.activity",
         iteration: 1,
-        block_id: 0,
+        form_index: 0,
         activity: activityFixture,
       }),
     );
     const withProgress = reduceRunningTurnEvent(
       withActivity,
       event({
-        type: "activity",
-        activity: "provider-call",
+        type: "turn.progress",
+        progress: "provider-call",
         iteration: 1,
         model: "model-a",
       }),
@@ -142,7 +142,6 @@ describe("Activity ownership inside a running turn", () => {
     );
     expect(withProgress).not.toHaveProperty("activity");
   });
-
 
   it("ignores a form frame that has no owner coordinate", () => {
     const turn = reduceRunningTurnEvent(

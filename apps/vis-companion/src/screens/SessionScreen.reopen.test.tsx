@@ -13,8 +13,8 @@ function transcript() {
   return Array.from({ length: TURNS }, (_unused, index) => {
     const position = index + 1;
     return {
-      id: `t${position}`,
-      user_request: `question ${position}`,
+      turn_id: `t${position}`,
+      request: `question ${position}`,
       status: "completed",
       iterations: [
         {

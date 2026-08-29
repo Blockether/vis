@@ -333,7 +333,7 @@
         (expect (= [{"scopes" #{"t2"} "issued_turn" 99 "at_turn" 99 "gist" "whole turn 2"}]
                    (get @ca "session_summaries")))
         (expect (re-find #"^folded t2 " out))))
-  (it "fold_session WITHOUT a gist records a gist-less collapse (replaces session_drop)"
+  (it "fold_session WITHOUT a gist records a canonical gist-less collapse"
       (let [[ca ev]
             (with-verbs)
 
@@ -576,7 +576,7 @@
             (trailer "t1/i1" "t1/i2" "t1/i3")
 
             out
-            (apply-summaries tr [{"through" "t1/i2" "gist" "G"}])
+            (apply-summaries tr [{"through" "t1/i2" "at_turn" 1 "gist" "G"}])
 
             [[_ r1] [_ r2] [_ r3]]
             out
@@ -598,7 +598,7 @@
             (trailer "t1/i1" "t1/i2" "t1/i3")
 
             out
-            (apply-summaries tr [{"scopes" #{"t1"} "gist" "all of t1"}])]
+            (apply-summaries tr [{"scopes" #{"t1"} "at_turn" 1 "gist" "all of t1"}])]
 
         (expect (every? (fn [[_ r]]
                           (:collapsed? r))
@@ -609,7 +609,7 @@
             (trailer "t1/i1" "t1/i2" "t1/i3" "t1/i4")
 
             out
-            (apply-summaries tr [{"from" "t1/i2" "to" "t1/i3" "gist" "mid"}])]
+            (apply-summaries tr [{"from" "t1/i2" "to" "t1/i3" "at_turn" 1 "gist" "mid"}])]
 
         ;; endpoints of the window survive; only i2,i3 collapse
         (expect (= 2
@@ -622,7 +622,7 @@
             (trailer "t1/i1" "t1/i2" "t1/i3")
 
             out
-            (apply-summaries tr [{"since" "t1/i2" "gist" "tail"}])
+            (apply-summaries tr [{"since" "t1/i2" "at_turn" 1 "gist" "tail"}])
 
             [[_ r1] [_ r2] [_ r3]]
             out]
@@ -635,7 +635,7 @@
             (trailer "t1/i1" "t1/i2")
 
             out
-            (apply-summaries tr [{"through" "t0/i0" "gist" "nope"}])]
+            (apply-summaries tr [{"through" "t0/i0" "at_turn" 1 "gist" "nope"}])]
 
         (expect (not-any? (fn [[_ r]]
                             (:collapsed? r))
@@ -1228,10 +1228,10 @@
              [2 {:forms-vec [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b"}]}]]
 
             folded
-            (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "gist" "did it"}])
+            (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "at_turn" 1 "gist" "did it"}])
 
             dropped
-            (apply-summaries tr [{"scopes" #{"t1/i1"} "drop" true "gist" "misread"}])
+            (apply-summaries tr [{"scopes" #{"t1/i1"} "at_turn" 1 "note" " · misread"}])
 
             line
             (:content (irm (second (first folded))))]

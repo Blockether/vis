@@ -7,8 +7,8 @@ import { renderSessionScreen } from "./session-screen-harness";
 
 const ATTACHMENT_ID = "8e3a587d-232c-497d-a290-7d16cfcf0e02";
 const row = {
-  id: "turn-1",
-  user_request: "Show me the preview",
+  turn_id: "turn-1",
+  request: "Show me the preview",
   status: "completed",
   created_at: Date.now(),
   content: [
