@@ -1962,7 +1962,7 @@ export function PullToSearchHint({ phase, ref }: { phase: PullPhase; ref?: Ref<H
     <div
       ref={ref}
       aria-hidden="true"
-      className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex min-h-13 items-center justify-center gap-2 border-b border-dialog-edge font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none mouse:min-h-9 ${
+      className={`pointer-events-none absolute inset-x-0 top-0 z-20 flex min-h-13 items-center justify-center gap-2 border-b border-dialog-edge font-mono text-meta transition-[translate] duration-150 motion-reduce:transition-none mouse:min-h-12 ${
         isShown ? 'translate-y-0' : '-translate-y-full'
       } ${isArmed ? 'bg-accent-surface text-accent-ink' : 'bg-level-project text-dialog-hint'}`}
     >
@@ -2610,11 +2610,20 @@ export function machineTagFace(color?: MachineColor): string {
  * to be seen: 13px against 12px is a step you can measure and cannot notice.
  *
  *   level     type              band (touch / mouse)   paper
- *   project   text-title   13   52 / 36                level-project
+ *   project   text-title   13   52 / 48                level-project
  *   session   text-ui      11   48 / 32                the page's own surface
  *
- * Two points of type per step, four pixels of band per step, and one derived step of
- * paper per level (see `--color-level-*` in `index.css`).
+ * Two points of type per step, one derived step of paper per level (see
+ * `--color-level-*` in `index.css`) — and a band that is its CONTENT plus air rather
+ * than a step of its own. The mouse column used to read 36, four pixels over the row
+ * beneath it, and that number was measured while a project's band was ONE line. Then
+ * the path and the session count moved UNDER the name (`HeaderTitle`'s `qualifier`),
+ * the stack grew 20 to 34, and 36 minus the 2px outgoing rule left exactly ZERO air:
+ * reported, and measured on the shipped desk as 34px of ink in a 34px box — while the
+ * row this band headers breathes 10. Touch had absorbed the same move (52 - 2 - 34 =
+ * 16, so 8 over and 8 under); the mouse column had nothing left to absorb it with.
+ * 48 gives it 6 and 6: one step tighter than a thumb's, and still visibly taller than
+ * the 33px row it contains.
  *
  * There is no machine step any more: the machine is SELECTION (a chip in the scope
  * strip, the title of the chrome above the list), not a band, so a second header tone
@@ -2628,9 +2637,15 @@ export function machineTagFace(color?: MachineColor): string {
  */
 const HEADER_TYPE = 'text-title';
 
-/** The band every header in the list stands in. It sticks; nothing above it does. */
+/**
+ * The band every header in the list stands in. It sticks; nothing above it does.
+ *
+ * Both heights are that stack plus air, minus the rule the band sends out — 52 - 2 -
+ * 34 and 48 - 2 - 34 — so whatever the stack carries decides them. That is exactly
+ * how the pointer column reached zero while it still spelled 36.
+ */
 const HEADER_BAND =
-  'flex min-h-13 items-stretch mouse:min-h-9 sticky top-0 z-10 bg-level-project';
+  'flex min-h-13 items-stretch mouse:min-h-12 sticky top-0 z-10 bg-level-project';
 
 /**
  * THE LEADING EDGE OF THE LIST, and every row in it starts here.

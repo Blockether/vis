@@ -380,7 +380,7 @@ describe("SectionHeader", () => {
     expect(html).toContain("border-b border-dialog-edge");
     expect(html).not.toContain("border-b-2");
     expect(html).toContain("min-h-13");
-    expect(html).toContain("mouse:min-h-9");
+    expect(html).toContain("mouse:min-h-12");
     expect(html).toContain("items-stretch");
     expect(html).not.toContain("py-2");
     // The only header in the list is the one that sticks.
@@ -388,6 +388,18 @@ describe("SectionHeader", () => {
     expect(html).toContain("bg-level-project");
     expect(html).not.toContain("bg-level-machine");
     expect(html).not.toContain("bg-panel-2");
+  });
+
+  // Regression, user report (paraphrased: the project header has practically no top or
+  // bottom padding): under a pointer the band spelled 36px, a number measured while its
+  // header was one line. Once the path and the session count stacked UNDER the name the
+  // ink stood 34px, so the 2px outgoing rule left zero over it and zero under it — a
+  // header breathing less than the 33px row it heads.
+  it("keeps air over and under the stack it carries", () => {
+    const html = renderToStaticMarkup(<SectionHeader>rows</SectionHeader>);
+    // 48 - 2px rule - 34px of stacked ink = 6 and 6; a thumb's 52 gives 8 and 8.
+    expect(html).toContain("mouse:min-h-12");
+    expect(html).not.toContain("mouse:min-h-9");
   });
 
   it("gives its title the list's own type step", () => {

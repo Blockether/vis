@@ -318,12 +318,14 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
  *
  *   - a session row is 48px with a 1px rule under it, and 32px + 1px under
  *     `mouse:`, where the density follows the pointer (`index.css`);
- *   - the first row of a project starts at y=211 on a phone and at y=137 on a
- *     desk — the app bar, the filter row, the scope strip, the project's own band
- *     and the shelf carrying its pager, all of which a page pays for before its
- *     first row. The desk used to pay 215 for the same bands because the page's
- *     top inset was spelled TWICE, once on the section and once on the scope
- *     strip standing inside it;
+ *   - the first row of a project starts at y=211 on a phone, at y=149 under a
+ *     pointer and at y=138 on a desk — the app bar, the filter row, the scope strip,
+ *     the project's own band and the shelf carrying its pager, all of which a page
+ *     pays for before its first row. Twelve of those pixels arrived late: the band is
+ *     48px under a pointer rather than 36, because the path moved under the name and
+ *     36 left the stack no air at all (`HEADER_BAND` in `components/ui`). The desk
+ *     used to pay 215 for the same bands because the page's top inset was spelled
+ *     TWICE, once on the section and once on the scope strip standing inside it;
  *   - FOOT is the gap the panel keeps under itself once it detaches from the
  *     glass (`sm:py-4`), and it is the same gap it keeps ABOVE itself: 16 over the
  *     card against 24 under it hung the whole list one step high in its own
@@ -344,11 +346,11 @@ const LIST_FOOT = 16;
 const LIST_LANE = 12;
 const LIST_GEOMETRY = {
   touch: { row: 49, chrome: 211 + LIST_PEEK, min: 3 },
-  mouse: { row: 33, chrome: 137 + LIST_FOOT + LIST_PEEK, min: 3 },
+  mouse: { row: 33, chrome: 149 + LIST_FOOT + LIST_PEEK, min: 3 },
   // A DESK SPENDS ITS CHROME SIDEWAYS. The machine strip that stands above the list
   // at every other size is the rail here, so those 40px go back to the rows and the
   // fleet footer under the list takes 29 of them again.
-  desk: { row: 33, chrome: 126 + LIST_FOOT + LIST_LANE + LIST_PEEK, min: 3 },
+  desk: { row: 33, chrome: 138 + LIST_FOOT + LIST_LANE + LIST_PEEK, min: 3 },
 } as const;
 
 /**
