@@ -116,6 +116,11 @@ function installFrames() {
   };
 }
 
+/** Is the "↓ Latest" offer on screen? */
+function latestOffered(): boolean {
+  return !!screen.queryByRole("button", { name: /Latest/ });
+}
+
 describe("the keyboard against the reader's place", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -195,5 +200,48 @@ describe("the keyboard against the reader's place", () => {
     expect(viewport.scrollTop).toBe(20_000);
 
     expect(moves).toEqual([]);
+  });
+  // Regression, user report ("I tap the input on iOS and the Latest pill appears —
+  // I am writing a new message, that makes no sense"): nothing scrolled. The
+  // keyboard took 274 px off the scroller's bottom, the newest turn stayed exactly
+  // where it was, and the offer measured that lost edge as distance the reader had
+  // chosen to keep — over the composer they had just tapped to write in.
+  it("makes no offer to a reader who taps the composer at the end", async () => {
+    const paint = installFrames();
+    const shell = { height: SHELL };
+    shellIs(SHELL);
+    const resize = installObserver();
+    renderSessionScreen({
+      session: sessionFixture({ id: "writing" }),
+      client: { transcript: () => Promise.resolve(transcript()) },
+    });
+    await act(async () => {});
+    const viewport = screen.getByRole("region", { name: "Transcript" });
+    const moves: number[] = [];
+    measure(viewport, shell, moves);
+    await paint();
+    act(() => resize(viewport));
+
+    // They are at the newest turn, and a ten-pixel nudge drops follow there: an
+    // upward move is "hold this line" however small, so the screen stops chasing
+    // and never re-arms while they sit still. The end is on screen; nothing is
+    // offered, because there is nowhere to go.
+    viewport.scrollTop = TRANSCRIPT - SHELL;
+    fireEvent.scroll(viewport);
+    await paint();
+    viewport.scrollTop -= 10;
+    fireEvent.scroll(viewport);
+    await paint();
+    expect(latestOffered()).toBe(false);
+
+    // Now they tap the composer and the keyboard slides up over the bottom 274 px.
+    act(() => (screen.getByLabelText("Message Vis") as HTMLTextAreaElement).focus());
+    shell.height = SHELL - KEYBOARD;
+    shellIs(SHELL - KEYBOARD);
+    act(() => resize(viewport));
+    await paint();
+
+    expect(latestOffered()).toBe(false);
+    expect(viewport.scrollTop).toBe(TRANSCRIPT - (SHELL - KEYBOARD));
   });
 });

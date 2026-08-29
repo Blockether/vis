@@ -24,24 +24,34 @@ export function isAtBottom(box: ScrollBox): boolean {
   return distanceFromEnd(box) <= AT_BOTTOM_PX;
 }
 
+/** The largest `scrollTop` this box can hold: where its end is. */
+export function bottomOf(box: ScrollBox): number {
+  return Math.max(0, box.scrollHeight - box.clientHeight);
+}
+
 
 /**
  * Whether a smaller `scrollTop` is the reader RETREATING, or the scroller being
- * CLAMPED by content that shrank underneath it.
+ * CLAMPED because its own end moved up underneath them.
  *
- * A collapsing Activity card, a keyboard, a live bubble replaced by its shorter
- * persisted row: each removes height, and the browser answers by pulling `scrollTop`
- * down to the new end — no gesture involved. Measured against the previous top alone
- * that reads as an upward gesture, which is what dropped follow on a tap.
+ * `previousBottom` is where that end WAS: the largest `scrollTop` the box could
+ * hold at the last measurement. Two ordinary events lower it and neither is a
+ * gesture — content LEAVES (a collapsing Activity card, a live bubble replaced
+ * by its shorter persisted row), or the viewport GROWS, which is exactly what
+ * the iOS keyboard does on the way down: 274 px of a 568 px screen handed back
+ * to the scroller, whose maximum offset drops by that much and takes the reader
+ * with it. Measured against the previous top alone, both read as an upward
+ * gesture, which is what dropped follow on a tap — and a reader whose follow
+ * died that way was offered "↓ Latest" the next time they touched the composer.
  */
 export function readerRetreatedFrom(
   box: ScrollBox,
   previousTop: number,
-  previousHeight: number,
+  previousBottom: number,
 ): boolean {
   if (box.scrollTop >= previousTop) return false;
-  const shrink = Math.max(0, previousHeight - box.scrollHeight);
-  return previousTop - box.scrollTop > shrink;
+  const clamp = Math.max(0, previousBottom - bottomOf(box));
+  return previousTop - box.scrollTop > clamp;
 }
 
 /**
@@ -74,7 +84,7 @@ export function arrivedAtEnd(box: ScrollBox, aimed: number): boolean {
  * move. Returns whether it had to move at all.
  */
 export function followEnd(box: ScrollBox): boolean {
-  const bottom = Math.max(0, box.scrollHeight - box.clientHeight);
+  const bottom = bottomOf(box);
   if (Math.abs(box.scrollTop - bottom) < 1) return false;
   box.scrollTop = bottom;
   return true;

@@ -124,6 +124,7 @@ import {
 } from "../lib/reader-gesture";
 import {
   arrivedAtEnd,
+  bottomOf,
   followEnd,
   heightSettler,
   isAtBottom,
@@ -1991,10 +1992,11 @@ export function SessionScreen({
   // Where `handleScroll` last SAW the scroller. A scroll event that finds it on
   // this pixel reports growth underneath a position this screen already owns.
   const seenTopRef = useRef(-1);
-  // ...and how TALL it was then. Content that SHRINKS — a card collapsed, a
-  // keyboard, a live bubble replaced by its shorter row — is clamped to the new end
-  // by the browser, and that arrives here as an upward move nobody made.
-  const seenHeightRef = useRef(-1);
+  // ...and where its END was then — the largest `scrollTop` the box could hold.
+  // Content that LEAVES (a card collapsed, a live bubble replaced by its shorter
+  // row) and a viewport that GROWS (the keyboard going back down) both lower that
+  // limit, and the browser clamps the reader to it: an upward move nobody made.
+  const seenBottomRef = useRef(-1);
   // The end the reader is REACHING FOR. Re-aimed on every scroll event that
   // finds them more than a screen away, and FROZEN once they are inside that
   // last screen: from there on, a live turn's growth is not distance they chose
@@ -4779,8 +4781,20 @@ export function SessionScreen({
   // vetoes the catch-up. Re-pin instead, on the same settle schedule the session
   // opens with, but ONLY for a reader who was already at the bottom: someone
   // reading history and tapping reply keeps their place.
+  //
+  // Ask the SCROLLER, not the memory. Being at the end IS following — the same
+  // reading `handleScroll` takes through `arrivedAtEnd` — and `followingRef` can
+  // be false with the newest turn right there: one nudge inside the 64 px slack
+  // drops it, and it never re-arms while the reader sits still. Remembering
+  // instead of measuring is what put "↓ Latest" over the composer of someone who
+  // had just tapped it to write: nothing scrolled, the keyboard simply took
+  // 274 px of a 568 px screen (measured, iPhone 17 Pro) off the bottom, and the
+  // newest turn became 274 px of "distance" nobody chose.
   function handleComposerFocus() {
-    if (followingRef.current) pinToEnd();
+    const viewport = scrollRef.current;
+    if (!viewport) return;
+    if (!followingRef.current && !isAtBottom(viewport)) return;
+    pinToEnd();
   }
 
   function handleScroll() {
@@ -4805,10 +4819,10 @@ export function SessionScreen({
       // Measured on a 46 373 px transcript, the session opened 6 917 px above its
       // newest turn with "↓ Latest" painted over the composer.
       const previousTop = seenTopRef.current;
-      const previousHeight = seenHeightRef.current;
+      const previousBottom = seenBottomRef.current;
       const settled = isCorrectionEcho(viewport, previousTop);
       seenTopRef.current = viewport.scrollTop;
-      seenHeightRef.current = viewport.scrollHeight;
+      seenBottomRef.current = bottomOf(viewport);
       if (settled) return;
       // The bottom tolerance only helps a downward gesture ARRIVE at a live end.
       // An upward gesture means “hold this line”, even when it moved less than
@@ -4816,11 +4830,11 @@ export function SessionScreen({
       // snap the scroller straight back after gesture ownership expires.
       const readerOwns = readerOwnsScroll();
       // Native WebKit momentum can outlive touchcancel and the gesture grace. A real
-      // upward move still proves retreat; height-aware comparison excludes a clamp.
+      // upward move still proves retreat; the end-aware reading excludes a clamp.
       const readerRetreated = readerRetreatedFrom(
         viewport,
         previousTop,
-        previousHeight,
+        previousBottom,
       );
       // Being at the end IS following; leaving it is only ever the reader's own
       // doing. `reader-gesture.ts` is the one place that knows the difference,

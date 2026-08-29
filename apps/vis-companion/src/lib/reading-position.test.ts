@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   arrivedAtEnd,
+  bottomOf,
   followEnd,
   isAtBottom,
   heightSettler,
   isCorrectionEcho,
+  readerRetreatedFrom,
   shouldOfferLatest,
   type ScrollBox,
 } from './reading-position';
@@ -178,5 +180,54 @@ describe('arriving at an end that is still being written', () => {
 
   it('leaves a reader who never got there where they are', () => {
     expect(arrivedAtEnd(box(44_000, 48_100, 800), 47_500)).toBe(false);
+  });
+});
+
+
+// Regression, user report ("I tap the input to write a new message and the Latest
+// pill shows up — I am writing, that makes no sense"): the keyboard is the only
+// thing that moved. Coming UP it takes 274 px of a 568 px screen off the scroller's
+// bottom, so the newest turn keeps its pixels and simply falls behind the keyboard;
+// going DOWN it hands them back, the scroller's end moves up by that much, and the
+// browser CLAMPS a reader sitting at that end. Measured against the previous top
+// alone, the clamp read as an upward gesture: follow died on a tap, and "↓ Latest"
+// was then offered to someone standing exactly where it would have taken them.
+describe('a clamp is not a retreat', () => {
+  const box = (scrollTop: number, scrollHeight: number, clientHeight: number): ScrollBox => ({
+    scrollTop,
+    scrollHeight,
+    clientHeight,
+  });
+
+  // iPhone 17 Pro: 800 px of scroller, 274 px of keyboard, and a transcript whose
+  // own height never changes while any of this happens.
+  const TRANSCRIPT = 46_000;
+
+  it('forgives the reader clamped by a keyboard going down', () => {
+    // At the end with the keyboard up, the end was 46 000 - 526.
+    expect(readerRetreatedFrom(box(45_200, TRANSCRIPT, 800), 45_474, 45_474)).toBe(false);
+  });
+
+  it('forgives the reader clamped by content that left', () => {
+    // 400 px of a collapsed card: the transcript is shorter and so is its end.
+    expect(readerRetreatedFrom(box(44_800, TRANSCRIPT - 400, 800), 45_200, 45_200)).toBe(false);
+  });
+
+  it('still hears a gesture that outruns the clamp', () => {
+    // The keyboard hands 274 px back AND the reader drags into history.
+    expect(readerRetreatedFrom(box(44_800, TRANSCRIPT, 800), 45_474, 45_474)).toBe(true);
+  });
+
+  it('hears a plain upward move with nothing clamping it', () => {
+    expect(readerRetreatedFrom(box(45_190, TRANSCRIPT, 800), 45_200, 45_200)).toBe(true);
+  });
+
+  it('never calls moving down a retreat', () => {
+    expect(readerRetreatedFrom(box(45_200, TRANSCRIPT, 800), 44_000, 45_200)).toBe(false);
+  });
+
+  it('reads the end off the box itself', () => {
+    expect(bottomOf(box(0, TRANSCRIPT, 526))).toBe(45_474);
+    expect(bottomOf(box(0, 600, 800))).toBe(0);
   });
 });
