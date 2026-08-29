@@ -136,13 +136,25 @@ describe("reopening the notifications panel", () => {
         name: "Disconnect notifications from buildbox",
       }),
     ).toBeTruthy();
-    expect(screen.queryByText("Checking…")).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Disconnect notifications from buildbox" })
+        .getAttribute("aria-busy"),
+    ).toBe("false");
   });
 
+  // Regression, user report (paraphrased: make these buttons circles with icons in
+  // the headers, the settings are too big): the panel used to SPELL `Checking…` on
+  // a full-width button, so waiting was a word. It is the control's own busy state
+  // now — the name says what is being asked, the mark pulses, the press is refused.
   it("still asks where this device has never been told", () => {
     open(null);
 
-    expect(screen.getByText("Checking…")).toBeTruthy();
+    const control = screen.getByRole("button", {
+      name: "Asking buildbox whether this device is registered",
+    });
+    expect(control.getAttribute("aria-busy")).toBe("true");
+    expect(control.hasAttribute("disabled")).toBe(true);
   });
 
   // Regression, same report: a machine too old to carry `/v1/devices` painted
@@ -194,6 +206,10 @@ describe("reopening the notifications panel", () => {
         name: "Disconnect notifications from buildbox",
       }),
     ).toBeTruthy();
-    expect(screen.queryByText("Checking…")).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Disconnect notifications from buildbox" })
+        .getAttribute("aria-busy"),
+    ).toBe("false");
   });
 });

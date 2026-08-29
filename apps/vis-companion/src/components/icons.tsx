@@ -59,6 +59,8 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpRight,
+  Bell,
+  BellOff,
   Camera,
   ChartNoAxesColumn,
   Check,
@@ -386,6 +388,23 @@ export function FastIcon({ className }: { className?: string }) {
  */
 export function AlertIcon({ className }: { className?: string }) {
   return <Mark icon={TriangleAlert} className={className} />;
+}
+
+/**
+ * ALERTS ARRIVE ON THIS DEVICE, and the same bell struck through when they do not.
+ *
+ * A PAIR READ AS ONE STATE. Notifications are the only machine setting whose answer
+ * a reader wants before its verb — am I getting alerts from this machine — so the
+ * control that changes it carries the answer in its mark instead of spending a row
+ * of the screen on a word.
+ */
+export function BellIcon({ className }: { className?: string }) {
+  return <Mark icon={Bell} className={className} />;
+}
+
+/** The bell silenced: this device is not connected to that machine. */
+export function BellOffIcon({ className }: { className?: string }) {
+  return <Mark icon={BellOff} className={className} />;
 }
 
 /**

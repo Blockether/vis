@@ -68,7 +68,7 @@ import {
   MachineTab,
   MetaButton,
   NewSessionButton,
-  NotifyConnectionRow,
+  NotifyConnectionButton,
   OptionRow,
   Pill,
   Disclosure,
@@ -1436,22 +1436,28 @@ describe("settings is ONE dialog with two columns", () => {
     expect(settings).not.toContain("sm:divide-y-0");
   });
 
-  it("pairs a machine from the band's own word, over the column rather than inside it", () => {
+  // Regression, user report (paraphrased, over a screenshot of this dialog with the
+  // amber slabs ringed in red: make these buttons circles with icons and put them in
+  // the headers so the settings are not so big).
+  it("pairs a machine from the band's own mark, over the column rather than inside it", () => {
     // The verb used to be a button that CLOSED this dialog and navigated to the
     // machines screen. Then it was two pairing cards standing permanently open
     // under the list, so the column opened on forms for a machine that does not
     // exist yet, and the fleet the cog was pressed FOR started below them. Then it
-    // was an amber ＋ — the mark this app already spends on a NEW SESSION, so one
-    // glyph meant two things and it was the only thing in the band with a face.
-    // It is the band's one WORD now, and what it opens is the app's own `fit` sheet.
+    // was an amber ＋ read as this app's NEW SESSION mark, so it spelled its word
+    // out for a while — which is how a band ends up as wide as its longest verb.
+    // The ＋ is back and it is not one glyph meaning two things: it adds the thing
+    // the band is NAMED after, which is what it does in the project band as well.
     const band = settings.slice(
       settings.indexOf("<SettingsColumn"),
       settings.indexOf("{/* THE COG"),
     );
     expect(band).toContain('variant="primary"');
-    expect(band).toContain('density="compact"');
-    expect(band).toContain("Add a machine");
-    expect(settings).not.toContain("<PlusIcon");
+    expect(band).toContain('label="Add a machine"');
+    expect(band).toContain('<PlusIcon className="size-4" />');
+    // A mark has no word to be wide for, so it takes no density either.
+    expect(band).not.toContain('density="compact"');
+    expect(band).not.toContain(">\n                Add a machine\n              </Button>");
     const sheet = settings.slice(settings.indexOf('<Modal size="fit"'));
     expect(sheet).toContain('title="Add a machine"');
     expect(sheet).toContain("<AddMachine");
@@ -1494,47 +1500,54 @@ describe("settings is ONE dialog with two columns", () => {
   it("leaves the providers band its title and its verb, and nothing else", () => {
     // Reported over this screenshot: the providers description says nothing the
     // rows do not, and "8/8 SIGNED IN" is a count of a list already on screen —
-    // both crowded the one band whose rows each carry their own status. The
-    // Reported over this screenshot: the two bands wore the SAME amber button, so
-    // the providers band read as a second machines band. The machines column keeps
-    // its full-size primary verb; the providers band, nested one level in, drops to
-    // a quiet face so it sits under the column it belongs to instead of competing.
+    // both crowded the one band whose rows each carry their own status. Reported
+    // next: the two bands wore the SAME amber button, so the providers band read as
+    // a second machines band; nested one level in, it drops to a quiet face. Then
+    // the quiet word was still a 42px chip at the TOP of a list it appends to the
+    // BOTTOM of, so it became the list's own last row, full width under the last
+    // provider — and THAT was reported in turn (paraphrased: circles with icons, in
+    // the headers, the settings are too big), because three panels meant three
+    // full-width slabs inside one machine. It is a mark in its band again.
     const band = settings.slice(
       settings.indexOf("<SettingsColumn"),
       settings.indexOf("{/* THE COG"),
     );
-    expect(band).toContain('aria-label="Add a machine"');
-    expect(band).toContain('variant="primary"');
-    expect(band).toContain(">\n                Add a machine\n              </Button>");
-    // Then the quiet word in the band was still a 42px chip at the TOP of a list
-    // it appends to the BOTTOM of: it left the band entirely and became the list's
-    // own last row, full width under the last provider.
-    expect(settings).not.toContain("action={<AddProviderButton");
+    expect(band).toContain('label="Add a machine"');
+    expect(settings).toContain("action={<AddProviderButton auth={auth} />}");
     const providerButton = providerAuthSource.slice(
-      providerAuthSource.indexOf("A ROW, NOT A CHIP"),
+      providerAuthSource.indexOf("THE VERB RIDES THE BAND"),
       providerAuthSource.indexOf("{isPicking &&"),
     );
-    // Reported next over the same screenshot: that last row is the panel's one
-    // action, so it carries the amber the band's action used to carry.
-    expect(providerButton).toContain('variant="primary"');
-    expect(providerButton).not.toContain('variant="quiet"');
-    expect(providerButton).toContain("w-full justify-center");
-    expect(providerButton).toContain("Add a provider");
+    // Quiet, not amber: the fill belongs to the level above, the MACHINES column.
+    expect(providerButton).toContain('variant="quiet"');
+    expect(providerButton).not.toContain('variant="primary"');
+    expect(providerButton).toContain('label="Add a provider"');
+    expect(providerButton).toContain('<PlusIcon className="size-4" />');
+    expect(providerButton).not.toContain("w-full justify-center");
+    // And no panel verb stands in a padded box of its own any more, in either file.
+    expect(providerAuthSource).not.toContain('<div className="px-3 py-2">');
+    expect(settings).not.toContain('<div className="px-3 py-2">');
   });
 
-  // Reported over the same screenshot: the same song for MCP.
-  it("strips the MCP band to its title and lands its verb as the list's last row", () => {
+  // Reported over the same screenshot: the same song for MCP, and asked for by name
+  // when the verbs became marks (paraphrased: make sure MCP is ported too).
+  it("strips the MCP band to its title and lands its verb in it as a mark", () => {
     // MCP SERVERS carried a sentence and a "0 configured" counter over a list that
-    // states its own emptiness, and its verb was a chip floating in a padded box.
+    // states its own emptiness; its verb was a chip floating in a padded box, then
+    // the list's own full-width last row, which is where the reader found it again.
     const mcp = settings.slice(
       settings.indexOf('title="MCP servers"'),
       settings.indexOf("MCP transport"),
     );
     expect(mcp).not.toContain("description=");
     expect(mcp).not.toContain("meta=");
-    expect(mcp).toContain('variant="primary"');
-    expect(mcp).toContain("w-full justify-center");
-    expect(mcp).toContain("Add an MCP server");
+    expect(mcp).toContain('variant="quiet"');
+    expect(mcp).toContain('label="Add an MCP server"');
+    expect(mcp).not.toContain("w-full justify-center");
+    // The ＋ IS the form's door, so it steps out of the band while the form is open
+    // rather than standing over it offering to open a second one.
+    expect(mcp).toContain("showForm ? null : (");
+    expect(mcp).toContain("{showForm && (");
   });
 
   it("keeps speech engines and voices unboxed under the machine", () => {
@@ -1557,21 +1570,27 @@ describe("settings is ONE dialog with two columns", () => {
     expect(settings).not.toContain("Spoken replies");
   });
   // Reported over this screenshot: why is that button not simply full width on a
-  // phone, and the green dots do not line up with the text.
-  it("gives a lone verb the phone's full width and rides each status dot on the name's line", () => {
+  // phone, and the green dots do not line up with the text. Then, over the next
+  // screenshot of the same dialog (paraphrased: make these buttons circles with
+  // icons and put them in the headers, the settings are too big).
+  it("makes every panel verb a mark in its own band, and rides each status dot on the name's line", () => {
     // The notification verb hugged the right edge of a full-bleed panel with
     // nothing beside it, so it read as the leftover of a row that lost its text.
+    // Full width fixed the reading and cost a 44px row per panel for a press that
+    // happens twice in a machine's life — three of them stacked inside one machine.
     const notify = uiSource.slice(
-      uiSource.indexOf("export function NotifyConnectionRow"),
+      uiSource.indexOf("export function NotifyConnectionButton"),
       uiSource.indexOf("THE ✕, AND THERE IS EXACTLY ONE OF IT"),
     );
-    expect(notify).toContain("w-full justify-center sm:w-auto");
-    // Reported again over the settings screenshot: full-bleed verbs read as a
-    // landing page's call to action, so every panel verb now keeps the panel's
-    // own left/right inset on a phone — the one `Connect` always had.
-    expect(notify).toContain('className="flex items-center justify-end px-3 py-2"');
-    expect(providerAuthSource).toContain('<div className="px-3 py-2">');
-    expect(settings).toContain('<div className="px-3 py-2">');
+    expect(notify).toContain("<IconButton");
+    expect(notify).toContain('variant="quiet"');
+    expect(notify).toContain("label={action}");
+    expect(notify).not.toContain("w-full justify-center sm:w-auto");
+    expect(notify).not.toContain('className="flex items-center justify-end px-3 py-2"');
+    // One full-width verb is left in the dialog and it is not a band's: importing a
+    // voice is a file picker inside a nested group, which has no trailing cell.
+    expect(settings.match(/w-full justify-center/g)).toHaveLength(1);
+    expect(settings).toContain("Import a voice…");
     // And a dot centred in a two-line row sat between the name and its meta line,
     // marking neither. Both lists now lead with the RING the live view paints
     // rather than a character in the body face: the one-line machine row lets the
@@ -3155,12 +3174,12 @@ describe("a setting is picked and switched by one control each", () => {
 // control beside it printed the state it was ALREADY in — `Not connected`, `visgw will
 // not alert this device.`, `OFF` — so the row said no three times over and never once
 // said how to say yes.
-describe("the notifications row answers one question", () => {
-  const row = (
-    props: Partial<ComponentProps<typeof NotifyConnectionRow>> = {},
+describe("the notifications control answers one question", () => {
+  const control = (
+    props: Partial<ComponentProps<typeof NotifyConnectionButton>> = {},
   ) =>
     renderToStaticMarkup(
-      <NotifyConnectionRow
+      <NotifyConnectionButton
         machine="visgw"
         isOn={false}
         onClick={() => {}}
@@ -3168,64 +3187,84 @@ describe("the notifications row answers one question", () => {
       />,
     );
 
-  it("states whether this device is connected — in the verb, and only there", () => {
-    const on = row({ isOn: true });
-    expect(on).toContain(">Disconnect<");
+  it("states whether this device is connected — in the mark, and only there", () => {
+    const on = control({ isOn: true });
+    expect(on).toContain('aria-label="Disconnect notifications from visgw"');
     expect(on).not.toContain("visgw alerts this device when a turn finishes.");
 
-    const off = row();
-    expect(off).toContain(">Connect<");
+    const off = control();
+    expect(off).toContain('aria-label="Connect notifications from visgw"');
     expect(off).not.toContain("visgw will not alert this device.");
+    // Regression, user report (paraphrased: make these buttons circles with icons
+    // and put them in the headers, the settings are too big): the verb was a word,
+    // so it was as wide as itself and needed a row under the band to stand in. The
+    // sentence is the control's NAME now — read out, shown to a pointer, drawn
+    // nowhere — and the bell carries the state the word used to imply.
+    expect(off).not.toContain(">Connect<");
+    expect(on).not.toContain(">Disconnect<");
+    expect(uiSource).toContain(
+      "{isOn ? <BellIcon className={mark} /> : <BellOffIcon className={mark} />}",
+    );
+    expect(on).not.toBe(off);
   });
 
   it("presses the VERB, never the state it is already in", () => {
-    const off = row();
-    expect(off).toContain(">Connect<");
-    expect(off).toContain('aria-label="Connect notifications from visgw"');
-    // The state is the sentence's job; this control's whole job is the way out of it.
+    const off = control();
+    expect(off).toContain('title="Connect notifications from visgw"');
+    // The state is the mark's job; this control's whole job is the way out of it.
     expect(off).not.toContain(">OFF<");
     expect(off).not.toContain('role="switch"');
     expect(off).not.toContain("aria-checked");
 
-    const on = row({ isOn: true });
-    expect(on).toContain(">Disconnect<");
-    expect(on).toContain('aria-label="Disconnect notifications from visgw"');
+    const on = control({ isOn: true });
+    expect(on).toContain('title="Disconnect notifications from visgw"');
     expect(on).not.toContain(">ON<");
-
-    // Connecting is the invitation and wears the amber; leaving never shouts.
-    expect(off).toContain("bg-accent");
-    expect(on).not.toContain("bg-accent");
   });
 
   it("keeps ONE control for both verbs, in the same place in both states", () => {
     const buttons = (markup: string) => (markup.match(/<button/g) ?? []).length;
-    expect(buttons(row({ isOn: true }))).toBe(1);
-    expect(buttons(row())).toBe(1);
+    expect(buttons(control({ isOn: true }))).toBe(1);
+    expect(buttons(control())).toBe(1);
   });
 
   it("says which way it is moving, and asks before it answers", () => {
-    expect(row({ isBusy: true })).toContain("Connecting…");
-    expect(row({ isOn: true, isBusy: true })).toContain("Disconnecting…");
+    // `Connecting…` and `Disconnecting…` had to be as wide as the verbs they stood
+    // in for, which is most of what made this a row. A round trip pulses the mark.
+    const busy = control({ isBusy: true });
+    expect(busy).toContain('aria-busy="true"');
+    expect(busy).toContain("animate-pulse");
+    expect(busy).not.toContain("Connecting…");
+    expect(control({ isOn: true, isBusy: true })).not.toContain("Disconnecting…");
 
-    const checking = row({ isChecking: true });
-    expect(checking).toContain("Checking…");
+    const checking = control({ isChecking: true });
+    expect(checking).toContain('aria-busy="true"');
+    expect(checking).toContain(
+      'aria-label="Asking visgw whether this device is registered"',
+    );
     // Neither a verdict nor a verb before the machine has answered: there is no
     // direction to offer yet.
     expect(checking).not.toContain("Not connected");
+    expect(checking).not.toContain("Checking…");
     expect(checking).not.toContain(">Connect<");
-    expect(checking).toContain('aria-busy="true"');
   });
 
   // Reported over the settings dialog: the notifications panel is too big, I want
-  // only one Connect/Disconnect button there.
-  it("is the button and nothing else — no verdict line, no sentence", () => {
-    const markup = row({ machine: "gateway.example.com" });
+  // only one Connect/Disconnect button there. Then, over the next screenshot: put
+  // it in the header, as a circle.
+  it("is the control and nothing else — no verdict line, no sentence, no row", () => {
+    const markup = control({ machine: "gateway.example.com" });
     expect(markup).not.toContain("gateway.example.com will not alert this device.");
-    expect(markup).not.toContain("Not connected");
-    expect(markup).not.toContain("Connected");
-    expect(markup).toContain(">Connect<");
-    // One line of controls, so the row is the button's own height.
+    expect(markup).not.toContain(">Not connected<");
+    expect(markup).toContain(
+      'aria-label="Connect notifications from gateway.example.com"',
+    );
+    // It IS the band's trailing cell, so it brings no row, no inset and no width.
     expect(markup).not.toContain("min-h-12");
+    expect(markup).not.toContain("px-3 py-2");
+    expect(markup).not.toContain("w-full");
+    // The one disc every icon button in this app wears: 32px face, 28 for a pointer.
+    expect(markup).toContain("size-8");
+    expect(markup).toContain("rounded-full");
   });
 });
 
@@ -3336,7 +3375,7 @@ describe("the session screen and the settings dialog spell no control out", () =
   it("answers the notifications question with one row, not a token list", () => {
     // Native push and Web Push are two transports for ONE question, so both panels
     // ask it with the same row.
-    expect(settingsSource.match(/<NotifyConnectionRow/g)).toHaveLength(2);
+    expect(settingsSource.match(/<NotifyConnectionButton/g)).toHaveLength(2);
     expect(settingsSource).not.toContain("Notify me from this machine");
     expect(settingsSource).not.toContain("Stop notifying me from this machine");
     expect(settingsSource).not.toContain("devices?.map(");
@@ -3781,10 +3820,11 @@ describe("a call site positions, and the component paints", () => {
     expect(renderToStaticMarkup(<Button>Save</Button>)).not.toContain(
       "font-mono",
     );
-    // The panel's two verbs became one row (`NotifyConnectionRow`), which carries
-    // its own; what remains is the door to the OS, the diagnostics export, and the
-    // MCP and Voices lists' own last rows.
-    expect(settingsSource.match(/density="panel"/g)).toHaveLength(4);
+    // The panel's two verbs became one control (`NotifyConnectionButton`), which
+    // wears the disc; the MCP list's last row went back into its band as a mark.
+    // What remains is the door to the OS, the diagnostics export, and the Voices
+    // list's own last row.
+    expect(settingsSource.match(/density="panel"/g)).toHaveLength(3);
   });
 
   it("gives the spinner the app's waiting ink as a tone", () => {

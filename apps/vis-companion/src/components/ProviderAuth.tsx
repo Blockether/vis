@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { AuthFlow, ProviderAuthState, ProviderLimitRow, ProviderPreset, RouterProvider } from '../lib/types';
-import { Banner, Button, ConfirmRow, DialogFrame, Input, ListRow, Modal } from './ui';
+import { Banner, Button, ConfirmRow, DialogFrame, IconButton, Input, ListRow, Modal } from './ui';
 import {
   ChevronIcon,
   CircleAlertIcon,
@@ -927,23 +927,27 @@ export function AddProviderButton({ auth }: { auth: ProviderAuth }) {
 
   return (
     <>
-      {/* A ROW, NOT A CHIP — but inset by the same margin the rows' own text
-          keeps, so the verb lines up with the list above it instead of with the
-          panel's border. Full-bleed made it read as a call to action. */}
-      <div className="px-3 py-2">
-        <Button
-          variant="primary"
-          density="panel"
-          className="w-full justify-center"
-          aria-label="Add a provider"
-          onClick={() => {
-            setIsPicking(true);
-            setChosen(null);
-          }}
-        >
-          Add a provider
-        </Button>
-      </div>
+      {/* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS. Reported over a screenshot
+          of a machine's settings (paraphrased: make these buttons circles with icons
+          and put them in the headers, the screen is too big): this was a full-width
+          amber slab under the last provider, and Notifications and MCP each carried
+          one too, so one machine spent three landing-page blocks on three verbs
+          pressed once a month. A band already reserves a trailing cell, and a ＋
+          there means "add the thing this band is named after" — the same mark the
+          project band of the sessions list spends on a new session in the project it
+          heads. Quiet rather than amber: this panel is nested INSIDE a machine, and
+          the filled verb of that level is the MACHINES column's own ＋. */}
+      <IconButton
+        variant="quiet"
+        label="Add a provider"
+        title="Add a provider to this machine"
+        onClick={() => {
+          setIsPicking(true);
+          setChosen(null);
+        }}
+      >
+        <PlusIcon className="size-4" />
+      </IconButton>
 
       {isPicking && (
         <Modal size="fit" onDismiss={close}>

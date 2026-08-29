@@ -22,6 +22,8 @@ import { createPortal } from 'react-dom';
 
 import {
   ArrowDownIcon,
+  BellIcon,
+  BellOffIcon,
   CheckIcon,
   ChevronIcon,
   CloseIcon,
@@ -1666,8 +1668,8 @@ export function Switch({
 }
 
 /**
- * IS THIS DEVICE CONNECTED TO THIS MACHINE — the answer, and the verb that
- * changes it.
+ * IS THIS DEVICE CONNECTED TO THIS MACHINE — the answer, and the verb that changes
+ * it, in the one control at the end of the panel's own band.
  *
  * The notifications panel used to answer an OPERATOR's question instead: it
  * listed every push token the gateway holds, so one iPhone reinstalled three
@@ -1675,23 +1677,33 @@ export function Switch({
  * question — am I connected? — survived only as the verb on a button. Reported
  * as: same device, four entries, and no way to just see whether alerts arrive.
  *
- * THE ROW IS THE VERB, AND NOTHING ELSE. The control used to be `Switch`, whose
- * entire face is the state it is ALREADY in, standing under two lines that had
- * just said it: `Not connected`, then `<machine> will not alert this device.`,
- * then a box reading `OFF` — the same no three times over. Dropping the switch
- * for a verb left the two lines behind, and they were reported again: the panel
- * is too big, I want one Connect/Disconnect button there. `Disconnect` can only
- * stand where this device IS connected, so the button's own word carries the
- * state and the panel's title already names the machine. `Switch` still belongs
- * to a setting this device owns outright (a feature toggle, an MCP server) where
- * the press IS the new state; this one is a round trip to a machine that can
- * refuse, and a round trip is a verb.
+ * THE CONTROL IS THE VERB, AND NOTHING ELSE. It used to be `Switch`, whose entire
+ * face is the state it is ALREADY in, standing under two lines that had just said
+ * it: `Not connected`, then `<machine> will not alert this device.`, then a box
+ * reading `OFF` — the same no three times over. Dropping the switch for a verb left
+ * the two lines behind, and they were reported again: the panel is too big, I want
+ * one Connect/Disconnect button there. `Switch` still belongs to a setting this
+ * device owns outright (a feature toggle, an MCP server) where the press IS the new
+ * state; this one is a round trip to a machine that can refuse, and a round trip is
+ * a verb.
+ *
+ * THEN THE WORD BECAME A MARK. Reported over the same panel (paraphrased: make
+ * these buttons circles with icons and put them in the headers, the settings are
+ * too big): a full-width word took a 44px row of the screen for a press that
+ * happens twice in a machine's life, and Providers and MCP servers each kept one
+ * too. So the verb rides the band's trailing cell as the app's disc, and the two
+ * things the word carried split the way this control already splits them — the
+ * BELL is the state, struck through where this device gets nothing, and the
+ * sentence is the control's NAME, read out by `aria-label` and shown to a pointer
+ * by `title`. It stays quiet rather than amber: a panel nested inside a machine
+ * never wears the fill of the column above it, and the mark says the state without
+ * one.
  *
  * The words live in this component rather than at each call site because native
  * APNs/FCM and Web Push are two transports for ONE question and must never
  * become two vocabularies.
  */
-export function NotifyConnectionRow({
+export function NotifyConnectionButton({
   machine,
   isOn,
   isBusy = false,
@@ -1699,7 +1711,7 @@ export function NotifyConnectionRow({
   disabled = false,
   onClick,
 }: {
-  /** The paired machine this row speaks for; it names itself in the sentence. */
+  /** The paired machine this control speaks for; it names itself in the sentence. */
   machine: string;
   isOn: boolean;
   isBusy?: boolean;
@@ -1708,50 +1720,27 @@ export function NotifyConnectionRow({
   disabled?: boolean;
   onClick: () => void;
 }) {
-  // ONE CONTROL, AND IT IS THE VERB. Reported over the settings dialog: the row
-  // carried a verdict line, a sentence naming the machine and the button — three
-  // ways to say the same yes or no, in a panel already titled with that machine.
-  // `Disconnect` can only stand where this device IS connected, so the button's
-  // own word is the state; only the not-yet-answered case needs saying, and it
-  // says it on the button.
-  const label = isChecking
-    ? 'Checking…'
-    : isBusy
-      ? isOn
-        ? 'Disconnecting…'
-        : 'Connecting…'
-      : isOn
-        ? 'Disconnect'
-        : 'Connect';
   const isWaiting = isBusy || isChecking;
+  // The NAME is what the press will do, and it is the only place the sentence is
+  // spelled out now. A round trip in flight pulses the mark rather than replacing
+  // it with a word: `Checking…` had to be as wide as the verbs it stood in for.
   const action = isChecking
     ? `Asking ${machine} whether this device is registered`
     : isOn
       ? `Disconnect notifications from ${machine}`
       : `Connect notifications from ${machine}`;
-
+  const mark = `size-4 ${isWaiting ? 'animate-pulse motion-reduce:animate-none' : ''}`;
   return (
-    // FULL WIDTH ON A PHONE, BUT INSIDE THE PANEL'S OWN INSET. A verb that runs
-    // edge to edge reads as a landing-page call to action rather than a setting,
-    // and three of them stacked turn the screen into a wall. The inset is the
-    // margin every row's text already keeps, so the verb lines up with the
-    // content above it instead of with the panel's border. Above `sm:` it goes
-    // back to hugging the right, where a full-width verb would be absurd.
-    <div className="flex items-center justify-end px-3 py-2">
-      {/* Connecting is the invitation and wears the amber; disconnecting is the
-          way out of something already working and never shouts to be taken. */}
-      <Button
-        variant={isOn ? 'secondary' : 'primary'}
-        density="panel"
-        aria-label={action}
-        aria-busy={isWaiting}
-        disabled={disabled}
-        onClick={onClick}
-        className="w-full justify-center sm:w-auto sm:shrink-0"
-      >
-        <span className={isWaiting ? 'animate-pulse' : ''}>{label}</span>
-      </Button>
-    </div>
+    <IconButton
+      variant="quiet"
+      label={action}
+      title={action}
+      aria-busy={isWaiting}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {isOn ? <BellIcon className={mark} /> : <BellOffIcon className={mark} />}
+    </IconButton>
   );
 }
 

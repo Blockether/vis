@@ -84,6 +84,7 @@ import {
   DownloadIcon,
   MARK_NUDGE,
   PlayIcon,
+  PlusIcon,
   StopIcon,
 } from "../components/icons";
 import {
@@ -105,9 +106,10 @@ import {
   Chip,
   ConfirmRow,
   DialogFrame,
+  IconButton,
   Input,
   Modal,
-  NotifyConnectionRow,
+  NotifyConnectionButton,
   PROSE,
   SettingsChoiceDisclosure,
   SettingsChoiceGroup,
@@ -701,6 +703,18 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
   return (
     <SettingsPanel
       title="MCP servers"
+      action={
+        showForm ? null : (
+          <IconButton
+            variant="quiet"
+            label="Add an MCP server"
+            title="Add an MCP server"
+            onClick={() => openForm(null)}
+          >
+            <PlusIcon className="size-4" />
+          </IconButton>
+        )
+      }
     >
       <div className="divide-y divide-dialog-edge">
         {error && <Banner kind="err">{error}</Banner>}
@@ -833,18 +847,7 @@ function McpServersPanel({ client }: { client: GatewayClient }) {
             No MCP servers on this gateway.
           </p>
         )}
-        {!showForm ? (
-          <div className="px-3 py-2">
-            <Button
-              variant="primary"
-              density="panel"
-              className="w-full justify-center"
-              onClick={() => openForm(null)}
-            >
-              Add an MCP server
-            </Button>
-          </div>
-        ) : (
+        {showForm && (
           <div className="space-y-3 p-2.5">
             <div
               className="grid grid-cols-2 gap-1"
@@ -2108,24 +2111,27 @@ function SettingsColumn({
 }: {
   title: string;
   meta?: ReactNode;
-  /** The column's ONE verb, at the end of its band: `Add a machine`. */
+  /** The column's ONE verb, at the end of its band: the amber ＋. */
   action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="flex min-w-0 flex-col sm:min-h-0">
-      {/* A BAND NAMES THE COLUMN IN ONE LINE, and its verb is a WORD.
+      {/* A BAND NAMES THE COLUMN IN ONE LINE, and its verb is a MARK.
           The title, a meta and the ＋ used to share one wrapping flex line whose
           height was the button's: the two words sat at the top of it on their
           baseline while the ＋ centred itself in the rest, 8px lower than the title
           it stands beside. Then the reader asked what the meta and the sentence
           under it were FOR — a column that lists every machine does not need to
-          name one of them in its own header, and "tap a row" is not news — and a
-          bare ＋ is the mark this app already spends on a new session, so an amber
-          slab of it here was one glyph meaning two things. The name and its meta
-          wrap inside their own cell, the verb is the band's trailing cell centred
-          against whatever that cell grows to, and the band never pads around it:
-          the row is `min-h-12` because a finger lands there. */}
+          name one of them in its own header, and "tap a row" is not news. The verb
+          spelled itself out in WORDS for a while, which is how a band ends up as
+          wide as its longest verb; it is the disc again, and the ＋ adds the thing
+          the band is NAMED after — so the mark opening a session in the project
+          band of the list and the mark adding a machine here are one rule, not one
+          glyph meaning two things. The name and its meta wrap inside their own
+          cell, the verb is the band's trailing cell centred against whatever that
+          cell grows to, and the band never pads around it: the row is `min-h-12`
+          because a finger lands there. */}
       <header className="min-w-0 shrink-0 border-b border-dialog-edge bg-level-machine">
         <div className="flex min-h-12 min-w-0 items-center gap-3 px-3 py-1 sm:px-4 mouse:min-h-9">
           <div className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -2139,7 +2145,7 @@ function SettingsColumn({
             )}
           </div>
           {action && (
-            <span className="flex shrink-0 items-center">{action}</span>
+            <span className="flex shrink-0 items-center empty:hidden">{action}</span>
           )}
         </div>
       </header>
@@ -2391,14 +2397,19 @@ export function SettingsDialog({
           <SettingsColumn
             title="Machines"
             action={
-              <Button
+              /* THE COLUMN'S ONE VERB, AND IT WEARS THE ONLY FILL IN THE DIALOG.
+                 This is the top level here — the bands nested under a machine
+                 (Providers, Notifications, MCP servers) carry the same disc in the
+                 quiet face, so a panel inside a machine can never read as a second
+                 MACHINES band. */
+              <IconButton
                 variant="primary"
-                density="compact"
-                aria-label="Add a machine"
+                label="Add a machine"
+                title="Add a machine"
                 onClick={() => setIsAdding(true)}
               >
-                Add a machine
-              </Button>
+                <PlusIcon className="size-4" />
+              </IconButton>
             }
           >
             {/* THE COG'S FIRST ANSWER IS THE FLEET. Reported over the machines screen:
@@ -2521,7 +2532,13 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
   const fleetNote = unscopedMessage(note, providers);
 
   return (
-    <SettingsPanel title="Providers">
+    <SettingsPanel
+      title="Providers"
+      /* THE VERB RIDES THE BAND THAT NAMES WHAT IT ADDS, and it renders nothing
+         until the gateway has said something is addable — so the band asks for it
+         unconditionally and `AddProviderButton` answers with its own silence. */
+      action={<AddProviderButton auth={auth} />}
+    >
       {(fleetErr || fleetNote) && (
         <div className="space-y-2 p-3">
           {fleetErr && <Banner kind="err">{fleetErr.text}</Banner>}
@@ -2542,11 +2559,6 @@ function ProvidersPanel({ client }: { client: GatewayClient }) {
       )}
 
       <ProviderRows auth={auth} />
-      {/* THE VERB SITS UNDER THE LIST IT ADDS TO. Squeezed into the band it was a
-          42px word beside the column's own amber verb, at the top of a list it
-          appends to the bottom of; full width under the last row it is one target
-          the thumb already rests near. */}
-      <AddProviderButton auth={auth} />
     </SettingsPanel>
   );
 }
@@ -2663,7 +2675,22 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   const hasBanner = Boolean(err) || !supported || blocked;
 
   return (
-    <SettingsPanel title="Notifications" meta={machine}>
+    <SettingsPanel
+      title="Notifications"
+      meta={machine}
+      action={
+        <NotifyConnectionButton
+          machine={machine}
+          isOn={shown ?? false}
+          isBusy={busy !== null}
+          isChecking={shown === null}
+          disabled={!supported || blocked || shown === null || busy !== null}
+          // The mark on the control is what the press must do, so a band painted
+          // from the remembered verdict acts on THAT, not on a load still in flight.
+          onClick={() => void (shown ? disable() : enable())}
+        />
+      }
+    >
       {hasBanner && (
         <div className="space-y-2 p-3">
           {err && <Banner kind="err">{err}</Banner>}
@@ -2682,17 +2709,6 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
           )}
         </div>
       )}
-
-      <NotifyConnectionRow
-        machine={machine}
-        isOn={shown ?? false}
-        isBusy={busy !== null}
-        isChecking={shown === null}
-        disabled={!supported || blocked || shown === null || busy !== null}
-        // The word on the button is what the press must do, so a row painted
-        // from the remembered verdict acts on THAT, not on a load still in flight.
-        onClick={() => void (shown ? disable() : enable())}
-      />
     </SettingsPanel>
   );
 }
@@ -2889,7 +2905,24 @@ export function NativeNotificationsPanel({
     Boolean(err) || !supported || blocked || Boolean(push && !available);
 
   return (
-    <SettingsPanel title="Notifications" meta={machine}>
+    <SettingsPanel
+      title="Notifications"
+      meta={machine}
+      action={
+        <NotifyConnectionButton
+          machine={machine}
+          isOn={shown ?? false}
+          isBusy={busy !== null}
+          isChecking={checking}
+          disabled={
+            !supported || !available || blocked || checking || busy !== null
+          }
+          // The mark on the control is what the press must do, so a band painted
+          // from the remembered verdict acts on THAT, not on a load still in flight.
+          onClick={() => void (shown ? disable() : enable())}
+        />
+      }
+    >
       {hasBanner && (
         <div className="space-y-2 p-3">
           {err && <Banner kind="err">{err}</Banner>}
@@ -2926,19 +2959,6 @@ export function NativeNotificationsPanel({
           )}
         </div>
       )}
-
-      <NotifyConnectionRow
-        machine={machine}
-        isOn={shown ?? false}
-        isBusy={busy !== null}
-        isChecking={checking}
-        disabled={
-          !supported || !available || blocked || checking || busy !== null
-        }
-        // The word on the button is what the press must do, so a row painted
-        // from the remembered verdict acts on THAT, not on a load still in flight.
-        onClick={() => void (shown ? disable() : enable())}
-      />
 
       {blocked && canOpenSystemNotificationSettings() && (
         <div className="px-3 pb-3">
@@ -3003,7 +3023,7 @@ export function SettingsPanel({
           </span>
         )}
         {action && (
-          <span className="flex shrink-0 items-center self-center">
+          <span className="flex shrink-0 items-center self-center empty:hidden">
             {action}
           </span>
         )}
