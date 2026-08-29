@@ -10,17 +10,6 @@ import { BandButton } from './ui';
 // with no band and one hand-built row. The same glyph, one line apart in the same
 // list, opened two different-looking things — so `⋯` stopped being a promise.
 describe('Menu parts', () => {
-  // Regression, user report ("delete button for project management is wrongly
-  // positioned"): the trash is an `edge` IconButton, which reclaims the row's
-  // trailing gutter with `-mr-3`. The action wrapper never had one, so the button
-  // hung 12px past the sheet's own paper.
-  it('gives an action the row’s own trailing gutter to reclaim', () => {
-    const html = renderToStaticMarkup(
-      <MenuItem title="vis" action={<button type="button">x</button>} onSelect={() => {}} />,
-    );
-
-    expect(html).toContain('items-stretch border-b border-dialog-edge pr-3');
-  });
 
   it('places from exactly the width the panel paints', () => {
     // The popover is positioned before it has ever been measured, so the number
@@ -31,10 +20,6 @@ describe('Menu parts', () => {
   describe('MenuHeading', () => {
     it('names what the rows act on in the black title band', () => {
       const html = renderToStaticMarkup(<MenuHeading>studio-mbp</MenuHeading>);
-
-      expect(html).toContain('bg-dialog-title');
-      expect(html).toContain('text-dialog-title-foreground');
-      expect(html).toContain('uppercase');
       expect(html).toContain('studio-mbp');
     });
 
@@ -43,12 +28,6 @@ describe('Menu parts', () => {
       const html = renderToStaticMarkup(<MenuHeading tone="quiet">Or a draft</MenuHeading>);
 
       expect(html).not.toContain('bg-accent');
-      expect(html).toContain('bg-panel-2');
-      expect(html).toContain('text-dialog-hint');
-    });
-
-    it('truncates instead of wrapping a long machine name onto two lines', () => {
-      expect(renderToStaticMarkup(<MenuHeading>a</MenuHeading>)).toContain('truncate');
     });
 
     // Regression, user report (paraphrased: the sheet's colours look wrong): this slot
@@ -65,10 +44,6 @@ describe('Menu parts', () => {
           New project
         </MenuHeading>,
       );
-
-      // The band's own box: full height, welded by the band's hairline, band ink.
-      expect(html).toContain('self-stretch');
-      expect(html).toContain('border-l');
       // And nothing pads it off the band the way a wrapper around a button did.
       expect(html).not.toContain('items-center px-2');
     });
@@ -81,12 +56,8 @@ describe('Menu parts', () => {
           Start the session in
         </MenuBack>,
       );
-
-      expect(html).toContain('bg-dialog-title');
       expect(html).toContain('<button');
       expect(html).toContain('aria-label="Back to actions for tower"');
-      expect(html).toContain('min-h-12');
-      expect(html).toContain('mouse:min-h-9');
     });
 
     it('carries the step’s commit cells beside the way back', () => {
@@ -99,8 +70,6 @@ describe('Menu parts', () => {
           New project
         </MenuBack>,
       );
-
-      expect(html).toContain('self-stretch');
       expect(html).not.toContain('items-center gap-2 px-2');
     });
   });
@@ -111,7 +80,6 @@ describe('Menu parts', () => {
 
     it('is a menuitem with a real thumb target', () => {
       expect(html()).toContain('role="menuitem"');
-      expect(html()).toContain('min-h-11');
     });
 
     // A workspace decision is unrecoverable-ish once the agent starts writing, so
@@ -120,22 +88,16 @@ describe('Menu parts', () => {
       const markup = html({ hint: 'browse, create, and choose folders' });
 
       expect(markup).toContain('browse, create, and choose folders');
-      expect(markup).toContain('text-dialog-hint');
     });
 
     it('marks the default answer with a badge rather than a second colour', () => {
       const markup = html({ badge: 'Default' });
 
       expect(markup).toContain('Default');
-      expect(markup).toContain('border-edge');
     });
 
     it('paints a destructive row in the app’s red, and it is still the same row', () => {
       const markup = html({ tone: 'danger', title: 'Remove sessions' });
-
-      expect(markup).toContain('text-err');
-      expect(markup).toContain('hover:bg-err/15');
-      expect(markup).toContain('min-h-11');
       expect(markup).toContain('role="menuitem"');
     });
 
@@ -146,9 +108,6 @@ describe('Menu parts', () => {
     // paper above the title, 23.5px below it, twice over.
     it('centres a one-line row in the thumb target it has to fill', () => {
       const markup = html({ icon: <svg />, badge: 'Default' });
-
-      expect(markup).toContain('min-h-11');
-      expect(markup).toContain('items-center');
       expect(markup).not.toContain('items-start');
       // Nothing beside the title is nudged down: the centred row already put it on
       // the title's line.

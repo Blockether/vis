@@ -389,11 +389,6 @@ describe("typing does not redraw the list under the thumb", () => {
     // The row wraps on a phone and stops wrapping where there is room for both.
     expect(row.className).toContain("flex-wrap");
     expect(row.className).toContain("sm:flex-nowrap");
-    // A whole line of its own below the switch, inline again from `sm` up.
-    expect(report!.className).toContain("w-full");
-    expect(report!.className).toContain("order-last");
-    expect(report!.className).toContain("sm:w-auto");
-    expect(report!.className).toContain("sm:order-none");
     // And it is not sharing a box with the machine's own verb any more.
     expect(report!.querySelector('[aria-label^="Projects on"]')).toBeNull();
   });

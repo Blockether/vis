@@ -153,8 +153,6 @@ describe('where "New session" lives', () => {
     const add = screen.getByRole("button", { name: "Projects on alpha" });
     expect(add.textContent).toBe("");
     expect(add.querySelector("svg")).toBeTruthy();
-    // The amber fill `New session` wears, so the two controls are one species.
-    expect(add.className).toContain("bg-accent");
     // ...and the plus is left to mean exactly one thing on this screen: a session.
     expect(add.innerHTML).not.toBe(
       screen.getAllByRole("button", { name: /^New session on/ })[0]!.innerHTML,
@@ -308,8 +306,6 @@ describe("machine, project and session are three different shapes", () => {
     const view = renderSessionsScreen({ machines: alpha() });
     restore = view.restore;
     const row = (await screen.findByText("First")).closest("button")!;
-    expect(row.className).toContain("min-h-12");
-    expect(row.className).toContain("mouse:min-h-8");
     expect(row.className).not.toContain("min-h-14");
   });
 

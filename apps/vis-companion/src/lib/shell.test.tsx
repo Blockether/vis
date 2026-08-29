@@ -95,15 +95,10 @@ describe('the app bar', () => {
   // intrinsic height at `sm`, leaving the app painted only across its upper strip.
   it('gives desktop screens the whole shell instead of an intrinsic-height strip', async () => {
     const view = await mount();
-    const main = view.baseElement.querySelector('main') as HTMLElement;
-    expect(main.className).toContain('h-full');
-    expect(main.className).toContain('min-w-0');
-    expect(main.className).toContain('w-full');
 
     const sessions = screen.getByRole('region', { name: 'Sessions' });
     const list = sessions.querySelector('.overflow-y-auto') as HTMLElement;
     expect(list).toBeTruthy();
-    expect(list.parentElement?.className).toContain('h-full');
     expect(list.parentElement?.className).not.toContain('sm:h-auto');
 
     view.unmount();

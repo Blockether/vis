@@ -27,12 +27,7 @@ describe("the share the list is holding", () => {
     const label = await screen.findByText("Sharing");
     const detail = screen.getByText(/memo\.m4a — pick a session, or start a new one/);
     const banner = label.closest('[role="status"]');
-    expect(banner?.className).toContain("border-edge-strong");
-    expect(banner?.className).toContain("bg-level-project");
-    expect(banner?.className).toContain("text-footer-strong");
     expect(banner?.className).not.toContain("warn");
-    expect(label.className).toContain("block");
-    expect(detail.className).toContain("block");
     expect(label.nextElementSibling).toBe(detail);
   });
 
@@ -65,7 +60,6 @@ describe("the share the list is holding", () => {
     const discard = await screen.findByLabelText("Discard the share");
     const banner = discard.closest('[role="status"]');
     expect(discard.parentElement).toBe(banner);
-    expect(discard.className).toContain("self-stretch");
 
     await act(async () => {
       discard.click();

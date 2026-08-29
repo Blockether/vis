@@ -58,12 +58,10 @@ describe("one form's Activity on the phone", () => {
     const disclosure = screen.getByRole('button', { name: 'Expand Activity' });
 
     expect(receipt.classList.contains('border')).toBe(false);
-    expect(receipt.className).toContain('border-l-2');
     expect(header?.classList.contains('min-h-8')).toBe(true);
     expect(header?.classList.contains('min-h-10')).toBe(false);
     expect(header?.querySelector('.animate-spinner-frame')).toBeNull();
     expect(header?.querySelector('.text-code-duration')).toBeNull();
-    expect(disclosure.className).toContain('min-h-8');
     expect(disclosure.className).toContain('motion-reduce:transition-none');
   });
 

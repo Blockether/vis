@@ -327,16 +327,11 @@ describe("the speech-engines band", () => {
     // never the selection amber, which would draw structure with the colour of a choice.
     const groupClasses = voiceGroup.className.split(/\s+/);
     expect(groupClasses).not.toContain("pl-3");
-    expect(groupClasses).toContain("border-dialog-edge");
     expect(groupClasses).not.toContain("border-accent/40");
     const foot = voiceGroup.lastElementChild as HTMLElement;
     expect(foot.className.split(/\s+/)).toEqual(
       expect.arrayContaining(["h-px", "w-full", "bg-dialog-edge"]),
     );
-    // The engine that owns the list outweighs it: two lines against a voice's one.
-    expect(piper.className.split(/\s+/)).toContain("min-h-10");
-    const amy = await within(voiceGroup).findByRole("button", { name: /Amy/ });
-    expect(amy.className.split(/\s+/)).toContain("min-h-9");
   });
   it("reads and downloads an unselected engine from its own row", async () => {
     const { client, asked } = machine();

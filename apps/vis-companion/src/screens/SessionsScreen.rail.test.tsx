@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
 
-
 /**
  * A desk, as `DESK_RAIL` in `lib/fit-rows.ts` spells it: a window wide enough to
  * stand a rail beside the list, under a pointer that can hit a 28px row. jsdom has
@@ -192,20 +191,7 @@ describe("the desk's fleet rail", () => {
     await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
 
     const sheet = document.querySelector('section[data-project-root]');
-    expect(sheet?.className).toContain('rounded-panel');
-    // Clip and not hidden: hidden would make the sheet a scroll container of its
-    // own, and the band inside it would stick to the sheet instead of to the list.
-    expect(sheet?.className).toContain('overflow-clip');
     expect(sheet?.className).not.toContain('overflow-hidden');
-
-    // The lane is padding on the scroller, and behind the sheets standing inside it
-    // the card paints the PAGE and keeps no frame of its own — a container holding
-    // objects with their own edges is not an object.
-    const list = document.querySelector('.overscroll-contain');
-    expect(list?.className).toContain('sm:px-3');
-    const page = list?.parentElement;
-    expect(page?.className).toContain('bg-page');
-    expect(page?.className).toContain('sm:border-0');
   });
 
   // Regression, user report (paraphrased: why are the projects on mobile not rounded
@@ -232,8 +218,6 @@ describe("the desk's fleet rail", () => {
     await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
 
     const sheet = document.querySelector('section[data-project-root]');
-    expect(sheet?.className).toContain('rounded-panel');
-    expect(sheet?.className).toContain('mx-3');
     // Nothing about the sheet waits for a desk any more.
     expect(sheet?.className).not.toContain('sm:rounded-panel');
     expect(sheet?.className).not.toContain('sm:bg-panel');
@@ -241,7 +225,6 @@ describe("the desk's fleet rail", () => {
     // And the card holding it is the page here too, one step under the sheet's own
     // paper: that step is the difference a corner is visible against.
     const page = document.querySelector('.overscroll-contain')?.parentElement;
-    expect(page?.className).toContain('bg-page');
     expect(page?.className).not.toContain('bg-panel');
   });
 });

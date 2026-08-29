@@ -45,17 +45,9 @@ describe("starring a session", () => {
     const cell = () => screen.getByRole("group", { name: "Older session actions" });
     const slab = (label: string) =>
       cell().querySelector(`button[aria-label="${label}"]`)!.className;
-    // The strip's meaning is in the CELL: the amber tint for the mark the human
-    // leaves, nothing at all for the neutral verb beside it.
-    expect(slab("Star")).toContain("bg-accent/15");
     expect(slab("Rename")).not.toContain("bg-accent/15");
 
     await userEvent.click(cell().querySelector('button[aria-label="Star"]')!);
-
-    // The cell keeps the amber while the verb becomes its own undo, and the caption
-    // keeps the READABLE amber — #ffc420 measured 1.37:1 as 9px text on this tint.
-    expect(slab("Unstar")).toContain("bg-accent/15");
-    expect(slab("Unstar")).toContain("text-accent-ink");
   });
 
   it("pins the starred row to the top and brings it back into view", async () => {

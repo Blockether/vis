@@ -67,7 +67,6 @@ describe('a live view on the phone', () => {
     expect(html).toContain('Collect inventory');
     expect(html).toContain('db-2 · 1 critical (openssl)');
     expect(screen.getAllByRole('row').length).toBe(3);
-    expect(screen.getByRole('columnheader', { name: 'Findings' }).className).toContain('text-right');
     expect(screen.getByRole('link', { name: 'The run on GitHub' })).toHaveProperty(
       'href',
       'https://example.com/run/42',
@@ -210,7 +209,6 @@ describe('selecting a table row', () => {
 
     const selected = screen.getByRole('button', { name: 'Select db-2' });
     const row = selected.closest('tr') as HTMLTableRowElement;
-    expect(row.className).toContain('bg-accent/10');
     expect(row.getAttribute('aria-selected')).toBe('true');
   });
 
@@ -345,7 +343,6 @@ describe('stopping the run from the phone', () => {
   it('states a refusal where the press happened', () => {
     const html = paint({ onInterrupt: vi.fn(), error: 'That view would not stop.' });
     expect(html).toContain('That view would not stop.');
-    expect(html).toContain('text-err');
   });
 });
 
@@ -361,8 +358,6 @@ describe('what a run says about its own layout', () => {
     const beside = [...list.children].find((row) => row.textContent?.includes('Hosts')) as HTMLElement;
     expect(beside.textContent).toContain('Why');
     expect(beside.innerHTML).toContain('sm:grid-flow-col');
-    // …and the sentence beside a table uses the app's naturally spaced prose rule.
-    expect(beside.innerHTML).toContain('text-left');
     const alone = [...list.children].find((row) => row.textContent?.includes('Elsewhere')) as HTMLElement;
     expect(alone.innerHTML).not.toContain('grid-flow-col');
   });
@@ -378,7 +373,6 @@ describe('what a run says about its own layout', () => {
     expect(table.className).not.toContain('border border-dialog-edge');
     expect(table.querySelector('tbody')?.className).toContain('divide-y');
     const head = table.querySelector('thead') as HTMLElement;
-    expect(head.className).toContain('hidden');
     expect(head.className).toContain('sm:table-header-group');
     const cells = [...table.querySelectorAll('td')];
     expect(cells.some((cell) => cell.className.includes('border border-dialog-edge'))).toBe(false);

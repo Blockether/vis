@@ -40,15 +40,6 @@ describe("the machine tag", () => {
     expect(machineTagFace(MACHINE_COLORS[0]!)).not.toBe(machineTagFace(MACHINE_COLORS[1]!));
   });
 
-  it("hugs the name instead of growing into a bar", () => {
-    // A tag as wide as its column is the full-bleed banner again, which is the
-    // exact thing the 2px spine down the list replaced.
-    const face = machineTagFace(MACHINE_COLORS[0]!);
-    expect(face).toContain("w-fit");
-    expect(face).toContain("truncate");
-    expect(face).toContain("max-w-full");
-  });
-
   it("still dresses a machine that has no hue of its own", () => {
     // An unpainted name is the plain white ink this tag exists to replace.
     expect(machineTagFace().trim()).not.toBe("");

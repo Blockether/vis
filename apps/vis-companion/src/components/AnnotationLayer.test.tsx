@@ -91,7 +91,6 @@ describe("AnnotationLayer", () => {
       />,
     );
     const canvas = layer();
-    expect(canvas.className).toContain("pointer-events-none");
     draw(canvas, [
       [1, 1],
       [5, 5],
@@ -189,7 +188,6 @@ describe("PenToolbar", () => {
     ).toHaveLength(1);
     for (const swatch of swatches) {
       expect(swatch.getAttribute("aria-label")).toMatch(/pen$/u);
-      expect(swatch.className).toContain("min-h-11");
       expect(swatch.className).not.toContain("sm:min-h");
     }
     act(() => (swatches[0] as HTMLButtonElement).click());
@@ -264,7 +262,6 @@ it("drops the stroke in progress when its owner cancels it", () => {
 it("refuses to be selected, so letters are written and not highlighted", () => {
   mount(<AnnotationLayer active color="--err" />);
   const canvas = layer();
-  expect(canvas.className).toContain("select-none");
   expect(canvas.className).toContain("[-webkit-touch-callout:none]");
 
   // And a highlight already on the page does not survive the next stroke.

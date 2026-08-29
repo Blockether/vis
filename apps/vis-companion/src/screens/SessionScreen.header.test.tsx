@@ -5,7 +5,6 @@ import userEvent from "@testing-library/user-event";
 
 import { renderSessionScreen, sessionFixture } from "./session-screen-harness";
 
-
 // Regression, user report (a tablet showed a full band of composer chrome under
 // the open artifacts sheet): the sheet covered the transcript and left the
 // composer standing under it — chrome for a message nobody is writing, and on a
@@ -143,32 +142,7 @@ describe("the session heading under a notch", () => {
       await screen.findByRole("button", { name: "Back to sessions" })
     ).closest("header")!;
     const worn = band.className.split(/\s+/).filter(Boolean);
-
-    expect(worn).toContain("min-h-13");
     expect(worn).toContain("pt-[env(safe-area-inset-top)]");
     expect(worn).toContain("box-content");
-  });
-});
-
-// Regression, user report on desktop macOS (paraphrased: the top of the session
-// screen wastes far too much room): the band wore ONE density everywhere — a
-// phone's 52px floor, a phone's 6px title padding and a notch strip — so on a
-// pointer the title floated with ~14px more empty paint above it than below,
-// and a fullscreen window on a notched Mac reports a real
-// `safe-area-inset-top`, which pushed the whole heading down again.
-describe("the session heading on a pointer", () => {
-  it("drops the notch strip and takes a pointer's density", async () => {
-    renderSessionScreen({ session: sessionFixture({ id: "pointer" }) });
-
-    const band = (
-      await screen.findByRole("button", { name: "Back to sessions" })
-    ).closest("header")!;
-    const worn = band.className.split(/\s+/).filter(Boolean);
-
-    expect(worn).toContain("mouse:pt-0");
-    expect(worn).toContain("mouse:min-h-9");
-
-    const title = band.querySelector("h1")!.parentElement!;
-    expect(title.className.split(/\s+/)).toContain("mouse:py-1");
   });
 });

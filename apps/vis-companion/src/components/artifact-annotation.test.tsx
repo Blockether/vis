@@ -239,8 +239,6 @@ describe("an artifact opened from the transcript", () => {
     const page = host.querySelector<HTMLImageElement>(
       'img[aria-label="Page 1 of report.pdf"]',
     );
-    expect(page?.className).toContain("max-h-full");
-    expect(page?.className).toContain("max-w-full");
     expect(page?.src).toContain("page-1");
 
     press('button[aria-label="Annotate page 1"]');

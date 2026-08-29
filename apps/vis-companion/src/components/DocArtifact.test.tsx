@@ -128,9 +128,6 @@ describe("DocPreview", () => {
   it("is itself the control that opens the document", () => {
     const html = preview();
     expect(html).toContain('aria-label="Open report.pdf"');
-    expect(html).toContain("min-h-12");
-    expect(html).toContain("px-3");
-    expect(html).toContain("w-full");
     // One press target in the row, and no second word beside it.
     expect(html.match(/<button/g)).toHaveLength(1);
     expect(text(html)).not.toContain("Open ");
@@ -154,7 +151,6 @@ describe("DocStack", () => {
 
   it("is the one frame the rows live in", () => {
     const html = stack();
-    expect(html).toContain("border border-code-edge");
     expect(html).toContain("divide-y");
   });
 
@@ -193,12 +189,9 @@ describe("an opened document", () => {
 
   it("owns the whole viewport", () => {
     const markup = overlay();
-    expect(markup).toContain("inset-0");
-    expect(markup).toContain("h-full");
     expect(markup).not.toContain("h-[100dvh]");
     expect(markup).toContain("flex-1");
     expect(markup).not.toContain("60vh");
-    expect(markup).toContain("w-full");
     expect(markup).toContain('aria-label="Close report.pdf"');
   });
 
@@ -233,7 +226,6 @@ describe("an opened document", () => {
     const { view, screenEl } = await openPreview("shelled.pdf");
     expect(shell.contains(screenEl)).toBe(true);
     expect(view.container.contains(screenEl)).toBe(false);
-    expect(screenEl.className).toContain("absolute");
     expect(screenEl.className).not.toContain("fixed");
 
     view.unmount();
@@ -246,7 +238,6 @@ describe("an opened document", () => {
     const { view, screenEl } = await openPreview("bodied.pdf");
     expect(view.container.contains(screenEl)).toBe(false);
     expect(screenEl.closest("body")).toBe(document.body);
-    expect(screenEl.className).toContain("fixed");
     view.unmount();
   });
 
@@ -273,7 +264,6 @@ describe("an opened document", () => {
       screen.getByRole("button", { name: "Versions of threaded.pdf" }),
     );
     for (const mark of [screen.getByText("latest"), screen.getByText("reading")]) {
-      expect(mark.className).toContain("text-accent-ink");
       expect(mark.className).not.toMatch(/(?:^|\s)text-accent(?:\s|$)/);
     }
   });

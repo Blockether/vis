@@ -53,7 +53,6 @@ describe("spoken transcript", () => {
     expect(html).toContain('aria-expanded="true"');
     expect(html).toContain('role="slider"');
     expect(html).toContain('aria-label="Speech position"');
-    expect(html).toContain("text-justify");
     expect(html).toContain('lang="en"');
   });
 
@@ -136,17 +135,11 @@ describe("spoken transcript", () => {
         block={{ id: "speech-1", type: "speech", text: "Listen again." }}
       />,
     );
-    const caption = html.slice(
-      html.indexOf("data-disclosure-toggle"),
-      html.indexOf("</button>"),
-    );
 
     // Above the border, not in it.
     expect(html.indexOf("data-disclosure-toggle")).toBeLessThan(
       html.indexOf("<section"),
     );
-    expect(caption).toContain("uppercase");
-    expect(caption).toContain("text-chip");
 
     const view = render(<SpeechBlock text="Listen again." />);
     try {
@@ -192,7 +185,6 @@ describe("spoken transcript", () => {
     );
 
     expect(disclosure.indexOf("<svg")).toBeLessThan(disclosure.indexOf("Transcript"));
-    expect(disclosure).toContain("rotate-90");
   });
 
   it("restarts speech at the position pressed on the wave", async () => {
@@ -1173,9 +1165,6 @@ describe("a markdown table", () => {
     ).replace(/&amp;/g, "&");
     expect(cellRules).toContain("[&_code]:[word-break:normal]");
     expect(cellRules).toContain("[&_a]:[word-break:normal]");
-    // The other half of the contract: a table too wide for the bubble reaches for
-    // its own scroller instead of shredding a column to fit.
-    expect(markup).toContain("overflow-x-auto");
     expect(text(markup)).toContain("manifest.edn");
   });
 
@@ -1251,7 +1240,6 @@ describe("a turn that has not answered yet", () => {
     expect(html).toContain("animate-spinner-frame");
   });
 });
-
 
 // Regression, session 0ec1e9f3-23d5-4070-a17e-46f8e7f514e8: the moment a long
 // streamed answer became the finished one, the transcript flickered — it jumped

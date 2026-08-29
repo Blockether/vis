@@ -222,8 +222,6 @@ describe("picking a passage on a touch screen", () => {
     // The native callout is what broke it, so the prose does not offer one on a
     // touch screen; a mouse keeps its drag-selection.
     const prose = paragraph?.closest("div[class*=overflow-y-auto]");
-    expect(prose?.className).toContain("select-none");
-    expect(prose?.className).toContain("mouse:select-text");
     expect(prose?.className).toContain("[-webkit-touch-callout:none]");
 
     act(() => root.unmount());
@@ -242,9 +240,6 @@ describe("picking a passage on a touch screen", () => {
         chrome={chrome}
       />,
     );
-    // The column itself does not scroll — only the prose inside it does — and it
-    // ends above the home indicator now that nothing is docked under it.
-    expect(markup).toContain("overflow-hidden");
     expect(markup).toContain("flex-1 touch-manipulation overflow-y-auto");
     expect(markup).toContain("env(safe-area-inset-bottom)");
 
@@ -253,8 +248,6 @@ describe("picking a passage on a touch screen", () => {
     // The ✕'s own cell with a word in it: welded by the band's hairline and as
     // tall as the band, never a bordered button parked on a title.
     expect(band).toContain(">Save<");
-    expect(band).toContain("border-l");
-    expect(band).toContain("self-stretch");
     expect(column).not.toContain(">Save<");
   });
 });
@@ -618,7 +611,6 @@ describe("a remark already written", () => {
     const body = [...opened.comments()!.querySelectorAll("span")].find(
       (span) => span.textContent === "Stale.",
     )!;
-    expect(body.className).toContain("text-justify");
     expect(body.className).toContain("italic");
 
     // Pressing the card edits; the one mark on it still removes.

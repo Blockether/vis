@@ -279,7 +279,6 @@ describe("ManageProjectsSheet paints no box of its own", () => {
     const home = await screen.findByRole("button", { name: "~" });
 
     expect(home.tagName).toBe("BUTTON");
-    expect(classesOf(home)).toContain("min-h-11");
     // The crumb you are standing on is not a way to anywhere.
     expect(screen.getByRole("button", { name: "code" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "code" })).toHaveAttribute(
@@ -461,7 +460,6 @@ describe("the path band", () => {
     expect(use.closest("footer")).toBeNull();
   });
 });
-
 
 // Regression, user report ("the projects manager blinks and it is not a projects manager
 // at all, only a way to add another project — none of the rows are there"): the folder

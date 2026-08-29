@@ -29,13 +29,6 @@ describe("every dialog header is the one dialog header", () => {
     );
 
     expect(document.querySelectorAll("header")).toHaveLength(1);
-    // The same height the list headers on the same screen stand at, tightened only for
-    // a pointer.
-    expect(band().className).toContain("min-h-12");
-    expect(band().className).toContain("mouse:min-h-9");
-    expect(band().className).toContain("bg-dialog-title");
-    expect(band().className).toContain("rounded-b-panel");
-    expect(band().className).toContain("overflow-hidden");
     expect(band().className).not.toContain("rounded-t-panel");
   });
 
@@ -151,10 +144,6 @@ describe("every dialog header is the one dialog header", () => {
     // A verb is a CELL of the band, and the way out is still the last one.
     expect(cells).toContain(refresh);
     expect(cells.indexOf(refresh)).toBeLessThan(cells.indexOf(close));
-    // It stretches to the band's height exactly like the ✕ one hairline away from it,
-    // rather than floating a 32px box in a 48px row.
-    expect(refresh.className).toContain("self-stretch");
-    expect(refresh.className).toContain("border-l");
     expect(refresh.className).not.toContain("self-center");
 
     await userEvent.click(refresh);

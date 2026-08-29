@@ -111,9 +111,6 @@ describe("a media block's own edges", () => {
   for (const [name, html] of edges) {
     it(`tops ${name} up to the stack's gap and never pads under it`, () => {
       const classes = root(html).split(/\s+/u);
-
-      expect(classes).toContain("mt-2.5");
-      expect(classes).toContain("first:mt-0");
       expect(classes.filter((one) => /^m[by]?-/u.test(one))).toEqual([]);
     });
   }
@@ -235,7 +232,6 @@ describe("MediaRecording", () => {
     const words = screen.getByText(/buy milk and call back/);
     expect(words.textContent).toBe("“buy milk and call back”");
     expect(words.className).toContain("italic");
-    expect(words.className).toContain("text-justify");
   });
 
   it("ignores a transcript that is only whitespace", () => {

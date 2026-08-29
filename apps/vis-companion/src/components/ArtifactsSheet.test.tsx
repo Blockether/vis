@@ -197,7 +197,6 @@ describe("the artifacts chip", () => {
     expect(html).toContain('aria-label="12 artifacts produced by the model"');
     // The word does not fit a phone header, so the pixels carry a clip and `12`.
     expect(text(html)).toContain("12");
-    expect(html).toContain("hidden sm:inline");
   });
 
   // Regression: the chip stood 44px, then 32px, tall beside a 24px session id, so the
@@ -240,7 +239,6 @@ describe("the artifacts sheet", () => {
     const html = sheet([picture, document, recorded]);
     expect(html).toContain('id="artifacts-surface"');
     expect(html).toContain('role="region"');
-    expect(html).toContain("absolute inset-0");
   });
 
   // Regression, user request: CSV tiles showed a generic page even though the artifact
@@ -288,21 +286,11 @@ describe("the artifacts sheet", () => {
   // sheet did not have. It has the band now, and the ✕ inherits it like every other.
   it("opens with the app's own band, and leaves by the ✕ standing in it", () => {
     const html = sheet([picture]);
-    const band = /<header[^>]*class="([^"]*)"/.exec(html)?.[1] ?? "";
-    expect(band).toContain("bg-dialog-title");
-    expect(band).toContain("text-dialog-title-foreground");
     expect(html).toContain("<h2");
     expect(text(html)).toContain("Artifacts");
 
     const close = classesOf(html, 'aria-label="Close artifacts"');
-    expect(close).toContain("self-stretch");
-    expect(close).toContain("w-12");
-    // Still no paint of its own: the band is dark, so the mark is.
-    expect(close).toContain("text-current");
     expect(close).not.toContain("bg-dialog-title");
-    // The strip below it keeps the same inset on both sides now that nothing is
-    // welded to its right edge.
-    expect(html).toContain("bg-panel px-3");
   });
 
   // Regression, user report ("big on Ipad we don't need this"): a permanent band under
@@ -388,10 +376,6 @@ describe("the artifacts sheet", () => {
       ...view.baseElement.querySelectorAll(`.${CSS.escape(mask)}`),
     ];
     expect(masked).toHaveLength(1);
-    // The one masked element is the clipping box itself, so black-to-transparent spans
-    // exactly the height the letters are cut at.
-    expect(masked[0].className).toContain("h-24");
-    expect(masked[0].className).toContain("overflow-hidden");
     expect(view.baseElement.querySelector('[aria-hidden="true"].text-chip')).not.toBeNull();
     view.unmount();
     vi.unstubAllGlobals();
@@ -414,9 +398,6 @@ describe("the artifacts sheet", () => {
     );
     const html = view.baseElement.innerHTML;
     expect(html).not.toContain("# Note");
-    expect(html).toContain("font-bold");
-    // The peek starts where the name below it starts.
-    expect(html).toContain("bg-panel-2 px-2 py-1.5");
     // `MD` is the meta line's word, once, not a label stamped over the document.
     expect(view.baseElement.textContent?.match(/MD/g)).toHaveLength(1);
     view.unmount();
@@ -443,7 +424,6 @@ describe("the artifacts sheet", () => {
     const peek = view.baseElement.querySelector('[aria-hidden="true"].text-chip');
     const rows = [...(peek?.children ?? [])].map((row) => row.className);
     expect(rows.length).toBeGreaterThan(1);
-    expect(rows[0]).toContain("pr-9");
     expect(rows.slice(1).join(" ")).not.toContain("pr-9");
     view.unmount();
     vi.unstubAllGlobals();
@@ -474,7 +454,6 @@ describe("the artifacts sheet", () => {
   it("leaves the plate on a document it cannot read", () => {
     const html = sheet([document]);
     expect(text(html)).toContain("PDF");
-    expect(html).toContain("bg-dialog-hint/50");
   });
 
   it("puts the band above the filter strip, and the strip above the grid", () => {
@@ -541,8 +520,6 @@ describe("the artifacts sheet", () => {
       /<button[^>]*aria-pressed="[^"]*"[^>]*class="([^"]*)"/.exec(
         sheet([document]),
       )?.[1] ?? "";
-    expect(strip.split(" ")).toContain("min-h-7");
-    expect(strip.split(" ")).toContain("mouse:min-h-6");
     expect(strip).not.toMatch(/sm:min-h|sm:h-/);
   });
 
@@ -613,8 +590,6 @@ describe("the artifacts sheet, paged", () => {
       )?.[1] ??
       /<button[^>]*class="(mt-3[^"]*)"/.exec(html)?.[1] ??
       "";
-    expect(reveal.split(" ")).toContain("min-h-8");
-    expect(reveal.split(" ")).toContain("mouse:min-h-7");
     // A width query may never shrink a hit box; only a pointer may.
     expect(reveal).not.toMatch(/sm:min-h|sm:h-/);
   });
@@ -669,7 +644,6 @@ describe("an artifact with a history", () => {
       screen.getByRole("button", { name: "Show 3 versions of chart.png" }),
     );
     const mark = await screen.findByText("latest");
-    expect(mark.className).toContain("text-accent-ink");
     expect(mark.className).not.toMatch(/(?:^|\s)text-accent(?:\s|$)/);
   });
   // The dot cannot live INSIDE the tile: a button inside a button is invalid
@@ -684,7 +658,6 @@ describe("an artifact with a history", () => {
   // with a negative margin — placed `right-1` on a tile, it hung outside the card.
   it("keeps the history control inside the card it belongs to", () => {
     const dots = classesOf(sheet([threaded]), "versions of chart.png");
-    expect(dots).toContain("bg-dialog-title");
     expect(dots).not.toContain("-mr-3");
     expect(dots).not.toContain("sm:-mr-4");
     expect(dots).not.toContain("justify-items-end");

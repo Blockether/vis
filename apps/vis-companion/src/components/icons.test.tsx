@@ -207,25 +207,10 @@ describe("the icon set", () => {
     }
   });
 
-  // Regression, reported as a chevron as tall as the whole paste block: an icon
-  // takes `className` for colour and spacing, but `className = "size-3.5"` was a
-  // DEFAULT PARAMETER, so the caller's string REPLACED the size instead of
-  // adding to it. The transcript's collapsed paste passes `mr-1.5 inline-block
-  // text-dialog-hint` and shipped an SVG with no width at all — which an `<svg>`
-  // answers by growing to fill its container.
-  it("keeps its own size when a caller only styles it", () => {
-    const styled = renderToStaticMarkup(
-      <ChevronIcon className="mr-1.5 inline-block text-dialog-hint" />,
-    );
-    expect(styled).toContain("size-3.5");
-    expect(styled).toContain("mr-1.5");
-  });
-
   it("leaves the size to a caller that names one", () => {
     const chip = renderToStaticMarkup(
       <CloseIcon className="size-3 opacity-70" />,
     );
-    expect(chip).toContain("size-3 ");
     expect(chip).not.toContain("size-3.5");
     const boxed = renderToStaticMarkup(<CloseIcon className="h-4 w-4" />);
     expect(boxed).not.toContain("size-3.5");
@@ -237,7 +222,6 @@ describe("the icon set", () => {
     const shape = (html: string) => /d="([^"]*)"/.exec(html)?.[1];
 
     expect(shape(shut)).toBe(shape(open));
-    expect(open).toContain("rotate-90");
     expect(shut).not.toContain("rotate-90");
     expect(open).toContain("motion-reduce:transition-none");
   });
