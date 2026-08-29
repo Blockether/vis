@@ -1,26 +1,33 @@
 ---
-name: apple-design
+name: design
 description: >
   The binding design contract for every Vis surface — the companion app (web/iOS/Android) and the
   TUI. Read it BEFORE writing or changing a screen, a row, a dialog, a mockup or a screenshot
-  review, and again before saying a design is done. Distilled from Apple's Human Interface
-  Guidelines and bound to this repo's real tokens and real components: the eight-step type scale,
-  the two shipped font families, the shared TUI/app palette with measured contrast ratios, the
-  painted face vs the finger's target, one-edge chrome, the control contracts already written in
-  `ui.tsx`, required states, motion budget, and the anti-slop list. Use it whenever the task
-  mentions design, UI, UX, layout, spacing, typography, colour, icons, accessibility, dark mode,
-  "does this look good", "modernize", "redesign", or hands over a screenshot of a screen.
+  review, before naming a new screen's copy, and again before saying a design is done. Distilled
+  from Apple's Human Interface Guidelines and Anthropic's frontend-design skill, bound to this
+  repo's real tokens and real components: the eight-step type scale, the two shipped font families,
+  the shared TUI/app palette with measured contrast ratios, the painted face vs the finger's
+  target, one-edge chrome, the control contracts already written in `ui.tsx`, required states,
+  motion budget, the anti-slop list, the make protocol and the words that ship with a screen. Use
+  it whenever the task mentions design, UI, UX, layout, spacing, typography, colour, icons,
+  accessibility, dark mode, copy for a control or an empty state, "does this look good",
+  "modernize", "redesign", "make it distinctive", "it looks templated", or hands over a screenshot
+  of a screen.
 ---
 
-# Apple design, as this repo builds it
+# Design, as this repo builds it
 
-Adapted from Apple's HIG (via `github.com/dickwu/apple-design-skill`) into rules that hold for a
-**terminal-native product**: JetBrains Mono, one accent, hairlines. The aesthetic is not up for
-review — the *hierarchy, density, contrast, states and honesty* are. Nothing here overrides
-`AGENTS.md` → **Companion UI** (`ui.tsx` closed vocabulary, Tailwind v4 tokens only, `sm:` for
-room / `mouse:` for a cursor) or **TUI paint** (the paint docstrings in
+Two sources, one contract. Apple's HIG (via `github.com/dickwu/apple-design-skill`) supplies the
+platform rules; Anthropic's `frontend-design` skill supplies the refusal to ship a default — and
+both are bound here to a **terminal-native product**: JetBrains Mono, one accent, hairlines. The
+aesthetic is not up for review — the *hierarchy, density, contrast, states, honesty and words* are.
+Nothing here overrides `AGENTS.md` → **Companion UI** (`ui.tsx` closed vocabulary, Tailwind v4
+tokens only, `sm:` for room / `mouse:` for a cursor) or **TUI paint** (the paint docstrings in
 `extensions/channels/vis-channel-tui/`). Those say what you build *with*; this says what is
 worth building.
+
+**Two protocols, and you are always in one of them.** Making a screen is §13; reviewing one is §9.
+Both end at §10, "done means".
 
 Beautiful here is not "less". Apple's screens are dense — a Mail row carries five facts. They read
 calm because ONE thing leads, the paint is tight, the ink is measured and every control is exactly
@@ -376,6 +383,20 @@ Reject on sight, in a mockup or in a diff:
 16. Facts deleted to make a screen look calm.
 17. A mark drawn by hand where a name in `icons.tsx` exists — a bespoke `<path>`, a terminal glyph
     (`✓ ✗ ● ◇ → ▾`), or two icon families in one app.
+18. A look reached by defaulting rather than by choosing. Generated design clusters around three:
+    (a) warm cream ground near `#F4F1EA`, high-contrast serif display, terracotta accent;
+    (b) near-black ground under a single acid-green or vermilion accent; (c) broadsheet columns of
+    hairline rules at zero radius. Each is legitimate for some brief and none is legitimate as a
+    reflex.
+
+**And the normalization that matters here, because this repo lives next door to two of them.** Vis
+is cream (`Blockether Light`), hairline-ruled, zero-radius on every plane, and set in mono — which
+is cluster (a) and cluster (c) standing in the same room. That is not this skill failing its own
+rule: it is the *brief*, chosen deliberately, measured in §2, and pinned by `ui.test.tsx`. **A brief
+that names a direction always wins, and this one names it.** Item 18 therefore bites in exactly one
+place: when you reach past this system for a look — a serif display, a second accent, a gradient, a
+radius on a plane — because the screen felt plain. The cure for a plain screen is §0, not a new
+palette.
 
 ## 9. Review protocol
 
@@ -496,3 +517,65 @@ wider than SF Mono, so every column in the frame measured the wrong product.
    glyph clips at the device edge, a path chip wraps mid-word, a keyboard chip appears on a phone.
 4. Fix, re-render, look again. Ship the HTML as the artifact — it is inspectable at any zoom, and it
    is what §10 is checked against.
+
+## 13. Make protocol — plan, critique the plan, build, critique the build
+
+§9 is what to do with a screen that exists. This is what to do before one does. It is two passes,
+and the first one writes nothing to `src/`.
+
+**Pass one — the plan, in four lines.** Before any code, name:
+
+1. **Lead.** §0's answer for this screen, in one noun phrase. What wins the eye, and what is
+   subordinate to it by size, weight, ink, position — in that order.
+2. **Type.** Which of the eight steps appear, and which family carries each (§1). Three steps in a
+   row, four in a screen, and mono only where the machine produced the fact.
+3. **Structure.** The bands, the plane they lie on, the one edge that carries chrome (§4). Prose
+   sentence and, when the layout is not obvious, an ASCII wireframe at §5's viewport.
+4. **Signature.** The one element this screen is remembered by. **Spend your boldness in exactly
+   one place** and keep everything around it disciplined. A screen with two signatures has none.
+
+**Structure encodes, never decorates.** Numbering, eyebrows, dividers and labels must be true about
+the content — number a list only when order is a fact the reader needs, rule a band only where the
+material actually changes. `01 / 02 / 03` down a set of peers is decoration wearing information's
+clothes.
+
+**Pass two — critique the plan before building it.** Ask the one question that makes this skill
+worth reading: *would I have produced this plan for a different screen in this app?* Work a similar
+brief through and see where you land. Anything that survives unchanged is a reflex, not a decision
+— revise it, and say in one line what you changed and why. Only then write code, and derive every
+token from the revised plan.
+
+**Then build, and critique what you built** — §12 renders it, §10 is the bar, §8 is the reject
+list. Chanel's rule applies to a working tool as much as to an outfit: before you call it done,
+look once more and take one thing off.
+
+**What a closed system changes about all this.** The frontend-design instinct is to reach for a new
+palette, a new pair of faces, a real aesthetic risk. Here the palette is measured (§2), the two
+families are declared once (§1), and the components are a closed vocabulary (§5) — so the risk
+budget is not spent on *materials*, it is spent on the **lead and the signature**: what this screen
+puts first, and the one move that makes it unmistakably ours. Restyling still changes paint, never
+behaviour (§5).
+
+## 14. Words are design material
+
+Copy is not a layer applied after the boxes; it is the same craft as spacing and ink, and it makes
+a screen as templated as any gradient can. Before writing a label, ask what the design needs to say
+and how it helps a person navigate.
+
+- **Write from the user's side of the screen.** Name things by what a person controls and
+  recognizes, never by how the system is built. Someone manages notifications, not webhook config;
+  in this repo they connect a **machine**, not a gateway daemon process.
+- **Active voice, and the verb is the button.** "Save changes", never "Submit". An act keeps ONE
+  name through the whole flow — the control that says "Publish" produces the state that says
+  "Published". This is the same rule §5 already enforces on marks, applied to words: the vocabulary
+  IS the signposting, and consistency is how the product is learned.
+- **Be specific rather than clever.** A label that is a joke is a label read twice.
+- **Failure and emptiness are direction, not mood.** An error says what happened and what to do, in
+  the interface's voice — it does not apologize, and it is never vague. An empty screen is an
+  invitation to act, not a shrug. This is why §7's states are required and why "honesty" sits beside
+  hierarchy at the top of this file.
+- **Sentence case, plain verbs, no filler**, tone matched to the audience (§1's caps rule is the
+  hard edge of this). **Each element does exactly one job**: a label labels, an example
+  demonstrates, and nothing quietly does double duty.
+- **Every word in a mockup is real product copy.** Placeholder and lorem text in a shipped screen is
+  §8.10; sample text in an artifact is a claim about a product nobody wrote.
