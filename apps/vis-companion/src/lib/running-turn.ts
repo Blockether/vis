@@ -113,9 +113,6 @@ function upsertRunningForm(
   next: TranscriptForm,
 ): TranscriptIteration {
   const key = next.block_id == null ? "" : String(next.block_id);
-  // A form frame without its owner coordinate is malformed. Silently inventing a
-  // card here used to turn routing defects into duplicate or empty transcript UI.
-  if (!key) return iteration;
 
   const forms = [...(iteration.forms ?? [])];
   const index = forms.findIndex((form) => String(form.block_id ?? "") === key);
@@ -142,7 +139,6 @@ function applyFormActivity(
   if (iterationIndex < 0) return turn;
 
   const key = eventBlockKey(event);
-  if (!key) return turn;
   const forms = [...(turn.iterations[iterationIndex].forms ?? [])];
   const formIndex = forms.findIndex(
     (form) => String(form.block_id ?? "") === key,

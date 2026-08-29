@@ -97,6 +97,20 @@ describe("Activity ownership inside a running turn", () => {
     );
 
     expect(turn?.iterations).toEqual([]);
+
+    // The iteration exists but owns no such block: the frame must change nothing.
+    const owner = started();
+    expect(
+      reduceRunningTurnEvent(
+        owner,
+        event({
+          type: "block.activity",
+          iteration: 1,
+          block_id: 7,
+          activity: activityFixture,
+        }),
+      ),
+    ).toBe(owner);
   });
 
   it("keeps ticker progress separate from the form-owned Activity snapshot", () => {
