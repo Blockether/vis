@@ -13,8 +13,8 @@
    is immutable, so when a commit that broke a rule is already on `main` the
    cutoff MOVES past it rather than staying red forever — the hook keeps new work
    honest, and this test keeps the hook from being skipped. It last moved past
-   `269f5dbd2`, whose subject ran to 82 characters."
-  "2026-08-27T20:37:00+00:00")
+   `69f63a613`, which carried no session trailer and a body over six lines."
+  "2026-08-29T08:01:00+00:00")
 
 (def ^:private max-subject-chars 72)
 
