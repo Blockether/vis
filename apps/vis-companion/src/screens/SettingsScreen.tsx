@@ -78,11 +78,7 @@ import {
 } from "../lib/storage";
 import { speechOutput } from "../lib/speech";
 import {
-  CircleCheckIcon,
-  CircleDashedIcon,
-  CircleDotIcon,
   DownloadIcon,
-  MARK_NUDGE,
   PlayIcon,
   PlusIcon,
   StopIcon,
@@ -340,38 +336,27 @@ function GatewayPanels({
           </p>
         </SettingsPanel>
       ) : (
+        // A band's meta says what the list itself CANNOT — `unauthorized`, `app
+        // logs`, `this device`. A tally of the rows you are already looking at is
+        // not that, and it said the same nothing over every group.
         groups.map((group) => (
-          <SettingsPanel
-            key={group.id}
-            title={group.title}
-            meta={`${group.toggles.length} ${group.toggles.length === 1 ? "option" : "options"}`}
-          >
+          <SettingsPanel key={group.id} title={group.title}>
             <div className="divide-y divide-dialog-edge">
               {group.toggles.map((toggle) => {
                 const busy = pending === toggle.id;
-                // THE STATE IS THE SHAPE, and the colour only agrees with it: the
-                // ticked ring is on, the dashed ring is off, and a setting that
-                // holds a VALUE rather than a switch carries the dot — one ring,
-                // three interiors, the same set the live view paints.
-                const StateMark =
-                  toggle.type !== "boolean"
-                    ? CircleDotIcon
-                    : toggle.enabled
-                      ? CircleCheckIcon
-                      : CircleDashedIcon;
+                // Regression, user report (paraphrased: now that the row ends in a
+                // real toggle, what is the mark on the left for): the row said its
+                // state twice — a ticked ring in one alphabet and, a column away, the
+                // switch that already says it — and every value row wore the same dot,
+                // which changed for nothing. One row, one anchor (anti-slop 3 and 5).
+                // The marks that stayed are the ones nothing else in their row can
+                // say: a machine's health, a provider's session, an MCP server's
+                // reach.
                 return (
                   <div
                     key={toggle.id}
-                    className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 transition-colors hover:bg-hover sm:px-4 sm:py-2"
+                    className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 transition-colors hover:bg-hover sm:px-4 sm:py-2"
                   >
-                    <StateMark
-                      className={`${MARK_NUDGE} ${
-                        toggle.type === "boolean" && toggle.enabled
-                          ? "text-ok"
-                          : "text-dialog-hint"
-                      }`}
-                    />
-
                     <div className="min-w-0">
                       <p className="break-words font-mono text-ui font-bold text-white">
                         {toggle.label}
@@ -403,7 +388,7 @@ function GatewayPanels({
                     )}
 
                     {toggle.type === "enum" && toggle.choices && (
-                      <div className="col-span-full col-start-2 flex min-w-0 flex-wrap gap-1.5">
+                      <div className="col-span-full flex min-w-0 flex-wrap gap-1.5">
                         {toggle.choices.map((choice) => {
                           const selected = toggle.value === choice;
                           return (
@@ -2473,10 +2458,7 @@ export function SettingsDialog({
               </div>
             )}
 
-            <SettingsPanel
-              title="Theme"
-              meta={`${THEMES.length} available`}
-            >
+            <SettingsPanel title="Theme">
               <div className="grid grid-cols-1 gap-px bg-dialog-edge">
                 {/* NO MODE COLUMN. Every theme is named `Blockether Light`, `Solarized
                     Dark`, `Vis Light`, so a trailing `light`/`dark` restated the last word
