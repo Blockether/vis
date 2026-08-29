@@ -3440,17 +3440,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   // arming it cannot change the height it was armed with.
   const paintSkip = useMeasuredPaintSkip(streaming);
 
-  // A turn that has been sent but has not been answered by one token yet is the
-  // longest silence on this screen (measured on this machine: 6.4s median from
-  // submit to the first painted token, 10.5s at p90, never under a second). The
-  // phase line alone left the space where the answer will land empty, and an
-  // empty screen under a sent message reads as a hang. Reserve the band the
-  // first thinking will fill, on the same paper and the same pulse the media
-  // slots already use, and let the phase line under it say what is happening.
-  // It is a RESERVATION, not progress: nothing here claims to know how long.
-  const awaitingFirstToken =
-    streaming && !turn.iterations?.length && !blocks.length && !fallback;
-
   return (
     <article className="flow-root mt-4 w-full" aria-busy={streaming} ref={paintSkip}>
       <div
@@ -3468,12 +3457,6 @@ export const AssistantMessage = memo(function AssistantMessage({
           sid={sid}
           liveActivities={liveActivities}
         />
-        {awaitingFirstToken && (
-          <div
-            className="my-2 h-16 w-full animate-pulse bg-thinking-surface motion-reduce:animate-none"
-            aria-hidden="true"
-          />
-        )}
         {/* Message prose sits on the SAME canonical step as the trace it grows out of:
             tool results, thinking bands and code cards are all `text-ui` (11px), so an
             answer at `text-body` (12px) was one px of drift, not a hierarchy. The role
