@@ -171,7 +171,7 @@ faces `ui.tsx` ships; a mockup that repaints them is proposing a change and has 
 | mic while recording | `--warn-surface`, pulsing | `--err` |
 | mic in voice-conversation mode | `--accent` | `--accent-fg` |
 | the project's new-session verb | `--primary` (amber fill) | `--primary-fg` |
-| band close (`CloseButton isBand`) | Blockether Light: compact `--primary` disk; elsewhere the band's paper | `--primary-fg` on Light; elsewhere the band's ink |
+| band close (`CloseButton isBand`) | Blockether Light: compact `--primary` disk; Blockether Dark: that same disk in `--primary-fg`; elsewhere the band's paper | `--primary-fg` on Light, `--primary` on Dark; elsewhere the band's ink |
 | star on a session | — | `--warning` (never `--warning-border`: 2.9:1) |
 | LIVE / WAITING chip | `--ok-bg` / `--warning-bg` | `--ok` / `--warning`, plus the word |
 
@@ -180,7 +180,8 @@ faces `ui.tsx` ships; a mockup that repaints them is proposing a change and has 
   band because the verb belongs to the project, and that is one control repeated, not two competing
   acts. Two DIFFERENT filled verbs in one view are a tie, not a hierarchy. The sole chrome exception
   is `CloseButton isBand`: a fixed 32px circle (28px on a pointer), carrying only `CloseIcon`, whose
-  amber fill identifies the app's way out on Blockether Light. It may coexist with the primary verb
+  branded fill identifies the app's way out on both Blockether palettes — amber on Light's dark band,
+  and the band's own ink under an amber mark on Dark's amber band. It may coexist with the primary verb
   because it is navigation, not another offered act; it never licenses a filled label or rectangle.
 - **Never encode meaning in colour alone.** A green dot and a grey dot are one dot to a
   colour-blind reader and to an 8-colour terminal: the state also needs a glyph, a word, or a
@@ -289,10 +290,12 @@ argument for the shape, usually written after a bug report; the standing ones:
   paper, a second hairline and a second sticky layer for one heading, 40px of the screen".
 - **Search leads with the glass, inside the box** (ui.tsx:1790), and clear is the app's one
   `CloseButton` at the field's own inset.
-- **A band close is the branded way out** (`CloseButton isBand`, ui.tsx:1740): its 48px touch / 36px
-  pointer target carries a 32px / 28px circle. On Blockether Light that circle is the full amber
-  `--primary` fill with the dark `--primary-fg` `CloseIcon`; this compact navigation identity is the
-  one allowed fill beside a screen's primary verb. A close inside another control remains unfilled.
+- **A band close is the branded way out** (`CloseButton isBand`, ui.tsx:1735): its 48px touch / 36px
+  pointer target carries a 32px / 28px circle. Blockether Light fills that circle with `--primary` under
+  a dark `--primary-fg` `CloseIcon`; Blockether Dark carries the same pair swapped — `--primary-fg` under
+  an amber mark — because its title band is already amber, and a face left unfilled there is a way out
+  fainter than everything it sits beside. This compact navigation identity is the one allowed fill beside
+  a screen's primary verb. A close inside another control remains unfilled.
 - **What the turn will run as is one line under the composer** (`MetaButton`, ui.tsx:1168): model
   and reasoning level, both pressable, the dotted rule marking the one that opens a picker.
 

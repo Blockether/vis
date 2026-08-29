@@ -24,10 +24,14 @@
    desktop rhythm. Layout — which columns exist, how wide the paper is — stays
    on `sm:`, because that really is a question about room. */
 @custom-variant mouse (@media (width >= 40rem) and (pointer: fine));
-/* Blockether Light alone puts dark paper under a dialog close. Its compact face takes
-   the amber fill and paired dark ink; the branded way out is not another primary verb. */
+/* The two Blockether palettes put branded paper under a dialog close, and they carry the
+   SAME amber pair mirrored: Light's dark title band takes an amber face with dark ink,
+   Dark's amber title band takes that pair swapped — an ink face with an amber mark. The
+   branded way out is one identity, not another primary verb. */
 @custom-variant blockether-light
   (&:where([data-theme='blockether-light'], [data-theme='blockether-light'] *));
+@custom-variant blockether-dark
+  (&:where([data-theme='blockether-dark'], [data-theme='blockether-dark'] *));
 
 /* Every palette the app ships lives in the generated stylesheet imported above:
    `[data-theme='<id>']` blocks rendered from `theme.clj`, with the default theme

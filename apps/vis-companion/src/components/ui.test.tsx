@@ -657,16 +657,29 @@ describe("CloseButton", () => {
     }
   });
 
-  // Design request: the full-size target stays part of the band, while the visible
-  // close is a compact circle. On Blockether Light that face takes the amber fill and
-  // its paired dark ink; navigation identity is not a second primary verb.
-  it("fills the round close face on Blockether Light", () => {
+  // Design request: the full-size target stays part of the band while the visible close is
+  // a compact circle, and the two Blockether palettes carry the same amber pair mirrored —
+  // Light fills the face with amber over dark ink, Dark fills it with the ink and marks it
+  // in amber. Navigation identity is not a second primary verb in either.
+  //
+  // Regression, user report (the dark theme looked unfinished): the fill was Light-only, so
+  // on Blockether Dark's amber title band the way out stayed a hairline ring in the band's
+  // own colour — the faintest thing on a screen whose Share was a filled amber block.
+  it("mirrors the filled close face across both Blockether palettes", () => {
     const band = html({ isBand: true });
     expect(band).toContain("rounded-full");
     expect(band).toContain("size-8");
     expect(band).toContain("mouse:size-7");
     expect(band).toContain("blockether-light:bg-accent");
     expect(band).toContain("blockether-light:text-accent-foreground");
+    expect(band).toContain("blockether-dark:bg-accent-foreground");
+    expect(band).toContain("blockether-dark:text-accent");
+    // A filled face has to STAY filled: the generic hover wash and a focus ring in the
+    // mark's own amber would each repaint the dark disc back into its band.
+    expect(band).toContain("blockether-dark:group-hover:bg-hover");
+    expect(band).toContain(
+      "blockether-dark:group-focus-visible:ring-accent-foreground/60",
+    );
     expect(band).not.toContain("border-l");
   });
 

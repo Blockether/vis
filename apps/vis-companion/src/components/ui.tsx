@@ -1732,12 +1732,17 @@ export function NotifyConnectionRow({
  *   a mouse: the visible control rides the header rhythm while the invisible room
  *   around it keeps the way out comfortably hittable. A wrapped title can make the
  *   band taller; the target still stretches with it while its face stays round.
- * - A BAND CLOSE IS A COMPACT BRANDED DISC, NOT A SECOND VERB. On Blockether
- *   Light's black title paper, its face takes the amber fill and paired dark ink. The
- *   dark theme's amber title band supplies that same paper around the transparent face.
- *   This one fixed circle may coexist with Share or Download because it identifies the
- *   way out rather than offering a competing act; it never licenses another filled label
- *   in chrome. Hover darkens the disc, never paints a square across the band's last cell.
+ * - A BAND CLOSE IS A COMPACT BRANDED DISC, NOT A SECOND VERB. The two Blockether
+ *   palettes carry the SAME amber pair, mirrored: on Light's dark title paper the face is
+ *   an amber fill with dark ink, and on Dark's amber title band it is that pair swapped —
+ *   an ink fill with an amber mark. Leaving Dark's face transparent made the way out the
+ *   faintest thing on a screen whose Share is a filled amber block: one hairline in the
+ *   band's own colour. Every other palette keeps the hairline face, which is the only one
+ *   its quieter band can afford. This one fixed circle may coexist with Share or Download
+ *   because it identifies the way out rather than offering a competing act; it never
+ *   licenses another filled label in chrome. Hover deepens the disc — amber to its darker
+ *   step, ink to the theme's hover paper — and never paints a square across the band's
+ *   last cell.
  * - A close inside another control keeps the established hairline and red intent wash.
  *   Its parent already supplies the face, so wrapping that mark in another circle would
  *   be a box inside a box.
@@ -1776,7 +1781,7 @@ export function CloseButton({
       {...props}
     >
       {isBand ? (
-        <span className="grid size-8 place-items-center rounded-full border border-current transition-[background-color,box-shadow,transform] duration-150 blockether-light:bg-accent blockether-light:text-accent-foreground group-hover:bg-current/15 blockether-light:group-hover:bg-accent-2 group-focus-visible:ring-2 group-focus-visible:ring-current/60 group-active:scale-[0.94] motion-reduce:transition-none mouse:size-7">
+        <span className="grid size-8 place-items-center rounded-full border border-current transition-[background-color,box-shadow,transform] duration-150 blockether-light:bg-accent blockether-light:text-accent-foreground blockether-dark:bg-accent-foreground blockether-dark:text-accent group-hover:bg-current/15 blockether-light:group-hover:bg-accent-2 blockether-dark:group-hover:bg-hover group-focus-visible:ring-2 group-focus-visible:ring-current/60 blockether-dark:group-focus-visible:ring-accent-foreground/60 group-active:scale-[0.94] motion-reduce:transition-none mouse:size-7">
           {mark}
         </span>
       ) : (
