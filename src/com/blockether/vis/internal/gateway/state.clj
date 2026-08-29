@@ -4325,9 +4325,12 @@
 ;; Session lifecycle + souls
 
 (def ^:private PREWARM_POOL_DEPTH
-  "Empty, fully-built sessions retained per channel. One removes cold-start
-   latency without pinning a second unused GraalPy context per channel."
-  1)
+  "Empty, fully-built sessions retained per channel. Building one costs a full
+   GraalPy context startup (~15 s on a small host), so a single spare hides only
+   the FIRST create: the next one races the still-running refill and pays the
+   cold price again. Two covers back-to-back creates for one extra idle context
+   per channel."
+  2)
 
 (defonce ^:private prewarm-pool (atom {:ready {} :in-flight {} :accepting? false}))
 

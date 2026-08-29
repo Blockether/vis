@@ -2917,7 +2917,7 @@
                                    (expect (= false (deref result 1000 ::timeout))))
                                  (finally (remove-watch waiting ::queued)))))
                         (finally (.release semaphore)))))
-             (it "keeps one unused prewarm context per channel"
+             (it "keeps two unused prewarm contexts per channel"
                  (let [pool
                        @#'state/prewarm-pool
 
@@ -2928,6 +2928,7 @@
                        (deref #'state/reserve-prewarm-slot!)]
 
                    (try (reset! pool {:ready {} :in-flight {} :accepting? true})
+                        (expect (true? (reserve! :api)))
                         (expect (true? (reserve! :api)))
                         (expect (false? (reserve! :api)))
                         (finally (reset! pool prior)))))
