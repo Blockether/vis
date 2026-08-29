@@ -14,8 +14,49 @@ import {
   APP_PROTOCOL,
   APP_VERSION,
 } from './compat';
+import { onAway, onWake } from './wake';
 
 export type DiagnosticLevel = 'debug' | 'info' | 'warn' | 'error';
+
+export type GatewayRequestDiagnosticStart = {
+  gateway: string;
+  method: string;
+  path: string;
+  transport: 'fetch' | 'sse' | 'xhr';
+  session_id?: string;
+  session_ids?: readonly string[];
+  stream?: 'fleet' | 'session' | 'sessions' | 'voice_job';
+  attempt?: number;
+};
+
+export type GatewayRequestDiagnosticFinish = {
+  outcome:
+    | 'success'
+    | 'not_modified'
+    | 'cancelled'
+    | 'timeout'
+    | 'http_error'
+    | 'network_error'
+    | 'closed';
+  status: number;
+  error?: string;
+};
+
+export type GatewayRequestDiagnostic = {
+  request_id: string;
+  finish: (level: DiagnosticLevel, result: GatewayRequestDiagnosticFinish) => void;
+};
+
+type TrackedGatewayRequest = {
+  request_id: string;
+  started_at_ms: number;
+  started_wake_id: number;
+  backgrounded_at_ms: number | null;
+  background_duration_ms: number;
+  wake_count: number;
+  crossed_background: boolean;
+  start: GatewayRequestDiagnosticStart;
+};
 
 const SCHEMA = 1;
 const LOG_DIRECTORY = 'diagnostics';
@@ -41,6 +82,10 @@ let installed = false;
 let directoryReady: Promise<void> | null = null;
 let writeQueue: Promise<void> = Promise.resolve();
 let storageFailure: Error | null = null;
+let requestSequence = 0;
+let wakeId = 0;
+let appState: 'foreground' | 'background' = 'foreground';
+const inflightGatewayRequests = new Map<string, TrackedGatewayRequest>();
 
 function errorOf(cause: unknown): Error {
   return cause instanceof Error ? cause : new Error(String(cause));
@@ -215,6 +260,106 @@ export function recordDiagnostic(
   enqueue(() => appendRecord(`${json}\n`));
 }
 
+function trackedRequestDetails(request: TrackedGatewayRequest): Record<string, unknown> {
+  return {
+    request_id: request.request_id,
+    ...request.start,
+  };
+}
+
+function inflightRequestDetails(now: number): Array<Record<string, unknown>> {
+  return [...inflightGatewayRequests.values()].map((request) => ({
+    ...trackedRequestDetails(request),
+    age_ms: Math.max(0, now - request.started_at_ms),
+  }));
+}
+
+function recordBackgrounded(): void {
+  if (appState === 'background') return;
+  const now = Date.now();
+  appState = 'background';
+  for (const request of inflightGatewayRequests.values()) {
+    request.backgrounded_at_ms = now;
+    request.crossed_background = true;
+  }
+  recordDiagnostic('info', 'app', 'backgrounded', {
+    wake_id: wakeId,
+    inflight_request_count: inflightGatewayRequests.size,
+    inflight_requests: inflightRequestDetails(now),
+  });
+  // Start draining while the native bridge is still live; the OS may freeze it immediately after.
+  void flushDiagnostics();
+}
+
+function recordWake(awayMs: number): void {
+  const now = Date.now();
+  const resumed = appState === 'background';
+  if (resumed) wakeId += 1;
+  for (const request of inflightGatewayRequests.values()) {
+    if (request.backgrounded_at_ms === null) continue;
+    request.background_duration_ms += Math.max(0, now - request.backgrounded_at_ms);
+    request.backgrounded_at_ms = null;
+    request.wake_count += 1;
+  }
+  appState = 'foreground';
+  recordDiagnostic('info', 'app', resumed ? 'resumed' : 'wake', {
+    wake_id: wakeId,
+    away_ms: Math.max(0, awayMs),
+    inflight_request_count: inflightGatewayRequests.size,
+    inflight_requests: inflightRequestDetails(now),
+  });
+}
+
+/** Start one payload-free gateway span that remains visible even if a frozen request never ends. */
+export function startGatewayRequestDiagnostic(
+  start: GatewayRequestDiagnosticStart,
+): GatewayRequestDiagnostic {
+  const startedAt = Date.now();
+  const request: TrackedGatewayRequest = {
+    request_id: `req-${runNonce}-${(++requestSequence).toString(36)}`,
+    started_at_ms: startedAt,
+    started_wake_id: wakeId,
+    backgrounded_at_ms: appState === 'background' ? startedAt : null,
+    background_duration_ms: 0,
+    wake_count: 0,
+    crossed_background: appState === 'background',
+    start,
+  };
+  inflightGatewayRequests.set(request.request_id, request);
+  recordDiagnostic('info', 'gateway', 'request_started', {
+    ...trackedRequestDetails(request),
+    wake_id: wakeId,
+    app_state: appState,
+  });
+
+  let finished = false;
+  return {
+    request_id: request.request_id,
+    finish(level, result) {
+      if (finished) return;
+      finished = true;
+      const finishedAt = Date.now();
+      let backgroundDuration = request.background_duration_ms;
+      if (request.backgrounded_at_ms !== null) {
+        backgroundDuration += Math.max(0, finishedAt - request.backgrounded_at_ms);
+      }
+      const duration = Math.max(0, finishedAt - request.started_at_ms);
+      inflightGatewayRequests.delete(request.request_id);
+      recordDiagnostic(level, 'gateway', 'request_finished', {
+        ...trackedRequestDetails(request),
+        ...result,
+        duration_ms: duration,
+        foreground_duration_ms: Math.max(0, duration - backgroundDuration),
+        background_duration_ms: backgroundDuration,
+        wake_count: request.wake_count,
+        started_wake_id: request.started_wake_id,
+        finished_wake_id: wakeId,
+        crossed_background: request.crossed_background,
+      });
+    },
+  };
+}
+
 /** Wait until every record already accepted by the logger has reached durable storage. */
 export async function flushDiagnostics(): Promise<void> {
   await writeQueue;
@@ -336,16 +481,12 @@ export function installDiagnostics(): void {
     window.addEventListener('offline', () => recordDiagnostic('warn', 'network', 'offline'));
   }
 
+  onAway(recordBackgrounded);
+  onWake(({ awayMs }) => recordWake(awayMs));
+
   if (Capacitor.isNativePlatform()) {
     void CapacitorApp.getInfo()
       .then((info) => recordDiagnostic('info', 'app', 'native_build', info))
       .catch((cause) => recordDiagnostic('warn', 'app', 'native_build_unavailable', { cause }));
-    void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-      recordDiagnostic('info', 'app', isActive ? 'active' : 'inactive');
-    }).catch((cause) => recordDiagnostic('warn', 'app', 'lifecycle_unavailable', { cause }));
-  } else if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', () => {
-      recordDiagnostic('info', 'app', document.hidden ? 'hidden' : 'visible');
-    });
   }
 }

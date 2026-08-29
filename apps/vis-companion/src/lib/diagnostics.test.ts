@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const nativeCompressionStream = globalThis.CompressionStream;
 const nativeDecompressionStream = globalThis.DecompressionStream;
 const files = vi.hoisted(() => new Map<string, string>());
@@ -18,6 +18,25 @@ const shareArtifact = vi.hoisted(() =>
     ) => 'Diagnostics shared.',
   ),
 );
+const lifecycle = vi.hoisted(() => ({
+  away: null as (() => void) | null,
+  wake: null as ((info: { awayMs: number }) => void) | null,
+}));
+
+vi.mock('./wake', () => ({
+  onAway: (listener: () => void) => {
+    lifecycle.away = listener;
+    return () => {
+      lifecycle.away = null;
+    };
+  },
+  onWake: (listener: (info: { awayMs: number }) => void) => {
+    lifecycle.wake = listener;
+    return () => {
+      lifecycle.wake = null;
+    };
+  },
+}));
 
 vi.mock('@capacitor/filesystem', () => ({
   Directory: { LibraryNoCloud: 'LIBRARY_NO_CLOUD' },
@@ -49,8 +68,14 @@ describe('persistent app diagnostics', () => {
     appendFile.mockClear();
     deleteFile.mockClear();
     shareArtifact.mockClear();
+    lifecycle.away = null;
+    lifecycle.wake = null;
     vi.resetModules();
     vi.stubGlobal('CompressionStream', undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('writes ordered structured records to app-private storage and redacts secrets', async () => {
@@ -86,6 +111,73 @@ describe('persistent app diagnostics', () => {
     expect(serialized).not.toContain('Bearer private');
     expect(serialized).not.toContain('url-private');
     expect(serialized).not.toContain('label-private');
+  });
+
+  it('correlates session requests across a background freeze and resume', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-10T12:00:00.000Z'));
+    const { flushDiagnostics, installDiagnostics, startGatewayRequestDiagnostic } =
+      await diagnostics();
+    installDiagnostics();
+
+    const request = startGatewayRequestDiagnostic({
+      gateway: 'https://gateway.example.com',
+      method: 'GET',
+      path: '/v1/sessions/session-42',
+      session_id: 'session-42',
+      transport: 'fetch',
+    });
+    vi.advanceTimersByTime(125);
+    lifecycle.away?.();
+    vi.advanceTimersByTime(5_000);
+    lifecycle.wake?.({ awayMs: 5_000 });
+    vi.advanceTimersByTime(75);
+    request.finish('info', { outcome: 'success', status: 200 });
+    await flushDiagnostics();
+
+    const records = appendFile.mock.calls.map(([call]) => JSON.parse(call.data));
+    const started = records.find((record) => record.event === 'request_started');
+    const backgrounded = records.find((record) => record.event === 'backgrounded');
+    const resumed = records.find((record) => record.event === 'resumed');
+    const finished = records.find((record) => record.event === 'request_finished');
+
+    expect(started.details).toMatchObject({
+      request_id: expect.any(String),
+      session_id: 'session-42',
+      wake_id: 0,
+      app_state: 'foreground',
+    });
+    expect(backgrounded.details).toMatchObject({
+      inflight_request_count: 1,
+      inflight_requests: [
+        expect.objectContaining({
+          request_id: started.details.request_id,
+          session_id: 'session-42',
+          age_ms: 125,
+        }),
+      ],
+    });
+    expect(resumed.details).toMatchObject({
+      wake_id: 1,
+      away_ms: 5_000,
+      inflight_request_count: 1,
+      inflight_requests: [
+        expect.objectContaining({ request_id: started.details.request_id, session_id: 'session-42' }),
+      ],
+    });
+    expect(finished.details).toMatchObject({
+      request_id: started.details.request_id,
+      session_id: 'session-42',
+      outcome: 'success',
+      status: 200,
+      duration_ms: 5_200,
+      foreground_duration_ms: 200,
+      background_duration_ms: 5_000,
+      wake_count: 1,
+      started_wake_id: 0,
+      finished_wake_id: 1,
+      crossed_background: true,
+    });
   });
 
   it('prunes expired runs before it writes this launch', async () => {

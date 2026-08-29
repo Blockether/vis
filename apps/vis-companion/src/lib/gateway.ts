@@ -81,7 +81,12 @@ import {
   scheduleSnapshotFlush,
   type SnapshotStores,
 } from "./snapshot-store";
-import { recordDiagnostic } from "./diagnostics";
+import {
+  startGatewayRequestDiagnostic,
+  type GatewayRequestDiagnostic,
+  type GatewayRequestDiagnosticFinish,
+  type GatewayRequestDiagnosticStart,
+} from "./diagnostics";
 
 export class GatewayError extends Error {
   status: number;
@@ -753,6 +758,96 @@ function diagnosticGateway(base: string): string {
   }
 }
 
+type GatewayRequestDiagnosticExtras = Omit<
+  GatewayRequestDiagnosticStart,
+  "gateway" | "method" | "path"
+>;
+
+function diagnosticPath(path: string): string {
+  try {
+    return new URL(path, "https://gateway.invalid").pathname;
+  } catch {
+    return path.split(/[?#]/u, 1)[0] || "/";
+  }
+}
+
+function diagnosticSessionId(path: string): string | undefined {
+  const encoded = /^\/v1\/sessions\/([^/]+)/u.exec(path)?.[1];
+  if (!encoded) return undefined;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
+}
+
+function startRequestDiagnostic(
+  base: string,
+  method: string,
+  path: string,
+  extras: GatewayRequestDiagnosticExtras = { transport: "fetch" },
+): GatewayRequestDiagnostic {
+  const safePath = diagnosticPath(path);
+  const sessionId = diagnosticSessionId(safePath);
+  return startGatewayRequestDiagnostic({
+    gateway: diagnosticGateway(base),
+    method,
+    path: safePath,
+    ...(sessionId ? { session_id: sessionId } : {}),
+    ...extras,
+  });
+}
+
+type FinishRequestDiagnosticOptions = {
+  status?: number;
+  failure?: { cause: unknown };
+  signal?: AbortSignal;
+  timedOut?: boolean;
+  outcome?: GatewayRequestDiagnosticFinish["outcome"];
+};
+
+function finishRequestDiagnostic(
+  diagnostic: GatewayRequestDiagnostic,
+  {
+    status = 0,
+    failure,
+    signal,
+    timedOut = false,
+    outcome: explicitOutcome,
+  }: FinishRequestDiagnosticOptions,
+): void {
+  const outcome =
+    explicitOutcome ??
+    (signal?.aborted
+      ? "cancelled"
+      : timedOut
+        ? "timeout"
+        : status >= 400
+          ? "http_error"
+          : failure
+            ? "network_error"
+            : status === 304
+              ? "not_modified"
+              : "success");
+  const diagnosticError =
+    !failure || outcome === "cancelled"
+      ? undefined
+      : outcome === "http_error"
+        ? `HTTP ${status}`
+        : errorOfDiagnostic(failure.cause);
+  const level =
+    outcome === "success" || outcome === "not_modified" || outcome === "cancelled"
+      ? "info"
+      : outcome === "closed"
+        ? "warn"
+        : "error";
+  diagnostic.finish(level, {
+    status,
+    outcome,
+    ...(diagnosticError ? { error: diagnosticError } : {}),
+  });
+}
+
 /**
  * One gateway queued-turn payload (a `/v1/sessions/:id/turns` row OR a
  * `turn.queued` / `.updated` SSE frame — same keys) → the row the tray paints.
@@ -866,9 +961,9 @@ export class GatewayClient {
     etag: string | null;
     headers: Headers;
   }> {
-    const startedAt = Date.now();
+    const diagnostic = startRequestDiagnostic(this.base, method, path);
     let exchangeStatus = 0;
-    let exchangeError: string | undefined;
+    let exchangeFailure: { cause: unknown } | undefined;
     const headers = this.headers(extraHeaders);
     // A Blob is a RECORDING (or any raw upload) and travels as itself: it carries its
     // own media type and JSON-encoding it would destroy it.
@@ -957,17 +1052,14 @@ export class GatewayClient {
         headers: res.headers,
       };
     } catch (cause) {
-      exchangeError = errorOfDiagnostic(cause);
+      exchangeFailure = { cause };
       throw cause;
     } finally {
-      recordDiagnostic(exchangeError ? "error" : "info", "gateway", "request", {
-        gateway: diagnosticGateway(this.base),
-        method,
-        path: path.split("?", 1)[0] ?? path,
+      finishRequestDiagnostic(diagnostic, {
         status: exchangeStatus,
-        duration_ms: Math.max(0, Date.now() - startedAt),
-        ...(signal?.aborted ? { outcome: "cancelled" } : {}),
-        ...(exchangeError ? { error: exchangeError } : {}),
+        failure: exchangeFailure,
+        signal,
+        timedOut: deadline.signal.aborted && !signal?.aborted,
       });
       window.clearTimeout(timer);
     }
@@ -1336,7 +1428,7 @@ export class GatewayClient {
   /**
    * The sound of ONE voice, so a catalogue can be heard and not only read.
    *
-   * `audioFetch` rather than `request`, for the same reason [[speakText]] uses it: a WAV
+   * `requestBody` rather than `request`, for the same reason [[speakText]] uses it: a WAV
    * is not text. A 404 here is not a broken client — it is a voice with nothing to play
    * yet, and what to do about that belongs to the screen.
    */
@@ -1344,12 +1436,12 @@ export class GatewayClient {
     id: string,
     { signal, engine }: { signal?: AbortSignal; engine?: string | null } = {},
   ): Promise<Blob> {
-    const answer = await this.audioFetch(
+    return this.requestBody(
       "GET",
       withEngine(`/v1/speech/voices/${encodeURIComponent(id)}/sample`, engine),
       { signal },
+      (response) => response.blob(),
     );
-    return await answer.blob();
   }
 
   /**
@@ -1360,7 +1452,7 @@ export class GatewayClient {
    * caller only ever wanted the sound, and where the threshold sits is the gateway's
    * to publish (`features.speech.inline_max_chars`), never this client's to guess.
    *
-   * `fetch` directly rather than `request`: `request` reads every answer as text, and
+   * `requestBody` rather than `request`: `request` reads every answer as text, and
    * a WAV is not text.
    */
   async speakText(
@@ -1373,20 +1465,27 @@ export class GatewayClient {
     } = {},
   ): Promise<Blob> {
     const base = `/v1/sessions/${encodeURIComponent(sid)}/speech`;
-    const answer = await this.audioFetch("POST", withEngine(base, engine), {
-      body: JSON.stringify(voice ? { text, voice } : { text }),
-      contentType: "application/json",
-      signal,
-    });
-    if (answer.status !== 202) return await answer.blob();
-    const started = (await answer.json()) as SpeechJob;
-    const finished = await this.awaitSpeechJob(sid, started, signal);
-    const audio = await this.audioFetch(
+    const answer = await this.requestBody(
+      "POST",
+      withEngine(base, engine),
+      {
+        body: JSON.stringify(voice ? { text, voice } : { text }),
+        contentType: "application/json",
+        signal,
+      },
+      async (response) =>
+        response.status === 202
+          ? { kind: "job" as const, job: (await response.json()) as SpeechJob }
+          : { kind: "audio" as const, blob: await response.blob() },
+    );
+    if (answer.kind === "audio") return answer.blob;
+    const finished = await this.awaitSpeechJob(sid, answer.job, signal);
+    const blob = await this.requestBody(
       "GET",
       `${base}/jobs/${encodeURIComponent(finished.id)}/audio`,
       { signal },
+      (response) => response.blob(),
     );
-    const blob = await audio.blob();
     // The audio is ours now, so the machine may forget the job. A failure here costs
     // nothing - finished jobs expire on their own.
     void this.request(
@@ -1398,41 +1497,71 @@ export class GatewayClient {
     return blob;
   }
 
-  /** One request whose answer is BYTES: no text read, no JSON parse, errors still named. */
-  private async audioFetch(
+  /** One fully-consumed request with a caller-selected body decoder. */
+  private async requestBody<T>(
     method: string,
     path: string,
     options: { body?: BodyInit; contentType?: string; signal?: AbortSignal },
-  ): Promise<Response> {
+    read: (response: Response) => Promise<T>,
+  ): Promise<T> {
+    const diagnostic = startRequestDiagnostic(this.base, method, path);
     const headers = this.headers();
     if (options.contentType) headers.set("Content-Type", options.contentType);
-    let res: Response;
+    const deadline = new AbortController();
+    const timer = window.setTimeout(() => deadline.abort(), REQUEST_TIMEOUT_MS);
+    const attemptSignal = anySignal(
+      options.signal ? [options.signal, deadline.signal] : [deadline.signal],
+    );
+    let status = 0;
+    let failure: { cause: unknown } | undefined;
     try {
-      res = await fetch(this.base + path, {
-        method,
-        headers,
-        body: options.body,
-        signal: options.signal,
-      });
-    } catch (e) {
-      throw new GatewayError(0, `network error: ${(e as Error).message}`);
-    }
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      let message = `HTTP ${res.status}`;
-      try {
-        const parsed = JSON.parse(body) as {
-          error?: string | { message?: string };
-        };
-        const named =
-          typeof parsed.error === "string" ? parsed.error : parsed.error?.message;
-        if (named) message = named;
-      } catch {
-        if (body) message = body;
+      const res = await raceAbort(
+        fetch(this.base + path, {
+          method,
+          headers,
+          body: options.body,
+          signal: attemptSignal,
+        }),
+        attemptSignal,
+      );
+      status = res.status;
+      if (!res.ok) {
+        const body = await raceAbort(res.text(), attemptSignal).catch(() => "");
+        let message = `HTTP ${res.status}`;
+        try {
+          const parsed = JSON.parse(body) as {
+            error?: string | { message?: string };
+          };
+          const named =
+            typeof parsed.error === "string" ? parsed.error : parsed.error?.message;
+          if (named) message = named;
+        } catch {
+          if (body) message = body;
+        }
+        throw new GatewayError(res.status, message);
       }
-      throw new GatewayError(res.status, message);
+      return await raceAbort(read(res), attemptSignal);
+    } catch (cause) {
+      const error =
+        deadline.signal.aborted && !options.signal?.aborted
+          ? new GatewayError(
+              0,
+              `gateway did not finish the response within ${Math.round(REQUEST_TIMEOUT_MS / 1000)}s`,
+            )
+          : cause instanceof GatewayError
+            ? cause
+            : new GatewayError(0, `network error: ${errorOfDiagnostic(cause)}`);
+      failure = { cause: error };
+      throw error;
+    } finally {
+      finishRequestDiagnostic(diagnostic, {
+        status,
+        failure,
+        signal: options.signal,
+        timedOut: deadline.signal.aborted && !options.signal?.aborted,
+      });
+      window.clearTimeout(timer);
     }
-    return res;
   }
 
   /** Follow one synthesis job to its end, or say why it will never get there. */
@@ -1473,18 +1602,26 @@ export class GatewayClient {
   ): Promise<VoiceJob> {
     const budget = voiceTimeoutMs(wav.size);
     const seconds = Math.round(budget / 1000);
+    const path = withEngine(`/v1/sessions/${encodeURIComponent(sid)}/voice`, engine);
     return new Promise<VoiceJob>((resolve, reject) => {
       if (signal?.aborted) {
         reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
         return;
       }
+      const diagnostic = startRequestDiagnostic(this.base, "POST", path, { transport: "xhr" });
       const xhr = new XMLHttpRequest();
       const onAbort = () => xhr.abort();
       const done = () => signal?.removeEventListener("abort", onAbort);
-      xhr.open(
-        "POST",
-        `${this.base}${withEngine(`/v1/sessions/${encodeURIComponent(sid)}/voice`, engine)}`,
-      );
+      const finish = (failure?: { cause: unknown }, timedOut = false) => {
+        done();
+        finishRequestDiagnostic(diagnostic, {
+          status: xhr.status,
+          failure,
+          signal,
+          timedOut,
+        });
+      };
+      xhr.open("POST", `${this.base}${path}`);
       xhr.timeout = budget;
       this.headers({ "Content-Type": "audio/wav" }).forEach((value, key) =>
         xhr.setRequestHeader(key, value),
@@ -1497,7 +1634,6 @@ export class GatewayClient {
         };
       }
       xhr.onload = () => {
-        done();
         let parsed: unknown;
         try {
           parsed = xhr.responseText ? JSON.parse(xhr.responseText) : undefined;
@@ -1505,33 +1641,40 @@ export class GatewayClient {
           parsed = xhr.responseText;
         }
         if (xhr.status >= 200 && xhr.status < 300) {
+          finish();
           onUploaded(100);
           resolve(parsed as VoiceJob);
           return;
         }
-        reject(
-          new GatewayError(xhr.status, errorText(parsed, xhr.status), parsed),
-        );
+        const error = new GatewayError(xhr.status, errorText(parsed, xhr.status), parsed);
+        finish({ cause: error });
+        reject(error);
       };
       xhr.onerror = () => {
-        done();
-        reject(new GatewayError(0, "network error: upload failed"));
+        const error = new GatewayError(0, "network error: upload failed");
+        finish({ cause: error });
+        reject(error);
       };
       xhr.ontimeout = () => {
-        done();
-        reject(
-          new GatewayError(
-            0,
-            `transcription did not answer within ${seconds}s`,
-          ),
+        const error = new GatewayError(
+          0,
+          `transcription did not answer within ${seconds}s`,
         );
+        finish({ cause: error }, true);
+        reject(error);
       };
       xhr.onabort = () => {
-        done();
-        reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        const error = signal?.reason ?? new DOMException("Aborted", "AbortError");
+        finish({ cause: error });
+        reject(error);
       };
       signal?.addEventListener("abort", onAbort, { once: true });
-      xhr.send(wav);
+      try {
+        xhr.send(wav);
+      } catch (cause) {
+        finish({ cause });
+        reject(cause);
+      }
     });
   }
 
@@ -1548,12 +1691,19 @@ export class GatewayClient {
     onJob: (job: VoiceJob) => void,
     signal?: AbortSignal,
   ): Promise<VoiceJob> {
+    const path = `/v1/sessions/${encodeURIComponent(sid)}/voice/jobs/${encodeURIComponent(jobId)}/events`;
+    const diagnostic = startRequestDiagnostic(this.base, "GET", path, {
+      transport: "sse",
+      stream: "voice_job",
+    });
     const watchdog = new AbortController();
     const streamSignal = signal
       ? anySignal([signal, watchdog.signal])
       : watchdog.signal;
     const seen: { job: VoiceJob | null } = { job: null };
     let stalled = false;
+    let status = 0;
+    let failure: { cause: unknown } | undefined;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const armStall = () => {
       if (timer) clearTimeout(timer);
@@ -1564,17 +1714,18 @@ export class GatewayClient {
     };
     try {
       armStall();
-      const response = await fetch(
-        `${this.base}/v1/sessions/${encodeURIComponent(sid)}/voice/jobs/${encodeURIComponent(jobId)}/events`,
-        {
+      const response = await raceAbort(
+        fetch(this.base + path, {
           headers: this.headers({ Accept: "text/event-stream" }),
           signal: streamSignal,
-        },
+        }),
+        streamSignal,
       );
+      status = response.status;
       if (!response.ok || !response.body) {
         let parsed: unknown;
         try {
-          parsed = await response.json();
+          parsed = await raceAbort(response.json(), streamSignal);
         } catch {
           parsed = undefined;
         }
@@ -1584,44 +1735,53 @@ export class GatewayClient {
           parsed,
         );
       }
-      await readSseFrames(
-        response.body,
-        (json, event) => {
-          // This stream carries `voice.job` frames and nothing else. Any other
-          // name (an intermediary's own notice, a future kind sharing the
-          // connection, a session event from a misrouted URL) is not this job's
-          // progress and must never be reported as it.
-          if (event !== VOICE_JOB_EVENT) return;
-          let job: VoiceJob;
-          try {
-            job = JSON.parse(json) as VoiceJob;
-          } catch {
-            return;
-          }
-          if (!job || typeof job !== "object" || !job.id) return;
-          seen.job = job;
-          onJob(job);
-        },
-        armStall,
+      await raceAbort(
+        readSseFrames(
+          response.body,
+          (json, event) => {
+            // This stream carries `voice.job` frames and nothing else. Any other
+            // name is not this job's progress and must never be reported as it.
+            if (event !== VOICE_JOB_EVENT) return;
+            let job: VoiceJob;
+            try {
+              job = JSON.parse(json) as VoiceJob;
+            } catch {
+              return;
+            }
+            if (!job || typeof job !== "object" || !job.id) return;
+            seen.job = job;
+            onJob(job);
+          },
+          armStall,
+          streamSignal,
+        ),
         streamSignal,
       );
-    } catch (error) {
-      if (stalled && !signal?.aborted) {
-        throw new GatewayError(
-          0,
-          `transcription stopped reporting for ${Math.round(VOICE_STALL_TIMEOUT_MS / 1000)}s`,
-        );
+      const job = seen.job;
+      if (!job?.is_done) {
+        throw new GatewayError(0, "transcription ended before the transcript");
       }
+      return job;
+    } catch (cause) {
+      const error =
+        stalled && !signal?.aborted
+          ? new GatewayError(
+              0,
+              `transcription stopped reporting for ${Math.round(VOICE_STALL_TIMEOUT_MS / 1000)}s`,
+            )
+          : cause;
+      failure = { cause: error };
       throw error;
     } finally {
+      finishRequestDiagnostic(diagnostic, {
+        status,
+        failure,
+        signal,
+        timedOut: stalled && !signal?.aborted,
+      });
       if (timer) clearTimeout(timer);
       watchdog.abort();
     }
-    const job = seen.job;
-    if (!job?.is_done) {
-      throw new GatewayError(0, "transcription ended before the transcript");
-    }
-    return job;
   }
 
   /** Drop a collected job. Finished jobs also expire on the gateway by themselves. */
@@ -3412,19 +3572,12 @@ export class GatewayClient {
   }
 
   async transcriptMd(sid: string, signal?: AbortSignal): Promise<string> {
-    let response: Response;
-    try {
-      response = await fetch(
-        `${this.base}/v1/sessions/${encodeURIComponent(sid)}/transcript.md`,
-        { headers: this.headers(), signal },
-      );
-    } catch (error) {
-      throw new GatewayError(0, `network error: ${(error as Error).message}`);
-    }
-    const text = await response.text();
-    if (!response.ok)
-      throw new GatewayError(response.status, `HTTP ${response.status}`, text);
-    return text;
+    return this.requestBody(
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sid)}/transcript.md`,
+      { signal },
+      (response) => response.text(),
+    );
   }
 
   /**
@@ -3464,26 +3617,55 @@ export class GatewayClient {
         this.attachmentSizes.set(key, stored.size);
         return URL.createObjectURL(stored);
       }
-      let response: Response;
+      let blob: Blob | null = null;
       // The live descriptor can beat the durable attachment row by a few hundred
       // milliseconds. A 404 here means "not landed yet", not "this picture is
-      // broken"; leaving it rejected parked the tile until the whole session was
-      // remounted. Keep the one in-flight promise and bridge that persistence seam.
+      // broken"; each retry is its own diagnostic request.
       const landingDelays = [60, 140, 300, 600];
       for (let attempt = 0; ; attempt += 1) {
+        const diagnostic = startRequestDiagnostic(this.base, "GET", endpoint, {
+          transport: "fetch",
+          attempt: attempt + 1,
+        });
+        const deadline = new AbortController();
+        const timer = window.setTimeout(() => deadline.abort(), REQUEST_TIMEOUT_MS);
+        let status = 0;
+        let failure: { cause: unknown } | undefined;
         try {
-          response = await fetch(endpoint, { headers: this.headers() });
-        } catch (error) {
-          throw new GatewayError(0, `network error: ${(error as Error).message}`);
+          const response = await raceAbort(
+            fetch(endpoint, { headers: this.headers(), signal: deadline.signal }),
+            deadline.signal,
+          );
+          status = response.status;
+          if (response.ok) {
+            blob = await raceAbort(response.blob(), deadline.signal);
+          } else {
+            const error = new GatewayError(response.status, `HTTP ${response.status}`);
+            failure = { cause: error };
+            if (response.status !== 404 || attempt >= landingDelays.length) throw error;
+          }
+        } catch (cause) {
+          const error =
+            deadline.signal.aborted
+              ? new GatewayError(0, "attachment download timed out")
+              : cause instanceof GatewayError
+                ? cause
+                : new GatewayError(0, `network error: ${errorOfDiagnostic(cause)}`);
+          failure = { cause: error };
+          throw error;
+        } finally {
+          finishRequestDiagnostic(diagnostic, {
+            status,
+            failure,
+            timedOut: deadline.signal.aborted,
+          });
+          window.clearTimeout(timer);
         }
-        if (response.ok) break;
-        if (response.status !== 404 || attempt >= landingDelays.length)
-          throw new GatewayError(response.status, `HTTP ${response.status}`);
+        if (blob) break;
         await new Promise<void>((resolve) =>
           window.setTimeout(resolve, landingDelays[attempt]),
         );
       }
-      const blob = await response.blob();
       this.attachmentSizes.set(key, blob.size);
       // Keeping it is best-effort and never blocks the picture it just produced.
       void writeCachedAttachment(endpoint, blob);
@@ -3996,19 +4178,34 @@ export class GatewayClient {
 
     void (async () => {
       let retryMs = 400;
+      let attemptNumber = 0;
       while (!signal.aborted && cursors.size > 0) {
         // Per-attempt controller: the stall watchdog aborts only THIS
         // connection attempt, so the outer loop reconnects with up-to-date
         // cursors instead of dying with the caller's shared signal.
         const attempt = new AbortController();
         const attemptSignal = anySignal([signal, attempt.signal]);
+        const diagnostic = startRequestDiagnostic(this.base, "GET", "/v1/events", {
+          transport: "sse",
+          stream: "sessions",
+          attempt: ++attemptNumber,
+          session_ids: [...cursors.keys()],
+        });
+        let status = 0;
+        let failure: { cause: unknown } | undefined;
+        let stallExpired = false;
+        let closed = false;
+        let retryAfterMs = 0;
         let stallTimer: ReturnType<typeof setTimeout> | null = null;
         // One watchdog for both phases of the attempt: a short bound on the
         // connect, the heartbeat bound once frames are flowing. Either way the
         // abort hits only THIS attempt and the outer loop reconnects.
         const armStall = (ms: number) => {
           if (stallTimer) clearTimeout(stallTimer);
-          stallTimer = setTimeout(() => attempt.abort(), ms);
+          stallTimer = setTimeout(() => {
+            stallExpired = true;
+            attempt.abort();
+          }, ms);
         };
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
@@ -4026,6 +4223,7 @@ export class GatewayClient {
             ),
             attemptSignal,
           );
+          status = response.status;
           if (!response.ok || !response.body) {
             throw new GatewayError(
               response.status,
@@ -4078,8 +4276,12 @@ export class GatewayClient {
             ),
             attemptSignal,
           );
-          if (!signal.aborted) throw new GatewayError(0, "event stream closed");
+          if (!signal.aborted) {
+            closed = true;
+            throw new GatewayError(0, "event stream closed");
+          }
         } catch (error) {
+          failure = { cause: error };
           if (signal.aborted) break;
           opts.onError?.(error);
           // A 4xx is NOT a reason to abandon the app's only push channel. A
@@ -4089,12 +4291,20 @@ export class GatewayClient {
           // no stall watchdog fires, because there is no socket left to stall —
           // until the user backed out and re-entered. Every failure now backs
           // off and retries; the hub supervises what is left.
-          await abortableDelay(retryMs, signal);
+          retryAfterMs = retryMs;
           retryMs = Math.min(retryMs * 2, 5_000);
         } finally {
+          finishRequestDiagnostic(diagnostic, {
+            status,
+            failure,
+            signal,
+            timedOut: stallExpired && !signal.aborted,
+            ...(closed ? { outcome: "closed" as const } : {}),
+          });
           if (stallTimer) clearTimeout(stallTimer);
           attempt.abort();
         }
+        if (retryAfterMs > 0) await abortableDelay(retryAfterMs, signal);
       }
       opts.onClosed?.();
     })();
@@ -4131,15 +4341,29 @@ export class GatewayClient {
 
     void (async () => {
       let retryMs = 400;
+      let attemptNumber = 0;
       while (!signal.aborted) {
         // Per-attempt controller, exactly as the multiplexed stream: the stall
         // watchdog aborts only THIS attempt and the outer loop reconnects.
         const attempt = new AbortController();
         const attemptSignal = anySignal([signal, attempt.signal]);
+        const diagnostic = startRequestDiagnostic(this.base, "GET", "/v1/events", {
+          transport: "sse",
+          stream: "fleet",
+          attempt: ++attemptNumber,
+        });
+        let status = 0;
+        let failure: { cause: unknown } | undefined;
+        let stallExpired = false;
+        let closed = false;
+        let retryAfterMs = 0;
         let stallTimer: ReturnType<typeof setTimeout> | null = null;
         const armStall = (ms: number) => {
           if (stallTimer) clearTimeout(stallTimer);
-          stallTimer = setTimeout(() => attempt.abort(), ms);
+          stallTimer = setTimeout(() => {
+            stallExpired = true;
+            attempt.abort();
+          }, ms);
         };
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
@@ -4150,6 +4374,7 @@ export class GatewayClient {
             }),
             attemptSignal,
           );
+          status = response.status;
           if (!response.ok || !response.body) {
             throw new GatewayError(
               response.status,
@@ -4179,18 +4404,30 @@ export class GatewayClient {
             ),
             attemptSignal,
           );
-          if (!signal.aborted) throw new GatewayError(0, "fleet stream closed");
+          if (!signal.aborted) {
+            closed = true;
+            throw new GatewayError(0, "fleet stream closed");
+          }
         } catch (error) {
+          failure = { cause: error };
           if (signal.aborted) break;
           opts.onError?.(error);
           // No status ends this loop: the alternative to a retry is a list that
           // goes back to re-reading its window forever.
-          await abortableDelay(retryMs, signal);
+          retryAfterMs = retryMs;
           retryMs = Math.min(retryMs * 2, 5_000);
         } finally {
+          finishRequestDiagnostic(diagnostic, {
+            status,
+            failure,
+            signal,
+            timedOut: stallExpired && !signal.aborted,
+            ...(closed ? { outcome: "closed" as const } : {}),
+          });
           if (stallTimer) clearTimeout(stallTimer);
           attempt.abort();
         }
+        if (retryAfterMs > 0) await abortableDelay(retryAfterMs, signal);
       }
       opts.onClosed?.();
     })();
@@ -4212,26 +4449,41 @@ export class GatewayClient {
       ? anySignal([opts.signal, controller.signal])
       : controller.signal;
 
+    const path = `/v1/sessions/${encodeURIComponent(sid)}/events`;
     void (async () => {
       let cursor = opts.cursor;
       let retryMs = 400;
+      let attemptNumber = 0;
 
       while (!signal.aborted) {
         // Per-attempt controller — the stall watchdog aborts only this attempt
         // so the loop reconnects from `cursor` instead of dying.
         const attempt = new AbortController();
         const attemptSignal = anySignal([signal, attempt.signal]);
+        const diagnostic = startRequestDiagnostic(this.base, "GET", path, {
+          transport: "sse",
+          stream: "session",
+          attempt: ++attemptNumber,
+        });
+        let status = 0;
+        let failure: { cause: unknown } | undefined;
+        let stallExpired = false;
+        let closed = false;
+        let retryAfterMs = 0;
         let stallTimer: ReturnType<typeof setTimeout> | null = null;
         const armStall = (ms: number) => {
           if (stallTimer) clearTimeout(stallTimer);
-          stallTimer = setTimeout(() => attempt.abort(), ms);
+          stallTimer = setTimeout(() => {
+            stallExpired = true;
+            attempt.abort();
+          }, ms);
         };
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
           const query = cursor != null ? `?cursor=${cursor}` : "";
           const response = await raceAbort(
             fetch(
-              `${this.base}/v1/sessions/${encodeURIComponent(sid)}/events${query}`,
+              `${this.base}${path}${query}`,
               {
                 headers: this.headers({ Accept: "text/event-stream" }),
                 signal: attemptSignal,
@@ -4239,6 +4491,7 @@ export class GatewayClient {
             ),
             attemptSignal,
           );
+          status = response.status;
           if (!response.ok || !response.body) {
             throw new GatewayError(
               response.status,
@@ -4273,8 +4526,12 @@ export class GatewayClient {
             ),
             attemptSignal,
           );
-          if (!signal.aborted) throw new GatewayError(0, "event stream closed");
+          if (!signal.aborted) {
+            closed = true;
+            throw new GatewayError(0, "event stream closed");
+          }
         } catch (error) {
+          failure = { cause: error };
           if (signal.aborted) return;
           opts.onError?.(error);
           if (
@@ -4284,12 +4541,20 @@ export class GatewayClient {
           ) {
             return;
           }
-          await abortableDelay(retryMs, signal);
+          retryAfterMs = retryMs;
           retryMs = Math.min(retryMs * 2, 5_000);
         } finally {
+          finishRequestDiagnostic(diagnostic, {
+            status,
+            failure,
+            signal,
+            timedOut: stallExpired && !signal.aborted,
+            ...(closed ? { outcome: "closed" as const } : {}),
+          });
           if (stallTimer) clearTimeout(stallTimer);
           attempt.abort();
         }
+        if (retryAfterMs > 0) await abortableDelay(retryAfterMs, signal);
       }
     })();
 
