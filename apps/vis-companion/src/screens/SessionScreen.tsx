@@ -5644,7 +5644,7 @@ export function SessionScreen({
               id="file-mention-list"
               role="listbox"
               aria-label="File mentions"
-              className="absolute bottom-full left-[max(0.5rem,env(safe-area-inset-left))] right-[max(0.5rem,env(safe-area-inset-right))] mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:left-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:right-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
+              className="absolute bottom-full left-[max(0.5rem,env(safe-area-inset-left))] right-[max(0.5rem,env(safe-area-inset-right))] mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto rounded-panel border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:left-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:right-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
             >
               <div className="bg-dialog-title px-3 py-2 font-mono text-meta font-bold text-dialog-title-foreground">
                 Attach a file
@@ -5678,7 +5678,7 @@ export function SessionScreen({
               id="slash-command-list"
               role="listbox"
               aria-label="Slash commands"
-              className="absolute bottom-full left-[max(0.5rem,env(safe-area-inset-left))] right-[max(0.5rem,env(safe-area-inset-right))] mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:left-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:right-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
+              className="absolute bottom-full left-[max(0.5rem,env(safe-area-inset-left))] right-[max(0.5rem,env(safe-area-inset-right))] mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto rounded-panel border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:left-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:right-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
             >
               <div className="bg-dialog-title px-3 py-2 font-mono text-meta font-bold text-dialog-title-foreground">
                 Slash commands
@@ -5702,7 +5702,7 @@ export function SessionScreen({
           )}
 
           {queuePaused && (
-            <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 border border-warn-strong bg-warn-surface px-2.5 py-1.5 font-mono text-meta text-warn-strong">
+            <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-field border border-warn-strong bg-warn-surface shadow-[3px_3px_0_var(--dialog-shadow)] px-2.5 py-1.5 font-mono text-meta text-warn-strong">
               <span
                 className="size-1.5 shrink-0 bg-warn-strong"
                 aria-hidden="true"
@@ -5732,8 +5732,14 @@ export function SessionScreen({
             </div>
           )}
 
+          {/* THE TRAY IS NOT A PLANE, so the square `index.css` gives a band of the
+            page does not reach it: it arrives over the dock carrying its own paper,
+            at the composer's width and six pixels above it. Two boxes of one object
+            read as one material only at one radius, so it takes the composer's field
+            rung and its 3px shadow — never the panel's 16px, which would make it a
+            second sheet floating over the first. */}
           {queued.length > 0 && (
-            <div className="mb-1.5 border border-dialog-edge bg-panel">
+            <div className="mb-1.5 overflow-clip rounded-field border border-dialog-edge bg-panel shadow-[3px_3px_0_var(--dialog-shadow)]">
               <div className="flex items-center gap-1.5 border-b border-dialog-edge bg-dialog-title px-2.5 py-1 font-mono text-meta font-bold text-dialog-title-foreground">
                 <span aria-hidden="true">┌</span>
                 Queued · {queued.length}

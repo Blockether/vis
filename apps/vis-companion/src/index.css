@@ -76,6 +76,12 @@
    than lying in it, so it takes the rungs its own arithmetic gives — a 28px tile
    is a chip, and the track is that chip plus the 2px that insets it.
 
+   THE DOCK IS ONE OBJECT too: the queue tray and the paused banner are not bands
+   of a page but boxes that arrive over the composer, carrying their own paper at
+   its width six pixels above it — two boxes of one object read as one material
+   only at one radius, so they take its field rung and its 3px shadow, while a
+   completion list, floating on a 6px shadow like the menu beside it, is a panel.
+
    Two lines size every corner. A radius is its box divided by four, capped at
    16px; and a CONTAINER's radius is its child's radius plus the padding between
    them. The second line is what makes the composer's send look concentric inside

@@ -4316,4 +4316,27 @@ describe("Corners", () => {
       expect(source).toContain("sm:rounded-panel");
     }
   });
+
+  it("gives the dock's own boxes the composer's corner", () => {
+    // "why isn't this element rounded" was a report about the queue tray, the one
+    // box in the dock still square. The tray and the paused banner are not bands of
+    // a page: they arrive over the composer at its width, so they take its 12px
+    // field and its 3px shadow. Anything floating on the 6px shadow — the two
+    // completion lists, the attachment menu — is a 16px panel.
+    expect(sessionScreenSource).toContain(
+      "mb-1.5 overflow-clip rounded-field border border-dialog-edge bg-panel shadow-[3px_3px_0_var(--dialog-shadow)]",
+    );
+    expect(sessionScreenSource).toContain(
+      "rounded-field border border-warn-strong bg-warn-surface shadow-[3px_3px_0_var(--dialog-shadow)]",
+    );
+    const floating = [
+      ...sessionScreenSource.matchAll(
+        /className="[^"]*shadow-\[6px_6px_0_var\(--dialog-shadow\)\][^"]*"/g,
+      ),
+    ];
+    expect(floating.length).toBeGreaterThan(2);
+    for (const [list] of floating) {
+      expect(list).toContain("rounded-panel");
+    }
+  });
 });
