@@ -44,6 +44,10 @@ const classesOf = (html: string, mark: string) => {
 /** The bytes are never fetched in static markup: effects do not run. */
 const client = {
   attachmentUrl: async () => "blob:none",
+  attachmentBlob: async (_sid: string, iterationId: string) =>
+    iterationId === "i6"
+      ? new Blob(["name;email\nNatalia;natalia@example.com\n"], { type: "text/csv" })
+      : new Blob(["# Note\n\nA read that works.\n"], { type: "text/markdown" }),
   retainAttachment: () => () => {},
 } as unknown as GatewayClient;
 
@@ -717,6 +721,40 @@ describe("the artifacts surface", () => {
 // its own scrolling — a clip, a note, a text file, a document — is handed the
 // overlay's whole body (`fill`); only a list of rows keeps the padded scroller.
 describe("an opened artifact", () => {
+  // Regression, issue #1e96d5cf-c861-4fa9-88d7-4986c1ea37c7: a downloaded
+  // Markdown plan stayed on `Loading…`; opening Share issued a second read and was
+  // the only way to see bytes the client already held.
+  it("reads downloaded text without fetching its object URL again", async () => {
+    const directClient = {
+      attachmentUrl: async () => "blob:stalled",
+      attachmentBlob: async () =>
+        new Blob(["# Plan\n\nAlready downloaded."], { type: "text/markdown" }),
+      retainAttachment: () => () => {},
+    } as unknown as GatewayClient;
+    const stalledFetch = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", stalledFetch);
+    const view = render(
+      <ArtifactsSheet
+        client={directClient}
+        sid="s1"
+        artifacts={[note]}
+        onClose={() => {}}
+      />,
+    );
+
+    try {
+      await userEvent.click(
+        screen.getByRole("button", { name: /^Open vis-issue-115-comment\.md/ }),
+      );
+      expect(
+        await screen.findByText("Already downloaded.", { selector: "p" }),
+      ).toBeTruthy();
+      expect(stalledFetch).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      vi.unstubAllGlobals();
+    }
+  });
   it("opens an artifact requested by answer prose without a tile click", () => {
     render(
       <ArtifactsSheet

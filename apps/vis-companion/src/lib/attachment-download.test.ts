@@ -92,7 +92,17 @@ describe('downloading one produced artifact', () => {
     expect(second).toBe(first);
     expect(third).toBe(first);
   });
+  it('hands text readers the retained Blob without another request', async () => {
+    const client = new GatewayClient(CONN);
+    const [url, blob] = await Promise.all([
+      client.attachmentUrl('s1', 'i1', 0),
+      client.attachmentBlob('s1', 'i1', 0),
+    ]);
 
+    expect(asked).toHaveLength(1);
+    expect(blob.size).toBe(1024);
+    expect(urls.sizeOf(url)).toBe(blob.size);
+  });
   it('never downloads it again on a device that already has the bytes', async () => {
     // The second client is the app re-opened, or the session re-entered: a new
     // document, an empty memory tier, the SAME immutable artifact.

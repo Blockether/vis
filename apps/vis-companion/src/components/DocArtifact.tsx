@@ -323,7 +323,7 @@ export const DocOverlay = memo(function DocOverlay({
         iterationId={annotate.iterationId}
         name={name}
         mediaType={mime}
-        url={url}
+        source={url}
         plain={!isMarkdownMedia(mime, name)}
         chrome={chrome}
       />

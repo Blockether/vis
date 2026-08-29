@@ -98,14 +98,3 @@ export async function shareArtifact(
     }
   }
 }
-
-/** Fetch the retained attachment URL only when the human asks to share it. */
-export async function shareArtifactUrl(
-  url: string,
-  name: string,
-  mediaType = '',
-): Promise<string> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`artifact ${response.status}`);
-  return shareArtifact(await response.blob(), name, mediaType);
-}

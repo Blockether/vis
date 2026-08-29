@@ -26,9 +26,10 @@ export function clampArtifactText(text: string): string {
   return `${text.slice(0, TEXT_ARTIFACT_LIMIT)}\n\n… truncated`;
 }
 
-/** The artifact's own bytes, as text. `url` is an object/blob URL. */
-export async function readArtifactText(url: string): Promise<string> {
-  const response = await fetch(url);
+/** The artifact's own downloaded bytes, or an object URL for legacy readers. */
+export async function readArtifactText(source: Blob | string): Promise<string> {
+  if (source instanceof Blob) return clampArtifactText(await source.text());
+  const response = await fetch(source);
   if (!response.ok) throw new Error(`artifact text ${response.status}`);
   return clampArtifactText(await response.text());
 }

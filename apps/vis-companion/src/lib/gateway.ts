@@ -893,13 +893,15 @@ function attachmentPayloadBlob(attachment: GatewayAttachment): Blob {
   return new Blob([bytes], { type: attachment.media_type });
 }
 
+type AttachmentSource = { blob: Blob; url: string };
+
 export class GatewayClient {
   readonly base: string;
   private readonly token?: string;
-  // (session, iteration, index) → the produced artifact's object URL. The row is
-  // append-only and content-addressed by that triple, so one download per
-  // picture — but BOUNDED, because every entry pins full decoded bytes.
-  private readonly attachmentUrls = new Map<string, Promise<string>>();
+  // (session, iteration, index) → the produced artifact's downloaded Blob and its
+  // object URL. Text readers consume the Blob directly; media elements consume the
+  // URL. One source owns both so neither path downloads or re-reads the other.
+  private readonly attachmentSources = new Map<string, Promise<AttachmentSource>>();
   // What each of those rows actually COSTS, learned when its bytes land. A bound
   // counted in entries alone cannot tell 24 thumbnails from 24 video clips.
   private readonly attachmentSizes = new Map<string, number>();
@@ -3581,33 +3583,29 @@ export class GatewayClient {
   }
 
   /**
-   * ONE produced artifact's bytes as a `blob:` URL —
+   * ONE produced artifact's retained source —
    * `GET /v1/sessions/:sid/iterations/:iid/attachments/:idx`, the endpoint the
    * `iteration.completed` / transcript descriptors index. `<img src>` cannot
    * carry the bearer header a token-gated gateway demands, so the bytes are
-   * fetched WITH the auth headers and handed back as an object URL.
+   * fetched WITH the auth headers and retained as both a Blob and an object URL.
    *
-   * THREE TIERS, and the network is the LAST one: the object URL this document
+   * THREE TIERS, and the network is the LAST one: the source this document
    * already made; else the bytes this DEVICE already downloaded, from the
    * persistent store in `attachment-cache`; else, and only then, the gateway.
-   * An artifact is immutable, so a re-entered session, a re-opened app and a
-   * figure scrolled back to all cost zero bytes on the wire — only artifacts
-   * this device has never seen are downloaded. A FAILED fetch is evicted so a
-   * row that has not landed yet is retried by the next render.
+   * An artifact is immutable, so every consumer shares exactly one download.
    */
-  attachmentUrl(
+  private attachmentSource(
     sid: string,
     iterationId: string,
     index: number,
-  ): Promise<string> {
+  ): Promise<AttachmentSource> {
     const key = GatewayClient.attachmentKey(sid, iterationId, index);
-    const cached = this.attachmentUrls.get(key);
+    const cached = this.attachmentSources.get(key);
     if (cached) {
-      // Map insertion order IS the eviction order, so a picture asked for AGAIN
-      // (a re-entered session re-mounting its tiles) has to re-insert, or the
-      // very artifacts back on screen stay first in line to be revoked.
-      this.attachmentUrls.delete(key);
-      this.attachmentUrls.set(key, cached);
+      // Map insertion order IS the eviction order, so a source asked for AGAIN
+      // has to re-insert or the artifacts back on screen stay first in line.
+      this.attachmentSources.delete(key);
+      this.attachmentSources.set(key, cached);
       return cached;
     }
     const endpoint = this.attachmentEndpoint(sid, iterationId, index);
@@ -3615,7 +3613,7 @@ export class GatewayClient {
       const stored = await readCachedAttachment(endpoint);
       if (stored) {
         this.attachmentSizes.set(key, stored.size);
-        return URL.createObjectURL(stored);
+        return { blob: stored, url: URL.createObjectURL(stored) };
       }
       let blob: Blob | null = null;
       // The live descriptor can beat the durable attachment row by a few hundred
@@ -3667,20 +3665,30 @@ export class GatewayClient {
         );
       }
       this.attachmentSizes.set(key, blob.size);
-      // Keeping it is best-effort and never blocks the picture it just produced.
+      // Keeping it is best-effort and never blocks the source it just produced.
       void writeCachedAttachment(endpoint, blob);
-      return URL.createObjectURL(blob);
+      return { blob, url: URL.createObjectURL(blob) };
     })();
-    pending.catch(() => this.attachmentUrls.delete(key));
-    this.attachmentUrls.set(key, pending);
+    pending.catch(() => this.attachmentSources.delete(key));
+    this.attachmentSources.set(key, pending);
     // Twice: once for the COUNT bound, which is knowable immediately, and again
     // when the bytes have landed and the SIZE bound finally has numbers to add.
-    this.evictAttachmentUrls();
+    this.evictAttachmentSources();
     void pending.then(
-      () => this.evictAttachmentUrls(),
+      () => this.evictAttachmentSources(),
       () => undefined,
     );
     return pending;
+  }
+
+  /** The retained object URL used by image, audio, video, PDF, and frame elements. */
+  attachmentUrl(sid: string, iterationId: string, index: number): Promise<string> {
+    return this.attachmentSource(sid, iterationId, index).then((source) => source.url);
+  }
+
+  /** The same retained download, read directly without fetching its object URL. */
+  attachmentBlob(sid: string, iterationId: string, index: number): Promise<Blob> {
+    return this.attachmentSource(sid, iterationId, index).then((source) => source.blob);
   }
 
   /** Where ONE artifact is served from — its identity in every tier of cache. */
@@ -3817,7 +3825,7 @@ export class GatewayClient {
       }
       this.attachmentHolds.delete(key);
       // The screen just let go of this one: now the bound can be honoured.
-      this.evictAttachmentUrls();
+      this.evictAttachmentSources();
     };
   }
 
@@ -3836,19 +3844,19 @@ export class GatewayClient {
    * Cheap, now that the bytes survive on disk: a revoked URL costs a decode when
    * that figure scrolls back into view, never another download.
    */
-  private evictAttachmentUrls(): void {
-    const entries = Array.from(this.attachmentUrls.keys()).map((key, at) => ({
+  private evictAttachmentSources(): void {
+    const entries = Array.from(this.attachmentSources.keys()).map((key, at) => ({
       url: key,
       bytes: this.attachmentSizes.get(key) ?? 0,
       used: at,
       pinned: this.attachmentHolds.has(key),
     }));
     for (const key of cacheVictims(entries, ATTACHMENT_MEMORY_BUDGET)) {
-      const stale = this.attachmentUrls.get(key);
-      this.attachmentUrls.delete(key);
+      const stale = this.attachmentSources.get(key);
+      this.attachmentSources.delete(key);
       this.attachmentSizes.delete(key);
       void stale
-        ?.then((url) => URL.revokeObjectURL(url))
+        ?.then((source) => URL.revokeObjectURL(source.url))
         .catch(() => undefined);
     }
   }

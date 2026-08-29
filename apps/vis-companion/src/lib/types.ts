@@ -452,7 +452,7 @@ export interface GatewayAttachment {
  * image/file), as the gateway's byte-free descriptor. It ships identically on
  * the live `iteration.completed` frame and on the persisted transcript, so a
  * produced image renders the same live and in history. The bytes are lazy:
- * `GatewayClient.attachmentUrl(sid, iteration_id, index)`.
+ * `GatewayClient.attachmentUrl(...)` for media, `attachmentBlob(...)` for text.
  */
 export interface IterationAttachment {
   index: number;

@@ -41,7 +41,7 @@ import {
 import { useAttachImage } from "../lib/attach-image";
 import { editedFilename } from "../lib/image-file";
 import type { GatewayClient } from "../lib/gateway";
-import { artifactShareVerb, shareArtifactUrl } from "../lib/artifact-share";
+import { artifactShareVerb, shareArtifact } from "../lib/artifact-share";
 import { DataTable, parseCsv } from "./DataTable";
 import { DocFrame } from "./DocArtifact";
 import { ImageViewer } from "./ImageViewer";
@@ -133,23 +133,27 @@ export function describeArtifact(artifact: SessionArtifact): string {
  * only safe while the thing that painted it holds a retain — released on
  * unmount, which is what keeps the bound meaningful for everything off screen.
  */
-function useArtifactUrl(
+function useArtifactSource(
   client: GatewayClient,
   sid: string,
   artifact: SessionArtifact,
   enabled: boolean,
 ) {
-  const [url, setUrl] = useState<string | null>(null);
+  const [source, setSource] = useState<{ url: string; blob: Blob } | null>(null);
   const [failed, setFailed] = useState(false);
   const { iterationId, index } = artifact;
   useEffect(() => {
     if (!enabled || !iterationId || !sid) return;
     let alive = true;
+    setSource(null);
+    setFailed(false);
     const release = client.retainAttachment(sid, iterationId, index);
-    client
-      .attachmentUrl(sid, iterationId, index)
-      .then((next) => {
-        if (alive) setUrl(next);
+    Promise.all([
+      client.attachmentUrl(sid, iterationId, index),
+      client.attachmentBlob(sid, iterationId, index),
+    ])
+      .then(([url, blob]) => {
+        if (alive) setSource({ url, blob });
       })
       .catch(() => {
         if (alive) setFailed(true);
@@ -159,7 +163,7 @@ function useArtifactUrl(
       release();
     };
   }, [client, sid, iterationId, index, enabled]);
-  return { url, failed };
+  return { url: source?.url ?? null, blob: source?.blob ?? null, failed };
 }
 
 /**
@@ -292,12 +296,12 @@ export function previewBlocks(text: string, limit = PREVIEW_LINES): PreviewLine[
 }
 
 /** The note's text, once its bytes are in hand. A failure simply peeks at nothing. */
-function useArtifactPreview(url: string | null, enabled: boolean): string {
+function useArtifactPreview(source: Blob | null, enabled: boolean): string {
   const [text, setText] = useState("");
   useEffect(() => {
-    if (!enabled || !url) return;
+    if (!enabled || !source) return;
     let alive = true;
-    readArtifactText(url)
+    readArtifactText(source)
       .then((next) => {
         if (alive) setText(next);
       })
@@ -307,7 +311,7 @@ function useArtifactPreview(url: string | null, enabled: boolean): string {
     return () => {
       alive = false;
     };
-  }, [url, enabled]);
+  }, [source, enabled]);
   return text;
 }
 
@@ -398,7 +402,7 @@ function Thumb({
     (table || isTextMedia(artifact.mediaType, artifact.name)) &&
     typeof artifact.size === "number" &&
     artifact.size <= PREVIEW_LIMIT;
-  const { url, failed } = useArtifactUrl(
+  const { url, blob, failed } = useArtifactSource(
     client,
     sid,
     artifact,
@@ -406,7 +410,7 @@ function Thumb({
   );
   // Markdown is parsed into what its lines ARE; anything else is text and stays
   // verbatim — the same split the reader makes on the same two files.
-  const head = useArtifactPreview(url, previewable);
+  const head = useArtifactPreview(blob, previewable);
   const plain = !isMarkdownMedia(artifact.mediaType, artifact.name);
   const preview: PreviewLine[] = plain
     ? previewLines(head).map((text): PreviewLine => ({ kind: "code", text }))
@@ -723,7 +727,7 @@ function DetailOverlay({
   /** The artifact's own verbs, as cells of this band before the ✕. */
   actions?: ReactNode;
   /** The retained original file offered to the platform share sheet. */
-  share?: { url: string; name: string; mediaType: string };
+  share?: { blob: Blob; name: string; mediaType: string };
   onClose: () => void;
   /** The child fills the body and scrolls itself. */
   fill?: boolean;
@@ -737,7 +741,7 @@ function DetailOverlay({
       onClick={() => {
         setShareState("sharing");
         setShareStatus("");
-        void shareArtifactUrl(share.url, share.name, share.mediaType)
+        void shareArtifact(share.blob, share.name, share.mediaType)
           .then(setShareStatus)
           .catch(() => setShareStatus("Could not share artifact."))
           .finally(() => setShareState("idle"));
@@ -840,9 +844,9 @@ function ArtifactDetail({
   onClose: () => void;
 }) {
   const attach = useAttachImage();
-  const { url, failed } = useArtifactUrl(client, sid, artifact, true);
+  const { url, blob, failed } = useArtifactSource(client, sid, artifact, true);
 
-  if (failed || !url) {
+  if (failed || !url || !blob) {
     return (
       <DetailOverlay name={artifact.name} onClose={onClose}>
         <p className="p-4 font-mono text-meta text-dialog-hint">
@@ -880,7 +884,7 @@ function ArtifactDetail({
     );
   }
 
-  const share = { url, name: artifact.name, mediaType: artifact.mediaType };
+  const share = { blob, name: artifact.name, mediaType: artifact.mediaType };
 
   // An arbitrary file may have no safe in-app reader, but its original bytes are
   // still useful. The detail states that honestly and gives the band one real verb.
@@ -967,7 +971,7 @@ function ArtifactDetail({
         iterationId={artifact.iterationId}
         name={artifact.name}
         mediaType={artifact.mediaType}
-        url={url}
+        source={blob}
         plain={!isMarkdownMedia(artifact.mediaType, artifact.name)}
         // The note's own verb stands in this overlay's band, one cell from the
         // ✕, and the band reports the version it saved as.

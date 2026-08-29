@@ -124,7 +124,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   iterationId,
   name,
   mediaType,
-  url,
+  source,
   plain,
   chrome,
 }: {
@@ -133,7 +133,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
   iterationId: string;
   name: string;
   mediaType: string;
-  url: string;
+  source: Blob | string;
   /** A `.txt`/`.log` note: the same annotator, reading the file verbatim. */
   plain?: boolean;
   /** The band and the frame this document is read inside. */
@@ -146,7 +146,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
     let alive = true;
     setLoaded(null);
     setFailed(false);
-    readArtifactText(url)
+    readArtifactText(source)
       .then((next) => {
         if (alive) setLoaded(next);
       })
@@ -156,7 +156,7 @@ export const MarkdownArtifact = memo(function MarkdownArtifact({
     return () => {
       alive = false;
     };
-  }, [url]);
+  }, [source]);
 
   const save = useCallback(
     async (text: string) => {
