@@ -250,17 +250,20 @@ already implements it:
 
 ## 5. Draw the product, not a product
 
-A mockup is a claim about OUR app. Every control in it must exist in `apps/vis-companion/src`, in
-the same place, at the same size, in the same token — or be labelled, in the artifact itself, as a
-proposal with the reason it beats what ships. An invented control is worse than an ugly one: it
-reviews a product nobody can build, and it is why a "modernized" screen reads as a stock template.
+**There is no mockup.** What a design answer shows is the shipped component, rendered by the code that
+ships it: the vocabulary in Storybook (`npm run storybook`, `Vocabulary/*`), a whole screen in the running
+app (`npm run dev`). §12 owns the recipe. A hand-written frame is a claim ABOUT the app that nothing checks —
+it drifts by a token, a variant or a breakpoint per drawing, and that drift is why a "modernized" screen
+reads as a stock template. A proposal is a DIFF: change the line in `apps/vis-companion/src`, look at it,
+keep it or `git checkout`. Three variants are three shots of three tree states, and each still costs zero files.
 
-**The frames you draw at.** One canonical viewport per surface, and the frame is a plain rectangle: phone
-**393×852pt** (safe areas 59pt top, 34pt bottom), small phone 375×812, tablet 834×1194 (crosses the app's `sm:`
-40rem breakpoint, so density still follows the pointer), desktop window **1280×800**, TUI 120×40 cells.
-**Never hand-draw the device.** An island, a status bar, a home indicator, a bezel, traffic lights or a browser
-bar drawn by hand is fiction at the pixel level and is the fastest way to make real work read as a mockup —
-draw the viewport, hatch the safe areas, and let the caption carry the size.
+**The frames you look at.** One canonical viewport per surface, set on the renderer and never drawn: phone
+**393×852pt** (safe areas 59pt top, 34pt bottom), small phone 375×812, tablet 834×1194 (crosses the app's
+`sm:` 40rem step), desktop window **1280×800**, TUI 120×40 cells. `spel set device 'iphone 14'` emulates the
+finger; a plain `set viewport 1280 800` is the pointer. The step is real and it is what a hand-drawn frame
+gets wrong: the same `Button` measures 28px under a 10px label below 40rem and 32px under an 11px label above
+it. **Never hand-draw the device** — an island, a status bar, a home indicator, a bezel, traffic lights or a
+browser bar drawn by hand is fiction at the pixel level, and the caption carries the size anyway.
 
 **Restyling changes paint, never behaviour.** A design pass may move a control inside its own screen and change
 its box, its token or its type step. It may NOT remove a fact, merge two controls, drop a state, re-order a
@@ -268,11 +271,12 @@ flow, or "simplify" what a tool result shows — that is a product change wearin
 it is the one thing a design review is never asked for. If the shape argues for a functional change, say it in
 one sentence and leave it out of the artifact.
 
-**Draw the components before the screens.** An artifact opens with a component sheet: every control drawn ONCE,
-at the size the code paints it, captioned with the file and line that owns it. The screens are then assembled
-from that sheet and from nothing else — two rows that disagree about the same control mean the sheet is wrong,
-not the screen.
-**Before drawing a control, `grep` it and read the docstring above it.** Those docstrings are the
+**The sheet is Storybook.** Every control is drawn ONCE, by the component that ships it, in
+`apps/vis-companion/src/**/*.stories.tsx` under the `Vocabulary/*` title — the six real themes in the toolbar,
+the story's own frame deciding density. A control that gains a state earns that state in its story in the
+same commit, and a screen is assembled from those components and nothing else: two rows that disagree about
+the same control mean the COMPONENT is wrong, not the drawing.
+**Before you change a control, `grep` it and read the docstring above it.** Those docstrings are the
 argument for the shape, usually written after a bug report; the standing ones:
 
 - **The composer has ONE control per act** (`ComposerButton`, ui.tsx:1074). Attach is a **`+`**, not
@@ -488,35 +492,37 @@ Two derived rules that catch most of the damage:
 
 A design answer that was never rendered and inspected is a guess, and it will read as one.
 
-**Load the fonts, then prove they loaded.** The frame declares `@font-face` for `Inter Variable` and
-`JetBrains Mono Variable` with the repo's own `.woff2` inlined as base64 — §1 owns the files and the
-naming rule; a `file://` reference is refused by the renderer's origin rules. Then PROVE it in the
-rendered page with a width probe, because nothing else reports a silent
-fallback: paint two off-screen spans holding the same string, one in the family under test and one
-in `system-ui`, and measure both.
+**The browser is `spel`, always.** One tool renders the mockup and drives the running app:
+`spel --session agent-<ts> …`, one named session per task, chained in ONE shell because the daemon
+lives with that process, and closed when the task ends — `~/spel/AGENTS.md` owns those rules. Measure
+the SHIPPED screen exactly as a frame is measured: `open http://127.0.0.1:<vite port>`, `snapshot -i -c`
+for every box on the screen, `get box` for one, `screenshot -f` or `-a` for the picture. **Never
+hand-roll a Playwright or Puppeteer script** in the sandbox to measure a screen — it measures a
+browser nobody else can reproduce, and the figures in the answer stop being checkable by the next
+reader.
 
-```
-#probe-a{font-family:'Inter Variable'}  #probe-b{font-family:system-ui}
-spel --session <s> get box '#probe-a'   # widths must DIFFER
-spel --session <s> get box '#probe-b'
-```
+**Render the real thing; there is no frame to build.** Two renderers, and the answer decides which:
 
-Equal widths mean the face never loaded, and a frame that fell back to SF Pro invalidates every
-judgement about density and hierarchy in it — SF is narrower than Inter, and JetBrains Mono is
-wider than SF Mono, so every column in the frame measured the wrong product.
+- **The vocabulary → Storybook.** `npm run storybook` serves `127.0.0.1:6006`, and every story is an
+  address: `iframe.html?id=<story-id>&globals=theme:<theme-id>`, so one command paints one shipped control in
+  one of the six real themes. The builder is the app's own `vite.config.ts`, so the Tailwind tokens, the React
+  Compiler and `index.css` are the ones production uses — including the fonts, which `index.css` imports
+  itself. Nothing to inline and nothing to prove: a face missing there is missing in the product too.
+- **A screen with real data → the app.** `npm run dev` serves `127.0.0.1:5273` against the local gateway, so
+  the screen carries the real sessions, the real names and the real truncation. What the gateway cannot
+  produce — offline, an empty list, a 90-item folder — is a fixture beside its story in `src/dev/**`.
 
-1. Build the screens as ONE self-contained HTML file at §5's canonical viewport for the surface —
-   a frame that omits the safe areas lies about the space.
-   Paint from `themes.generated.css` variables and the `text-*` steps only, both appearances.
-2. Render and crop:
-   `spel --session agent-<ts> set viewport 1440 900 && … open file:///… && … get box '#p1' && … screenshot -f /tmp/full.png`
-   — chain the commands in ONE shell (the daemon lives with that process), then crop each frame with
-   PIL from the `get box` figures. Close the session when the task ends.
-3. Put the PNG in front of yourself (`attach(path, audience="model")`) and read it as a stranger.
-   The first render is ALWAYS wrong in ways prose cannot predict: labels collide inside a cell, a
-   glyph clips at the device edge, a path chip wraps mid-word, a keyboard chip appears on a phone.
-4. Fix, re-render, look again. Ship the HTML as the artifact — it is inspectable at any zoom, and it
-   is what §10 is checked against.
+Then, in both cases:
+
+1. Set the frame first (§5), then open the address.
+2. MEASURE, never estimate: `get box <sel>` for one box, `styles <sel>` for the type step, the radius and the
+   ink, `snapshot -i -c` for every interactive element at once. Every figure in the answer comes from that
+   output, and a reader can re-run the same line.
+3. Put the PNG in front of yourself (`attach(path, audience="model")`) and read it as a stranger. The first
+   render is ALWAYS wrong in ways prose cannot predict: labels collide inside a cell, a glyph clips at the
+   device edge, a path chip wraps mid-word, a keyboard chip appears on a phone.
+4. Fix the CODE, re-render, look again. The artifact is the screenshot AND the diff that produced it — that
+   diff is what §10 is checked against.
 
 ## 13. Make protocol — plan, critique the plan, build, critique the build
 

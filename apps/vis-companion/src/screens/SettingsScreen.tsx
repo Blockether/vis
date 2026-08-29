@@ -109,7 +109,7 @@ import {
   IconButton,
   Input,
   Modal,
-  NotifyConnectionButton,
+  NotifyConnectionSwitch,
   PROSE,
   SettingsChoiceDisclosure,
   SettingsChoiceGroup,
@@ -362,7 +362,7 @@ function GatewayPanels({
                 return (
                   <div
                     key={toggle.id}
-                    className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-3 transition-colors hover:bg-hover sm:px-4 sm:py-2.5"
+                    className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 px-3 py-2 transition-colors hover:bg-hover sm:px-4 sm:py-2"
                   >
                     <StateMark
                       className={`${MARK_NUDGE} ${
@@ -386,7 +386,14 @@ function GatewayPanels({
                     </div>
 
                     {toggle.type === "boolean" && (
+                      // A CONTROL ANSWERS THE WHOLE ROW, not its first line. The mark
+                      // beside the name rides the title's baseline, but a 28px switch
+                      // pinned to `items-start` sat 6px above the centre of the two
+                      // lines it governs, and every wrapped description tilted the
+                      // column further; it centres against the cell, the way a setting
+                      // row does everywhere a finger expects one.
                       <Switch
+                        className="self-center"
                         label={toggle.label}
                         isOn={!!toggle.enabled}
                         isBusy={busy}
@@ -2130,10 +2137,16 @@ function SettingsColumn({
           band of the list and the mark adding a machine here are one rule, not one
           glyph meaning two things. The name and its meta wrap inside their own
           cell, the verb is the band's trailing cell centred against whatever that
-          cell grows to, and the band never pads around it: the row is `min-h-12`
-          because a finger lands there. */}
+          cell grows to. Reported since (paraphrased: the ＋ in MACHINES and the ones
+          by notifications and by MCP are uneven): this band stood 48px tall and
+          padded 16px on `sm:` while the bands nested inside a machine stood 36 and
+          padded 12, so one 32px mark floated in 8px of paper and the next had 2 —
+          and measured on a desktop the two did not even share a vertical line, 595
+          against 599. Every band in the dialog is ONE height now, 36px on touch and
+          32 under a pointer, on ONE gutter; the LEVEL is the paper, the white and
+          the amber fill, not twelve extra pixels. */}
       <header className="min-w-0 shrink-0 border-b border-dialog-edge bg-level-machine">
-        <div className="flex min-h-12 min-w-0 items-center gap-3 px-3 py-1 sm:px-4 mouse:min-h-9">
+        <div className="flex min-h-9 min-w-0 items-center gap-3 px-3 py-0.5 sm:px-4 mouse:min-h-8">
           <div className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
             <h3 className="min-w-0 flex-auto truncate font-mono text-ui font-black uppercase tracking-[0.12em] text-white">
               {title}
@@ -2674,12 +2687,16 @@ function WebNotificationsPanel({ gateway }: { gateway: GatewayConn }) {
   const shown = live ?? remembered;
   const hasBanner = Boolean(err) || !supported || blocked;
 
+  // NO ADDRESS IN THE BAND. It printed the machine beside its own title — the same one
+  // the row three lines above is named after — and that was reported (paraphrased: drop
+  // that address, it is not useful; notifications are just on or off). The panel's one
+  // fact is whether alerts arrive on this device, and the switch is that fact.
+
   return (
     <SettingsPanel
       title="Notifications"
-      meta={machine}
       action={
-        <NotifyConnectionButton
+        <NotifyConnectionSwitch
           machine={machine}
           isOn={shown ?? false}
           isBusy={busy !== null}
@@ -2904,12 +2921,13 @@ export function NativeNotificationsPanel({
   const hasBanner =
     Boolean(err) || !supported || blocked || Boolean(push && !available);
 
+  // Same band rule as the web panel: no address, one switch.
+
   return (
     <SettingsPanel
       title="Notifications"
-      meta={machine}
       action={
-        <NotifyConnectionButton
+        <NotifyConnectionSwitch
           machine={machine}
           isOn={shown ?? false}
           isBusy={busy !== null}
@@ -3011,21 +3029,30 @@ export function SettingsPanel({
           levels. The column keeps the paper, the size and the white; a panel
           inside a machine keeps neither, and speaks in the hint colour one step
           smaller. Reported since (paraphrased: bin that rail on the left, line the
-          borders up): the 2px accent tick it wore was the only label on the screen
-          standing 10px right of every other one. */}
-      <header className="flex min-h-8 min-w-0 flex-wrap content-center items-baseline gap-x-3 gap-y-1 border-b border-dialog-edge px-3 py-1.5">
-        <h3 className="min-w-0 flex-auto truncate font-mono text-chip font-bold uppercase tracking-[0.14em] text-dialog-hint">
-          {title}
-        </h3>
-        {meta && (
-          <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
-            {meta}
-          </span>
-        )}
+           borders up): the 2px accent tick it wore was the only label on the screen
+           standing 10px right of every other one. Reported since (paraphrased: the
+           pluses in MACHINES and the ones by notifications and MCP are uneven): a band
+           that carried a verb PADDED around it and stood 45px tall while the sibling
+           band without one stayed 32, so the column's rules were spaced by whether a
+           panel had anything to press; and the title, the meta and the face shared
+           ONE baseline line, which left the label's optical centre 9px above the
+           mark's. The band owns ONE height at each density — 36px on touch, 32px
+           under a pointer, the project band's own rhythm, the same the column band
+           above now keeps — the name and its meta wrap inside their own cell, and
+           the verb is the trailing cell, centred against it. */}
+      <header className="flex min-h-9 min-w-0 items-center gap-3 border-b border-dialog-edge px-3 py-0.5 sm:px-4 mouse:min-h-8">
+        <div className="flex min-w-0 flex-auto flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h3 className="min-w-0 flex-auto truncate font-mono text-chip font-bold uppercase tracking-[0.14em] text-dialog-hint">
+            {title}
+          </h3>
+          {meta && (
+            <span className="ms-auto min-w-0 max-w-full break-words text-right font-mono text-chip font-bold uppercase tracking-wider text-dialog-hint">
+              {meta}
+            </span>
+          )}
+        </div>
         {action && (
-          <span className="flex shrink-0 items-center self-center empty:hidden">
-            {action}
-          </span>
+          <span className="flex shrink-0 items-center empty:hidden">{action}</span>
         )}
       </header>
       {/* A PANEL BODY DIVIDES ITS OWN PARTS. `divide-y` draws only BETWEEN

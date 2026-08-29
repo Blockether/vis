@@ -124,8 +124,8 @@ const connected = async () => {
       gateway={{ url: MACHINE, label: "buildbox" }}
     />,
   );
-  const verb = await screen.findByRole("button", {
-    name: "Disconnect notifications from buildbox",
+  const verb = await screen.findByRole("switch", {
+    name: "Notifications from buildbox: on",
   });
   return { unregistered, verb };
 };

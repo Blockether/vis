@@ -65,11 +65,19 @@ const sourceFiles = (dir) =>
 const literals = (source) =>
   (source.match(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g) ?? []).map((raw) => raw.slice(1, -1));
 
-/** Every `sm:` utility in the source that is smaller than the base it overrides. */
+/** Every `sm:` utility in the source that is smaller than the base it overrides.
+ *
+ *  A class list is written on ONE line, and that line is the comparison's real
+ *  scope: this scanner pairs quotes without a parser, so a lone apostrophe inside
+ *  a comment ("the frame's own border") pairs with the next quote in the file and
+ *  hands the rule a "literal" spanning two unrelated components — measured here, a
+ *  section's `sm:min-h-0` was reported as shrinking the `min-h-12` of a different
+ *  component nine lines below it. Line by line cannot pair those, and no real class
+ *  list loses a pair it actually declares. */
 export function shrinksAtSm(source) {
   const found = [];
-  for (const literal of literals(source)) {
-    const tokens = literal.split(/\s+/).filter(Boolean);
+  for (const line of literals(source).flatMap((literal) => literal.split('\n'))) {
+    const tokens = line.split(/\s+/).filter(Boolean);
     const baseline = new Map();
     for (const token of tokens) {
       const m = measure(token);

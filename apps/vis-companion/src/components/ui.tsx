@@ -22,8 +22,6 @@ import { createPortal } from 'react-dom';
 
 import {
   ArrowDownIcon,
-  BellIcon,
-  BellOffIcon,
   CheckIcon,
   ChevronIcon,
   CloseIcon,
@@ -1609,13 +1607,20 @@ export function SettingsDisclosure({
 }
 
 /**
- * ON OR OFF, and there is only one of it.
+ * ON OR OFF, AND THE KNOB IS WHERE THE ANSWER IS.
  *
- * A feature toggle is a WORD, not a sliding knob: `ON`/`OFF` in the same mono
- * the rest of the app is set in, amber when it is on. It reports its own work
- * (`isBusy` → `··`, `aria-busy`) because a setting is a round trip to a gateway
- * and a control that snaps back a second later without saying why is a bug
- * report. `role="switch"` and `aria-checked` are the control's, not the caller's.
+ * A feature toggle used to be a WORD — `ON`/`OFF` set in the same mono as the rest
+ * of the app, amber when on. Reported over this dialog (paraphrased: these have to
+ * be real toggles, the modern kind with the little circle in them, it is the most
+ * natural thing there is): a switch is the one control a reader recognises before
+ * reading it, and a settings column that spells its state out in type puts a second
+ * mono word on every row to argue with the label it belongs to. So the state is
+ * POSITION — knob left, knob right — and the colour only agrees with it, which is
+ * also how it keeps its meaning without hue.
+ *
+ * 46x28 on touch and 40x24 under a pointer, the design skill's own settings figures,
+ * with the 44px finger target arriving as invisible reach above and below (32px on a
+ * pointer, the floor) rather than as paint.
  *
  * OFF WEARS THE RESTING FRAME, because a switched-off toggle had NO BOX AT ALL.
  * It drew `border-transparent` over `bg-panel-2`, and `--panel2` is the same value
@@ -1623,16 +1628,14 @@ export function SettingsDisclosure({
  * that was supposed to be the control's own paper measures 1.00:1 against the row
  * it sits in, and the border was transparent by name — so a settings row ended in
  * a grey word floating on the page, reported as "these off buttons are not visible
- * at all: why no border?". The frame is `border-edge-strong` (1.38:1 light,
- * 1.40:1 dark), the hairline `Button`'s `secondary` already draws — the button
- * this one stands beside on an MCP server row — and the fill is dropped, so the
- * switch reads on whatever paper it is put on rather than carrying a step that
- * has never once rendered. ON keeps the amber slab and names its own frame, so
- * the two faces differ in colour and never in box.
+ * at all: why no border?". The track keeps `border-edge-strong` (1.38:1 light,
+ * 1.40:1 dark), the hairline `Button`'s `secondary` already draws, and the knob is
+ * that same ink, so an off switch is a filled circle on the row's own paper.
  *
- * The hover moves the SURFACE and not the ink, exactly as `Button` spells it: the
- * ink used to jump from `text-dialog-hint` to `text-white` under the pointer,
- * which is the app's one hover system saying two things at once.
+ * It reports its own work — the knob pulses and `aria-busy` says so — because a
+ * setting is a round trip to a gateway and a control that snaps back a second later
+ * without saying why is a bug report. `role="switch"` and `aria-checked` are the
+ * control's, not the caller's.
  */
 export function Switch({
   label,
@@ -1641,7 +1644,7 @@ export function Switch({
   className = '',
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
-  /** Icon-only in effect — `ON` is not a name — so the name is not optional. */
+  /** A knob is not a name, so the name is not optional. */
   label: string;
   isOn: boolean;
   isBusy?: boolean;
@@ -1653,16 +1656,19 @@ export function Switch({
       aria-label={`${label}: ${isOn ? 'on' : 'off'}`}
       aria-checked={isOn}
       aria-busy={isBusy}
-      className={`mt-0.5 inline-flex h-8 w-[3.25rem] shrink-0 items-center justify-center border font-mono text-chip font-black tracking-[0.08em] transition-colors duration-150 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 active:scale-[0.97] disabled:opacity-45 motion-reduce:transition-none motion-reduce:active:scale-100 mouse:h-6 ${
-        isOn
-          ? 'border-accent bg-accent text-accent-foreground'
-          : 'border-edge-strong bg-transparent text-dialog-hint hover:bg-hover'
+      className={`relative inline-flex h-7 w-[2.875rem] shrink-0 items-center rounded-full border p-0.5 transition-colors duration-150 ease-out after:absolute after:inset-x-0 after:-top-2 after:-bottom-2 after:content-[""] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-45 motion-reduce:transition-none mouse:h-6 mouse:w-10 mouse:after:-top-1 mouse:after:-bottom-1 ${
+        isOn ? 'border-accent bg-accent' : 'border-dialog-hint bg-transparent hover:bg-hover'
       } ${className}`}
       {...props}
     >
-      <span aria-hidden className={isBusy ? 'animate-pulse' : ''}>
-        {isBusy ? '··' : isOn ? 'ON' : 'OFF'}
-      </span>
+      <span
+        aria-hidden
+        className={`size-[1.375rem] rounded-full transition-transform duration-150 ease-out mouse:size-[1.125rem] ${
+          isOn
+            ? 'translate-x-[1.125rem] bg-accent-foreground mouse:translate-x-4'
+            : 'translate-x-0 bg-dialog-hint'
+        } ${isBusy ? 'animate-pulse motion-reduce:animate-none' : ''}`}
+      />
     </button>
   );
 }
@@ -1687,23 +1693,19 @@ export function Switch({
  * state; this one is a round trip to a machine that can refuse, and a round trip is
  * a verb.
  *
- * THEN THE WORD BECAME A MARK. Reported over the same panel (paraphrased: make
- * these buttons circles with icons and put them in the headers, the settings are
- * too big): a full-width word took a 44px row of the screen for a press that
- * happens twice in a machine's life, and Providers and MCP servers each kept one
- * too. So the verb rides the band's trailing cell as the app's disc, and the two
- * things the word carried split the way this control already splits them — the
- * BELL is the state, struck through where this device gets nothing, and the
- * sentence is the control's NAME, read out by `aria-label` and shown to a pointer
- * by `title`. It stays quiet rather than amber: a panel nested inside a machine
- * never wears the fill of the column above it, and the mark says the state without
- * one.
- *
- * The words live in this component rather than at each call site because native
- * APNs/FCM and Web Push are two transports for ONE question and must never
- * become two vocabularies.
+ * THEN THE MARK BECAME THE SWITCH. Reported over the same panel (paraphrased: make
+ * these buttons circles with icons and put them in the headers, the settings are too
+ * big) the word became a bell in the band's trailing cell; reported again over that
+ * bell (paraphrased: drop the address beside it — notifications are simply on or off,
+ * so that should be a toggle too), the bell became the control every other on/off
+ * setting in this dialog already wears. The round trip did not go away, it is spoken
+ * by the same `isBusy` every gateway-backed toggle here uses: the knob pulses while
+ * the machine is being asked. The sentence survives as the pointer's `title` —
+ * `Connect notifications from <machine>` — and the machine's name rides the switch's
+ * own accessible name, so the band no longer prints an address a reader already read
+ * three rows above.
  */
-export function NotifyConnectionButton({
+export function NotifyConnectionSwitch({
   machine,
   isOn,
   isBusy = false,
@@ -1721,26 +1723,23 @@ export function NotifyConnectionButton({
   onClick: () => void;
 }) {
   const isWaiting = isBusy || isChecking;
-  // The NAME is what the press will do, and it is the only place the sentence is
-  // spelled out now. A round trip in flight pulses the mark rather than replacing
-  // it with a word: `Checking…` had to be as wide as the verbs it stood in for.
+  // The pointer gets the whole sentence, because a switch says WHICH WAY it will go
+  // and not what that means; a screen reader gets the setting's name and its state
+  // from the control itself.
   const action = isChecking
     ? `Asking ${machine} whether this device is registered`
     : isOn
       ? `Disconnect notifications from ${machine}`
       : `Connect notifications from ${machine}`;
-  const mark = `size-4 ${isWaiting ? 'animate-pulse motion-reduce:animate-none' : ''}`;
   return (
-    <IconButton
-      variant="quiet"
-      label={action}
+    <Switch
+      label={`Notifications from ${machine}`}
+      isOn={isOn}
+      isBusy={isWaiting}
       title={action}
-      aria-busy={isWaiting}
       disabled={disabled}
       onClick={onClick}
-    >
-      {isOn ? <BellIcon className={mark} /> : <BellOffIcon className={mark} />}
-    </IconButton>
+    />
   );
 }
 

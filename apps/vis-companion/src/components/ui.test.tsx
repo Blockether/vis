@@ -68,7 +68,7 @@ import {
   MachineTab,
   MetaButton,
   NewSessionButton,
-  NotifyConnectionButton,
+  NotifyConnectionSwitch,
   OptionRow,
   Pill,
   Disclosure,
@@ -1579,12 +1579,15 @@ describe("settings is ONE dialog with two columns", () => {
     // Full width fixed the reading and cost a 44px row per panel for a press that
     // happens twice in a machine's life — three of them stacked inside one machine.
     const notify = uiSource.slice(
-      uiSource.indexOf("export function NotifyConnectionButton"),
+      uiSource.indexOf("export function NotifyConnectionSwitch"),
       uiSource.indexOf("THE ✕, AND THERE IS EXACTLY ONE OF IT"),
     );
-    expect(notify).toContain("<IconButton");
-    expect(notify).toContain('variant="quiet"');
-    expect(notify).toContain("label={action}");
+    // Reported again over the same band (paraphrased: drop that address, notifications
+    // are just on or off — make it a toggle): the band's verb is the app's switch now,
+    // and the machine it speaks for rides its accessible name, not the band's meta.
+    expect(notify).toContain("<Switch");
+    expect(notify).toContain("title={action}");
+    expect(notify).toContain("label={`Notifications from ${machine}`}");
     expect(notify).not.toContain("w-full justify-center sm:w-auto");
     expect(notify).not.toContain('className="flex items-center justify-end px-3 py-2"');
     // One full-width verb is left in the dialog and it is not a band's: importing a
@@ -3126,15 +3129,38 @@ describe("a setting is picked and switched by one control each", () => {
     expect(settingsSource).not.toContain("Spoken replies");
   });
 
-  it("says ON or OFF in words, and says when it is still asking", () => {
+  // Regression, user report (paraphrased: these have to be real toggles, the modern
+  // kind with the little circle inside — it is the most natural thing there is): the
+  // control spelled its own state out as the mono word ON or OFF, so every settings
+  // row carried a second word arguing with the label it belonged to.
+  it("says on or off with the knob, and never with a word", () => {
     const on = renderToStaticMarkup(<Switch label="Web search" isOn />);
     expect(on).toContain('role="switch"');
     expect(on).toContain('aria-checked="true"');
     expect(on).toContain('aria-label="Web search: on"');
-    expect(on).toContain("ON");
-    expect(
-      renderToStaticMarkup(<Switch label="Web search" isOn isBusy />),
-    ).toContain("\u00b7\u00b7");
+    expect(on).not.toContain(">ON<");
+    // The knob has crossed the track, and the track is the amber.
+    expect(on).toContain("translate-x-[1.125rem]");
+    expect(on).toContain("bg-accent");
+    const off = renderToStaticMarkup(<Switch label="Web search" isOn={false} />);
+    expect(off).toContain('aria-checked="false"');
+    expect(off).toContain('aria-label="Web search: off"');
+    expect(off).not.toContain(">OFF<");
+    expect(off).toContain("translate-x-0");
+    // 46x28 on touch and 40x24 under a pointer — the design skill's own settings
+    // figures — with the 44px target arriving as invisible reach, never as paint.
+    const box = classes(off);
+    expect(box).toContain("h-7");
+    expect(box).toContain("w-[2.875rem]");
+    expect(box).toContain("mouse:h-6");
+    expect(box).toContain("mouse:w-10");
+    expect(box).toContain("after:-top-2");
+    expect(box).toContain("after:-bottom-2");
+    // A round trip to a gateway pulses the knob instead of printing dots at it.
+    const busy = renderToStaticMarkup(<Switch label="Web search" isOn isBusy />);
+    expect(busy).toContain('aria-busy="true"');
+    expect(busy).toContain("animate-pulse");
+    expect(busy).not.toContain("··");
   });
 
   // Regression, user report ("these off buttons are not visible at all: why no
@@ -3142,14 +3168,24 @@ describe("a setting is picked and switched by one control each", () => {
   // the same value as `--surface` in both bundled palettes — a transparent frame
   // over the very paper the control stands on, so a settings row ended in a grey
   // word with no box at all.
+  //
+  // Regression, measured on the shipped Blockether Light once the word became a
+  // knob: track and knob were both `edge-strong` (#d8d1c8) on `--surface`
+  // (#faf3eb) — 1.38:1, where the design contract asks 3:1 of any mark that
+  // CARRIES MEANING, and a switch a reader cannot find says nothing about what it
+  // is set to. Resting is the hint ink the label beside it already wears: 4.87:1
+  // on the dialog's paper, 4.2:1 on a machine's own.
   it("wears the resting frame when it is off, over no paper of its own", () => {
-    const off = classes(
-      renderToStaticMarkup(<Switch label="Web search" isOn={false} />),
-    );
-    expect(off).toContain("border-edge-strong");
+    const resting = renderToStaticMarkup(<Switch label="Web search" isOn={false} />);
+    const off = classes(resting);
+    expect(off).toContain("border-dialog-hint");
     expect(off).toContain("bg-transparent");
     expect(off).not.toContain("border-transparent");
     expect(off).not.toContain("bg-panel-2");
+    expect(off).not.toContain("border-edge-strong");
+    // The knob is drawn in that same ink, so the pair reads as one object.
+    expect(resting).toContain("bg-dialog-hint");
+    expect(resting).not.toContain("bg-edge-strong");
     // One hover system, and it only ever moves the surface.
     expect(off).toContain("hover:bg-hover");
     expect(off).not.toContain("hover:text-white");
@@ -3174,12 +3210,19 @@ describe("a setting is picked and switched by one control each", () => {
 // control beside it printed the state it was ALREADY in — `Not connected`, `visgw will
 // not alert this device.`, `OFF` — so the row said no three times over and never once
 // said how to say yes.
+//
+// Regression, user report (paraphrased: drop that address next to notifications, it is
+// not useful — notifications are simply on or off, so that should be a toggle too):
+// the verb answered the second report by becoming a bell in the band, and a bell is a
+// mark a reader has to learn. The state is a knob again — the same control every other
+// on/off setting in this dialog wears — and the verb survives as the sentence a pointer
+// gets, because the panel's one fact is whether alerts arrive on this device.
 describe("the notifications control answers one question", () => {
   const control = (
-    props: Partial<ComponentProps<typeof NotifyConnectionButton>> = {},
+    props: Partial<ComponentProps<typeof NotifyConnectionSwitch>> = {},
   ) =>
     renderToStaticMarkup(
-      <NotifyConnectionButton
+      <NotifyConnectionSwitch
         machine="visgw"
         isOn={false}
         onClick={() => {}}
@@ -3187,38 +3230,34 @@ describe("the notifications control answers one question", () => {
       />,
     );
 
-  it("states whether this device is connected — in the mark, and only there", () => {
+  it("states whether this device is connected — in the knob, and only there", () => {
     const on = control({ isOn: true });
-    expect(on).toContain('aria-label="Disconnect notifications from visgw"');
+    expect(on).toContain('aria-label="Notifications from visgw: on"');
+    expect(on).toContain('aria-checked="true"');
     expect(on).not.toContain("visgw alerts this device when a turn finishes.");
 
     const off = control();
-    expect(off).toContain('aria-label="Connect notifications from visgw"');
+    expect(off).toContain('aria-label="Notifications from visgw: off"');
+    expect(off).toContain('aria-checked="false"');
     expect(off).not.toContain("visgw will not alert this device.");
-    // Regression, user report (paraphrased: make these buttons circles with icons
-    // and put them in the headers, the settings are too big): the verb was a word,
-    // so it was as wide as itself and needed a row under the band to stand in. The
-    // sentence is the control's NAME now — read out, shown to a pointer, drawn
-    // nowhere — and the bell carries the state the word used to imply.
+
+    // The verb was a word, then a bell; neither is drawn now. What the press will do
+    // is the pointer's sentence, and the state is the knob's side of the track.
     expect(off).not.toContain(">Connect<");
     expect(on).not.toContain(">Disconnect<");
-    expect(uiSource).toContain(
-      "{isOn ? <BellIcon className={mark} /> : <BellOffIcon className={mark} />}",
-    );
+    expect(off).not.toContain("BellOff");
     expect(on).not.toBe(off);
   });
 
-  it("presses the VERB, never the state it is already in", () => {
+  it("carries the verb in its title and the state in its knob", () => {
     const off = control();
     expect(off).toContain('title="Connect notifications from visgw"');
-    // The state is the mark's job; this control's whole job is the way out of it.
-    expect(off).not.toContain(">OFF<");
-    expect(off).not.toContain('role="switch"');
-    expect(off).not.toContain("aria-checked");
+    expect(off).toContain('role="switch"');
+    expect(off).toContain("translate-x-0");
 
     const on = control({ isOn: true });
     expect(on).toContain('title="Disconnect notifications from visgw"');
-    expect(on).not.toContain(">ON<");
+    expect(on).toContain("translate-x-[1.125rem]");
   });
 
   it("keeps ONE control for both verbs, in the same place in both states", () => {
@@ -3229,7 +3268,7 @@ describe("the notifications control answers one question", () => {
 
   it("says which way it is moving, and asks before it answers", () => {
     // `Connecting…` and `Disconnecting…` had to be as wide as the verbs they stood
-    // in for, which is most of what made this a row. A round trip pulses the mark.
+    // in for, which is most of what made this a row. A round trip pulses the knob.
     const busy = control({ isBusy: true });
     expect(busy).toContain('aria-busy="true"');
     expect(busy).toContain("animate-pulse");
@@ -3239,7 +3278,7 @@ describe("the notifications control answers one question", () => {
     const checking = control({ isChecking: true });
     expect(checking).toContain('aria-busy="true"');
     expect(checking).toContain(
-      'aria-label="Asking visgw whether this device is registered"',
+      'title="Asking visgw whether this device is registered"',
     );
     // Neither a verdict nor a verb before the machine has answered: there is no
     // direction to offer yet.
@@ -3250,20 +3289,20 @@ describe("the notifications control answers one question", () => {
 
   // Reported over the settings dialog: the notifications panel is too big, I want
   // only one Connect/Disconnect button there. Then, over the next screenshot: put
-  // it in the header, as a circle.
+  // it in the header, as a circle. Then: make it the same toggle as the rest.
   it("is the control and nothing else — no verdict line, no sentence, no row", () => {
     const markup = control({ machine: "gateway.example.com" });
     expect(markup).not.toContain("gateway.example.com will not alert this device.");
     expect(markup).not.toContain(">Not connected<");
     expect(markup).toContain(
-      'aria-label="Connect notifications from gateway.example.com"',
+      'title="Connect notifications from gateway.example.com"',
     );
     // It IS the band's trailing cell, so it brings no row, no inset and no width.
     expect(markup).not.toContain("min-h-12");
     expect(markup).not.toContain("px-3 py-2");
     expect(markup).not.toContain("w-full");
-    // The one disc every icon button in this app wears: 32px face, 28 for a pointer.
-    expect(markup).toContain("size-8");
+    // The one switch every on/off setting in this app wears: 46x28, 40x24 on a pointer.
+    expect(markup).toContain("w-[2.875rem]");
     expect(markup).toContain("rounded-full");
   });
 });
@@ -3375,7 +3414,7 @@ describe("the session screen and the settings dialog spell no control out", () =
   it("answers the notifications question with one row, not a token list", () => {
     // Native push and Web Push are two transports for ONE question, so both panels
     // ask it with the same row.
-    expect(settingsSource.match(/<NotifyConnectionButton/g)).toHaveLength(2);
+    expect(settingsSource.match(/<NotifyConnectionSwitch/g)).toHaveLength(2);
     expect(settingsSource).not.toContain("Notify me from this machine");
     expect(settingsSource).not.toContain("Stop notifying me from this machine");
     expect(settingsSource).not.toContain("devices?.map(");
@@ -3429,15 +3468,36 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(sessionsListSource).not.toContain("RowVerbs");
     expect(uiSource).not.toContain("export function RowVerbs(");
 
-    // The verb is the band's trailing CELL, centred against the title's own cell,
-    // and that cell is what wraps — never the line the verb stands on.
+    // Regression, user report (paraphrased: the ＋ in MACHINES and the ones by
+    // notifications and by MCP are uneven): the column band stood 48px tall on a
+    // 16px `sm:` gutter while the bands nested inside a machine stood 36 on a 12px
+    // one, so the same 32px mark floated in 8px of paper and then in 2 — and
+    // measured on a desktop the two marks did not even share a vertical line, 595
+    // against 599. Every band in this dialog is ONE height and ONE gutter; the verb
+    // is the band's trailing CELL, centred against the title's own cell, and that
+    // cell is what wraps — never the line the verb stands on.
     const band =
       /bg-level-machine">\s*<div className="([^"]*)"/.exec(
         settingsSource,
       )?.[1] ?? "";
-    expect(band).toContain("items-center");
-    expect(band).toContain("min-h-12");
-    expect(band).not.toContain("items-baseline");
+    const nestedBand =
+      /<header className="(flex min-h-9[^"]*)"/.exec(settingsSource)?.[1] ?? "";
+    expect(band.length).toBeGreaterThan(0);
+    expect(nestedBand.length).toBeGreaterThan(0);
+    for (const row of [band, nestedBand]) {
+      expect(row).toContain("min-h-9");
+      expect(row).toContain("mouse:min-h-8");
+      expect(row).toContain("items-center");
+      expect(row).toContain("px-3");
+      expect(row).toContain("sm:px-4");
+      expect(row).not.toContain("items-baseline");
+      expect(row).not.toContain("min-h-12");
+    }
+
+    // A 28px control answers the WHOLE cell, so it centres against it: pinned to
+    // the row's `items-start` the switch sat 6px above the middle of the two lines
+    // it governs, and every description that wrapped tilted the column further.
+    expect(/<Switch\s+className="self-center"/.test(settingsSource)).toBe(true);
 
     // MACHINES says its own name and nothing else: no sentence telling the reader
     // to tap a row, and no meta naming one machine over a list of them.
@@ -3820,7 +3880,7 @@ describe("a call site positions, and the component paints", () => {
     expect(renderToStaticMarkup(<Button>Save</Button>)).not.toContain(
       "font-mono",
     );
-    // The panel's two verbs became one control (`NotifyConnectionButton`), which
+    // The panel's two verbs became one control (`NotifyConnectionSwitch`), which
     // wears the disc; the MCP list's last row went back into its band as a mark.
     // What remains is the door to the OS, the diagnostics export, and the Voices
     // list's own last row.

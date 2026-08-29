@@ -132,13 +132,13 @@ describe("reopening the notifications panel", () => {
     open(held);
 
     expect(
-      screen.getByRole("button", {
-        name: "Disconnect notifications from buildbox",
+      screen.getByRole("switch", {
+        name: "Notifications from buildbox: on",
       }),
     ).toBeTruthy();
     expect(
       screen
-        .getByRole("button", { name: "Disconnect notifications from buildbox" })
+        .getByRole("switch", { name: "Notifications from buildbox: on" })
         .getAttribute("aria-busy"),
     ).toBe("false");
   });
@@ -146,13 +146,16 @@ describe("reopening the notifications panel", () => {
   // Regression, user report (paraphrased: make these buttons circles with icons in
   // the headers, the settings are too big): the panel used to SPELL `Checking…` on
   // a full-width button, so waiting was a word. It is the control's own busy state
-  // now — the name says what is being asked, the mark pulses, the press is refused.
+  // now — the title says what is being asked, the knob pulses, the press is refused.
   it("still asks where this device has never been told", () => {
     open(null);
 
-    const control = screen.getByRole("button", {
-      name: "Asking buildbox whether this device is registered",
+    const control = screen.getByRole("switch", {
+      name: "Notifications from buildbox: off",
     });
+    expect(control.getAttribute("title")).toBe(
+      "Asking buildbox whether this device is registered",
+    );
     expect(control.getAttribute("aria-busy")).toBe("true");
     expect(control.hasAttribute("disabled")).toBe(true);
   });
@@ -202,13 +205,13 @@ describe("reopening the notifications panel", () => {
 
     expect(asked).toBe(1);
     expect(
-      screen.getByRole("button", {
-        name: "Disconnect notifications from buildbox",
+      screen.getByRole("switch", {
+        name: "Notifications from buildbox: on",
       }),
     ).toBeTruthy();
     expect(
       screen
-        .getByRole("button", { name: "Disconnect notifications from buildbox" })
+        .getByRole("switch", { name: "Notifications from buildbox: on" })
         .getAttribute("aria-busy"),
     ).toBe("false");
   });

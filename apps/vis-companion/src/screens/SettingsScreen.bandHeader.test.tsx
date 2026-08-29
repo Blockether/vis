@@ -31,7 +31,14 @@ describe("a settings band header carrying a long status", () => {
   it("measures the title at its own width so the status wraps instead", () => {
     const header = band("0 devices · via relay.example.com");
 
-    expect(header.className).toContain("flex-wrap");
+    // The band is one centred row — the name's cell, then the verb's — so the
+    // wrapping the status needs belongs to the CELL that holds the name, not to
+    // the row that centres a 32px mark against whatever that cell grows to.
+    expect(header.className).toContain("items-center");
+    expect(header.className).not.toContain("items-baseline");
+    const cell = header.querySelector("div");
+    expect(cell?.className).toContain("flex-wrap");
+    expect(cell?.className).toContain("items-baseline");
     const title = header.querySelector("h3");
     expect(title?.className).toContain("flex-auto");
   });
