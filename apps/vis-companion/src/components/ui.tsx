@@ -3394,13 +3394,17 @@ export function MachineMark({
  * whatever the pointer. Overflow scrolls INSIDE the clipped track, so a fleet of
  * six never widens the row or pushes the verb off the trailing edge.
  *
- * The corners are SQUARE. This screen's paper is a stack of square bands — machine
- * card, project header, session rows — and a pill-cornered track floating above them
- * was the only such shape on the page.
+ * THE CORNERS ARE THE TWO RUNGS ITS OWN BOX GIVES. The first report on this row —
+ * "definitely there should be no rounded corners" — was about a pill floating over a
+ * stack of square bands, and the answer to it squared a CONTROL along with the
+ * planes. A tile is 28px and is pressed, which is the chip rung; the track is that
+ * chip plus the 2px that insets it, which is the control rung, exactly as the field
+ * around the composer's send is measured (`index.css`). The bands under it stay
+ * square, because they are still planes.
  */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto bg-level-machine p-0.5">
+    <div className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto rounded-control bg-level-machine p-0.5">
       {children}
     </div>
   );
@@ -3475,7 +3479,7 @@ export function MachineTab({
       // and what came back are read out where the finger already is.
       aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
-      className={`inline-flex h-7 shrink-0 items-center gap-1.5 px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
+      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-chip px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
         isDown
           ? 'text-dialog-hint/60 hover:text-dialog-hint'
           : isOn

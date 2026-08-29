@@ -1948,7 +1948,9 @@ describe("SearchField", () => {
 
 // Regression, user report (paraphrased: should the machine tabs be regular buttons?):
 // each tab carried its own border and stood beside a filled button, so the row read as
-// several competing boxes instead of one switch beside one verb.
+// several competing boxes instead of one switch beside one verb. Second report
+// (paraphrased: the machine picker is still square and should be rounder): squaring
+// the planes on this page had squared a CONTROL with them.
 describe("MachineSwitcher", () => {
   it("is one track that stands at the button's own height", () => {
     const html = renderToStaticMarkup(
@@ -1969,9 +1971,12 @@ describe("MachineSwitcher", () => {
     expect(html).toContain("mouse:h-5");
     // Six machines scroll INSIDE the clipped track rather than widening the row.
     expect(html).toContain("overflow-x-auto");
-    // Regression, user report: "definitely there should be no rounded corners" — this
-    // screen is a stack of square bands and the track was the only pill on the page.
-    expect(html).not.toContain("rounded");
+    // The two rungs its own box gives: a 28px tile is pressed, so it is a chip, and
+    // the track is that chip plus the 2px that insets it. The bands under it stay
+    // square — "definitely there should be no rounded corners" was a report about a
+    // pill floating over planes, and every plane it named is still square.
+    expect(html).toContain("rounded-chip");
+    expect(html).toContain("rounded-control");
   });
 
   it("gives the chosen machine a raised tile and the rest no box at all", () => {
@@ -4220,18 +4225,21 @@ describe("Corners", () => {
     ]) {
       expect(corners(pressed)).toContain("rounded-control");
     }
-    // A row in a list and a tab in the machine track are planes of a page made of
-    // square bands, and the report that made those square still holds.
-    for (const plane of [
-      renderToStaticMarkup(<ListRow onClick={() => {}}>anthropic</ListRow>),
-      renderToStaticMarkup(
-        <MachineTab isOn onClick={() => {}}>
-          tower
-        </MachineTab>,
+    // A row in a list is a plane of a page made of square bands, and the report that
+    // made it square still holds. The machine tab left that list: it is a segmented
+    // control standing ON the page, and it takes the rung its 28px box gives.
+    expect(
+      corners(renderToStaticMarkup(<ListRow onClick={() => {}}>anthropic</ListRow>)),
+    ).toEqual([]);
+    expect(
+      corners(
+        renderToStaticMarkup(
+          <MachineTab isOn onClick={() => {}}>
+            tower
+          </MachineTab>,
+        ),
       ),
-    ]) {
-      expect(corners(plane)).toEqual([]);
-    }
+    ).toContain("rounded-chip");
   });
 
   it("measures a container off the thing it holds", () => {

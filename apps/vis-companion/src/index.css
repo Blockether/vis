@@ -63,9 +63,14 @@
 /* Corners. A radius is a promise that a thing can be PRESSED, so it belongs to a
    control, to the field that holds controls, and to a layer that floats over the
    page. Never to a PLANE: activity rows, code and result surfaces, transcript
-   bands, list rows and the machine switcher stay square — "definitely there
-   should be no rounded corners" was a report about a pill on a page of square
-   bands, and `ui.test.tsx` still pins it.
+   bands and list rows stay square — "definitely there should be no rounded
+   corners" was a report about a pill on a page of square bands, and `ui.test.tsx`
+   still pins every plane that report named.
+
+   THE MACHINE SWITCHER IS NOT ONE OF THEM, and it took a second report to see it:
+   it is a segmented control whose tiles are pressed, standing ON the page rather
+   than lying in it, so it takes the rungs its own arithmetic gives — a 28px tile
+   is a chip, and the track is that chip plus the 2px that insets it.
 
    Two lines size every corner. A radius is its box divided by four, capped at
    16px; and a CONTAINER's radius is its child's radius plus the padding between
