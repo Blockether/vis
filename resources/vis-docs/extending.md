@@ -772,8 +772,13 @@ the first cell may retain the full `Release apps / iOS` identity, while surfaces
 show only `iOS` below that parent. A table declared with `is_selectable=True`
 paints every leaf row as a control; `selected_ids=[…]` is its initial selection.
 
-A surface click and `view["jobs"].select(*row_ids)` write the same shared patch, so the
-extension reads the current selection from `view.state()` before it replaces the selected detail.
+Related node changes can be published atomically with `with view.batch(): …`; nested
+batches, structural add/drop operations, and ordinary node updates then cross as one
+materialized patch rather than transient partial pictures.
+
+A surface click and `view["jobs"].select(*row_ids)` write the same shared patch, so
+the extension reads the current selection from `view.state()` before it replaces the
+selected detail.
 
 **Nap with `view.sleep(seconds)`, never `time.sleep`.** A provider's cadence is not the
 human's: `time.sleep(3)` holds the loop for three whole seconds after a click, so the
@@ -781,8 +786,9 @@ steps and log a person just asked for arrive a tick late even though the extensi
 already had them. `view.sleep(3)` waits out that same tick in short slices, reads the
 view every slice, and answers `True` the moment a surface changed it (or the view
 ended) — apply the new selection there and go back to napping out the rest of the tick,
-and a tap costs no provider call at all. Napping costs about five host reads a second
-and nothing outside a nap; `view.sleep(0)` answers `False` without reading.
+and a tap costs no provider call at all. The shipped GH watcher samples inside the
+live-frame batching window so its derived details join the tap instead of painting a
+partial transition.
 
 **Writing an item twice updates it in place.** Every keyed verb is an upsert:
 `.upsert("web-1", …)` is both "new row" and "that row changed", because a scan

@@ -476,6 +476,51 @@ def test_a_human_selection_is_read_back_and_kept_across_the_next_poll(recorder):
     }
 
 
+# Regression, session 8d48e75e-5cd5-41d2-9b13-77fb639de366: selecting another
+# matrix job published the new selection, old timeline, and new log as separate pictures.
+def test_selection_switches_are_complete_and_reuse_published_logs(recorder):
+    payload = fixture("run-mid.json")
+    initial = "95742028721"
+    failed = "95742028770"
+    shape = gh.run_shape(payload, selected_ids=[initial])
+    shown = gh._selection_signature(shape)
+    manual = None
+    cache = {}
+    asked = []
+    view = vis.live(TITLE, gh.declared_nodes(shape), description=DESCRIPTION)
+
+    def switch(before, selected, current_manual, current_shown):
+        recorder.select("jobs", [selected])
+        recorder.said.clear()
+        after, next_manual, next_shown = gh._sync_surface_selection(
+            view,
+            payload,
+            before,
+            current_manual,
+            lambda job_id, _lines: asked.append(job_id) or [f"log for {job_id}"],
+            cache,
+            current_shown,
+        )
+        patches = [one for one in recorder.said if one.get("op") == "patch"]
+        assert len(patches) == 1
+        assert recorder.node("jobs")["selected_ids"] == [selected]
+        assert recorder.node("steps")["steps"] == after["steps"]
+        return after, next_manual, next_shown
+
+    try:
+        shape, manual, shown = switch(shape, failed, manual, shown)
+        assert recorder.node("output")["lines"] == [f"log for {failed}"]
+
+        shape, manual, shown = switch(shape, initial, manual, shown)
+        assert "output" not in view
+
+        shape, manual, shown = switch(shape, failed, manual, shown)
+        assert recorder.node("output")["lines"] == [f"log for {failed}"]
+        assert asked == [failed]
+    finally:
+        view.close()
+
+
 def test_a_selection_change_refreshes_details_even_while_github_is_unavailable(
     recorder,
 ):
@@ -1006,6 +1051,7 @@ def test_a_tap_during_the_nap_is_answered_before_the_next_poll(recorder, monkeyp
     second_poll = [index for index, one in enumerate(events) if one == "poll"][1]
     assert events.index(f"log {selected}") < second_poll
     # The tap was answered a slice after it landed, not a tick.
+    assert gh.NAP_SLICE_S * 1000 < vis._FLUSH_MS
     assert sum(slept[:2]) <= gh.NAP_SLICE_S * 2
     # GitHub keeps its own cadence: the tap neither polls it nor cuts the tick short.
     assert sum(slept) == pytest.approx(3.0)

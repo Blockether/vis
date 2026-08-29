@@ -25,6 +25,7 @@ except NameError:  # Installed from PyPI: no host in the room, so bring one.
 import inspect
 import time
 from collections.abc import MutableMapping as _MutableMapping
+from contextlib import contextmanager
 
 _registration = {"spec": None}
 
@@ -1049,8 +1050,9 @@ class LiveView:
 
     Pushes are BATCHED: ops buffer and cross on the next push after `flush_ms`,
     when a coalesced push fills, and always before the view is read or closed.
-    A repeated write to the same row or the same node collapses into the last
-    one, so a per-row progress counter costs one wire row per tick rather than
+    `with view.batch():` groups one logical picture explicitly, including structural
+    add/drop operations. Repeated writes to the same row or node collapse into the
+    last one, so a per-row progress counter costs one wire row per tick rather than
     one per write.
 
     Closing is the point: `close()` answers either the structured verdict or the
@@ -1066,6 +1068,7 @@ class LiveView:
         self._json = json
         self._flush_ms = _FLUSH_MS if flush_ms is None else max(0, int(flush_ms))
         self._buffer = []
+        self._batch_depth = 0
         self._nodes = {}
         self._order = []
         self._is_open = False
@@ -1119,6 +1122,27 @@ class LiveView:
     def _refuse_closed(self):
         raise Interrupted(self.view_id, self.reason, self.note)
 
+    @contextmanager
+    def batch(self):
+        """Send one complete picture for a related group of node changes.
+
+        Node handles still coalesce exactly as usual, but neither the leading edge nor
+        structural add/drop operations cross the host seam until the outermost batch
+        ends. Reads and close remain explicit flush points.
+        """
+        self._batch_depth += 1
+        try:
+            yield self
+        finally:
+            self._batch_depth -= 1
+            if self._batch_depth == 0:
+                self.flush()
+
+    def _flush_shape_change(self):
+        """Flush an add/drop immediately, unless an explicit batch owns it."""
+        if self._batch_depth == 0:
+            self.flush()
+
     # -- pushing --------------------------------------------------------------
 
     def _push(self, op):
@@ -1129,7 +1153,9 @@ class LiveView:
         if not self._is_open:
             self._refuse_closed()
         self._coalesce(op)
-        if self._is_full() or self._since_ms(self._last_flush) >= self._flush_ms:
+        if self._batch_depth == 0 and (
+            self._is_full() or self._since_ms(self._last_flush) >= self._flush_ms
+        ):
             self.flush()
         return self
 
@@ -1334,7 +1360,7 @@ class LiveView:
         if after is not None:
             op["after"] = str(after)
         self._push(op)
-        self.flush()
+        self._flush_shape_change()
         self._index([node])
         node_id = str(node.get("id"))
         # Adding a ROW hands back the view: layout takes no op, and the nodes it
@@ -1344,7 +1370,7 @@ class LiveView:
     def drop(self, node_id):
         """Drop a whole node, its items with it."""
         self._push({"op": "remove-node", "node_id": str(node_id)})
-        self.flush()
+        self._flush_shape_change()
         self._nodes.pop(str(node_id), None)
         self._order = [i for i in self._order if i != str(node_id)]
         return self

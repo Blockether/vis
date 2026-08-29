@@ -223,14 +223,7 @@
           "detail": "Run both package suites · failed after 12s",
           "op": "set",
           "node_id": "run"
-        }
-      ]
-    }
-  },
-  {
-    "op": "patch",
-    "patch": {
-      "ops": [
+        },
         {
           "done": 36,
           "total": 36,
@@ -359,15 +352,6 @@
           ],
           "op": "append",
           "node_id": "steps"
-        },
-        {
-          "op": "add-node",
-          "node_spec": {
-            "label": "Failure · vis-agent + vis-contract (PyPI packages)",
-            "type": "log",
-            "id": "output"
-          },
-          "after": "run"
         }
       ]
     }
@@ -376,6 +360,15 @@
     "op": "patch",
     "patch": {
       "ops": [
+        {
+          "op": "add-node",
+          "node_spec": {
+            "label": "Failure · vis-agent + vis-contract (PyPI packages)",
+            "type": "log",
+            "id": "output"
+          },
+          "after": "run"
+        },
         {
           "lines": [
             "2026-08-18T14:10:24.6255054Z     [",

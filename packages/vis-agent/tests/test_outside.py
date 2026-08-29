@@ -522,6 +522,47 @@ def test_a_burst_of_pushes_crosses_the_boundary_once_per_window(monkeypatch):
     assert lines[-1] == "line 49"
 
 
+# Regression, session 8d48e75e-5cd5-41d2-9b13-77fb639de366: one selection
+# transition crossed as several partial pictures instead of one materialized batch.
+def test_an_explicit_batch_crosses_as_one_complete_patch(monkeypatch):
+    crossed = []
+    serve = _outside.live
+
+    def counted(envelope_json):
+        crossed.append(json.loads(envelope_json))
+        return serve(envelope_json)
+
+    monkeypatch.setattr(vis._host, "live", counted)
+    view = vis.live(
+        "CI",
+        [
+            vis.status("run", "Job A"),
+            vis.steps("steps", steps=[{"id": "a", "label": "Old"}]),
+        ],
+        flush_ms=60_000,
+    )
+
+    with view.batch():
+        view["run"].set("Job B")
+        view["steps"].clear()
+        view["steps"].set("b", label="New")
+        view.add(vis.output("output", label="Job B"), after="run")
+        view["output"].write("ready")
+        assert [one["op"] for one in crossed] == ["open"]
+
+    patches = [one for one in crossed if one["op"] == "patch"]
+    assert len(patches) == 1
+    assert [op["op"] for op in patches[0]["patch"]["ops"]] == [
+        "set",
+        "clear",
+        "append",
+        "add-node",
+        "append",
+    ]
+    assert view.state()["nodes"][0]["text"] == "Job B"
+    view.close()
+
+
 def test_the_first_op_crosses_on_a_freshly_booted_machine(monkeypatch):
     # Regression: `time.monotonic()` counts from an arbitrary origin, so on a machine
     # up for eight seconds every stamp of "never" fell INSIDE a 60s window — the first

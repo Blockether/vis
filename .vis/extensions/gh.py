@@ -57,9 +57,9 @@ BACKOFF_AFTER_S = 300.0
 MAX_CONSECUTIVE_POLL_FAILURES = 3
 
 # A tick is GITHUB's cadence, never the human's. The nap between two polls is slept in
-# slices, and every slice reads the shared selection, so a tap on a job row is answered
-# within a fifth of a second instead of at the end of a three- or eight-second tick.
-NAP_SLICE_S = 0.2
+# slices shorter than the live-frame batching window: every slice reads shared selection,
+# so the derived timeline and cached log join the same frame as the row tap.
+NAP_SLICE_S = 0.05
 
 # The model's copy of a log is a TAIL: the whole log stays in the view's record. The settled tail
 # is the engine's own model budget for a log node, so the picture elides nothing; a job that fails
@@ -1075,13 +1075,14 @@ def _show_selection_logs(view, shape, log_of, cache, lines):
     something breaks. Its label names the job it belongs to, so a new job is a new node
     rather than a rename, and the callers only reach here when the selection moved.
     """
-    written = _selection_log_lines(shape, log_of, cache, lines)
-    if "output" in view:
-        view.drop("output")
-    if not written:
-        return
-    view.add(vis.output("output", label=_log_label(shape)), after="run")
-    view["output"].write(*written)
+    with view.batch():
+        written = _selection_log_lines(shape, log_of, cache, lines)
+        if "output" in view:
+            view.drop("output")
+        if not written:
+            return
+        view.add(vis.output("output", label=_log_label(shape)), after="run")
+        view["output"].write(*written)
 
 
 def _archive_selection_snapshots(view, payload, log_of, cache):
@@ -1120,6 +1121,16 @@ def _archive_selection_snapshots(view, payload, log_of, cache):
     return snapshots
 
 
+def _refresh_surface(view, before, after, shown_selection, log_of, cache):
+    """Publish one internally consistent picture for a provider poll or selection."""
+    fresh_selection = _selection_signature(after)
+    with view.batch():
+        push_changes(view, before, after)
+        if fresh_selection != shown_selection and not after["is_over"]:
+            _show_selection_logs(view, after, log_of, cache, FAILED_TAIL_LINES)
+    return fresh_selection
+
+
 def _sync_surface_selection(
     view, payload, shape, manual_selection, log_of, cache, shown_selection
 ):
@@ -1129,10 +1140,9 @@ def _sync_surface_selection(
         return shape, manual_selection, shown_selection
     manual_selection = selected
     selected = run_shape(payload, selected_ids=manual_selection, now=_wall_time())
-    push_changes(view, shape, selected)
-    fresh_selection = _selection_signature(selected)
-    if fresh_selection != shown_selection and not selected["is_over"]:
-        _show_selection_logs(view, selected, log_of, cache, FAILED_TAIL_LINES)
+    fresh_selection = _refresh_surface(
+        view, shape, selected, shown_selection, log_of, cache
+    )
     return selected, manual_selection, fresh_selection
 
 
@@ -1212,19 +1222,20 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                     if superseded:
                         run_id = str(superseded.get("databaseId") or "?")
                         settled = superseded_shape(shape)
-                        push_changes(view, shape, settled)
-                        shape = settled
-                        view["run"].set(
-                            f"Superseded by newer run {run_id}",
-                            tone="idle",
-                            detail="Stopped watching obsolete work after a newer commit started",
-                        )
-                        _show_selection_logs(
-                            view, shape, log_of, log_cache, FAILED_TAIL_LINES
-                        )
-                        target = str(superseded.get("url") or "")
-                        if target:
-                            view["links"].add("newer-run", "Newer run", target)
+                        with view.batch():
+                            push_changes(view, shape, settled)
+                            shape = settled
+                            view["run"].set(
+                                f"Superseded by newer run {run_id}",
+                                tone="idle",
+                                detail="Stopped watching obsolete work after a newer commit started",
+                            )
+                            _show_selection_logs(
+                                view, shape, log_of, log_cache, FAILED_TAIL_LINES
+                            )
+                            target = str(superseded.get("url") or "")
+                            if target:
+                                view["links"].add("newer-run", "Newer run", target)
                         break
                 try:
                     payload = poll()
@@ -1261,13 +1272,9 @@ def watch(title, description, poll, log_of=None, superseded_by=None):
                 fresh = run_shape(
                     payload, selected_ids=manual_selection, now=_wall_time()
                 )
-                push_changes(view, shape, fresh)
-                fresh_selection = _selection_signature(fresh)
-                if fresh_selection != shown_selection and not fresh["is_over"]:
-                    _show_selection_logs(
-                        view, fresh, log_of, log_cache, FAILED_TAIL_LINES
-                    )
-                    shown_selection = fresh_selection
+                shown_selection = _refresh_surface(
+                    view, shape, fresh, shown_selection, log_of, log_cache
+                )
                 shape = fresh
             if shape["is_over"]:
                 _show_selection_logs(view, shape, log_of, log_cache, LOG_TAIL_LINES)
