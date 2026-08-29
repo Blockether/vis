@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { fn } from 'storybook/test';
 import { MENU_VERBS, STORY_SESSION } from '../dev/story-data';
 import { ForkIcon, ProjectsIcon, StarIcon, TrashIcon } from './icons';
 import { Menu, MenuBack, MenuHeading, MenuItem, MenuNote } from './Menu';
@@ -32,10 +33,10 @@ export const Verbs: Story = {
   args: {
     label: `Actions for ${STORY_SESSION.title}`,
     at: AT,
-    onDismiss: () => undefined,
+    onDismiss: fn(),
     children: (
       <>
-        <MenuHeading closeLabel="Close the session menu" onClose={() => undefined}>
+        <MenuHeading closeLabel="Close the session menu" onClose={fn()}>
           {STORY_SESSION.title}
         </MenuHeading>
         {MENU_VERBS.map((verb) => (
@@ -45,14 +46,14 @@ export const Verbs: Story = {
             meta={'meta' in verb ? verb.meta : undefined}
             hint={'hint' in verb ? verb.hint : undefined}
             badge={'badge' in verb ? verb.badge : undefined}
-            onSelect={() => undefined}
+            onSelect={fn()}
           />
         ))}
         <MenuItem
           title="Delete session"
           tone="danger"
           icon={<TrashIcon className="size-3.5" />}
-          onSelect={() => undefined}
+          onSelect={fn()}
         />
         <MenuNote>Deleting is immediate on {STORY_SESSION.machine}.</MenuNote>
       </>
@@ -65,12 +66,12 @@ export const BandWithCells: Story = {
   args: {
     label: 'Projects on tower',
     at: AT,
-    onDismiss: () => undefined,
+    onDismiss: fn(),
     children: (
       <>
         <MenuHeading
           closeLabel="Close the projects menu"
-          onClose={() => undefined}
+          onClose={fn()}
           cells={<BandButton isPrimary>Add</BandButton>}
         >
           Projects on tower
@@ -79,10 +80,10 @@ export const BandWithCells: Story = {
           title="vis"
           meta="42 sessions"
           icon={<ProjectsIcon className="size-3.5" />}
-          onSelect={() => undefined}
+          onSelect={fn()}
         />
-        <MenuItem title="svar" meta="6 sessions" onSelect={() => undefined} />
-        <MenuItem title="infrastructure" meta="2 sessions" onSelect={() => undefined} />
+        <MenuItem title="svar" meta="6 sessions" onSelect={fn()} />
+        <MenuItem title="infrastructure" meta="2 sessions" onSelect={fn()} />
       </>
     ),
   },
@@ -93,28 +94,28 @@ export const Stepped: Story = {
   args: {
     label: 'Fork this session',
     at: AT,
-    onDismiss: () => undefined,
+    onDismiss: fn(),
     children: (
       <>
-        <MenuBack label="Back to the session menu" onBack={() => undefined}>
+        <MenuBack label="Back to the session menu" onBack={fn()}>
           Fork from turn 61
         </MenuBack>
         <MenuItem
           title="Fork on tower"
           meta="2 live"
           icon={<ForkIcon className="size-3.5" />}
-          onSelect={() => undefined}
+          onSelect={fn()}
         />
         <MenuItem
           title="Fork on macbook-pro-16-work"
           hint="Idle since 11:57"
           icon={<ForkIcon className="size-3.5" />}
-          onSelect={() => undefined}
+          onSelect={fn()}
         />
         <MenuItem
           title="Star the original"
           icon={<StarIcon className="size-3.5" />}
-          onSelect={() => undefined}
+          onSelect={fn()}
         />
       </>
     ),
@@ -126,10 +127,10 @@ export const Empty: Story = {
   args: {
     label: 'Projects on mini',
     at: AT,
-    onDismiss: () => undefined,
+    onDismiss: fn(),
     children: (
       <>
-        <MenuHeading closeLabel="Close the projects menu" onClose={() => undefined}>
+        <MenuHeading closeLabel="Close the projects menu" onClose={fn()}>
           Projects on mini
         </MenuHeading>
         <MenuNote>mini is not answering, so it has no projects to offer.</MenuNote>

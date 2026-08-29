@@ -18,13 +18,7 @@ import { ActivityPanel } from './ActivityPanel';
 const meta = {
   title: 'Components/Activity panel',
   component: ActivityPanel,
-  decorators: [
-    (Story) => (
-      <div className="p-3">
-        <Story />
-      </div>
-    ),
-  ],
+  parameters: { layout: 'padded' },
 } satisfies Meta<typeof ActivityPanel>;
 
 export default meta;

@@ -42,6 +42,7 @@ const withTheme: Decorator = (Story, { globals }) => (
  */
 const preview: Preview = {
   decorators: [withTheme],
+  tags: ['autodocs'],
   parameters: {
     layout: 'fullscreen',
     viewport: {

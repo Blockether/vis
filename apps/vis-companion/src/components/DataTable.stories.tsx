@@ -17,13 +17,7 @@ import { DataTable } from './DataTable';
 const meta = {
   title: 'Components/Data table',
   component: DataTable,
-  decorators: [
-    (Story) => (
-      <div className="p-3">
-        <Story />
-      </div>
-    ),
-  ],
+  parameters: { layout: 'padded' },
 } satisfies Meta<typeof DataTable>;
 
 export default meta;
@@ -50,7 +44,7 @@ export const Opened: Story = {
   args: { body: TABLE_BLOCK, compact: false, fill: true },
   decorators: [
     (Story) => (
-      <div className="flex h-[520px] flex-col p-3">
+      <div className="flex h-[520px] flex-col">
         <Story />
       </div>
     ),

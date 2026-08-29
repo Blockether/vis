@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
+import { fn } from 'storybook/test';
 import { useState, type ReactNode } from 'react';
 import { RECORDING_PEAKS, STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
 import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
@@ -274,7 +275,7 @@ export const Rows: Story = {
           leadingAction={{
             label: 'Download Piper English',
             icon: <DownloadIcon className="size-3" />,
-            onClick: () => undefined,
+            onClick: fn(),
           }}
         />
         <ChoiceCell className="w-full" title="System voice" sub="ready" isSelected />
@@ -348,7 +349,7 @@ export const Feedback: Story = {
         <Banner
           kind="err"
           title="Authentication rejected"
-          dismiss={{ label: 'Dismiss', onClick: () => undefined }}
+          dismiss={{ label: 'Dismiss', onClick: fn() }}
         >
           Sign in again to keep this provider.
         </Banner>
@@ -452,8 +453,8 @@ export const Selection: Story = {
           question={`Delete ${STORY_SESSION.title}?`}
           cost="61 turns and every artifact go with it."
           confirmLabel="Delete"
-          onKeep={() => undefined}
-          onConfirm={() => undefined}
+          onKeep={fn()}
+          onConfirm={fn()}
         />
       </Group>
     </Sheet>
@@ -492,7 +493,7 @@ export const Bands: Story = {
           name={STORY_MACHINES[0].name}
           qualifier={STORY_SESSION.where}
           qualifierTitle={STORY_SESSION.where}
-          onRename={() => undefined}
+          onRename={fn()}
           renameLabel={`Rename ${STORY_MACHINES[0].name}`}
         />
       </Group>
@@ -501,7 +502,7 @@ export const Bands: Story = {
           name={STORY_SESSION.project}
           qualifier={STORY_SESSION.where}
           qualifierTitle={STORY_SESSION.where}
-          disclosure={{ isOpen: true, onToggle: () => undefined, label: 'Collapse vis' }}
+          disclosure={{ isOpen: true, onToggle: fn(), label: 'Collapse vis' }}
         />
       </Group>
       <Group of="What a band counts">
@@ -580,15 +581,15 @@ export const Machines: Story = {
         <NewSessionButton
           machine={STORY_MACHINES[0].name}
           where={STORY_SESSION.where}
-          onPress={() => undefined}
+          onPress={fn()}
         />
         <NewSessionButton
           machine={STORY_MACHINES[0].name}
           busyLabel="Starting…"
-          onPress={() => undefined}
+          onPress={fn()}
         />
-        <MachineProjectsButton machine={STORY_MACHINES[0].name} onPress={() => undefined} />
-        <MachineProjectsButton machine={STORY_MACHINES[0].name} isQuiet onPress={() => undefined} />
+        <MachineProjectsButton machine={STORY_MACHINES[0].name} onPress={fn()} />
+        <MachineProjectsButton machine={STORY_MACHINES[0].name} isQuiet onPress={fn()} />
       </Group>
     </Sheet>
   ),
@@ -618,7 +619,7 @@ function SettingsChoiceDemo() {
           isOpen={false}
           controls="story-device-settings"
           onSelect={() => setEngine('device')}
-          onToggle={() => undefined}
+          onToggle={fn()}
         />
       </div>
     </div>
@@ -673,13 +674,13 @@ export const Settings: Story = {
         <NotifyConnectionSwitch
           machine={STORY_MACHINES[0].name}
           isOn
-          onClick={() => undefined}
+          onClick={fn()}
         />
         <NotifyConnectionSwitch
           machine={STORY_MACHINES[1].name}
           isOn={false}
           isChecking
-          onClick={() => undefined}
+          onClick={fn()}
         />
       </Group>
       <Group of="A bounded number is dragged, and audio is scrubbed">
@@ -698,21 +699,21 @@ export const Settings: Story = {
  */
 export const Dialogs: Story = {
   render: () => (
-    <Modal size="fit" onDismiss={() => undefined}>
+    <Modal size="fit" onDismiss={fn()}>
       <DialogFrame
         title="Delete this session?"
         subtitle={STORY_SESSION.title}
         actions={<BandButton isPrimary>Delete</BandButton>}
         closeLabel="Close the delete dialog"
-        onClose={() => undefined}
+        onClose={fn()}
       >
         <div className="p-4">
           <ConfirmRow
             question={`Delete ${STORY_SESSION.title}?`}
             cost="61 turns and every artifact go with it."
             confirmLabel="Delete"
-            onKeep={() => undefined}
-            onConfirm={() => undefined}
+            onKeep={fn()}
+            onConfirm={fn()}
           />
         </div>
       </DialogFrame>
@@ -723,13 +724,13 @@ export const Dialogs: Story = {
 /** The full-height dialog: a list inside it gets every pixel the glass has. */
 export const DialogFull: Story = {
   render: () => (
-    <Modal onDismiss={() => undefined}>
+    <Modal onDismiss={fn()}>
       <DialogFrame
         title={`Projects on ${STORY_MACHINES[0].name}`}
         subtitle={STORY_SESSION.where}
         actions={<BandButton isPrimary>Add</BandButton>}
         closeLabel="Close the projects dialog"
-        onClose={() => undefined}
+        onClose={fn()}
       >
         <div className="flex flex-col">
           <ListRow isFramed>vis</ListRow>
@@ -750,7 +751,7 @@ export const Overlay: Story = {
       title="fleet.csv"
       subtitle="7 rows × 5 cols · 268 B"
       actions={<BandButton>Download</BandButton>}
-      onClose={() => undefined}
+      onClose={fn()}
     >
       <div className="p-4">
         <p className="font-mono text-meta text-dialog-hint">
@@ -773,7 +774,7 @@ export const Band: Story = {
             subtitle={`${STORY_MACHINES[0].name} · protocol 7`}
             actions={<BandButton>Export</BandButton>}
             closeLabel="Close settings"
-            onClose={() => undefined}
+            onClose={fn()}
           />
         </div>
       </Group>
@@ -783,7 +784,7 @@ export const Band: Story = {
             title="fleet.csv"
             isStacked
             closeLabel="Close fleet.csv"
-            onClose={() => undefined}
+            onClose={fn()}
           />
         </div>
       </Group>

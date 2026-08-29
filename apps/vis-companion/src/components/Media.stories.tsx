@@ -22,13 +22,7 @@ import { MediaGrid, MediaPlate, MediaRecording, MediaTile } from './Media';
  */
 const meta = {
   title: 'Components/Media',
-  decorators: [
-    (Story) => (
-      <div className="p-3">
-        <Story />
-      </div>
-    ),
-  ],
+  parameters: { layout: 'padded' },
 } satisfies Meta;
 
 export default meta;

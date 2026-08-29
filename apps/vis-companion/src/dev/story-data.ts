@@ -22,6 +22,11 @@
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
 import activityWire from '../lib/activity.fixture.json';
 import { MACHINE_COLORS, type MachineColor } from '../lib/machine-colors';
+import { liveViewFromWire, type LiveView } from '../lib/live-view';
+import liveViewWire from '../lib/live-view.fixture.json';
+import { COMMENTS_HEADING } from '../lib/markdown-annotations';
+import type { RouterProvider } from '../lib/types';
+import type { ProviderAuth } from '../components/ProviderAuth';
 
 /** A hue by its palette name, so a story names a colour the way the fleet does. */
 export function storyHue(name: string): MachineColor {
@@ -253,3 +258,138 @@ export const STORY_SESSION = {
   tokens: '152k',
   model: 'claude-opus-5',
 } as const;
+
+/**
+ * THE ENGINE'S OWN VIEW. `live-view.fixture.json` is the projection
+ * `gateway/human_input_test.clj` pins, so the panel here paints what a real run
+ * pushes — and a wire change breaks this story before it reaches a screen.
+ */
+export const STORY_LIVE_VIEW: LiveView = (() => {
+  const view = liveViewFromWire(liveViewWire);
+  if (!view) throw new Error('the engine fixture must be paintable');
+  return view;
+})();
+
+/** A fleet with something to say: the default, the fallback, and one never signed in. */
+export const STORY_PROVIDERS: RouterProvider[] = [
+  {
+    id: 'anthropic',
+    label: 'Anthropic',
+    models: ['claude-opus-5', 'claude-sonnet-4-5'],
+    is_default: true,
+    default_model: 'claude-opus-5',
+    is_fallback: false,
+    fallback_model: null,
+    status: {
+      is_authenticated: true,
+      auth_state: 'verified',
+      account_type: 'Coding plan',
+      source: 'auth-file',
+    },
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI',
+    models: ['gpt-5.2', 'gpt-5-mini'],
+    is_default: false,
+    default_model: null,
+    is_fallback: true,
+    fallback_model: 'gpt-5-mini',
+    status: {
+      is_authenticated: true,
+      auth_state: 'degraded',
+      warning: 'The last live check timed out; the credential still works.',
+    },
+  },
+  {
+    id: 'ollama',
+    label: 'Ollama',
+    base_url: 'http://127.0.0.1:11434',
+    models: [],
+    is_default: false,
+    default_model: null,
+    is_fallback: false,
+    fallback_model: null,
+    status: {
+      is_authenticated: false,
+      auth_state: 'unverified',
+      detail: 'No credential on this machine',
+    },
+  },
+];
+
+/**
+ * The `ProviderAuth` the rows are handed: the fields a COLLAPSED fleet reads, plus
+ * a stub for every verb a press could reach. The panel asks the gateway only when
+ * a row is opened, so the paint a gallery photographs needs no client at all — and
+ * the cast is the same one `ProviderAuth.test.tsx` uses for the same reason.
+ */
+export function storyProviderAuth(
+  providers: RouterProvider[] | null = STORY_PROVIDERS,
+): ProviderAuth {
+  const nothing = async () => {};
+  return {
+    providers,
+    presets: [],
+    err: null,
+    note: null,
+    flow: null,
+    pending: null,
+    apiKey: '',
+    redirectUrl: '',
+    setProviders: () => {},
+    setErr: () => {},
+    setNote: () => {},
+    setPending: () => {},
+    setApiKey: () => {},
+    setRedirectUrl: () => {},
+    reload: nothing,
+    refresh: nothing,
+    recheck: nothing,
+    signIn: nothing,
+    finishPkce: nothing,
+    finishApiKey: nothing,
+    cancelFlow: nothing,
+    loadPresets: nothing,
+    addProvider: nothing,
+    removeProvider: nothing,
+  } as unknown as ProviderAuth;
+}
+
+/**
+ * A DOCUMENT AS BYTES, NOT AS A FETCH. The app hands the frame an object URL for
+ * an attachment; a `data:` URL carries the same markup with nothing to download,
+ * so the story draws the quarantine itself — the sandbox, the paper, the fitted
+ * box — and two frames of it compare.
+ */
+export const STORY_DOC_HTML = [
+  '<!doctype html>',
+  '<meta charset="utf-8">',
+  '<title>Coverage report</title>',
+  '<style>',
+  '  body { font: 14px ui-monospace, monospace; margin: 24px; color: #1c1c1c; }',
+  '  h1 { font-size: 18px; margin: 0 0 12px; }',
+  '  table { border-collapse: collapse; width: 100%; }',
+  '  th, td { border-bottom: 1px solid #d8d8d8; padding: 6px 8px; text-align: left; }',
+  '  td.n { text-align: right; font-variant-numeric: tabular-nums; }',
+  '</style>',
+  '<h1>Coverage &mdash; apps/vis-companion</h1>',
+  '<table>',
+  '  <tr><th>file</th><th>lines</th><th>covered</th></tr>',
+  '  <tr><td>src/components/ui.tsx</td><td class="n">2412</td><td class="n">98%</td></tr>',
+  '  <tr><td>src/screens/SessionScreen.tsx</td><td class="n">6412</td><td class="n">91%</td></tr>',
+  '  <tr><td>src/lib/live-view.ts</td><td class="n">318</td><td class="n">100%</td></tr>',
+  '</table>',
+].join('\n');
+
+export const STORY_DOC_URL = `data:text/html;charset=utf-8,${encodeURIComponent(STORY_DOC_HTML)}`;
+
+/** The same note after two remarks, in the format the file itself carries. */
+export const NOTE_ANNOTATED = [
+  NOTE_MARKDOWN,
+  '',
+  COMMENTS_HEADING,
+  '',
+  '- **“the strip reads left to right”** — Say WHY, not what: the left half never starts a turn.',
+  '- **Whole document** — Worth a screenshot in the gallery once the stop slot lands.',
+].join('\n');

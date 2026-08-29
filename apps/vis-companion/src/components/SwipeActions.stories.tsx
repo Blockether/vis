@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { fn } from 'storybook/test';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { SESSION_VERBS, STORY_SESSION } from '../dev/story-data';
 import { PencilIcon, StarIcon, TrashIcon } from './icons';
@@ -28,19 +29,13 @@ const actions: SwipeAction[] = SESSION_VERBS.map((verb) => ({
   name: verb.name,
   tone: verb.tone,
   icon: MARKS[verb.key],
-  onSelect: () => undefined,
+  onSelect: fn(),
 }));
 
 const meta = {
   title: 'Components/Swipe actions',
   component: SwipeActions,
-  decorators: [
-    (Story) => (
-      <div className="p-3">
-        <Story />
-      </div>
-    ),
-  ],
+  parameters: { layout: 'padded' },
 } satisfies Meta<typeof SwipeActions>;
 
 export default meta;

@@ -17,13 +17,7 @@ import { TextBody } from './TextArtifact';
 const meta = {
   title: 'Components/Text artifact',
   component: TextBody,
-  decorators: [
-    (Story) => (
-      <div className="p-3">
-        <Story />
-      </div>
-    ),
-  ],
+  parameters: { layout: 'padded' },
 } satisfies Meta<typeof TextBody>;
 
 export default meta;
