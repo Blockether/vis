@@ -142,8 +142,9 @@
       ;; Regression, user report: a section that ORDERS a verb has to say how it is CALLED.
       ;; Every code verb §3 names carries its literal call shape, and the options-dict ones
       ;; name the keys inside it — the shape is read, never remembered or looked up.
-      (doseq [shape ["`grep({\"query\": [needles], \"paths\": [scopes]})`" "`cat(path, start, end)`"
-                     "`patch(path, edits)`" "`[{\"from\": a, \"to\": b, \"replace\": text}]`"]]
+      (doseq [shape ["`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"
+                     "`cat(path, start, end)`" "`patch(path, edits)`"
+                     "`[{\"from\": a, \"to\": b, \"replace\": text}]`"]]
         (expect (str/includes? text shape)))
       (expect
         (str/includes?
@@ -772,7 +773,7 @@
              ;; Regression: after grep started answering ONE anchored TEXT block the
              ;; prompt still said only "hits arrive ANCHORED", never WHAT arrives, so the
              ;; model kept treating the answer as a keyed map.
-             (it "says grep answers anchored TEXT, and how to spend several hits at once"
+             (it "says grep answers anchored TEXT, models context, and spends several hits at once"
                  (let [text (prompt/build-system-prompt {})]
                    (expect (str/includes? text "answers anchored TEXT, never a map"))
                    (expect (not (str/includes? text "returns a MAP")))
@@ -780,7 +781,13 @@
                    ;; order left for the caller to compute.
                    (expect (not (str/includes? text "bottom-up")))
                    (expect (str/includes? text "every `patch` edit for a file"))
-                   (expect (str/includes? text "FRESH ANCHOR"))))
+                   (expect (str/includes? text "FRESH ANCHOR"))
+                   ;; User report: recent sessions copied the primary grep example without
+                   ;; context even though nearby lines often answered the question outright.
+                   (expect (str/includes?
+                             text
+                             "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"))
+                   (expect (str/includes? text "Keep context for code"))))
              ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
              ;; prompt named the method with no arguments at all, so a watcher still
              ;; paged bytes to answer "what did it just print".

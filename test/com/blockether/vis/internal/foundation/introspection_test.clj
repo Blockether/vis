@@ -35,10 +35,11 @@
                    (let [message (advice :regex-unsupported-escape)]
                      (expect (str/includes? message "is_regex"))
                      (expect (not (str/includes? message "Regex is not supported")))))
-               (it "tells the model grep answers TEXT, not a keyed map"
+               (it "tells the model grep answers TEXT and demonstrates context"
                    (let [message (advice :regex-unsupported-escape)]
                      (expect (str/includes? message "anchored TEXT"))
-                     (expect (str/includes? message ".splitlines()"))))))
+                     (expect (str/includes? message ".splitlines()"))
+                     (expect (str/includes? message "\"context\": 3"))))))
 
 (defdescribe
   introspection-public-surface-test

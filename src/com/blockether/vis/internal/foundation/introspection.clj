@@ -349,7 +349,7 @@
     "Provider returned prose/string instead of the iteration map. Skip the SQLite trip - the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
 
     :regex-unsupported-escape
-    "grep matches literal substrings by default — no regex escaping needed. Pass a list of terms for OR: grep({\"query\": [\"foo\", \"bar\"]}), or set is_regex: True to run the query as a real regex. grep takes ONE options map — never a positional query — and answers anchored TEXT, so filter it with .splitlines() rather than by key."
+    "grep matches literal substrings by default — no regex escaping needed. Pass a list of terms for OR: grep({\"query\": [\"foo\", \"bar\"], \"context\": 3}), or set is_regex: True to run the query as a real regex. grep takes ONE options map — never a positional query — and answers anchored TEXT, so filter it with .splitlines() rather than by key."
 
     :regex-unescaped-quote
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."

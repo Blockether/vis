@@ -4931,7 +4931,10 @@
 
                    (expect (string/includes? result "Text, not a map"))
                    (expect (not (string/includes? result "hit_count")))
-                   (expect (not (string/includes? description "hit_count")))))
+                   (expect (not (string/includes? description "hit_count")))
+                   (expect (string/includes? description "\"context\": 3"))
+                   (expect (string/includes? description "default 0"))
+                   (expect (string/includes? description "pure location/count sweeps"))))
              (it
                "the blank-path refusal no longer says grep returns a map"
                (let [safe-path

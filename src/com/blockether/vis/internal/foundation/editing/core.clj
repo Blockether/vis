@@ -2263,11 +2263,11 @@
    Search file CONTENT and match file NAMES/PATHS in one call (bound as `grep`;
    `find_files`/`find` stay as compatibility aliases).
 
-     await grep({\"query\": \"grep-tool\"})
-     await grep({\"query\": \"channel_tui render\", \"paths\": [\"src\"], \"limit\": 20})
+     await grep({\"query\": \"grep-tool\", \"context\": 3})
+     await grep({\"query\": \"channel_tui render\", \"paths\": [\"src\"], \"context\": 3, \"limit\": 20})
      await grep({\"query\": [\"TODO\", \"FIXME\"], \"include\": [\"**/*.clj\"], \"context\": 2})
-     await grep({\"query\": \"defn grep\", \"exclude\": [\"**/*_test.clj\"]})
-     await grep({\"query\": \"defn-? +grep-data\", \"is_regex\": True})
+     await grep({\"query\": \"defn grep\", \"exclude\": [\"**/*_test.clj\"], \"context\": 3})
+     await grep({\"query\": \"defn-? +grep-data\", \"is_regex\": True, \"context\": 3})
 
    ONE options map is the WHOLE call surface — kwargs
    (`grep(query=…, paths=[…])`) fold into that same map. There is no positional
@@ -2433,11 +2433,11 @@
   "grep — literal smart-case CONTENT search plus fuzzy file-NAME matching, in ONE
    options map, answered as ONE anchored TEXT block.
 
-     await grep({\"query\": \"grep-tool\"})
-     await grep({\"query\": \"channel_tui render\", \"paths\": [\"src\"], \"limit\": 20})
+     await grep({\"query\": \"grep-tool\", \"context\": 3})
+     await grep({\"query\": \"channel_tui render\", \"paths\": [\"src\"], \"context\": 3, \"limit\": 20})
      await grep({\"query\": [\"TODO\", \"FIXME\"], \"include\": [\"**/*.clj\"], \"context\": 2})
-     await grep({\"query\": \"defn grep\", \"exclude\": [\"**/*_test.clj\"]})
-     await grep({\"query\": \"defn-? +grep-tool\", \"is_regex\": True})
+     await grep({\"query\": \"defn grep\", \"exclude\": [\"**/*_test.clj\"], \"context\": 3})
+     await grep({\"query\": \"defn-? +grep-tool\", \"is_regex\": True, \"context\": 3})
 
    The whole call surface is `grep-data`'s; this is its projection. Line 1 always
    summarizes — hits, files, truncation and the literal next call — then each
@@ -4766,8 +4766,9 @@
        "FIND WHERE something is — the codebase-wide search that answers `where is X`, `who calls this "
        "function`, `which file defines this class`, `every usage of this symbol`. Scans the whole repo, "
        "or only the paths you name. "
-       "ONE options map is the whole call — `grep({\"query\": q, \"paths\": [\"src\"]})`, or that "
-       "same map as kwargs; never a positional query. "
+       "ONE options map is the whole call — `grep({\"query\": q, \"paths\": [\"src\"], \"context\": 3})`, or that "
+       "same map as kwargs; never a positional query. `context: N` includes N anchored lines on each side "
+       "(default 0); keep it for code understanding and omit it only for pure location/count sweeps. "
        "Literal smart-case content plus fuzzy filenames; use first when location is unknown. "
        "`is_regex: True` runs the query as a REGEX over CONTENT instead (names are not matched). "
        "Hits come back ANCHORED, so a hit is already a `patch` argument. "
