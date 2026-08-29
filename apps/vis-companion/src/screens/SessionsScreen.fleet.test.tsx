@@ -27,7 +27,8 @@ const section = (machine: string) => screen.getByLabelText(`${machine} projects`
 const hue = (element: Element | null | undefined, property: "border" | "bg") =>
   element?.className.match(new RegExp(`${property}-machine-([a-z]+)`))?.[1] ?? null;
 
-const railHue = (machine: string) =>
+/** The hue the LIST wears for a machine: none — the mark on the switch carries it. */
+const listHue = (machine: string) =>
   hue(section(machine).querySelector("[class*='border-machine-']"), "border");
 
 const named = (pattern: RegExp) =>
@@ -78,11 +79,17 @@ describe("the machine scope always has one active machine", () => {
     expect(alphaHue).toBeTruthy();
     expect(betaHue).toBeTruthy();
     expect(alphaHue).not.toBe(betaHue);
-    expect(railHue("alpha")).toBe(alphaHue);
+    // Regression, user report (paraphrased: bin that rail on the left): the list used to
+    // echo the tab's hue as a 2px frame down everything that machine owned.
+    expect(listHue("alpha")).toBeNull();
 
     await userEvent.click(beta);
     await screen.findByText("Second");
-    expect(railHue("beta")).toBe(betaHue);
+    const chosen = within(screen.getByLabelText("Machines")).getByRole("button", {
+      name: /^beta/,
+    });
+    expect(hue(chosen.querySelector("[class*='bg-machine-']"), "bg")).toBe(betaHue);
+    expect(listHue("beta")).toBeNull();
   });
 
   it("puts machines that are not answering after every active machine", async () => {

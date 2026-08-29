@@ -75,10 +75,11 @@
    corners" was a report about a pill on a page of square bands, and `ui.test.tsx`
    still pins every plane that report named.
 
-   THE MACHINE SWITCHER IS NOT ONE OF THEM, and it took a second report to see it:
+   THE MACHINE SWITCHER IS NOT ONE OF THEM, and it took two more reports to land it:
    it is a segmented control whose tiles are pressed, standing ON the page rather
-   than lying in it, so it takes the rungs its own arithmetic gives — a 28px tile
-   is a chip, and the track is that chip plus the 2px that insets it.
+   than lying in it, so it wears the shape of the control standing beside it — track
+   and tiles are capsules, because the mark that opens this machine's projects is a
+   disc, and a rectangle next to a circle is two rhythms on one 32px row.
 
    THE DOCK IS ONE OBJECT too: the queue tray and the paused banner are not bands
    of a page but boxes that arrive over the composer, carrying their own paper at
@@ -90,12 +91,14 @@
    16px; and a CONTAINER's radius is its child's radius plus the padding between
    them. The second line is what makes the composer's send look concentric inside
    the field instead of parallel to it: an 8px control with a 4px inset around it
-   gives the field 12px. A LAYER OVER THE PAGE takes the panel rung whatever its
-   own box is, because it is not standing on the page's grid: on a 32px face that
-   lands on a capsule, the one shape nothing standing on the page wears, which is
-   how the eye reads "Latest" as arriving over the transcript rather than
-   belonging to the band under it. Tailwind's own scale is reset so `rounded-2xl`
-   cannot appear — four rungs, each named after the box it wraps. */
+   gives the field 12px. A MARK HAS NO WIDTH TO EARN: a control carrying a glyph
+   where its word would be is square, and a square control is a DISC — 32px of face,
+   28px under a pointer, which is the box the way out of a dialog already drew and
+   nothing else copied. A LAYER OVER THE PAGE takes the panel rung whatever its own
+   box is, because it is not standing on the page's grid; on a 32px face that lands
+   on a capsule too, and what tells "Latest" apart from a disc in the chrome is the
+   WORD inside it and the shadow under it. Tailwind's own scale is reset so
+   `rounded-2xl` cannot appear — four rungs, each named after the box it wraps. */
 @theme {
   --radius-*: initial;
 

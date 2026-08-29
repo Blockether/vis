@@ -64,7 +64,6 @@ import {
   machineTagFace,
   MachineMark,
   MachineProjectsButton,
-  MachineRail,
   MachineSwitcher,
   MachineTab,
   MetaButton,
@@ -320,77 +319,20 @@ describe("ProjectCrumb", () => {
   });
 });
 
-describe("MachineRail", () => {
-  // A machine's hue separates two computers before a word is read. It ran as a 2px
-  // border INSIDE the card, one pixel from the card's own border — a grey hairline
-  // immediately followed by a coloured one, doing one job twice — and, being a
-  // border, it also stole 2px of layout the trailing edge had no match for (left ink
-  // 19px against right ink 17px). Above a fleet it is the card's LEFT FRAME: the card
-  // gives that side up, both sides are 2px, and the rail simply colours one of them.
-  it("is the frame, in the machine colour", () => {
-    const html = renderToStaticMarkup(
-      <MachineRail color={MACHINE_COLORS[3]!} isFleet>
-        rows
-      </MachineRail>,
-    );
-    expect(html).toContain("border-l-2");
-    expect(html).toContain(MACHINE_COLORS[3]!.rail);
-    expect(html).toContain("rows");
-  });
-
-  // Regression, user report: on a phone the machine rail stopped at the side while
-  // the enclosing sheet drew an unrelated dark rule underneath the machine.
-  it("closes each machine in its own hue instead of the sheet's edge", () => {
-    const html = renderToStaticMarkup(
-      <MachineRail color={MACHINE_COLORS[3]!} isFleet>
-        rows
-      </MachineRail>,
-    );
-
-    expect(html).toContain("border-b-2");
-    expect(html).toContain(MACHINE_COLORS[3]!.rail);
-    expect(sessionsListSource).toContain(
-      "overflow-hidden border-t border-dialog-edge",
-    );
-    expect(sessionsListSource).not.toContain(
-      "overflow-hidden border-y border-dialog-edge",
-    );
-  });
-
-  it("gives two machines two different rails", () => {
-    const first = renderToStaticMarkup(
-      <MachineRail color={MACHINE_COLORS[0]!} isFleet>
-        a
-      </MachineRail>,
-    );
-    const second = renderToStaticMarkup(
-      <MachineRail color={MACHINE_COLORS[1]!} isFleet>
-        a
-      </MachineRail>,
-    );
-    expect(first).not.toBe(second);
-  });
-
-  // Without a hue it still has to PAINT where it paints at all: above a fleet this is the
-  // card's edge, and a frame that disappears where a colour is missing is a hole in the
-  // panel, not a subtlety.
-  it("falls back to the list frame rather than vanishing", () => {
-    const html = renderToStaticMarkup(<MachineRail isFleet>rows</MachineRail>);
-    expect(html).toContain("border-l-2");
-    expect(html).toContain("border-dialog-edge");
-  });
-
-  // Regression, user report (paraphrased: no left rail on the phone either — there is only
-  // ever one machine): a colour is a COMPARISON, and with nothing to compare it to the sole
-  // machine still wrapped the whole list in its hue and closed it with a rule.
-  it("wraps a machine standing alone in nothing at all", () => {
-    const html = renderToStaticMarkup(
-      <MachineRail color={MACHINE_COLORS[3]!}>rows</MachineRail>,
-    );
-
-    expect(html).toBe("rows");
-    // The list gives up its left side with it: no chrome band wears that frame either.
+describe("the machine's hue", () => {
+  // Regression, user reports (paraphrased: no left rail on the phone, there is only
+  // ever one machine — and then, with three machines on one screen: bin that rail on
+  // the left). A machine's colour used to be the list's whole left FRAME: 2px down
+  // every row it owned and a rule under the last one, so each machine read as a box
+  // framed inside the card, and the frame answered "whose" for rows nobody compares.
+  it("is a mark on the name, and nothing down the side of the list", () => {
+    expect(uiSource).not.toContain("MachineRail");
+    expect(sessionsListSource).not.toContain("MachineRail");
+    // The chrome bands gave up that side with it.
     expect(sessionsListSource).not.toContain("LIST_FRAME");
+    expect(sessionsListSource).not.toContain("border-l-2");
+    // The hue survives where the machine is NAMED, which is where the question is.
+    expect(machineTagFace(MACHINE_COLORS[0]!)).toContain(MACHINE_COLORS[0]!.rail);
   });
 });
 
@@ -510,13 +452,15 @@ describe("NewSessionButton", () => {
   });
 
   // Regression, user report: the 28px desktop box still read as a tall slab beside the
-  // 24px machine action. The shared 16px line box fits safely inside a 24px control.
-  it("uses the same compact mouse height as the neighboring small action", () => {
-    expect(html()).toContain("mouse:h-6");
-    expect(html()).toContain("mouse:min-h-6");
+  // 24px machine action — and then (paraphrased: line the borders and the icons up):
+  // a word's padding around a glyph that has no word made every one of these a
+  // rectangle, 38px wide on a phone around a 16px mark. It wears the disc the way out
+  // of a dialog already drew: 32px of face, 28px under a pointer.
+  it("wears the same disc as the machine action beside it", () => {
+    expect(html()).toContain("size-8");
+    expect(html()).toContain("rounded-full");
     expect(html()).toContain("self-center");
-    expect(html()).toContain(" h-8 ");
-    expect(html()).toContain("mouse:text-meta");
+    expect(html()).toContain("mouse:size-7");
     expect(html()).not.toContain("mouse:h-7");
   });
 
@@ -540,26 +484,25 @@ describe("IconButton", () => {
 
   it("is the app’s button with a glyph where its word would be", () => {
     expect(html()).toContain("border-edge-strong");
-    expect(html()).toContain("min-h-7");
+    expect(html()).toContain("rounded-full");
     expect(html()).toContain("focus-visible:ring-accent/60");
   });
 
-  // Reported: "the height of the new session button on iOS is too big". The touch
-  // box WAS the paint (`h-11`), so the amber slab filled the whole header band.
-  it("wears the same compact box as the yellow button beside it", () => {
+  // Regression, user report (paraphrased: line the borders and the icons up, and make
+  // them round): a word's padding sized a box with no word in it, so one 16px glyph
+  // sat in a 38x32 rectangle on the phone and a 42x24 one on the desk while the way
+  // out of a dialog, two components away, was already a 32px disc.
+  it("wears one disc, the size of the header's own rhythm", () => {
     const primary = renderToStaticMarkup(
       <NewSessionButton machine="tower" onPress={() => {}} />,
     );
 
-    for (const rhythm of [
-      " h-8 ",
-      "self-center",
-      "mouse:h-6",
-      "mouse:min-h-6",
-    ]) {
+    for (const rhythm of ["size-8", "rounded-full", "self-center", "mouse:size-7"]) {
       expect(html()).toContain(rhythm);
       expect(primary).toContain(rhythm);
     }
+    // A word still gets a word's box: the disc is for the glyph that has none.
+    expect(renderToStaticMarkup(<Button>Rename</Button>)).toContain("rounded-control");
   });
 
   it("keeps the 44px finger target the 32px face gave up", () => {
@@ -869,7 +812,8 @@ describe("KebabButton", () => {
     expect(over).toContain("text-dialog-title-foreground");
     // `bg-ink/80` reads as ink and paints near-white in a light theme.
     expect(over).not.toContain("bg-ink/80");
-    expect(over).not.toContain("self-center");
+    // A glyph with no word is a disc here too, over the tile it floats on.
+    expect(over).toContain("rounded-full");
     // It ends no row, so it reclaims no row's gutter and centres its own glyph.
     expect(over).not.toContain("-mr-3");
     expect(over).not.toContain("justify-items-end");
@@ -1880,7 +1824,7 @@ describe("NewSessionButton, one action", () => {
       <NewSessionButton machine="visgw" where="vis" onPress={() => {}} />,
     );
     expect(html.match(/<button/g)).toHaveLength(1);
-    expect(html).toContain(renderToStaticMarkup(<PlusIcon className="size-3.5" />));
+    expect(html).toContain(renderToStaticMarkup(<PlusIcon className="size-4" />));
     expect(html).not.toContain("border-r-0");
   });
 
@@ -2032,12 +1976,11 @@ describe("MachineSwitcher", () => {
     expect(html).toContain("mouse:h-5");
     // Six machines scroll INSIDE the clipped track rather than widening the row.
     expect(html).toContain("overflow-x-auto");
-    // The two rungs its own box gives: a 28px tile is pressed, so it is a chip, and
-    // the track is that chip plus the 2px that insets it. The bands under it stay
-    // square — "definitely there should be no rounded corners" was a report about a
-    // pill floating over planes, and every plane it named is still square.
-    expect(html).toContain("rounded-chip");
-    expect(html).toContain("rounded-control");
+    // A segmented control standing beside a disc: the track and its tiles are
+    // capsules, so every painted box on that row is one shape. The bands under it
+    // stay square — "definitely there should be no rounded corners" was a report
+    // about a pill floating over planes, and every plane it named is still square.
+    expect(html).toContain("rounded-full");
   });
 
   it("gives the chosen machine a raised tile and the rest no box at all", () => {
@@ -2188,7 +2131,7 @@ describe("MachineProjectsButton", () => {
   });
 
   it("stands at the header row's own compact height", () => {
-    expect(html).toContain("min-h-7");
+    expect(html).toContain("size-8");
     expect(html).toContain("shrink-0");
   });
 
@@ -2213,7 +2156,7 @@ describe("project verbs use distinct marks", () => {
     const glyph = (markup: string) => markup.match(/<svg[\s\S]*?<\/svg>/g)?.[0];
     const start = glyph(session);
     const inventory = glyph(projects);
-    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-3.5" />));
+    expect(start).toBe(renderToStaticMarkup(<PlusIcon className="size-4" />));
     expect(inventory).toBe(renderToStaticMarkup(<ProjectsIcon className="size-4" />));
     expect(start).not.toBe(inventory);
   });
@@ -4128,10 +4071,13 @@ describe("a panel band sits UNDER its column band, never beside it", () => {
     expect(panel).not.toContain("bg-level-machine");
     expect(panel).not.toContain("bg-panel-2");
     expect(panel).not.toContain("text-white");
-    // One step smaller, in the hint colour, marked only by the accent tick.
+    // One step smaller and in the hint colour, and that is the whole difference.
+    // Reported (paraphrased: bin that rail on the left, line the borders up): the
+    // panel's label wore a 2px accent tick nothing else on the screen wore, so THEME
+    // began 10px right of APPLICATION above it and of every row beneath it.
     expect(panel).toContain("text-chip font-bold uppercase");
     expect(panel).toContain("text-dialog-hint");
-    expect(panel).toContain("border-l-2 border-accent");
+    expect(panel).not.toContain("border-accent");
   });
 });
 
@@ -4215,7 +4161,7 @@ describe("SettingsChoiceGroup", () => {
     expect(nested).toContain('class="h-px w-full bg-dialog-edge"');
     expect(nested).not.toContain("border-accent");
     expect(nested).not.toContain("ml-3");
-    expect(group(false)).toContain("border-l-2 border-accent");
+    expect(group(false)).not.toContain("border-accent");
     expect(group(false)).not.toContain("border-dialog-edge");
   });
 
@@ -4300,7 +4246,7 @@ describe("Corners", () => {
     }
     // A row in a list is a plane of a page made of square bands, and the report that
     // made it square still holds. The machine tab left that list: it is a segmented
-    // control standing ON the page, and it takes the rung its 28px box gives.
+    // control standing beside a disc, so it is a capsule.
     expect(
       corners(renderToStaticMarkup(<ListRow onClick={() => {}}>anthropic</ListRow>)),
     ).toEqual([]);
@@ -4312,7 +4258,7 @@ describe("Corners", () => {
           </MachineTab>,
         ),
       ),
-    ).toContain("rounded-chip");
+    ).toContain("rounded-full");
   });
 
   it("measures a container off the thing it holds", () => {

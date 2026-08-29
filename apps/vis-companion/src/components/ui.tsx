@@ -84,6 +84,24 @@ export const Button = forwardRef<
      * Tailwind's emission order and never by which one the call site typed.
      */
     isJoined?: boolean;
+    /**
+     * A WORD SETS A CONTROL'S WIDTH; A MARK DOES NOT.
+     *
+     * `box` is the button with a word in it — the word measures it, so it is a
+     * rounded rectangle on the control rung. `disc` is the same button with its
+     * word replaced by a glyph: nothing inside it has a width to earn, so it is a
+     * 32px circle (28px under a pointer), which is the box `CloseButton isBand`
+     * has drawn since it was written and nothing else in the app copied.
+     *
+     * It is a PROP rather than a `className` because the two shapes disagree about
+     * `px-*` and `rounded-*`, and two utilities of equal specificity are settled by
+     * Tailwind's emission order and never by the call site: `IconButton` asked for
+     * `px-0` here for as long as it has existed and lost every time. Measured on the
+     * shipping app before this prop: every icon-only control was a 38x32 rectangle
+     * around a 16px mark, and 42x24 under a pointer — a face 1.75 times as wide as
+     * it was tall, on a row of boxes that were 36, 38 and 42 wide.
+     */
+    shape?: 'box' | 'disc';
   }
 >(function Button(
   {
@@ -91,6 +109,7 @@ export const Button = forwardRef<
     pressEffect = 'scale',
     density = 'default',
     isJoined = false,
+    shape = 'box',
     className = '',
     disabled = false,
     onClick,
@@ -180,12 +199,21 @@ export const Button = forwardRef<
     panel: 'min-h-9 px-3 font-mono text-meta',
   }[density];
   const joined = isJoined ? 'border-x-0' : '';
+  // THE DISC IS THE BOX THAT NEVER LEARNED A WORD. It keeps the header's own 32px
+  // rhythm and the 6px of invisible reach above and below it that makes the 44px
+  // finger target, and under a pointer it is 28px — square, where the rectangle it
+  // replaces was 24px tall and 42px wide: under the 28px floor on the one side an
+  // eye checks against the control standing beside it.
+  const frame =
+    shape === 'disc'
+      ? 'relative grid size-8 self-center place-items-center rounded-full after:absolute after:inset-x-0 after:-top-1.5 after:-bottom-1.5 after:content-[""] mouse:size-7 mouse:after:content-none'
+      : `min-h-7 rounded-control px-2.5 py-0.5 sm:min-h-8 sm:px-3 sm:text-ui ${scale}`;
 
   return (
     <button
       ref={ref}
       disabled={disabled}
-      className={`min-h-7 rounded-control border px-2.5 py-0.5 text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none sm:min-h-8 sm:px-3 sm:text-ui ${scale} ${joined} ${styles} ${className}`}
+      className={`border text-meta font-bold transition-[background-color,border-color,color,opacity,transform,translate,scale,rotate] duration-150 ${press} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 disabled:cursor-not-allowed disabled:opacity-100 disabled:shadow-none motion-reduce:transition-none ${frame} ${joined} ${styles} ${className}`}
       {...tapPress}
       {...props}
     />
@@ -205,6 +233,18 @@ export const Button = forwardRef<
  * focus ring, transition and desktop rhythm as every other button in the app.
  * `pressEffect="none"` because these anchor menus and sheets — a transform moves
  * the box the popover was measured against.
+ * AND IT IS A DISC. A word is what makes a control wide and a mark is not, so the box
+ * around a mark is square — and a square control's honest corner is the circle, the
+ * one this app already drew on the way out of a dialog and nowhere else. Reported
+ * (paraphrased: line the borders and the icons up, and make them round): the bar's
+ * glass and cog, the strip's folder mark, the band's plus and the pager's two steps
+ * were five rectangles at three different widths around marks at three different
+ * sizes, every one of them wider than it was tall.
+ *
+ * A control that ENDS a row keeps the row's cell instead (`edge`): it is not a box
+ * standing on the page, it is that row's trailing edge, and a circle cannot stretch
+ * to a row's height.
+ *
  */
 export const IconButton = forwardRef<
   HTMLButtonElement,
@@ -257,13 +297,14 @@ export const IconButton = forwardRef<
     ? `h-auto justify-items-end self-stretch border-r-0 pl-0 pr-3 -mr-3 after:content-none sm:pr-4 sm:-mr-4 mouse:h-auto ${
         fullCell ? 'w-12 mouse:w-9' : 'min-w-10 sm:min-w-12 mouse:min-w-10'
       }`
-    : 'min-w-7 place-items-center px-0 sm:min-w-8 sm:px-0 mouse:min-w-6';
+    : 'place-items-center';
   return (
     <Button
       ref={ref}
       type="button"
       variant={variant}
       pressEffect="none"
+      shape={edge ? 'box' : 'disc'}
       density={density}
       aria-label={label}
       className={`grid shrink-0 items-center ${box} ${className}`}
@@ -1519,9 +1560,7 @@ export function SettingsChoiceGroup({
       >
         <h4
           id={headingId}
-          className={`font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint ${
-            isNested ? '' : 'border-l-2 border-accent pl-2'
-          }`}
+          className="font-mono text-chip font-bold uppercase tracking-[0.12em] text-dialog-hint"
         >
           {label}
         </h4>
@@ -2586,17 +2625,17 @@ export function UnreadBadge({ count }: { count: number }) {
  *
  * A full-bleed bar of hue was a second loud band competing with the project header
  * under it, and it only answered "whose" for as long as it stayed on screen. The colour
- * that ANSWERS ownership is the machine's spine (`MachineRail`, 2px down every project
- * and session it owns); the name only has to NAME, so it wears the hue on its own
- * leading edge and nothing else does.
+ * that ANSWERS ownership is 2px on this tag's own leading edge, where the machine is
+ * NAMED — which is where a reader asks whose it is. The name only has to NAME, so it
+ * wears the hue there and nothing else in the list wears it at all.
  *
  * THE HUE IS THE TAG'S EDGE, NEVER ITS FILL. A hue at L 0.62 filled behind a word can
  * only carry dark ink — the page's own paper on top of it is a 3.2:1 name — so the one
  * word that says which computer you are looking at was black type on orange paper, the
  * only black ink on a screen where every other word is the page's. The tag is the
- * page's own paper and ink now, with 2px of hue down its leading side: the SAME rule
- * `MachineRail` paints under it, at the same width and on the same side, so the name
- * and the block it heads are one machine and the word keeps ordinary ink's contrast.
+ * page's own paper and ink now, with 2px of hue down its leading side. Reported
+ * (paraphrased: bin the rail on the left): that same hue used to run the full height
+ * of the glass beside every row it owned, so it is a NAME's edge and nothing longer.
  */
 export function machineTagFace(color?: MachineColor): string {
   // `w-fit` so the tag hugs the NAME: a tag as wide as the column it sits in
@@ -2718,10 +2757,11 @@ export const LIST_EDGE_END = 'pr-3 sm:pr-4';
  *
  * The sessions list wore this too — the card gave its whole left side up so that a
  * machine's rail could BE the frame rather than stand beside it, and the chrome bands
- * carried the same rule in edge ink between machines. Reported (paraphrased: no left
- * rail on the phone either, there is only ever one machine): with a fleet of one that
- * frame was 2px of ink saying which of one, the full height of the glass. The card
- * draws no left edge at all now, and the hue paints only above a fleet (`MachineRail`).
+ * carried the same rule in edge ink between machines. Reported twice (paraphrased: no
+ * left rail on the phone, there is only ever one machine — and then, with three of
+ * them on screen: bin that rail on the left): a hue running the height of the glass
+ * answers "whose" for rows nobody is comparing. The card draws no left edge at all,
+ * and the machine's NAME carries the only hue the list has left.
  */
 export const LIST_FRAME = 'border-l-2 border-dialog-edge';
 
@@ -3122,7 +3162,7 @@ export function Pager({
         aria-hidden={can ? undefined : true}
         tabIndex={can ? undefined : -1}
       >
-        <ChevronIcon back={isBack} className="size-3" />
+        <ChevronIcon back={isBack} className="size-4" />
       </IconButton>
     );
   };
@@ -3346,44 +3386,6 @@ export function ProjectStatusCounts({
 }
 
 /**
- * THE RAIL OF A MACHINE: 2px of its own hue down everything it owns and across the edge
- * that closes it — and a machine standing alone is not wrapped in anything.
- *
- * A COLOUR IS A COMPARISON. Above a fleet the rail says which computer these rows are
- * on before a word is read; a project boundary is a hairline and a machine boundary is a
- * colour change, and unlike a band at the top of the block the rail is still on screen
- * after the reader scrolls past that band. Above a fleet of ONE it answers a question
- * nobody can ask. Reported (paraphrased: no left rail on the phone either, there is only
- * ever one machine): the sole machine wrapped the whole list in its hue and closed it
- * with a rule, so the phone spent 2px of ink down the glass to say which of one. So it
- * paints only when `isFleet`, and otherwise the projects under it simply ARE the list.
- *
- * On a desk it draws nothing: a fleet there gets the index rail down the side of the
- * page, naming its machines in words. On the glass the hue runs in the 12px lane the
- * sheets stand in, beside cards that already carry an edge of their own — never as a
- * second frame around one.
- */
-export function MachineRail({
-  color,
-  isFleet,
-  children,
-}: {
-  color?: MachineColor;
-  /** There is a second machine, so the hue is telling the reader something. */
-  isFleet?: boolean;
-  children: ReactNode;
-}) {
-  if (!isFleet) return <>{children}</>;
-  return (
-    <div
-      className={`border-b-2 border-l-2 sm:border-0 ${color ? color.rail : 'border-dialog-edge'}`}
-    >
-      {children}
-    </div>
-  );
-}
-
-/**
  * The machine's hue as a solid block, worn by its banner and its scope chip, so
  * the chip you tapped and the rail you got back are visibly the same machine.
  */
@@ -3442,17 +3444,17 @@ export function MachineMark({
  * whatever the pointer. Overflow scrolls INSIDE the clipped track, so a fleet of
  * six never widens the row or pushes the verb off the trailing edge.
  *
- * THE CORNERS ARE THE TWO RUNGS ITS OWN BOX GIVES. The first report on this row —
+ * THE CORNERS ARE THE ONES ITS NEIGHBOUR WEARS. The first report on this row —
  * "definitely there should be no rounded corners" — was about a pill floating over a
  * stack of square bands, and the answer to it squared a CONTROL along with the
- * planes. A tile is 28px and is pressed, which is the chip rung; the track is that
- * chip plus the 2px that insets it, which is the control rung, exactly as the field
- * around the composer's send is measured (`index.css`). The bands under it stay
- * square, because they are still planes.
+ * planes. This is a segmented switch standing beside a disc: track and tiles are
+ * capsules, so every painted box on the strip is a 32px face with round ends and the
+ * row reads as one rhythm instead of a rectangle next to a circle. The bands under it
+ * stay square, because they are still planes.
  */
 export function MachineSwitcher({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto rounded-control bg-level-machine p-0.5">
+    <div className="flex min-w-0 shrink items-center gap-0.5 overflow-x-auto rounded-full bg-level-machine p-0.5">
       {children}
     </div>
   );
@@ -3462,7 +3464,7 @@ export function MachineSwitcher({ children }: { children: ReactNode }) {
  * One machine inside the switcher's track. Selection is a RAISED TILE — the page's
  * own paper lifted out of the track — never a border and never the accent: amber is
  * this product's verb colour, and a selected tab painted in it reads as a button
- * that will do something when you press it. Square, like the track that holds it.
+ * that will do something when you press it. A capsule, like the track that holds it.
  *
  * News is a HIGHLIGHT, not a tally. A machine tab carried two numbers (live, unread)
  * and the reader had to learn a colour code to tell them apart; what a tab has to say
@@ -3527,7 +3529,7 @@ export function MachineTab({
       // and what came back are read out where the finger already is.
       aria-live={isDown ? 'polite' : undefined}
       onClick={onClick}
-      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-chip px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
+      className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
         isDown
           ? 'text-dialog-hint/60 hover:text-dialog-hint'
           : isOn
@@ -3601,7 +3603,7 @@ export function NewSessionButton({
       title={title}
       onClick={(event) => onPress(event.currentTarget)}
     >
-      <PlusIcon className="size-3.5" />
+      <PlusIcon className="size-4" />
     </IconButton>
   );
 }

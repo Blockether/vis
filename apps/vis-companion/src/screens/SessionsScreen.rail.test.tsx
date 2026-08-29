@@ -246,11 +246,12 @@ describe("the desk's fleet rail", () => {
   });
 });
 
-// Regression, user report (paraphrased: no left rail on the phone either — there is only
-// ever one machine): the machine that owns everything still wrapped its whole block in 2px
-// of its own hue and closed it with a rule, so the phone spent the height of the glass
-// saying which of one.
-describe('the machine rail inside the list', () => {
+// Regression, user reports (paraphrased: no left rail on the phone either — there is only
+// ever one machine; and then, with three machines paired on one screen: bin that rail on the
+// left). A machine used to wrap its whole block in 2px of its own hue and close it with a
+// rule, so a fleet read as framed boxes stacked inside the card and a lone machine spent the
+// height of the glass saying which of one.
+describe('the machine hue inside the list', () => {
   const alone = {
     machines: [
       {
@@ -260,6 +261,15 @@ describe('the machine rail inside the list', () => {
         ],
       },
     ],
+  };
+
+  /** The block a machine owns, once it is on screen, painting no hue on any side. */
+  const blockWithoutHue = (label: string) => {
+    const block = screen.getByLabelText(label);
+    const first = block.firstElementChild;
+    expect(first?.className ?? '').not.toContain('border-l-2');
+    expect(first?.className ?? '').not.toContain('border-b-2');
+    return block;
   };
 
   it('wraps a machine that stands alone in nothing at all', async () => {
@@ -272,14 +282,11 @@ describe('the machine rail inside the list', () => {
     await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
 
     // The landmark stays — it is a NAME, not ink — and its projects are simply the list.
-    const block = screen.getByLabelText('visgw projects');
-    const first = block.firstElementChild;
-    expect(first?.className ?? '').not.toContain('border-l-2');
-    expect(first?.className ?? '').not.toContain('border-b-2');
+    const block = blockWithoutHue('visgw projects');
     expect(block.querySelector('section[data-project-root]')).toBeTruthy();
   });
 
-  it('paints the hue again the moment there is a second machine', async () => {
+  it('wraps a machine standing in a fleet in nothing at all either', async () => {
     const view = renderSessionsScreen(fleet());
     restore = () => {
       view.unmount();
@@ -288,8 +295,8 @@ describe('the machine rail inside the list', () => {
 
     await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
 
-    const rail = screen.getByLabelText('visgw projects').firstElementChild;
-    expect(rail?.className ?? '').toContain('border-l-2');
-    expect(rail?.className ?? '').toContain('border-b-2');
+    // Where one computer ends is the trough between two blocks and the name on the next
+    // landmark, never a stripe down the side of everything the first one owns.
+    blockWithoutHue('visgw projects');
   });
 });

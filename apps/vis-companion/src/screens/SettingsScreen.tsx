@@ -2989,10 +2989,12 @@ export function SettingsPanel({
           wore the same slab, the same white and nearly the same weight as the
           `MACHINES` band above them, so four peers stood where there are two
           levels. The column keeps the paper, the size and the white; a panel
-          inside a machine keeps only the accent tick and speaks in the hint
-          colour one step smaller. */}
+          inside a machine keeps neither, and speaks in the hint colour one step
+          smaller. Reported since (paraphrased: bin that rail on the left, line the
+          borders up): the 2px accent tick it wore was the only label on the screen
+          standing 10px right of every other one. */}
       <header className="flex min-h-8 min-w-0 flex-wrap content-center items-baseline gap-x-3 gap-y-1 border-b border-dialog-edge px-3 py-1.5">
-        <h3 className="min-w-0 flex-auto truncate border-l-2 border-accent pl-2 font-mono text-chip font-bold uppercase tracking-[0.14em] text-dialog-hint">
+        <h3 className="min-w-0 flex-auto truncate font-mono text-chip font-bold uppercase tracking-[0.14em] text-dialog-hint">
           {title}
         </h3>
         {meta && (

@@ -16,7 +16,6 @@ import {
   ProjectStatusCounts,
   LoadMore,
   MachineMark,
-  MachineRail,
   MachineSwitcher,
   MachineTab,
   Modal,
@@ -1944,9 +1943,10 @@ export function SessionsScreen({
   // machine row and three project rows whose own bands stand on the list two pixels
   // to the right of them. It earns that column the moment there is a second machine
   // to choose between; until then the projects verb it hosts stands in the footer.
-  // A MACHINE'S HUE IS A COMPARISON TOO, and the list makes the same call: with one
-  // machine the block of projects it owns wears no rail and no closing rule, on a phone
-  // or anywhere else (`MachineRail`).
+  // A MACHINE'S HUE IS A COMPARISON TOO, and after two reports (paraphrased: no left
+  // rail on the phone either — and then, with three machines on screen: bin that rail
+  // on the left) nothing in the list wears it at all: a machine's block is separated
+  // by the trough it opens on and named by its own landmark.
   const isFleet = machines.length > 1;
   const showRail = isDesk && isFleet;
   // THE RAIL IS BUILT FROM WHAT THE LIST IS ALREADY HOLDING, and only on a desk,
@@ -2363,21 +2363,18 @@ export function SessionsScreen({
           <div>
             {sections.map(({ machine, groups, admitted }, sectionIndex) => {
               const key = machineKey(machine.conn);
-              const color = machineColor(machineColors, key);
               return (
                 <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
                   {/* Every machine keeps its own named panel and landmark, even when it
                       is the only one in the fleet: the landmark is a NAME, not ink. */}
-                  {/* THE HUE EXISTS TO TELL TWO COMPUTERS APART. Above a fleet everything
-                      one machine owns hangs off ITS rail, and that rail is the phone
-                      card's left frame — a project boundary is a hairline, a machine
-                      boundary is a colour change, so where `tower` ends is seen before it
-                      is read. With one machine there is nothing to tell it apart from, so
-                      nothing is drawn and its projects are simply the list. */}
-                  <MachineRail color={color} isFleet={isFleet}>
-                  {/* Where one computer ends is a colour change AND a trough, so the
-                      first project of the second machine can never read as the fifth
-                      project of the first one. */}
+                  {/* Reported (paraphrased: bin that rail on the left): a machine's
+                      hue used to run 2px down everything it owned and close it with a
+                      rule, and with three machines paired that stripe was the full
+                      height of the glass. The reader picks a machine in the switch
+                      above this list, not by comparing rows 800px apart, so where one
+                      computer ends is the trough this gap opens and the name its
+                      landmark carries — the first project of the second machine can
+                      still never read as the fifth project of the first. */}
                   {sectionIndex > 0 && <SectionGap />}
                   {/* The active tab directly above the card already names this machine, so
                       the list has no second selected/unselected presentation to maintain. */}
@@ -2439,7 +2436,6 @@ export function SessionsScreen({
                         />
                         </Fragment>
                       ))}
-                  </MachineRail>
                 </section>
               );
             })}
