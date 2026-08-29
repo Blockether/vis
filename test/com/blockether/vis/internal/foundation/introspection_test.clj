@@ -39,7 +39,7 @@
                    (let [message (advice :regex-unsupported-escape)]
                      (expect (str/includes? message "anchored TEXT"))
                      (expect (str/includes? message ".splitlines()"))
-                     (expect (str/includes? message "\"context\": 3"))))))
+                     (expect (str/includes? message "\"context\": 4"))))))
 
 (defdescribe
   introspection-public-surface-test

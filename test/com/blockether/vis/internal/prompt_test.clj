@@ -142,7 +142,7 @@
       ;; Regression, user report: a section that ORDERS a verb has to say how it is CALLED.
       ;; Every code verb §3 names carries its literal call shape, and the options-dict ones
       ;; name the keys inside it — the shape is read, never remembered or looked up.
-      (doseq [shape ["`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"
+      (doseq [shape ["`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 4})`"
                      "`cat(path, start, end)`" "`patch(path, edits)`"
                      "`[{\"from\": a, \"to\": b, \"replace\": text}]`"]]
         (expect (str/includes? text shape)))
@@ -786,8 +786,8 @@
                    ;; context even though nearby lines often answered the question outright.
                    (expect (str/includes?
                              text
-                             "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 3})`"))
-                   (expect (str/includes? text "Keep context for code"))))
+                             "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 4})`"))
+                   (expect (str/includes? text "context defaults to 4"))))
              ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
              ;; prompt named the method with no arguments at all, so a watcher still
              ;; paged bytes to answer "what did it just print".

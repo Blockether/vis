@@ -887,8 +887,8 @@
         (expect (= 2 (:total-file-count out)))
         (expect (true? (:total-file-count-exact? out)))
         (expect (vector? (:hits out)))
-        ;; Every hit is a clean {:path :line :text} map, no sentinel.
-        (expect (every? #(= #{:path :line :text} (set (keys %))) (:hits out)))
+        ;; Omitted context defaults to four, including short boundary windows.
+        (expect (every? #(= #{:path :line :text :before :after} (set (keys %))) (:hits out)))
         (expect (= 2 (count (:hits out))))
         (expect (= :end-of-results (:truncated-by out)))))
   (it "query strings are literal, including pipe characters"
@@ -1977,6 +1977,32 @@
 
         (expect (= 3 (count rows)))
         (expect (every? #(re-matches #"  \d+:[0-9a-f]{3}│ .*" %) rows))))
+  (it "clips the default four-line context safely at a one-line file"
+      (let [d
+            (temp-dir-path "greptextone")
+
+            _
+            (write-temp! "greptextone/only.clj" "ZZONEZZ\n")
+
+            out
+            (:result ((grep-data-fn) {"query" "ZZONEZZ" "paths" [d]}))
+
+            hit
+            (-> (get out "matches")
+                vals
+                first
+                vals
+                first)
+
+            rows
+            (->> ((private-fn "render-grep-text") out)
+                 string/split-lines
+                 (filter #(string/starts-with? % "  ")))]
+
+        (expect (= [] (get hit "before")))
+        (expect (= [] (get hit "after")))
+        (expect (= 1 (count rows)))
+        (expect (re-matches #"  1:[0-9a-f]{3}│ ZZONEZZ" (first rows)))))
   (it "zero hits is the summary plus the hint that explains it"
       (let [d
             (temp-dir-path "greptextzero")
@@ -2030,9 +2056,8 @@
                        hit-row
                        (->> (:result (grep-tool {"query" "ZZHITZZ" "paths" [d]}))
                             string/split-lines
-                            ;; Content rows are the indented ones; line 1 is the summary
-                            ;; and it echoes the query, so it must not be mistaken for a hit.
-                            (filter #(re-matches #"  \d+:[0-9a-f]{3}│ .*" %))
+                            ;; Default context is anchored too; select the query-bearing hit.
+                            (filter #(string/includes? % "│ ZZHITZZ line"))
                             first)
 
                        anchor
@@ -2061,7 +2086,7 @@
                        hit-row
                        (->> (:result (grep-tool {"query" "ZZWHOLEZZ" "paths" [d]}))
                             string/split-lines
-                            (filter #(re-matches #"  \d+:[0-9a-f]{3}│ .*" %))
+                            (filter #(string/includes? % "│ ZZWHOLEZZ LINE"))
                             first)
 
                        out
@@ -2652,7 +2677,7 @@
             (expect (:success? r))
             (expect (= 2 (get-in r [:result "hit_count"])))))) ;; both lines, not 0
     (it
-      "content value is a UNIFORM `{\"text\" line}` map with AND without context"
+      "content value is uniform with explicit zero and positive context"
       (let [d
             (temp-dir-path "rguni")
 
@@ -2661,7 +2686,7 @@
 
         (spit (fs/file f) "L1\nMATCH\nL3\n")
         (let [plain
-              (get-in (rg {"query" "MATCH" "paths" [d]}) [:result "matches"])
+              (get-in (rg {"query" "MATCH" "paths" [d] "context" 0}) [:result "matches"])
 
               ctx
               (get-in (rg {"query" "MATCH" "paths" [d] "context" 1}) [:result "matches"])
@@ -2979,9 +3004,11 @@
           ;; find-arg-paths (gate checking) keeps the file so
           ;; config/private/settings.edn is authorized as that file, not config/private/
           (expect (= [expected-file] (find-paths [spec])))))
-    (it "accepts context-lines and rejects a negative/non-integer one"
+    (it "accepts an explicit context and defaults both grep paths to four lines"
         (expect (= 2 (:context (coerce-find [{"query" "needle" "context" 2}]))))
-        (expect (= 0 (:context (coerce-find [{"query" "needle"}]))))
+        (expect (= 0 (:context (coerce-find [{"query" "needle" "context" 0}]))))
+        (expect (= 4 (:context (coerce-find [{"query" "needle"}]))))
+        (expect (= 4 (:context (coerce-rg {"query" "needle"}))))
         (expect (throws? clojure.lang.ExceptionInfo
                          #(coerce-find [{"query" "needle" "context" -1}])))
         (expect (throws? clojure.lang.ExceptionInfo
@@ -4932,8 +4959,9 @@
                    (expect (string/includes? result "Text, not a map"))
                    (expect (not (string/includes? result "hit_count")))
                    (expect (not (string/includes? description "hit_count")))
-                   (expect (string/includes? description "\"context\": 3"))
-                   (expect (string/includes? description "default 0"))
+                   (expect (string/includes? description "\"context\": 4"))
+                   (expect (string/includes? description "default 4"))
+                   (expect (string/includes? description "set it to 0"))
                    (expect (string/includes? description "pure location/count sweeps"))))
              (it
                "the blank-path refusal no longer says grep returns a map"

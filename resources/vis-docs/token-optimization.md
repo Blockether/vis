@@ -37,7 +37,7 @@ Use these verbs before inventing a name or call shape.
 
 ## Read the region before bytes
 
-`grep({"query": [needles], "paths": [scopes], "context": 3})` locates unknown code and answers one ANCHORED text block, so the search that FINDS a line also ADDRESSES it:
+`grep({"query": [needles], "paths": [scopes], "context": 4})` locates unknown code and answers one ANCHORED text block, so the search that FINDS a line also ADDRESSES it:
 
 ```text
 src/com/blockether/vis/internal/foundation/editing/core.clj  (2)
@@ -95,7 +95,7 @@ A tool takes that `Path` itself: every path argument crosses the sandbox boundar
 Write a small helper the first time a shape repeats, then CALL it from every later block — a function defined in an earlier block is still bound, and redefining it is a paste the context pays for twice:
 
 ```python
-def hits(needles, *paths, ctx=2):
+def hits(needles, *paths, ctx=4):
     """Anchored `line:hash│ text` rows only, across every page."""
     text = grep({"query": needles, "paths": list(paths), "context": ctx}).all()
     return [l for l in text.splitlines() if "│ " in l]
@@ -106,7 +106,7 @@ A definition lives as long as the **session**, and now longer than the **process
 ```python
 print(defs())            # 2 definitions in this sandbox
                          #   deploy_ok(env)                <prog:1>  2 lines
-                         #   hits(needles, *paths, ctx=2)  <prog:1>  3 lines  Anchored `line:hash│ text`
+                         #   hits(needles, *paths, ctx=4)  <prog:1>  3 lines  Anchored `line:hash│ text`
                          #                                                    rows only, across every page.
                          # defs("name") returns one's source. 1 has no docstring — one line of it would be
                          # the gist above, the whole of it a doc(name) page the next turn can read.

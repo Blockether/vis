@@ -2991,14 +2991,14 @@
        (str
          "Sandbox policy denied " sandbox-denial-operation
          ": the resource is outside approved filesystem roots. "
-         "Use grep({\"query\": q, \"context\": 3}) or cat(path, start, end) to read, patch(path, edits) to edit, "
+         "Use grep({\"query\": q, \"context\": 4}) or cat(path, start, end) to read, patch(path, edits) to edit, "
          "repl_eval(language, code) for project code, "
          "or ask the USER to add the path to workspace.filesystem in vis.yml and run /reload. Original error: ")
        sandbox-denied?
        (str
          "Your sandbox has NO real filesystem / native / process access — "
          "importlib + exec_module on a project file, open(), subprocess, and sockets "
-         "CANNOT run here. To READ a project file use grep({\"query\": q, \"context\": 3}) or cat(path, start, end); to RUN project code "
+         "CANNOT run here. To READ a project file use grep({\"query\": q, \"context\": 4}) or cat(path, start, end); to RUN project code "
          "(import its modules, use its deps) use repl_eval(language, code) — that runs "
          "in the project's interpreter where the file is importable. Original error: "))
 
