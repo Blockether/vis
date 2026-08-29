@@ -1206,10 +1206,7 @@
   ;; is never entered.
   (it
     "pairs a real guest tool call and settles its Activity receipt on timeout"
-    (let [env {:activity/evaluation-id "00000000-0000-4000-8000-000000000007"
-               :activity/form-index 4
-               :activity/iteration 3
-               :session-id "session-activity"
+    (let [env {:session-id "session-activity"
                :iteration-id "iteration-activity"
                :workspace/root (System/getProperty "user.dir")
                :workspace {:root (System/getProperty "user.dir")
@@ -1240,13 +1237,19 @@
                     env))] (expect (true? (:timeout? result))) (expect (= [:start :terminal]
                                                                           (mapv :phase @events)))
                (expect (= 1 (count (set (map :invocation-id @events)))))
-               (expect (= #{"00000000-0000-4000-8000-000000000007"}
-                          (set (map :evaluation-id @events)))) (expect (= #{4}
-                                                                          (set (map :form-index
-                                                                                    @events))))
+               ;; Ownerless: a lifecycle event names its own invocation and carries
+               ;; nothing about the evaluation, iteration or form that ran it — the
+               ;; form the block becomes is the snapshot's only identity.
+               (expect (not-any? (fn [event]
+                                   (some (partial contains? event)
+                                         [:schema-version :evaluation-id :form-index]))
+                                 @events))
                ;; No close, and no receipt filed: Activity rides the form now.
-               (expect (= [0 []] [@close-attempts (vec (:attachments result))]))
-               (expect (= "python-only\n" (:stdout result)))
+               (expect (= [0 []] [@close-attempts (vec (:attachments result))])) (expect
+                                                                                   (=
+                                                                                     "python-only\n"
+                                                                                     (:stdout
+                                                                                       result)))
                ;; Python returns semantics only; the host derives this display after it exits.
                (expect (not (contains? result :result-render))) (expect (str/includes?
                                                                           (form/result-render
@@ -1263,44 +1266,43 @@
 (defdescribe activity-dispatch-order-test
              ;; Regression, issue td-74427c: concurrent callbacks could reduce S2 before
              ;; publishing stale S1, while a slow listener blocked the tool callback itself.
-             (it "publishes snapshots FIFO without blocking their callback threads"
-                 (let [[dispatch! shutdown!]
-                       (#'lp/serial-activity-dispatcher)
+             (it
+               "publishes snapshots FIFO without blocking their callback threads"
+               (let [[dispatch! shutdown!]
+                     (#'lp/serial-activity-dispatcher)
 
-                       release-first
-                       (promise)
+                     release-first
+                     (promise)
 
-                       entered-first
-                       (promise)
+                     entered-first
+                     (promise)
 
-                       snapshots
-                       (atom [])
+                     snapshots
+                     (atom [])
 
-                       ;; `dispatch!` answers the Future the settler waits on, so the
-                       ;; drain is deref-ing what was submitted rather than a third
-                       ;; function the dispatcher no longer hands out.
-                       submitted
-                       (atom [])
+                     ;; `dispatch!` answers the Future the settler waits on, so the
+                     ;; drain is deref-ing what was submitted rather than a third
+                     ;; function the dispatcher no longer hands out.
+                     submitted
+                     (atom [])
 
-                       submit
-                       (fn [n]
-                         (swap! submitted conj
-                                (dispatch! (fn []
-                                             (when (= 1 n)
-                                               (deliver entered-first true)
-                                               @release-first)
-                                             (swap! snapshots conj n)))))]
+                     submit
+                     (fn [n]
+                       (swap! submitted conj
+                         (dispatch! (fn []
+                                      (when (= 1 n) (deliver entered-first true) @release-first)
+                                      (swap! snapshots conj n)))))]
 
-                   (try (submit 1)
-                        @entered-first
-                        (let [started (System/nanoTime)]
-                          (submit 2)
-                          (submit 3)
-                          (expect (< (/ (- (System/nanoTime) started) 1e6) 100.0)))
-                        (deliver release-first true)
-                        (run! deref @submitted)
-                        (expect (= [1 2 3] @snapshots))
-                        (finally (shutdown!))))))
+                 (try (submit 1)
+                      @entered-first
+                      (let [started (System/nanoTime)]
+                        (submit 2)
+                        (submit 3)
+                        (expect (< (/ (- (System/nanoTime) started) 1e6) 100.0)))
+                      (deliver release-first true)
+                      (run! deref @submitted)
+                      (expect (= [1 2 3] @snapshots))
+                      (finally (shutdown!))))))
 
 (defdescribe tool-call-execution-test
              ;; REGRESSION: tool calling once shipped 100% broken — `run-iteration`

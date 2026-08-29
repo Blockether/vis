@@ -56,7 +56,8 @@ import {
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
 import { LiveView, useLiveViews } from "../components/LiveView";
-import { activityProjectionFromWire, isLiveViewEvent } from "../lib/live-view";
+import { activityProjectionFromWire } from "../lib/activity";
+import { isLiveViewEvent } from "../lib/live-view";
 import { speechOutput } from "../lib/speech";
 import { markSessionId } from "../lib/session-id";
 import { settledTranscriptCoversLiveTurn } from "../lib/live-turn-handover";
@@ -5014,7 +5015,7 @@ export function SessionScreen({
     void loadTranscript();
   }, [loadTranscript]);
   const liveViews = useLiveViews(client, subscriptions, sid, revealFiledLiveRecord);
-  const watching = liveViews.filter((view) => !view.is_settled).at(-1)?.title ?? null;
+  const watching = liveViews.at(-1)?.title ?? null;
   // The sender's own copy of the pictures dies with the process. Ask the gateway
   // for the bytes of a live turn that has none in hand — a restarted app, or a
   // second device, has no other source until the turn lands and is refetched.

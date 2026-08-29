@@ -752,7 +752,6 @@ describe("a Python evaluation without detected Activity", () => {
           {
             source: "answer = search()",
             activity: {
-              schema_version: 1,
               state: "running",
               counts: { running: 1, succeeded: 0, failed: 0, cancelled: 0 },
               rows: [{
@@ -785,7 +784,6 @@ describe("a Python evaluation without detected Activity", () => {
           result: 42,
           duration_ms: 29,
           activity: {
-            schema_version: 1,
             state: "succeeded",
             counts: { running: 0, succeeded: 0, failed: 0, cancelled: 0 },
             rows: [],
@@ -812,7 +810,6 @@ describe("Activity owns the slot after its Python form and result", () => {
     { id: "call-2", sequence: 2, operation: "run_tests", presenter: "tests", signal: "verification", state: "running", summary: "companion suite", resources: [], evidence: [] },
   ];
   const runningActivity = {
-    schema_version: 1,
     state: "running",
     counts: { running: 1, succeeded: 1, failed: 0, cancelled: 0 },
     rows,

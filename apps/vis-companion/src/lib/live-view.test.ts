@@ -2,7 +2,6 @@
 import { describe, expect, it } from 'vitest';
 import fixture from './live-view.fixture.json';
 import {
-  activityProjectionFromWire,
   applyLivePatch,
   applyLiveViewEvent,
   isLiveViewEvent,
@@ -57,32 +56,6 @@ function nodeOfType<K extends LiveNode['type']>(
 }
 
 const ids = (view: LiveView) => view.nodes.map((node) => node.id);
-
-const activityProjection = (
-  state: 'running' | 'succeeded' | 'failed' | 'cancelled' = 'running',
-) => ({
-  state,
-  counts: {
-    running: state === 'running' ? 1 : 0,
-    succeeded: state === 'succeeded' ? 1 : 0,
-    failed: state === 'failed' ? 1 : 0,
-    cancelled: state === 'cancelled' ? 1 : 0,
-  },
-  rows: [
-    {
-      id: 'call-1',
-      sequence: 1,
-      operation: 'run_tests',
-      presenter: 'tests',
-      signal: 'verification',
-      state,
-      summary: 'suite',
-      resources: [],
-      evidence: [{ kind: 'arguments', text: 'suite' }],
-    },
-  ],
-  omitted: { rows: 0, by_classification: {} },
-});
 
 describe('a live view read off the wire', () => {
   it('reads the engine fixture node for node, in the order it was declared', () => {
@@ -529,67 +502,15 @@ describe('the record of a settled view', () => {
   });
 });
 
-describe('the current Activity wire contract', () => {
-  // Protocol 7 took Activity off the Live View rail: it is no longer a classified
-  // view with a projection hanging off it, so the projection is parsed on its own
-  // — from the transient `block.activity` frame and from the terminal block event.
-  it('reads a bare projection off the wire', () => {
-    expect(activityProjectionFromWire(activityProjection())).toMatchObject({ state: 'running' });
-  });
-
-  it('reads structured diff evidence and rejects incomplete lines', () => {
-    const projection = activityProjection();
-    const diff = {
-      kind: 'diff',
-      text: 'fixture.clj',
-      lines: [
-        { kind: 'hunk', text: '@@ -1 +1 @@' },
-        { kind: 'deletion', text: '[REDACTED]', is_redacted: true },
-        { kind: 'addition', text: 'after' },
-      ],
-      additions: 0,
-      deletions: 0,
-      modifications: 1,
-      omitted_lines: 7,
-      is_truncated: true,
-      is_redacted: true,
-    };
-    const withDiff = {
-      ...projection,
-      rows: [{ ...projection.rows[0], evidence: [diff] }],
-    };
-    expect(activityProjectionFromWire(withDiff)?.rows[0].evidence[0]).toEqual(diff);
-    expect(
-      activityProjectionFromWire({
-        ...withDiff,
-        rows: [
-          {
-            ...withDiff.rows[0],
-            evidence: [{ ...diff, lines: [{ kind: 'addition' }] }],
-          },
-        ],
-      }),
-    ).toBeNull();
-  });
-
-  it('rejects a missing, malformed, or retired Activity projection', () => {
-    expect(activityProjectionFromWire(undefined)).toBeNull();
-    expect(activityProjectionFromWire({ ...activityProjection(), rows: [{ id: 'broken' }] })).toBeNull();
-    // Protocol 7 dropped both: a payload still wearing either came from a gateway
-    // the compatibility gate should already have refused.
-    expect(activityProjectionFromWire({ ...activityProjection(), schema_version: 1 })).toBeNull();
-    expect(
-      activityProjectionFromWire({ ...activityProjection(), anchor: { iteration: 1, form_index: 0 } }),
-    ).toBeNull();
-  });
-
-  // The gate that refuses an older gateway has already run by the time a frame is
-  // parsed, so a view still wearing the retired vocabulary is a contract violation
-  // rather than a shape to tolerate.
-  it('refuses a view still carrying the retired Activity vocabulary', () => {
+// The gate that refuses an older gateway has already run by the time a frame is
+// parsed, so a view still wearing the retired vocabulary is a contract violation
+// rather than a shape to tolerate: Activity belongs to a form, and a view that
+// carries one is not a picture this rail knows how to paint.
+describe('a view still wearing the retired Activity vocabulary', () => {
+  it('is refused rather than tolerated', () => {
     const view = { id: 'v-1', title: 'Build', nodes: [{ id: 'n1', type: 'status', text: 'go', tone: 'running' }] };
     expect(liveViewFromWire(view)).toMatchObject({ id: 'v-1' });
     expect(liveViewFromWire({ ...view, classification: 'activity' })).toBeNull();
-    expect(liveViewFromWire({ ...view, activity: activityProjection() })).toBeNull();
+    expect(liveViewFromWire({ ...view, activity: { state: 'running' } })).toBeNull();
   });
 });

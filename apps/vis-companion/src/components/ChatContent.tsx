@@ -14,8 +14,8 @@ import Prism from "prismjs";
 import { DataTable } from "./DataTable";
 import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
 import { LiveRunRow } from "./LiveArtifact";
-import { ActivityPanel, activityReceiptText } from "./LiveView";
-import type { ActivityProjection } from "../lib/live-view";
+import { ActivityPanel, activityReceiptText } from "./ActivityPanel";
+import type { ActivityProjection } from "../lib/activity";
 import { AlertIcon, ArrowOutIcon, ChevronIcon, PauseIcon, PlayIcon } from "./icons";
 import {
   attachmentBytes,

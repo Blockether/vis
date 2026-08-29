@@ -498,6 +498,39 @@
              {:phase :form-result :iteration 3 :position 0 :code "print(42)" :stdout "42"})]
         (expect (= "block.output" type))
         (expect (= 3 (:iteration payload)))))
+  ;; Protocol 7: Activity belongs to the form that produced it. The running frame is
+  ;; TRANSIENT — a saturated queue may drop it — so the settled snapshot must ride the
+  ;; terminal event, and a client that missed every live frame still ends on the
+  ;; picture the database keeps.
+  (it "a running form's Activity streams transient and routes on the block position"
+      (let [snapshot
+            {:state :running
+             :counts {:running 1 :succeeded 0 :failed 0 :cancelled 0}
+             :rows [{:id "call-1" :sequence 1 :operation "grep" :state :running}]
+             :omitted {:rows 0 :by-classification {}}}
+
+            [type store? payload]
+            (#'state/chunk->event
+             {:phase :form-activity :iteration 3 :position 2 :activity snapshot})]
+
+        (expect (= "block.activity" type))
+        (expect (false? store?))
+        (expect (= {:block_id 2 :iteration 3 :activity snapshot} payload))))
+  (it "the settled Activity rides block.output, and only when the form has one"
+      (let [snapshot
+            {:state :succeeded
+             :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+             :rows [{:id "call-1" :sequence 1 :operation "grep" :state :succeeded}]
+             :omitted {:rows 0 :by-classification {}}}
+
+            settled
+            (fn [chunk]
+              (last (#'state/chunk->event
+                     (merge {:phase :form-result :iteration 3 :position 2 :code "grep(...)"}
+                            chunk))))]
+
+        (expect (= snapshot (:activity (settled {:activity snapshot}))))
+        (expect (not (contains? (settled {}) :activity)))))
   (it "reasoning streams as a replayable typed block delta"
       (let [[type store? payload] (#'state/chunk->event
                                    {:phase :reasoning

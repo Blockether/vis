@@ -781,6 +781,5 @@
           (expect (= ["ci-run.live.ndjson"] (mapv #(get % "filename") attachments)))
           ;; The shared projection - what a person reopens - keeps the picture.
           (expect (some? (:result-render (first (:blocks human-iteration)))))
-          (expect (= #{"ci-run.live.ndjson"}
-                     (set (map :filename (:attachments human-iteration))))))
+          (expect (= #{"ci-run.live.ndjson"} (set (map :filename (:attachments human-iteration))))))
         (finally (vis/db-dispose-connection! s))))))

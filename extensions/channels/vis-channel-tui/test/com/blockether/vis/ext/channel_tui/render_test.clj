@@ -5155,7 +5155,6 @@ h = 8"
                      :success? true
                      :activity activity}]}]
 
-
           collapsed-rendered
           (render/format-answer-with-thinking-data* "Done."
                                                     trace
@@ -5171,15 +5170,14 @@ h = 8"
               strip-sentinels)
 
           rendered
-          (render/format-answer-with-thinking-data* "Done."
-                                                    trace
-                                                    52
-                                                    {:show-thinking true :show-iterations true}
-                                                    nil
-                                                    false
-                                                    {:session-id "s1"
-                                                     :detail-expansions
-                                                     {:vis.channel-tui/expand-all-details? true}})
+          (render/format-answer-with-thinking-data*
+            "Done."
+            trace
+            52
+            {:show-thinking true :show-iterations true}
+            nil
+            false
+            {:session-id "s1" :detail-expansions {:vis.channel-tui/expand-all-details? true}})
 
           expanded-text
           (-> (:text rendered)

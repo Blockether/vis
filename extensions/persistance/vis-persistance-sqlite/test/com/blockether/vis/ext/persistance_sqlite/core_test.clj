@@ -2509,6 +2509,43 @@
           (expect (= 2 (count states)))
           (expect (nil? (:parent_state_id (first states))))
           (expect (= (:id (first states)) (:parent_state_id (second states)))))))
+  ;; Protocol 7's one invariant: the snapshot the terminal wire event handed the
+  ;; client is the value the store hands back. Freezing is where a lazy or deeply
+  ;; nested Activity would be swapped for a `:vis/ref` placeholder instead, and only
+  ;; a real round trip through the BLOB can catch that.
+  (it
+    "a form's settled Activity survives the tool_calls BLOB unchanged"
+    (let [s
+          (h/store)
+
+          cid
+          (h/store-session! s {:channel :tui})
+
+          qid
+          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
+
+          activity
+          {:state :succeeded
+           :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+           :rows [{:id "call-1"
+                   :sequence 1
+                   :operation "grep"
+                   :presenter :observation
+                   :signal :observation
+                   :state :succeeded
+                   :summary "18 matches"
+                   :resources []
+                   :evidence [{:kind :result :text "18 matches"}]}]
+           :omitted {:rows 0 :by-classification {}}}
+
+          _
+          (h/store-iteration! s
+                              {:session-turn-id qid
+                               :code "grep(...)"
+                               :forms [{:scope "t1/i1" :src "grep(...)" :activity activity}]})]
+
+      (let [form (first (:forms (first (vis/db-list-session-turn-iterations s qid))))]
+        (expect (= activity (:activity form))))))
   (it "per-form payload lives on session_turn_iteration.forms (no definition_* sidecar)"
       (let [s
             (h/store)

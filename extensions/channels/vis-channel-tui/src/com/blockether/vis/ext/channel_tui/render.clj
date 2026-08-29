@@ -4732,8 +4732,7 @@
   (let [field (fn [m k]
                 (or (get m k) (get m (keyword k)) (get m (keyword (str/replace k "_" "-")))))]
     (->> attachments
-         (filter #(and (= "tool" (str (field % "source")))
-                       (not= "activity" (str (field % "classification")))))
+         (filter #(= "tool" (str (field % "source"))))
          (keep-indexed (fn [index artifact]
                          (let [kind (str (field artifact "kind"))
                                media-type (str (or (field artifact "media_type")

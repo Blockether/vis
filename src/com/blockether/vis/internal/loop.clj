@@ -1006,9 +1006,7 @@
         (activity-event/collector)
 
         activity-context
-        (activity-event/context {:evaluation-id (or (:activity/evaluation-id env)
-                                                    (str (random-uuid)))
-                                 :form-index (long (or (:activity/form-index env) 0))})
+        (activity-event/context)
 
         [dispatch-activity! shutdown-activity!]
         (serial-activity-dispatcher)
@@ -5159,7 +5157,6 @@
           ;; executable tool code.
           suppress-form-start? (some :vis/preflight-error code-entries)
           total-blocks (count code-entries)
-          activity-evaluation-id (str (random-uuid))
           executed
           (mapv
             (fn [idx
@@ -5212,9 +5209,6 @@
                                                              :render-segments render-segments
                                                              :tool-event tool-event}))))
                               r (let [activity-env (assoc environment
-                                                     :activity/evaluation-id activity-evaluation-id
-                                                     :activity/iteration iteration-position
-                                                     :activity/form-index idx
                                                      ;; Live Activity belongs to the ITERATION
                                                      ;; protocol and routes on the block's own
                                                      ;; position — the very coordinate

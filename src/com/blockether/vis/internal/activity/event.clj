@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.activity.event
-  "Versioned, bounded lifecycle events for host-observed tool invocations.
+  "Bounded, ownerless lifecycle events for host-observed tool invocations.
 
    Events are presentation input, never operation control. Construction redacts
    before measuring, collectors reject broken lifecycle order, and a sink failure
@@ -12,7 +12,6 @@
            [java.util UUID]
            [java.util.concurrent.atomic AtomicLong]))
 
-(def schema-version 1)
 (def max-event-bytes (* 16 1024))
 (def max-summary-bytes 512)
 (def max-detail-bytes (* 2 1024))
@@ -155,12 +154,12 @@
     (update bounded :is-truncated #(or % is-truncated))))
 
 (defn context
-  "Create one concurrency-safe event context for an evaluation/form anchor."
-  [{:keys [evaluation-id form-index] :or {evaluation-id (str (random-uuid)) form-index 0}}]
-  {:evaluation-id (str evaluation-id)
-   :form-index (long form-index)
-   :invocation-counter (AtomicLong. 0)
-   :event-counter (AtomicLong. 0)})
+  "Create one concurrency-safe counter context for a single block's tool calls.
+
+   Ownerless by contract: the form this block becomes is the snapshot's only
+   identity, so no evaluation, iteration or form coordinate is carried here."
+  []
+  {:invocation-counter (AtomicLong. 0) :event-counter (AtomicLong. 0)})
 
 (defn invocation
   "Allocate stable identity and wrapper-entry sequence from `ctx`."
@@ -173,11 +172,11 @@
 (defn- valid-id? [x] (try (UUID/fromString (str x)) true (catch Throwable _ false)))
 
 (defn event-error
-  "Nil for a valid v1 event, otherwise the lifecycle contract violation."
+  "Nil for a valid event, otherwise the lifecycle contract violation."
   [event]
   (let [required
-        [:schema-version :evaluation-id :invocation-id :form-index :invocation-sequence
-         :event-sequence :operation :presenter :phase :observed-at]
+        [:invocation-id :invocation-sequence :event-sequence :operation :presenter :phase
+         :observed-at]
 
         terminal?
         (= :terminal (:phase event))
@@ -185,9 +184,7 @@
         outcomes
         (select-keys event [:succeeded :failed :cancelled])]
 
-    (cond (not= schema-version (:schema-version event)) "unknown schema version"
-          (some #(not (contains? event %)) required) "missing required event field"
-          (not (valid-id? (:evaluation-id event))) "malformed evaluation id"
+    (cond (some #(not (contains? event %)) required) "missing required event field"
           (not (valid-id? (:invocation-id event))) "malformed invocation id"
           (and (:parent-invocation-id event) (not (valid-id? (:parent-invocation-id event))))
           "malformed parent invocation id"
@@ -241,10 +238,7 @@
 
 (defn- base-event
   [ctx invocation operation presenter phase]
-  {:schema-version schema-version
-   :evaluation-id (:evaluation-id ctx)
-   :invocation-id (:invocation-id invocation)
-   :form-index (:form-index ctx)
+  {:invocation-id (:invocation-id invocation)
    :invocation-sequence (:invocation-sequence invocation)
    :event-sequence (.incrementAndGet ^AtomicLong (:event-counter ctx))
    :operation operation

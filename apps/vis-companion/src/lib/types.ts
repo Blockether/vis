@@ -2,9 +2,9 @@
 // src/com/blockether/vis/internal/gateway/server.clj). Only the fields the
 // companion reads are typed; unknown fields are preserved but ignored.
 
-// Type-only, so it is erased at compile time and the `live-view` -> `types`
+// Type-only, so it is erased at compile time and the `activity` -> `types`
 // import stays the one real edge between these two modules.
-import type { ActivityProjection } from './live-view';
+import type { ActivityProjection } from './activity';
 
 export interface GatewayConn {
   /** Base URL, e.g. http://100.64.0.10:7890 (LAN, Tailscale, or cloudflared). */
@@ -478,7 +478,7 @@ export interface IterationAttachment {
   transcription?: string;
   /** {@link GatewayAttachment.transcription_status} for a PRODUCED recording. */
   transcription_status?: string;
-  /** Stable live-view identity used to replace the live Activity in place. */
+  /** Stable identity of the settled live view this artifact is the record of. */
   view_id?: string;
 }
 

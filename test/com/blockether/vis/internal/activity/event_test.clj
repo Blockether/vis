@@ -6,41 +6,45 @@
 
 (defdescribe
   activity-event-contract-test
-  (it "accepts one start and terminal in event order"
-      (let [state
-            (event/collector)
+  (it
+    "accepts one start and terminal in event order"
+    (let [state
+          (event/collector)
 
-            ctx
-            (event/context {:evaluation-id (str (random-uuid)) :form-index 3})
+          ctx
+          (event/context)
 
-            invocation
-            (event/invocation ctx nil)
+          invocation
+          (event/invocation ctx nil)
 
-            common
-            {:operation :grep :presenter :generic}
+          common
+          {:operation :grep :presenter :generic}
 
-            start
-            (event/start-event ctx invocation (assoc common :args [{:query "needle"}]))
+          start
+          (event/start-event ctx invocation (assoc common :args [{:query "needle"}]))
 
-            terminal
-            (event/terminal-event ctx
-                                  invocation
-                                  (assoc common
-                                    :started-at-ms (System/currentTimeMillis)
-                                    :outcome :succeeded
-                                    :result {:matches 2}))]
+          terminal
+          (event/terminal-event ctx
+                                invocation
+                                (assoc common
+                                  :started-at-ms (System/currentTimeMillis)
+                                  :outcome :succeeded
+                                  :result {:matches 2}))]
 
-        (event/accept! state start)
-        (event/accept! state terminal)
-        (expect (= #{(:invocation-id start)} (:starts @state)))
-        (expect (= #{(:invocation-id start)} (:terminals @state)))
-        (expect (not (contains? @state :events)))
-        (expect (= 3 (:form-index start)))
-        (expect (true? (:succeeded terminal)))))
+      (event/accept! state start)
+      (event/accept! state terminal)
+      (expect (= #{(:invocation-id start)} (:starts @state)))
+      (expect (= #{(:invocation-id start)} (:terminals @state)))
+      (expect (not (contains? @state :events)))
+      ;; Ownerless: an event names its own invocation, never the evaluation,
+      ;; iteration or form it ran in — the form the block becomes is the
+      ;; snapshot's only identity.
+      (expect (not-any? #(contains? start %) [:schema-version :evaluation-id :form-index]))
+      (expect (true? (:succeeded terminal)))))
   (it
     "rejects orphan and duplicate lifecycle edges"
     (let [ctx
-          (event/context {})
+          (event/context)
 
           invocation
           (event/invocation ctx nil)
@@ -75,7 +79,7 @@
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))
   (it "redacts before applying the UTF-8 summary budget"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             invocation
             (event/invocation ctx nil)
@@ -93,7 +97,7 @@
   (it
     "bounds, classifies, and redacts structured patch diff evidence"
     (let [ctx
-          (event/context {})
+          (event/context)
 
           invocation
           (event/invocation ctx nil)
@@ -132,7 +136,7 @@
   ;; and printed the whole transcript before truncating it, leaving the await open.
   (it "bounds result traversal before rendering a terminal summary"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             invocation
             (event/invocation ctx nil)
@@ -155,7 +159,7 @@
         (expect (<= (event/utf8-bytes (:result-summary terminal)) event/max-detail-bytes))))
   (it "records actual parentage and independent wrapper order"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             outer
             (event/invocation ctx nil)
@@ -168,7 +172,7 @@
         (expect (= (:invocation-id outer) (:parent-invocation-id inner)))))
   (it "derives typed shell resources from explicit presenter metadata"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             run
             (event/invocation ctx nil)
@@ -239,7 +243,7 @@
   (it
     "builds a terminal event for a multi-megabyte single-line result"
     (let [ctx
-          (event/context {})
+          (event/context)
 
           invocation
           (event/invocation ctx nil)

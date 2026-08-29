@@ -2271,7 +2271,7 @@
   (if-not *tool-event-sink*
     (invoke-symbol-wrapper* ext sym-entry args env)
     (let [ctx
-          (or *tool-event-context* (activity-event/context {}))
+          (or *tool-event-context* (activity-event/context))
 
           invocation
           (activity-event/invocation ctx *current-invocation-id*)

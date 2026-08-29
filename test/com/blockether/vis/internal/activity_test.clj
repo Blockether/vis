@@ -35,7 +35,7 @@
   activity-reducer-test
   (it "keeps wrapper-entry order when terminals settle out of order"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             [a-start a-end*]
             (event-pair ctx :grep :succeeded {:matches 3})
@@ -61,7 +61,7 @@
         (expect (= 2 (get-in state [:counts :succeeded])))))
   (it "classifies specialized operations without client-side inference"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             pairs
             [(event-pair ctx
@@ -86,7 +86,7 @@
         (expect (= :failed (:state state)))))
   (it "exports the current bounded semantic projection without channel markup"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             events
             (mapcat identity
@@ -113,7 +113,7 @@
                    (activity/presentation-error (assoc presentation :anchor {}))))))
   (it "preserves structured patch evidence through the presentation boundary"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             events
             (event-pair ctx
@@ -138,7 +138,7 @@
         (expect (nil? (activity/presentation-error presentation)))))
   (it "terminalizes rows still running when the evaluation is killed"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             [started _]
             (event-pair ctx :grep :succeeded {:matches 3})
@@ -153,7 +153,7 @@
         (expect (= [:cancelled] (mapv :state (:rows state))))))
   (it "never retains more than the row or receipt byte budget"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             pairs
             (mapv (fn [n]
@@ -176,7 +176,7 @@
   ;; generic status/stat/steps nodes, so every channel had two sources of truth.
   (it "keeps one bounded semantic presentation at the 128-row ceiling"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             starts
             (mapv (fn [n]
@@ -197,7 +197,7 @@
   (it
     "coalesces one typed shell handle while preserving its command and child chronology"
     (let [ctx
-          (event/context {})
+          (event/context)
 
           pairs
           [(event-pair ctx
@@ -230,7 +230,7 @@
       (expect (= [:shell :_shell_logs :_shell_wait] (mapv :operation (:children group))))))
   (it "groups only adjacent observations with the same explicit token"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             pairs
             [(event-pair ctx
@@ -260,7 +260,7 @@
         (expect (= :grep (:operation (last rows))))))
   (it "replay is deterministic for the same immutable event order"
       (let [ctx
-            (event/context {})
+            (event/context)
 
             events
             (vec (mapcat identity
