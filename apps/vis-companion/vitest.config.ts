@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitest/config';
 import pkg from './package.json' with { type: 'json' };
+import { companionBuildInfo } from './scripts/build-info.ts';
 
+const buildInfo = companionBuildInfo();
 // Deliberately NOT an extension of `vite.config.ts`: the app config exists to
 // build a browser bundle (React Compiler babel pass, Tailwind, Prism
 // pre-bundling, the dev gateway proxy) and none of that helps a unit test — it
@@ -20,5 +22,9 @@ export default defineConfig({
   },
   // `compat.ts` reads the release string the app build injects; the tests need
   // the SAME source of truth, not a hand-written stand-in.
-  define: { __VIS_APP_VERSION__: JSON.stringify(pkg.version) },
+  define: {
+    __VIS_APP_VERSION__: JSON.stringify(pkg.version),
+    __VIS_APP_BUILD_NUMBER__: JSON.stringify(buildInfo.buildNumber),
+    __VIS_APP_BUILD_COMMIT__: JSON.stringify(buildInfo.commit),
+  },
 });

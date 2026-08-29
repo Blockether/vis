@@ -81,6 +81,7 @@ import {
   scheduleSnapshotFlush,
   type SnapshotStores,
 } from "./snapshot-store";
+import { recordDiagnostic } from "./diagnostics";
 
 export class GatewayError extends Error {
   status: number;
@@ -740,6 +741,17 @@ export function mergeQueueBacklog(
 function normalizeBase(url: string): string {
   return url.replace(/\/+$/, "");
 }
+function errorOfDiagnostic(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+function diagnosticGateway(base: string): string {
+  try {
+    return new URL(base).origin;
+  } catch {
+    return "invalid gateway";
+  }
+}
 
 /**
  * One gateway queued-turn payload (a `/v1/sessions/:id/turns` row OR a
@@ -854,6 +866,9 @@ export class GatewayClient {
     etag: string | null;
     headers: Headers;
   }> {
+    const startedAt = Date.now();
+    let exchangeStatus = 0;
+    let exchangeError: string | undefined;
     const headers = this.headers(extraHeaders);
     // A Blob is a RECORDING (or any raw upload) and travels as itself: it carries its
     // own media type and JSON-encoding it would destroy it.
@@ -888,6 +903,7 @@ export class GatewayClient {
           }),
           attemptSignal,
         );
+        exchangeStatus = res.status;
       } catch (e) {
         throw stalled()
           ? new GatewayError(0, `gateway did not answer within ${seconds}s`)
@@ -940,7 +956,19 @@ export class GatewayClient {
         etag: res.headers.get("ETag"),
         headers: res.headers,
       };
+    } catch (cause) {
+      exchangeError = errorOfDiagnostic(cause);
+      throw cause;
     } finally {
+      recordDiagnostic(exchangeError ? "error" : "info", "gateway", "request", {
+        gateway: diagnosticGateway(this.base),
+        method,
+        path: path.split("?", 1)[0] ?? path,
+        status: exchangeStatus,
+        duration_ms: Math.max(0, Date.now() - startedAt),
+        ...(signal?.aborted ? { outcome: "cancelled" } : {}),
+        ...(exchangeError ? { error: exchangeError } : {}),
+      });
       window.clearTimeout(timer);
     }
   }

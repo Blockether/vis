@@ -7,7 +7,9 @@ import {
   devConnectionStorageScript,
   discoverDevGatewayConnections,
 } from './scripts/dev-gateway.ts';
+import { companionBuildInfo } from './scripts/build-info.ts';
 
+const buildInfo = companionBuildInfo();
 // https://vite.dev/config/
 export default defineConfig(async ({ command }) => {
   const devGateways = command === 'serve' ? await discoverDevGatewayConnections() : [];
@@ -25,7 +27,11 @@ export default defineConfig(async ({ command }) => {
     // repo-root VIS_VERSION file (stamped by `scripts/version.mjs`, run from
     // `prebuild`/`predev` and every release script) so app and gateway ship the
     // same number.
-    define: { __VIS_APP_VERSION__: JSON.stringify(pkg.version) },
+    define: {
+      __VIS_APP_VERSION__: JSON.stringify(pkg.version),
+      __VIS_APP_BUILD_NUMBER__: JSON.stringify(buildInfo.buildNumber),
+      __VIS_APP_BUILD_COMMIT__: JSON.stringify(buildInfo.commit),
+    },
     plugins: [
       {
         name: 'vis-dev-gateway-autoconnect',

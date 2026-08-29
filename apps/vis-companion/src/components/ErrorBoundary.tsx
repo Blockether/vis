@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 
+import { recordDiagnostic } from '../lib/diagnostics';
 import { Button } from './ui';
 
 /**
@@ -27,6 +28,10 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
   componentDidCatch(error: Error, info: ErrorInfo): void {
     // The webview has no attached inspector in production, so leave the stack
     // where a remote-debug session can still find it.
+    recordDiagnostic('error', 'react', 'render_failed', {
+      error,
+      componentStack: info.componentStack,
+    });
     globalThis.console?.error?.('vis: render failed', error, info.componentStack);
   }
 

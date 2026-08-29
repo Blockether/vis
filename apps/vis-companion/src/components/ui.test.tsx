@@ -3761,9 +3761,9 @@ describe("a call site positions, and the component paints", () => {
       "font-mono",
     );
     // The panel's two verbs became one row (`NotifyConnectionRow`), which carries
-    // its own; what is left in this screen is the door to the OS that row cannot
-    // open itself, plus the MCP and Voices lists' own last rows.
-    expect(settingsSource.match(/density="panel"/g)).toHaveLength(3);
+    // its own; what remains is the door to the OS, the diagnostics export, and the
+    // MCP and Voices lists' own last rows.
+    expect(settingsSource.match(/density="panel"/g)).toHaveLength(4);
   });
 
   it("gives the spinner the app's waiting ink as a tone", () => {
