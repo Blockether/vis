@@ -1,9 +1,9 @@
 # Starting work: machine, project, draft
 
 Decisions about the sessions list — who owns which action, and what a session costs
-to start. The chosen flow is photographed in `src/dev/projectVariants.tsx` and shot
-with `npm run design:shots` (`#/__design?v=session-ux-board`); this file records only
-what is settled.
+to start. The vocabulary this flow is built from is drawn in Storybook (`npm run storybook`,
+`Vocabulary/*`), and the flow itself is looked at in the running app (`npm run dev`); this file
+records only what is settled.
 
 ## The model everything follows
 

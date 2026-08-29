@@ -557,8 +557,8 @@ describe("the shipped screens", () => {
   it("never paint a glyph where an icon belongs", () => {
     const offenders: string[] = [];
     for (const [path, source] of Object.entries(sources)) {
-      // `src/dev/**` is the design gallery: proposals, never shipped (see
-      // `main.tsx`, which reaches it behind `import.meta.env.DEV`).
+      // `src/dev/**` holds the gallery's FIXTURES — the requests a story feeds a
+      // shipped component — and nothing in it renders in the app itself.
       if (path.includes("/dev/") || path.includes(".test.")) continue;
       for (const glyph of glyphsAsIcons(source)) {
         // A MARKDOWN DOCUMENT'S OWN BULLETS ARE CONTENT. The artifacts sheet paints

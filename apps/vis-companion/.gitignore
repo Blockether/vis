@@ -2,6 +2,10 @@ node_modules
 .npm-cache
 dist
 dist-ssr
+
+# `storybook build` output. The gallery is READ from source by `npm run
+# storybook`; a built copy is a screenshot of the tree at some past minute.
+storybook-static
 # Release artefacts (xcarchives, ipas) written by scripts/ios-release.mjs.
 /build
 *.local

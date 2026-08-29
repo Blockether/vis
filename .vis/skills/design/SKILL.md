@@ -64,10 +64,10 @@ other's family is the fastest way to make our app look like a different app.
 - The files are in the tree — `@fontsource-variable/{inter,jetbrains-mono}/files/*-latin-wght-normal.woff2`
   (48 KB and 40 KB; the italic is a third file) and the tracked
   `resources/vis-docs/assets/fonts/{hanken-grotesk,jetbrains-mono}.woff2`. Anything that renders a
-  screen loads THOSE, by `@font-face` with the bytes inlined as a `data:font/woff2;base64` URI —
+  screen renders it through the app's own build (§12), which imports THOSE files —
   **naming the family in `font-family` loads nothing.** Neither Inter nor JetBrains Mono is
-  installed on a Mac, so `font-family:'Inter',-apple-system,…` silently renders in SF Pro and
-  reviews someone else's typeface. Verify, do not assume: §12.
+  installed on a Mac, so a hand-written `font-family:'Inter',-apple-system,…` silently renders in SF Pro
+  and reviews someone else's typeface. Verify, do not assume: §12.
 
 `src/index.css` clears Tailwind's scale on purpose. The eight steps and their roles:
 
@@ -377,11 +377,11 @@ Reject on sight, in a mockup or in a diff:
 8. Pagination where a filter belongs; a hamburger where a sidebar fits.
 9. Labels like "Manage", "Settings", "Options" where a verb and an object would say it.
 10. Any placeholder, sample or lorem text left in a shipped screen.
-11. A mockup set in a font we do not ship — `system-ui`/SF Pro because the file only NAMED Inter,
-    DejaVu, Arial, PIL's default — or app prose set in the mono family.
+11. A review PNG set in a font we do not ship — `system-ui`/SF Pro, DejaVu, Arial, PIL's default,
+    because the picture came from anything but the app's own build — or app prose set in the mono family.
 12. A filled accent block floating in a navigation bar, except the compact circular `CloseButton isBand`.
-13. A control that does not exist in the code, drawn without saying it is a proposal — and its
-    twin, a control that exists being drawn as something else (a paperclip for the composer `+`).
+13. A control shown without the diff that makes it real — a proposal is a branch, not a drawing — and its
+    twin, a control that exists being shown as something else (a paperclip for the composer `+`).
 14. A painted face inflated to the 44px target: fat strips, a search field taller than its bar.
 15. Two different filled primary verbs on one screen; the compact band-close disk is navigation, not a verb.
 16. Facts deleted to make a screen look calm.
@@ -450,8 +450,8 @@ When asked to review, audit, critique or modernize a design — screenshot, mock
 - Text scaling to 130% and reduced motion both survive.
 - App: `npm test -- <files>`, `npm run lint`, `npm run build` clean, and any new control pinned in
   `ui.test.tsx`. TUI: a capture PNG eyeballed and grid assertions added.
-- Any mockup or review PNG is set in the shipped families (§1), loaded from the repo's own files,
-  and the render was CHECKED to have used them (§12).
+- Every review PNG came out of the app's own build — a story or `npm run dev` (§12) — so the families,
+  the tokens and the breakpoints in it are the ones that ship.
 - Every mark is an app name from `src/components/icons.tsx` over a Lucide drawing, at the box its type step
   allows (§1): no second family, no hand-drawn path, no glyph, stroke `2` untouched, and the light theme's mark
   measured on its own panel.

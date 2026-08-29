@@ -24,5 +24,7 @@
     // (`src/lib/human-input.fixture.json`), which the Clojure suite re-derives.
     "resolveJsonModule": true
   },
-  "include": ["src"]
+  // `.storybook/*` is app-side TSX: it imports the app's components, its
+  // stylesheet and its theme catalog, so `npm run typecheck` owns it too.
+  "include": ["src", ".storybook"]
 }
