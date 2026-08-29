@@ -2,6 +2,14 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (5033) — 2026-08-29
+<!-- commit: d667f47b63696b1c0f268289a2a73ac2ff9ebb38 -->
+
+- Drop the private voice-settings deep link
+- Rename focus state to selection
+- Unify operator actions
+- Hide false unreachable panel on refusal
+
 ## 0.1.41 (5029) — 2026-08-29
 <!-- commit: 8ea250645d5ea5d75eb14df14651ccd4d895d7d3 -->
 
