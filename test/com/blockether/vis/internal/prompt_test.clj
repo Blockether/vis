@@ -133,10 +133,11 @@
       ;; where that line SHOWS UP, or it reads as style advice. It lands at 6 152.
       ;; 6.2k → 6.35k to distinguish questions from implementation requests before any tool rule.
       ;; Answering directly avoids turning an informational question into an unsolicited code change.
-      ;; 6.35k → 6.5k for the missing semantic fold cadence. The call grammar made a fold
-      ;; possible but never taught the research → distill → settled range pattern. The real-model
-      ;; benchmark then caught a vague gist erasing exact identifiers, so stand-alone quality is pinned too.
-      (expect (< (count text) 6500))
+      ;; 6.35k → 6.65k for measured semantic-fold cadence. The first benchmark caught a vague gist;
+      ;; a real Z.ai GLM-5.3 Flash A/B then showed that forcing a 4k-token fold doubled cost, while
+      ;; the exact-route benchmark proved one canonical prior-prefix fold and continuation. The runtime's
+      ;; measured 75% hint remains the default threshold instead of inventing an unverified lower one.
+      (expect (< (count text) 6650))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -185,60 +186,67 @@
                        "## 3. Inspect" "## 4. Edit + verify" "## 5. Act autonomously"
                        "## 6. Manage context" "## 7. Style and finish"]]
         (expect (str/includes? text heading)))
-      (doseq [required
-              ["Host project default" "`apropos(pattern)` filters SYMBOL names"
-               "`doc(name)` returns" "runtime > source > docs > assumption"
-               "obey its stated preconditions" "the curated index"
-               "A skill is one of those documents" "`python_execution`" "ONE call exists"
-               "there is no tool to choose" "Batch independent work in ONE block"
-               "`await gather(...)` for"
-               ;; No tool blocks on the model's behalf: the old `shell` op `wait`/`until`
-               ;; is gone, so core routes to background + a poll the model can read.
-               ;; Regression, issue #137: the handle line spelled `sh.type()` among the
-               ;; status accessors, so following it verbatim raised a TypeError —
-               ;; `type` SENDS keystrokes and its text argument is required.
-               "No shell TOOL" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.type(\"y\")`"
-               "NEVER paste a near-identical loop or block twice" "Define once and reuse"
-               "factor it out on the second occurrence" "keep results in"
-               "a value you never printed costs nothing" "gone when the block ends"
-               "Inspect shape before indexing" "nothing lists one for you"
-               "tests-only work starts with `run_tests`" "interactive work uses `repl_eval`"
-               "Keep reproduction as a suite test" "rerun after the fix"
-               "unverified until a test covers it" "BATCH inside one block"
-               "Write only files the task asked" "Commit, push, publish" "Treat context as a budget"
-               "at most two targeted"
-               ;; Regression, user report: cross-validating §6 against the runtime. The
-               ;; utilization line named no field, and the two fields a model reads first
-               ;; (`saturation`, `headroom_tokens`) are priced against the hard per-call
-               ;; limit — calm at 15% while `over-budget-hint` is already saying FOLD SOON.
-               ;; Name the ratio the fold triggers actually use.
-               "pressure is `last_request_tokens`" "`auto_compress_above`"
-               "`saturation`/`headroom_tokens` price" "`hint` only arms at 75% of it"
-               ;; Svar owns prompt-cache policy; the core tells the model which explicit
-               ;; provider-cache fields it receives and separates transport continuation.
-               "`prompt_cache.token_read_percent`" "`request_hit_percent`"
-               "WebSocket delta continuation is separate transport telemetry"
-               ;; `session_drop` is gone: omitting the gist IS the discard, and a model
-               ;; that does not know that writes a useless gist instead of dropping.
-               "the gist discards outright" "named unresolved decision blocks the edit"
-               "no repeated search/read"
-               ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
-               ;; but named no callable, so `fold_session` had to be remembered or
-               ;; rediscovered through `doc()` — every other verb in the core is named.
-               "`fold_session(key, gist)`" "Fold obsolete settled work"
-               ;; Regression, user report: a fold that "saved 0 tokens". §6 named the verb
-               ;; but not the KEY it takes, so the shape was guessed — a selector structure
-               ;; or a bare id that resolved to nothing. The key grammar is in the core now.
-               "the key is a STRING" "`\"-t2/i9\"` everything through it"
-               ;; Nothing stores a folded step for later: the gist is the whole survivor,
-               ;; and a prompt that hints otherwise buys a fold the model regrets.
-               "a folded step is NOT re-readable, so the gist is what survives"
-               "Before synthesis, distill research into a self-sufficient gist"
-               "call `fold_session` on its settled range" "continue from that gist"
-               "When edit-ready and headroom permits, edit first" "Every gist must stand alone"
-               "every fact the next phase needs"
-               "exact paths/symbols, decisions, verification, edit/test state, and dirty files"
-               "confirm reduction" "Fold only settled steps through the last completed scope"]]
+      (doseq [required ["Host project default" "`apropos(pattern)` filters SYMBOL names"
+                        "`doc(name)` returns" "runtime > source > docs > assumption"
+                        "obey its stated preconditions" "the curated index"
+                        "A skill is one of those documents" "`python_execution`" "ONE call exists"
+                        "there is no tool to choose" "Batch independent work in ONE block"
+                        "`await gather(...)` for"
+                        ;; No tool blocks on the model's behalf: the old `shell` op `wait`/`until`
+                        ;; is gone, so core routes to background + a poll the model can read.
+                        ;; Regression, issue #137: the handle line spelled `sh.type()` among the
+                        ;; status accessors, so following it verbatim raised a TypeError —
+                        ;; `type` SENDS keystrokes and its text argument is required.
+                        "No shell TOOL" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.type(\"y\")`"
+                        "NEVER paste a near-identical loop or block twice" "Define once and reuse"
+                        "factor it out on the second occurrence" "keep results in"
+                        "a value you never printed costs nothing" "gone when the block ends"
+                        "Inspect shape before indexing" "nothing lists one for you"
+                        "tests-only work starts with `run_tests`"
+                        "interactive work uses `repl_eval`" "Keep reproduction as a suite test"
+                        "rerun after the fix" "unverified until a test covers it"
+                        "BATCH inside one block" "Write only files the task asked"
+                        "Commit, push, publish" "Treat context as a budget" "at most two targeted"
+                        ;; Regression, user report: cross-validating §6 against the runtime. The
+                        ;; utilization line named no field, and the two fields a model reads first
+                        ;; (`saturation`, `headroom_tokens`) are priced against the hard per-call
+                        ;; limit — calm at 15% while `over-budget-hint` is already saying FOLD SOON.
+                        ;; Name the ratio the fold triggers actually use.
+                        "pressure is `last_request_tokens`" "`auto_compress_above`"
+                        "`saturation`/`headroom_tokens` price"
+                        "`hint` only arms at 75% of that operating budget"
+                        ;; Svar owns prompt-cache policy; the core tells the model which explicit
+                        ;; provider-cache fields it receives and separates transport continuation.
+                        "`prompt_cache.token_read_percent`" "`request_hit_percent`"
+                        "WebSocket delta continuation is separate transport telemetry"
+                        ;; `session_drop` is gone: omitting the gist IS the discard, and a model
+                        ;; that does not know that writes a useless gist instead of dropping.
+                        "the gist discards outright" "named unresolved decision blocks the edit"
+                        "no repeated search/read"
+                        ;; Regression, user report: sessions stopped folding. §6 ORDERED the fold
+                        ;; but named no callable, so `fold_session` had to be remembered or
+                        ;; rediscovered through `doc()` — every other verb in the core is named.
+                        "`fold_session(key, gist)`" "Fold obsolete settled work"
+                        ;; Regression, user report: a fold that "saved 0 tokens". §6 named the verb
+                        ;; but not the KEY it takes, so the shape was guessed — a selector structure
+                        ;; or a bare id that resolved to nothing. The key grammar is in the core now.
+                        "the key is a STRING" "`\"-t2/i9\"` everything through it"
+                        ;; Nothing stores a folded step for later: the gist is the whole survivor,
+                        ;; and a prompt that hints otherwise buys a fold the model regrets.
+                        "a folded step is NOT re-readable, so the gist is what survives"
+                        ;; Regression, user report: the benchmark said folding worked only because the task
+                        ;; ordered it. Real Z.ai GLM-5.3 Flash A/B data showed a forced 4k settled-prefix fold
+                        ;; doubled cost. Use the runtime's measured hint, require enough future work to amortize
+                        ;; the cache reset, and pin the exact oldest-prefix call instead of an arbitrary trigger.
+                        "research-to-implementation boundary" "`hint` as the default fold threshold"
+                        "Require a substantial next" "repeated large/clipped results"
+                        "clearly worth one cache reset" "beat append-only history"
+                        "Make the next iteration only" "`fold_session(\"-tN/iK\", gist)`"
+                        "last completed research step" "oldest settled prefix folds"
+                        "live step stays out" "one cache discontinuity" "One broad fold"
+                        "continue append-only" "gist must stand alone" "exact paths/symbols"
+                        "decisions," "verification, edit/test state and dirty files"
+                        "confirm reduction"]]
         (expect (str/includes? text required)))
       ;; Regression, user report: blanket resource cleanup stopped a healthy dev server
       ;; that the user had explicitly asked the agent to open and keep available.

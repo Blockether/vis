@@ -1,6 +1,6 @@
 {
   "lang": "python",
-  "prompt": "Perform a broad architecture audit of the job lifecycle. Map the workspace, then read every text file under exactly src/, docs/, architecture-notes/, and tests/. Ignore .git and every other path; do not execute code, import project or sandbox modules, or use search as a substitute for those reads. Before the final synthesis, explicitly fold the completed research range once into a self-sufficient gist and continue from it. Call the already-bound fold_session directly as Python, without importing it or narrating the call. Use one compact paragraph for the gist while preserving all ten requested identifiers and exact values. Then give a concise synthesis naming the public entry point, validator, idempotency index, persistence boundary, dispatcher, retry constant, dead-letter sink, attempt metric, database environment key, and default database filename. This is analysis only; do not edit files.",
+  "prompt": "Perform a broad architecture audit of the job lifecycle. Map the workspace, then read every text file under exactly src/, docs/, architecture-notes/, and tests/. Ignore .git and every other path; do not execute code, import project or sandbox modules, or use search as a substitute for those reads. Before the final synthesis, explicitly fold the completed research once into a self-sufficient gist and continue from it. Use the canonical oldest-prefix call from the system guidance: call the already-bound fold_session directly with -tN/iK, where tN/iK is the last completed research iteration, without importing it or narrating the call. Use one compact paragraph for the gist while preserving all ten requested identifiers and exact values. Then give a concise synthesis naming the public entry point, validator, idempotency index, persistence boundary, dispatcher, retry constant, dead-letter sink, attempt metric, database environment key, and default database filename. This is analysis only; do not edit files.",
   "want": {},
   "wantnot": {},
   "want_answer": [
@@ -17,5 +17,8 @@
   ],
   "want_forms": [
     "fold_session("
-  ]
+  ],
+  "want_requested_route": true,
+  "want_folded_prefix": true,
+  "want_cache_read": true
 }
