@@ -6,7 +6,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { GatewayClient, GatewayError } from "../lib/gateway";
+import { GatewayClient, GatewayError, INCOMPATIBLE_STATUS } from "../lib/gateway";
 import type {
   GatewayCapabilities,
   GatewayConn,
@@ -161,8 +161,9 @@ function GatewayPanels({
   );
   const [err, setErr] = useState<string | null>(null);
   const [pending, setPending] = useState<string | null>(null);
-  const [unreachable, setUnreachable] = useState(false);
-  const [unauthorized, setUnauthorized] = useState(false);
+  const [failure, setFailure] = useState<
+    "unreachable" | "unauthorized" | "incompatible" | null
+  >(null);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -173,8 +174,7 @@ function GatewayPanels({
         const settings = await client.settings();
         if (signal?.aborted) return;
         setErr(null);
-        setUnreachable(false);
-        setUnauthorized(false);
+        setFailure(null);
         setGroups(settings.groups ?? []);
       } catch (e) {
         if (signal?.aborted) return;
@@ -183,15 +183,17 @@ function GatewayPanels({
         // NOT "offline" — otherwise the dialog contradicts the reachable list.
         if (e instanceof GatewayError && e.status === 401) {
           setErr(null);
-          setUnreachable(false);
-          setUnauthorized(true);
+          setFailure("unauthorized");
           setGroups(null);
           return;
         }
         setErr((e as Error).message);
-        setUnreachable(true);
-        setUnauthorized(false);
         setGroups(null);
+        if (e instanceof GatewayError && e.status === INCOMPATIBLE_STATUS) {
+          setFailure("incompatible");
+          return;
+        }
+        setFailure("unreachable");
       }
     },
     [client],
@@ -255,24 +257,20 @@ function GatewayPanels({
         </div>
       )}
 
-      {!unreachable && !unauthorized && <ProvidersPanel client={client} />}
-
-      {!unreachable && !unauthorized && (
-        <NotificationsPanel client={client} gateway={gateway} />
+      {failure === null && (
+        <>
+          <ProvidersPanel client={client} />
+          <NotificationsPanel client={client} gateway={gateway} />
+          <McpServersPanel client={client} />
+          <SpeechEnginesPanel
+            client={client}
+            prefs={speechPrefs}
+            onChange={onSpeechChange}
+          />
+        </>
       )}
 
-      {!unreachable && !unauthorized && <McpServersPanel client={client} />}
-
-      {!unreachable && !unauthorized && (
-        <SpeechEnginesPanel
-          client={client}
-          prefs={speechPrefs}
-          onChange={onSpeechChange}
-        />
-      )}
-
-
-      {unreachable ? (
+      {failure === "incompatible" ? null : failure === "unreachable" ? (
         <SettingsPanel title="Settings">
           <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
             <p className="font-mono text-body font-bold text-err">
@@ -286,7 +284,7 @@ function GatewayPanels({
             </Button>
           </div>
         </SettingsPanel>
-      ) : unauthorized ? (
+      ) : failure === "unauthorized" ? (
         <SettingsPanel title="Settings" meta="unauthorized">
           <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
             <p className="font-mono text-body font-bold text-warn-strong">
