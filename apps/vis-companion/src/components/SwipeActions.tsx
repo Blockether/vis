@@ -229,7 +229,7 @@ export function SwipeActions({
         {children}
       </div>
       <div
-      className="flex shrink-0 snap-end mouse:pointer-events-none mouse:absolute mouse:inset-y-0 mouse:right-0 mouse:bg-panel mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/swipe:pointer-events-auto mouse:group-hover/swipe:opacity-100 mouse:group-focus-within/swipe:pointer-events-auto mouse:group-focus-within/swipe:opacity-100 mouse:motion-reduce:transition-none"
+        className="flex shrink-0 snap-end mouse:pointer-events-none mouse:absolute mouse:inset-y-0 mouse:right-0 mouse:bg-hover mouse:opacity-0 mouse:transition-opacity mouse:duration-150 mouse:group-hover/swipe:pointer-events-auto mouse:group-hover/swipe:opacity-100 mouse:group-focus-within/swipe:pointer-events-auto mouse:group-focus-within/swipe:opacity-100 mouse:motion-reduce:transition-none"
         role="group"
         aria-label={label ? `${label} actions` : 'Row actions'}
       >

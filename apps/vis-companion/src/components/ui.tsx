@@ -2708,15 +2708,21 @@ export const LIST_FRAME = 'border-l-2 border-dialog-edge';
 const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4';
 
 /**
- * The leading GLYPH of a header, in a box the width of the widest one.
+ * THE MARK COLUMN, and every band AND every row in the list reserves it.
  *
  * A machine is marked by a 6px identity block and a project by a 14px disclosure, so
  * with each sized to its own ink the machine's name began at x=28 and the project's
  * name directly below it at x=36 — the last 8px of the same misalignment, surviving
  * inside the two components that had just been taught to share every other edge.
  * One column, and the names start together.
+ *
+ * A session row carries no mark at all and reserves it anyway, empty. Measured on the
+ * desk: a project's name stood at x=302 and the titles of the rows it heads at x=279,
+ * so the heading and the things it heads sat on two different left edges — the last
+ * one of the five this file was written to collapse. A column that exists only where
+ * something fills it is not a column.
  */
-const HEADER_GLYPH = 'grid size-3.5 shrink-0 place-items-center';
+export const LIST_MARK = 'grid size-3.5 shrink-0 place-items-center';
 
 export function SectionHeader({
   rule,
@@ -2871,7 +2877,7 @@ export function HeaderTitle({
           that only exists when it is filled put the machine's name at x=36 and
           the project's at x=14 on a 390px iPhone — the deeper row starting
           further left, which is hierarchy read backwards. */}
-      <span className={HEADER_GLYPH}>{mark}</span>
+      <span className={LIST_MARK}>{mark}</span>
       {/* `items-start` keeps each line as wide as its own ink and no wider: the
           name stays a word-sized press target rather than a full-width one, and
           both lines still truncate, because shrink-to-fit is capped by the column

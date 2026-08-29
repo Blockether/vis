@@ -13,6 +13,7 @@ import {
   LIST_EDGE,
   LIST_EDGE_END,
   LIST_FRAME,
+  LIST_MARK,
   ProjectStatusCounts,
   LoadMore,
   MachineMark,
@@ -324,7 +325,9 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
  *     top inset was spelled TWICE, once on the section and once on the scope
  *     strip standing inside it;
  *   - FOOT is the gap the panel keeps under itself once it detaches from the
- *     glass (`sm:pb-6`); a phone is full bleed and pays none;
+ *     glass (`sm:py-4`), and it is the same gap it keeps ABOVE itself: 16 over the
+ *     card against 24 under it hung the whole list one step high in its own
+ *     window. A phone is full bleed and pays none;
  *   - PEEK is what a page leaves UNDER its last row, so the next project's band
  *     shows and the list never ends flush with the bottom of the screen.
  *
@@ -332,7 +335,7 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
  * pager with a row attached.
  */
 const LIST_PEEK = 40;
-const LIST_FOOT = 24;
+const LIST_FOOT = 16;
 const LIST_GEOMETRY = {
   touch: { row: 49, chrome: 211 + LIST_PEEK, min: 3 },
   mouse: { row: 33, chrome: 137 + LIST_FOOT + LIST_PEEK, min: 3 },
@@ -420,9 +423,10 @@ const WHOLE_SESSION_FORK = 'whole-session';
  *
  * A phone has one column, so the machines have to spend a row of it: the switch
  * above the card is that row. A desk window has a second column to spare and a
- * pointer that can hit a 28px row, so the same two facts — which computers answer,
- * and which projects they hold — become a rail that never scrolls away, and the
- * list gets those 40px back as rows.
+ * pointer that can hit a 32px row — the SAME face the list's rows wear, so the two
+ * columns march down the window together instead of drifting a pixel per row — so the
+ * same two facts, which computers answer and which projects they hold, become a rail
+ * that never scrolls away, and the list gets those 40px back as rows.
  *
  * Nothing here is new behaviour. A machine row sets exactly the scope a
  * `MachineTab` sets (and retries a machine that is not answering, instead of
@@ -491,7 +495,7 @@ function RailGroup({
               type="button"
               onClick={entry.onPress}
               aria-current={entry.isActive ? 'true' : undefined}
-              className={`flex min-h-7 w-full items-center gap-2 px-3 text-left font-mono text-ui transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent motion-reduce:transition-none ${
+              className={`flex min-h-8 w-full items-center gap-2 px-3 text-left font-mono text-ui transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent motion-reduce:transition-none ${
                 entry.isActive
                   ? 'bg-hover text-white'
                   : 'text-dialog-hint hover:bg-hover hover:text-white'
@@ -2000,7 +2004,7 @@ export function SessionsScreen({
   if (loadError) return null;
 
   return (
-    <section aria-label="Sessions" className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:pb-6 sm:pt-4">
+    <section aria-label="Sessions" className="mx-auto flex h-full min-h-0 w-full max-w-[1400px] flex-col pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] pt-0 transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none sm:px-6 sm:py-4">
       {/* On phones this panel sits FLUSH under the app header, whose own `border-b`
           already draws the rule below the Vis mark. A `border-y` here stacked a
           second hairline on top of it, so the Sessions tab wore a 2px seam while
@@ -2011,7 +2015,12 @@ export function SessionsScreen({
           down everything that machine owns — because a rail beside a border is two
           lines doing one job, and a rail that is a BORDER also steals 2px of layout
           the trailing edge has no match for. Both sides are 2px now, so the ink
-          lands symmetrically whichever one is painting. */}
+          lands symmetrically whichever one is painting — which is why the card
+          draws no left border of ITS own: `sm:border-x` laid a hairline one pixel
+          outside the 2px rule already standing there and the seam measured 3px
+          against the trailing edge's 2. The bottom is the card's own from `sm` up:
+          the rail beside it closes with a rule, and a box that closes on three
+          sides is a box that came apart. */}
       {/* THE SWITCHER STANDS OUTSIDE WHAT IT SWITCHES, AND IT IS ONE OBJECT.
           The chips used to sit inside the machine card's own header, so the control
           that picks a machine looked like part of that machine's own answer. They are
@@ -2240,7 +2249,7 @@ export function SessionsScreen({
             At `sm` the card detaches from the viewport edges but still fills the
             available height. Its list owns overflow; the document never grows a second
             scrollbar or leaves an intrinsic-height strip above empty desktop paper. */}
-        <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-panel sm:mx-0 sm:max-h-full sm:border-x sm:border-r-2">
+        <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-panel sm:mx-0 sm:max-h-full sm:border-b sm:border-r-2">
         {/* The pull reports itself while it happens: the card clips the band until a
             finger brings it down over the list's first header. */}
         <PullToSearchHint phase={pullPhase} ref={hintRef} />
@@ -3285,13 +3294,22 @@ const SessionRow = memo(function SessionRow({
           },
         ]}
       >
-      <div className="flex items-stretch">
+      {/* THE ROW IS ONE SLAB, and the hover tint is ITS colour, not the open
+          button's. The button stops where the disclosure begins, so a pointer
+          crossing the row lit 948px of a 991px row and left the last 43 in plain
+          paper — the trailing strip of the very row under the cursor. */}
+      <div className="group flex items-stretch transition-colors duration-150 hover:bg-hover motion-reduce:transition-none">
         <button
           type="button"
-          className={`group flex min-h-12 min-w-0 flex-1 items-center py-1.5 text-left transition-colors duration-150 hover:bg-hover active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-8 mouse:py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
+          className={`flex min-h-12 min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors duration-150 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-8 mouse:py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
           data-session-id={session.id}
           onClick={() => void onOpen(conn, session.id)}
         >
+        {/* THE MARK COLUMN, EMPTY — and reserved for exactly that reason. The
+            project band above these rows spends it on its fold, so a row that
+            skipped it started its title 23px to the LEFT of the name that heads
+            it. See `LIST_MARK`. */}
+        <span className={LIST_MARK} aria-hidden="true" />
         {/* One row of facts, laid out twice from ONE dom order.
             A phone stacks it: what the session IS on the first line, what it has DONE
             on the second, each line's own trailing fact right-aligned against it.
@@ -3345,11 +3363,14 @@ const SessionRow = memo(function SessionRow({
               so that the id and the turn count become columns in their own right. */}
           {/* One rank, one ink: hierarchy is carried by SIZE (title 12px vs meta 10px),
               never by transparency — an id at 55% ink beside a `·` at 40% beside a full
-              hint made one 9px line carry three different inks and none of them readable. */}
+              hint made one 9px line carry three different inks and none of them readable.
+              A COUNT ends on its track's edge, not where its own digits run out:
+              left-aligned, `9 turns` stopped 6px short of the `20 turns` one row below
+              it, and a column of numbers that does not end together is not a column. */}
           <span className="col-start-1 row-start-2 flex min-w-0 items-center gap-x-2 font-mono text-meta text-dialog-hint sm:contents">
             <span className="truncate tabular-nums">{shortId(session.id)}</span>
             <span className="sm:hidden" aria-hidden="true">·</span>
-            <span className="whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums">
+            <span className="whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums sm:justify-self-end">
               {turns} {turns === 1 ? 'turn' : 'turns'}
             </span>
           </span>
@@ -3376,7 +3397,7 @@ const SessionRow = memo(function SessionRow({
             <span>{status}</span>
           </span>
           <span
-            className="col-start-2 col-end-4 row-start-2 justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums sm:col-start-auto sm:col-end-auto sm:row-start-auto sm:justify-self-start"
+            className="col-start-2 col-end-4 row-start-2 justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums sm:col-start-auto sm:col-end-auto sm:row-start-auto"
             title={formatExact(timestamp)}
           >
             {timeLabel(timestamp)}

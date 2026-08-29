@@ -124,9 +124,12 @@ describe('a mouse never slides', () => {
   // with no slab of its own, so an `accent/15` cell printed its caption over an
   // `IDLE` that read straight through it — and while invisible it still took the
   // pointer, four unseeable buttons covering the date of every row.
+  // The slab is the row's HOVER tint, not the card's paper: the strip is only ever
+  // seen while its row is hovered or focused, and `bg-panel` cut a plain-paper
+  // rectangle out of the trailing end of the one row the pointer was lighting.
   it('owns the pixels it stands on, and takes no pointer while unseen', () => {
     const html = markup();
-    expect(html).toContain('mouse:bg-panel');
+    expect(html).toContain('mouse:bg-hover');
     expect(html).toContain('mouse:pointer-events-none');
     expect(html).toContain('mouse:group-hover/swipe:pointer-events-auto');
     expect(html).toContain('mouse:group-focus-within/swipe:pointer-events-auto');
