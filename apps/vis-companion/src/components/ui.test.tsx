@@ -3888,3 +3888,44 @@ describe("Corners", () => {
     expect(floating.length).toBeGreaterThan(2);
   });
 });
+
+
+// The gallery is the ONE place a design is looked at, so a control no story draws is a
+// control nobody has seen since the commit that added it. Six of them had never been
+// drawn at all — the activity panel, the data table, the menu, media, the swipe drawer,
+// the text artifact — which is why each of those grew a paint nobody compared.
+describe("every control is drawn in the gallery", () => {
+  const stories = import.meta.glob(["../**/*.stories.tsx"], {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+
+  const drawn = Object.values(stories).join("\n");
+
+  it("draws every component ui.tsx exports", () => {
+    const undrawn = [...uiSource.matchAll(/export (?:function|const) ([A-Z]\w+)/g)]
+      .map(([, name]) => name)
+      // A SCREAMING_CASE export is a shared class string, not a control.
+      .filter((name) => name !== name.toUpperCase())
+      .filter((name) => !new RegExp(`<${name}[\\s/>]`).test(drawn));
+    expect(undrawn).toEqual([]);
+  });
+
+  // A story is a FIXTURE. Anything that fetches, ticks or rolls a die draws a
+  // different picture every time it is opened, and two frames of it stop comparing.
+  it("draws from fixtures, never from a clock, a die or a gateway", () => {
+    for (const [path, source] of Object.entries(stories)) {
+      for (const forbidden of [
+        "fetch(",
+        "Math.random",
+        "setInterval",
+        "setTimeout",
+        "new Date(",
+        "GatewayClient",
+      ]) {
+        expect(source, `${path} ${forbidden}`).not.toContain(forbidden);
+      }
+    }
+  });
+});

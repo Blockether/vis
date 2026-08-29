@@ -1,3 +1,35 @@
+/**
+ * THE CONTROL VOCABULARY. Every pressable thing in the app is one of these, and a
+ * screen COMPOSES them — a screen never paints a control of its own.
+ *
+ * How a control is made here, in order:
+ *
+ * 1. WAIT FOR THE SECOND CALL SITE. One screen's button is that screen's button.
+ *    At the second one it moves in here, in the same commit, with both call sites
+ *    switched over — a control invented for a single caller is a guess about the
+ *    next one, and the guess is what goes stale.
+ * 2. THE PROPS NAME A STATE, NEVER A PAINT: `isOn`, `isSelected`, `isBusy`,
+ *    `tone`, `density`, `variant`. A caller may not hand paint down — the only
+ *    `className` a control accepts POSITIONS it (`flex-1`, `shrink-0`, a grid
+ *    cell) and the whole-tree scan in `ui.test.tsx` fails when a paint utility
+ *    arrives at one of these components.
+ * 3. TOKENS ONLY. Tailwind v4 utilities over the tokens in `index.css`: no
+ *    component CSS, no inline styles, no hex, and no raw radius — the ladder is
+ *    `rounded-chip | rounded-control | rounded-field | rounded-panel`.
+ * 4. TWO FACES, AND ONLY TWO. `sm:` answers "is there room" and owns layout;
+ *    only `mouse:` may make a control tighter (44px under a finger, 28px under a
+ *    pointer). A control has no other responsive behaviour.
+ * 5. IT SAYS ITS OWN NAME. Anything without a visible word takes a `label` and
+ *    wears it as `aria-label`, and a state is `aria-pressed` / `aria-expanded` /
+ *    `aria-current` — never a colour alone, which a screen reader cannot see and
+ *    a colour-blind reader cannot tell apart.
+ * 6. IT SHIPS WITH A STORY, in the same commit. `ui.stories.tsx` holds the
+ *    vocabulary; a control that needs DATA to say anything gets
+ *    `<Component>.stories.tsx` beside it, and the data is `dev/story-data.ts`.
+ *    Draw the states that can break it — long name, zero, busy, failed — because
+ *    that gallery is where the design is LOOKED at. The suite pins behaviour and
+ *    the tree-wide rules; it never pins a size, a spacing or a token.
+ */
 import {
   createContext,
   Fragment,

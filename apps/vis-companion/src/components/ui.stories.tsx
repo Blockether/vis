@@ -1,7 +1,11 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useState, type ReactNode } from 'react';
+import { RECORDING_PEAKS, STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
+import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
 import {
   ArrowDownIcon,
+  CircleCheckIcon,
+  CircleDotIcon,
   CopyIcon,
   DownloadIcon,
   MicIcon,
@@ -12,30 +16,65 @@ import {
 } from './icons';
 import {
   BackButton,
+  BandButton,
   BandLabel,
+  BandTally,
   Banner,
   Button,
   Chip,
   ChoiceCell,
+  ChoiceRow,
   CloseButton,
   ComposerButton,
+  ConfirmRow,
   CopyChip,
+  DialogFrame,
+  DialogHeader,
   Disclosure,
+  EditableName,
+  HeaderActions,
+  HeaderMeta,
+  HeaderTally,
+  HeaderTitle,
   IconButton,
   Input,
   KebabButton,
   ListRow,
+  LiveCount,
+  LiveTally,
   LoadMore,
+  machineTagFace,
+  MachineMark,
+  MachineProjectsButton,
+  MachineSwitcher,
+  MachineTab,
   Meter,
   MetaButton,
+  Modal,
+  NewSessionButton,
+  NotifyConnectionSwitch,
   OptionRow,
+  OverlayScreen,
+  Pager,
   Pill,
+  ProjectCrumb,
+  ProjectStatusCounts,
+  PullToSearchHint,
+  RowDisclosure,
   SearchField,
+  SectionGap,
   SectionHeader,
+  SettingsChoiceDisclosure,
+  SettingsChoiceGroup,
+  SettingsDisclosure,
+  Slider,
   Spinner,
   Switch,
+  TableSelectionButton,
+  TableSelectionRow,
   TextButton,
   UnreadBadge,
+  Waveform,
 } from './ui';
 
 /**
@@ -55,6 +94,11 @@ import {
  * What is NOT here: screens. A screen needs real data — 1000 sessions, a truncated
  * title, an offline machine — and that is `npm run dev` against a live gateway.
  * The gallery owns the vocabulary; the dev server owns the product.
+ *
+ * A control that needs DATA to say anything is drawn beside its own module
+ * instead — `ActivityPanel`, `DataTable`, `Media`, `Menu`, `SwipeActions`,
+ * `TextArtifact` — and every one of them reads that data from `dev/story-data`,
+ * so the fleet, the session and the payloads are the SAME ones in every frame.
  */
 const meta = {
   title: 'Vocabulary/Controls',
@@ -314,6 +358,450 @@ export const Feedback: Story = {
           <CopyIcon className="size-3" />
         </CopyChip>
       </Group>
+    </Sheet>
+  ),
+};
+
+
+/** A pick that owns which one is picked, because a sheet has to show both faces. */
+function ChoiceRowDemo() {
+  const [picked, setPicked] = useState('production');
+  const [any, setAny] = useState<string[]>(['tests']);
+  const toggle = (value: string) =>
+    setAny((on) => (on.includes(value) ? on.filter((v) => v !== value) : [...on, value]));
+  return (
+    <div className="flex w-full flex-col gap-3">
+      <div className="flex flex-col gap-1" role="radiogroup" aria-label="Environment">
+        {['production', 'staging'].map((value) => (
+          <ChoiceRow
+            key={value}
+            isOn={picked === value}
+            role="radio"
+            aria-checked={picked === value}
+            mark={
+              picked === value
+                ? HUMAN_INPUT_CHOICE_MARKS.exclusiveOn
+                : HUMAN_INPUT_CHOICE_MARKS.exclusiveOff
+            }
+            onClick={() => setPicked(value)}
+          >
+            {value}
+          </ChoiceRow>
+        ))}
+      </div>
+      <div className="flex flex-col gap-1" role="group" aria-label="What to run">
+        {['tests', 'lint'].map((value) => (
+          <ChoiceRow
+            key={value}
+            isOn={any.includes(value)}
+            aria-pressed={any.includes(value)}
+            mark={
+              any.includes(value)
+                ? HUMAN_INPUT_CHOICE_MARKS.inclusiveOn
+                : HUMAN_INPUT_CHOICE_MARKS.inclusiveOff
+            }
+            onClick={() => toggle(value)}
+          >
+            {value}
+          </ChoiceRow>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The two rows a live run is read through: the `<tr>` says which one is current,
+ * the button inside it is what a finger presses and what a screen reader names.
+ */
+export const Selection: Story = {
+  render: () => (
+    <Sheet>
+      <Group of="ChoiceRow — pick one, then pick any">
+        <ChoiceRowDemo />
+      </Group>
+      <Group of="TableSelectionRow, and the button that fills it">
+        <table className="w-full table-fixed">
+          <tbody>
+            <TableSelectionRow isSelected>
+              <td className="p-0 align-top">
+                <TableSelectionButton
+                  isSelected
+                  mark={<CircleDotIcon className="size-3" />}
+                  aria-label="Select tests / macos"
+                >
+                  tests / macos
+                </TableSelectionButton>
+              </td>
+            </TableSelectionRow>
+            <TableSelectionRow>
+              <td className="p-0 align-top">
+                <TableSelectionButton
+                  mark={<CircleCheckIcon className="size-3" />}
+                  aria-label="Select tests / linux"
+                >
+                  tests / linux
+                </TableSelectionButton>
+              </td>
+            </TableSelectionRow>
+          </tbody>
+        </table>
+      </Group>
+      <Group of="ConfirmRow — the question, and what committing costs">
+        <ConfirmRow
+          question={`Delete ${STORY_SESSION.title}?`}
+          cost="61 turns and every artifact go with it."
+          confirmLabel="Delete"
+          onKeep={() => undefined}
+          onConfirm={() => undefined}
+        />
+      </Group>
+    </Sheet>
+  ),
+};
+
+/** A name that edits in place has to hold the value it is editing. */
+function EditableNameDemo() {
+  const [name, setName] = useState<string>(STORY_MACHINES[0].name);
+  return (
+    <EditableName
+      value={name}
+      label={`Rename ${name}`}
+      face={machineTagFace(STORY_MACHINES[0].color)}
+      onCommit={setName}
+    />
+  );
+}
+
+function PagerDemo() {
+  const [page, setPage] = useState(2);
+  return <Pager page={page} pageCount={7} onPage={setPage} label="vis sessions" />;
+}
+
+/**
+ * WHAT A BAND SAYS ABOUT WHAT IS UNDER IT. Every one of these is INK on the band's
+ * own paper — no plates, no second frame — because a header that stacks controls
+ * on a coloured band reads as a second toolbar rather than as the list's own name.
+ */
+export const Bands: Story = {
+  render: () => (
+    <Sheet>
+      <Group of="A machine's own band: the name IS the rename control">
+        <HeaderTitle
+          mark={<MachineMark color={STORY_MACHINES[0].color} />}
+          name={STORY_MACHINES[0].name}
+          qualifier={STORY_SESSION.where}
+          qualifierTitle={STORY_SESSION.where}
+          onRename={() => undefined}
+          renameLabel={`Rename ${STORY_MACHINES[0].name}`}
+        />
+      </Group>
+      <Group of="A project, and the fold that exposes its sessions">
+        <ProjectCrumb
+          name={STORY_SESSION.project}
+          qualifier={STORY_SESSION.where}
+          qualifierTitle={STORY_SESSION.where}
+          disclosure={{ isOpen: true, onToggle: () => undefined, label: 'Collapse vis' }}
+        />
+      </Group>
+      <Group of="What a band counts">
+        <HeaderMeta>
+          <HeaderTally count={STORY_SESSION.turns} unit="turn" />
+          <LiveCount count={2} />
+          <LiveTally count={2} />
+          <UnreadBadge count={4} />
+          <BandTally>42</BandTally>
+        </HeaderMeta>
+      </Group>
+      <Group of="States a project can be in, told apart">
+        <ProjectStatusCounts live={3} awaiting={1} unread={4} />
+        <ProjectStatusCounts live={0} />
+      </Group>
+      <Group of="The trailing cluster of a row">
+        <HeaderActions>
+          <RowDisclosure label={`Show details for ${STORY_SESSION.id}`} isOpen={false} />
+          <KebabButton label={`Actions for ${STORY_SESSION.id}`} />
+        </HeaderActions>
+      </Group>
+      <Group of="A name that edits in place, and the step through a long list">
+        <EditableNameDemo />
+        <PagerDemo />
+      </Group>
+      <Group of="The rule between two sections, which is paper and not a line">
+        <div className="w-full">
+          <SectionHeader rule="Machines">Machines</SectionHeader>
+          <SectionGap />
+          <BandLabel>Recent</BandLabel>
+        </div>
+      </Group>
+    </Sheet>
+  ),
+};
+
+function MachineSwitcherDemo() {
+  const [on, setOn] = useState<string>(STORY_MACHINES[0].name);
+  return (
+    <MachineSwitcher>
+      {STORY_MACHINES.map((machine) => (
+        <MachineTab
+          key={machine.name}
+          isOn={on === machine.name}
+          hasUnread={machine.unread > 0}
+          isDown={machine.isDown}
+          label={`Switch to ${machine.name}`}
+          title={machine.isDown ? `${machine.name} is not answering` : machine.name}
+          onClick={() => setOn(machine.name)}
+        >
+          {machine.name}
+        </MachineTab>
+      ))}
+    </MachineSwitcher>
+  );
+}
+
+/**
+ * A MACHINE IS A HUE AND A NAME, never a hue alone. Down is the same hue drained
+ * to an outline: it is still that computer, and nothing is behind it.
+ */
+export const Machines: Story = {
+  render: () => (
+    <Sheet>
+      <Group of="MachineMark, two sizes and the state that is not answering">
+        {STORY_MACHINES.map((machine) => (
+          <MachineMark key={machine.name} color={machine.color} isHollow={machine.isDown} />
+        ))}
+        <MachineMark color={STORY_MACHINES[0].color} size="banner" />
+        <MachineMark color={STORY_MACHINES[2].color} size="banner" isHollow />
+      </Group>
+      <Group of="The switcher, with news on one tile and a machine that is down">
+        <MachineSwitcherDemo />
+      </Group>
+      <Group of="What a machine's footer offers">
+        <NewSessionButton
+          machine={STORY_MACHINES[0].name}
+          where={STORY_SESSION.where}
+          onPress={() => undefined}
+        />
+        <NewSessionButton
+          machine={STORY_MACHINES[0].name}
+          busyLabel="Starting…"
+          onPress={() => undefined}
+        />
+        <MachineProjectsButton machine={STORY_MACHINES[0].name} onPress={() => undefined} />
+        <MachineProjectsButton machine={STORY_MACHINES[0].name} isQuiet onPress={() => undefined} />
+      </Group>
+    </Sheet>
+  ),
+};
+
+function SettingsChoiceDemo() {
+  const [open, setOpen] = useState(true);
+  const [engine, setEngine] = useState('piper');
+  return (
+    <div className="grid w-full grid-cols-1 gap-px bg-dialog-edge">
+      <div className="grid bg-input">
+        <SettingsChoiceDisclosure
+          title="Piper (gateway)"
+          sub="ready"
+          isSelected={engine === 'piper'}
+          isOpen={open}
+          controls="story-piper-settings"
+          onSelect={() => setEngine('piper')}
+          onToggle={() => setOpen((one) => !one)}
+        />
+      </div>
+      <div className="grid bg-input">
+        <SettingsChoiceDisclosure
+          title="This device"
+          sub="system TTS"
+          isSelected={engine === 'device'}
+          isOpen={false}
+          controls="story-device-settings"
+          onSelect={() => setEngine('device')}
+          onToggle={() => undefined}
+        />
+      </div>
+    </div>
+  );
+}
+
+function SliderDemo() {
+  const [rate, setRate] = useState(120);
+  return (
+    <Slider
+      min={60}
+      max={220}
+      value={rate}
+      aria-label="Speaking rate"
+      onChange={(event) => setRate(Number(event.target.value))}
+      className="w-full"
+    />
+  );
+}
+
+function WaveformDemo() {
+  const [at, setAt] = useState(0.34);
+  return (
+    <Waveform
+      peaks={RECORDING_PEAKS}
+      value={at}
+      label="Memo, 1:12"
+      onSeek={setAt}
+      className="w-full"
+    />
+  );
+}
+
+/** A SETTINGS PANEL IS ROWS, and a row is a question with its answer beside it. */
+export const Settings: Story = {
+  render: () => (
+    <Sheet>
+      <Group of="A setting that opens, and the value it already holds">
+        <SettingsDisclosure
+          label="Voice"
+          value="Piper English"
+          isOpen={false}
+          className="w-full"
+        />
+      </Group>
+      <Group of="A group of choices, one of them opened">
+        <SettingsChoiceGroup label="TTS engines">
+          <SettingsChoiceDemo />
+        </SettingsChoiceGroup>
+      </Group>
+      <Group of="The switch that speaks for one machine">
+        <NotifyConnectionSwitch
+          machine={STORY_MACHINES[0].name}
+          isOn
+          onClick={() => undefined}
+        />
+        <NotifyConnectionSwitch
+          machine={STORY_MACHINES[1].name}
+          isOn={false}
+          isChecking
+          onClick={() => undefined}
+        />
+      </Group>
+      <Group of="A bounded number is dragged, and audio is scrubbed">
+        <SliderDemo />
+        <WaveformDemo />
+      </Group>
+    </Sheet>
+  ),
+};
+
+/**
+ * EVERY SURFACE THAT OPENS OVER ANOTHER WEARS THE SAME BAND. There is one dialog
+ * header in this app; a `fit` sheet is a SIZE of the same modal, not a second one.
+ * These stories paint over the whole frame on purpose — a dialog photographed on
+ * white paper never shows whether it reads as an interruption.
+ */
+export const Dialogs: Story = {
+  render: () => (
+    <Modal size="fit" onDismiss={() => undefined}>
+      <DialogFrame
+        title="Delete this session?"
+        subtitle={STORY_SESSION.title}
+        actions={<BandButton isPrimary>Delete</BandButton>}
+        closeLabel="Close the delete dialog"
+        onClose={() => undefined}
+      >
+        <div className="p-4">
+          <ConfirmRow
+            question={`Delete ${STORY_SESSION.title}?`}
+            cost="61 turns and every artifact go with it."
+            confirmLabel="Delete"
+            onKeep={() => undefined}
+            onConfirm={() => undefined}
+          />
+        </div>
+      </DialogFrame>
+    </Modal>
+  ),
+};
+
+/** The full-height dialog: a list inside it gets every pixel the glass has. */
+export const DialogFull: Story = {
+  render: () => (
+    <Modal onDismiss={() => undefined}>
+      <DialogFrame
+        title={`Projects on ${STORY_MACHINES[0].name}`}
+        subtitle={STORY_SESSION.where}
+        actions={<BandButton isPrimary>Add</BandButton>}
+        closeLabel="Close the projects dialog"
+        onClose={() => undefined}
+      >
+        <div className="flex flex-col">
+          <ListRow isFramed>vis</ListRow>
+          <ListRow isFramed isSelected>
+            svar
+          </ListRow>
+          <ListRow isFramed>infrastructure</ListRow>
+        </div>
+      </DialogFrame>
+    </Modal>
+  ),
+};
+
+/** An artifact opened over the transcript: the band reports, the body is the file. */
+export const Overlay: Story = {
+  render: () => (
+    <OverlayScreen
+      title="fleet.csv"
+      subtitle="7 rows × 5 cols · 268 B"
+      actions={<BandButton>Download</BandButton>}
+      onClose={() => undefined}
+    >
+      <div className="p-4">
+        <p className="font-mono text-meta text-dialog-hint">
+          The artifact stands here, and the band above it is the same one every
+          dialog wears.
+        </p>
+      </div>
+    </OverlayScreen>
+  ),
+};
+
+/** The band alone, which is what four hand-built title bars used to be. */
+export const Band: Story = {
+  render: () => (
+    <Sheet>
+      <Group of="DialogHeader, with a subtitle and a cell of its own">
+        <div className="w-full">
+          <DialogHeader
+            title="Settings"
+            subtitle={`${STORY_MACHINES[0].name} · protocol 7`}
+            actions={<BandButton>Export</BandButton>}
+            closeLabel="Close settings"
+            onClose={() => undefined}
+          />
+        </div>
+      </Group>
+      <Group of="Stacked over another band, and clearing the notch">
+        <div className="w-full">
+          <DialogHeader
+            title="fleet.csv"
+            isStacked
+            closeLabel="Close fleet.csv"
+            onClose={() => undefined}
+          />
+        </div>
+      </Group>
+    </Sheet>
+  ),
+};
+
+/** The pull that finds the search field, in the three states it can be in. */
+export const Gestures: Story = {
+  render: () => (
+    <Sheet>
+      {(['none', 'pulling', 'armed'] as const).map((phase) => (
+        <Group key={phase} of={`PullToSearchHint — ${phase}`}>
+          <div className="relative h-16 w-full overflow-hidden bg-level-project">
+            <PullToSearchHint phase={phase} />
+          </div>
+        </Group>
+      ))}
     </Sheet>
   ),
 };
