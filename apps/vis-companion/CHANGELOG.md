@@ -2,6 +2,13 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (5066) — 2026-08-29
+<!-- commit: 876103f5b201162aa8cfe0922e7b3fb4f9a46e4c -->
+
+- Give Activity to the form that produced it
+- Let the two protocol numbers lead the mismatch screen
+- Bin the machine rail and round the icon-only controls
+
 ## 0.1.41 (5061) — 2026-08-29
 <!-- commit: a45da30c17e23de30ca9f157c85c627d26caa8de -->
 
