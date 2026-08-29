@@ -39,7 +39,9 @@ afterEach(() => {
 });
 
 describe("the running app compatibility listener", () => {
-  it("keeps a settled refusal without reopening negotiation", async () => {
+  // Regression, issue #ea166d2d-d22f-4a89-b117-d058641b7422: the mismatch
+  // screen exposed retry and machine-switch actions that should not be available.
+  it("keeps a settled refusal without recovery actions", async () => {
     const view = renderApp({
       machines: [
         {
@@ -65,6 +67,10 @@ describe("the running app compatibility listener", () => {
     await waitFor(() =>
       expect(screen.getByText("Update this app")).toBeTruthy(),
     );
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Choose another machine" }),
+    ).toBeNull();
     expect(gatewayEvent.registrations).toBe(1);
     expect(gatewayEvent.listener).not.toBeNull();
 

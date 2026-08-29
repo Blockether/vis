@@ -5,9 +5,6 @@ import { Button, DialogHeader } from '../components/ui';
 interface Props {
   compat: Compat;
   conn: GatewayConn;
-  onRetry: () => void;
-  onBack: () => void;
-  isChecking?: boolean;
 }
 
 /**
@@ -19,7 +16,7 @@ interface Props {
  * side by side, the stale one flagged), WHY it matters (one sentence), and WHAT
  * to do (numbered remedy from `compat`, the same text the TUI prints).
  */
-export function IncompatibleScreen({ compat, conn, onRetry, onBack, isChecking = false }: Props) {
+export function IncompatibleScreen({ compat, conn }: Props) {
   const appStale = compat.upgrade === 'client';
   const gatewayStale = compat.upgrade === 'gateway';
 
@@ -79,19 +76,13 @@ export function IncompatibleScreen({ compat, conn, onRetry, onBack, isChecking =
         </section>
       )}
 
-      <footer className="flex flex-wrap items-center gap-2">
-        <Button type="button" onClick={onRetry} disabled={isChecking}>
-          {isChecking ? 'Checking…' : 'Check again'}
-        </Button>
-        {appStale && (
+      {appStale && (
+        <footer>
           <Button type="button" variant="secondary" onClick={() => window.location.reload()}>
             Reload app
           </Button>
-        )}
-        <Button type="button" variant="secondary" onClick={onBack}>
-          Choose another machine
-        </Button>
-      </footer>
+        </footer>
+      )}
     </div>
   );
 }

@@ -218,7 +218,6 @@ export function App() {
   // the browser's `online` event. A failed request therefore explicitly kicks
   // address recovery instead of waiting for the next wake event.
   const [compat, setCompat] = useState<Compat | null>(null);
-  const [compatChecking, setCompatChecking] = useState(false);
   const [compatNonce, setCompatNonce] = useState(0);
   // The 426 listener is registered once, while its Effect Event always reads
   // whether a re-read is already on its way and the latest verdict. Keeping
@@ -631,7 +630,6 @@ export function App() {
     }
     let cancelled = false;
     const ctrl = new AbortController();
-    setCompatChecking(true);
     void client
       .health(ctrl.signal)
       .then((h) => {
@@ -642,7 +640,6 @@ export function App() {
       })
       .finally(() => {
         compatRecheckPending.current = false;
-        if (!cancelled) setCompatChecking(false);
       });
     return () => {
       cancelled = true;
@@ -659,8 +656,7 @@ export function App() {
   // ONCE per episode, though. A refused gateway refuses EVERYTHING, so every
   // poller, prefetch and retry in flight reports the same 426 within the same
   // second — re-asking for each would answer one storm with another. The first
-  // refusal is the whole story; recovery is the retry button, which bumps the
-  // same nonce deliberately.
+  // refusal is the whole story for a settled incompatible verdict.
   useEffect(
     () => onGatewayIncompatible(handleGatewayIncompatible),
     [],
@@ -1088,12 +1084,6 @@ export function App() {
           <IncompatibleScreen
             compat={compat}
             conn={sessionConn}
-            isChecking={compatChecking}
-            onRetry={() => setCompatNonce((n) => n + 1)}
-            onBack={() => {
-              setOpenTarget(null);
-              setTab("connect");
-            }}
           />
         )}
         {shellView === "session" && openTarget && client && subscriptions && (
