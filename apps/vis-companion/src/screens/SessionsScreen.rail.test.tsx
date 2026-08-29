@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { listSession, renderSessionsScreen } from './sessions-screen-harness';
 
+
 /**
  * A desk, as `DESK_RAIL` in `lib/fit-rows.ts` spells it: a window wide enough to
  * stand a rail beside the list, under a pointer that can hit a 28px row. jsdom has
@@ -165,5 +166,45 @@ describe("the desk's fleet rail", () => {
     const footer = verb.closest('footer');
     expect(footer).toBeTruthy();
     expect(footer?.textContent).toContain('visgw');
+  });
+
+  // Regression, user report (paraphrased: the projects should read as separate
+  // rounded sheets, and the scrollbar runs straight across their layers): every
+  // project was a slab cut out of one card, and the bar painted PAGE paper — the
+  // track colour — over each sticky project band it passed under.
+  it('stands each project on the page as its own sheet, clear of the bar', async () => {
+    restoreDensity = onADesk();
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: 'visgw',
+          sessions: [
+            listSession({ id: 'a1', title: 'First', workspace: { root: '/Users/dev/alpha' } }),
+          ],
+        },
+      ],
+    });
+    restore = () => {
+      view.unmount();
+      view.restore();
+    };
+
+    await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
+
+    const sheet = document.querySelector('section[data-project-root]');
+    expect(sheet?.className).toContain('sm:rounded-panel');
+    // Clip and not hidden: hidden would make the sheet a scroll container of its
+    // own, and the band inside it would stick to the sheet instead of to the list.
+    expect(sheet?.className).toContain('sm:overflow-clip');
+    expect(sheet?.className).not.toContain('overflow-hidden');
+
+    // The lane is padding on the scroller, and behind the sheets standing inside it
+    // the card paints the PAGE and keeps no frame of its own — a container holding
+    // objects with their own edges is not an object.
+    const list = document.querySelector('.overscroll-contain');
+    expect(list?.className).toContain('sm:px-3');
+    const page = list?.parentElement;
+    expect(page?.className).toContain('sm:bg-page');
+    expect(page?.className).toContain('sm:border-0');
   });
 });

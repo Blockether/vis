@@ -216,6 +216,14 @@
      with nothing to override and no per-theme fork. */
   --color-level-machine: color-mix(in oklab, var(--fg) 9%, var(--surface));
   --color-level-project: color-mix(in oklab, var(--fg) 4%, var(--surface));
+  /* THE PAGE UNDER THE SHEETS, derived the same way and for the same reason. A desk
+     window stands one sheet per project, and a sheet is only an object while the
+     paper behind it is a different paper — but `--bg` and `--surface` are the SAME
+     value in the light palette (#faf3eb), so the page cannot be a named token any
+     more than the two header levels above could be. Mixing the page's own ink into
+     its own ground puts it one step UNDER the sheet in both directions: #f3ece4
+     behind a #faf3eb sheet in light, #14161c behind a #161820 one in dark. */
+  --color-page: color-mix(in oklab, var(--fg) 3%, var(--bg));
   --font-sans: 'Inter Variable', Inter, ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono Variable', 'SFMono-Regular', Consolas, monospace;
 }
@@ -354,7 +362,11 @@
 
   * {
     -webkit-tap-highlight-color: transparent;
-    scrollbar-color: var(--dialog-border) var(--bg);
+    /* THE TRACK IS NOT A SURFACE. Painted `--bg`, it striped page paper down the
+       inside of the list and straight across every sticky project band it passed
+       under; transparent, the thumb travels alone over whatever it happens to be
+       over. The lane that keeps it off the words is padding on the scroller. */
+    scrollbar-color: var(--dialog-border) transparent;
     scrollbar-width: thin;
   }
 

@@ -336,13 +336,19 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
  */
 const LIST_PEEK = 40;
 const LIST_FOOT = 16;
+/**
+ * The lane the scrollbar travels in — and, being padding on the scroller, the air the
+ * project sheets stand inside on a desk. The bar itself paints no track any more
+ * (`index.css`), so without this the thumb would ride the sheets' own edge.
+ */
+const LIST_LANE = 12;
 const LIST_GEOMETRY = {
   touch: { row: 49, chrome: 211 + LIST_PEEK, min: 3 },
   mouse: { row: 33, chrome: 137 + LIST_FOOT + LIST_PEEK, min: 3 },
   // A DESK SPENDS ITS CHROME SIDEWAYS. The machine strip that stands above the list
   // at every other size is the rail here, so those 40px go back to the rows and the
   // fleet footer under the list takes 29 of them again.
-  desk: { row: 33, chrome: 126 + LIST_FOOT + LIST_PEEK, min: 3 },
+  desk: { row: 33, chrome: 126 + LIST_FOOT + LIST_LANE + LIST_PEEK, min: 3 },
 } as const;
 
 /**
@@ -2260,19 +2266,23 @@ export function SessionsScreen({
             At `sm` the card detaches from the viewport edges but still fills the
             available height. Its list owns overflow; the document never grows a second
             scrollbar or leaves an intrinsic-height strip above empty desktop paper. */}
-        <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-panel sm:mx-0 sm:max-h-full sm:border-b sm:border-r-2">
+        {/* AND ON A DESK IT IS NOT A CARD AT ALL: it is the PAGE the project sheets
+            stand on. It keeps no frame there — a container that holds objects with
+            their own edges is not itself an object — and takes the derived page
+            paper, one step under the sheet in either palette. */}
+        <div className="relative flex h-full min-h-0 flex-col overflow-hidden border-t border-dialog-edge bg-panel sm:mx-0 sm:max-h-full sm:border-0 sm:bg-page">
         {/* The pull reports itself while it happens: the card clips the band until a
             finger brings it down over the list's first header. */}
         <PullToSearchHint phase={pullPhase} ref={hintRef} />
         {/* A create that failed has no button left to speak from once the order's own
             popover is gone, so the word lands on the paper the list is about to fill. */}
         {createError && (
-          <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME}`}>
+          <div className={`border-b border-dialog-edge bg-panel-2 px-3 py-2 sm:px-4 ${LIST_FRAME} sm:border-l-0`}>
             <Banner kind="err">{createError}</Banner>
           </div>
         )}
 
-        <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable]">
+        <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] sm:px-3 sm:pb-3">
         {/* Pinned above the list, and it does not scroll away with a machine's
             section: the demand belongs to the whole fleet in view. */}
         <NeedsYou
@@ -2310,7 +2320,7 @@ export function SessionsScreen({
         {sessions === null ? (
           <NavigatorSkeleton />
         ) : visible?.length === 0 && sections.every(({ groups }) => groups.length === 0) ? (
-          <div className={`px-5 py-16 text-center ${LIST_FRAME}`}>
+          <div className={`px-5 py-16 text-center ${LIST_FRAME} sm:border-l-0`}>
             {/* A query whose answer has not come back yet is not a dead end, and
                 saying "No matching sessions" while every gateway is still reading
                 its transcripts is the screen lying about a result it does not
@@ -2353,7 +2363,7 @@ export function SessionsScreen({
                       machine boundary is a colour change, so where `tower` ends is seen
                       before it is read. The panel is always rendered for the machine
                       whose projects follow, fleet view or scoped view alike. */}
-                  <MachineRail color={color}>
+                  <MachineRail color={color} isFlat={true}>
                   {/* Where one computer ends is a colour change AND a trough, so the
                       first project of the second machine can never read as the fifth
                       project of the first one. */}
@@ -2431,7 +2441,7 @@ export function SessionsScreen({
             the control that produced it said nothing was the same fact in the wrong
             place, and the third copy of it on the screen. */}
         {sessions === null && (
-          <footer className={`hidden items-center justify-end border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint sm:flex sm:px-4 ${LIST_FRAME}`}>
+          <footer className={`hidden items-center justify-end border-t border-dialog-edge bg-panel-2 px-3 py-2 font-mono text-meta text-dialog-hint sm:flex sm:border-l-0 sm:bg-page sm:px-4 ${LIST_FRAME}`}>
             <span>Reading sessions...</span>
           </footer>
         )}
@@ -2439,7 +2449,7 @@ export function SessionsScreen({
             fleet search (`App`), and both counts are the gateway's. A window this size
             can hold a footer without spending a row of the list on it. */}
         {isDesk && (
-          <footer className={`flex items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-4 py-1.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint ${LIST_FRAME}`}>
+          <footer className={`flex items-center justify-between gap-3 border-t border-dialog-edge bg-panel-2 px-4 py-1.5 font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint sm:border-l-0 sm:bg-page ${LIST_FRAME}`}>
             <span className="flex items-center gap-1.5">
               <kbd className="border border-dialog-edge px-1 font-mono text-chip normal-case">/</kbd>
               Search the fleet
@@ -3071,6 +3081,13 @@ const ProjectGroup = memo(function ProjectGroup({
     {/* The rail's index finds this band by the two facts that identify it, and the
         only two a jump can be sure of: which machine, and which root. */}
     <section
+      /* THE PROJECT IS A SHEET, and only on a desk. One 16px panel corner — the rung
+         for a layer standing OVER the page — one hairline, and the card's own paper
+         on the derived page behind it. `overflow-clip` and NOT `overflow-hidden`:
+         clip rounds the corners without making the sheet a scroll container, so the
+         band inside it still sticks to the list's own scrollport. A phone draws none
+         of it, because there the card IS the page and does not breathe. */
+      className="sm:overflow-clip sm:rounded-panel sm:border sm:border-dialog-edge sm:bg-panel"
       aria-label={`${project} sessions`}
       data-machine={machineKey(conn)}
       data-project-root={root}
@@ -3668,7 +3685,7 @@ function SkeletonBar({
 
 function NavigatorSkeleton() {
   return (
-    <div role="status" aria-live="polite" aria-label="Loading sessions" className={LIST_FRAME}>
+    <div role="status" aria-live="polite" aria-label="Loading sessions" className={`${LIST_FRAME} sm:border-l-0`}>
       <div className="animate-pulse motion-reduce:animate-none" aria-hidden="true">
         {SKELETON_GROUPS.map((rows, group) => (
           <div key={group}>

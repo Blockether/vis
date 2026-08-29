@@ -2755,10 +2755,12 @@ export function SectionHeader({
  * the rail's hue runs through the gap because the machine owns both sides of it.
  *
  * It is 8px and not a margin: a gap collapses, a slab does not, and this one has to
- * PAINT to be a boundary at all.
+ * PAINT to be a boundary at all. On a desk it paints the PAGE instead: the projects
+ * it separates stand there as sheets on that page rather than as slabs cut out of
+ * one card, and the paper between two objects belongs to neither of them.
  */
 export function SectionGap() {
-  return <div aria-hidden="true" className="h-2 bg-level-machine" />;
+  return <div aria-hidden="true" className="h-2 bg-level-machine sm:bg-page" />;
 }
 
 /**
@@ -3309,11 +3311,25 @@ export function ProjectStatusCounts({
  * A grey bottom rule on the enclosing phone sheet used to close the whole fleet while
  * the coloured rail simply stopped, making the machine look unfinished. The machine
  * owns that edge now: one 2px border paints both sides in the same hue, and the sheet
- * draws neither a duplicate left line nor an unrelated closing line on the phone.
+ * draws neither a duplicate left line nor an unrelated closing line on the phone. On
+ * a desk it draws nothing at all: the projects are sheets with their own edges there,
+ * and a 2px hue running down the page beside them would be the frame of a card that
+ * is no longer drawn.
  */
-export function MachineRail({ color, children }: { color?: MachineColor; children: ReactNode }) {
+export function MachineRail({
+  color,
+  isFlat,
+  children,
+}: {
+  color?: MachineColor;
+  /** It is on a desk, where every sheet under it carries its own edge. */
+  isFlat?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <div className={`border-b-2 border-l-2 ${color ? color.rail : 'border-dialog-edge'}`}>
+    <div
+      className={`border-b-2 border-l-2 ${color ? color.rail : 'border-dialog-edge'}${isFlat ? ' sm:border-0' : ''}`}
+    >
       {children}
     </div>
   );
