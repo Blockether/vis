@@ -134,4 +134,36 @@ describe("the desk's fleet rail", () => {
     expect((list as HTMLElement).scrollTop).toBe(340);
     expect(window.scrollY).toBe(0);
   });
+
+  // Regression, user report (paraphrased: with one machine on screen the rail shows
+  // nothing the list does not already show): 236px of a 1280px window stood a single
+  // machine row and the projects it was already listing two pixels to its right.
+  it('gives its column back while there is only one machine', async () => {
+    restoreDensity = onADesk();
+    const view = renderSessionsScreen({
+      machines: [
+        {
+          label: 'visgw',
+          sessions: [
+            listSession({ id: 'a1', title: 'First', workspace: { root: '/Users/dev/alpha' } }),
+          ],
+        },
+      ],
+    });
+    restore = () => {
+      view.unmount();
+      view.restore();
+    };
+
+    await waitFor(() => expect(screen.getByText('First')).toBeTruthy());
+    expect(screen.queryByRole('navigation', { name: 'Fleet' })).toBeNull();
+
+    // What the rail carried moves to the footer: the machine's own name, and the one
+    // door to its projects — which is ink there, not the amber fill it wears in the
+    // rail's caption.
+    const verb = screen.getByRole('button', { name: /^Projects on visgw/ });
+    const footer = verb.closest('footer');
+    expect(footer).toBeTruthy();
+    expect(footer?.textContent).toContain('visgw');
+  });
 });

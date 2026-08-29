@@ -1932,12 +1932,18 @@ export function SessionsScreen({
     list.scrollTop += band.getBoundingClientRect().top - list.getBoundingClientRect().top;
   }, []);
 
+  // A RAIL IS FOR A FLEET, AND ONE MACHINE IS NOT ONE. Measured at 1280x800 against a
+  // gateway with a single machine paired: 236px — 18% of the window — spent on one
+  // machine row and three project rows whose own bands stand on the list two pixels
+  // to the right of them. It earns that column the moment there is a second machine
+  // to choose between; until then the projects verb it hosts stands in the footer.
+  const showRail = isDesk && machines.length > 1;
   // THE RAIL IS BUILT FROM WHAT THE LIST IS ALREADY HOLDING, and only on a desk,
   // because only a desk paints it: one row per machine in the switcher's own order,
   // one per project band on screen.
   const railMachines = useMemo(
     () =>
-      isDesk
+      showRail
         ? switcherMachines.map((machine) => {
             const key = machineKey(machine.conn);
             const isDown = Boolean(machine.error);
@@ -1951,14 +1957,14 @@ export function SessionsScreen({
             };
           })
         : [],
-    [isDesk, switcherMachines, tallies, machineColors, scope, selectScope, retryMachine],
+    [showRail, switcherMachines, tallies, machineColors, scope, selectScope, retryMachine],
   );
 
   // The hue only rides a project row when there is more than one machine in view:
   // with a single machine every row would wear the same block, which says nothing.
   const railProjects = useMemo(
     () =>
-      isDesk
+      showRail
         ? sections.flatMap(({ machine, groups }) => {
             const key = machineKey(machine.conn);
             return groups.map((group) => ({
@@ -1973,7 +1979,7 @@ export function SessionsScreen({
             }));
           })
         : [],
-    [isDesk, sections, machineColors, jumpToProject],
+    [showRail, sections, machineColors, jumpToProject],
   );
 
   // ON A DESK THE FLEET IS THE RAIL, so the row above the list is left with the
@@ -1991,12 +1997,17 @@ export function SessionsScreen({
     0,
   );
 
+  // WITH ONE MACHINE THERE IS NOTHING TO CHOOSE, so the footer NAMES it instead of
+  // counting it: the rail's single row said `visgw`, and a count of one machine says
+  // less than the name of the one whose rows are on screen.
+  const soleMachine = machines.length === 1 ? machines[0] : null;
   // ONE VERB, AND TWO PLACES IT CAN STAND: the strip on a phone, the rail's own
   // PROJECTS caption on a desk. It is built here so neither paint can grow a second
   // folder with different words behind it (`ui.test.tsx` counts the call site).
   const projectsVerb =
     scopeMachine && !scopeMachine.error ? (
       <MachineProjectsButton
+        isQuiet={isDesk && !showRail}
         machine={machineLabel(scopeMachine.conn)}
         onPress={(anchor) => openManageProjects(scopeMachine, anchor)}
       />
@@ -2229,8 +2240,8 @@ export function SessionsScreen({
       {/* TWO COLUMNS ONLY WHERE THERE ARE TWO COLUMNS. `contents` is not a layout:
           at every other size this wrapper is not there at all and the card keeps the
           section's own single column, exactly as it had it. */}
-      <div className={isDesk ? 'flex min-h-0 flex-1' : 'contents'}>
-        {isDesk && (
+      <div className={showRail ? 'flex min-h-0 flex-1' : 'contents'}>
+        {showRail && (
           <FleetRail
             machines={railMachines}
             projects={railProjects}
@@ -2433,8 +2444,15 @@ export function SessionsScreen({
               <kbd className="border border-dialog-edge px-1 font-mono text-chip normal-case">/</kbd>
               Search the fleet
             </span>
-            <span className="tabular-nums">
-              {fleetSessions} sessions · {machines.length === 1 ? '1 machine' : `${machines.length} machines`}
+            {/* WITH NO RAIL, THE FOOTER CARRIES WHAT THE RAIL CARRIED: which machine
+                these rows came from, and the one door to that machine's projects. */}
+            <span className="flex items-center gap-3">
+              {!showRail && projectsVerb}
+              <span className="tabular-nums">
+                {soleMachine
+                  ? `${machineLabel(soleMachine.conn)} · ${fleetSessions} ${fleetSessions === 1 ? 'session' : 'sessions'}`
+                  : `${fleetSessions} sessions · ${machines.length} machines`}
+              </span>
             </span>
           </footer>
         )}
