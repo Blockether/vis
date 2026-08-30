@@ -236,7 +236,7 @@
    :ai-bubble-fg [226 232 240]
    :ai-role-fg [74 222 128]
    :status-ok [74 222 128]
-   :status-bad [248 113 113]
+   :status-bad [248 116 116]
    :warning-bg [71 49 10]
    :warning-fg [253 230 138]
    :warning-border [245 158 11]
@@ -290,7 +290,7 @@
    :footer-fg-strong [241 245 249]
    :footer-spinner-fg [74 222 128]
    :footer-warning-fg [251 191 36]
-   :footer-error-fg [248 113 113]})
+   :footer-error-fg [248 116 116]})
 
 (def blockether-light-palette
   "Blockether brand light palette: warm cream ground + amber accent + brand
@@ -332,7 +332,7 @@
      :ai-bubble-fg [38 38 38]
      :ai-role-fg [16 118 54]
      :status-ok [16 118 54]
-     :status-bad [193 33 33]
+     :status-bad [191 32 32]
      :warning-bg [242 221 160]
      :warning-fg [122 74 0]
      :warning-border [165 91 5]
@@ -377,7 +377,7 @@
      :footer-fg-strong [38 38 38]
      :footer-spinner-fg [16 118 54]
      :footer-warning-fg [165 91 5]
-     :footer-error-fg [193 33 33]}))
+     :footer-error-fg [191 32 32]}))
 
 (def blockether-dark-palette
   "Blockether brand dark palette: deep slate ground + amber accent + brand
@@ -491,7 +491,7 @@
    :dialog-border [147 161 161]
    :dialog-shadow [213 206 189]
    :dialog-hint [87 95 95]
-   :dialog-hint-key [88 110 117]
+   :dialog-hint-key [84 105 112]
    :input-field-bg [253 246 227]
    :user-bubble-bg [253 246 227]
    :user-bubble-fg [62 76 81]

@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.dialogs
   (:require [clojure.string :as str]
+            [com.blockether.vis.ext.channel-tui.frame :as frame]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.highlight :as highlight]
@@ -14,7 +15,7 @@
             [com.blockether.vis.ext.channel-tui.mcp-model :as mcp-model]
             [com.blockether.vis.internal.theme :as shared-theme]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna Symbols TerminalPosition TextCharacter]
+  (:import [com.googlecode.lanterna Symbols TerminalPosition TerminalSize TextCharacter]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [java.text SimpleDateFormat]
@@ -75,25 +76,35 @@
 
     (max 1 (- box-h (long t/dialog-chrome-h)))))
 
-(defn clear-screen!
-  "Fill the entire screen with terminal background. Call before sub-dialogs
-   to cleanly replace the current dialog (wizard step pattern)."
-  [^TerminalScreen screen]
-  (let [size
-        (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
-
-        cols
+(defn- clear-screen-buffer!
+  "Fill the resized back buffer without flushing an intermediate blank frame."
+  [^TerminalScreen screen ^TerminalSize size]
+  (let [cols
         (.getColumns size)
 
         rows
         (.getRows size)
 
         g
-        (.newTextGraphics screen)]
+        (frame/surface-graphics screen cols rows)]
 
     (p/set-bg! g t/terminal-bg)
     (p/fill-rect! g 0 0 cols rows)
-    (.refresh screen Screen$RefreshType/DELTA)))
+    size))
+
+(defn- modal-size!
+  "Apply a pending resize and clear the old back buffer before the next paint."
+  ^TerminalSize [^TerminalScreen screen]
+  (if-let [size (.doResizeIfNecessary screen)]
+    (clear-screen-buffer! screen size)
+    (.getTerminalSize screen)))
+
+(defn clear-screen!
+  "Fill the entire screen with terminal background. Call before sub-dialogs
+   to cleanly replace the current dialog (wizard step pattern)."
+  [^TerminalScreen screen]
+  (clear-screen-buffer! screen (modal-size! screen))
+  (.refresh screen Screen$RefreshType/DELTA))
 
 (defn frame-restorer
   "Snapshot the screen's back buffer NOW and return `(fn [] …)` / `(fn [from to])`
@@ -109,7 +120,7 @@
   [^TerminalScreen screen]
   (when screen
     (let [size
-          (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+          (modal-size! screen)
 
           cols
           (.getColumns size)
@@ -305,6 +316,28 @@
 
             (and (= cy (:y b)) (>= (long cx) (long (:x0 b))) (<= (long cx) (long (:x1 b))))))))))
 
+(defn- mouse-row-offset
+  "Return the zero-based row under a primary click inside a list rectangle."
+  [key left top width height]
+  (when (instance? MouseAction key)
+    (let [action (.getActionType ^MouseAction key)]
+      (when (or (= action MouseActionType/CLICK_DOWN) (= action MouseActionType/CLICK_RELEASE))
+        (let [^TerminalPosition pos (.getPosition ^MouseAction key)
+              x (long (.getColumn pos))
+              y (long (.getRow pos))
+              left (long left)
+              top (long top)
+              width (long width)
+              height (long height)]
+
+          (when (and (pos? width)
+                     (pos? height)
+                     (<= left x)
+                     (< x (+ left width))
+                     (<= top y)
+                     (< y (+ top height)))
+            (- y top)))))))
+
 (def ^:private modal-close-hover (ThreadLocal/withInitial #(atom false)))
 
 (defn update-modal-close-hover!
@@ -326,18 +359,36 @@
 
           (when (not= @cell hit?) (clojure.core/reset! cell hit?) true))))))
 
+(defn- poll-modal-key!
+  "Return queued input, or one harmless wake key after applying a resize."
+  ^KeyStroke [^TerminalScreen screen]
+  (or (.pollInput screen)
+      (when-let [size (.doResizeIfNecessary screen)]
+        (clear-screen-buffer! screen size)
+        (KeyStroke. KeyType/Unknown))))
+
+(defn- await-modal-key!
+  ^KeyStroke [^TerminalScreen screen]
+  (loop []
+
+    (if-let [key (poll-modal-key! screen)]
+      key
+      (do (Thread/sleep 16) (recur)))))
+
 (defn read-modal-input!
   "Read one modal input event. Consecutive pending wheel events are drained
    and returned as one `:scroll-delta`, so a wheel flood costs one redraw.
    The first non-wheel event encountered while draining is held for the next
    modal read on this thread. MOVE/DRAG events also refresh the close (X)
-   hover flag so the button can light up under the cursor."
+   hover flag so the button can light up under the cursor. A terminal resize
+   clears the old frame and returns `KeyType/Unknown`, waking every modal loop
+   to measure and paint again without waiting for a user keystroke."
   [^TerminalScreen screen]
   (let [pending-key
         (.get ^ThreadLocal modal-pending-key)
 
         key
-        (normalize-modal-key (or @pending-key (.readInput screen)))]
+        (normalize-modal-key (or @pending-key (await-modal-key! screen)))]
 
     (reset! pending-key nil)
     (update-modal-close-hover! key)
@@ -353,19 +404,18 @@
                   {:key key}))))
 
 (defn modal-input-pending?
-  "True when another keystroke is ALREADY queued for this modal loop. The peeked
-   event is stashed in the same thread-local slot `read-modal-input!` drains, so
-   nothing is lost.
+  "True when another keystroke or resize wake is ALREADY queued for this modal
+   loop. The peeked event is stashed in the same thread-local slot
+   `read-modal-input!` drains, so nothing is lost.
 
    This is the TUI's DEBOUNCE primitive: an expensive per-keystroke effect (the
    gateway transcript search) can skip itself while the user is still typing and
    run once on the keystroke that lands in a pause — no threads, no timers, and
-   no repaint problem from an async result arriving while the loop blocks in
-   `readInput`."
+   no repaint problem from an async result arriving while the loop waits."
   [^TerminalScreen screen]
   (let [pending (.get ^ThreadLocal modal-pending-key)]
     (boolean (or (some? @pending)
-                 (when-let [k (.pollInput screen)]
+                 (when-let [k (poll-modal-key! screen)]
                    (reset! pending k)
                    true)))))
 
@@ -1076,12 +1126,12 @@
    terminal at all — the React-like win."
   [^TerminalScreen screen {:keys [init measure reconcile paint on-key]}]
   (loop [state (if (fn? init) (init) init)]
-    (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+    (let [size (modal-size! screen)
           cols (.getColumns size)
           rows (.getRows size)
           geom (measure state cols rows)
           state (if reconcile (reconcile state geom) state)
-          g (.newTextGraphics screen)
+          g (frame/surface-graphics screen cols rows)
           cursor (paint g state geom)]
 
       ;; nil cursor HIDES the hardware cursor (no parked top-left blink — the
@@ -1516,7 +1566,7 @@
     (loop []
 
       (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            (modal-size! screen)
 
             cols
             (.getColumns size)
@@ -1525,7 +1575,7 @@
             (.getRows size)
 
             g
-            (.newTextGraphics screen)
+            (frame/surface-graphics screen cols rows)
 
             footer
             [["↑/↓" "move"] ["Space" "toggle"] ["a" "all"] ["Enter" "start"] ["Esc" "cancel"]]
@@ -1624,7 +1674,7 @@
     (loop []
 
       (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            (modal-size! screen)
 
             cols
             (.getColumns size)
@@ -1633,7 +1683,7 @@
             (.getRows size)
 
             g
-            (.newTextGraphics screen)
+            (frame/surface-graphics screen cols rows)
 
             cur-lines
             @lines*
@@ -1762,7 +1812,7 @@
     (loop []
 
       (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            (modal-size! screen)
 
             cols
             (.getColumns size)
@@ -1771,7 +1821,7 @@
             (.getRows size)
 
             g
-            (.newTextGraphics screen)
+            (frame/surface-graphics screen cols rows)
 
             cur-lines
             @lines*
@@ -1944,7 +1994,7 @@
     (loop []
 
       (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            (modal-size! screen)
 
             cols
             (.getColumns size)
@@ -1953,7 +2003,7 @@
             (.getRows size)
 
             g
-            (.newTextGraphics screen)
+            (frame/surface-graphics screen cols rows)
 
             ;; Content: body rows + label row + spacer + 3-row bordered input box.
             ;; Pre-estimate the content height (at the default width) so the box is
@@ -2153,7 +2203,7 @@
     (loop []
 
       (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            (modal-size! screen)
 
             cols
             (.getColumns size)
@@ -2162,7 +2212,7 @@
             (.getRows size)
 
             g
-            (.newTextGraphics screen)
+            (frame/surface-graphics screen cols rows)
 
             bounds
             (draw-dialog-chrome! g cols rows title ch)
@@ -2492,7 +2542,7 @@
    Returns `tr/run!`'s `{:action :switches :options}`, or nil on Esc."
   [^TerminalScreen screen title body spec]
   (let [size
-        (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+        (modal-size! screen)
 
         cols
         (.getColumns size)
@@ -2501,7 +2551,7 @@
         (.getRows size)
 
         g
-        (.newTextGraphics screen)
+        (frame/surface-graphics screen cols rows)
 
         est-w
         (max 1 (- (default-content-width cols) 2))
@@ -3523,7 +3573,7 @@
 
         (preview-selected!)
         (let [size
-              (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+              (modal-size! screen)
 
               cols
               (.getColumns size)
@@ -3532,7 +3582,7 @@
               (.getRows size)
 
               g
-              (.newTextGraphics screen)
+              (frame/surface-graphics screen cols rows)
 
               content-w
               (theme-picker-content-width cols)
@@ -3588,14 +3638,31 @@
           (.refresh screen Screen$RefreshType/DELTA)
           (let [key (read-modal-key! screen)]
             (when key
-              (condp = (key-type key)
-                KeyType/Escape (do (preview! original) nil)
-                KeyType/ArrowUp (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total))))
-                                    (recur))
-                KeyType/ArrowDown
-                (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
-                KeyType/Enter (:theme-id (nth items @selected))
-                (recur)))))))))
+              (if (instance? MouseAction key)
+                (if-let [step (modal-wheel-step key)]
+                  (do (swap! selected #(p/clamp (+ (long %) (long step)) 0 (max 0 (dec total))))
+                      (recur))
+                  (if-let [row-offset (mouse-row-offset key
+                                                        left
+                                                        content-top
+                                                        (if (> (long total) (long content-h))
+                                                          (dec (long inner-w))
+                                                          inner-w)
+                                                        visible)]
+                    (let [idx (p/clamp (+ (long @scroll) (long row-offset)) 0 (max 0 (dec total)))]
+                      (reset! selected idx)
+                      (if (= MouseActionType/CLICK_RELEASE (.getActionType ^MouseAction key))
+                        (:theme-id (nth items idx))
+                        (recur)))
+                    (recur)))
+                (condp = (key-type key)
+                  KeyType/Escape (do (preview! original) nil)
+                  KeyType/ArrowUp
+                  (do (swap! selected #(p/clamp (dec (long %)) 0 (max 0 (dec total)))) (recur))
+                  KeyType/ArrowDown
+                  (do (swap! selected #(p/clamp (inc (long %)) 0 (max 0 (dec total)))) (recur))
+                  KeyType/Enter (:theme-id (nth items @selected))
+                  (recur))))))))))
 
 (defn- activate-theme-row!
   [screen values callbacks {:keys [choices key]}]
@@ -3815,17 +3882,38 @@
                            :active? (and (>= (long selected) (long start))
                                          (< (long selected) end))}))
                       sec-idxs))))
+(defn- settings-pane-geometry
+  "Use a TOC rail only when its 14 columns, divider, and a useful 17-column
+   settings pane all fit. Narrow dialogs become one pane instead of painting
+   a forced sidebar through their right edge."
+  [left inner-w]
+  (let [left
+        (long left)
+
+        inner-w
+        (max 1 (long inner-w))
+
+        split?
+        (>= inner-w (+ 14 1 17))
+
+        rail-w
+        (if split? (p/clamp (quot inner-w 4) 14 22) 0)]
+
+    {:split? split?
+     :rail-w rail-w
+     :pane-left (if split? (+ left rail-w 1) left)
+     :pane-width (if split? (- inner-w rail-w 1) inner-w)}))
 
 (defn settings-dialog!
   "Show the settings dialog.
 
-   ONE flat, grouped, scrollable list (mirrors the web settings modal), laid
-   out VS Code-style: a left Table-of-Contents sidebar rail lists the sections
-   with per-section counts and highlights the one owning the selection, while
-   the right pane shows the settings themselves. Toggle rows render a leading
-   status glyph; choice rows cycle their value with Enter; action rows invoke
-   a callback. The rail is a passive locator — arrow keys still move through
-   the right pane and the rail tracks where you are.
+   ONE flat, grouped, scrollable list (mirrors the web settings modal). When
+   space permits, a left Table-of-Contents rail lists sections and highlights
+   the one owning the selection while the right pane shows settings. At narrow
+   widths the rail collapses and the settings list owns the full dialog width.
+   Toggle rows render a leading status glyph; choice rows cycle their value
+   with Enter; action rows invoke a callback. The rail is a passive locator —
+   arrow keys still move through the settings pane and the rail tracks them.
 
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). `callbacks` also carries `:focus-section` (a
@@ -3884,7 +3972,7 @@
              (count rows)
 
              size
-             (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+             (modal-size! screen)
 
              cols
              (.getColumns size)
@@ -3893,7 +3981,7 @@
              (.getRows size)
 
              g
-             (.newTextGraphics screen)
+             (frame/surface-graphics screen cols screen-rows)
 
              bounds
              (draw-dialog-chrome! g
@@ -3912,19 +4000,20 @@
              inner-w
              (long inner-w)
 
-             ;; VS Code split: a left sidebar rail (the section Table of
-             ;; Contents) + a vertical divider + the right settings pane.
-             ;; `lleft`/`linner` are the right pane's own left/inner-w, so the
-             ;; whole list-painting block below reuses the single-pane math
-             ;; unchanged — only the search bar and hint bar stay full width.
+             ;; Wide Settings is a TOC rail + divider + settings pane. Narrow
+             ;; Settings collapses to one pane; forcing the 14-column rail was
+             ;; what let content cross the dialog's right border.
+             {:keys [split? rail-w pane-left pane-width]}
+             (settings-pane-geometry left inner-w)
+
              rail-w
-             (p/clamp (quot inner-w 4) 14 22)
+             (long rail-w)
 
              lleft
-             (+ left rail-w 1)
+             (long pane-left)
 
              linner
-             (max 1 (- inner-w rail-w 1))
+             (long pane-width)
 
              {:keys [content-top content-h hint-row]}
              (dialog-layout bounds)
@@ -4082,12 +4171,11 @@
 
          ;; Full-width rule under the search bar — the same framed-input
          ;; compartment the command palette (`list-dialog!`) and the session
-         ;; switcher (`navigator-dialog!`) draw under their query fields, so
-         ;; every searchable surface reads the same. `┬` joins the rail
-         ;; divider that begins on the row below it.
+         ;; switcher (`navigator-dialog!`) draw under their query fields. On a
+         ;; split layout, `┬` joins the rail divider beginning below it.
          (p/set-colors! g t/dialog-border t/dialog-bg)
          (p/draw-separator! g left (+ left inner-w 1) (inc content-top))
-         (p/put-str! g lleft (inc content-top) "┬")
+         (when split? (p/put-str! g lleft (inc content-top) "┬"))
          (dotimes [i visible-h]
            (let [entry-idx (+ (long @scroll) i)
                  row-y (+ list-top i)]
@@ -4168,30 +4256,29 @@
                                (p/put-str! g dx row-y (ellipsize (str description) avail)))))))))
                (do (p/set-colors! g t/dialog-fg t/dialog-bg)
                    (p/fill-rect! g (inc lleft) row-y paint-w 1)))))
-         ;; Left Table-of-Contents rail (the VS Code settings sidebar): the
-         ;; section list with per-section counts; the section owning the
-         ;; selected row gets an accent bar. Painted AFTER the right pane so
-         ;; the divider never gets overwritten by a pane fill.
-         (let [toc (settings-toc rows @selected)]
-           (p/set-colors! g t/dialog-border t/dialog-bg)
-           (doseq [ry (range list-top (+ content-top content-h))]
-             (p/put-str! g lleft ry "│"))
-           (dotimes [i (min (count toc) visible-h)]
-             (let [{lbl :label cnt :count active? :active?} (nth toc i)
-                   ry (+ list-top i)
-                   rail-x (inc left)
-                   cstr (str cnt)
-                   lbl-w (max 1 (- rail-w 2 (count cstr) 1))
-                   bg (if active? t/header-active-tab-accent t/dialog-bg)
-                   fg (if active? t/dialog-bg t/dialog-fg)]
+         ;; Wide-only Table-of-Contents rail. Painted AFTER the settings pane so
+         ;; its divider cannot be overwritten by a pane fill.
+         (when split?
+           (let [toc (settings-toc rows @selected)]
+             (p/set-colors! g t/dialog-border t/dialog-bg)
+             (doseq [ry (range list-top (+ content-top content-h))]
+               (p/put-str! g lleft ry "│"))
+             (dotimes [i (min (count toc) visible-h)]
+               (let [{lbl :label cnt :count active? :active?} (nth toc i)
+                     ry (+ list-top i)
+                     rail-x (inc left)
+                     cstr (str cnt)
+                     lbl-w (max 1 (- rail-w 2 (count cstr) 1))
+                     bg (if active? t/header-active-tab-bg t/dialog-bg)
+                     fg (if active? t/header-active-tab-fg t/dialog-fg)]
 
-               (p/set-colors! g fg bg)
-               (p/fill-rect! g rail-x ry rail-w 1)
-               (if active?
-                 (p/styled g [p/BOLD] (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
-                 (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
-               (p/set-colors! g (if active? t/dialog-bg t/dialog-hint) bg)
-               (p/put-str! g (- (+ rail-x rail-w) (count cstr) 1) ry cstr))))
+                 (p/set-colors! g fg bg)
+                 (p/fill-rect! g rail-x ry rail-w 1)
+                 (if active?
+                   (p/styled g [p/BOLD] (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
+                   (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
+                 (p/set-colors! g (if active? t/header-active-tab-fg t/dialog-hint) bg)
+                 (p/put-str! g (- (+ rail-x rail-w) (count cstr) 1) ry cstr)))))
          (scrollbar/draw! g
                           {:col (+ lleft linner)
                            :top list-top
@@ -4522,7 +4609,7 @@
     (loop []
 
       (let [size
-            (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            (modal-size! screen)
 
             cols
             (.getColumns size)
@@ -4531,7 +4618,7 @@
             (.getRows size)
 
             g
-            (.newTextGraphics screen)
+            (frame/surface-graphics screen cols rows)
 
             ;; nil content-h -> shared full-height footprint, matching the
             ;; directory picker (both are long, scrollable browsers)
@@ -5348,7 +5435,7 @@
                 (count visible-rows)
 
                 size
-                (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+                (modal-size! screen)
 
                 cols
                 (.getColumns size)
@@ -5357,7 +5444,7 @@
                 (.getRows size)
 
                 g
-                (.newTextGraphics screen)
+                (frame/surface-graphics screen cols rows-n)
 
                 unfiltered
                 (navigator-visible-rows rows "" {})
@@ -5631,10 +5718,10 @@
    an anchor into a band region: a second one is how two bands drift apart."
   [^TerminalScreen screen {:keys [content-top prompt-h]} body]
   (let [size
-        (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+        (modal-size! screen)
 
         g
-        (.newTextGraphics screen)
+        (frame/surface-graphics screen (.getColumns size) (.getRows size))
 
         restore!
         (frame-restorer screen)
@@ -5909,10 +5996,10 @@
   (let [scroll (atom 0)]
     (loop []
 
-      (let [size (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+      (let [size (modal-size! screen)
             cols (.getColumns size)
             rows (.getRows size)
-            g (.newTextGraphics screen)
+            g (frame/surface-graphics screen cols rows)
             ;; Text viewer is the only dialog that should consume the
             ;; vertical room it can get - it scrolls long content. Ask
             ;; for terminal-bound height so the viewport is generous,
@@ -6034,7 +6121,7 @@
       (loop []
 
         (let [size
-              (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+              (modal-size! screen)
 
               cols
               (.getColumns size)
@@ -6043,7 +6130,7 @@
               (.getRows size)
 
               g
-              (.newTextGraphics screen)
+              (frame/surface-graphics screen cols rows)
 
               bounds
               (draw-dialog-chrome! g cols rows title (max 12 (- rows 8)))

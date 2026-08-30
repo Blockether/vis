@@ -28,14 +28,17 @@
             [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.flex :as flex]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             ;; Channel-agnostic header policy (slot ratios, workspace
             ;; switcher padding/cap, glyphs, default labels). Lives in
             ;; `internal/header.cljc` so a future non-TUI channel
             ;; reuses the same values without touching TUI code.
-            [com.blockether.vis.internal.header :as vh]))
+            [com.blockether.vis.internal.header :as vh])
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+           [com.googlecode.lanterna.graphics TextGraphics]
+           [com.googlecode.lanterna.gui2 Button Button$ButtonRenderer GridLayout Panel
+            TextGUIGraphics]))
 
 (set! *unchecked-math* :warn-on-boxed)
 
@@ -74,6 +77,85 @@
    bottom rule. `header-rows` adds the height contributed by registered
    `:tui.slot/header-row` extensions on top of this base."
   3)
+
+(defn- header-action-chips
+  []
+  [[:header-help (str " help (" (keymap/label-for :toggle-help) ") ")]
+   ;; Search stays available through C-x f but does not occupy the header yet.
+   #_[:header-search (str " search (" (keymap/label-for :search-open) ") ")]])
+
+(defn header-actions-component
+  "Build the real interactive GUI2 grid used by the header action cluster. With
+   no arguments it is a portable component for `HtmlTerminalView`; `on-action`
+   receives the action kind when its button is activated. The full-screen form
+   also bridges absolute Vis click regions without changing the component tree."
+  ([] (header-actions-component nil false nil))
+  ([on-action] (header-actions-component nil false on-action))
+  ([root-graphics register?] (header-actions-component root-graphics register? nil))
+  ([root-graphics register? on-action]
+   (let [chips
+         (header-action-chips)
+
+         gap
+         1
+
+         layout
+         (doto (GridLayout. (max 1 (count chips)))
+           (.setLeftMarginSize 0)
+           (.setRightMarginSize gap)
+           (.setHorizontalSpacing gap))
+
+         panel
+         (Panel. layout)]
+
+     (.setFillColorOverride panel t/terminal-bg)
+     (doseq [[kind label] chips]
+       (let [button (Button. label
+                             ^Runnable
+                             (reify
+                               Runnable
+                                 (run [_] (when on-action (on-action kind)))))]
+         (.setRenderer
+           button
+           (reify
+             Button$ButtonRenderer
+               (getCursorLocation [_ _] nil)
+               (getPreferredSize [_ _] (TerminalSize. (int (p/display-width label)) 1))
+               (drawComponent [_ local-graphics component]
+                 (if root-graphics
+                   (let [child-position (.getPosition ^Button component)
+                         panel-position (.getPosition panel)]
+
+                     (components/button! root-graphics
+                                         (+ (.getColumn panel-position) (.getColumn child-position))
+                                         (+ (.getRow panel-position) (.getRow child-position))
+                                         label
+                                         kind
+                                         {:register? register?}))
+                   (components/button! local-graphics 0 0 label kind {:register? false})))))
+         (.addComponent panel button)))
+     panel)))
+
+(defn- draw-header-actions!
+  [^TextGraphics g ^Panel panel col row]
+  (let [size
+        (.getPreferredSize panel)
+
+        position
+        (TerminalPosition. (int col) (int row))
+
+        children
+        (.getChildrenList panel)
+
+        graphics
+        (TextGUIGraphics/from g)]
+
+    (.setPosition panel position)
+    (.setSize panel size)
+    (.doLayout (.getLayoutManager panel) size children)
+    (doseq [^Button child children]
+      (.drawComponent ^Button$ButtonRenderer (.getRenderer child) graphics child))
+    (.getColumns size)))
 
 (defn- title-or-placeholder
   "Visible title for the active session. Delegates to the shared
@@ -780,23 +862,14 @@
         active-id
         (active-tab-entry-id db workspaces)
 
-        ;; RIGHT cluster geometry (help/search chips + id badge) is
-        ;; right-aligned by ABSOLUTE `cols` math, independent of the centre
-        ;; slot. On narrow/medium terminals its real width exceeds the
-        ;; layout's `right-w` estimate, so `slot-layout` alone would let the
-        ;; chips paint ON TOP of the tab strip. Compute the cluster's true
-        ;; left edge here and clamp the centre width to stop short of it.
-        chips
-        [[:header-help (str " help (" (keymap/label-for :toggle-help) ") ")]
-         ;; search chip hidden for now — the C-x f binding still works, just no button.
-         #_[:header-search (str " search (" (keymap/label-for :search-open) ") ")]]
-
-        chip-gap
-        1
+        ;; RIGHT cluster geometry is measured by the same real GUI2 GridLayout
+        ;; that positions and paints the action components. Its right margin is
+        ;; the one-cell separation from the id badge.
+        actions-component
+        (header-actions-component g *register-click-regions?*)
 
         cluster-w
-        (long (+ (long (reduce + (map (comp long p/display-width second) chips)))
-                 (* chip-gap (count chips))))
+        (long (.getColumns (.getPreferredSize ^Panel actions-component)))
 
         cluster-start
         (long (max edge-pad (- action-col cluster-w)))
@@ -826,20 +899,10 @@
     ;; affordance. Each chip shows its Emacs chord inline (`C-x h` / `C-x f`)
     ;; so the binding is discoverable right on the button; C-x C-p opens the full
     ;; searchable palette.
-    ;; A declarative flex ROW lays the chips out left→right (`:gap` between),
-    ;; so the coordinate threading is gone — each chip is a measured node that
-    ;; delegates to the shared `button!` (its own paint + hover + click).
-    (flex/render!
-      g
-      cluster-start
-      content-row
-      (flex/row
-        (for [[kind label] chips]
-          (flex/node
-            (p/display-width label)
-            (fn [g x r]
-              (components/button! g x r label kind {:register? *register-click-regions?*}))))
-        {:gap chip-gap}))
+    ;; The action chips are real GUI2 components in a GridLayout. The same tree
+    ;; renders as a standalone HtmlTerminalView and inside this full application;
+    ;; only the absolute hit-region bridge is specific to the immediate-mode host.
+    (draw-header-actions! g actions-component cluster-start content-row)
     ;; Extension-contributed rows.
     (loop [row
            (inc content-row)

@@ -1,19 +1,13 @@
 (ns com.blockether.vis.ext.channel-tui.terminal-image
-  "Inline terminal image rendering — Kitty graphics protocol / iTerm2 inline
-   images.
+  "Inline image rendering for native and HTML Lanterna terminals.
 
-   The pixel-free logic (capability detection, intrinsic dimension sniffing,
-   cell-box sizing, escape encoding, base64/PNG transcoding) now lives in the
-   lanterna fork's Java class
-   `com.googlecode.lanterna.terminal.image.TerminalImage`. This namespace is the
-   thin Clojure adapter that keeps vis's map-shaped API (`{:images …}`,
-   `{:w :h}`, `{:cols :rows}`) plus the attachment-aware paste probe, which
-   reaches back into vis internals and so stays here.
+   Pixel-free capability detection, dimensions and escape encoding live in the
+   Lanterna fork's `TerminalImage`. Browser media is owned by Lanterna's
+   `HtmlTerminal`; this namespace keeps Vis's map-shaped attachment adapter.
 
-   The escape strings are emitted DIRECTLY to the tty AFTER Lanterna's delta
-   refresh (the screen loop owns that), placed over rows the renderer
-   reserved as blanks. Lanterna never sees the graphics bytes, so its cell
-   diff stays intact and the image survives subsequent delta frames."
+   Native Kitty/iTerm2 escapes are emitted directly after Lanterna's delta
+   refresh. The HTML backend instead receives cell-positioned media values over
+   the same reserved rows, so both backends share one transcript layout."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.imaging :as img]
@@ -37,7 +31,19 @@
 
 (def ^:private caps (delay (detect-capabilities)))
 
-(defn images-protocol "`:kitty`, `:iterm2`, or nil for the current terminal." [] (:images @caps))
+(defonce ^:private backend (atom :native))
+
+(defn set-backend!
+  "Select `:native` or `:html` media rendering for the active TUI."
+  [value]
+  (when-not (contains? #{:native :html} value)
+    (throw (ex-info "Unsupported terminal image backend" {:backend value})))
+  (reset! backend value))
+
+(defn images-protocol
+  "`:html`, `:kitty`, `:iterm2`, or nil for the active terminal."
+  []
+  (if (= :html @backend) :html (:images @caps)))
 
 (defn graphical-terminal?
   "Whether we're in a GRAPHICAL terminal — one that speaks an inline-image
@@ -246,6 +252,12 @@
         (when-let [r (if (video-source? f nil) (video->png f box) (still->png f box))]
           (swap! png-transcode-cache assoc key r)
           r))))
+
+(defn html-png-data
+  "Box-fitted PNG bytes for an HTML media node, or nil when decoding fails."
+  [path box]
+  (some-> (transcode->png path box)
+          :data))
 
 (defn transcode->png-base64
   "Decode `path` (any format `com.blockether.imaging` reads) and re-encode it as a

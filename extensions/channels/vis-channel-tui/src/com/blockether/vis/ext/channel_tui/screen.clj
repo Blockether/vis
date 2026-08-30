@@ -10,6 +10,7 @@
             [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.file-suggest :as file-suggest]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
+            [com.blockether.vis.ext.channel-tui.frame :as frame]
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.human-input :as hi]
             [com.blockether.vis.ext.channel-tui.input :as input]
@@ -40,8 +41,10 @@
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
            [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour UnixTerminal]
+           [com.googlecode.lanterna.terminal.html HtmlMedia HtmlMedia$Kind HtmlTerminal]
            [java.io PrintWriter StringWriter]
            [java.nio.charset Charset]
+           [java.nio.file Path]
            [java.util.concurrent TimeUnit]
            [java.util.concurrent.locks ReentrantLock]
            [sun.misc Signal SignalHandler]))
@@ -1876,6 +1879,8 @@
   ;; frame of its own, so the last painted set is remembered here instead of recomputed.
   (atom []))
 
+(defonce ^:private active-html-terminal (atom nil))
+
 (defonce ^:private kitty-image-state
   ;; Transmit-once bookkeeping for the Kitty graphics protocol. Each unique image
   ;; (keyed by path + transmitted box) uploads its PNG ONCE under a client image id;
@@ -1974,13 +1979,36 @@
               (reset! kitty-image-state
                 {:transmits transmits :order order :placed placed :next-id next-id})))))))
 
+(defn- region->html-media
+  [{:keys [row col img]}]
+  (try (let [path
+             (str (:path img))
+
+             builder
+             (if (timg/video-source? path (:mime img))
+               (HtmlMedia/video (.toPath (java.io.File. path)))
+               (when-let [data (timg/html-png-data path {:cols (:cols img) :rows (:rows img)})]
+                 (HtmlMedia/builder HtmlMedia$Kind/IMAGE "image/png" ^bytes data)))]
+
+         (when builder
+           (-> builder
+               (.id (str (or (:id img) path)))
+               (.position (TerminalPosition. (int col) (int row)))
+               (.size (TerminalSize. (int (:cols img)) (int (:rows img))))
+               (.description (.getName (java.io.File. path)))
+               (.build))))
+       (catch Throwable t
+         (tel/log! {:level :debug :id ::html-media-skipped :data {:error (ex-message t)}}
+                   "HTML terminal media could not be embedded.")
+         nil)))
+
+(defn- sync-html-media!
+  [regions]
+  (when-let [^HtmlTerminal terminal @active-html-terminal]
+    (.replaceMedia terminal (vec (keep region->html-media regions)))))
+
 (defn- paint-terminal-images!
-  "Draw every region from `image-regions` onto the terminal's graphics layer,
-   AFTER Lanterna's delta refresh has painted the reserved blank cells. Wrapped
-   in DECSC/DECRC so the shell cursor lands back where Lanterna left it. Kitty
-   images transmit once and re-place (no delete-all, no re-upload), so a scroll
-   moves them without the flicker the old delete+retransmit caused. Skips the
-   whole write when the signature matches the last paint."
+  "Draw visible image regions through the active terminal backend."
   [regions]
   (reset! last-image-regions (vec regions))
   (let [proto
@@ -1988,41 +2016,39 @@
 
         signature
         (mapv (fn [{:keys [row col img]}]
-                [row col (:path img) (:cols img) (:rows img) (:crop-top img) (:crop-bottom img)])
+                [row col (:id img) (:path img) (:cols img) (:rows img) (:crop-top img)
+                 (:crop-bottom img)])
               regions)]
 
     (when (and proto (not= signature @image-paint-state))
-      (let [^java.io.OutputStream out
-            @vis/tty-out
+      (if (= proto :html)
+        (sync-html-media! regions)
+        (let [^java.io.OutputStream out
+              @vis/tty-out
 
-            sb
-            (StringBuilder.)]
+              sb
+              (StringBuilder.)]
 
-        (.append sb "\u001b7") ;; DECSC save cursor
-        (if (= proto :kitty) (emit-kitty-images! sb regions) (emit-iterm2-images! sb regions))
-        (.append sb "\u001b8") ;; DECRC restore cursor
-        (try (when out (.write out (.getBytes (.toString sb) "UTF-8")) (.flush out))
-             (catch Throwable _ nil)))
+          (.append sb "7") ;; DECSC save cursor
+          (if (= proto :kitty) (emit-kitty-images! sb regions) (emit-iterm2-images! sb regions))
+          (.append sb "8") ;; DECRC restore cursor
+          (try (when out (.write out (.getBytes (.toString sb) "UTF-8")) (.flush out))
+               (catch Throwable _ nil))))
       (reset! image-paint-state signature))))
 
 (defn- drop-terminal-images!
-  "Delete every image on the terminal's graphics layer and forget the paint
-   signature so the next full frame re-places them.
-
-   Kitty inline graphics ride ABOVE the text cells, so an image painted for
-   the transcript would otherwise BLEED OVER any modal dialog / overlay drawn
-   on top of it. Dropping them first — and clearing `image-paint-state` so the
-   post-dialog frame repaints — keeps the dialog the top surface. iTerm2 images
-   are cell-bound (repainting the cells erases them), so only Kitty needs the
-   explicit delete; the `image-paint-state` reset still runs for both."
+  "Remove every image from the active terminal media layer."
   []
-  (when (and (= (timg/images-protocol) :kitty) (seq @image-paint-state))
-    (let [^java.io.OutputStream out @vis/tty-out]
-      (try (when out (.write out (.getBytes "\u001b_Ga=d,d=A,q=2\u001b\\" "UTF-8")) (.flush out))
-           (catch Throwable _ nil))))
+  (if (= (timg/images-protocol) :html)
+    (when-let [^HtmlTerminal terminal @active-html-terminal]
+      (.replaceMedia terminal []))
+    (when (and (= (timg/images-protocol) :kitty) (seq @image-paint-state))
+      (let [^java.io.OutputStream out @vis/tty-out]
+        (try (when out
+               (.write out (.getBytes (str (char 27) "_Ga=d,d=A,q=2" (char 27) "\\") "UTF-8"))
+               (.flush out))
+             (catch Throwable _ nil)))))
   (reset! image-paint-state nil)
-  ;; `d=A` above freed the uploaded data too, so forget the transmit cache — the
-  ;; next full frame re-uploads and re-places every visible image.
   (reset! kitty-image-state {:transmits {} :order [] :placed #{} :next-id 1})
   (reset! last-image-regions []))
 
@@ -2470,40 +2496,32 @@
   [db]
   (boolean (or (:help-open? db) (:tasks-open? db) (:human-input db))))
 
+(defn- paint-attachment-rail!
+  [g db rail-top cols]
+  (attachment-rail/draw! g
+                         (:attachments db)
+                         rail-top
+                         cols
+                         {:focused? (:attachment-focus? db) :focused-index (:attachment-index db)}))
+
+(defn- paint-composer!
+  [g input input-top text-rows cols]
+  (render/draw-input-box! g input input-top text-rows cols nil))
+
+
 (defn- draw-bottom-chrome!
-  "Paint the bottom screen chrome — input box, echo-area row, the two
-   footer rows, and slash-command suggestions — then place the text cursor.
-
-   Always draws the full chrome so the input remains visible behind F1/F2
-   overlays (matching the Lanterna modal behaviour where the last frame
-   persists underneath the dialog). When `overlay-locked?` the cursor is
-   hidden so the overlay owns the interactive surface.
-
-   A human-input request is a TRANSIENT, not a modal: its band is anchored
-   directly ABOVE this prompt and never over it, so the box is drawn exactly as
-   always and the operator keeps seeing what they were typing. The band owns the
-   keyboard and the cursor while it is open — `human-input/paint!` places it —
-   which is why the cursor is hidden here."
+  "Paint the bottom screen chrome — attachment rail, composer, echo area, and
+   footer — then place the text cursor. The full-frame path invokes these same
+   painters as separate GridLayout children; this helper remains the focused
+   test/modal entry point."
   [^TerminalScreen screen g db
    {:keys [input input-top rail-top text-rows cols now-ms echo-row footer-row slash-suggestions
            slash-command-index]}]
-  (let [human-input?
-        (some? (:human-input db))
-
-        _
-        (attachment-rail/draw! g
-                               (:attachments db)
-                               rail-top
-                               cols
-                               {:focused? (:attachment-focus? db)
-                                :focused-index (:attachment-index db)})
-
-        [cx cy]
-        (render/draw-input-box! g input input-top text-rows cols nil)]
-
+  (paint-attachment-rail! g db rail-top cols)
+  (let [[cx cy] (paint-composer! g input input-top text-rows cols)]
     (footer/draw-echo-area! g db echo-row cols now-ms)
     (footer/draw-footer! g db footer-row cols now-ms)
-    (when-not human-input?
+    (when-not (:human-input db)
       (render/draw-slash-command-suggestions! g
                                               slash-suggestions
                                               input-top
@@ -2576,27 +2594,55 @@
         (System/nanoTime)
 
         g
-        (.newTextGraphics screen)
+        (frame/surface-graphics screen cols rows)
 
-        {:keys [^long text-rows ^long composer-h ^long input-top ^long rail-top ^long echo-row]}
+        {:keys [^long text-rows ^long input-box-h ^long composer-h ^long rail-h]}
         (composer-geometry db cols rows)
 
+        paint-context
+        (volatile! {})
+
+        root-frame
+        (frame/layout
+          cols
+          rows
+          {:header (header/header-rows db) :attachments rail-h :composer input-box-h :footer 2}
+          (into {}
+                (map (fn [section-id]
+                       [section-id
+                        (fn [graphics component]
+                          (when-let [paint-section (get @paint-context section-id)]
+                            (paint-section graphics component)))])
+                     frame/section-order)))
+
+        section-bounds
+        (into {}
+              (map (fn [[section-id component]]
+                     [section-id (frame/bounds component)]))
+              (:sections root-frame))
+
         header-top
-        0
+        (get-in section-bounds [:header :row])
 
         footer-row
-        (- rows 2)
+        (get-in section-bounds [:footer :row])
 
-        ;; Keep one empty terminal row between the header band (`Vis`/workspace
-        ;; strip) and the first transcript bubble. `draw-messages-area!` then
-        ;; applies its own internal MESSAGE_MARGIN_TOP inside this area; without
-        ;; this outer gap the first recap/progress bubble visually hugs the
-        ;; header bottom rule.
+        ;; `GridLayout` owns the one-row air gap below the header and gives every
+        ;; remaining row to the transcript component.
         messages-top
-        (inc (long (header/header-rows db)))
+        (get-in section-bounds [:transcript :row])
 
         messages-bottom
+        (+ messages-top (get-in section-bounds [:transcript :rows]))
+
         echo-row
+        (get-in section-bounds [:echo :row])
+
+        rail-top
+        (get-in section-bounds [:attachments :row])
+
+        input-top
+        (get-in section-bounds [:composer :row])
 
         ;; Single source of truth for the gutter math lives in `render.clj`
         ;; (`MESSAGE_SIDE_PAD`). Reference it directly; do
@@ -2741,42 +2787,60 @@
           ;; #24's copy-region storm lived in `draw-messages-area!`; bracket it
           ;; with its own timestamps so a regression there reads `messages`, not
           ;; `paint`.
+          cursor-position
+          (volatile! nil)
+
+          _
+          (vreset!
+            paint-context
+            {:transcript
+             (fn [graphics _]
+               (binding [render/*image-placements* image-sink]
+                 (render/draw-messages-area! graphics layout messages-top messages-bottom cols))
+               (when (tab-content-loading? db)
+                 (paint-content-loading! graphics cols messages-top messages-bottom now-ms)))
+             :header (fn [graphics _]
+                       (header/draw-header! graphics db header-top cols))
+             :attachments (fn [graphics _]
+                            (paint-attachment-rail! graphics db rail-top cols))
+             :composer (fn [graphics _]
+                         (let [[cx cy] (paint-composer! graphics input input-top text-rows cols)]
+                           (vreset! cursor-position (TerminalPosition. cx cy))))
+             :echo (fn [graphics _]
+                     (footer/draw-echo-area! graphics db echo-row cols now-ms))
+             :footer (fn [graphics _]
+                       (footer/draw-footer! graphics db footer-row cols now-ms))})
+
+          ;; Messages paint first because they start click-region staging. Every
+          ;; surface is nevertheless invoked through its laid-out GUI2 component.
           messages-start-ns
           (System/nanoTime)
 
           _
-          (binding [render/*image-placements* image-sink]
-            (render/draw-messages-area! g layout messages-top messages-bottom cols))
+          (frame/paint! g root-frame :transcript)
 
           messages-end-ns
           (System/nanoTime)
 
-          ;; Freshly focused pending/building tab with an empty transcript: paint a
-          ;; centered animated spinner in the messages band so a tab switch shows
-          ;; motion instead of a blank void until its history hydrates.
           _
-          (when (tab-content-loading? db)
-            (paint-content-loading! g cols messages-top messages-bottom now-ms))
+          (frame/paint! g root-frame :header)
 
           _
-          (header/draw-header! g db header-top cols)
+          (doseq [section-id [:attachments :composer :echo :footer]]
+            (frame/paint! g root-frame section-id))
 
-          ;; Bottom band (input box + footer + slash suggestions) — always painted so
-          ;; the input stays visible behind F1/F2 overlays (modal-like behaviour).
           _
-          (draw-bottom-chrome! screen
-                               g
-                               db
-                               {:input input
-                                :input-top input-top
-                                :rail-top rail-top
-                                :text-rows text-rows
-                                :cols cols
-                                :now-ms now-ms
-                                :echo-row echo-row
-                                :footer-row footer-row
-                                :slash-suggestions slash-suggestions
-                                :slash-command-index slash-command-index})
+          (when-not (:human-input db)
+            (render/draw-slash-command-suggestions! g
+                                                    slash-suggestions
+                                                    input-top
+                                                    cols
+                                                    slash-command-index))
+
+          _
+          (if (or (overlay-locked? db) (scroll/scrolled-up? (:scroll db)))
+            (.setCursorPosition screen nil)
+            (.setCursorPosition screen ^TerminalPosition @cursor-position))
 
           ;; Atomically publish every chrome region painted above. Until this swap runs the input
           ;; thread sees the PREVIOUS frame's regions, which is the correct fallback - the previous
@@ -3227,7 +3291,7 @@
    Bind header registration off so header-only redraws do not fill the
    staging buffer."
   [^TerminalScreen screen cols _rows db]
-  (let [g (.newTextGraphics screen)]
+  (let [g (frame/surface-graphics screen cols _rows)]
     (binding [header/*register-click-regions?* false]
       (header/draw-header! g db 0 cols))
     (.refresh screen Screen$RefreshType/DELTA)))
@@ -3273,7 +3337,7 @@
         (System/nanoTime)
 
         g
-        (.newTextGraphics screen)
+        (frame/surface-graphics screen cols rows)
 
         cols
         (long cols)
@@ -3652,7 +3716,7 @@
         (System/nanoTime)
 
         g
-        (.newTextGraphics screen)
+        (frame/surface-graphics screen cols rows)
 
         ;; Geometry MUST match render-frame! / render-live-bubble-frame!
         ;; EXACTLY — a one-row slip shifts the viewport + scrollbar and reads
@@ -3789,7 +3853,7 @@
         (long rows)
 
         g
-        (.newTextGraphics screen)
+        (frame/surface-graphics screen cols rows)
 
         {:keys [^long text-rows ^long input-top ^long rail-top ^long echo-row]}
         (composer-geometry db cols rows)
@@ -4930,9 +4994,23 @@
   []
   UnixLikeTerminal$CtrlCBehaviour/TRAP)
 
+(defn- announce-html-terminal!
+  [^HtmlTerminal terminal]
+  (doto ^java.io.PrintStream vis/original-stdout
+    (.println (str "Vis TUI (HTML): " (.getUrl terminal)))
+    (.flush)))
+
 (defn- create-terminal!
-  [_opts]
-  (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset) (terminal-ctrl-c-behaviour)))
+  [opts]
+  (if (:html? opts)
+    (let [terminal (-> (HtmlTerminal/builder)
+                       (.title "Vis terminal")
+                       (.defaultForeground t/text-fg)
+                       (.defaultBackground t/terminal-bg)
+                       (.build))]
+      (announce-html-terminal! terminal)
+      terminal)
+    (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset) (terminal-ctrl-c-behaviour))))
 
 (defn- configure-terminal-input!
   [terminal _opts]
@@ -4998,27 +5076,24 @@
       (catch Throwable _ nil))))
 
 (defn- enable-terminal-escape-modes!
-  [_opts]
-  (input/enable-bracketed-paste! @vis/tty-out)
-  (input/enable-sgr-mouse! @vis/tty-out)
-  ;; Free control bytes that the tty line discipline would otherwise consume:
-  ;; IEXTEN owns Ctrl+V/Ctrl+O; IXON owns Ctrl+S/Ctrl+Q and can freeze all output.
-  (input/disable-literal-next!)
-  (input/disable-software-flow-control!)
-  ;; Match the emulator's window padding to the theme background (OSC 11):
-  ;; without this the 1-cell rim around the Lanterna grid stays the user's
-  ;; default (often white) instead of the theme background.
-  (let [^com.googlecode.lanterna.TextColor$RGB c t/terminal-bg]
-    (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))))
+  [opts]
+  (when-not (:html? opts)
+    (input/enable-bracketed-paste! @vis/tty-out)
+    (input/enable-sgr-mouse! @vis/tty-out)
+    ;; Free control bytes that the tty line discipline would otherwise consume.
+    (input/disable-literal-next!)
+    (input/disable-software-flow-control!)
+    (let [^com.googlecode.lanterna.TextColor$RGB c t/terminal-bg]
+      (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c)))))
 
 (defn- disable-terminal-escape-modes!
-  [_opts]
-  (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
-  (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil))
-  (try (input/reset-default-bg! @vis/tty-out) (catch Throwable _ nil))
-  ;; Restore shell tty semantics even when another teardown action failed.
-  (try (input/restore-software-flow-control!) (catch Throwable _ nil))
-  (try (input/restore-literal-next!) (catch Throwable _ nil)))
+  [opts]
+  (when-not (:html? opts)
+    (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
+    (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil))
+    (try (input/reset-default-bg! @vis/tty-out) (catch Throwable _ nil))
+    (try (input/restore-software-flow-control!) (catch Throwable _ nil))
+    (try (input/restore-literal-next!) (catch Throwable _ nil))))
 
 ;; Encrypted SSH key passphrase prompt — retired.
 ;;
@@ -5132,6 +5207,9 @@
                       "Toggle hydration from config failed; defaults stand.")))
      (let [terminal (create-terminal! opts)
            _ (configure-terminal-input! terminal opts)
+           _ (if (instance? HtmlTerminal terminal)
+               (do (reset! active-html-terminal terminal) (timg/set-backend! :html))
+               (do (reset! active-html-terminal nil) (timg/set-backend! :native)))
            screen (TerminalScreen. terminal)
            ;; Render thread handle is held in a volatile so the `finally`
            ;; clause can join it. (Locals from the `try` body aren't in
@@ -5185,9 +5263,9 @@
                     ;; or every reasoning-effort cycle re-lays out the transcript.
                     (state/dispatch [:resync-toggle-settings (:id event)])
                     (state/dispatch [:bump-render-version]))))
-       ;; Ask the terminal for its real cell pixel size NOW — raw mode is on and
-       ;; nothing reads input yet — so inline-image boxes reserve the exact rows.
-       (probe-terminal-cell-size!)
+       ;; Native graphical terminals report real cell pixels; the browser backend
+       ;; measures its own CSS cell and needs no tty probe.
+       (when-not (:html? opts) (probe-terminal-cell-size!))
        ;; `:close-tab` fires this when the LAST view of an idle session closes:
        ;; invoke + drop that session's SSE live subscription bundle (host title +
        ;; queue-sync/attach stream) so a closed tab stops holding a live
@@ -5232,7 +5310,8 @@
                     (catch Throwable _ (state/dispatch [:older-history-loading sid false])))))))
        (let [ssh-passphrase-cleanup (volatile! nil)]
          (try
-           (vreset! terminal-signal-cleanup (register-terminal-interrupt-handlers!))
+           (when-not (:html? opts)
+             (vreset! terminal-signal-cleanup (register-terminal-interrupt-handlers!)))
            (vreset! ssh-passphrase-cleanup (install-ssh-passphrase-prompt! screen))
            ;; A missing config file does not imply a missing provider: OAuth preset
            ;; credentials live outside config. Use those immediately; only onboard when
@@ -7648,58 +7727,69 @@
              (release-workspace-sessions!)
              (when-let [cleanup @ssh-passphrase-cleanup]
                (try (cleanup) (catch Throwable _ nil)))
-             (.stopScreen screen))))))))
+             (when (and (:html-out opts) (instance? HtmlTerminal terminal))
+               (try (.writeHtml ^HtmlTerminal terminal
+                                (Path/of ^String (str (:html-out opts)) (make-array String 0)))
+                    (catch Throwable t
+                      (tel/log!
+                        {:level :warn :id ::html-export-failed :data {:error (ex-message t)}}
+                        "HTML terminal export failed."))))
+             (try (.stopScreen screen)
+                  (finally (when (instance? HtmlTerminal terminal) (.close ^HtmlTerminal terminal))
+                           (reset! active-html-terminal nil)
+                           (timg/set-backend! :native))))))))))
 
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 (def ^:private tui-usage
   "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] channels tui [--session-id ID | --resume | --continue]")
 
+(def ^:private tui-html-usage
+  "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] channels tui-html [--session-id ID | --resume | --continue] [--html-out PATH]")
+
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 
 (defn- flag-value
-  [flag more]
+  [flag more usage]
   (let [v (first more)]
     (when (missing-value? v)
-      (throw (ex-info (str flag " requires a value" "\nUsage: " tui-usage) {:vis/user-error true})))
+      (throw (ex-info (str flag " requires a value" "\nUsage: " usage) {:vis/user-error true})))
     v))
 
 (defn- parse-args
-  "Parse `vis-agent channels tui` flags.
-     --session-id ID   Resume a session (full UUID or short prefix)
-     --resume, -r           Open the session picker at startup
-     --continue, -c         Reopen the most-recent :tui session
+  "Parse the flags shared by `tui` and `tui-html`."
+  ([args] (parse-args args tui-usage))
+  ([args usage]
+   (loop [args
+          (seq args)
 
-   Unknown flags and missing flag values throw a `:vis/user-error` ex-info
-   so the user sees a clean error instead of the TUI silently swallowing a
-   typo (e.g. `--sessions-id`)."
-  [args]
-  (loop [args
-         (seq args)
+          opts
+          {}]
 
-         opts
-         {}]
+     (if-not args
+       opts
+       (let [arg
+             (first args)
 
-    (if-not args
-      opts
-      (let [arg
-            (first args)
+             more
+             (next args)]
 
-            more
-            (next args)]
+         (case arg
+           "--session-id"
+           (let [v (flag-value arg more usage)]
+             (recur (next more) (assoc opts :session-id v)))
 
-        (case arg
-          "--session-id"
-          (let [v (flag-value arg more)]
-            (recur (next more) (assoc opts :session-id v)))
+           ("--resume" "-r")
+           (recur more (assoc opts :resume true))
 
-          ("--resume" "-r")
-          (recur more (assoc opts :resume true))
+           ("--continue" "-c")
+           (recur more (assoc opts :continue true))
 
-          ("--continue" "-c")
-          (recur more (assoc opts :continue true))
+           "--html-out"
+           (let [v (flag-value arg more usage)]
+             (recur (next more) (assoc opts :html-out v)))
 
-          (throw (ex-info (str "unknown flag: " arg "\nUsage: " tui-usage)
-                          {:vis/user-error true})))))))
+           (throw (ex-info (str "unknown flag: " arg "\nUsage: " usage)
+                           {:vis/user-error true}))))))))
 
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,
@@ -7725,67 +7815,51 @@
     (alter-var-root #'*err* (constantly log-w))))
 
 (defn- print-session-id-on-exit!
-  "After the fullscreen TUI releases the terminal, print the session id
-   back to the shell so users can resume/copy it from scrollback. During the
-   TUI session the same id is visible in the header; stdout is intentionally
-   quiet until teardown because Lanterna owns the screen."
-  []
-  (when-let [id (current-session-id)]
-    (let [^java.io.PrintStream out vis/original-stdout]
-      ;; Lanterna leaves the cursor wherever the alt-screen teardown
-      ;; parked it (rarely column 0), so a bare println lands the
-      ;; banner mid-row and the leading char looks "eaten". Lead with
-      ;; a carriage return to snap back to column 0 first.
-      ;; Explicit `\n` (not println) so the banner is byte-identical on every OS.
-      (.print out "\rResume with:\n")
-      (.print out (str "vis-agent channels tui --session-id " id "\n"))
-      (.flush out))))
+  "Print the session id after the terminal releases its output surface."
+  ([] (print-session-id-on-exit! "tui"))
+  ([command]
+   (when-let [id (current-session-id)]
+     (let [^java.io.PrintStream out vis/original-stdout]
+       (.print out "\rResume with:\n")
+       (.print out (str "vis-agent channels " command " --session-id " id "\n"))
+       (.flush out)))))
 
-(defn channel-main
-  "Channel entry point: full TUI bootstrap. Performs the stdout/stderr
-   redirect, runs `vis/init!`, then hands off to `run-chat!`. Errors
-   surface on the original terminal and the log file.
-
-   Invoked by `com.blockether.vis.core` dispatch - not called from
-   vis-runtime directly."
-  [args]
+(defn- run-channel-main!
+  [args {:keys [html? command usage]}]
   (redirect-stdio-to-log!)
   (vis/init!)
   (let [exit-code (atom 0)]
-    (try (run-chat! (parse-args args))
-         (print-session-id-on-exit!)
+    (try (run-chat! (cond-> (parse-args args usage)
+                      html?
+                      (assoc :html? true)))
+         (if html? (print-session-id-on-exit! command) (print-session-id-on-exit!))
          (catch Throwable t
            (if-let [ue (loop [c t]
                          (cond (nil? c) nil
                                (:vis/user-error (ex-data c)) c
                                :else (recur (.getCause c))))]
-             ;; Caller-facing error: invalid flag value, missing
-             ;; session id, etc. Print the message clean and let the
-             ;; process exit non-zero - no Java stack trace, no rethrow
-             ;; (which would trigger clojure.main's auto-trace dump).
              (do (if-let [panel (seq (:vis/panel (ex-data ue)))]
                    (doseq [line panel]
                      (.println ^java.io.PrintStream vis/original-stdout ^String (str line)))
                    (.println ^java.io.PrintStream vis/original-stdout
                              (str "vis-agent: " (.getMessage ^Throwable ue))))
                  (reset! exit-code 2))
-             ;; Genuine fatal: dump the trace to the terminal AND the log
-             ;; so we can post-mortem it.
              (do (.println ^java.io.PrintStream vis/original-stdout
                            (str "vis-agent: fatal error - " (.getMessage t)))
                  (.printStackTrace t (java.io.PrintStream. ^java.io.OutputStream @vis/tty-out true))
                  (throw t))))
-         (finally (vis/shutdown!)
-                  ;; Stop the agent thread-pool so the JVM can exit immediately
-                  ;; after the TUI tears down. Without this the pool's non-daemon
-                  ;; threads keep the process alive for ~60s of idle keep-alive,
-                  ;; which from the user's seat looks like "Ctrl+C froze vis":
-                  ;; the screen is gone, raw mode is restored, but the shell
-                  ;; prompt does not return. The CLI channel path already
-                  ;; calls `shutdown-agents` after its main loop; the TUI did
-                  ;; not, so the hang was channel-specific.
-                  (try (shutdown-agents) (catch Throwable _ nil))))
+         (finally (vis/shutdown!) (try (shutdown-agents) (catch Throwable _ nil))))
     (when (pos? (long @exit-code)) (System/exit (int @exit-code)))))
+
+(defn channel-main
+  "Native terminal channel entry point."
+  [args]
+  (run-channel-main! args {:html? false :command "tui" :usage tui-usage}))
+
+(defn html-channel-main
+  "Browser terminal channel entry point over the complete Vis TUI."
+  [args]
+  (run-channel-main! args {:html? true :command "tui-html" :usage tui-html-usage}))
 
 ;;; Channel registration lives in com.blockether.vis.ext.channel-tui.core.
 ;;; Keep this namespace as the heavyweight runtime implementation loaded only

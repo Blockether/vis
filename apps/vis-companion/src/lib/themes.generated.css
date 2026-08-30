@@ -42,9 +42,9 @@
   --dialog-title-bg: #3f3f3f;
   --dialog-title-fg: #faf3eb;
   --dim: #625d57;
-  --err: #c12121;
+  --err: #bf2020;
   --fg: #262626;
-  --footer-error: #c12121;
+  --footer-error: #bf2020;
   --footer-fg: #3f3f3f;
   --footer-muted: #625d57;
   --footer-spinner: #107636;
@@ -289,7 +289,7 @@
   --dialog-border: #93a1a1;
   --dialog-fg: #3e4c51;
   --dialog-hint: #575f5f;
-  --dialog-hint-key: #586e75;
+  --dialog-hint-key: #546970;
   --dialog-shadow: #d5cebd;
   --dialog-title-bg: #586e75;
   --dialog-title-fg: #fdf6e3;
@@ -378,9 +378,9 @@
   --dialog-title-bg: #334155;
   --dialog-title-fg: #ffffff;
   --dim: #a0a0a0;
-  --err: #f87171;
+  --err: #f87474;
   --fg: #e2e8f0;
-  --footer-error: #f87171;
+  --footer-error: #f87474;
   --footer-fg: #cbd5e1;
   --footer-muted: #94a3b8;
   --footer-spinner: #4ade80;

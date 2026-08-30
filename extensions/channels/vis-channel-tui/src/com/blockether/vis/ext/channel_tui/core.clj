@@ -17,6 +17,9 @@
 (def tui-usage
   "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] channels tui [--session-id ID | --resume | --continue]")
 
+(def tui-html-usage
+  "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] channels tui-html [--session-id ID | --resume | --continue] [--html-out PATH]")
+
 (defn render-for-tui
   "Project canonical typed content blocks to Markdown for the TUI."
   ([blocks] (render-for-tui blocks nil))
@@ -66,34 +69,44 @@
         (str/join "\n\n"))))
 
 (defn- require-screen-channel-main
-  "Resolve the heavyweight screen channel entry point without doing gateway work.
-   Arguments, including `--session-id`, stay untouched so the screen can paint
-   before its deferred startup worker resolves the requested session."
-  []
-  (or (requiring-resolve 'com.blockether.vis.ext.channel-tui.screen/channel-main)
+  "Resolve a heavyweight screen entry point without doing gateway work."
+  [entrypoint]
+  (or (requiring-resolve entrypoint)
       (throw (ex-info "TUI screen channel entry point did not resolve"
-                      {:type :channel-tui/missing-screen-main}))))
+                      {:type :channel-tui/missing-screen-main :entrypoint entrypoint}))))
 
 (defn channel-main
-  "Lazy channel entry point. Loading the Lanterna screen stack is deferred until
-   the TUI channel is invoked; all gateway work begins after its first paint."
+  "Lazy native-terminal entry point."
   [args]
-  ((require-screen-channel-main) args))
+  ((require-screen-channel-main 'com.blockether.vis.ext.channel-tui.screen/channel-main) args))
+
+(defn html-channel-main
+  "Lazy browser-terminal entry point over the same Lanterna application."
+  [args]
+  ((require-screen-channel-main 'com.blockether.vis.ext.channel-tui.screen/html-channel-main) args))
 
 (def tui-extension
-  (vis/extension {:ext/name "channel-tui"
-                  :ext/description "Lanterna-based terminal UI channel."
-                  :ext/version "0.3.0"
-                  :ext/author "Blockether"
-                  :ext/owner "vis"
-                  :ext/license "Apache-2.0"
-                  :ext/channels [{:channel/id :tui
-                                  :channel/cmd "tui"
-                                  :channel/doc "Interactive terminal UI."
-                                  :channel/usage tui-usage
-                                  :channel/owns-tty? true
-                                  :channel/main-fn #'channel-main
-                                  :channel/messages-renderer-fn #'render-for-tui}]
-                  :ext/channel-contributions builtin-hooks/channel-contributions}))
+  (vis/extension
+    {:ext/name "channel-tui"
+     :ext/description "Lanterna-based terminal UI channel."
+     :ext/version "0.3.0"
+     :ext/author "Blockether"
+     :ext/owner "vis"
+     :ext/license "Apache-2.0"
+     :ext/channels [{:channel/id :tui
+                     :channel/cmd "tui"
+                     :channel/doc "Interactive terminal UI."
+                     :channel/usage tui-usage
+                     :channel/owns-tty? true
+                     :channel/main-fn #'channel-main
+                     :channel/messages-renderer-fn #'render-for-tui}
+                    {:channel/id :tui-html
+                     :channel/cmd "tui-html"
+                     :channel/doc "Interactive browser-rendered terminal UI."
+                     :channel/usage tui-html-usage
+                     :channel/owns-tty? false
+                     :channel/main-fn #'html-channel-main
+                     :channel/messages-renderer-fn #'render-for-tui}]
+     :ext/channel-contributions builtin-hooks/channel-contributions}))
 
 (defn register! [] (vis/register-extension! tui-extension))

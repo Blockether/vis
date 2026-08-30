@@ -39,8 +39,11 @@
         lb
         (relative-luminance b)
 
-        [hi lo]
-        (if (>= la lb) [la lb] [lb la])]
+        hi
+        (if (>= la lb) la lb)
+
+        lo
+        (if (>= la lb) lb la)]
 
     (/ (+ hi 0.05) (+ lo 0.05))))
 
@@ -106,19 +109,27 @@
 
 (defdescribe
   adapter-coverage-test
-  (describe "TUI adapter consumes every shared theme token"
-            (it "has a public Lanterna var for every palette token and matches light theme values"
-                (try (t/apply-theme! :vis-light)
-                     (doseq [[token expected] (:palette shared-theme/vis-light)]
-                       (let [v (ns-resolve 'com.blockether.vis.ext.channel-tui.theme
-                                           (symbol (name token)))]
-                         (expect (some? v))
-                         (expect (= expected (rgb-vec @v)))))
-                     (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
-            (it "applies dark theme through the atom-backed shared theme registry"
-                (try (t/apply-theme! :vis-dark)
-                     (expect (= [12 14 18] (rgb-vec t/terminal-bg)))
-                     (expect (= (:widths shared-theme/vis-dark) t/default-widths))
-                     (expect (= (:fonts shared-theme/vis-dark) t/default-fonts))
-                     (expect (= (:spacing shared-theme/vis-dark) t/default-spacing))
-                     (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))))
+  (describe
+    "TUI adapter consumes every shared theme token"
+    (it "has a public Lanterna var for every palette token and matches light theme values"
+        (try (t/apply-theme! :vis-light)
+             (doseq [[token expected] (:palette shared-theme/vis-light)]
+               (let [v (ns-resolve 'com.blockether.vis.ext.channel-tui.theme (symbol (name token)))]
+                 (expect (some? v))
+                 (expect (= expected (rgb-vec @v)))))
+             (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
+    (it "applies dark theme through the atom-backed shared theme registry"
+        (try (t/apply-theme! :vis-dark)
+             (expect (= [12 14 18] (rgb-vec t/terminal-bg)))
+             (expect (= (:widths shared-theme/vis-dark) t/default-widths))
+             (expect (= (:fonts shared-theme/vis-dark) t/default-fonts))
+             (expect (= (:spacing shared-theme/vis-dark) t/default-spacing))
+             (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))
+    (it "keeps active selections, keyboard hints, and error banners AA-readable in every theme"
+        (try (doseq [theme-id (map keyword (shared-theme/available-theme-ids))]
+               (t/apply-theme! theme-id)
+               (expect (>= (contrast-ratio t/header-active-tab-fg t/header-active-tab-bg) 4.5))
+               (expect (>= (contrast-ratio t/dialog-hint-key t/dialog-bg) 4.5))
+               (expect (>= (contrast-ratio t/status-bad t/warning-bg) 4.5))
+               (expect (>= (contrast-ratio t/footer-error-fg t/warning-bg) 4.5)))
+             (finally (t/apply-theme! (keyword shared-theme/default-theme-id)))))))

@@ -11,7 +11,7 @@
             ;; Loaded for its side effect: registers the `shell` toggle (internal
             ;; foundation, at ns load), which the settings-rows test asserts.
             [com.blockether.vis.internal.foundation.shell])
-  (:import [com.googlecode.lanterna TerminalPosition]
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
@@ -877,6 +877,63 @@
         (expect (= [{:theme-id :vis-dark :label "Vis Dark"}
                     {:theme-id :vis-light :label "Vis Light"}]
                    (theme-picker-items [:vis-dark :vis-light])))))
+  (it
+    "theme choices preview by wheel and commit by pointer"
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+          (term/virtual-screen)
+
+          choose-theme!
+          (var-get #'dlg/theme-picker-dialog!)
+
+          adaptive-content-height
+          (var-get #'dlg/adaptive-content-height)
+
+          dialog-layout
+          (var-get #'dlg/dialog-layout)
+
+          choices
+          [:vis-light :vis-dark :blockether-dark]
+
+          size
+          (.getTerminalSize screen)
+
+          cols
+          (.getColumns size)
+
+          rows
+          (.getRows size)
+
+          content-w
+          ((var-get #'dlg/theme-picker-content-width) cols)
+
+          content-h
+          (adaptive-content-height rows (count choices))
+
+          bounds
+          (dlg/draw-dialog-chrome! (.newTextGraphics screen) cols rows "Theme" content-w content-h)
+
+          left
+          (:left bounds)
+
+          {:keys [content-top]}
+          (dialog-layout bounds (count choices))
+
+          target
+          (TerminalPosition. (int (inc (long left))) (int (+ (long content-top) 2)))
+
+          previews
+          (atom [])]
+
+      (try (.addInput terminal (wheel-down))
+           (.addInput terminal (MouseAction. MouseActionType/CLICK_DOWN 0 target))
+           (.addInput terminal (MouseAction. MouseActionType/CLICK_RELEASE 0 target))
+           ;; Keeps the pre-fix loop bounded: ignored pointer events fall through
+           ;; to Enter and reveal that the original row was never changed.
+           (.addInput terminal (KeyStroke. KeyType/Enter))
+           (expect (= :blockether-dark
+                      (choose-theme! screen choices :vis-light #(swap! previews conj %))))
+           (expect (some #{:vis-dark} @previews))
+           (finally (.stopScreen screen)))))
   (it
     "Settings is ONE flat list (no tabs): Terminal UI + grouped toggles + Models"
     (let [settings-rows (var-get #'dlg/settings-rows)]
@@ -2255,6 +2312,98 @@
                    (expect (= track-top (:thumb beside)))
                    (expect (= before (:row beside)))))
                (finally (.stopScreen screen))))))))
+
+(defdescribe modal-resize-wake-test
+             (it "wakes a blocked modal and clears its old frame when the terminal resizes"
+                 (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                       (term/virtual-screen)
+
+                       marker
+                       (TerminalPosition. 4 4)
+
+                       reader
+                       (future (dlg/read-modal-key! screen))]
+
+                   (try (doto (.newTextGraphics screen) (.putString marker "OLD"))
+                        (.refresh screen)
+                        (.setTerminalSize terminal (TerminalSize. 100 36))
+                        (let [key (deref reader 750 ::blocked)]
+                          (when (= ::blocked key) (.addInput terminal (KeyStroke. KeyType/Escape)))
+                          (expect (not= ::blocked key))
+                          (expect (= KeyType/Unknown (.getKeyType ^KeyStroke key)))
+                          (expect (= (TerminalSize. 100 36) (.getTerminalSize screen)))
+                          (expect (str/blank? (.getCharacterString
+                                                (.getBackCharacter screen 4 4)))))
+                        (finally (when-not (future-done? reader)
+                                   (.addInput terminal (KeyStroke. KeyType/Escape))
+                                   (deref reader 750 nil))
+                                 (.stopScreen screen))))))
+
+(defdescribe modal-paint-resize-clear-test
+             (it "clears stale cells when a paint loop consumes the resize first"
+                 (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+                       (term/virtual-screen)
+
+                       marker
+                       (TerminalPosition. 4 4)
+
+                       modal-size!
+                       (var-get #'dlg/modal-size!)]
+
+                   (try (doto (.newTextGraphics screen) (.putString marker "OLD"))
+                        (.refresh screen)
+                        (.setTerminalSize terminal (TerminalSize. 100 36))
+                        (expect (= (TerminalSize. 100 36) (modal-size! screen)))
+                        (expect (str/blank? (.getCharacterString (.getBackCharacter screen 4 4))))
+                        (finally (.stopScreen screen))))))
+
+(defdescribe settings-responsive-frame-test
+             (it "keeps every visible settings cell inside the dialog at every supported width"
+                 (let [rows
+                       30
+
+                       settings-content-width
+                       (var-get #'dlg/settings-content-width)
+
+                       settings-content-height
+                       (var-get #'dlg/settings-content-height)]
+
+                   (doseq [cols (range 20 401)]
+                     (let [terminal (DefaultVirtualTerminal. (TerminalSize. cols rows))
+                           screen (doto (TerminalScreen. terminal) (.startScreen))
+                           {:keys [left right]} (dlg/dialog-bounds cols
+                                                                   rows
+                                                                   (settings-content-width cols)
+                                                                   (settings-content-height rows))]
+
+                       (try (.addInput terminal (KeyStroke. KeyType/Escape))
+                            (with-redefs-fn {#'dlg/load-inventories! (constantly nil)}
+                              #(dlg/settings-dialog! screen {} nil))
+                            (let [outside-ink
+                                  (for [y (range rows)
+                                        x (range cols)
+                                        :when (or (< x left) (> x right))
+                                        :let [cell (.getCharacter terminal (TerminalPosition. x y))
+                                              text (when cell (.getCharacterString cell))]
+                                        :when (and text (not (str/blank? text)))]
+
+                                    [x y text])]
+                              (expect (= [] (vec outside-ink))))
+                            (finally (.stopScreen screen)))))))
+             (it "collapses the rail until both panes fit and always returns bounded geometry"
+                 (let [geometry
+                       (var-get #'dlg/settings-pane-geometry)
+
+                       left
+                       3]
+
+                   (doseq [inner-w (range 1 401)]
+                     (let [{:keys [split? rail-w pane-left pane-width]} (geometry left inner-w)]
+                       (expect (= (>= inner-w 32) split?))
+                       (expect (= (if split? (p/clamp (quot inner-w 4) 14 22) 0) rail-w))
+                       (expect (<= left pane-left))
+                       (expect (pos? pane-width))
+                       (expect (<= (+ pane-left pane-width) (+ left inner-w))))))))
 
 (defdescribe
   dialog-title-column-measure-test

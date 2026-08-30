@@ -95,7 +95,7 @@
   [old-db new-db]
   (not= (active-view-slice old-db) (active-view-slice new-db)))
 
-(defn- notify-render! [] (locking render-monitor (.notifyAll render-monitor)))
+(defn- notify-render! [] (locking render-monitor (.notifyAll ^Object render-monitor)))
 
 (defn reg-event-db
   "Register a pure event handler: (fn [db event-vec] new-db)"
@@ -858,10 +858,14 @@
   (-> settings
       (update :theme-name normalize-theme-name)
       (update :contributors-disabled
-              (fn [v]
-                (cond (nil? v) #{}
-                      (set? v) v
-                      :else (set v))))))
+              (fn [ids]
+                (into #{}
+                      (keep (fn [id]
+                              (cond (keyword? id) id
+                                    (string? id) (let [id (str/trim id)]
+                                                   (when-not (str/blank? id) (keyword id)))
+                                    :else nil)))
+                      (or ids []))))))
 
 (defn- migrated-toggle-projection
   "Pull the migrated boolean + enum toggles back into a flat
@@ -932,16 +936,16 @@
         (try (vis/load-config-raw) (catch Throwable _ nil))
 
         saved
-        (when (map? raw) (get raw "tui-settings"))
+        (when (map? raw) (get raw "tui_settings"))
 
         runtime-saved
         (when (map? saved)
           (cond-> {}
-            (contains? saved "theme-name")
-            (assoc :theme-name (get saved "theme-name"))
+            (contains? saved "theme_name")
+            (assoc :theme-name (get saved "theme_name"))
 
-            (contains? saved "contributors-disabled")
-            (assoc :contributors-disabled (get saved "contributors-disabled"))))]
+            (contains? saved "contributors_disabled")
+            (assoc :contributors-disabled (get saved "contributors_disabled"))))]
 
     (normalize-settings (merge default-settings runtime-saved))))
 
@@ -956,9 +960,19 @@
    outrank the files they came from. `update-machine-config!` reads the machine
    tier alone, under the store's lock."
   [settings]
-  (try (vis/update-machine-config! (fn [raw]
-                                     (assoc raw "tui-settings" settings)))
-       (catch Throwable _ nil)))
+  (let [{:keys [theme-name contributors-disabled]}
+        (normalize-settings settings)
+
+        wire-settings
+        {"theme_name" (name theme-name)
+         "contributors_disabled" (->> contributors-disabled
+                                      (map name)
+                                      sort
+                                      vec)}]
+
+    (try (vis/update-machine-config! (fn [raw]
+                                       (assoc raw "tui_settings" wire-settings)))
+         (catch Throwable _ nil))))
 
 (defn- apply-settings-update!
   "Merge `new-settings` over the local-owned slice (theme +
@@ -1338,7 +1352,7 @@
 
 (defn init!
   "Initialize app-db with default state. The persisted layer now
-   has two halves: `~/.vis/config.edn :tui-settings` holds the
+   has two halves: `~/.vis/state.yml :tui_settings` holds the
    handful of locals this channel still owns (theme +
    contributors-disabled). All migrated booleans / enums live in the
    toggles registry (`:toggles` slot, loaded by

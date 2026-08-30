@@ -124,7 +124,7 @@
 (defn cache-size
   "Current number of entries (handy for tests/diagnostics)."
   ^long []
-  (locking fmt-cache (.size fmt-cache)))
+  (locking fmt-cache (.size ^LinkedHashMap fmt-cache)))
 
 (def ^:private live-body-throttle-ms
   "Minimum wall-clock gap (ms) between full re-projections of the LIVE
@@ -4534,7 +4534,13 @@
                 (max 1 (long (:rows box)))
 
                 img
-                {:path path :mime mime :cols (:cols box) :rows rows :width width :height height}]
+                {:id (str node-id)
+                 :path path
+                 :mime mime
+                 :cols (:cols box)
+                 :rows rows
+                 :width width
+                 :height height}]
 
             ;; First reserved row carries the paint meta; the rest are
             ;; blanks the graphics sequence spans over. Every row is

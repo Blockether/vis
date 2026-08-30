@@ -582,67 +582,84 @@
       ;; real bottom is far below the stale layout's. Nothing may animate there.
       (expect (not (scroll/animating? (:scroll @state/app-db) 970)))))
 
-(defdescribe init-settings-test
-             (it "loads the default balanced reasoning level when config has none"
-                 (with-redefs [vis/load-config-raw (fn []
-                                                     {})]
-                   (state/init!)
-                   (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
-                   (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
-                   (expect (= :blockether-light (get-in @state/app-db [:settings :theme-name])))
-                   (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
-                   (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))))
-             (it "hydrates persisted enum toggles into the registry"
-                 ;; The persistence shape now lives under `:toggles`, not
-                 ;; `:tui-settings`. `state/init!` keeps the `:settings`
-                 ;; projection coherent by pulling each migrated toggle's value
-                 ;; off the registry. (In production `screen/run-chat!` runs
-                 ;; hydration AFTER `init!` and then dispatches
-                 ;; `:resync-toggle-settings` — see the regression test below.)
-                 (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :deep}})
-                 (try (with-redefs [vis/load-config-raw (fn []
-                                                          {})]
-                        (state/init!)
-                        (expect (= "deep" (get-in @state/app-db [:settings :reasoning-level]))))
-                      (finally (vis/toggle-reset-to-default! "reasoning_level"))))
-             (it "resync repairs the projection when hydration runs AFTER init! (production order)"
-                 ;; Regression: `screen/run-chat!` calls `state/init!` FIRST — projecting
-                 ;; registry DEFAULTS into `:settings` — and only THEN hydrates the toggles
-                 ;; from config, followed by a `:resync-toggle-settings` dispatch. Without
-                 ;; that resync the footer keeps showing the default (`balanced`) while the
-                 ;; real toggle holds the persisted value, so the first Ctrl+X r cycle
-                 ;; advances the toggle only up to the already-displayed level and appears
-                 ;; to do nothing.
-                 (try (with-redefs [vis/load-config-raw (fn []
-                                                          {})]
-                        (state/init!)                     ;; projects default :balanced
-                        (vis/toggles-hydrate-from-config! ;; toggle -> persisted :quick
-                          {:toggles {"reasoning_level" :quick}})
-                        (expect (= "balanced" ;; stale projection, pre-resync
-                                   (get-in @state/app-db [:settings :reasoning-level])))
-                        (state/dispatch [:resync-toggle-settings]) ;; the fix
-                        (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
-                      (finally (vis/toggle-reset-to-default! "reasoning_level"))))
-             (it "hydrates verbosity from the toggles registry"
-                 (vis/toggles-hydrate-from-config! {:toggles {"verbosity" :medium}})
-                 (try (with-redefs [vis/load-config-raw (fn []
-                                                          {})]
-                        (state/init!)
-                        (expect (= "medium" (get-in @state/app-db [:settings :verbosity]))))
-                      (finally (vis/toggle-reset-to-default! "verbosity"))))
-             (it "drops invalid persisted enum values back to registered defaults"
-                 ;; `hydrate-from-config!` routes through `set-value!` which
-                 ;; validates against `:choices`. Invalid entries are silently
-                 ;; skipped — the registered default stands.
-                 (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :turbo
-                                                              "verbosity" :loud}})
-                 (try (with-redefs [vis/load-config-raw (fn []
-                                                          {})]
-                        (state/init!)
-                        (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
-                        (expect (= "low" (get-in @state/app-db [:settings :verbosity]))))
-                      (finally (vis/toggle-reset-to-default! "reasoning_level")
-                               (vis/toggle-reset-to-default! "verbosity")))))
+(defdescribe
+  init-settings-test
+  (it "loads the default balanced reasoning level when config has none"
+      (with-redefs [vis/load-config-raw (fn []
+                                          {})]
+        (state/init!)
+        (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
+        (expect (= "low" (get-in @state/app-db [:settings :verbosity])))
+        (expect (= :blockether-light (get-in @state/app-db [:settings :theme-name])))
+        (expect (not (contains? (:settings @state/app-db) :differentiate-turns)))
+        (expect (true? (get-in @state/app-db [:settings :mouse-selection-copy])))))
+  (it "loads persisted local TUI settings from YAML wire keys"
+      (with-redefs [vis/load-config-raw (fn []
+                                          {"tui_settings" {"theme_name" "vis-dark"
+                                                           "contributors_disabled" ["voice"]}})]
+        (state/init!)
+        (expect (= :vis-dark (get-in @state/app-db [:settings :theme-name])))
+        (expect (= #{:voice} (get-in @state/app-db [:settings :contributors-disabled])))))
+  (it "writes local TUI settings using schema-valid YAML wire keys"
+      (let [written (atom nil)]
+        (with-redefs [vis/update-machine-config! (fn [f]
+                                                   (reset! written (f {"vision_memory"
+                                                                       {"working_eye" {}}})))]
+          (#'state/persist-settings! {:theme-name :vis-dark :contributors-disabled #{:voice :goal}})
+          (expect (= {"vision_memory" {"working_eye" {}}
+                      "tui_settings" {"theme_name" "vis-dark"
+                                      "contributors_disabled" ["goal" "voice"]}}
+                     @written)))))
+  (it "hydrates persisted enum toggles into the registry"
+      ;; The persistence shape now lives under `:toggles`, not
+      ;; `:tui-settings`. `state/init!` keeps the `:settings`
+      ;; projection coherent by pulling each migrated toggle's value
+      ;; off the registry. (In production `screen/run-chat!` runs
+      ;; hydration AFTER `init!` and then dispatches
+      ;; `:resync-toggle-settings` — see the regression test below.)
+      (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :deep}})
+      (try (with-redefs [vis/load-config-raw (fn []
+                                               {})]
+             (state/init!)
+             (expect (= "deep" (get-in @state/app-db [:settings :reasoning-level]))))
+           (finally (vis/toggle-reset-to-default! "reasoning_level"))))
+  (it "resync repairs the projection when hydration runs AFTER init! (production order)"
+      ;; Regression: `screen/run-chat!` calls `state/init!` FIRST — projecting
+      ;; registry DEFAULTS into `:settings` — and only THEN hydrates the toggles
+      ;; from config, followed by a `:resync-toggle-settings` dispatch. Without
+      ;; that resync the footer keeps showing the default (`balanced`) while the
+      ;; real toggle holds the persisted value, so the first Ctrl+X r cycle
+      ;; advances the toggle only up to the already-displayed level and appears
+      ;; to do nothing.
+      (try (with-redefs [vis/load-config-raw (fn []
+                                               {})]
+             (state/init!)                     ;; projects default :balanced
+             (vis/toggles-hydrate-from-config! ;; toggle -> persisted :quick
+               {:toggles {"reasoning_level" :quick}})
+             (expect (= "balanced" ;; stale projection, pre-resync
+                        (get-in @state/app-db [:settings :reasoning-level])))
+             (state/dispatch [:resync-toggle-settings]) ;; the fix
+             (expect (= "quick" (get-in @state/app-db [:settings :reasoning-level]))))
+           (finally (vis/toggle-reset-to-default! "reasoning_level"))))
+  (it "hydrates verbosity from the toggles registry"
+      (vis/toggles-hydrate-from-config! {:toggles {"verbosity" :medium}})
+      (try (with-redefs [vis/load-config-raw (fn []
+                                               {})]
+             (state/init!)
+             (expect (= "medium" (get-in @state/app-db [:settings :verbosity]))))
+           (finally (vis/toggle-reset-to-default! "verbosity"))))
+  (it "drops invalid persisted enum values back to registered defaults"
+      ;; `hydrate-from-config!` routes through `set-value!` which
+      ;; validates against `:choices`. Invalid entries are silently
+      ;; skipped — the registered default stands.
+      (vis/toggles-hydrate-from-config! {:toggles {"reasoning_level" :turbo "verbosity" :loud}})
+      (try (with-redefs [vis/load-config-raw (fn []
+                                               {})]
+             (state/init!)
+             (expect (= "balanced" (get-in @state/app-db [:settings :reasoning-level])))
+             (expect (= "low" (get-in @state/app-db [:settings :verbosity]))))
+           (finally (vis/toggle-reset-to-default! "reasoning_level")
+                    (vis/toggle-reset-to-default! "verbosity")))))
 
 (defdescribe
   settings-shortcut-test

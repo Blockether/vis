@@ -3,8 +3,8 @@ name: design
 description: >
   The binding design contract for every Vis surface: companion web/iOS/Android and TUI. Read it
   before changing or reviewing layout, controls, type, colour, motion, copy, stories, interactive
-  previews or screenshots, and again before calling the result done. Storybook renders the shipped
-  UI; Spel drives and verifies it; companion reviews receive self-contained HTML from the same code.
+  previews or screenshots, and again before calling the result done. Storybook and Lanterna's HTML
+  terminal render the shipped UI; Spel drives and verifies both; reviews receive self-contained HTML.
 ---
 
 # Design
@@ -111,10 +111,11 @@ Reject on sight:
 
 ## 5. Draw, verify and attach the product
 
-There is no hand-built mockup. A proposal is a small diff in `src/**`, rendered from the app's own
-build, then kept or reverted. Storybook draws components and deterministic states; the running app
-draws screens with real data. **Use stable Storybook as a renderer. Do not add MCP, prerelease agent
-tools or a second browser layer: Spel already navigates, measures and exercises it.**
+There is no hand-built mockup. A proposal is a small diff in production source, rendered from the
+app's own build, then kept or reverted. Companion uses stable Storybook for components and the
+running app for screens. TUI uses Lanterna `HtmlTerminalView` for one production GUI2 component and
+`HtmlTerminal` for the complete application. **Do not add MCP, a copied HTML implementation, or a
+second browser layer: Spel already navigates, measures and exercises both renderers.**
 
 Split by ownership, not line count or DOM shape. A screen owns routing, data loading and
 orchestration; a feature component may own one coherent interaction and all of its visible states so
@@ -122,9 +123,10 @@ it can be rendered and tested alone. Keep a one-use screen fragment local. A gen
 `ui.tsx` only at its second real call site, with both callers converted in the same commit. Never
 extract a wrapper, a speculative prop matrix or a preview-only twin of production markup.
 
-Every reusable visual component and meaningful state has a story in the same commit. Vocabulary
-controls live in `ui.stories.tsx`; data-heavy components use their colocated story and the one fixture
-module `src/dev/story-data.ts`. Stories never fetch, wait on timers or generate random data.
+Every reusable companion visual component and meaningful state has a story in the same commit.
+Vocabulary controls live in `ui.stories.tsx`; data-heavy components use their colocated story and the
+one fixture module `src/dev/story-data.ts`. Stories never fetch, wait on timers or generate random
+data. Every reusable TUI state has a deterministic production-component `HtmlTerminalView` fixture.
 
 ### Inspect the shipped render
 
@@ -148,16 +150,24 @@ spinner are not readiness. Use one unique Spel session for the whole task, re-sn
 and close only that session when every comparison is finished. Read `spel <command> --help` before
 guessing an argument.
 
-Canonical review frames are phone 393×852, tablet 834×1194 and desktop 1280×800. At each relevant
-frame and theme, use `snapshot -i -c`, `get box` and `styles` to settle claims; exercise every changed
-interaction and inspect a screenshot yourself. A green build is not a visual review.
+Canonical companion review frames are phone 393×852, tablet 834×1194 and desktop 1280×800. At
+each relevant frame and theme, use `snapshot -i -c`, `get box` and `styles` to settle claims; exercise
+every changed interaction and inspect a screenshot yourself. A green build is not a visual review.
 
-### Attach the interactive render
+For TUI, serve the exact production component with `HtmlTerminalView.serve(...)`, or launch the full
+channel with `vis-agent channels tui-html`. In one Spel session, test keyboard, paste, pointer, wheel,
+resize, focus, every changed show/hide transition and any image/video/audio layer. Inspect resolved
+cell boxes and computed SGR styles; `Ctrl+Shift+G` exposes the cell grid when geometry is disputed.
+CSS Grid is only the projection: the JVM's `GridLayout`/`LinearLayout` and terminal buffer must have
+already resolved every integer cell.
 
-For companion design choices, the default user-facing artifact is a self-contained **interactive
-`.html` attachment**, not a screenshot. Build it from the current source after the last design change,
-open it with Spel, exercise it, then attach it. Generated HTML is temporary evidence and never enters
-the repository.
+### Attach the production render
+
+The default user-facing design artifact is a self-contained **`.html` attachment**, not a screenshot.
+Build it from current production source after the last design change, open it with Spel, and attach it.
+Generated HTML is temporary evidence and never enters the repository.
+
+#### Companion
 
 **One-to-one means one implementation, not similar pixels:**
 
@@ -176,8 +186,20 @@ the repository.
 
 This is exact production rendering and behaviour **inside the component boundary**, with explicit
 fixture data; it is not a claim that the attachment has the app's credentials or native shell.
-Screenshots remain private inspection and measurement evidence. TUI review still uses the real
-`DefaultVirtualTerminal` capture PNG because terminal cells are its shipped surface.
+
+#### TUI
+
+1. The live review is the production `HtmlTerminal` backend: `HtmlTerminalView` for one GUI2
+   component, or the complete Vis `TerminalScreen` over `HtmlTerminal`. Never transcribe cells or
+   reimplement layout in HTML/CSS.
+2. Spel exercises the live loopback URL and verifies interaction, computed styles, geometry, Unicode
+   width and media persistence before export.
+3. Export the reviewed frame with `writeHtml(Path)` and attach that one self-contained file. It has no
+   token, loopback dependency or external asset. Because arbitrary terminal callbacks remain in the
+   JVM, call the attachment a portable exact frame, not a still-interactive application.
+4. HTML is the primary make/review artifact. After it passes, the real `DefaultVirtualTerminal` PNG
+   capture and terminal-grid assertions remain the final parity gate for terminal-specific glyph width
+   and back-buffer behaviour; the PNG is private verification evidence, not the review attachment.
 
 ## 6. Review and finish
 
@@ -190,10 +212,13 @@ Done means:
 - exactly one lead and one signature; no generic reflex survived the comparison pass;
 - type, tokens, marks, contrast and targets satisfy §2 in every relevant theme and input mode;
 - loading, empty, error and partial/stale states exist; motion, 130% type and reduced motion survive;
-- every shown control and word ships from `src/**`; every reusable state has a deterministic story;
+- every shown control and word ships from production source; each reusable companion state has a
+  deterministic story and each reusable TUI state has a deterministic `HtmlTerminalView` fixture;
 - app: relevant tests, `npm run lint`, `npm run test:storybook` and `npm run build` pass;
 - companion review: the attached HTML satisfies the one-to-one checks in §5 and its fixture seams
-  are named; TUI review: its capture PNG was inspected and terminal-grid assertions pass;
+  are named;
+- TUI review: live HTML passed Spel interaction/style/geometry checks, the exported HTML is attached,
+  and the final `DefaultVirtualTerminal` capture plus terminal-grid assertions pass;
 - the final artifact came from the production component or running app, never a drawing or copied
   preview implementation;
 - one last pass removed anything that did not earn its place.
