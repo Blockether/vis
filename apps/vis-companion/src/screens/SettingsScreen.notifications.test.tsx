@@ -50,7 +50,7 @@ vi.mock("../lib/push", async (importOriginal) => ({
   pushPermission: async () => "granted" as const,
 }));
 
-import { NativeNotificationsPanel } from "./SettingsScreen";
+import { NativeNotificationsPanel } from "./settings/NotificationSettings";
 import { maskToken } from "../lib/push";
 import { getGatewayNotify, setGatewayNotify, setRelayGrant } from "../lib/storage";
 import type { GatewayClient } from "../lib/gateway";

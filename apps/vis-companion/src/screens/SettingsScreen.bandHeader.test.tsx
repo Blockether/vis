@@ -2,7 +2,7 @@
 import { render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { SettingsPanel } from "./SettingsScreen";
+import { SettingsPanel } from "./settings/SettingsLayout";
 
 afterEach(() => {
   document.body.innerHTML = "";

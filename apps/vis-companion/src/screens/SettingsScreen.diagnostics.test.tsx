@@ -8,7 +8,7 @@ vi.mock('../lib/diagnostics', () => ({ exportDiagnostics, recordDiagnostic: vi.f
 
 import { APP_BUILD_COMMIT, APP_BUILD_NUMBER } from '../lib/build-info';
 import { APP_MIN_GATEWAY_PROTOCOL, APP_PROTOCOL, APP_VERSION } from '../lib/compat';
-import { DiagnosticsPanel } from './SettingsScreen';
+import { DiagnosticsPanel } from './settings/DiagnosticsPanel';
 
 describe('application diagnostics settings', () => {
   it('identifies the exact app build and the gateway wire it accepts', () => {

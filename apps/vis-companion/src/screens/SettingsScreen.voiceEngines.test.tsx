@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 
-import { SpeechEnginesPanel } from "./SettingsScreen";
+import { SpeechEnginesPanel } from "./settings/SpeechSettings";
 import { GatewayError } from "../lib/gateway";
 import type { GatewayClient } from "../lib/gateway";
 import { getSpeechPrefs } from "../lib/storage";

@@ -20,9 +20,15 @@ import uiSource from "./ui.tsx?raw";
 import navigatorSource from "./SessionNavigator.tsx?raw";
 import appSource from "../App.tsx?raw";
 import storageSource from "../lib/storage.ts?raw";
-import sessionsListSource from "../screens/SessionsScreen.tsx?raw";
+import sessionsScreenSource from "../screens/SessionsScreen.tsx?raw";
+import sessionListComponentsSource from "./SessionList.tsx?raw";
 import gatewaySource from "../lib/gateway.ts?raw";
-import settingsSource from "../screens/SettingsScreen.tsx?raw";
+import settingsScreenSource from "../screens/SettingsScreen.tsx?raw";
+import diagnosticsSettingsSource from "../screens/settings/DiagnosticsPanel.tsx?raw";
+import machineSettingsSource from "../screens/settings/MachineSettings.tsx?raw";
+import notificationSettingsSource from "../screens/settings/NotificationSettings.tsx?raw";
+import settingsLayoutSource from "../screens/settings/SettingsLayout.tsx?raw";
+import speechSettingsSource from "../screens/settings/SpeechSettings.tsx?raw";
 import chatSource from "./ChatContent.tsx?raw";
 import docSource from "./DocArtifact.tsx?raw";
 import markdownArtifactSource from "./MarkdownArtifact.tsx?raw";
@@ -39,6 +45,17 @@ import jumpToLatestSource from "./JumpToLatestButton.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
 import notifyVerdictSource from "../lib/notify-verdict.ts?raw";
+
+const sessionsListSource = [sessionsScreenSource, sessionListComponentsSource].join("\n");
+
+const settingsSource = [
+  machineSettingsSource,
+  speechSettingsSource,
+  settingsLayoutSource,
+  diagnosticsSettingsSource,
+  notificationSettingsSource,
+  settingsScreenSource,
+].join("\n");
 
 import { PlusIcon, ProjectsIcon } from "./icons";
 import { MACHINE_COLORS } from "../lib/machine-colors";
@@ -745,10 +762,10 @@ describe("a project band carries its own count and its own pager", () => {
   const cluster = /<HeaderActions>[\s\S]*?<\/HeaderActions>/.exec(band)?.[0] ?? "";
 
   it("walks the project from the band's own trailing cluster", () => {
-    expect(cluster).toContain("<Pager page={shownPage}");
+    expect(cluster).toMatch(/<Pager\s+page=\{shownPage\}/);
     expect(cluster).toContain("<NewSessionButton");
     // ...and it is the ONLY pager on this screen.
-    expect(sessionsListSource.match(/<Pager /g)?.length).toBe(1);
+    expect(sessionsListSource.match(/<Pager\b/g)?.length).toBe(1);
   });
 
   it("counts the project under its name, never in that cluster", () => {
@@ -934,9 +951,9 @@ describe("the list grid", () => {
     expect(html).toContain('title="/Users/dev/vis/apps/vis-companion"');
     // The loading band stands in for the SAME two lines, through the same two
     // slots: a one-line skeleton grows by a line the moment data lands.
-    expect(sessionsListSource).toMatch(/name=\{<SkeletonBar type="text-title"/);
+    expect(sessionsListSource).toMatch(/name=\{\s*<SkeletonBar\s+type="text-title"/);
     expect(sessionsListSource).toMatch(
-      /qualifier=\{\s*<SkeletonBar type="text-chip"/,
+      /qualifier=\{\s*<SkeletonBar\s+type="text-chip"/,
     );
   });
 
@@ -1094,7 +1111,7 @@ describe("settings is ONE dialog with two columns", () => {
 
   it("is the only settings dialog in the app", () => {
     // The gateway half is a COLUMN BODY now, not a dialog of its own.
-    expect(settings).toContain("function GatewayPanels");
+    expect(settings).toContain("function MachineSettings");
     expect(settings).not.toContain("function GatewaySettingsDialog");
     expect(settings).not.toContain("function ApplicationSettingsDialog");
     expect(settings).toContain("export function SettingsDialog");
@@ -2319,7 +2336,7 @@ describe("the composer's own controls", () => {
       classes(
         renderToStaticMarkup(
           <ComposerButton tone={tone} label="Send message">
-            {"\u2191"}
+            {"↑"}
           </ComposerButton>,
         ),
       );
@@ -2352,7 +2369,7 @@ describe("the composer's own controls", () => {
   it("is icon-only, so it is named", () => {
     expect(
       renderToStaticMarkup(
-        <ComposerButton label="Dictate message">{"\u25cf"}</ComposerButton>,
+        <ComposerButton label="Dictate message">{"●"}</ComposerButton>,
       ),
     ).toContain('aria-label="Dictate message"');
   });
@@ -2459,7 +2476,7 @@ describe("a setting is picked and switched by one control each", () => {
     const on = renderToStaticMarkup(
       <ChoiceCell title="Gruvbox" sub="dark" isSelected />,
     );
-    expect(on).toContain("\u25cf");
+    expect(on).toContain("●");
     expect(on).toContain('aria-pressed="true"');
     const off = renderToStaticMarkup(
       <ChoiceCell title="Gruvbox" sub="dark" isSelected={false} />,

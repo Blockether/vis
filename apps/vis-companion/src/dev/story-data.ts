@@ -27,7 +27,7 @@ import { MACHINE_COLORS, type MachineColor } from '../lib/machine-colors';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import liveViewWire from '../lib/live-view.fixture.json';
 import { COMMENTS_HEADING } from '../lib/markdown-annotations';
-import type { GatewayConn, RouterProvider } from '../lib/types';
+import type { GatewayConn, RouterProvider, Session } from '../lib/types';
 import type { GwHealth } from '../components/Machines';
 import type { ManagedProject } from '../components/ManageProjectsSheet';
 import type { ProviderAuth } from '../components/ProviderAuth';
@@ -262,6 +262,24 @@ export const STORY_SESSION = {
   tokens: '152k',
   model: 'claude-opus-5',
 } as const;
+
+/** The same session in the gateway row shape consumed by the real navigator. */
+export const STORY_SESSION_ROW: Session = {
+  id: STORY_SESSION.id,
+  title: STORY_SESSION.title,
+  model: STORY_SESSION.model,
+  project_name: STORY_SESSION.project,
+  favorite_rank: 1,
+  status: 'running',
+  live: true,
+  current_turn_id: 'turn-story',
+  is_awaiting_input: true,
+  server_time_ms: Date.UTC(2030, 0, 2, 12, 0, 0),
+  turn_count: STORY_SESSION.turns,
+  created_at: '2030-01-02T11:00:00.000Z',
+  modified_at: '2030-01-02T11:59:00.000Z',
+  workspace: { root: STORY_SESSION.where, label: STORY_SESSION.project },
+};
 
 /**
  * THE ENGINE'S OWN VIEW. `live-view.fixture.json` is the projection

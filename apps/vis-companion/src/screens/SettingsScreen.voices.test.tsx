@@ -2,7 +2,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { VoicesPanel } from "./SettingsScreen";
+import { VoicesPanel } from "./settings/SpeechSettings";
 import { speechOutput } from "../lib/speech";
 import type { GatewayClient } from "../lib/gateway";
 import type { SpeechPrefs, SpeechVoices } from "../lib/types";
