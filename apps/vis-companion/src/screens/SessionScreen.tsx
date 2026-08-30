@@ -16,6 +16,11 @@ import {
 } from "../components/ChatContent";
 import { ArtifactsChip, ArtifactsSheet } from "../components/ArtifactsSheet";
 import {
+  ComposerAttachmentPicker,
+  type ComposerAttachmentCommands,
+  type ComposerAttachmentSource,
+} from "../components/ComposerAttachmentPicker";
+import {
   artifactsFromIndex,
   collapseArtifactVersions,
   collectArtifacts,
@@ -28,11 +33,9 @@ import { dropOverlayHandovers } from "../lib/sticky-overlay";
 import {
   BackButton,
   Banner,
-  Button,
   CloseButton,
   ComposerButton,
   CopyChip,
-  DialogHeader,
   LoadMore,
   MetaButton,
   OptionRow,
@@ -40,12 +43,8 @@ import {
   TextButton,
 } from '../components/ui';
 import {
-  CameraIcon,
-  ClipIcon,
   FastIcon,
-  ImageIcon,
   MicIcon,
-  PlusIcon,
   ReasoningIcon,
   SendIcon,
   StopIcon,
@@ -54,6 +53,7 @@ import {
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
 import { JumpToLatestButton } from "../components/JumpToLatestButton";
+import { PasteEditor } from "../components/PasteEditor";
 import { QueuedTurnsTray } from "../components/QueuedTurnsTray";
 import { LiveView, useLiveViews } from "../components/LiveView";
 import { reduceRunningTurnEvent, type RunningTurn } from "../lib/running-turn";
@@ -64,7 +64,6 @@ import {
   VoiceTurnOwnership,
   type VoiceModeLease,
 } from "../lib/voice-conversation";
-import { MenuItem } from "../components/Menu";
 import { ProviderRouterDialog } from "./RouterScreen";
 import {
   attachmentsFromFiles,
@@ -81,7 +80,7 @@ import {
 import { sheetDismissed } from "../lib/image-file";
 import { AttachImageContext } from "../lib/attach-image";
 import type { GatewayClient } from "../lib/gateway";
-import { holdKeyboardAcrossSheet, isEnterSendKeyboard } from "../lib/keyboard";
+import { holdKeyboardAcrossSheet, isEnterSendKeyboard, keepKeyboard } from "../lib/keyboard";
 import {
   GatewayError,
   mergeQueueBacklog,
@@ -93,7 +92,6 @@ import {
   collapsePastePlaceholders,
   createComposerPaste,
   expandPastePlaceholders,
-  pasteSummary,
   shouldCollapsePaste,
   type ComposerPaste,
 } from "../lib/paste";
@@ -171,7 +169,6 @@ import {
   visibleAnsweredTurnCount,
 } from "../lib/unread";
 import { App } from "@capacitor/app";
-import { Capacitor } from "@capacitor/core";
 
 import { workspaceRelativePath } from "../lib/path";
 
@@ -521,17 +518,6 @@ function LoadingSession({ ready, total }: { ready: number; total: number }) {
   );
 }
 
-/**
- * iOS takes the keyboard down the instant focus leaves the field, and a button
- * press IS a focus change: tapping a paste chip slid the whole shell down, then
- * straight back up as the editor's textarea autofocused — two full keyboard
- * animations for one tap, and the same again on the way out. Cancelling the
- * mousedown default keeps focus (and the keyboard) exactly where it is until the
- * next field claims it, so the flow is one still handover.
- */
-function keepKeyboard(event: ReactMouseEvent<HTMLElement>) {
-  event.preventDefault();
-}
 
 // The session id is the durable handle a user pastes into `vis-agent`/tools, so it is
 // tap-to-copy rather than inert text — shown short with the full id on hover. What
@@ -626,87 +612,6 @@ function seedRunningTurn(
   return runningTurnCarriesOutput(cached.turn) ? cached : null;
 }
 
-function PasteEditor({
-  editingPaste,
-  onDraftChange,
-  onClose,
-  onSave,
-}: {
-  editingPaste: { id: number; draft: string };
-  onDraftChange: (draft: string) => void;
-  onClose: () => void;
-  onSave: () => void;
-}) {
-  // `--safe-bottom` rides in on this element instead of the document root: it
-  // changes with every keyboard movement, and a root-scoped custom property is
-  // a whole-document style recalculation (see `useSafeBottomStyle`).
-  const safeBottomStyle = useSafeBottomStyle();
-  // This overlay lives inside SessionScreen's positioned root, so it follows
-  // the app shell without creating its own fixed WebKit layer.
-  return (
-    <div
-      className="absolute inset-0 z-50 flex h-full items-stretch justify-center bg-ink/85 p-0 pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] backdrop-blur-[2px] transition-opacity duration-200 starting:opacity-0 motion-reduce:transition-none sm:items-center sm:p-5"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <section
-        className="flex h-full w-full max-w-3xl flex-col overflow-hidden border-dialog-edge bg-panel shadow-none transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-6 starting:opacity-0 motion-reduce:transition-none sm:h-[70%] sm:max-h-[calc(100%-2rem)] sm:border sm:shadow-[8px_8px_0_var(--dialog-shadow)] sm:starting:translate-y-2"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="paste-editor-title"
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.stopPropagation();
-            onClose();
-          } else if (
-            event.key === "Enter" &&
-            (event.metaKey || event.ctrlKey)
-          ) {
-            event.preventDefault();
-            onSave();
-          }
-        }}
-      >
-        <DialogHeader
-          isUnderNotch
-          titleId="paste-editor-title"
-          title={`Pasted #${editingPaste.id}`}
-          subtitle={pasteSummary(editingPaste.id, editingPaste.draft)}
-          closeLabel="Close paste editor"
-          onClose={onClose}
-        />
-
-        <textarea
-          // eslint-disable-next-line jsx-a11y/no-autofocus
-          autoFocus
-          value={editingPaste.draft}
-          onChange={(event) => onDraftChange(event.target.value)}
-          spellCheck={false}
-          autoCapitalize="off"
-          autoCorrect="off"
-          className="min-h-0 flex-1 resize-none touch-pan-y overflow-y-auto overscroll-contain border-t border-dialog-edge bg-input p-3 font-mono text-body text-dialog-foreground outline-none sm:p-4"
-          aria-label={`Content of pasted block ${editingPaste.id}`}
-        />
-
-        <footer
-          style={safeBottomStyle}
-          className="flex shrink-0 items-center justify-end gap-2 border-t border-dialog-edge bg-panel-2 px-3 py-2 pb-[max(0.5rem,var(--safe-bottom,env(safe-area-inset-bottom)))] font-mono text-meta text-dialog-hint sm:px-4"
-        >
-          <span className="mr-auto hidden truncate sm:block">
-            Esc cancels · ⌘↵ saves
-          </span>
-          <Button variant="secondary" onMouseDown={keepKeyboard} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onMouseDown={keepKeyboard} onClick={onSave}>
-            Save
-          </Button>
-        </footer>
-      </section>
-    </div>
-  );
-}
 
 export function SessionScreen({
   client,
@@ -960,7 +865,6 @@ export function SessionScreen({
   ]);
   // Native hides two distinct acts behind one composer control, so the plus has
   // to ask which one: the OS gallery sheet never opens a shutter.
-  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
   // Dictation and voice conversation are ONE control: a tap acts in the current
   // mode, a press and hold flips it. `voiceModeHolding` paints the hold while it
   // fills; `voiceModeSwitchedRef` swallows the click that iOS still delivers
@@ -978,12 +882,9 @@ export function SessionScreen({
       ),
   );
   // A paste chip is a HANDLE on its payload, not a tombstone: tapping it opens the
-  // content for editing (the same affordance other agent composers give a collapsed
-  // paste). `draft` is the live textarea buffer — `pastes`/`prompt` only move on Save.
-  const [editingPaste, setEditingPaste] = useState<{
-    id: number;
-    draft: string;
-  } | null>(null);
+  // content for editing. The selected domain object stays here; the editor owns its
+  // unsaved textarea draft and reports content only when the user commits it.
+  const [editingPaste, setEditingPaste] = useState<ComposerPaste | null>(null);
   // The paste editor is absolute inside this screen's positioned root, so it
   // inherits the app shell's keyboard pin without a second viewport listener or
   // a lagging fixed WebKit layer.
@@ -1021,7 +922,6 @@ export function SessionScreen({
   // While the browser owns that smooth movement, the ordinary follow correctors must
   // stand down: one eager `auto` write cancels CSSOM smooth scrolling outright.
   const submitScrollActiveRef = useRef(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const recordingRef = useRef<WavRecording | null>(null);
   const pasteCounterRef = useRef(peekDraftMessage(draftMessageId).counter);
   const disclosureScrollFrameRef = useRef<number | null>(null);
@@ -3420,44 +3320,20 @@ export function SessionScreen({
     }
   }
 
-  async function addAttachments() {
-    // iOS/Android's file input hands freshly captured photos to JS as HEIC or
-    // with no MIME type. The native picker transcodes them before this boundary,
-    // so the gateway receives one of its supported image formats.
-    if (!Capacitor.isNativePlatform()) {
-      const maximum = capabilities?.features.attachments.max_files ?? 8;
-      if (attachments.length >= maximum) {
-        setComposerNotice(`You can attach up to ${maximum} files`);
-        return;
-      }
-      fileInputRef.current?.click();
-      return;
-    }
-    await chooseAttachments(pickMediaAttachments, "No files selected.");
+  async function pickNativeAttachments(source: ComposerAttachmentSource) {
+    const [pick, dismissedNotice]: [
+      (limits: AttachmentLimits) => Promise<PickAttachmentResult>,
+      string,
+    ] =
+      source === "camera"
+        ? [capturePhotoAttachment, "No photo taken."]
+        : source === "files"
+          ? [pickDocumentAttachments, "No files selected."]
+          : [pickMediaAttachments, "No files selected."];
+    await chooseAttachments(pick, dismissedNotice);
   }
 
-  // The gallery sheet only knows the camera roll. A voice memo, a clip someone
-  // sent in a chat, a recording synced from a desktop and a picture saved to
-  // Files instead of Photos are all invisible to it — so on a phone the `+`
-  // could reach none of them however many media types the gateway advertised.
-  // This is the document browser, the same door the web dialog already opens.
-  async function addFiles() {
-    await chooseAttachments(pickDocumentAttachments, "No files selected.");
-  }
-
-  // Taking a picture is a DIFFERENT act from picking one: the OS gallery sheet
-  // never opens the camera, so this is the composer's shutter. Native only —
-  // on web the file input already exposes whatever capture the browser has.
-  async function takePhoto() {
-    await chooseAttachments(capturePhotoAttachment, "No photo taken.");
-  }
-
-  async function onFilesPicked(fileList: FileList | null) {
-    const input = fileInputRef.current;
-    if (input) input.value = "";
-    const files = fileList ? Array.from(fileList) : [];
-    if (!files.length) return;
-
+  async function addBrowserFiles(files: File[]) {
     const limits = capabilities?.features.attachments;
     const maximum = limits?.max_files ?? 8;
     const remaining = maximum - attachments.length;
@@ -3465,6 +3341,7 @@ export function SessionScreen({
       setComposerNotice(`You can attach up to ${maximum} files`);
       return;
     }
+
     try {
       const result = await attachmentsFromFiles(files, {
         maxFiles: remaining,
@@ -3483,6 +3360,11 @@ export function SessionScreen({
       setComposerNotice((cause as Error).message);
     }
   }
+
+  const attachmentCommands: ComposerAttachmentCommands = {
+    addBrowserFiles,
+    pickNative: pickNativeAttachments,
+  };
   function removeAttachment(id: string) {
     setAttachments((current) =>
       current.filter((attachment) => attachment.id !== id),
@@ -3507,7 +3389,7 @@ export function SessionScreen({
   function openPasteEditor(id: number) {
     const paste = pastes.get(id);
     if (!paste) return;
-    setEditingPaste({ id, draft: paste.content });
+    setEditingPaste(paste);
   }
 
   function closePasteEditor() {
@@ -3521,7 +3403,7 @@ export function SessionScreen({
     setEditingPaste(null);
   }
 
-  function savePasteEdit() {
+  function savePasteEdit(content: string) {
     const editing = editingPaste;
     if (!editing) return;
     const previous = pastes.get(editing.id);
@@ -3529,7 +3411,6 @@ export function SessionScreen({
       closePasteEditor();
       return;
     }
-    const content = editing.draft;
     if (!content.trim()) {
       removePaste(editing.id);
       closePasteEditor();
@@ -4705,11 +4586,9 @@ export function SessionScreen({
 
         {editingPaste && (
           <PasteEditor
-            editingPaste={editingPaste}
-            onDraftChange={(draft) =>
-              setEditingPaste({ id: editingPaste.id, draft })
-            }
-            onClose={closePasteEditor}
+            key={editingPaste.id}
+            paste={editingPaste}
+            onDismiss={closePasteEditor}
             onSave={savePasteEdit}
           />
         )}
@@ -5052,120 +4931,19 @@ export function SessionScreen({
             )}
 
             <div className="flex items-end gap-1 p-1">
-              <input
-                ref={fileInputRef}
-                type="file"
+              <ComposerAttachmentPicker
                 accept={(
                   capabilities?.features.attachments.media_types ?? [
                     "image/*",
                     "video/*",
                   ]
                 ).join(",")}
-                multiple
-                className="hidden"
-                onChange={(event) => void onFilesPicked(event.target.files)}
+                disabled={
+                  attachments.length >=
+                  (capabilities?.features.attachments.max_files ?? 8)
+                }
+                commands={attachmentCommands}
               />
-
-              {/* ONE attachment button, three doors. The gallery sheet has no
-                shutter, so "take a photo" needs its own path — without it the only
-                way to attach what you are LOOKING at is to leave, open the camera
-                app, come back and hunt for the file. And the gallery cannot see
-                past the camera roll, so a voice memo, a document or a clip that
-                arrived in a chat needs the FILES browser or it cannot be attached
-                at all. Three rows in one menu instead of three icons crowding the
-                composer. Web keeps the direct file dialog: one input already
-                offers every accepted type and whatever capture the browser has. */}
-              <div
-                className="relative shrink-0"
-                onKeyDown={(event) => {
-                  if (event.key === "Escape" && attachMenuOpen) {
-                    event.stopPropagation();
-                    setAttachMenuOpen(false);
-                  }
-                }}
-              >
-                {attachMenuOpen && (
-                  <>
-                    {/* Tapping anywhere else is a dismissal, not a mis-tap. */}
-                    <div
-                      role="presentation"
-                      className="fixed inset-0 z-20"
-                      onMouseDown={keepKeyboard}
-                      onClick={() => setAttachMenuOpen(false)}
-                    />
-                    {/* The mousedown is cancelled on the PANEL: it bubbles from
-                        whichever row was pressed, and the default it cancels —
-                        moving focus off the composer — is what takes the iOS
-                        keyboard down and puts it straight back up. */}
-                    <div
-                      role="dialog"
-                      aria-label="Attach"
-                      onMouseDown={keepKeyboard}
-                      className="absolute bottom-full left-0 z-30 mb-1.5 w-max min-w-40 overflow-hidden rounded-panel border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
-                    >
-                      <MenuItem
-                        title="Take a photo"
-                        icon={<CameraIcon />}
-                        onSelect={() => {
-                          setAttachMenuOpen(false);
-                          void takePhoto();
-                        }}
-                      />
-                      <MenuItem
-                        title="Photos or videos"
-                        icon={<ImageIcon />}
-                        onSelect={() => {
-                          setAttachMenuOpen(false);
-                          void addAttachments();
-                        }}
-                      />
-                      <MenuItem
-                        title="Files"
-                        icon={<ClipIcon />}
-                        onSelect={() => {
-                          setAttachMenuOpen(false);
-                          void addFiles();
-                        }}
-                      />
-                    </div>
-                  </>
-                )}
-
-                <ComposerButton
-                  onMouseDown={keepKeyboard}
-                  onClick={() => {
-                    if (!Capacitor.isNativePlatform()) {
-                      void addAttachments();
-                      return;
-                    }
-                    setAttachMenuOpen((open) => !open);
-                  }}
-                  disabled={
-                    attachments.length >=
-                    (capabilities?.features.attachments.max_files ?? 8)
-                  }
-                  aria-haspopup={
-                    Capacitor.isNativePlatform() ? "menu" : undefined
-                  }
-                  aria-expanded={
-                    Capacitor.isNativePlatform() ? attachMenuOpen : undefined
-                  }
-                  label={
-                    Capacitor.isNativePlatform()
-                      ? "Attach a photo, clip, recording or file"
-                      : "Choose photos, clips, recordings or files"
-                  }
-                  title={
-                    Capacitor.isNativePlatform()
-                      ? "Attach a photo, clip, recording or file"
-                      : "Choose photos, clips, recordings or files"
-                  }
-                >
-                  <PlusIcon
-                    className={`size-3.5 transition-transform duration-150 motion-reduce:transition-none ${attachMenuOpen ? "rotate-45" : ""}`}
-                  />
-                </ComposerButton>
-              </div>
 
               {/* ONE microphone, the way a messenger does it: TAP acts in the mode
                 you are in, PRESS AND HOLD switches the mode. The mode was always a

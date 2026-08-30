@@ -16,4 +16,30 @@ describe("session feature boundaries", () => {
 
     expect(leaks).toEqual([]);
   });
+
+  it("lets the paste editor own its unsaved draft and dialog interaction", () => {
+    const leaks = [
+      ["local paste editor", /function PasteEditor\(/],
+      ["screen-owned paste draft", /\[editingPaste,[\s\S]*?draft:\s*string/],
+      ["paste draft callback plumbing", /onDraftChange=/],
+    ]
+      .filter(([, pattern]) => (pattern as RegExp).test(sessionScreenSource))
+      .map(([name]) => name);
+
+    expect(leaks).toEqual([]);
+  });
+
+  it("lets the attachment picker own its platform menu and browser input", () => {
+    const leaks = [
+      ["attachment menu state", /\[attachMenuOpen,\s*setAttachMenuOpen\]/],
+      ["browser file input", /fileInputRef/],
+      ["attachment menu rendering", /aria-label="Attach"/],
+    ]
+      .filter(([, pattern]) => (pattern as RegExp).test(sessionScreenSource))
+      .map(([name]) => name);
+
+    expect(leaks).toEqual([]);
+    expect(sessionScreenSource).toContain("<ComposerAttachmentPicker");
+    expect(sessionScreenSource).toContain("commands={attachmentCommands}");
+  });
 });

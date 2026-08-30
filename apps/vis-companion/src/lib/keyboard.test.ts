@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { holdKeyboardAcrossSheet, isEnterSendKeyboard } from './keyboard';
+import { holdKeyboardAcrossSheet, isEnterSendKeyboard, keepKeyboard } from './keyboard';
 import { HARDWARE_POINTER } from './pointer';
 
 let platform = 'web';
@@ -59,6 +59,16 @@ function stepper() {
     },
   };
 }
+
+describe('keepKeyboard', () => {
+  it('keeps the current field from losing focus on pointer press', () => {
+    const preventDefault = vi.fn();
+
+    keepKeyboard({ preventDefault });
+
+    expect(preventDefault).toHaveBeenCalledOnce();
+  });
+});
 
 describe('holdKeyboardAcrossSheet', () => {
   // The keyboard goes down on the app's terms, not the sheet's: with no field

@@ -22,12 +22,11 @@ import {
   firstLine,
   sessionSearchText,
   shortId,
-} from '../components/SessionList';
-import {
-  NeedsYou,
-  ProjectGroup,
+  type SessionListActions,
   type SessionRowAction,
-} from './sessions/SessionProjectGroups';
+  type SessionRowCommands,
+} from '../components/SessionList';
+import { NeedsYou, ProjectGroup } from './sessions/SessionProjectGroups';
 import {
   Menu,
   MenuHeading,
@@ -1808,6 +1807,37 @@ export function SessionsScreen({
   const commitRef = useRef<() => void>(() => {});
   commitRef.current = () => void commitRowAction();
   const confirmDelete = useCallback(() => commitRef.current(), []);
+  const deleting = rowAction?.mode === 'delete' ? rowAction : null;
+  const rowCommands = useMemo<SessionRowCommands>(
+    () => ({
+      open: onOpen,
+      rename: startRename,
+      fork: startFork,
+      requestDelete: startDelete,
+      toggleStar,
+    }),
+    [onOpen, startRename, startFork, startDelete, toggleStar],
+  );
+  const rowActions = useMemo<SessionListActions>(
+    () => ({
+      commands: rowCommands,
+      deletion: {
+        target: deleting,
+        isBusy: actionBusy,
+        error: actionError,
+        confirm: confirmDelete,
+        cancel: cancelDelete,
+      },
+    }),
+    [
+      rowCommands,
+      deleting,
+      actionBusy,
+      actionError,
+      confirmDelete,
+      cancelDelete,
+    ],
+  );
 
   const pageSize = useSessionsPerPage();
 
@@ -2261,16 +2291,7 @@ export function SessionsScreen({
           drafts={draftMessages}
           matches={matches}
           needle={searchNeedle}
-          onOpen={onOpen}
-          onRename={startRename}
-          onFork={startFork}
-          onDelete={startDelete}
-          onToggleStar={toggleStar}
-          rowAction={rowAction}
-          deleteBusy={actionBusy}
-          deleteError={actionError}
-          onConfirmDelete={confirmDelete}
-          onCancelDelete={cancelDelete}
+          rowActions={rowActions}
         />
         {/* A PROMOTION WAITS FOR THE READER, and the arrow points UP because that
             is where those rows go. Rows fresher than the oldest row on screen are
@@ -2370,20 +2391,7 @@ export function SessionsScreen({
                           getClient={clientFor}
                           matches={matches}
                           needle={searchNeedle}
-                          onOpen={onOpen}
-                          onRename={startRename}
-                          onFork={startFork}
-                          onDelete={startDelete}
-                          onToggleStar={toggleStar}
-                          pendingDeleteId={
-                            rowAction?.mode === 'delete' && machineKey(rowAction.conn) === key
-                              ? rowAction.session.id
-                              : null
-                          }
-                          deleteBusy={actionBusy}
-                          deleteError={actionError}
-                          onConfirmDelete={confirmDelete}
-                          onCancelDelete={cancelDelete}
+                          rowActions={rowActions}
                            onNewSession={(root) => void createSession(machine.conn, root)}
                           creating={creating}
                           pageSize={pageSize}

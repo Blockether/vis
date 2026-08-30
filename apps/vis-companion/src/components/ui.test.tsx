@@ -43,6 +43,7 @@ import providerAuthSource from "./ProviderAuth.tsx?raw";
 import routerSource from "../screens/RouterScreen.tsx?raw";
 import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
 import queuedTurnsTraySource from "./QueuedTurnsTray.tsx?raw";
+import composerAttachmentPickerSource from "./ComposerAttachmentPicker.tsx?raw";
 import jumpToLatestSource from "./JumpToLatestButton.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
@@ -54,7 +55,11 @@ const sessionsListSource = [
   sessionProjectGroupsSource,
   ].join("\n");
 
-const sessionDockSource = [sessionScreenSource, queuedTurnsTraySource].join("\n");
+const sessionDockSource = [
+  sessionScreenSource,
+  queuedTurnsTraySource,
+  composerAttachmentPickerSource,
+].join("\n");
 
 const settingsSource = [
   machineSettingsSource,
@@ -2248,15 +2253,15 @@ describe("every screen uses the second vocabulary too", () => {
   });
 
   it("keeps the composer's attachment choices as native buttons in a named dialog", () => {
-    expect(sessionScreenSource).toContain("<CloseButton");
-    expect(sessionScreenSource).toContain("<MenuItem");
-    expect(sessionScreenSource).toContain('role="dialog"');
-    expect(sessionScreenSource).toContain('aria-label="Attach"');
-    expect(sessionScreenSource).toContain("<CopyChip");
-    expect(sessionScreenSource).not.toContain(
+    expect(sessionDockSource).toContain("<CloseButton");
+    expect(composerAttachmentPickerSource).toContain("<MenuItem");
+    expect(composerAttachmentPickerSource).toContain('role="dialog"');
+    expect(composerAttachmentPickerSource).toContain('aria-label="Attach"');
+    expect(sessionDockSource).toContain("<CopyChip");
+    expect(sessionDockSource).not.toContain(
       "hover:bg-warn-surface hover:text-err",
     );
-    expect(sessionScreenSource).not.toContain('role="menuitem"');
+    expect(composerAttachmentPickerSource).not.toContain('role="menuitem"');
   });
 
   it("gives the human-input form the one option row", () => {

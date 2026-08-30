@@ -10,6 +10,13 @@ import { EMPTY_DRAFT_MESSAGE } from "../lib/draft-messages";
 import { SessionRow } from "./SessionList";
 
 const onOpen = fn();
+const commands = {
+  open: onOpen,
+  rename: fn(),
+  fork: fn(),
+  requestDelete: fn(),
+  toggleStar: fn(),
+};
 
 const meta = {
   title: "Session/Navigator row",
@@ -21,16 +28,8 @@ const meta = {
     conn: STORY_GATEWAYS[0],
     match: null,
     needle: "",
-    onOpen,
-    onRename: fn(),
-    onFork: fn(),
-    onDelete: fn(),
-    onToggleStar: fn(),
-    isConfirmingDelete: false,
-    deleteBusy: false,
-    deleteError: null,
-    onConfirmDelete: fn(),
-    onCancelDelete: fn(),
+    commands,
+    deletion: null,
   },
 } satisfies Meta<typeof SessionRow>;
 

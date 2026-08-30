@@ -2,7 +2,6 @@
 
 import {
   memo,
-  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -10,7 +9,11 @@ import {
   useState,
 } from "react";
 
-import { SessionRow } from "../../components/SessionList";
+import {
+  SessionRow,
+  type SessionListActions,
+  type SessionRowDeletion,
+} from "../../components/SessionList";
 import {
   HeaderActions,
   HeaderMeta,
@@ -48,17 +51,7 @@ import {
 } from "../../lib/project-fold";
 import type { GatewayConn, Session } from "../../lib/types";
 
-type OpenSession = (
-  conn: GatewayConn,
-  sid: string,
-  fresh?: boolean,
-) => void | Promise<void>;
 type SessionClient = (conn: GatewayConn) => GatewayClient;
-
-/** Rename or delete one session on one machine. */
-export type SessionRowAction =
-  | { mode: "rename"; session: Session; conn: GatewayConn }
-  | { mode: "delete"; session: Session; conn: GatewayConn };
 
 // A page whose read has not answered yet paints nothing rather than rows from
 // another place in the project (`ProjectGroup`).
@@ -88,16 +81,7 @@ export const NeedsYou = memo(function NeedsYou({
   drafts,
   matches,
   needle,
-  onOpen,
-  onRename,
-  onFork,
-  onDelete,
-  onToggleStar,
-  rowAction,
-  deleteBusy,
-  deleteError,
-  onConfirmDelete,
-  onCancelDelete,
+  rowActions,
 }: {
   /** One entry per parked session, carrying the machine it is parked on. */
   rows: { session: Session; conn: GatewayConn }[];
@@ -105,17 +89,7 @@ export const NeedsYou = memo(function NeedsYou({
   drafts: DraftMessageStore;
   matches: Map<string, SessionMatch> | null;
   needle: string;
-  onOpen: OpenSession;
-  onRename: (session: Session, conn: GatewayConn) => void;
-  onFork: (session: Session, conn: GatewayConn, anchor: HTMLElement) => void;
-  onDelete: (session: Session, conn: GatewayConn) => void;
-  onToggleStar: (session: Session, conn: GatewayConn) => void;
-  /** The row anywhere in the fleet that is currently asking to be deleted, if any. */
-  rowAction: SessionRowAction | null;
-  deleteBusy: boolean;
-  deleteError: string | null;
-  onConfirmDelete: () => void;
-  onCancelDelete: () => void;
+  rowActions: SessionListActions;
 }) {
   if (rows.length === 0) return null;
   return (
@@ -135,9 +109,16 @@ export const NeedsYou = memo(function NeedsYou({
       </SectionHeader>
       {rows.map(({ session, conn }) => {
         const pending =
-          rowAction?.mode === "delete" &&
-          machineKey(rowAction.conn) === machineKey(conn) &&
-          rowAction.session.id === session.id;
+          rowActions.deletion.target?.session.id === session.id &&
+          machineKey(rowActions.deletion.target.conn) === machineKey(conn);
+        const deletion: SessionRowDeletion = pending
+          ? {
+              isBusy: rowActions.deletion.isBusy,
+              error: rowActions.deletion.error,
+              confirm: rowActions.deletion.confirm,
+              cancel: rowActions.deletion.cancel,
+            }
+          : null;
         return (
           <SessionRow
             key={`${machineKey(conn)}\u0000${session.id}`}
@@ -149,16 +130,8 @@ export const NeedsYou = memo(function NeedsYou({
             conn={conn}
             match={matches?.get(session.id) ?? null}
             needle={needle}
-            onOpen={onOpen}
-            onRename={(row) => onRename(row, conn)}
-            onFork={(row, anchor) => onFork(row, conn, anchor)}
-            onDelete={(row) => onDelete(row, conn)}
-            onToggleStar={(row) => onToggleStar(row, conn)}
-            isConfirmingDelete={pending}
-            deleteBusy={deleteBusy}
-            deleteError={pending ? deleteError : null}
-            onConfirmDelete={onConfirmDelete}
-            onCancelDelete={onCancelDelete}
+            commands={rowActions.commands}
+            deletion={deletion}
           />
         );
       })}
@@ -178,16 +151,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   matches,
   needle,
   drafts,
-  onOpen,
-  onRename,
-  onFork,
-  onDelete,
-  onToggleStar,
-  pendingDeleteId,
-  deleteBusy,
-  deleteError,
-  onConfirmDelete,
-  onCancelDelete,
+  rowActions,
   onNewSession,
   creating,
   pageSize,
@@ -219,17 +183,7 @@ export const ProjectGroup = memo(function ProjectGroup({
   needle: string;
   /** Unsent composer content for the whole fleet; each row reads its own entry. */
   drafts: DraftMessageStore;
-  onOpen: OpenSession;
-  onRename: (session: Session, conn: GatewayConn) => void;
-  onFork: (session: Session, conn: GatewayConn, anchor: HTMLElement) => void;
-  onDelete: (session: Session, conn: GatewayConn) => void;
-  onToggleStar: (session: Session, conn: GatewayConn) => void;
-  /** The row of THIS machine that is currently asking to be deleted, if any. */
-  pendingDeleteId: string | null;
-  deleteBusy: boolean;
-  deleteError: string | null;
-  onConfirmDelete: () => void;
-  onCancelDelete: () => void;
+  rowActions: SessionListActions;
   onNewSession: (root: string) => void;
   /**
    * The create this very project header started, so its own button can say the word
@@ -261,24 +215,11 @@ export const ProjectGroup = memo(function ProjectGroup({
   isTop: boolean;
 }) {
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
-  // Row actions must reach the machine that OWNS the row. Bound here so a
-  // memoized row does not re-render on every paint of its parent.
-  const renameRow = useCallback(
-    (session: Session) => onRename(session, conn),
-    [onRename, conn],
-  );
-  const forkRow = useCallback(
-    (session: Session, anchor: HTMLElement) => onFork(session, conn, anchor),
-    [onFork, conn],
-  );
-  const deleteRow = useCallback(
-    (session: Session) => onDelete(session, conn),
-    [onDelete, conn],
-  );
-  const starRow = useCallback(
-    (session: Session) => onToggleStar(session, conn),
-    [onToggleStar, conn],
-  );
+  const pendingDeleteId =
+    rowActions.deletion.target &&
+    machineKey(rowActions.deletion.target.conn) === machineKey(conn)
+      ? rowActions.deletion.target.session.id
+      : null;
 
   // A PROJECT'S PAGE IS CUT BY WHOEVER OWNS THE LIST.
   //
@@ -662,31 +603,32 @@ export const ProjectGroup = memo(function ProjectGroup({
           project, or the card's own bottom border, closes the group. */}
         {isShowing && rows.length > 0 && (
           <div ref={rowsRef}>
-            {rows.map((session) => (
-              <SessionRow
-                key={session.id}
-                session={session}
-                draft={
-                  drafts[draftMessageKey(base, session.id)] ??
-                  EMPTY_DRAFT_MESSAGE
-                }
-                conn={conn}
-                match={matches?.get(session.id) ?? null}
-                needle={needle}
-                onOpen={onOpen}
-                onRename={renameRow}
-                onFork={forkRow}
-                onDelete={deleteRow}
-                onToggleStar={starRow}
-                isConfirmingDelete={pendingDeleteId === session.id}
-                deleteBusy={deleteBusy}
-                deleteError={
-                  pendingDeleteId === session.id ? deleteError : null
-                }
-                onConfirmDelete={onConfirmDelete}
-                onCancelDelete={onCancelDelete}
-              />
-            ))}
+            {rows.map((session) => {
+              const pending = pendingDeleteId === session.id;
+              const deletion: SessionRowDeletion = pending
+                ? {
+                    isBusy: rowActions.deletion.isBusy,
+                    error: rowActions.deletion.error,
+                    confirm: rowActions.deletion.confirm,
+                    cancel: rowActions.deletion.cancel,
+                  }
+                : null;
+              return (
+                <SessionRow
+                  key={session.id}
+                  session={session}
+                  draft={
+                    drafts[draftMessageKey(base, session.id)] ??
+                    EMPTY_DRAFT_MESSAGE
+                  }
+                  conn={conn}
+                  match={matches?.get(session.id) ?? null}
+                  needle={needle}
+                  commands={rowActions.commands}
+                  deletion={deletion}
+                />
+              );
+            })}
           </div>
         )}
       </section>

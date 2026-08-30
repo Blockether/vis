@@ -99,6 +99,14 @@ function afterSheetDismissal(run: () => void, delayMs: number): void {
 }
 
 /**
+ * Keeps the currently focused field — and therefore the software keyboard — in
+ * place while a pointer press hands control to another composer action.
+ */
+export function keepKeyboard(event: { preventDefault(): void }): void {
+  event.preventDefault();
+}
+
+/**
  * Takes the keyboard down with `element`'s focus and returns the thunk that puts
  * both back. Call the thunk in a `finally`, whether the sheet delivered media or was
  * cancelled. It is a no-op when the keyboard was down to begin with — a user who

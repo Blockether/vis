@@ -36,22 +36,47 @@ const SKELETON_GROUPS = [
 // number only decides when the panel may leave the tree.
 const STATS_MOTION_MS = 200;
 
+export type SessionRowAction =
+  | { mode: "rename"; session: Session; conn: GatewayConn }
+  | { mode: "delete"; session: Session; conn: GatewayConn };
+
+export type SessionRowCommands = {
+  open: (
+    conn: GatewayConn,
+    sid: string,
+    fresh?: boolean,
+  ) => void | Promise<void>;
+  rename: (session: Session, conn: GatewayConn) => void;
+  /** Opens the fork question under the very cell that was pressed. */
+  fork: (session: Session, conn: GatewayConn, anchor: HTMLElement) => void;
+  requestDelete: (session: Session, conn: GatewayConn) => void;
+  toggleStar: (session: Session, conn: GatewayConn) => void;
+};
+
+/** One stable contract shared by every feature that renders session rows. */
+export type SessionListActions = {
+  commands: SessionRowCommands;
+  deletion: {
+    target: Extract<SessionRowAction, { mode: "delete" }> | null;
+    isBusy: boolean;
+    error: string | null;
+    confirm: () => void;
+    cancel: () => void;
+  };
+};
+
+export type SessionRowDeletion =
+  | Omit<SessionListActions["deletion"], "target">
+  | null;
+
 export const SessionRow = memo(function SessionRow({
   session,
   draft,
   conn,
   match,
   needle,
-  onOpen,
-  onRename,
-  onFork,
-  onDelete,
-  onToggleStar,
-  isConfirmingDelete,
-  deleteBusy,
-  deleteError,
-  onConfirmDelete,
-  onCancelDelete,
+  commands,
+  deletion,
 }: {
   session: Session;
   /** This device's unsent composer content for the session; EMPTY when there is none. */
@@ -59,22 +84,8 @@ export const SessionRow = memo(function SessionRow({
   conn: GatewayConn;
   match: SessionMatch | null;
   needle: string;
-  onOpen: (
-    conn: GatewayConn,
-    sid: string,
-    fresh?: boolean,
-  ) => void | Promise<void>;
-  onRename: (session: Session) => void;
-  /** Opens the fork question under the very cell that was pressed. */
-  onFork: (session: Session, anchor: HTMLElement) => void;
-  onDelete: (session: Session) => void;
-  onToggleStar: (session: Session) => void;
-  /** This row IS the confirm: it asks in place instead of behind a dialog. */
-  isConfirmingDelete: boolean;
-  deleteBusy: boolean;
-  deleteError: string | null;
-  onConfirmDelete: () => void;
-  onCancelDelete: () => void;
+  commands: SessionRowCommands;
+  deletion: SessionRowDeletion;
 }) {
   const status = statusLabel(session);
   const timestamp = session.modified_at ?? session.created_at;
@@ -129,22 +140,22 @@ export const SessionRow = memo(function SessionRow({
   // Where the row GOES when this flips — the pinned band at the top of the project,
   // on page one — belongs to the group that pages it, so `ProjectGroup` owns the
   // follow. This is only the mark and the strip's verb.
-  const toggleStar = useCallback(
-    () => onToggleStar(session),
-    [onToggleStar, session],
+  const toggleFavorite = useCallback(
+    () => commands.toggleStar(session, conn),
+    [commands, session, conn],
   );
 
   return (
     <div className="[&+&]:border-t [&+&]:border-dialog-edge">
       {/* The confirm IS the row (`ConfirmRow`, shared with machine and project
           removal). Only renaming needs a dialog because its answer is a field. */}
-      {isConfirmingDelete ? (
+      {deletion ? (
         <ConfirmRow
           question={`Delete ${title}?`}
-          confirmLabel={deleteBusy ? "Deleting..." : "Yes, delete"}
-          isBusy={deleteBusy}
-          onKeep={onCancelDelete}
-          onConfirm={onConfirmDelete}
+          confirmLabel={deletion.isBusy ? "Deleting..." : "Yes, delete"}
+          isBusy={deletion.isBusy}
+          onKeep={deletion.cancel}
+          onConfirm={deletion.confirm}
         />
       ) : (
         <SwipeActions
@@ -157,13 +168,13 @@ export const SessionRow = memo(function SessionRow({
               // The one action on the strip that is not a neutral verb: it wears the
               // same brand yellow as the mark it leaves on the row.
               tone: "accent",
-              onSelect: toggleStar,
+              onSelect: toggleFavorite,
             },
             {
               key: "rename",
               label: "Rename",
               icon: <PencilIcon className="size-4" />,
-              onSelect: () => onRename(session),
+              onSelect: () => commands.rename(session, conn),
             },
             {
               key: "fork",
@@ -174,14 +185,14 @@ export const SessionRow = memo(function SessionRow({
               icon: <ForkIcon className="size-4" />,
               // Forking COPIES — it takes nothing away from the row it starts on —
               // so it stays a neutral verb beside Rename, never the red one.
-              onSelect: (anchor) => onFork(session, anchor),
+              onSelect: (anchor) => commands.fork(session, conn, anchor),
             },
             {
               key: "delete",
               label: "Delete",
               icon: <TrashIcon className="size-4" />,
               tone: "danger",
-              onSelect: () => onDelete(session),
+              onSelect: () => commands.requestDelete(session, conn),
             },
           ]}
         >
@@ -194,7 +205,7 @@ export const SessionRow = memo(function SessionRow({
               type="button"
               className={`flex min-h-12 min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors duration-150 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-8 mouse:py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
               data-session-id={session.id}
-              onClick={() => void onOpen(conn, session.id)}
+              onClick={() => void commands.open(conn, session.id)}
             >
               {/* THE MARK COLUMN, EMPTY — and reserved for exactly that reason. The
             project band above these rows spends it on its fold, so a row that
@@ -312,9 +323,9 @@ export const SessionRow = memo(function SessionRow({
           </div>
         </SwipeActions>
       )}
-      {isConfirmingDelete && deleteError && (
+      {deletion?.error && (
         <div className="px-3 pb-2">
-          <Banner kind="err">{deleteError}</Banner>
+          <Banner kind="err">{deletion.error}</Banner>
         </div>
       )}
       {/* Height eases through a 0fr -> 1fr grid track: the one pure-CSS way to

@@ -26,6 +26,7 @@ import type { GatewayClient } from '../lib/gateway';
 import { MACHINE_COLORS, type MachineColor } from '../lib/machine-colors';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import liveViewWire from '../lib/live-view.fixture.json';
+import { createComposerPaste, type ComposerPaste } from '../lib/paste';
 import { COMMENTS_HEADING } from '../lib/markdown-annotations';
 import type {
   GatewayConn,
@@ -473,6 +474,17 @@ export const STORY_QUEUE_PAUSED: QueuePausedInfo = {
   held: 2,
   reason: 'turn_failed',
 };
+
+export const STORY_COMPOSER_PASTE: ComposerPaste = createComposerPaste(
+  4,
+  [
+    'Release checklist',
+    '',
+    '- Verify the signed manifest',
+    '- Publish the changelog',
+    '- Notify the mobile release channel',
+  ].join('\n'),
+);
 
 /** The paired fleet: reachable, unavailable, and long enough to exercise truncation. */
 export const STORY_GATEWAYS: GatewayConn[] = [
