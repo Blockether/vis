@@ -1465,44 +1465,30 @@
         (expect (= :tool-result (reason-of 1)))
         (expect (= :tool-result (reason-of 7))))))
 
-(defdescribe persisted-form-omits-a-derivable-render-test
-             ;; Regression: every persisted form used to carry `:result-render` — a
-             ;; rendered copy of the `:result`/`:stdout` sitting right beside it in the
-             ;; same blob, 32% of `tool_calls`. The envelope must carry only what a
-             ;; reader cannot re-derive.
-             (it "drops a render the reader re-derives from the result"
-                 (let [block
-                       {:id 0
-                        :code "grep({})"
-                        :result {"files" ["a.clj"]}
-                        :result-render (form/result-render {:src "grep({})"
-                                                            :result {"files" ["a.clj"]}})}
-
-                       [envelope]
-                       (eng/blocks->forms [block] {:turn 1 :iter 1})]
-
-                   (expect (not (contains? envelope :result-render)))
-                   (expect (= {"files" ["a.clj"]} (:result envelope)))
-                   ;; …and the reader gets the very same body back
-                   (expect (= (:result-render block) (form/result-render envelope)))))
-             (it "keeps a render no projection reproduces"
-                 ;; A `!cmd` bubble: its body is the shell layer's own card markdown.
-                 (let [[envelope] (eng/blocks->forms [{:id 0
-                                                       :code "await shell({\"command\": \"ls\"})"
-                                                       :result {"ok" true}
-                                                       :result-render "**SHELL**\nls"}]
-                                                     {:turn 1 :iter 1})]
-                   (expect (= "**SHELL**\nls" (:result-render envelope)))))
-             (it "carries the timeout FLAG, and derives no card from it"
-                 (let [[envelope] (eng/blocks->forms [{:id 0
-                                                       :code "time.sleep(99)"
-                                                       :timeout? true
-                                                       :error {:message "Timeout (30s)"
-                                                               :data {:timeout-ms 30000}}}]
-                                                     {:turn 1 :iter 1})]
-                   (expect (true? (:timeout? envelope)))
-                   (expect (not (contains? envelope :result-render)))
-                   (expect (nil? (form/result-display envelope))))))
+(defdescribe
+  persisted-form-keeps-canonical-facts-test
+  (it "stores a structured host result and derives its card locally"
+      (let [[envelope] (eng/blocks->forms [{:id 0 :code "grep({})" :result {"files" ["a.clj"]}}]
+                                          {:turn 1 :iter 1})]
+        (expect (= {"files" ["a.clj"]} (:result envelope)))
+        (expect (str/includes? (get-in (form/result-card envelope) [:body]) "a.clj"))))
+  (it "stores printed output once as stdout even if an upstream result also exists"
+      (let [[envelope]
+            (eng/blocks->forms
+              [{:id 0 :code "print('hello')" :stdout "hello\n" :result {"duplicate" true}}]
+              {:turn 1 :iter 1})]
+        (expect (= "hello\n" (:stdout envelope)))
+        (expect (not (contains? envelope :result)))
+        (expect (str/includes? (get-in (form/result-card envelope) [:body]) "hello"))))
+  (it "carries the timeout flag and derives no card from it"
+      (let [[envelope] (eng/blocks->forms [{:id 0
+                                            :code "time.sleep(99)"
+                                            :timeout? true
+                                            :error {:message "Timeout (30s)"
+                                                    :data {:timeout-ms 30000}}}]
+                                          {:turn 1 :iter 1})]
+        (expect (true? (:timeout? envelope)))
+        (expect (nil? (form/result-display envelope))))))
 
 (defdescribe
   guest-interrupt-on-eval-timeout-test
@@ -1685,11 +1671,8 @@
                                                                                      "python-only\n"
                                                                                      (:stdout
                                                                                        result)))
-               ;; Python returns semantics only; the host derives this display after it exits.
-               (expect (not (contains? result :result-render))) (expect (str/includes?
-                                                                          (form/result-render
-                                                                            result)
-                                                                          "python-only"))
+               ;; The host derives presentation from the printed fact after execution.
+               (expect (str/includes? (:body (form/result-display result)) "python-only"))
                (expect (not (str/includes? (:stdout result) "# Activity"))) (expect (not
                                                                                       (str/includes?
                                                                                         (:stdout
@@ -3941,7 +3924,7 @@
               (irm {:forms-vec [{:scope "t1/i1/f1"
                                  :svar/tool-call-id "c1"
                                  :stdout "watching"
-                                 :result-render "PRESENTATION-ONLY-SENTINEL"}]
+                                 :result-summary "PRESENTATION-ONLY-SENTINEL"}]
                     :tool-calls [{:id "c1"}]
                     ;; Protocol 7 files no Activity attachment, so the only record
                     ;; this rail can meet is a semantic one.

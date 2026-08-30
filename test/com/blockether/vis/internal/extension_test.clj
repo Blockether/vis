@@ -428,7 +428,7 @@
                  ;; A result is painted from its OWN data now. A registry keyed by tool
                  ;; name is how per-tool cards grew back last time: one lookup, then a
                  ;; declaration per verb to feed it.
-                 (doseq [nm '[finish-call-renderers-by-name printed-result-renderers-by-op]]
+                 (let [nm 'finish-call-renderers-by-name]
                    (expect (nil? (ns-resolve 'com.blockether.vis.internal.extension nm)) (str nm))))
              (it "binds every doc-bearing symbol under a bare Python name"
                  (let [docs

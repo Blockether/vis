@@ -3,9 +3,7 @@
 
    Asserts that `run-turn!` short-circuits the LLM round-trip when the user
    message is a bang, runs the shell tool directly (honoring `:shell/enabled`),
-   and persists ONE synthetic iteration whose form carries the shell RESULT map
-   at `:tag :user-shell` — so the op-card renders as the answer bubble and the
-   result rides later prompts' prior-turn context like a real shell tool call."
+   and persists one synthetic iteration whose form owns the command's stdout."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.persistance-sqlite.core :as ps]
             [com.blockether.vis.ext.persistance-sqlite.registrar]
@@ -61,7 +59,7 @@
 (defdescribe
   run-turn-bang-test
   (it
-    "runs shell directly, skips iteration-loop, persists a :user-shell result form"
+    "runs shell directly and persists stdout as the only command output"
     (with-store
       (fn [store]
         (let [env
@@ -69,6 +67,9 @@
 
               called
               (atom 0)
+
+              chunks
+              (atom [])
 
               result
               (with-redefs [lp/iteration-loop
@@ -80,7 +81,7 @@
                             (fn [_]
                               true)]
 
-                (lp/run-turn! env "!echo hi-from-bang" {}))
+                (lp/run-turn! env "!echo hi-from-bang" {:hooks {:on-chunk #(swap! chunks conj %)}}))
 
               turns
               (persistance/db-list-session-turns store (:session-id env))
@@ -89,26 +90,27 @@
               (persistance/db-list-session-turn-iterations store (:id (first turns)))
 
               form
-              (first (:forms (first iters)))]
+              (first (:forms (first iters)))
+
+              output
+              (some #(when (= :form-result (:phase %)) %) @chunks)]
 
           ;; No LLM round-trip.
           (expect (= 0 @called))
           (expect (= :success (:status result)))
           (expect (= :complete (:prior-outcome result)))
-          ;; The op-card renders as the answer bubble.
-          (expect (str/includes? (:answer result) "echo hi-from-bang"))
-          (expect (str/includes? (:answer result) "hi-from-bang"))
           ;; The raw command is the persisted turn request.
           (expect (= "!echo hi-from-bang" (:user-request (first turns))))
-          ;; ONE synthetic iteration with a native-shell form the model reads
-          ;; back in prior-turn context, tagged so channels suppress the trace.
+          ;; One synthetic iteration and one canonical copy of the command output.
           (expect (= 1 (count turns)))
           (expect (= :user-shell (:tag form)))
           (expect (= "shell" (:vis/tool-name form)))
           (expect (= "await shell({\"command\": \"echo hi-from-bang\"})" (:src form)))
-          ;; ONE call is ONE command: the output is at the TOP level of the result.
-          (expect (= "hi-from-bang\n" (get (:result form) "out")))
-          (expect (= 0 (get (:result form) "exit"))))))))
+          (expect (= "hi-from-bang\n" (:stdout form)))
+          (expect (not (contains? form :result)))
+          ;; The same factual shape is streamed live; no answer prose duplicates it.
+          (expect (= "hi-from-bang\n" (:stdout output)))
+          (expect (= "" (:answer result))))))))
 
 ;; Regression: a `!`/`!&` bang turn ran in the PROCESS cwd instead of the
 ;; session's own workspace root — inside a draft `!ls -la` listed the real repo.
@@ -138,12 +140,11 @@
                            iters
                            (persistance/db-list-session-turn-iterations store (:id (first turns)))
 
-                           shell-result
-                           (:result (first (:forms (first iters))))]
+                           stdout
+                           (:stdout (first (:forms (first iters))))]
 
                        (expect (= :success (:status result)))
-                       (expect (= root (get shell-result "cwd")))
-                       (expect (= root (str/trim (get shell-result "out")))))))))
+                       (expect (= root (str/trim stdout))))))))
 
 (defdescribe run-turn-bang-disabled-test
              (it "refuses when the shell layer is OFF, without running the command"

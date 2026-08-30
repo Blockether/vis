@@ -309,7 +309,7 @@
                                        :forms [{:success? true
                                                 :code ""
                                                 :result-summary "12 results"
-                                                :result-render "**STDOUT**\n```\none hit\n```"
+                                                :stdout "one hit\n"
                                                 :duration-ms 2300}]})
               80
               1
@@ -4402,62 +4402,28 @@
                          (when (= s l) i))
                        lines)))
 
-(defdescribe
-  tool-card-body-blank-lines-test
-  ;; REGRESSION: the card-body compactor deleted EVERY blank row and re-added a
-  ;; single pad before each `**LABEL**`, so a blank line the TOOL authored inside
-  ;; a section -- a commit message's subject/body split, the gap between two
-  ;; phases of shell output -- was welded shut. Structural padding is still
-  ;; normalized; interior blanks survive as exactly one row.
-  (it "keeps the paragraph break inside a quoted commit MESSAGE"
-      (let [lines
-            (mapv card-plain
-                  (format-iteration-entry
-                    {:iteration 0
-                     :forms [{:op "shell"
-                              :code "shell(\"git commit\")"
-                              :result-summary "commit — feat: thing"
-                              :result-render
-                              (str "**COMMAND**\n```bash\ngit commit -m feat: thing\n```\n\n"
-                                   "**MESSAGE**\n> feat: thing\n>\n> body line\n")
-                              :started-at-ms 1000
-                              :success? true}]}
-                    80
-                    1
-                    {:now-ms 2500}))
+(defdescribe tool-card-body-blank-lines-test
+             (it "keeps a blank line stdout wrote"
+                 (let [lines
+                       (mapv card-plain
+                             (format-iteration-entry {:iteration 0
+                                                      :forms
+                                                      [{:op "shell"
+                                                        :code "shell({\"command\": \"run.sh\"})"
+                                                        :result-summary "$ run.sh"
+                                                        :stdout "phase one ok\n\nphase two ok\n"
+                                                        :started-at-ms 1000
+                                                        :success? true}]}
+                                                     80
+                                                     1
+                                                     {:now-ms 2500}))
 
-            msg-idx
-            (card-index-of lines "MESSAGE")]
+                       first-line
+                       (card-index-of lines "phase one ok")]
 
-        (expect (some? msg-idx) (str "got: " lines))
-        (expect (= ["│ feat: thing" "│" "│ body line"] (subvec lines (inc msg-idx) (+ msg-idx 4))))
-        ;; Section padding is untouched: exactly ONE blank row above the label.
-        (expect (= "" (nth lines (dec msg-idx))))
-        (expect (not= "" (nth lines (- msg-idx 2))))))
-  (it "keeps a blank line the shell wrote inside its OUT"
-      (let [lines
-            (mapv card-plain
-                  (format-iteration-entry
-                    {:iteration 0
-                     :forms [{:op "shell"
-                              :code "shell({\"command\": \"run.sh\"})"
-                              :result-summary "$ run.sh"
-                              :result-render (str
-                                               "**COMMAND**\n```bash\nrun.sh\n```\n\n"
-                                               "**OUT**\n```\nphase one ok\n\nphase two ok\n```\n")
-                              :started-at-ms 1000
-                              :success? true}]}
-                    80
-                    1
-                    {:now-ms 2500}))
-
-            out-idx
-            (card-index-of lines "OUT")]
-
-        (expect (some? out-idx) (str "got: " lines))
-        (expect (= ["phase one ok" "" "phase two ok"] (subvec lines (inc out-idx) (+ out-idx 4))))
-        (expect (= "" (nth lines (dec out-idx))))
-        (expect (not= "" (nth lines (- out-idx 2)))))))
+                   (expect (some? first-line) (str "got: " lines))
+                   (expect (= ["phase one ok" "" "phase two ok"]
+                              (subvec lines first-line (+ first-line 3)))))))
 
 ;; A PDF is pages and an HTML page is markup: neither has pixels a terminal can
 ;; paint, and neither is ever handed to the model as an image block. The card is
@@ -4692,7 +4658,7 @@
         [{:thinking thinking
           :forms [{:success? true
                    :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
-                   :result-render (str/join " " (repeat 200 "abcdefghij"))
+                   :stdout (str/join " " (repeat 200 "abcdefghij"))
                    :result-kind :value
                    :duration-ms 1
                    :silent? false}]}]
@@ -4762,12 +4728,10 @@
           (expect (not (str/includes? (row-text row) "result")))
           (expect (= "RESULT" (ink row :bold)))))))
 
-;; The unlabeled long-result disclosure was the one control that never said
-;; what it folded: collapsed it read `+12 more result lines`, so the row could
-;; only be understood from the rows above it. It wears the band's own name in
-;; both states now, exactly like the code band.
+ ;; Canonical output carries no pre-rendered body. The renderer derives it locally,
+ ;; and the disclosure keeps the result band's own name in both states.
 (defdescribe
-  long-result-disclosure-label-test
+  locally-derived-result-disclosure-label-test
   (let [long-result
         (str/join "\n" (map #(str "line " % " of the value") (range 1 40)))
 
@@ -4776,7 +4740,7 @@
           (render/invalidate-cache!)
           (->> (:lines (render/format-answer-with-thinking-data*
                          nil
-                         [{:forms [{:success? true :code "x = 1" :result long-result}]}]
+                         [{:forms [{:success? true :code "x = 1" :stdout long-result}]}]
                          80
                          {:show-thinking true :show-iterations true}
                          nil
@@ -4789,15 +4753,14 @@
                (filter #(str/includes? % "RESULT"))
                first))]
 
-    (it "names the collapsed disclosure and counts what it hides"
-        (expect (= "▸ RESULT +8 more lines" (label-of {}))))
+    (it "names the locally derived collapsed disclosure" (expect (= "▸ RESULT" (label-of {}))))
     (it "keeps the name once expanded"
         (expect (= "▾ RESULT" (label-of {:vis.channel-tui/expand-all-details? true}))))
     (it "wraps that name in the painter's bold sentinels"
         (render/invalidate-cache!)
         (let [line (->> (:lines (render/format-answer-with-thinking-data*
                                   nil
-                                  [{:forms [{:success? true :code "x = 1" :result long-result}]}]
+                                  [{:forms [{:success? true :code "x = 1" :stdout long-result}]}]
                                   80
                                   {:show-thinking true :show-iterations true}
                                   nil
@@ -5148,7 +5111,7 @@ e = 5
 f = 6
 g = 7
 h = 8"
-                     :result-render (str/join " " (repeat 200 "result-value"))
+                     :stdout (str/join " " (repeat 200 "result-value"))
                      :result-kind :value
                      :duration-ms 1
                      :silent? false

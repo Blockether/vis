@@ -90,7 +90,6 @@ function formFromEvent(event: SseEvent, running = false): TranscriptForm {
     op: eventString(event, "op") || undefined,
     result_summary:
       eventString(event, "result_summary") || (running ? "Running…" : undefined),
-    result_render: eventString(event, "result_render") || undefined,
     result_kind: eventString(event, "result_kind") || undefined,
     result: event.result as TranscriptForm["result"],
     error: event.error as TranscriptForm["error"],

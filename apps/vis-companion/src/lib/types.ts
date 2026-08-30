@@ -900,7 +900,6 @@ export interface TranscriptForm {
   display_language?: string;
   comment?: string;
   result?: JsonValue;
-  result_render?: string;
   result_summary?: string;
   result_kind?: string;
   result_detail?: Record<string, JsonValue>;

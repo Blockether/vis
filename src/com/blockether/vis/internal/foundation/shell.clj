@@ -110,9 +110,8 @@
    mangled every ordinary machine-readable payload above 16k chars: a plain
    `gh issue list --json …` (21k chars) came back with the omitted-marker spliced
    at char 4000, so `json.loads(r[\"out\"])` died on
-   \"Invalid control character\" EVERY time. Cards clip separately
-   ([[clip-stream]]) and the loop clips the wire, so capturing a parseable
-   stream costs context nothing."
+   \"Invalid control character\" EVERY time. The loop's wire projection clips
+   separately, so capturing a parseable stream costs context nothing."
   300000)
 
 (def ^:private max-bg-lines
@@ -382,11 +381,10 @@
   "The ONE reading of a PTY capture, shared by every consumer: ANSI/VT escapes and
    non-printing controls removed, tabs and line feeds kept, and a redrawn line
    resolved to the frame the terminal was left showing. What a human sitting at
-   that terminal SAW is what `out` carries and what the card prints —
-   a colour reset git wrote ONLY because our pty made isatty() true is invisible
-   to a human and a literal `[m` to everyone reading the string, and half-cleaning
-   it left the two readings disagreeing. The raw stream stays whole on disk at
-   `log_path` for anyone who wants the bytes."
+   that terminal SAW is what `out` carries and every consumer displays — a colour
+   reset git wrote ONLY because our pty made isatty() true is invisible to a human
+   and a literal `[m` to anyone reading the string. The raw stream stays whole on
+   disk at `log_path` for anyone who wants the bytes."
   [s]
   (when (some? s)
     (-> (str s)
@@ -1415,11 +1413,10 @@
 
 (defn- bg-core
   "Identity keys shared by EVERY background stage of `shell`, merged onto the
-   TOTAL base. `op` names the stage that produced the result, so the card renderer
-   — and model Python — reads ONE declared field instead of sniffing which keys
-    happen to exist. `exit` nil while running, `attach` nil when no attach
-   bridge was opened, `command`/`cwd`/`pid` nil only once the entry itself is
-   gone.
+   TOTAL base. `op` names the stage that produced the result, so consumers and
+   model Python read ONE declared field instead of sniffing which keys happen to
+   exist. `exit` is nil while running, `attach` nil when no attach bridge was
+   opened, and `command`/`cwd`/`pid` nil only once the entry itself is gone.
 
    The shell's own command line rides the SAME `command` key a run answers with,
    so a lifecycle stage says what the shell it acts on is running and the result
@@ -2218,10 +2215,9 @@
               :else (do (Thread/sleep (long wait-drain-poll-ms))
                         (recur nxt (inc idle) (if (= "" text) (inc quiet) 0) seen)))))))
 
-
 (def ^:private control-key-names
-  "Human names for the control characters `send` writes into a PTY, so a card can
-   show WHAT was typed even when the payload prints nothing at all."
+  "Human names for the control characters `send` writes into a PTY, so its factual
+   status can say WHAT was typed even when the payload prints nothing at all."
   {\newline "↵" \return "↵" \tab "⇥" (char 27) "Esc" (char 127) "Del"})
 
 (defn- key-token
@@ -2239,7 +2235,7 @@
   "Human keystroke label for a `send` payload: printable runs stay literal (quoted),
    every control character becomes its key name — `\"y\" ↵`, `C-c`, `Esc`. A send is
    frequently ENTIRELY non-printing, where a char count says nothing about what the
-   shell actually received, so this is what the card shows."
+   shell actually received, so the result metadata carries this label."
   [s]
   (when (some? s)
     (->> (str s)
@@ -2764,15 +2760,9 @@
   [env & args]
   (shell-dispatch env (assoc (shell-call-opts ["id"] args) "op" "stop")))
 
-;; The `!cmd` bang card — `:result` → `{:summary :body}`, built by
-;; `render-shell-run-result` below and called directly by the loop's bang path.
-;; The result arrives string-keyed snake_case (strings-only boundary); the card
-;; is the keyword `{:summary :body}` IR (that part is internal).
+;; Compact shell labels used by the live process ticker.
 
-(def ^:private shell-chip-max
-  "Display-width-ish budget for the command on the collapsed shell chip. Keep this
-   tighter than the TUI width; the op-card label already says SHELL RUN."
-  72)
+(def ^:private shell-chip-max "Display-width-ish budget for one command in a live shell label." 72)
 
 (defn- present-str
   "Stringify `x`, trim only the right edge (so logs keep indentation), and return
@@ -2782,7 +2772,7 @@
     (when-not (str/blank? s) s)))
 
 (defn- shell-one-line
-  "Collapse whitespace to one trimmed line for a shell card preview."
+  "Collapse whitespace to one trimmed line for a shell ticker preview."
   [s]
   (some-> (present-str s)
           (str/replace #"\s+" " ")
@@ -2790,8 +2780,7 @@
           not-empty))
 
 (defn- clip-chip
-  "Clip a single-line preview with an ellipsis so shell commands cannot blow out
-   collapsed cards."
+  "Clip a single-line shell label with an ellipsis."
   [s n]
   (let [s
         (str s)
@@ -2801,229 +2790,14 @@
 
     (if (> (count s) n) (str (subs s 0 (max 0 (dec n))) "…") s)))
 
-(def ^:private card-head-chars
-  "Head of a stream kept in a CARD. Display-only: capture stays whole."
-  4000)
-
-(def ^:private card-tail-chars
-  "Tail of a stream kept in a CARD — failures and summaries live at the END."
-  12000)
-
-(defn- clip-stream
-  "DISPLAY clip for a captured stream: keep the head and the tail, splice a
-   visible omitted-count marker into the middle. The RESULT keeps the whole
-   capture (up to [[max-sync-head-chars]]+[[max-sync-tail-chars]]) so
-   `json.loads(r[\"out\"])` works; only the card is clipped."
-  [s]
-  (let [head
-        (long card-head-chars)
-
-        tail
-        (long card-tail-chars)
-
-        cap
-        (+ head tail)
-
-        n
-        (long (count (str s)))]
-
-    (if-not (and (string? s) (> n cap))
-      s
-      (str (subs s 0 head) "\n\n…[" (- n cap) " chars omitted]…\n\n" (subs s (- n tail))))))
-
-(defn- duration-label
-  "Human duration for shell card chips/status sections."
-  [ms]
-  (when (number? ms)
-    (cond (< (long ms) 1000) (str (long ms) "ms")
-          (< (long ms) 60000) (str/replace (format "%.1fs" (/ (double ms) 1000.0)) "," ".")
-          :else (str/replace (format "%.1fm" (/ (double ms) 60000.0)) "," "."))))
-
-(defn- squeeze-blank-lines
-  "Display-tidy the lines of a rendered command: trailing whitespace off every
-   line, no blank head or tail, and an interior run of blanks collapsed to ONE.
-   A blank line the CALLER wrote is authored structure — the paragraph break in a
-   multi-line script — so it survives instead of being welded shut."
-  [lines]
-  (->> lines
-       (map str/trimr)
-       (partition-by str/blank?)
-       (mapcat (fn [g]
-                 (if (str/blank? (first g)) [""] g)))
-       (drop-while str/blank?)
-       reverse
-       (drop-while str/blank?)
-       reverse))
-
-(defn- skip-inline-space
-  "First index at or after `i` that is neither a space nor a tab. An operator
-   break ends its own line, so the continuation must not start indented by the
-   split — that is the ONLY whitespace this pretty-printer may drop."
-  ^long [^String s ^long i ^long n]
-  (loop [i i]
-    (if (and (< i n)
-             (let [c (.charAt s i)]
-               (or (= c \space) (= c \tab))))
-      (recur (inc i))
-      i)))
-
-(defn- format-shell-command
-  "Pretty-print a shell command for the COMMAND card so a compound one-liner
-   reads as separated statements instead of one crammed blob. Break onto its
-   own line at TOP-LEVEL `;`, `&&`, `||` operators, keeping the operator at the
-   end of its line. Quote- AND paren-aware: separators inside `'…'` / `\"…\"`
-   or nested `$(…)` / `(…)` stay put (so `$(f || g)` and `2>&1 &` are never
-   split), and a simple command comes back unchanged.
-
-   The command's OWN line structure is display: a multi-line script keeps its
-   indentation, and a blank line between two of its paragraphs survives as one
-   blank row (see [[squeeze-blank-lines]])."
-  [s]
-  (let [s
-        (str s)
-
-        n
-        (long (count s))
-
-        sb
-        (StringBuilder.)]
-
-    (loop [i
-           0
-
-           sq
-           false
-
-           dq
-           false
-
-           depth
-           0]
-
-      (if (>= i n)
-        (let [out (str/join "\n" (squeeze-blank-lines (str/split-lines (str sb))))]
-          (if (str/blank? out) (str/trim s) out))
-        (let [c
-              (.charAt s i)
-
-              nxt
-              (when (< (inc i) n) (.charAt s (inc i)))]
-
-          (cond
-            ;; backslash escape (not inside single quotes): copy the pair verbatim
-            (and (not sq) (= c \\))
-            (do (.append sb c) (when nxt (.append sb nxt)) (recur (+ i 2) sq dq depth))
-            (and (not dq) (= c \')) (do (.append sb c) (recur (inc i) (not sq) dq depth))
-            (and (not sq) (= c \")) (do (.append sb c) (recur (inc i) sq (not dq) depth))
-            (or sq dq) (do (.append sb c) (recur (inc i) sq dq depth))
-            (= c \() (do (.append sb c) (recur (inc i) sq dq (inc depth)))
-            (= c \)) (do (.append sb c) (recur (inc i) sq dq (max 0 (dec depth))))
-            (and (zero? depth) (= c \&) (= nxt \&))
-            (do (.append sb "&&\n") (recur (skip-inline-space s (+ i 2) n) sq dq depth))
-            (and (zero? depth) (= c \|) (= nxt \|))
-            (do (.append sb "||\n") (recur (skip-inline-space s (+ i 2) n) sq dq depth))
-            (and (zero? depth) (= c \;)) (do (.append sb ";\n")
-                                             (recur (skip-inline-space s (inc i) n) sq dq depth))
-            :else (do (.append sb c) (recur (inc i) sq dq depth))))))))
-
-(defn- fence
-  "Wrap normalized terminal text `s` in a code fence, or nil when blank."
-  ([s] (fence s nil))
-  ([s lang]
-   (when-let [s (present-str (normalize-terminal-output s))]
-     (util/fenced s lang))))
-
-(defn- shell-section
-  "One REPL-style labeled shell body section."
-  ([label s] (shell-section label s nil))
-  ([label s lang]
-   (when-let [f (fence s lang)]
-     (str "**" label "**\n" f))))
-
-(defn- kv-lines
-  "Render non-nil `[label value]` pairs as `label: value` lines."
-  [pairs]
-  (->> pairs
-       (keep (fn [[k v]]
-               (when-let [v (present-str v)]
-                 (str k ": " v))))
-       (str/join "\n")
-       not-empty))
-
-(defn- shell-run-status
-  "Status fields for a sync `run` result. Non-zero exit is display data, not a
-   tool error, but it still gets the failed visual treatment."
-  [r]
-  (let [exit (get r "exit")]
-    (cond (get r "timed_out") {:icon "⏱"
-                               :label (str "timed out"
-                                           (when-let [s (get r "timeout_secs")]
-                                             (str " after " s "s")))
-                               :failed? true}
-          (and exit (not (== 0 (long exit)))) {:icon "✗" :label (str "exit " exit) :failed? true}
-          exit {:icon "✓" :label (str "exit " exit) :failed? false}
-          :else {:icon "✓" :label "finished" :failed? false})))
-
-(defn render-shell-run-result
-  "shell op `run` → REPL-style collapsed/expanded card. The ONE surviving op-card
-   renderer, and it is called DIRECTLY: the `!cmd` bang path in the loop PRINTS a
-   command's output, so this card IS its whole answer. No registry, no symbol key
-   — every other result is painted from the result's own data.
-
-   Collapsed: `$ npm test (success) · 1.2s` or
-   `$ grep x missing (failure) · exit 2 · 34ms`.
-   Expanded: labeled COMMAND / STATUS / OUT sections. The body is
-   always present so shell cards are collapsible even when the command produced no
-   output; the full command and metadata stay available behind the disclosure."
-  [r]
-  (let [{:keys [label failed?]}
-        (shell-run-status r)
-
-        command
-        (or (shell-one-line (get r "command")) "shell")
-
-        duration
-        (duration-label (get r "duration_ms"))
-
-        summary
-        (str "$ "
-             (clip-chip command shell-chip-max)
-             " ("
-             (if failed? "failure" "success")
-             ")"
-             (when failed? (str " · " label))
-             (when duration (str " · " duration)))
-
-        status
-        (kv-lines [["status" label] ["duration" duration] ["cwd" (get r "cwd")]
-                   ;; The timeout budget is TOTAL in the result but only worth a row
-                   ;; when it was actually hit.
-                   ["timeout" (when (get r "timed_out") (str (get r "timeout_secs") "s"))]
-                   ;; Truncation is REAL data loss, but `*_omitted_chars` is 0 unless the
-                   ;; middle-excision actually dropped something — the count IS the flag,
-                   ;; so name the stream and the exact number of characters lost.
-                   ["out"
-                    (let [n (get r "out_omitted_chars")]
-                      (when (and n (pos? (long n))) (str "truncated · " n " chars omitted")))]])
-
-        body
-        (->> [(shell-section "COMMAND" (format-shell-command (get r "command")) "bash")
-              (shell-section "STATUS" status)
-              (shell-section "OUT" (clip-stream (get r "out")) "bash")]
-             (remove nil?)
-             (str/join "\n\n"))]
-
-    {:summary summary :body (when (seq body) body)}))
-
-
 ;; Symbols + prompt + extension. ONE builtin symbol — `shell` — bound bare in the
 ;; flat Python sandbox next to `ls` / `grep`.
 
 (defn- live-bg-script
   "The bash the LIVE background shell `id` is already running. A `logs`/`send`/
    `stop` call runs no command of its OWN, but the command it acts on is right
-   there in the registry — the same line the finished card renders out of its
-   result — so the live ticker can name that real command.
+   there in the registry — the same `command` fact a finished result carries — so
+   the live ticker can name that real command.
 
    nil when no live shell answers to that id, or when two sessions both do and the
    answer would be a guess."

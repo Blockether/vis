@@ -50,6 +50,7 @@
    :warn-on-boxed` clean across this namespace per the repo's GraalVM
    ratchet."
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.internal.render :as ast])
@@ -430,7 +431,7 @@
   ^long [message ^long content-w]
   (let [form-strings
         (fn [f]
-          (list (or (:result-render f) (:result f)) (:comment f)))
+          (list (:body (vis/result-card f)) (:comment f)))
 
         trace-strings
         (fn [it]
@@ -557,7 +558,7 @@
                                                 0))
 
                                         rr
-                                        (long (section-rows (or (:result-render f) (:result f))))
+                                        (long (section-rows (:body (vis/result-card f))))
 
                                         comr
                                         (long (let [cm (:comment f)]

@@ -35,6 +35,9 @@
   "Wire protocol number THIS build speaks. Monotonic; bump on every BREAKING
    gateway HTTP/SSE change.
 
+   10 — `block.output` carries canonical execution facts only. Its duplicated
+   presentation field is gone, and `!cmd` writes its output once as `stdout`.
+
    9 — Activity owns one event type for its whole lifecycle: running revisions are
    transient/materialized `block.activity`; the settled revision is durable
    `block.activity`. `block.output` carries execution output only.
@@ -43,17 +46,17 @@
    lookup. Coarse ticker frames are `turn.progress`; form frames route by the
    truthful numeric `form_index`. The split-id reconciliation contract and the
    overloaded `activity` event name are gone."
-  9)
+  10)
 
 (def min-client-protocol
-  "Oldest client protocol this gateway serves. Protocol 9 requires Activity to settle
-   on durable `block.activity`, never `block.output`."
-  9)
+  "Oldest client protocol this gateway serves. Protocol 10 removes the rendered
+   result duplicate from `block.output`; clients derive presentation from facts."
+  10)
 
 (def min-gateway-protocol
   "Oldest gateway protocol this client accepts: the mirror of
    [[min-client-protocol]]."
-  9)
+  10)
 
 (def protocol-header "Request header carrying the client's own protocol number." "x-vis-protocol")
 

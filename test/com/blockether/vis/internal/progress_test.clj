@@ -26,7 +26,7 @@
 
           (expect (= 1 (count (:forms entry))))
           (expect (= "(+ x 1)" (:code form)))
-          (expect (nil? (:result-render form)))
+          (expect (nil? (:stdout form)))
           (expect (= :error (:result-kind form)))
           (expect (= err (:error form)))
           (expect (false? (:success? form)))

@@ -102,18 +102,11 @@
 
 (defn- form-envelope->block
   "Project one per-form envelope from `:forms` into the transcript's
-   `:blocks` shape. Each envelope carries `:scope :tag :src :result :error`
-   and `:stdout` (what a `python_execution` block PRINTED — its primary
-   output; a success value rides `:result` while printed context rides
-   `:stdout`, and a failing block may carry partial `:stdout` alongside
-   `:error`). All are surfaced, plus a 0-based `:position` derived from the
-   form's index in the iter's `:forms` vec."
+   `:blocks` shape. Each envelope carries canonical result facts — structured
+   `:result` for host/native output, `:stdout` for what Python printed, and an
+   optional `:error` — plus a 0-based `:position` derived from its index."
   [position raw-envelope]
-  ;; `:result-render` is DERIVED, never stored: `with-display` fills the body the
-  ;; live stream painted, out of the result this very row kept, and leaves an
-  ;; AUTHORED one (a `!cmd` card, whose body is the shell layer's own markdown)
-  ;; alone.
-  (let [envelope (form/with-display raw-envelope)]
+  (let [envelope raw-envelope]
     (cond-> {:position position :code (or (:src envelope) "")}
       (:scope envelope)
       (assoc :scope (:scope envelope))
@@ -124,26 +117,19 @@
       (contains? envelope :result)
       (assoc :result (:result envelope))
 
-      ;; Printed output — the primary content of a `python_execution` block.
-      ;; Rides `:stdout`, NOT `:result` (bare values aren't echoed), and also
-      ;; appears alongside `:error` when a failing block printed before it threw.
-      ;; Without this the forensic transcript shows `result: None` for every
-      ;; python block and loses what it actually printed.
+      ;; Printed output is the primary content of a `python_execution` block and
+      ;; can coexist with an error when the block printed before it threw.
       (some? (:stdout envelope))
       (assoc :stdout (:stdout envelope))
 
       (contains? envelope :error)
       (assoc :error (:error envelope))
 
-      ;; Canonical card IR so the dialog renderer reuses the SAME descriptors the
-      ;; TUI/web build instead of re-parsing the invocation string. Gated on the
-      ;; CARD fields themselves: a block's own output carries no op, and losing its
-      ;; headline/body to a missing identity is exactly the drift this avoids.
-      (or (some? (:result-summary envelope)) (some? (:result-render envelope)))
-      (assoc :op
-        (:op envelope) :result-summary
-        (:result-summary envelope) :result-render
-        (:result-render envelope)))))
+      (some? (:op envelope))
+      (assoc :op (:op envelope))
+
+      (some? (:result-summary envelope))
+      (assoc :result-summary (:result-summary envelope)))))
 
 (defn- attachment-descriptor
   "Lean, byte-free descriptor for ONE persisted iteration attachment (an element

@@ -1089,30 +1089,34 @@ function interruptedPython(form: TranscriptForm): boolean {
 function resultBody(form: TranscriptForm): string {
   if (interruptedPython(form)) return "";
   if (form.error != null) return jsonText(form.error);
-  const rendered = form.result_render?.trimEnd();
-  if (rendered) return markAnsiHighlights(rendered);
-  if (form.result_summary?.trim()) return "";
+
+  const stdout = form.stdout?.trimEnd();
+  if (stdout) {
+    const rendered = ["````vis-image", "````vis-doc", "````vis-table"].some((marker) =>
+      stdout.includes(marker),
+    )
+      ? stdout
+      : fenced(stdout);
+    return markAnsiHighlights(rendered);
+  }
+
   if (form.result == null || form.result === "") return "";
   const raw = jsonText(form.result);
-  return typeof form.result === "string" ? raw : fenced(raw, "json");
+  return markAnsiHighlights(fenced(raw, typeof form.result === "string" ? "" : "json"));
 }
 
-// A synthetic COMMAND turn carries ONE form the model never wrote: `/reload` is
-// persisted as the slash envelope (`run-slash-turn!`, tag `user-slash`) and `!ls`
-// as the shell result (`run-bang-turn!`, tag `user-shell`), purely so history and
-// resume keep them. The engine stamps those tags so a channel SUPPRESSES the
-// trace — the answer band under the turn already is the whole result — and
-// without that rule the app painted `/reload` as a PYTHON program with its own
-// RESULT band under it.
-const COMMAND_FORM_TAGS = new Set(["user-slash", "user-shell"]);
+// Slash envelopes are persisted so history and resume retain the command, but their
+// answer band is the whole result. A `!cmd` turn is different: its visible form owns
+// the one canonical stdout body, so hiding it would hide the command's only output.
+const HIDDEN_FORM_TAGS = new Set(["user-slash"]);
 
-/** A form the trace paints NOTHING for: engine chrome, an answer, or a command. */
+/** A form the trace paints NOTHING for: engine chrome, an answer, or a slash command. */
 function hiddenForm(form: TranscriptForm): boolean {
   return (
     Boolean(form.silent) ||
     form.result === "vis_silent" ||
     form.result === "vis_answer" ||
-    COMMAND_FORM_TAGS.has(String(form.tag ?? ""))
+    HIDDEN_FORM_TAGS.has(String(form.tag ?? ""))
   );
 }
 
@@ -1204,13 +1208,12 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   const interrupted = interruptedPython(form);
   const resultText = resultBody(form);
   const failed = form.error != null && !interrupted;
-  // Once any real outcome has arrived (body/result/render/duration) a stale
-  // "Running…" placeholder from the gateway must not linger — the op is done.
+  // Once any real outcome has arrived a stale "Running…" placeholder from the
+  // gateway must not linger — the op is done.
   const hasOutcome =
     interrupted ||
     resultText !== "" ||
     form.result != null ||
-    form.result_render != null ||
     form.duration_ms != null;
   const placeholderSummary = form.result_summary?.trim() === "Running…";
   const rawSummary = interrupted
@@ -1463,7 +1466,6 @@ function pythonReceiptText(
     form.duration_ms != null ||
     resultBody(form) !== "" ||
     form.result != null ||
-    form.result_render != null ||
     Boolean(form.result_summary?.trim() && !placeholder);
   const state = interrupted
     ? "INTERRUPTED"
@@ -1477,7 +1479,8 @@ function pythonReceiptText(
             ? "RUNNING"
             : "DONE";
   const duration = activityDurationMs ?? form.duration_ms;
-  return [state, "PYTHON", state === "RUNNING" ? "" : formatDuration(duration)]
+  const role = form.tag === "user-shell" ? "SHELL" : "PYTHON";
+  return [state, role, state === "RUNNING" ? "" : formatDuration(duration)]
     .filter(Boolean)
     .join(" · ");
 }
@@ -2931,8 +2934,7 @@ export const ContentBlockView = memo(function ContentBlockView({
       const form: TranscriptForm = {
         op: block.tool ?? undefined,
         result_summary: block.status,
-        result_render:
-          block.output == null ? undefined : jsonText(block.output),
+        result: block.output ?? undefined,
         error: block.error,
       };
       return <ToolCard form={form} />;

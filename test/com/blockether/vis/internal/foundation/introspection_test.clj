@@ -728,14 +728,12 @@
                           (finally (vis/db-dispose-connection! s)))))))
 
 ;; Regression, issue 81dbadcc-620e-43b8-a3e7-661804a2718f: `read_session` handed the
-;; model the presentation layer — every block repeated its own printed output back as
-;; `:result-render`, and each host Activity receipt arrived as an attachment id whose
-;; bytes the sandbox reader refuses.
+;; model presentation metadata beside every block's canonical output, and each host
+;; Activity receipt arrived as an attachment id whose bytes the sandbox reader refuses.
 (defdescribe
   read-session-excludes-presentation-test
-  "`read_session` is the MODEL's read of a session: painted card IR never crosses it,
-   while the human transcript keeps the picture. Activity is no longer among the
-   things to exclude here — protocol 7 keeps it on the form, not in an attachment."
+  "`read_session` is the MODEL's read of a session: painted card metadata never
+   crosses it, while the human transcript retains the metadata needed to paint."
   (it
     "drops block card IR and the Activity receipt, keeping the semantic live record"
     (let [s (vis/db-create-connection! :memory)]
@@ -753,6 +751,8 @@
                                      :forms [{:scope "t1/i1"
                                               :tag :observation
                                               :src "await grep(...)"
+                                              :op "grep"
+                                              :result-summary "1 hit"
                                               :stdout "python-only\n"}]
                                      ;; Protocol 7 files no Activity attachment: the
                                      ;; receipt is a value on the form, so the only
@@ -771,15 +771,16 @@
               human (transcript/transcript s cid)
               human-iteration (first (mapcat :iterations (:turns human)))]
 
-          ;; The model reads the fact, never the picture painted of it.
+          ;; The model reads facts, never card metadata.
           (expect (= 1 (count blocks)))
           (expect (= "python-only\n" (get (first blocks) "stdout")))
-          (expect (empty? (filter #(contains? % "result_render") blocks)))
           (expect (empty? (filter #(contains? % "result_summary") blocks)))
           (expect (empty? (filter #(contains? % "op") blocks)))
           ;; A semantic live record is still model context.
           (expect (= ["ci-run.live.ndjson"] (mapv #(get % "filename") attachments)))
-          ;; The shared projection - what a person reopens - keeps the picture.
-          (expect (some? (:result-render (first (:blocks human-iteration)))))
+          ;; Human exports keep the label/headline and derive the body from stdout.
+          (expect (= "grep" (:op (first (:blocks human-iteration)))))
+          (expect (= "1 hit" (:result-summary (first (:blocks human-iteration)))))
+          (expect (= "python-only\n" (:stdout (first (:blocks human-iteration)))))
           (expect (= #{"ci-run.live.ndjson"} (set (map :filename (:attachments human-iteration))))))
         (finally (vis/db-dispose-connection! s))))))

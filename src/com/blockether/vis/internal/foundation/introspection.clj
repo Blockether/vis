@@ -1195,11 +1195,9 @@
         turns))
 
 (def ^:private painted-block-keys
-  "What a transcript block carries ONLY so a surface can paint it. `:result-render`
-   is `form/with-display`'s markdown body of the very `:result`/`:stdout` the same
-   block already holds, and `:op`/`:result-summary` are the card descriptor the TUI
-   and the companion build from it: a picture of a fact, never a second fact."
-  [:op :result-summary :result-render])
+  "Presentation metadata excluded from model introspection. Canonical
+   `:stdout` / `:result` facts remain; only the card label and headline go."
+  [:op :result-summary])
 
 (defn- model-iteration
   "One transcript iteration with the presentation-only rows taken out: the painted
@@ -1216,15 +1214,13 @@
 (defn- model-transcript
   "`transcript/transcript` with everything that exists only to be PAINTED removed.
 
-   That projection is shared with the HUMAN exports (`transcript-md` /
-   `transcript-html`), where the rendered card and the Activity receipt belong, so
-   the cut is made HERE - on the one edge that reaches the model - and never inside
-   the shared builder.
+   That projection is shared with HUMAN exports (`transcript-md` / `transcript-html`),
+   where card metadata and Activity receipts belong. The cut is made HERE — on the
+   one edge that reaches the model — and never inside the shared builder.
 
-   Both leaks were measured on a real session: every block handed the model a
-   `:result-render` repeating the `:stdout` printed right next to it, and nearly
-   every attachment descriptor named an Activity receipt whose bytes the sandbox
-   reader REFUSES, which is worse than no id at all."
+   Both leaks were measured on a real session: every block handed the model card
+   metadata beside its canonical output, and nearly every attachment descriptor
+   named an Activity receipt whose bytes the sandbox reader refuses."
   [transcript-data]
   (cond-> transcript-data
     (seq (:turns transcript-data))

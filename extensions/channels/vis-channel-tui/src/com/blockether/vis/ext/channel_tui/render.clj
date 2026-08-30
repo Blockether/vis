@@ -3575,10 +3575,10 @@
 (defn- form-fingerprint
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
-  [{:keys [code comment display-code display-language render-segments result-render result-summary
+  [{:keys [code comment display-code display-language render-segments result stdout result-summary
            result-kind result-detail error success? silent? runs activity]}]
-  [(text-fingerprint code) (text-fingerprint comment) render-segments
-   (text-fingerprint result-render) (text-fingerprint result-summary) result-kind
+  [(text-fingerprint code) (text-fingerprint comment) render-segments result
+   (text-fingerprint stdout) (text-fingerprint result-summary) result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
    result-detail error success? silent?
    ;; A settled live view joins this exact form after it closes, and reopening
@@ -5865,10 +5865,7 @@
                   (update :stdout strip-produced-artifact-transport))
 
                 card
-                (vis/result-card (cond-> display-form
-                                   (and (some? (:stdout display-form))
-                                        (nil? (:result display-form)))
-                                   vis/form-with-display))
+                (vis/result-card display-form)
 
                 ;; The card HEADLINE — the tally the printed value itself carried
                 ;; ("12 results"), never a first-line slice of the body.
@@ -5876,23 +5873,9 @@
                 (:summary card)
 
                 result-text
-                (let [rendered
-                      ;; The CARD's body, not `:result-render` straight off the form —
-                      ;; one field, decided once in `result-card`.
-                      (:body card)
-
-                      v
-                      (:result form)]
-
-                  (cond (and (string? rendered) (not (str/blank? rendered))) (str/trimr rendered)
-                        ;; A result that carried ONLY a headline has no body — the
-                        ;; summary alone IS the card; never fall back to an EDN dump.
-                        head-summary nil
-                        (nil? v) nil
-                        (string? v) (some-> v
-                                            str/trimr
-                                            not-empty)
-                        :else (str "```edn\n" (pr-str v) "\n```")))
+                (some-> (:body card)
+                        str/trimr
+                        not-empty)
 
                 result-node-id
                 (when (and session-id result-text)
@@ -5966,10 +5949,9 @@
                                 (assoc e :line (str result-marker stripped))))]
 
                         (cond
-                          ;; The value's own headline rides on a neutral row; the whole
-                          ;; `:result-render` body nests under it (collapsible). A
-                          ;; headline-only result renders a plain row with no expand
-                          ;; triangle because there is nothing beneath it.
+                          ;; The value's own headline rides on a neutral row; its locally
+                          ;; derived body nests under it. A headline-only result renders a
+                          ;; plain row with no expand triangle because there is no body.
                           card (tool-card-entries card
                                                   {:fill-w fill-w
                                                    :session-id session-id

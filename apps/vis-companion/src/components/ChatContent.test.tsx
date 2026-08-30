@@ -510,7 +510,7 @@ describe("collapsed tool results", () => {
             op: "shell",
             result: "ok",
             result_summary: `summary ${index}`,
-            result_render: `**STDOUT**\n\n\`\`\`\n${bodySentinel} ${index}\n\`\`\``,
+            stdout: `${bodySentinel} ${index}\n`,
           })),
         },
       ],
@@ -594,7 +594,7 @@ describe("a card wears no op badge, but its band has a name", () => {
   // duration with no word at all for what it held. The TUI names it RESULT
   // (`render/tool-card-entries`); the app said nothing.
   it("names the band when the value carried no tally", () => {
-    expect(card({ result_render: "```\nprinted\n```" })).toContain("RESULT");
+    expect(card({ stdout: "printed\n" })).toContain("RESULT");
     expect(card({ duration_ms: 39 })).toContain("RESULT");
   });
 
@@ -610,12 +610,10 @@ describe("a card wears no op badge, but its band has a name", () => {
   });
 });
 
-// Regression, reported from the companion: a `/reload` turn painted the command
-// itself as a PYTHON program with a RESULT band under it. A slash (`user-slash`)
-// and a bang (`user-shell`) are persisted as ONE synthetic form so history and
-// resume keep them; the answer beside it already IS the whole result.
-describe("a command turn shows its answer, never a program", () => {
-  const trace = (form: Record<string, unknown>) =>
+// A slash envelope is hidden behind its answer; a bang turn has no duplicate answer,
+// so its persisted `user-shell` form is the one visible owner of command output.
+describe("command turns expose one canonical result", () => {
+  const trace = (form: Record<string, unknown>, answer = "Reloaded — configuration") =>
     renderToStaticMarkup(
       <AssistantMessage
         turn={{
@@ -623,9 +621,9 @@ describe("a command turn shows its answer, never a program", () => {
           status: "completed",
           request: "/reload",
           iterations: [{ id: "iteration-1", forms: [form] }],
-          content: [
-            { id: "block-1", type: "prose", markdown: "Reloaded — configuration" },
-          ],
+          content: answer
+            ? [{ id: "block-1", type: "prose", markdown: answer }]
+            : [],
         }}
       />,
     );
@@ -644,19 +642,46 @@ describe("a command turn shows its answer, never a program", () => {
     expect(text(html)).toContain("Reloaded — configuration");
   });
 
-  it("hides the shell result a bang turn persists", () => {
-    const html = trace({
-      scope: "t1/i1/f1",
-      tag: "user-shell",
-      op: "shell",
-      src: "!ls",
-      result_summary: "exit 0",
-      result_render: "```\nREADME.md\n```",
-    });
+  it("shows a bang result from its one stdout fact", () => {
+    const painted = render(
+      <AssistantMessage
+        turn={{
+          turn_id: "bang",
+          status: "completed",
+          request: "!ls",
+          iterations: [
+            {
+              id: "iteration-1",
+              forms: [
+                {
+                  scope: "t1/i1/f1",
+                  tag: "user-shell",
+                  op: "shell",
+                  src: "!ls",
+                  result_summary: "exit 0",
+                  stdout: "README.md\n",
+                },
+              ],
+            },
+          ],
+          content: [],
+        }}
+      />,
+    );
 
-    expect(html).not.toContain("PYTHON");
-    expect(text(html)).not.toContain("exit 0");
-    expect(text(html)).toContain("Reloaded — configuration");
+    expect(painted.container.textContent).not.toContain("PYTHON");
+    expect(painted.container.textContent).toContain("SHELL");
+    fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
+    expect(painted.container.textContent).toContain("exit 0");
+    const resultSummary = painted.container.querySelector("details > summary");
+    expect(resultSummary).not.toBeNull();
+    const resultDetails = resultSummary?.closest("details");
+    if (resultDetails) {
+      resultDetails.open = true;
+      fireEvent(resultDetails, new Event("toggle", { bubbles: true }));
+    }
+    expect(painted.container.textContent).toContain("README.md");
+    expect(painted.container.textContent).not.toContain("Reloaded — configuration");
   });
 });
 
@@ -819,7 +844,7 @@ describe("Activity owns the slot after its Python form and result", () => {
       <AssistantMessage
         turn={turnOf([
           { source: "first_form()", result_summary: "first result" },
-          { source: "second_form()", result_render: "```\nsecond result\n```" },
+          { source: "second_form()", stdout: "second result\n" },
         ])}
       />,
     );
@@ -869,7 +894,7 @@ describe("Activity owns the slot after its Python form and result", () => {
         <AssistantMessage
           turn={turnOf([{
             source: "line_1()\nline_2()\nline_3()\nline_4()\nline_5()\nline_6()",
-            result_render: "```\nresult body\n```",
+            stdout: "result body\n",
             activity: runningActivity,
           }])}
         />
@@ -939,7 +964,7 @@ describe("Activity owns the slot after its Python form and result", () => {
     const rendered = text(
       renderToStaticMarkup(
         <AssistantMessage
-          turn={turnOf([{ result_render: "```\nprinted\n```", activity: runningActivity }])}
+          turn={turnOf([{ stdout: "printed\n", activity: runningActivity }])}
         />,
       ),
     );

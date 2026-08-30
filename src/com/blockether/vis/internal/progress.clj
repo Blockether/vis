@@ -65,7 +65,8 @@
       :forms     [{:code            str
                    :comment         str-or-nil
                    :render-segments [{:kind ...} ...] ;; source classification
-                   :result-render   str-or-IR-or-nil  ;; pre-rendered tool result
+                   :stdout          str-or-nil        ;; canonical printed output
+                   :result          any-or-nil        ;; structured host/native output
                    :result-kind     :tool|:value|:error
                    :result-detail   map-or-nil        ;; tool metadata
                    :error           map-or-nil
@@ -215,41 +216,27 @@
      :silent? (silent-chunk? chunk)}))
 
 (defn- chunk->form-result
-  "Build the completed `:forms` entry for a `:form-result` chunk.
-   Carries the raw `:error` and the pre-derived display projections
-   (`:result-render`, `:result-kind`, `:result-detail`) the renderer
-   reads verbatim.
-
-   `:result-render` is nil when the form errored (the renderer paints
-   `:error` inline with the failing source caret; the per-form result row
-   is suppressed)."
+  "Build the completed `:forms` entry for a `:form-result` chunk. Canonical
+   `:stdout` / structured `:result` facts survive verbatim; renderers derive
+   their local card body instead of consuming a stored presentation copy."
   [prev-form chunk]
   (let [errored? (some? (:error chunk))]
-    (merge
-      ;; The card fields (pre-rendered body, headline, the printed result's own
-      ;; op), projected from the ONE canonical list so this builder can't drift
-      ;; from the gateway / restore builders (see internal/form.clj).
-      (form/->display chunk)
-      {:code (:code chunk)
-       :comment (:comment chunk)
-       :render-segments (:render-segments chunk)
-       :scope (or (:scope chunk) (:scope prev-form))
-       :started-at-ms (or (:started-at-ms chunk) (:started-at-ms prev-form))
-       :duration-ms (or (form/envelope-duration-ms (:envelope chunk)) 0)
-       ;; The SINGLE display surface the channels paint (render.clj / web both read
-       ;; `(:result form)`): the pre-rendered markdown the loop built — the
-       ;; block's stdout plus a card per printed result.
-       :result (:result chunk)
-       ;; raw stdout kept for any model-context / resume consumer.
-       :stdout (:stdout chunk)
-       :result-kind (form-result-kind chunk)
-       :result-detail (form-result-detail chunk)
-       :error (:error chunk)
-       ;; Activity has its own lifecycle frame. Preserve the latest replacement
-       ;; when the execution output fills in the rest of this form.
-       :activity (:activity prev-form)
-       :success? (not errored?)
-       :silent? (and (not errored?) (silent-chunk? chunk))})))
+    (merge (form/->display chunk)
+           {:code (:code chunk)
+            :comment (:comment chunk)
+            :render-segments (:render-segments chunk)
+            :scope (or (:scope chunk) (:scope prev-form))
+            :started-at-ms (or (:started-at-ms chunk) (:started-at-ms prev-form))
+            :duration-ms (or (form/envelope-duration-ms (:envelope chunk)) 0)
+            :stdout (:stdout chunk)
+            :result-kind (form-result-kind chunk)
+            :result-detail (form-result-detail chunk)
+            :error (:error chunk)
+            ;; Activity has its own lifecycle frame. Preserve the latest replacement
+            ;; when the execution output fills in the rest of this form.
+            :activity (:activity prev-form)
+            :success? (not errored?)
+            :silent? (and (not errored?) (silent-chunk? chunk))})))
 
 (defn- assoc-form
   [entry ^long display-idx form]

@@ -87,20 +87,19 @@
           (expect
             (some? (get back k))
             (str k " was dropped on the gateway round-trip — add it to a boundary projection")))))
-  (it
-    "result-card is the ONE projection: a card for a form that shows something, none for one that shows nothing"
-    ;; a block's own printed output → exactly one card, carrying no op: a card
-    ;; descriptor mints no display NAME of its own.
-    (let [one (form/result-card {:result-render "```\nprinted\n```"})]
-      (expect (some? one))
-      (expect (nil? (:op one))))
-    ;; the op is carried VERBATIM — an op nothing registered still reaches a channel.
-    (expect (= "unheard_of" (:op (form/result-card {:op "unheard_of" :result-summary "1 row"}))))
-    ;; a block that printed nothing and returned nothing → no card at all.
-    (expect (nil? (form/result-card {:result {:k 1}}))))
+  (it "result-card derives one card from canonical facts, and none from an empty form"
+      ;; A block's own printed output becomes exactly one card carrying no invented op.
+      (let [one (form/result-card {:stdout "printed"})]
+        (expect (some? one))
+        (expect (nil? (:op one)))
+        (expect (str/includes? (:body one) "printed")))
+      ;; The op is carried verbatim — an op nothing registered still reaches a channel.
+      (expect (= "unheard_of" (:op (form/result-card {:op "unheard_of" :result-summary "1 row"}))))
+      ;; A block that printed and returned nothing has no card at all.
+      (expect (nil? (form/result-card {}))))
   (it "->display drops nils so a merge never stamps empty keys"
       (expect (= {} (form/->display {:result nil :op nil})))
-      (expect (= {:op "grep"} (form/->display {:op "grep" :result-render nil})))))
+      (expect (= {:op "grep"} (form/->display {:op "grep"})))))
 
 (defdescribe form-authored-display-code-test
              (it "keeps an authored display instead of re-deriving it from the source"
@@ -118,35 +117,32 @@
                    (expect (seq (:display-code form)))
                    (expect (nil? (:display-language form))))))
 
-;; Regression: `:result-render` used to be STORED on every persisted form — the
-;; rendered body sat in the store right next to the `:result`/`:stdout` it is a
-;; pure projection of, 32% of the whole `tool_calls` blob. A restored envelope
-;; now carries no render at all, so these derivations ARE the display: if one
-;; drifts, a reopened session paints a different card than the live stream did.
+;; The display is always derived from canonical facts. No rendered copy is stored,
+;; transported, or accepted as authored input, so live and restored forms use the
+;; same projection.
 (defdescribe
-  result-render-derivation-test
+  result-display-derivation-test
   (it "derives a native result's body from the value alone"
-      (let [body (form/result-render {:src "grep({})" :result {"files" ["a.clj"]}})]
+      (let [body (:body (form/result-display {:src "grep({})" :result {"files" ["a.clj"]}}))]
         (expect (some? body))
         (expect (str/includes? body "files"))
         (expect (str/includes? body "a.clj"))))
-  (it "derives a printed block's body from its stdout"
-      (expect (str/includes? (form/result-render {:src "print(1)" :stdout "hello"}) "hello")))
+  (it "derives a printed block's body from stdout"
+      (expect (str/includes? (:body (form/result-display {:src "print(1)" :stdout "hello"}))
+                             "hello")))
   (it "has nothing to show for a form that returned and printed nothing"
-      (expect (nil? (form/result-render {:src "x = 1"}))))
+      (expect (nil? (form/result-display {:src "x = 1"}))))
   (it "passes a vis-image fence through verbatim so the channel paints it inline"
-      (expect (= "````vis-image\nx\n````" (form/result-render {:stdout "````vis-image\nx\n````"}))))
+      (expect (= "````vis-image\nx\n````"
+                 (:body (form/result-display {:stdout "````vis-image\nx\n````"})))))
   ;; Regression: a printed tool result was captured on the side and painted as its
-  ;; OWN card, replacing the stdout — so ONE block that printed twice read as TWO
-  ;; results.
-  (it "keeps the WHOLE stdout as the one body, however many results the block printed"
-      (let [body (form/result-render {:stdout "first\nsecond"})]
+  ;; own card, replacing stdout, so one block that printed twice read as two results.
+  (it "keeps the whole stdout as the one body, however many results the block printed"
+      (let [body (:body (form/result-display {:stdout "first\nsecond"}))]
         (expect (str/includes? body "first"))
         (expect (str/includes? body "second"))))
-  ;; Regression: a timed-out block used to paint a second ⧖ card under its error
-  ;; line, whose body re-showed the FORM already rendered above it, the STDOUT and
-  ;; the very same timeout message — three sections saying what the error line had
-  ;; already said. A timeout is an error like every other one.
+  ;; Regression: a timed-out block used to paint a second card under its error line,
+  ;; whose body re-showed the form, stdout and the same timeout message.
   (it "gives a wall-clock timeout no card of its own"
       (expect (nil? (form/result-display {:src "time.sleep(99)"
                                           :timeout? true
@@ -162,24 +158,6 @@
         (expect (nil? (:summary card)))
         (expect (str/includes? (:body card) "partial"))
         (expect (not (str/includes? (:body card) "time.sleep(99)"))))))
-
-(defdescribe with-display-derives-the-body-test
-             (it "fills the body a restored envelope no longer carries"
-                 (let [restored
-                       {:src "grep({})" :code "grep({})" :result {"files" ["a.clj"]}}
-
-                       form
-                       (form/with-display restored)]
-
-                   (expect (= (form/result-render restored) (:result-render form)))
-                   (expect (str/includes? (:result-render form) "a.clj"))))
-             (it "never overwrites a render no projection reproduces"
-                 ;; A `!cmd` bubble: the body is the shell layer's own card markdown,
-                 ;; not a rendering of `:result`, so it is authored and kept verbatim.
-                 (let [form (form/with-display {:code "await shell({\"command\": \"ls\"})"
-                                                :result {"ok" true}
-                                                :result-render "**SHELL**\nls"})]
-                   (expect (= "**SHELL**\nls" (:result-render form))))))
 
 (defdescribe
   envelope-duration-test

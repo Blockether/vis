@@ -128,14 +128,12 @@
    matches the live progress tracker's per-form map so the renderer
    uses one code path for live and resumed traces.
 
-   The display surface is projected through `vis/form->display` — the ONE
+   The display metadata is projected through `vis/form->display` — the ONE
    canonical display-key projection (`internal/form.clj`) the live wire and the
-   gateway also use — so a NEW display field (the card op, the badge colour,
-   …) flows onto restored bubbles automatically instead of being
-   silently forgotten by a hand-listed map. On top of it we layer only the
-   surfaces that AREN'T verbatim display keys: the bounded `:stdout`/`:error`,
-   the derived `:duration-ms`/`:channel`, the computed op projections
-   (`:result-kind`/`:result-detail`), and the restore-only status flags."
+   gateway also use. Canonical `:stdout` / `:result` facts remain on the record;
+   every channel derives presentation locally. On top of the shared projection we
+   layer only bounded output/error, duration/channel, computed op metadata, and
+   restore-only status flags."
   [block]
   (merge (vis/form->display (vis/form-with-display block))
          {:started-at-ms nil
@@ -143,13 +141,10 @@
           ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the
           ;; SAME DISPLAY-state ops the live path derives from its `:channel`.
           :channel (vec (:channel block))
-          ;; The SINGLE display surface: what this form printed. Persisted per-form
-          ;; envelopes carry `:stdout` (loop de-conflated value vs printed); the
-          ;; renderer paints it instead of render-fn op cards / result blobs.
+          ;; Stdout is bounded outside the shared verbatim projection; a structured
+          ;; result already comes from `form->display`, which drops it when stdout exists.
           :stdout (:stdout block)
-          :result (:result block)
-          ;; Op projections computed from the block (the persisted envelope stores the
-          ;; rendered card/summary, not these derivations).
+          ;; Op metadata computed from the persisted block.
           :result-kind (form-result-kind block)
           :result-detail (form-result-detail block)
           :error (:error block)
@@ -718,15 +713,12 @@
                                 (seq (get last-it "llm_routing_trace"))
                                 (assoc :trace (get last-it "llm_routing_trace")))
                   produced-answer? (seq content-blocks)
-                  ;; A slash turn persists ONE synthetic iteration whose
-                  ;; envelope is tagged `:user-slash`. Live slash turns
-                  ;; stream no iterations, so they render as a bare answer
-                  ;; bubble — rebuilding that synthetic iteration into a
-                  ;; trace made resumed sessions look different from live.
-                  ;; Suppress it so resume matches live: just the answer.
+                  ;; A slash turn persists ONE synthetic iteration whose envelope is
+                  ;; tagged `:user-slash`. Live slash turns stream no iterations, so
+                  ;; suppress it on resume as well. A `user-shell` form is the bang
+                  ;; command's one visible stdout owner and must remain in the trace.
                   slash-turn? (some (fn [it]
-                                      (some #(#{"user-slash" "user-shell"} (str (get % "tag")))
-                                            (get it "forms")))
+                                      (some #(= "user-slash" (str (get % "tag"))) (get it "forms")))
                                     turn-iterations)
                   trace (if slash-turn? [] (iteration-rows->trace turn-iterations produced-answer?))
                   assistant-message (cond-> (assistant-message content-blocks

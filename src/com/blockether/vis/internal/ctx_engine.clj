@@ -1042,7 +1042,7 @@
            (some? duration-ms)
            (assoc :duration-ms duration-ms)
 
-           (contains? block :result)
+           (and (contains? block :result) (nil? (:stdout block)))
            (assoc :result result)
 
            ;; PRINT-ONLY context: the model sees ONLY what it printed. Carry the
@@ -1085,15 +1085,9 @@
            (some? (:activity block))
            (assoc :activity (:activity block)))]
 
-     ;; The display BODY is a PURE PROJECTION of what the envelope already carries,
-     ;; so it is NOT stored: `form/result-render` re-derives the same string on the
-     ;; way out. Storing it made every persisted iteration carry a second copy of
-     ;; its own `:result`/`:stdout`. Only a render no projection reproduces — a
-     ;; `!cmd` bubble, whose body is the shell layer's own card markdown — is kept.
-     (cond-> form-envelope
-       (let [authored (:result-render block)]
-         (and (some? authored) (not= authored (form/result-render form-envelope))))
-       (assoc :result-render (:result-render block))))))
+     ;; Presentation is a pure local projection of the canonical result facts;
+     ;; never persist a second rendered copy.
+     form-envelope)))
 
 (defn blocks->forms
   "Map a loop-side blocks vec into a vec of engine envelopes. `:cursor`

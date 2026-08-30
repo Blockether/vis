@@ -57,12 +57,7 @@
 
 (def ^:private shell* @#'shell/shell-dispatch)
 
-(def ^:private render-shell-run-result shell/render-shell-run-result)
-
-
 (def ^:private keys-label @#'shell/keys-label)
-
-(def ^:private format-shell-command @#'shell/format-shell-command)
 
 
 (defn- with-shell-on
@@ -312,36 +307,28 @@
 ;; more of `Compressing objects: N%`, because every bare carriage return was expanded
 ;; into a newline. The animation filled the capped capture window, so the rendered
 ;; card cut the answer the caller actually wanted — mid-word.
-(defdescribe
-  shell-pty-progress-test
-  (it "resolves a redrawn progress line to the ONE frame the terminal was showing"
-      (let [lf
-            @#'shell/lf
+(defdescribe shell-pty-progress-test
+             (it "resolves a redrawn progress line to the ONE frame the terminal was showing"
+                 (let [lf
+                       @#'shell/lf
 
-            ;; Byte-for-byte what git writes down a pty while pushing.
-            pushed
-            (lf (str "Enumerating objects: 28, done.\r\n"
-                     "Counting objects:   3% (1/28)\r" "Counting objects:  82% (23/28)\r"
-                     "Counting objects: 100% (28/28), done.\r\n"
-                     "Delta compression using up to 14 threads\r\n"))]
+                       ;; Byte-for-byte what git writes down a pty while pushing.
+                       pushed
+                       (lf (str "Enumerating objects: 28, done.\r\n"
+                                "Counting objects:   3% (1/28)\r" "Counting objects:  82% (23/28)\r"
+                                "Counting objects: 100% (28/28), done.\r\n"
+                                "Delta compression using up to 14 threads\r\n"))]
 
-        (expect (= (str "Enumerating objects: 28, done.\n"
-                        "Counting objects: 100% (28/28), done.\n"
-                        "Delta compression using up to 14 threads\n")
-                   pushed))))
-  (it "keeps the last frame when the capture ends on a bare carriage return"
-      (let [lf @#'shell/lf]
-        (expect (= "Receiving objects:  40% (12/28)" (lf "Receiving objects:  40% (12/28)\r")))
-        ;; A CR that only homes the cursor is a move, not a blank frame.
-        (expect (= "--- status ---" (lf "\r--- status ---")))))
-  (it "renders one progress line on the card instead of the whole animation"
-      (let [card (render-shell-run-result {"command" "git push"
-                                           "exit" 0
-                                           "out" (str "Compressing objects:   9% (1/11)\r"
-                                                      "Compressing objects: 100% (11/11), done.\r\n"
-                                                      "To github.com:example/repo.git\r\n")})]
-        (expect (str/includes? (:body card) "Compressing objects: 100% (11/11), done."))
-        (expect (not (str/includes? (:body card) "9% (1/11)"))))))
+                   (expect (= (str "Enumerating objects: 28, done.\n"
+                                   "Counting objects: 100% (28/28), done.\n"
+                                   "Delta compression using up to 14 threads\n")
+                              pushed))))
+             (it "keeps the last frame when the capture ends on a bare carriage return"
+                 (let [lf @#'shell/lf]
+                   (expect (= "Receiving objects:  40% (12/28)"
+                              (lf "Receiving objects:  40% (12/28)\r")))
+                   ;; A CR that only homes the cursor is a move, not a blank frame.
+                   (expect (= "--- status ---" (lf "\r--- status ---"))))))
 
 (defdescribe shell-doc-page-test
              ;; Regression, issue #137: the result carried no `stderr` field and the DOC PAGE the
@@ -998,87 +985,15 @@
                                       {"op" "logs" "id" sid "command" {"op" "wait" "id" "wrong"}}))]
                (expect (= "logs" (get r "stage"))))
              (finally (resources/stop-all! sid))))))
-(defdescribe
-  shell-render-test
-  (it "renders the run op like a REPL-style collapsible card"
-      (let [card (render-shell-run-result
-                   {"command" "echo hi" "exit" 0 "duration_ms" 12 "out" "hi"})]
-        (expect (= "$ echo hi (success) · 12ms" (:summary card)))
-        (expect (str/includes? (:body card) "**COMMAND**"))
-        (expect (str/includes? (:body card) "**STATUS**"))
-        (expect (str/includes? (:body card) "**OUT**"))))
-  (it "separates a compound command onto its own lines in the COMMAND card"
-      (let [card (render-shell-run-result {"command" "a; b && c" "exit" 0 "duration_ms" 1})]
-        (expect (str/includes? (:body card) "a;\nb &&\nc"))))
-  (it "pretty-prints top-level shell operators, quote/paren-aware"
-      ;; top-level ; && || each end their line
-      (expect (= "a;\nb &&\nc ||\nd" (format-shell-command "a; b && c || d")))
-      ;; separators inside quotes stay put
-      (expect (= "echo 'a; b && c'" (format-shell-command "echo 'a; b && c'")))
-      (expect (= "echo \"a; b\"" (format-shell-command "echo \"a; b\"")))
-      ;; separators nested in $(…) stay put; the top-level ; still breaks
-      (expect (= "x=$(f || g);\ny" (format-shell-command "x=$(f || g); y")))
-      ;; single & (background) and 2>&1 are never split
-      (expect (= "nohup ./x > log 2>&1 &" (format-shell-command "nohup ./x > log 2>&1 &")))
-      ;; a simple command comes back unchanged
-      (expect (= "ls -la" (format-shell-command "ls -la")))
-      (expect (= "" (format-shell-command nil))))
-  (it "keeps the line structure a multi-line command was written with"
-      ;; REGRESSION: the COMMAND pretty-printer trimmed every line and deleted
-      ;; every blank one, so a script's paragraph break was welded shut and a
-      ;; block's indentation was flattened. Only the whitespace the SPLIT itself
-      ;; introduces may go.
-      ;; a blank line between two paragraphs survives, exactly once
-      (expect (= "set -e\n\necho hi\n\necho bye"
-                 (format-shell-command "set -e\n\necho hi\n\n\necho bye")))
-      ;; indentation inside a block is the author's, not noise
-      (expect (= "if [ -f x ];\nthen\n  echo yes\nfi"
-                 (format-shell-command "if [ -f x ]; then\n  echo yes\nfi")))
-      ;; blank head/tail never reaches the card, and an operator break does not
-      ;; indent the line it creates
-      (expect (= "a &&\nb" (format-shell-command "\n\na && b\n\n"))))
-  (it "surfaces shell failures and timeouts on the collapsed chip"
-      (expect (str/includes? (:summary (render-shell-run-result
-                                         {"command" "grep nope missing" "exit" 2 "duration_ms" 34}))
-                             "$ grep nope missing (failure) · exit 2 · 34ms"))
-      (expect (str/includes? (:summary (render-shell-run-result {"command" "make test"
-                                                                 "timed_out" true
-                                                                 "timeout_secs" 5
-                                                                 "duration_ms" 5000}))
-                             "$ make test (failure) · timed out after 5s · 5.0s")))
-  (it "normalizes terminal controls in rendered output without changing the native result"
-      (let [out
-            "\u001b[0;32m✓ PASS\u001b[0m\rnext\b!"
-
-            result
-            {"command" "tests" "exit" 0 "out" out}
-
-            run-card
-            (render-shell-run-result result)]
-
-        (expect (= out (get result "out")))
-        ;; The CR REDREW the line, so the frame the terminal was left showing is the
-        ;; only one a reader is owed.
-        (expect (str/includes? (:body run-card) "next!"))
-        (expect (not (str/includes? (:body run-card) "PASS")))
-        (expect (not (str/includes? (:body run-card) "\u001b")))
-        (expect (not (str/includes? (:body run-card) "[0;32m")))))
-  (it "answers the bang path by the SYMBOL it resolves at runtime"
-      ;; `!cmd` builds its card by `requiring-resolve`-ing this exact public var —
-      ;; no registry, no symbol table. Renaming or re-privatizing it would fail
-      ;; silently at the call site, so the name is pinned here.
-      (let [render (requiring-resolve
-                     'com.blockether.vis.internal.foundation.shell/render-shell-run-result)]
-        (expect (some? render))
-        (expect (= "$ echo hi (success)" (:summary (render {"command" "echo hi" "exit" 0}))))))
-  (it "names every control character a send typed"
-      ;; `keys` is RESULT data, not paint: a send is frequently ENTIRELY
-      ;; non-printing (Ctrl-C, Esc, a bare Enter), and "sent 1 chars" taught
-      ;; the reader nothing.
-      (expect (= "\"hello\" ↵" (keys-label "hello\n")))
-      (expect (= "C-c" (keys-label "\u0003")))
-      (expect (= "Esc ⇥ \"y\" ↵" (keys-label "\u001b\ty\n")))
-      (expect (nil? (keys-label "")))))
+(defdescribe shell-keys-label-test
+             (it "names every control character a send typed"
+                 ;; `keys` is RESULT data, not paint: a send is frequently ENTIRELY
+                 ;; non-printing (Ctrl-C, Esc, a bare Enter), and "sent 1 chars" taught
+                 ;; the reader nothing.
+                 (expect (= "\"hello\" ↵" (keys-label "hello\n")))
+                 (expect (= "C-c" (keys-label "\u0003")))
+                 (expect (= "Esc ⇥ \"y\" ↵" (keys-label "\u001b\ty\n")))
+                 (expect (nil? (keys-label "")))))
 
 (defdescribe
   shell-status-on-every-stage-test

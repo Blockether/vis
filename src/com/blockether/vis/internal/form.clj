@@ -25,17 +25,15 @@
    overrides). Add a new verbatim display field HERE; `->display`/`<-wire` then
    flow it across every boundary without runtime key rewriting.
 
-   Grouped: the source the model wrote, the result surfaces, the card op, the
-   per-form display projections, the tool-call linkage, and the
-   repair/timeout flags channels surface."
+   Grouped: the source the model wrote, the canonical result fact, the card op,
+   the per-form display projections, the tool-call linkage, and the repair/timeout
+   flags channels surface."
   [;; source
    [:code "code"] [:display-code "display_code"] [:display-language "display_language"]
    [:comment "comment"] [:scope "scope"] [:started-at-ms "started_at_ms"]
-   ;; result surfaces — the raw value, the op-card BODY (a pure projection:
-   ;; `result-render` DERIVES it, and it is stored only for the rare card no
-   ;; projection reproduces) and the op-card HEADLINE (a tool-authored summary,
-   ;; never a first-line body slice)
-   [:result "result"] [:result-render "result_render"] [:result-summary "result_summary"]
+   ;; canonical result facts — a structured host/native value OR printed stdout,
+   ;; never a rendered copy of either; the headline is concise tool-authored metadata
+   [:result "result"] [:result-summary "result_summary"]
    ;; A form's OWN op ("grep", "attach") — the only identity a card has. It is DATA
    ;; the executed form carried, never a symbol looked up in a registry, so a card
    ;; cannot drift from what actually ran. Absent on a python block: a form is
@@ -64,39 +62,6 @@
              (nat-int? (:started-at-ms envelope))
              (nat-int? (:finished-at-ms envelope)))
     (max 0 (- (long (:finished-at-ms envelope)) (long (:started-at-ms envelope))))))
-(defn result-card
-  "Canonical result CARD descriptor — the ONE place the card / collapse decision is
-   made, so the TUI and web AGREE on summary/collapsible instead of each
-   re-deriving it from the raw form. Given an executed form map, returns:
-
-     {:op           `grep`             — the form's OWN op, verbatim data it
-                                          carried, nil for a python block's own
-                                          output. A channel titles the card from
-                                          this or from nothing; no display NAME is
-                                          minted here
-      :summary      12 results          — the HEADLINE (`:result-summary`), nil
-                                          when the value carried no tally
-      :body         …markdown…          — the detail body (`:result-render`), nil
-                                          when there is nothing under the headline
-      :collapsible? true}               — true ⇔ there's a body to fold under
-                                          the summary (a chevron/`<details>`)
-
-   `nil` when the form has neither headline nor body — there is no card, and the
-   channel renders whatever the form itself carries."
-  [{:keys [op result-summary result-render]}]
-  (let [summary
-        (some-> result-summary
-                str
-                str/trim
-                not-empty)
-
-        body
-        (some-> result-render
-                str
-                str/trimr
-                not-empty)]
-
-    (when (or summary body) {:op op :summary summary :body body :collapsible? (boolean body)})))
 
 (def MAX_FORM_WIRE_CHARS
   "Per-block printed-output ceiling. A block's stdout is head-clipped to this
@@ -137,92 +102,93 @@
          s)))))
 
 (defn result-display
-  "The human-channel DISPLAY for one executed form as `{:summary :body}` — the
-   ONE surface both the TUI and the web render, so they're unified:
-     - `:stdout` → verbatim as the body, no summary. This is what a PYTHON form
-       carries: print is its one channel, and a value it never printed does not
-       reach the form at all;
-     - a `:result` value → pretty-printed (Python-literal, fenced) as the body,
-       no summary. Only a HOST-AUTHORED form has one (a `!cmd` shell card, a
-       slash envelope, a native tool entry), because it has no stdout of its own.
+  "The human-channel DISPLAY for one executed form as `{:body}`:
+     - `:stdout` → verbatim as the body, no summary. This is what a PYTHON form and
+       a `!cmd` form carry: output is one fact, and an unprinted Python value never
+       reaches the form at all;
+     - a structured `:result` → pretty-printed (Python-literal, fenced) as the body.
+       Only a HOST-AUTHORED slash/native form has one, and only when it has no stdout.
    A wall-clock TIMEOUT gets NO card of its own: it is an error like any other, so
-   the channel paints `:error` — `Timeout (300s)` — where it paints every failure,
-   and whatever the block printed before the wall stays its ordinary stdout body.
-   A second ⧖ card only re-showed the form already painted above it and repeated
-   that one message.
-   The body is head-clipped to `MAX_FORM_WIRE_CHARS`. Returns nil when there's
-   nothing to show. NO symbol is consulted: a card is built from the FORM's own
-   data, so it can never drift from what actually ran.
+   the channel paints `:error` where it paints every failure, while output printed
+   before the timeout remains the ordinary stdout body.
 
-   A PURE projection of fields the form ALREADY carries (`:error`,
-   `:result`, `:stdout`) — that is what lets the live loop and a
-   DB-restored envelope paint the same card without either of them storing the
-   rendered string."
+   The body is head-clipped to `MAX_FORM_WIRE_CHARS`. Returns nil when there is
+   nothing to show. NO symbol is consulted: the form's own facts determine the view.
+
+   This is a PURE local projection of fields the form ALREADY carries (`:result`,
+   `:stdout`) — live wire and a DB-restored envelope therefore paint the same card
+   without storing or transporting a rendered string."
   [form]
-  (let [clip clip-to-wire]
+  (let [clip
+        clip-to-wire
+
+        stdout
+        (str (:stdout form))]
+
     (cond
-      ;; a result value → monospaced Python-literal body, so a dict/list reads as
-      ;; structured data rather than reflowed prose.
-      (some? (:result form)) (when-let [s (clip (env/ctx->python-str (:result form)))]
-                               {:body (util/fenced s "python")})
       ;; A `vis-image` fence (matplotlib `plt.show()` → inline PNG, ASCII plot
       ;; carried as its fallback body), a `vis-table` fence (a CSV/TSV artifact
       ;; carried as its own grid) or a `vis-doc` fence (a PDF/HTML document,
       ;; carrying only its host path) rides stdout as MARKDOWN so the channel
       ;; paints it inline; wrapping it in a ``` block would escape the
-      ;; 4-backtick fence, so pass the stdout through verbatim (unclipped — the
-      ;; fence is self-bounded and row-capped at the source) whenever one is
-      ;; present.
-      (or (str/includes? (str (:stdout form)) "````vis-image")
-          (str/includes? (str (:stdout form)) "````vis-doc")
-          (str/includes? (str (:stdout form)) "````vis-table"))
-      {:body (str (:stdout form))}
-      ;; python_execution printed output → fenced so newlines are preserved verbatim
-      ;; (plain stdout is NOT markdown; bare \n collapses to a space through the
-      ;; CommonMark SoftLineBreak → :space path if left unwrapped).
-      (not (str/blank? (str (:stdout form)))) {:body (util/fenced (clip (:stdout form)))}
+      ;; 4-backtick fence. These fences are bounded at their source.
+      (or (str/includes? stdout "````vis-image")
+          (str/includes? stdout "````vis-doc")
+          (str/includes? stdout "````vis-table"))
+      {:body stdout}
+      ;; Plain output is not markdown: fence it so CommonMark preserves newlines.
+      (not (str/blank? stdout)) {:body (util/fenced (clip stdout))}
+      ;; A structured host/native value only exists when stdout does not.
+      (some? (:result form)) (when-let [s (clip (env/ctx->python-str (:result form)))]
+                               {:body (util/fenced s "python")})
       :else nil)))
 
-(defn result-render
-  "The detail BODY one form displays — `:result-render` DERIVED rather than read,
-   so the rendered string never has to be persisted alongside the data it is a
-   projection of.
+(defn result-card
+  "Canonical result CARD descriptor — the ONE collapse decision shared by Clojure
+   channels. It combines the form's concise `:result-summary` headline with a body
+   derived locally from canonical `:stdout`/`:result` facts:
 
-   TOTAL where `result-display` is strict: the live loop renders the result as it
-   executes (and a value that cannot cross to Python still fails THERE, loudly),
-   but a READER is deriving the body of a row that was written long ago. A
-   forensic report or a reopened session must not die because one archived
-   result no longer renders — no body beats a throw."
-  [form]
-  (try (:body (result-display form)) (catch Throwable _ nil)))
+     {:op           `grep`       — the form's own op, never registry-derived
+      :summary      12 results    — optional tool-authored headline
+      :body         …markdown…    — optional local projection of the result fact
+      :collapsible? true}         — true exactly when a body exists
+
+   nil means the form has neither headline nor output. Archived values that can no
+   longer be formatted lose only their body; reopening a transcript must not fail."
+  [{:keys [op result-summary] :as form}]
+  (let [summary
+        (some-> result-summary
+                str
+                str/trim
+                not-empty)
+
+        body
+        (try (some-> (result-display form)
+                     :body
+                     str
+                     str/trimr
+                     not-empty)
+             (catch Throwable _ nil))]
+
+    (when (or summary body) {:op op :summary summary :body body :collapsible? (boolean body)})))
 
 (defn with-display
-  "Attach the display projections a channel paints but the store does NOT keep:
-   the cached ruff rendering of the form's Python source, and the rendered
-   `:result-render` detail body.
-
-   An AUTHORED value is never overwritten: a form that already carries the
-   source a channel must paint — paired with its `:display-language` — keeps it
-   verbatim, and so does a `:result-render` no projection reproduces (a `!cmd`
-   bubble, whose body is the shell layer's own card markdown)."
+  "Attach the cached ruff rendering of a form's Python source when the form did not
+   author its own `:display-code`. Result presentation is always derived locally
+   from canonical facts and is never attached to the form."
   [form]
   (cond-> form
     (and (str/blank? (str (:display-code form))) (not (str/blank? (str (:code form)))))
-    (assoc :display-code (pyfmt/beautify-python (:code form)))
-
-    (nil? (:result-render form))
-    (as-> f (let [body (result-render f)]
-              (cond-> f
-                body
-                (assoc :result-render body))))))
+    (assoc :display-code (pyfmt/beautify-python (:code form)))))
 
 (defn ->display
-  "Project the canonical display fields off a source map (loop chunk/block, a
-   restored row) — the ONE projection every form builder + the gateway uses
-   instead of hand-listing keys. Drops nils so a merge never stamps empty keys."
+  "Project canonical display fields from a source map. Drops nils, and when stdout
+   exists drops `:result`: one form has one output fact, never two success channels."
   [m]
   (reduce (fn [acc k]
-            (if (some? (get m k)) (assoc acc k (get m k)) acc))
+            (if (and (some? (get m k)) (not (and (= k :result) (some? (:stdout m)))))
+              (assoc acc k (get m k))
+              acc))
           {}
           display-keys))
 

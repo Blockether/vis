@@ -5247,17 +5247,10 @@
                     result* (assoc result
                               :envelope envelope
                               :role block-role)
-                    ;; The rendered human display `{:summary :body}` (native-tool
-                    ;; card, pretty result, or stdout) — a PURE projection of the
-                    ;; form's own fields, so it rides the LIVE stream but is never
-                    ;; persisted: a restored trace re-derives the same card through
-                    ;; `form/result-render` instead of keeping a second copy of what
-                    ;; `:result`/`:stdout` already say. `:summary` is the op-card
-                    ;; HEADLINE; `:body` (→ `:result-render`) the detail.
-                    displayable (assoc result* :src expr)
-                    result-card (form/result-display displayable)
-                    result-render (form/result-render displayable)
-                    result-summary (:summary result-card)
+                    ;; Output facts stay facts. Human channels derive their card body
+                    ;; locally from `:stdout` or a structured host/native `:result`;
+                    ;; the loop never manufactures a second rendered value.
+                    result-summary (:result-summary result*)
                     _ (when (and emit-activity! (map? (:activity result*)))
                         ;; The last revision has the same event type as the running
                         ;; replacements, but is durable. Output remains output.
@@ -5288,18 +5281,13 @@
                      :scope scope
                      :code expr
                      :render-segments render-segments
-                     ;; Pre-rendered human-channel display: a
-                     ;; STRING the TUI/web paint as markdown —
-                     ;; native `:result` pretty-printed (not raw
-                     ;; EDN), or python_execution's `:stdout`.
-                     :result result-render
-                     :result-render result-render
-                     ;; The op-card HEADLINE — a real tool-authored summary
-                     ;; ("5 hits in 1 file"), NOT a first-line slice of the body.
+                     ;; Canonical execution facts. A Python block succeeds through stdout;
+                     ;; a structured result belongs only to a host/native form that has
+                     ;; no stdout. Presentation is a channel-local projection.
+                     :result (when (nil? (:stdout result*)) (:result result*))
                      :result-summary result-summary
                      ;; Native tool identity for the result badge.
                      :vis/tool-name (:vis/tool-name entry)
-                     ;; Raw stdout kept for model-context consumers.
                      :stdout (:stdout result*)
                      :error (:error result*)
                      :envelope (:envelope result*)
@@ -5333,11 +5321,9 @@
             (mapv (fn [idx code result segments tool-call-id tool-name result-summary]
                     (cond-> {:id idx
                              :code code
-                             :result (:result result)
-                             ;; What the block PRINTED — the python_execution
-                             ;; result (a native call's result is :result).
-                             ;; One block = one tool call, so this is the
-                             ;; call's whole stdout (no per-form split).
+                             ;; What the block PRINTED — Python's one success channel.
+                             ;; One block = one tool call, so this is the call's whole
+                             ;; stdout (no per-form split).
                              :stdout (:stdout result)
                              ;; Artifacts the block PRODUCED (matplotlib
                              ;; show/savefig or an `attach` call),
@@ -5365,6 +5351,9 @@
                              ;; can disclose the diff and the model can
                              ;; correct itself if the repair was wrong.
                              :repaired-source (:repaired-source result)}
+                      (and (some? (:result result)) (nil? (:stdout result)))
+                      (assoc :result (:result result))
+
                       ;; Render metadata is optional; `:code` remains the canonical source.
                       (seq segments)
                       (assoc :render-segments segments)
@@ -9215,36 +9204,25 @@
             (str/starts-with? t "!") (let [cmd (str/trim (subs t 1))]
                                        (when (seq cmd) {:kind :run :cmd cmd}))))))
 
-(defn- bang-card->markdown
-  "Combine a native shell op-card `{:summary :body}` into the answer Markdown a
-   `!`/`!&` turn shows as its answer bubble."
-  [{:keys [summary body]}]
-  (let [summary
-        (some-> summary
-                str
-                str/trim
-                not-empty)
-
-        body
-        (some-> body
-                str
-                str/trimr
-                not-empty)]
-
-    (cond (and summary body) (str summary "\n\n" body)
-          summary summary
-          body body
-          :else "_shell command produced no output_")))
+(defn- bang-result-summary
+  "Compact factual status for a `!`/`!&` form. The command output itself belongs
+   only to stdout; this headline carries no second copy of it."
+  [kind id result]
+  (when (map? result)
+    (cond (= kind :bg) (if (get result "already_running")
+                         (str "Background shell " id " was already running")
+                         (str "Started background shell " id))
+          (get result "timed_out") (str "Timed out"
+                                        (when-let [seconds (get result "timeout_secs")]
+                                          (str " after " seconds "s")))
+          (some? (get result "exit")) (str "exit " (get result "exit"))
+          :else (util/non-blank (get result "status")))))
 
 (defn- run-bang-turn!
-  "LLM-free `!`/`!&` shell-sugar turn: run the shell tool DIRECTLY (honoring the
-   user-owned `shell` toggle), then persist ONE synthetic iteration —
-   the SAME shape `run-slash-turn!` writes — whose form carries the shell RESULT
-   map, native-tool identity, and `:tag :user-shell`. The op-card renders as the
-   answer bubble (channels suppress the redundant trace by that tag), and the
-   persisted `:result` rides later prompts' prior-turn context exactly as a
-   model-issued `shell` call does across turns. Returns the same
-   shape `iteration-loop` would (so callers don't special-case bang turns)."
+  "LLM-free `!`/`!&` shell-sugar turn: run the shell tool directly, then persist
+   and stream one ordinary form. Its canonical output is `:stdout`; the shell
+   result map and any rendered card are not copied beside it. The empty answer
+   keeps the form itself as the one visible result."
   [env user-request {:keys [kind cmd id]} loop-opts]
   (let [db-info
         (:db-info env)
@@ -9267,11 +9245,13 @@
         enabled?
         (toggles/enabled? "shell")
 
-        ;; The renderer is looked up by the tool NAME, and a bang picks the same
-        ;; tool the model would — there is only one: a background bang is a run
-        ;; whose caller waits for nothing.
         tool-name
         "shell"
+
+        block-code
+        (if (= kind :bg)
+          (str "await shell({\"command\": " (pr-str cmd) ", \"wait\": 0, \"id\": " (pr-str id) "})")
+          (str "await shell({\"command\": " (pr-str cmd) "})"))
 
         t0
         (util/now-ms)
@@ -9282,14 +9262,20 @@
         on-chunk
         (or (:on-chunk loop-opts) (get-in loop-opts [:hooks :on-chunk]))
 
-        ;; A bang turn never enters `iteration-loop` (the only path that streams
-        ;; live `:progress` activity), so while the shell tool blocks the live
-        ;; bubble shows the zero-iterations placeholder and claims Vis is
-        ;; "calling the provider". Emit ONE shell-phase chunk BEFORE the
-        ;; blocking call so the tracker renders `Vis is running: <cmd>` instead.
+        ;; This local turn never enters `iteration-loop`, so publish the same form
+        ;; lifecycle normal execution does. The shell phase names the live wait;
+        ;; the form start gives the eventual stdout a stable owner.
         _
         (when (and enabled? (fn? on-chunk))
           (try (on-chunk {:phase (if (= kind :bg) :shell-bg :shell-run) :iteration 1 :cmd cmd})
+               (on-chunk {:phase :form-start
+                          :iteration 1
+                          :position 0
+                          :count 1
+                          :code block-code
+                          :display-code cmd
+                          :display-language "bash"
+                          :tag :user-shell})
                (catch Throwable t
                  (tel/log! {:level :warn
                             :id ::bang-progress-emit-failed
@@ -9325,74 +9311,65 @@
         err
         (:error envelope)
 
-        display
-        ;; A bang PRINTS its command's output, so the shell card — exit-code headline
-        ;; plus COMMAND / STATUS / STDOUT — IS the answer here. It is built by
-        ;; calling shell's renderer DIRECTLY: one function, no symbol table, no
-        ;; registry lookup. Every other result is painted from its own data.
-        (when (some? result-map)
-          (try (let [render
-                     (requiring-resolve
-                       'com.blockether.vis.internal.foundation.shell/render-shell-run-result)
+        stdout
+        (when (and (map? result-map) (some? (get result-map "out"))) (str (get result-map "out")))
 
-                     card
-                     (render result-map)]
+        result-summary
+        (bang-result-summary kind id result-map)
 
-                 (when (map? card)
-                   (let [summary
-                         (some-> (:summary card)
-                                 str
-                                 str/trim
-                                 not-empty)
-
-                         body
-                         (some-> (:body card)
-                                 str
-                                 form/clip-to-wire)]
-
-                     (when (or summary body) {:summary summary :body body}))))
-               (catch Throwable _ nil)))
-
+        ;; Disabled commands have no executed form to explain the refusal. Every
+        ;; executed outcome is already visible on its form, including errors.
         answer-md
-        (cond (not enabled?) (str "**Shell layer is OFF.** Only you can enable it: settings dialog"
-                                  " → 'Shell commands'. Then `"
-                                  cmd
-                                  "` will run.")
-              (some? err) (str "**shell error**\n\n" (util/fenced (or (:message err) (pr-str err))))
-              display (bang-card->markdown display)
-              :else (str "_ran `" cmd "`_"))
+        (if-not enabled?
+          (str "**Shell layer is OFF.** Only you can enable it: settings dialog"
+               " → 'Shell commands'. Then `"
+               cmd
+               "` will run.")
+          "")
 
         block
-        (cond-> {:code (if (= kind :bg)
-                         (str "await shell({\"command\": "
-                              (pr-str cmd)
-                              ", \"wait\": 0, \"id\": "
-                              (pr-str id)
-                              "})")
-                         (str "await shell({\"command\": " (pr-str cmd) "})"))
+        (cond-> {:code block-code
                  :svar/tool-call-id (str "bang-" (subs (str (java.util.UUID/randomUUID)) 0 8))
                  :vis/tool-name tool-name
-                 ;; The card is titled by the op that produced it, exactly like a printed
-                 ;; result: a `!cmd` bubble reads SHELL, not RESULT.
                  :op tool-name
                  :envelope {:started-at-ms t0 :finished-at-ms t1}}
-          (some? result-map)
-          (assoc :result result-map)
+          (some? stdout)
+          (assoc :stdout stdout)
 
           (some? err)
           (assoc :error err)
 
-          display
-          (assoc :result-render
-            (:body display) :result-summary
-            (:summary display)))
+          result-summary
+          (assoc :result-summary result-summary))
 
-        ;; One block = one form. Stamp `:tag :user-shell` so the channels suppress
-        ;; the redundant trace card (the answer bubble already shows it), the same
-        ;; way `:user-slash` is suppressed.
+        ;; A bang is an ordinary visible form. The authored source display names
+        ;; the shell language without storing a rendered copy of its output.
         forms
-        (mapv #(assoc % :tag :user-shell)
+        (mapv #(assoc %
+                 :tag :user-shell
+                 :display-code cmd
+                 :display-language "bash")
               (ctx-engine/blocks->forms [block] {:turn turn-pos :iter 1} nil))
+
+        _output
+        (when (and enabled? (fn? on-chunk))
+          (try (on-chunk (cond-> {:phase :form-result
+                                  :iteration 1
+                                  :position 0
+                                  :count 1
+                                  :code block-code
+                                  :display-code cmd
+                                  :display-language "bash"
+                                  :tag :user-shell
+                                  :result-summary result-summary
+                                  :error err
+                                  :envelope (:envelope block)}
+                           (some? stdout)
+                           (assoc :stdout stdout)))
+               (catch Throwable t
+                 (tel/log! {:level :warn
+                            :id ::bang-output-emit-failed
+                            :data {:cmd cmd :error (ex-message t)}}))))
 
         ;; Snapshot CTX like run-slash-turn! / run-normal-turn! so resume is stable.
         ctx-snapshot
@@ -9420,7 +9397,9 @@
            (tel/log! {:level :warn :id ::bang-iter-persist-failed :data {:error (ex-message t)}})))
     (persist-turn-outcome! db-info
                            turn-id
-                           {:content [(content/prose answer-md)]
+                           {:content (cond-> []
+                                       (seq answer-md)
+                                       (conj (content/prose answer-md)))
                             :iteration-count 1
                             :duration-ms (- t1 t0)
                             :status :success

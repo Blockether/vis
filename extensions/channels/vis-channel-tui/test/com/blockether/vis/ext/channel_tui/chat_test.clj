@@ -656,7 +656,7 @@
                                    :tag :host
                                    :src "print(await grep(query='defn', paths=['src']))"
                                    :op "grep"
-                                   :result-render "a.clj:1: x"
+                                   :stdout "a.clj:1: x\n"
                                    :result-summary "8 hits in 1 file"})
 
                          card

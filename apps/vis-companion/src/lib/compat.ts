@@ -16,14 +16,13 @@
 import type { GatewayHealth, GatewayProtocol } from './types';
 
 /**
- * Wire protocol number THIS app build speaks. Protocol 9 gives Activity one event
- * throughout its lifecycle: transient/materialized running revisions and one durable
- * settled `block.activity`; `block.output` carries execution output only.
+ * Wire protocol number THIS app build speaks. Protocol 10 carries only canonical
+ * execution facts on `block.output`; each client derives result presentation locally.
  */
-export const APP_PROTOCOL = 9;
+export const APP_PROTOCOL = 10;
 
-/** Oldest gateway protocol this app accepts: the canonical protocol 9 shape. */
-export const APP_MIN_GATEWAY_PROTOCOL = 9;
+/** Oldest gateway protocol this app accepts: the canonical protocol 10 shape. */
+export const APP_MIN_GATEWAY_PROTOCOL = 10;
 
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';

@@ -145,7 +145,7 @@
                       :forms (vec (map-indexed (fn [idx {:keys [code result kind detail]}]
                                                  {:position idx
                                                   :code code
-                                                  :result-render result
+                                                  :stdout result
                                                   :result-kind kind
                                                   :result-detail detail
                                                   :duration-ms 1
@@ -325,7 +325,7 @@
 
               trace
               [{:forms [{:code "(+ 1 2)"
-                         :result-render huge-result
+                         :stdout huge-result
                          :result-kind :value
                          :duration-ms 1
                          :success? true
@@ -362,7 +362,6 @@
             progress-entry
             (fn [i done?]
               {:forms [{:code (str "(do (Thread/sleep 1000) " i ")")
-                        :result-render nil
                         :result-kind (when done? :value)
                         :duration-ms (if done? 1000 0)
                         :success? (when done? true)
@@ -657,7 +656,7 @@
           (doseq [w [84 154 254]]
             (let [result (str/join "\n" (map #(str "line " % " of output") (range 80)))
                   m (-> (trace-assistant-msg 1 1 "ok")
-                        (assoc-in [:traces 0 :forms 0 :result-render] result))
+                        (assoc-in [:traces 0 :forms 0 :stdout] result))
                   [est real] (est->real m w)]
 
               (expect (>= (long est) (long real)) (str "w=" w " est=" est " real=" real)))))
@@ -1108,7 +1107,7 @@
       (let [overshoot
             (fn [i]
               (-> (trace-assistant-msg 1 1 (str "ok " i))
-                  (assoc-in [:traces 0 :forms 0 :result-render]
+                  (assoc-in [:traces 0 :forms 0 :stdout]
                             (str/join "\n" (map #(str "line " % " out " i) (range 80))))))
 
             msgs
@@ -1408,9 +1407,8 @@
 
 (defn- compile-warnings
   "Whatever the compiler writes to `*err*` while `form` is compiled under this
-   namespace's own ratchet (`*warn-on-reflection*` + `:warn-on-boxed`), with
-   `render` aliased the way `virtual.clj` aliases it. Defines nothing that
-   survives the call."
+   namespace's own ratchet (`*warn-on-reflection*` + `:warn-on-boxed`), with the
+   aliases from `virtual.clj`. Defines nothing that survives the call."
   [form]
   (let [shadow
         (gensym "virtual-warn-check-")
@@ -1431,6 +1429,7 @@
                    (create-ns shadow)]
 
            (clojure.core/refer-clojure)
+           (alias 'vis 'com.blockether.vis.core)
            (alias 'render 'com.blockether.vis.ext.channel-tui.render)
            (eval form))
          (str sw)

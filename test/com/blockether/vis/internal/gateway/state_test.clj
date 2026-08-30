@@ -496,18 +496,21 @@
         (expect (= "block.started" type))
         (expect (= 1 (:iteration payload)))
         (expect (= 0 (:form_index payload)))))
-  (it "block.output carries its iteration and form index on the wire"
-      (let [[type _ payload]
-            (#'state/chunk->event
-             {:phase :form-result :iteration 3 :position 0 :code "print(42)" :stdout "42"})]
+  (it "block.output carries one canonical stdout payload"
+      (let [[type _ payload] (#'state/chunk->event
+                              {:phase :form-result
+                               :iteration 3
+                               :position 0
+                               :code "print(42)"
+                               :stdout "42"
+                               :result {"duplicate" true}})]
         (expect (= "block.output" type))
-        (expect (= 3 (:iteration payload)))
-        (expect (= 0 (:form_index payload)))))
-  ;; ONE form body, ONE ceiling: `stdout` here is a copy of the body the SAME event
-  ;; already carries as `result_render`, and it was clamped at a private 4000-char
-  ;; limit while that body rides at `form/MAX_FORM_WIRE_CHARS` — the wire disagreed
-  ;; with itself about the same printed output by a factor of sixteen.
-  (it "block.output clips stdout at the form-body ceiling, not a private one"
+        (expect (= {:form_index 0 :code "print(42)" :stdout "42" :silent false}
+                   (dissoc payload :iteration)))
+        (expect (= 3 (:iteration payload)))))
+  ;; One form body, one ceiling. The wire carries stdout once and clips that fact at
+  ;; the same boundary used for model context and both human channels.
+  (it "block.output clips stdout at the form-body ceiling"
       (let [printed
             (apply str (repeat 10000 "x"))
 
@@ -515,7 +518,6 @@
             (#'state/chunk->event
              {:phase :form-result :iteration 3 :position 0 :code "print(1)" :stdout printed})]
 
-        (expect (= printed (:stdout payload)))
         (expect (= (form/clip-to-wire printed) (:stdout payload)))))
   ;; Activity has one event type for both timing classes: live revisions are
   ;; transient but materialized last-one-wins; the settled revision is durable.

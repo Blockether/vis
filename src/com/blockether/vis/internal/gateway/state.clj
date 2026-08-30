@@ -1481,22 +1481,28 @@
                 (assoc :tool_call_id (:svar/tool-call-id chunk))))
 
             :form-result
-            (merge
-              ;; The card fields (pre-rendered body + headline + the printed
-              ;; result's own op) — projected from ONE canonical list.
-              (form/->display (form/with-display chunk))
-              ;; The form's execution output only. Activity has its own event type
-              ;; for both transient revisions and the durable settled snapshot.
-              {:form_index position
-               :code code
-               :result result
-               :stdout (form/clip-to-wire (:stdout chunk))
-               :error (when (some? error)
-                        (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-               :silent (boolean (or silent? (and (nil? error) (contains? #{"vis_silent"} result))))
-               :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
-                              (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
-                                (max 0 (- (long finished-at-ms) (long started-at-ms)))))})
+            (let [stdout (form/clip-to-wire (:stdout chunk))
+                  duration-ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
+                                (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
+                                  (max 0 (- (long finished-at-ms) (long started-at-ms)))))]
+
+              (merge
+                ;; Canonical facts and authored metadata only. Presentation is derived by
+                ;; each channel; no rendered copy rides beside `:stdout` / `:result`.
+                (form/->display chunk)
+                (cond-> {:form_index position
+                         :code code
+                         :silent (boolean (or silent?
+                                              (and (nil? error)
+                                                   (contains? #{"vis_silent"} result))))}
+                  stdout
+                  (assoc :stdout stdout)
+
+                  (some? error)
+                  (assoc :error (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+
+                  (some? duration-ms)
+                  (assoc :duration_ms duration-ms))))
 
             ;; Live thinking, on its OWN wire event so a client paints it as the
             ;; thinking trace — distinct from prose. `:text` is the INCREMENT
