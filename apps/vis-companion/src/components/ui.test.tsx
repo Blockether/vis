@@ -17,6 +17,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import uiSource from "./ui.tsx?raw";
+import navigatorSource from "./SessionNavigator.tsx?raw";
 import appSource from "../App.tsx?raw";
 import storageSource from "../lib/storage.ts?raw";
 import sessionsListSource from "../screens/SessionsScreen.tsx?raw";
@@ -34,6 +35,7 @@ import humanInputSource from "./HumanInputPrompt.tsx?raw";
 import providerAuthSource from "./ProviderAuth.tsx?raw";
 import routerSource from "../screens/RouterScreen.tsx?raw";
 import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
+import jumpToLatestSource from "./JumpToLatestButton.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
 import notifyVerdictSource from "../lib/notify-verdict.ts?raw";
@@ -45,7 +47,6 @@ import {
   Input,
   BandLabel,
   BandTally,
-  EditableName,
   BandButton,
   Button,
   Chip,
@@ -57,49 +58,39 @@ import {
   ConfirmRow,
   DialogFrame,
   DialogHeader,
-  HeaderActions,
-  HeaderMeta,
-  HeaderTally,
-  HeaderTitle,
-  Pager,
-  pageWindow,
   IconButton,
-  KebabButton,
   ListRow,
-  LiveCount,
-  ProjectStatusCounts,
-  LoadMore,
-  TableSelectionButton,
-  TableSelectionRow,
-  Meter,
-  LiveTally,
   LIST_EDGE,
-  machineTagFace,
-  MachineMark,
-  MachineProjectsButton,
-  MachineSwitcher,
-  MachineTab,
+  LoadMore,
   MetaButton,
-  NewSessionButton,
   NotifyConnectionSwitch,
   OptionRow,
-  Pill,
   Disclosure,
   SettingsDisclosure,
   Switch,
   TextButton,
-  ProjectCrumb,
-  RowDisclosure,
-  SearchField,
-  SectionGap,
-  SectionHeader,
   SettingsChoiceDisclosure,
   SettingsChoiceGroup,
-  Slider,
   Spinner,
-  UnreadBadge,
-  Waveform,
 } from "./ui";
+import {
+  HeaderActions,
+  HeaderMeta,
+  HeaderTally,
+  HeaderTitle,
+  MachineMark,
+  MachineProjectsButton,
+  MachineSwitcher,
+  MachineTab,
+  NewSessionButton,
+  Pager,
+  pageWindow,
+  ProjectCrumb,
+  ProjectStatusCounts,
+  RowDisclosure,
+  SectionGap,
+  SectionHeader,
+} from "./SessionNavigator";
 import { MenuHeading } from "./Menu";
 
 // Regression (reported: "why we still have this chevron here showing something is
@@ -141,97 +132,6 @@ describe("split button", () => {
   });
 });
 
-// The live count wears the SAME filled block as the unread badge, in green:
-// `macbook \u25ae3\u25ae\u25ae4\u25ae` — one shape, two colours, running then
-// waiting. It replaced a bracketed `[3]`, which read lighter than the badge
-// beside it, and before that a `\u25cf` whose metrics sat below the digits.
-describe("LiveTally", () => {
-  it("is a filled green block, not bracketed text or a glyph", () => {
-    const html = renderToStaticMarkup(<LiveTally count={5} />);
-    expect(html).toContain(">5<");
-    expect(html).not.toContain("[");
-    expect(html).not.toContain("\u25cf");
-  });
-
-  // `--ok` is the app's green INK (LIVE text, the 6px machine dot). Poured into
-  // a badge it is a slab twice as dark as the amber block beside it and carries
-  // its digit at 5:1; the fill has to be the lightened `ok-surface` peer.
-  it("fills with the green surface, never with the green ink", () => {
-    const html = renderToStaticMarkup(<LiveTally count={5} />);
-
-    expect(html).not.toMatch(/bg-ok(?!-surface)/);
-  });
-
-  it("says what the number counts, for a reader that cannot see green", () => {
-    const html = renderToStaticMarkup(<LiveTally count={1} />);
-
-    expect(html).toContain('<span class="sr-only"> live</span>');
-  });
-
-  it("renders nothing when nothing is running", () => {
-    expect(renderToStaticMarkup(<LiveTally count={0} />)).toBe("");
-  });
-});
-
-// Unread is a notification, not a second tally: beside the bracketed live
-// count it has to be told apart from it WITHOUT the reader remembering a colour
-// code, so it wears the same filled amber block the session row uses for "new".
-describe("UnreadBadge", () => {
-  it("is a filled block, not a bare number beside the live count", () => {
-    const html = renderToStaticMarkup(<UnreadBadge count={3} />);
-    expect(html).toContain(">3<");
-    expect(html).not.toContain("[");
-  });
-
-  it("says what the number counts, for a reader that cannot see amber", () => {
-    const html = renderToStaticMarkup(<UnreadBadge count={1} />);
-
-    expect(html).toContain('<span class="sr-only"> unread</span>');
-  });
-
-  it("renders nothing when there is nothing new", () => {
-    expect(renderToStaticMarkup(<UnreadBadge count={0} />)).toBe("");
-  });
-});
-
-// Regression, user report ("the machine is not updated"): the machine tag shipped as a
-// banner INSIDE the list, gated on a fleet section count this screen can never reach, so
-// every machine on screen kept the plain white name it always had. The tag is a face on
-// the chrome that actually renders now.
-describe("machineTagFace", () => {
-  // Regression, user report ("the foreground is black and it doesn't look good"): the
-  // tag was a FILLED block of hue, which at L 0.62 can only carry dark ink, so the
-  // machine's name was the only black word on the screen. Hue is the edge now.
-  it("names the machine with its own hue on the leading edge, in the page's ink", () => {
-    const face = machineTagFace(MACHINE_COLORS[0]!);
-
-    expect(face).toContain(MACHINE_COLORS[0]!.rail);
-    expect(face).not.toContain("text-machine-ink");
-    expect(face).not.toContain(MACHINE_COLORS[0]!.dot);
-  });
-
-  it("gives two machines two different tags", () => {
-    expect(machineTagFace(MACHINE_COLORS[0]!)).not.toBe(
-      machineTagFace(MACHINE_COLORS[1]!),
-    );
-  });
-
-  // The machine's name is also its RENAME control, and the field it becomes used to
-  // wear `bg-transparent p-0` spelled inside `EditableName` — so the tag lost its hue
-  // and its padding the moment a caret arrived. Paper belongs to the face.
-  it("survives being the rename control", () => {
-    const html = renderToStaticMarkup(
-      <EditableName
-        face={machineTagFace(MACHINE_COLORS[0]!)}
-        label="Rename tower"
-        value="tower"
-        onCommit={() => {}}
-      />,
-    );
-
-    expect(html).toContain(MACHINE_COLORS[0]!.rail);
-  });
-});
 
 // A project FOLDS, and the fold is the naming half of its own header.
 describe("ProjectCrumb", () => {
@@ -317,7 +217,7 @@ describe("the machine's hue", () => {
     expect(sessionsListSource).not.toContain("LIST_FRAME");
     expect(sessionsListSource).not.toContain("border-l-2");
     // The hue survives where the machine is NAMED, which is where the question is.
-    expect(machineTagFace(MACHINE_COLORS[0]!)).toContain(MACHINE_COLORS[0]!.rail);
+    expect(sessionsListSource).toContain("<MachineMark");
   });
 });
 
@@ -659,54 +559,6 @@ describe("BandButton", () => {
   });
 });
 
-// Regression, user report ("still the ⋯ between the machine and project are different
-// fix it! MARGIN RIGHT DIFFERS AND ALSO WHY THERE ARE BORDERS"): the two
-// kebabs had become the same Button, but each call site still spelled out its own
-// popup semantics and glyph, and the app's default bordered box turned a header
-// glyph into a second rival to the yellow verb standing beside it.
-describe("KebabButton", () => {
-  const html = (props: Partial<Parameters<typeof KebabButton>[0]> = {}) =>
-    renderToStaticMarkup(<KebabButton label="Actions for tower" {...props} />);
-
-  it("is one control: the machine’s and the project’s render the same box", () => {
-    expect(
-      html({ label: "Actions for tower" }).replace("Actions for tower", "X"),
-    ).toBe(html({ label: "Actions for vis" }).replace("Actions for vis", "X"));
-  });
-
-  // Reported: the `⋯` and the row chevrons "have borders". They did — the frame
-  // arrived on hover, and on a touch screen a tap counts as hover, so the glyph
-  // boxed itself and stayed boxed with no pointer to leave.
-  it("wears no border in ANY state: a header glyph is ink, not a rival box", () => {
-    expect(html()).not.toContain("border-edge-strong");
-    expect(html()).not.toContain("hover:border");
-  });
-
-  it("carries the popup semantics itself, so no call site can forget them", () => {
-    expect(html()).toContain('aria-haspopup="menu"');
-    expect(html({ isOpen: true })).toContain('aria-expanded="true"');
-    expect(html()).toContain('aria-label="Actions for tower"');
-  });
-
-  it("keeps the header’s compact rhythm and one glyph size", () => {
-    expect(html()).not.toContain("active:scale");
-  });
-
-  // Over a thumbnail the app's paper is not underneath it, so the same control brings
-  // its own ink instead of a call-site `bg-*` that Tailwind's emission order decides.
-  // Reported too ("not visible and goes outside of card!"): it wore the EDGE box as
-  // well, whose negative right margin reclaims a ROW's trailing gutter. Placed
-  // `right-1` on an artifact tile, that margin dragged the glyph past the card's edge.
-  it("has an overlay face for the artifact tile, with no height of its own", () => {
-    const over = html({ variant: "overlay", density: "default" });
-    // `bg-ink/80` reads as ink and paints near-white in a light theme.
-    expect(over).not.toContain("bg-ink/80");
-    // It ends no row, so it reclaims no row's gutter and centres its own glyph.
-    expect(over).not.toContain("-mr-3");
-    expect(over).not.toContain("justify-items-end");
-    expect(html()).toContain("justify-items-end");
-  });
-});
 
 // Regression, user report ("MARGIN RIGHT DIFFERS AND ALSO WHY THERE IS NO MARGIN
 // BEFORE NEW SESSION"): the machine header padded its own right edge while the project
@@ -717,7 +569,7 @@ describe("HeaderActions", () => {
   const html = renderToStaticMarkup(
     <HeaderActions>
       <HeaderMeta>2 projects</HeaderMeta>
-      <KebabButton label="Actions for tower" />
+      <RowDisclosure label="Show project details" isOpen={false} />
     </HeaderActions>,
   );
 
@@ -740,17 +592,6 @@ describe("HeaderActions", () => {
   });
 });
 
-describe("LiveCount", () => {
-  it("says nothing when nothing is running", () => {
-    expect(renderToStaticMarkup(<LiveCount count={0} />)).toBe("");
-  });
-
-  it("wears the same pulse a live session row does", () => {
-    const html = renderToStaticMarkup(<LiveCount count={3} />);
-    expect(html).toContain("animate-pulse bg-ok motion-reduce:animate-none");
-    expect(html).toContain("3 live");
-  });
-});
 
 // Regression, user report (paraphrased: project status values ran together and only
 // LIVE was summarized): live, human demand and finished unread work are separate states.
@@ -1127,7 +968,7 @@ describe("the list grid", () => {
   it("ends every row on one trailing edge, carried by the control itself", () => {
 
     for (const html of [
-      renderToStaticMarkup(<KebabButton label="Actions for vis" />),
+      renderToStaticMarkup(<IconButton label="Actions for vis" variant="quiet" edge />),
       renderToStaticMarkup(
         <RowDisclosure isOpen={false} label="Show details" />,
       ),
@@ -1146,8 +987,10 @@ describe("RowDisclosure", () => {
       <RowDisclosure isOpen={isOpen} label="Show details for Untitled" />,
     );
 
-  it("is the same button as the kebab beside it", () => {
-    const kebab = renderToStaticMarkup(<KebabButton label="Actions for vis" />);
+  it("uses the canonical edge IconButton geometry", () => {
+    const edge = renderToStaticMarkup(
+      <IconButton label="Actions for vis" variant="quiet" edge />,
+    );
     for (const token of [
       "min-w-10",
       "sm:min-w-12",
@@ -1156,7 +999,7 @@ describe("RowDisclosure", () => {
       "mouse:h-6",
     ]) {
       expect(html(false)).toContain(token);
-      expect(kebab).toContain(token);
+      expect(edge).toContain(token);
     }
   });
 
@@ -1597,7 +1440,7 @@ describe("a row-ending icon button fills its row", () => {
 describe("a row's pressable slab", () => {
   it("pads its trailing inside edge exactly as LIST_EDGE pads the leading one", () => {
     expect(uiSource).toContain("export const LIST_EDGE = 'pl-3 sm:pl-4';");
-    expect(uiSource).toContain("export const LIST_EDGE_END = 'pr-3 sm:pr-4';");
+    expect(navigatorSource).toContain("export const LIST_EDGE_END = 'pr-3 sm:pr-4';");
   });
 
   it("never lets a row spell that padding itself", () => {
@@ -1613,7 +1456,7 @@ describe("a row's pressable slab", () => {
 // of a mark sitting 13px from the paper on its right.
 describe("the trailing control cluster", () => {
   it("adds no gutter of its own in front of the first control", () => {
-    expect(uiSource).toContain(
+    expect(navigatorSource).toContain(
       "const LIST_TRAIL = 'flex shrink-0 items-stretch gap-2 self-stretch pr-3 sm:pr-4';",
     );
   });
@@ -1721,13 +1564,15 @@ describe("running prose has one justified rule", () => {
 // Regression, user report ("it should be this search more subtle and looking more
 // connected to our designs"): the search box was rounder, taller and whiter than the
 // controls it sat beside — a white slab on paper that carries no other box at rest.
-describe("SearchField", () => {
-  const field = uiSource.slice(uiSource.indexOf("export const SearchField"));
-  // The field's own box: the first class template in the component is its `<label>`.
+describe("HeaderSearchField", () => {
+  const field = appSource.slice(
+    appSource.indexOf("function HeaderSearchField"),
+    appSource.indexOf("export function Header"),
+  );
   const box = (/className={`([^`]*)`}/.exec(field)?.[1] ?? "").split(/\s+/);
 
   it("wears Button's own face and only lights up when focused", () => {
-    expect(uiSource).toContain("export const SearchField");
+    expect(appSource).toContain("function HeaderSearchField");
     expect(field).not.toContain("rounded-none");
     expect(field).toContain("focus-within:bg-input");
     expect(field).toContain("focus-within:border-accent");
@@ -1764,7 +1609,7 @@ describe("SearchField", () => {
     expect(field).toContain("<SearchIcon");
     // Leading, before the input: the mark introduces the field, it does not end it.
     expect(field.indexOf("<SearchIcon")).toBeLessThan(field.indexOf("<input"));
-    expect(uiSource).toContain("SearchIcon");
+    expect(appSource).toContain("SearchIcon");
   });
 
   // It is a SEARCH field, so the phone keyboard says so and nothing autocorrects a
@@ -2153,41 +1998,6 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
     });
   });
 
-  describe("TableSelectionButton", () => {
-    const html = (isSelected: boolean) =>
-      renderToStaticMarkup(
-        <TableSelectionButton isSelected={isSelected} mark={<i data-mark="running" />} aria-label="Select tests / macos">
-          tests / macos
-        </TableSelectionButton>,
-      );
-
-    it("states selection and keeps a finger-sized row target", () => {
-      expect(html(true)).toContain('aria-pressed="true"');
-      expect(html(false)).toContain('aria-pressed="false"');
-    });
-
-    // The row's state is the RUN's statement, so the button draws the caller's mark
-    // and does not invent one; and the face starts at the TOP of its box, because a
-    // row whose second line says what it is doing now must not push its name into
-    // the middle of two lines.
-    it("leads with the mark it was handed, from the top of the row", () => {
-      expect(html(false)).toContain('data-mark="running"');
-    });
-  });
-
-    it("washes the whole selected row while the button keeps the leading mark", () => {
-      const row = renderToStaticMarkup(
-        <table>
-          <tbody>
-            <TableSelectionRow isSelected>
-              <td>job</td>
-              <td>success</td>
-            </TableSelectionRow>
-          </tbody>
-        </table>,
-      );
-      expect(row).toContain('aria-selected="true"');
-    });
 
   describe("LoadMore", () => {
     const html = () =>
@@ -2496,7 +2306,7 @@ describe("the transcript's card header band", () => {
     expect(
       (chatSource.match(/\$\{CARD_BAND\}|className={CARD_BAND}/g) ?? []).length,
     ).toBe(3);
-    expect(chatSource).not.toContain("min-h-6");
+    expect(chatSource).not.toContain('className="flex min-h-6');
   });
 });
 
@@ -2616,14 +2426,9 @@ describe("the composer's own controls", () => {
     expect(classes(html)).not.toContain("bg-dialog-title");
   });
 
-  // Regression, measured over the transcript on both appearances: the way back to
-  // the newest turn was a square slab wearing a 14px mark beside a 10px label, at
-  // the same 32px face under a cursor as under a finger.
-  it("floats over the transcript on the rung a layer wears", () => {
-    const pill = classes(renderToStaticMarkup(<Pill>Latest</Pill>));
-    expect(pill).toContain("mouse:after:content-none");
-    // And the mark is the box that step allows, named where it is drawn.
-    expect(sessionScreenSource).toContain('<ArrowDownIcon className="size-3" />');
+  it("keeps the transcript's floating action inside its owning feature", () => {
+    expect(jumpToLatestSource).toContain("function JumpToLatestButton");
+    expect(sessionScreenSource).toContain("<JumpToLatestButton");
   });
 });
 
@@ -2996,7 +2801,7 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(sessionScreenSource).toContain("<OptionRow");
     expect(sessionScreenSource).toContain("<TextButton");
     expect(sessionScreenSource).toContain("<BackButton");
-    expect(sessionScreenSource).toContain("<Pill");
+    expect(sessionScreenSource).toContain("<JumpToLatestButton");
     // The transcript's "load earlier" is the artifacts sheet's own bar, turned over.
     expect(sessionScreenSource).toContain("<LoadMore");
     expect(sessionScreenSource).toContain("isEarlier");
@@ -3143,10 +2948,32 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(machinesSource).not.toContain("description=");
   });
 
-  it("keeps no control nobody uses", () => {
-    // `Card` and `Section` had no call site left anywhere in the app.
-    expect(uiSource).not.toContain("export function Card(");
-    expect(uiSource).not.toContain("export function Section(");
+  it("keeps the shared vocabulary shared and deletes dead controls", () => {
+    const production = Object.entries(
+      import.meta.glob(["../**/*.tsx"], {
+        query: "?raw",
+        import: "default",
+        eager: true,
+      }) as Record<string, string>,
+    )
+      .filter(
+        ([path]) =>
+          !path.endsWith("/ui.tsx") &&
+          !path.includes("/dev/") &&
+          !path.includes(".test.") &&
+          !path.includes(".stories.") &&
+          !path.includes("harness"),
+      )
+      .map(([, source]) => source)
+      .join("\n");
+    const controls = [...uiSource.matchAll(/^export (?:function|const) ([A-Z]\w+)/gm)]
+      .map(([, name]) => name)
+      .filter((name) => name !== name.toUpperCase());
+    const privateOrDead = controls.filter(
+      (name) => [...production.matchAll(new RegExp(`<${name}(?=[\\s/>])`, "g"))].length < 2,
+    );
+
+    expect(privateOrDead).toEqual([]);
   });
 });
 
@@ -3163,9 +2990,9 @@ describe("every ✕ in the app", () => {
     );
     expect(close).not.toContain("text-dialog-hint");
 
-    const field = uiSource.slice(
-      uiSource.indexOf("export const SearchField"),
-      uiSource.indexOf("export function Banner"),
+    const field = appSource.slice(
+      appSource.indexOf("function HeaderSearchField"),
+      appSource.indexOf("export function Header"),
     );
     expect(field).toContain("<CloseButton");
     expect(field).not.toContain('variant="quiet"');
@@ -3194,13 +3021,6 @@ describe("one ✕, at one size, under one wash", () => {
     ),
     "a queued message": renderToStaticMarkup(
       <CloseButton label="Remove queued message 1" onClick={() => {}} />,
-    ),
-    "a query": renderToStaticMarkup(
-      <SearchField
-        value="release"
-        onValue={() => {}}
-        label="Search sessions"
-      />,
     ),
   };
 
@@ -3248,77 +3068,6 @@ describe("one ✕, at one size, under one wash", () => {
   });
 });
 
-// Reported as a spoken reply with "one yellow dot" where its scrubber should be:
-// the transcript's seek rail was a bare native `range`, which paints no track at
-// all on light paper, while the human-input field one screen away drew a 4px rule
-// with the brand thumb. Two controls with one meaning, two faces.
-describe("Slider", () => {
-  const html = (props: Record<string, unknown> = {}) =>
-    renderToStaticMarkup(<Slider aria-label="Speech position" {...props} />);
-
-  it("draws one face: a rule the app paints, not the browser's own track", () => {
-    const face = html();
-    expect(face).toContain('type="range"');
-  });
-
-  it("is the only slider in the app", () => {
-    const sources = import.meta.glob(["../**/*.tsx"], {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    }) as Record<string, string>;
-    const rolled: string[] = [];
-    for (const [path, source] of Object.entries(sources)) {
-      if (path.endsWith(".test.tsx") || path.endsWith("/ui.tsx")) continue;
-      if (source.includes('type="range"')) rolled.push(path);
-    }
-    expect(rolled).toEqual([]);
-  });
-});
-
-// Reported as "nie możemy mieć tego audio controls z takim sexy waveformem ... z
-// rzeczywistym": the spoken reply's position was a bare rule, so a reply's own shape
-// — where it is loud, where it pauses — was thrown away before it reached the reader.
-describe("Waveform", () => {
-  const loud = [0.2, 0.4, 0.8, 1];
-  const html = (props: Record<string, unknown> = {}) =>
-    renderToStaticMarkup(
-      <Waveform
-        peaks={loud}
-        value={0}
-        label="Speech position"
-        onSeek={() => undefined}
-        {...props}
-      />,
-    );
-
-  it("is one seekable position, named and readable by a screen reader", () => {
-    const face = html({ value: 0.5 });
-
-    expect(face).toContain('role="slider"');
-    expect(face).toContain('aria-label="Speech position"');
-    expect(face).toContain('aria-valuenow="0.5"');
-  });
-
-  it("draws the samples it was given, and paints only the part already played", () => {
-    const face = html({ value: 0.5 });
-    const bars = [...face.matchAll(/height="(\d+)"/g)].map((bar) => Number(bar[1]));
-
-    expect(bars).toHaveLength(loud.length);
-    expect(bars[0]).toBeLessThan(bars[3]);
-    expect((face.match(/fill-accent/g) ?? []).length).toBe(2);
-    expect((face.match(/fill-edge/g) ?? []).length).toBe(2);
-  });
-
-  it("falls back to a flat rule when nothing has been measured", () => {
-    const bars = [...html({ peaks: [] }).matchAll(/height="(\d+)"/g)].map(
-      (bar) => bar[1],
-    );
-
-    expect(bars.length).toBeGreaterThan(0);
-    expect(new Set(bars).size).toBe(1);
-  });
-});
 // Regression, user report ("some of the X are a different X than the dialog ones, and
 // white instead of black"): the way out painted its own resting ink — the page's
 // `--fg` on a panel band — while the band under it painted `text-accent-foreground`.
@@ -3726,30 +3475,6 @@ describe("Input", () => {
   });
 });
 
-// The bar the live-view section paints for a run's progress. It is the app's
-// only gauge, so its resolution and its rounding are pinned here rather than
-// inferred from a screen.
-describe("the meter", () => {
-  const bar = (value: number) => renderToStaticMarkup(<Meter value={value} label="Swept" />);
-
-  it("draws one cell per five percent, filled up to the fraction", () => {
-    const half = bar(0.5);
-    expect(half.match(/<span class="h-full flex-1/g)).toHaveLength(20);
-    expect(half.match(/bg-accent/g)).toHaveLength(10);
-    expect(half.match(/bg-dialog-edge/g)).toHaveLength(10);
-    expect(bar(2 / 3).match(/bg-accent/g)).toHaveLength(13);
-  });
-
-  it("states the exact number it cannot draw, and stays inside the gauge", () => {
-    expect(bar(2 / 3)).toContain('aria-valuenow="67"');
-    expect(bar(0)).toContain('aria-valuenow="0"');
-    expect(bar(1.4)).toContain('aria-valuenow="100"');
-    expect(bar(1.4).match(/bg-dialog-edge/g)).toBeNull();
-    expect(bar(-1).match(/bg-accent/g)).toBeNull();
-    expect(bar(0.5)).toContain('aria-label="Swept"');
-    expect(bar(0.5)).not.toContain("style=");
-  });
-});
 
 // Regression, user report ("there is some white down one side, and at the bottom there is
 // not"): a nested cluster indented its whole body, so its rows stood a step in from the left
@@ -3907,6 +3632,7 @@ describe("every control is drawn in the gallery", () => {
     ImageViewer: "./ArtifactsSheet.stories.tsx",
     LiveArtifact: "./ArtifactsSheet.stories.tsx",
     PdfArtifact: "./DocArtifact.stories.tsx",
+    SessionNavigator: "./ui.stories.tsx",
   };
   it("draws every component ui.tsx exports", () => {
     const undrawn = [...uiSource.matchAll(/export (?:function|const) ([A-Z]\w+)/g)]

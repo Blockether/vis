@@ -602,9 +602,9 @@ describe('what a run says about its own layout', () => {
 });
 
 describe('the section is built from the closed vocabulary', () => {
-  it("borrows the app's controls and writes no styles of its own", () => {
+  it("uses shared actions around its feature-only meter and tables", () => {
     expect(liveViewSource).toContain('<Button');
-    expect(liveViewSource).toContain('<Meter');
+    expect(liveViewSource).toContain('<ProgressMeter');
     expect(liveViewSource).toContain('<LoadMore');
     expect(liveViewSource).toContain('<Disclosure');
     // And no spinner: a mark that turns for ninety minutes says only "still here",

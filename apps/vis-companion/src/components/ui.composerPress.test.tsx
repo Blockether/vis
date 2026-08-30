@@ -2,7 +2,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { ComposerButton, MetaButton, NewSessionButton } from "./ui";
+import { ComposerButton, MetaButton } from "./ui";
+import { NewSessionButton } from "./SessionNavigator";
 import { renderSessionScreen } from "../screens/session-screen-harness";
 
 /**

@@ -36,12 +36,10 @@ import {
   LoadMore,
   MetaButton,
   OptionRow,
-  Pill,
   Spinner,
   TextButton,
 } from '../components/ui';
 import {
-  ArrowDownIcon,
   CameraIcon,
   ClipIcon,
   FastIcon,
@@ -55,6 +53,7 @@ import {
   VoiceLoopIcon,
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
+import { JumpToLatestButton } from "../components/JumpToLatestButton";
 import { LiveView, useLiveViews } from "../components/LiveView";
 import { reduceRunningTurnEvent, type RunningTurn } from "../lib/running-turn";
 import { eventString, sessionEventBatch } from "../lib/session-stream";
@@ -4875,13 +4874,10 @@ export function SessionScreen({
             tray and composer no matter how tall they grow. Hidden while a
             completion list occupies the same strip. */}
           {showJump && !fileMatches.length && !slashMatches.length && (
-            <Pill
+            <JumpToLatestButton
               className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2"
               onClick={() => scrollToEnd("smooth")}
-            >
-              <ArrowDownIcon className="size-3" />
-              Latest
-            </Pill>
+            />
           )}
 
           {fileMatches.length > 0 && (

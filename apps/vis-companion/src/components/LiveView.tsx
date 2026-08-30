@@ -1,13 +1,11 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useEffect, useMemo, useRef, useState, type HTMLAttributes } from 'react';
 import {
   Button,
   Disclosure,
   Input,
+  ListRow,
   LoadMore,
-  Meter,
   PROSE,
-  TableSelectionButton,
-  TableSelectionRow,
 } from './ui';
 import { InlineMarkdown } from './ChatContent';
 import {
@@ -197,6 +195,48 @@ function StatusRow({ node }: { node: LiveStatusNode }) {
   );
 }
 
+const METER_SEGMENTS = 20;
+const METER_CELLS = Array.from({ length: METER_SEGMENTS }, (_, cell) => cell);
+
+/** The live view's segmented progress face, shared with its terminal rendering. */
+function ProgressMeter({ value, label }: { value: number; label: string }) {
+  const filled = Math.max(0, Math.min(METER_SEGMENTS, Math.round(value * METER_SEGMENTS)));
+  return (
+    <span
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(Math.max(0, Math.min(1, value)) * 100)}
+      className="flex h-1.5 w-full gap-px mouse:h-1"
+    >
+      {METER_CELLS.map((cell) => (
+        <span
+          key={cell}
+          className={`h-full flex-1 ${cell < filled ? 'bg-accent' : 'bg-dialog-edge'}`}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** Selection belongs to the whole live-table row, not only its first cell. */
+function SelectableTableRow({
+  isSelected = false,
+  className = '',
+  ...props
+}: HTMLAttributes<HTMLTableRowElement> & { isSelected?: boolean }) {
+  return (
+    <tr
+      aria-selected={isSelected}
+      className={`transition-colors duration-150 motion-reduce:transition-none ${
+        isSelected ? 'bg-accent/10' : ''
+      } ${className}`}
+      {...props}
+    />
+  );
+}
+
 /**
  * A bar only when there is a fraction to draw. `done of total` is stated in
  * words beside it because a bar answers "how far", never "how many", and a scan
@@ -215,7 +255,7 @@ function ProgressRow({ node }: { node: LiveProgressNode }) {
         </p>
       ) : (
         <>
-          <Meter value={fraction} label={node.label ?? 'Progress'} />
+          <ProgressMeter value={fraction} label={node.label ?? 'Progress'} />
           <p className="mt-1.5 flex items-baseline gap-2 font-mono text-meta text-dialog-hint">
             <span className="text-ui font-bold tabular-nums text-white">{livePercent(fraction)}%</span>
             {counted && <span className="tabular-nums">{counted}</span>}
@@ -507,7 +547,7 @@ function TableRows({
             const row = item.row;
             const isSelected = selected.has(row.id);
             return (
-              <TableSelectionRow
+              <SelectableTableRow
                 key={row.id}
                 isSelected={isSelected}
                 className={`${rowInk(row.tone)} ${node.is_selectable ? 'cursor-pointer' : ''}`}
@@ -515,13 +555,16 @@ function TableRows({
               >
                 <td className="p-0 align-top">
                   {node.is_selectable ? (
-                    <TableSelectionButton
+                    <ListRow
                       isSelected={isSelected}
-                      mark={<ToneMark tone={row.tone} />}
+                      aria-pressed={isSelected}
                       aria-label={`Select ${row.cells[0] || row.id}`}
                     >
-                      <RowFace node={node} row={row} isIndented={Boolean(row.branch)} />
-                    </TableSelectionButton>
+                      <ToneMark tone={row.tone} />
+                      <span className="min-w-0 flex-1 font-mono text-ui">
+                        <RowFace node={node} row={row} isIndented={Boolean(row.branch)} />
+                      </span>
+                    </ListRow>
                   ) : (
                     <span className="flex min-w-0 items-start gap-2 px-3 py-2">
                       <ToneMark tone={row.tone} />
@@ -542,7 +585,7 @@ function TableRows({
                     <InlineMarkdown>{row.cells[valueAt] ?? ''}</InlineMarkdown>
                   </td>
                 )}
-              </TableSelectionRow>
+              </SelectableTableRow>
             );
           })}
         </tbody>

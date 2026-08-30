@@ -577,7 +577,7 @@ describe("the shipped screens", () => {
 
     expect(offenders).toEqual([]);
   });
-  // A PLOT IS NOT AN ICON. `ui.tsx`'s `Waveform` draws one `<rect>` per measured
+  // A PLOT IS NOT AN ICON. `ChatContent.tsx`'s speech waveform draws one `<rect>` per measured
   // bucket, as many as the width a `ResizeObserver` reports; an icon is a fixed glyph
   // on the 24-unit grid, and keeping those in one module is the whole point of this
   // rule. So the plot is named here rather than exempted by folder, and it still may
@@ -591,7 +591,7 @@ describe("the shipped screens", () => {
         /<svg/.test(source),
     );
 
-    expect(drawn.map(([path]) => path)).toEqual(["./ui.tsx"]);
+    expect(drawn.map(([path]) => path)).toEqual(["./ChatContent.tsx"]);
     const [[, wave]] = drawn;
     expect(wave.match(/<svg/g)).toHaveLength(1);
     expect(wave).not.toContain("<path");

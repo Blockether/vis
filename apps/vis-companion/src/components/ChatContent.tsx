@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type PointerEvent,
   type ReactNode,
 } from "react";
 import Prism from "prismjs";
@@ -38,7 +39,6 @@ import {
   LoadMore,
   PROSE,
   Spinner,
-  Waveform,
 } from "./ui";
 import "prismjs/components/prism-bash";
 import "prismjs/components/prism-clojure";
@@ -2641,6 +2641,115 @@ const speechFrom = (text: string, position: number) => {
   return text.slice(boundary < 0 ? approximate : boundary + 1).trimStart();
 };
 
+const WAVE_BOX = 40;
+const WAVE_PITCH = 3;
+const WAVE_BAR = 2;
+const WAVE_FLOOR = 2;
+const WAVE_STEP = 0.05;
+const WAVE_FLAT = 64;
+const WAVE_ROOM = 3;
+
+/** Keep the loudest sample of each group when the speech rail narrows. */
+const cutWaveTo = (source: number[], count: number) =>
+  Array.from({ length: count }, (_, index) => {
+    const from = Math.floor((index * source.length) / count);
+    const to = Math.max(from + 1, Math.floor(((index + 1) * source.length) / count));
+    let peak = 0;
+    for (let at = from; at < to; at += 1) peak = Math.max(peak, source[at]);
+    return peak;
+  });
+
+/** The spoken reply's measured shape and seek interaction. */
+function SpeechWaveform({
+  peaks,
+  value,
+  label,
+  onSeek,
+  className = "",
+}: {
+  peaks: number[];
+  value: number;
+  label: string;
+  onSeek: (value: number) => void;
+  className?: string;
+}) {
+  // Re-cut the same peaks to the available rail, preserving the wave's rhythm
+  // instead of stretching a handful of bars across a wide transcript.
+  const [room, setRoom] = useState(0);
+  const frame = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    const node = frame.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(([entry]) => setRoom(entry.contentRect.width));
+    watch.observe(node);
+    return () => watch.disconnect();
+  }, []);
+  const source = peaks.length ? peaks : new Array<number>(WAVE_FLAT).fill(0);
+  const fits = room > 0 ? Math.max(8, Math.floor(room / WAVE_ROOM)) : source.length;
+  const bars = fits >= source.length ? source : cutWaveTo(source, fits);
+  const played = value * bars.length;
+  const clamp = (next: number) => onSeek(Math.max(0, Math.min(1, next)));
+  const seekAt = (event: PointerEvent<HTMLSpanElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    if (box.width <= 0) return;
+    clamp((event.clientX - box.left) / box.width);
+  };
+  return (
+    <span
+      className={`flex min-h-11 min-w-0 items-center mouse:min-h-6 ${className}`}
+    >
+      <span
+        ref={frame}
+        role="slider"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={1}
+        aria-valuenow={Math.round(value * 1000) / 1000}
+        tabIndex={0}
+        className="flex h-5 w-full min-w-0 cursor-pointer touch-none items-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+        onPointerDown={(event) => {
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+          seekAt(event);
+        }}
+        onPointerUp={(event) =>
+          event.currentTarget.releasePointerCapture?.(event.pointerId)
+        }
+        onKeyDown={(event) => {
+          if (event.key === "ArrowRight" || event.key === "ArrowUp")
+            clamp(value + WAVE_STEP);
+          else if (event.key === "ArrowLeft" || event.key === "ArrowDown")
+            clamp(value - WAVE_STEP);
+          else if (event.key === "Home") onSeek(0);
+          else if (event.key === "End") onSeek(1);
+          else return;
+          event.preventDefault();
+        }}
+      >
+        <svg
+          viewBox={`0 0 ${bars.length * WAVE_PITCH} ${WAVE_BOX}`}
+          preserveAspectRatio="none"
+          aria-hidden="true"
+          className="h-full w-full"
+        >
+          {bars.map((peak, index) => {
+            const height = Math.max(WAVE_FLOOR, Math.round(peak * WAVE_BOX));
+            return (
+              <rect
+                key={index}
+                x={index * WAVE_PITCH}
+                y={(WAVE_BOX - height) / 2}
+                width={WAVE_BAR}
+                height={height}
+                rx={1}
+                className={index < played ? "fill-accent" : "fill-edge"}
+              />
+            );
+          })}
+        </svg>
+      </span>
+    </span>
+  );
+}
 export function SpeechBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(true);
   const [speaking, setSpeaking] = useState(false);
@@ -2766,7 +2875,7 @@ export function SpeechBlock({ text }: { text: string }) {
           >
             {speaking ? <PauseIcon /> : <PlayIcon />}
           </IconButton>
-          <Waveform
+          <SpeechWaveform
             className="flex-1"
             peaks={track?.peaks ?? []}
             value={position}

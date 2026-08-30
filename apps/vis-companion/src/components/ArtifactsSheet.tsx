@@ -50,12 +50,12 @@ import { MarkdownArtifact } from "./MarkdownArtifact";
 import { MediaRecording } from "./Media";
 import { PdfAnnotator } from "./PdfArtifact";
 import { readArtifactText } from "./TextArtifact";
-import { AlertIcon, ClipIcon, MicIcon, PlayIcon } from "./icons";
+import { AlertIcon, ClipIcon, DotsIcon, MicIcon, PlayIcon } from "./icons";
 import {
   BandButton,
   Chip,
   DialogHeader,
-  KebabButton,
+  IconButton,
   ListRow,
   LoadMore,
   overlayLayer,
@@ -618,13 +618,16 @@ function Tile({
   // sibling of the tile rather than a child: a button inside a button is invalid
   // HTML, and the browser would hand the version menu's clicks to the tile.
   const dots = versions.length > 1 && (
-    <KebabButton
+    <IconButton
       label={`Show ${versions.length} versions of ${artifact.name}`}
       variant="overlay"
       density="default"
       className="absolute top-1 right-1 size-8 mouse:size-7"
+      aria-haspopup="menu"
       onClick={() => onVersions(artifact)}
-    />
+    >
+      <DotsIcon className="size-3" />
+    </IconButton>
   );
 
 

@@ -1,12 +1,9 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent } from 'storybook/test';
 import { useState, type ReactNode } from 'react';
-import { RECORDING_PEAKS, STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
+import { STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
 import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
 import {
-  ArrowDownIcon,
-  CircleCheckIcon,
-  CircleDotIcon,
   CopyIcon,
   DownloadIcon,
   MicIcon,
@@ -32,51 +29,40 @@ import {
   DialogFrame,
   DialogHeader,
   Disclosure,
-  EditableName,
+  IconButton,
+  Input,
+  ListRow,
+  LoadMore,
+  MetaButton,
+  Modal,
+  NotifyConnectionSwitch,
+  OptionRow,
+  OverlayScreen,
+  SettingsChoiceDisclosure,
+  SettingsChoiceGroup,
+  SettingsDisclosure,
+  Spinner,
+  Switch,
+  TextButton,
+} from './ui';
+import {
   HeaderActions,
   HeaderMeta,
   HeaderTally,
   HeaderTitle,
-  IconButton,
-  Input,
-  KebabButton,
-  ListRow,
-  LiveCount,
-  LiveTally,
-  LoadMore,
-  machineTagFace,
   MachineMark,
   MachineProjectsButton,
   MachineSwitcher,
   MachineTab,
-  Meter,
-  MetaButton,
-  Modal,
   NewSessionButton,
-  NotifyConnectionSwitch,
-  OptionRow,
-  OverlayScreen,
   Pager,
-  Pill,
   ProjectCrumb,
   ProjectStatusCounts,
   PullToSearchHint,
   RowDisclosure,
-  SearchField,
   SectionGap,
   SectionHeader,
-  SettingsChoiceDisclosure,
-  SettingsChoiceGroup,
-  SettingsDisclosure,
-  Slider,
-  Spinner,
-  Switch,
-  TableSelectionButton,
-  TableSelectionRow,
-  TextButton,
-  UnreadBadge,
-  Waveform,
-} from './ui';
+} from './SessionNavigator';
 
 /**
  * THE VOCABULARY, DRAWN ONCE EACH, BY THE CODE THAT SHIPS IT.
@@ -153,12 +139,6 @@ export const Buttons: Story = {
           Earlier
         </LoadMore>
       </Group>
-      <Group of="Pill, the one control that floats over the page">
-        <Pill>
-          <ArrowDownIcon className="size-3" />
-          Latest
-        </Pill>
-      </Group>
     </Sheet>
   ),
 };
@@ -173,8 +153,6 @@ export const Marks: Story = {
         <IconButton label="Settings" variant="secondary">
           <SettingsIcon />
         </IconButton>
-        <KebabButton label="Actions for tower" />
-        <KebabButton label="Actions for tower" isOpen />
       </Group>
       <Group of="Navigation and the ways out">
         <BackButton label="Back to sessions" />
@@ -184,8 +162,6 @@ export const Marks: Story = {
       <Group of="Work in progress">
         <Spinner />
         <Spinner tone="accent" />
-        <Meter value={0.62} label="Context used" />
-        <UnreadBadge count={12} />
       </Group>
     </Sheet>
   ),
@@ -214,19 +190,6 @@ export const Chips: Story = {
   ),
 };
 
-/** A field owns its value, so the sheet has to hold one. */
-function SearchDemo() {
-  const [value, setValue] = useState('');
-  return (
-    <SearchField
-      value={value}
-      onValue={setValue}
-      label="Search sessions"
-      placeholder="Search sessions"
-      className="w-full"
-    />
-  );
-}
 
 function SwitchDemo() {
   const [isOn, setIsOn] = useState(true);
@@ -245,9 +208,6 @@ export const Fields: Story = {
       <Group of="Input">
         <Input placeholder="Project name" className="w-full" />
       </Group>
-      <Group of="SearchField, the glass inside the box">
-        <SearchDemo />
-      </Group>
       <Group of="Switch">
         <SwitchDemo />
         <Switch label="Busy" isOn isBusy />
@@ -255,10 +215,6 @@ export const Fields: Story = {
     </Sheet>
   ),
   play: async ({ canvas }) => {
-    const search = canvas.getByLabelText('Search sessions');
-    await userEvent.type(search, 'vis');
-    await expect(search).toHaveValue('vis');
-
     const notifications = canvas.getByRole('switch', { name: /^Notify on this machine/ });
     await expect(notifications).toHaveAttribute('aria-checked', 'true');
     await userEvent.click(notifications);
@@ -427,42 +383,11 @@ function ChoiceRowDemo() {
   );
 }
 
-/**
- * The two rows a live run is read through: the `<tr>` says which one is current,
- * the button inside it is what a finger presses and what a screen reader names.
- */
 export const Selection: Story = {
   render: () => (
     <Sheet>
       <Group of="ChoiceRow — pick one, then pick any">
         <ChoiceRowDemo />
-      </Group>
-      <Group of="TableSelectionRow, and the button that fills it">
-        <table className="w-full table-fixed">
-          <tbody>
-            <TableSelectionRow isSelected>
-              <td className="p-0 align-top">
-                <TableSelectionButton
-                  isSelected
-                  mark={<CircleDotIcon className="size-3" />}
-                  aria-label="Select tests / macos"
-                >
-                  tests / macos
-                </TableSelectionButton>
-              </td>
-            </TableSelectionRow>
-            <TableSelectionRow>
-              <td className="p-0 align-top">
-                <TableSelectionButton
-                  mark={<CircleCheckIcon className="size-3" />}
-                  aria-label="Select tests / linux"
-                >
-                  tests / linux
-                </TableSelectionButton>
-              </td>
-            </TableSelectionRow>
-          </tbody>
-        </table>
       </Group>
       <Group of="ConfirmRow — the question, and what committing costs">
         <ConfirmRow
@@ -486,15 +411,14 @@ export const Selection: Story = {
   },
 };
 
-/** A name that edits in place has to hold the value it is editing. */
-function EditableNameDemo() {
+/** The production header's name edits in place. */
+function HeaderRenameDemo() {
   const [name, setName] = useState<string>(STORY_MACHINES[0].name);
   return (
-    <EditableName
-      value={name}
-      label={`Rename ${name}`}
-      face={machineTagFace(STORY_MACHINES[0].color)}
-      onCommit={setName}
+    <HeaderTitle
+      name={name}
+      onRename={setName}
+      renameLabel={`Rename ${name}`}
     />
   );
 }
@@ -533,9 +457,6 @@ export const Bands: Story = {
       <Group of="What a band counts">
         <HeaderMeta>
           <HeaderTally count={STORY_SESSION.turns} unit="turn" />
-          <LiveCount count={2} />
-          <LiveTally count={2} />
-          <UnreadBadge count={4} />
           <BandTally>42</BandTally>
         </HeaderMeta>
       </Group>
@@ -546,11 +467,10 @@ export const Bands: Story = {
       <Group of="The trailing cluster of a row">
         <HeaderActions>
           <RowDisclosure label={`Show details for ${STORY_SESSION.id}`} isOpen={false} />
-          <KebabButton label={`Actions for ${STORY_SESSION.id}`} />
         </HeaderActions>
       </Group>
-      <Group of="A name that edits in place, and the step through a long list">
-        <EditableNameDemo />
+      <Group of="A header name that edits in place, and the step through a long list">
+        <HeaderRenameDemo />
         <PagerDemo />
       </Group>
       <Group of="The rule between two sections, which is paper and not a line">
@@ -659,32 +579,6 @@ function SettingsChoiceDemo() {
   );
 }
 
-function SliderDemo() {
-  const [rate, setRate] = useState(120);
-  return (
-    <Slider
-      min={60}
-      max={220}
-      value={rate}
-      aria-label="Speaking rate"
-      onChange={(event) => setRate(Number(event.target.value))}
-      className="w-full"
-    />
-  );
-}
-
-function WaveformDemo() {
-  const [at, setAt] = useState(0.34);
-  return (
-    <Waveform
-      peaks={RECORDING_PEAKS}
-      value={at}
-      label="Memo, 1:12"
-      onSeek={setAt}
-      className="w-full"
-    />
-  );
-}
 
 /** A SETTINGS PANEL IS ROWS, and a row is a question with its answer beside it. */
 export const Settings: Story = {
@@ -715,10 +609,6 @@ export const Settings: Story = {
           isChecking
            onClick={noop}
         />
-      </Group>
-      <Group of="A bounded number is dragged, and audio is scrubbed">
-        <SliderDemo />
-        <WaveformDemo />
       </Group>
     </Sheet>
   ),

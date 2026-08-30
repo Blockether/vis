@@ -75,9 +75,8 @@ describe('app bar', () => {
     expect(page).toContain('<BackButton label="Close search"');
     expect(page).toContain('label="Search sessions on every machine"');
     expect(page).toContain('placeholder="Search all machines…"');
-    // The field is the app's own `SearchField`, so the call site may only POSITION it —
-    // the face (box, paper at rest, the trailing ✕) belongs to the component.
-    const field = classes(page.slice(page.indexOf('<SearchField')));
+    // The feature owns this one-use field; the call site only positions it.
+    const field = classes(page.slice(page.indexOf('<HeaderSearchField')));
     expect(field.every((c) => ['ml-3', 'min-w-0', 'flex-1'].includes(c))).toBe(true);
     expect(field).toContain('flex-1');
   });

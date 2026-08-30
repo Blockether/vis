@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { Banner, Button, ChoiceRow, DialogFrame, Input, Modal, Slider } from './ui';
+import { useCallback, useEffect, useId, useRef, useState, type InputHTMLAttributes } from 'react';
+import { Banner, Button, ChoiceRow, DialogFrame, Input, Modal } from './ui';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
 import {
@@ -20,6 +20,21 @@ import {
   type HumanInputValues,
 } from '../lib/human-input';
 
+/** The range field's painted track and finger-sized target. */
+function RangeSlider({
+  className = '',
+  ...props
+}: InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <span className={`flex min-h-11 min-w-0 items-center mouse:min-h-6 ${className}`}>
+      <input
+        type="range"
+        className="h-1 w-full min-w-0 cursor-pointer appearance-none rounded-full bg-edge accent-accent disabled:cursor-not-allowed"
+        {...props}
+      />
+    </span>
+  );
+}
 /**
  * The companion half of the typed human-input pause.
  *
@@ -521,7 +536,7 @@ function HumanInputFieldRow({
     return (
       <FieldShell field={field} {...(error ? { error } : {})}>
         <div className="flex items-center gap-3">
-          <Slider
+          <RangeSlider
             disabled={disabled}
             min={min}
             max={max}

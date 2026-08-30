@@ -23,7 +23,7 @@ import {
 import { onWake } from '../lib/wake';
 import { warm } from '../lib/warm';
 import { menuPosition, type MenuPosition } from '../lib/anchored-menu';
-import { Banner, Button, ConfirmRow, Input, LIST_FRAME, ListRow, Spinner } from './ui';
+import { Banner, Button, ConfirmRow, Input, ListRow, Spinner } from './ui';
 import {
   AddressIcon,
   ChevronIcon,
@@ -761,7 +761,7 @@ export function MachineRows({
               </div>
             </SwipeActions>
             {isOpen && renderPanel && (
-              <div id={panelId} className={`min-w-0 ${LIST_FRAME}`}>
+              <div id={panelId} className="min-w-0 border-l-2 border-dialog-edge">
                 {renderPanel(conn)}
               </div>
             )}
