@@ -84,4 +84,20 @@ describe("session feature boundaries", () => {
     expect(leaks).toEqual([]);
     expect(sessionScreenSource.match(/<ComposerSuggestions/g)).toHaveLength(2);
   });
+
+  it("keeps the session header behind one display model and command boundary", () => {
+    const leaks = [
+      ["local session header", /<header className=/],
+      ["local session id chip", /function CopyableId\(/],
+      ["loose header back control", /<BackButton label="Back to sessions"/],
+      ["loose artifacts control", /<ArtifactsChip/],
+    ]
+      .filter(([, pattern]) => (pattern as RegExp).test(sessionScreenSource))
+      .map(([name]) => name);
+
+    expect(leaks).toEqual([]);
+    expect(sessionScreenSource).toContain("<SessionHeader");
+    expect(sessionScreenSource).toContain("model={headerModel}");
+    expect(sessionScreenSource).toContain("commands={headerCommands}");
+  });
 });

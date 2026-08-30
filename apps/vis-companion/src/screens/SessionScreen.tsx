@@ -14,7 +14,7 @@ import {
   transcriptEnterClass,
   UserMessage,
 } from "../components/ChatContent";
-import { ArtifactsChip, ArtifactsSheet } from "../components/ArtifactsSheet";
+import { ArtifactsSheet } from "../components/ArtifactsSheet";
 import {
   ComposerAttachmentPicker,
   type ComposerAttachmentCommands,
@@ -33,6 +33,11 @@ import {
   composerSuggestionListId,
 } from "../components/ComposerSuggestions";
 import {
+  SessionHeader,
+  type SessionHeaderCommands,
+  type SessionHeaderModel,
+} from "../components/SessionHeader";
+import {
   artifactsFromIndex,
   collapseArtifactVersions,
   collectArtifacts,
@@ -42,10 +47,8 @@ import {
 import type { SessionArtifact } from "../lib/artifacts";
 import { dropOverlayHandovers } from "../lib/sticky-overlay";
 import {
-  BackButton,
   Banner,
   ComposerButton,
-  CopyChip,
   LoadMore,
   Spinner,
 } from '../components/ui';
@@ -63,7 +66,6 @@ import { LiveView, useLiveViews } from "../components/LiveView";
 import { reduceRunningTurnEvent, type RunningTurn } from "../lib/running-turn";
 import { eventString, sessionEventBatch } from "../lib/session-stream";
 import { speechOutput } from "../lib/speech";
-import { markSessionId } from "../lib/session-id";
 import {
   VoiceTurnOwnership,
   type VoiceModeLease,
@@ -521,26 +523,6 @@ function LoadingSession({ ready, total }: { ready: number; total: number }) {
   );
 }
 
-
-// The session id is the durable handle a user pastes into `vis-agent`/tools, so it is
-// tap-to-copy rather than inert text — shown short with the full id on hover. What
-// LANDS on the clipboard is the marked form (`vis_session_id#<uuid>`): a bare UUID
-// says nothing about what it addresses, while the marker names it as a Vis session
-// for whoever — or whatever — reads it next.
-function CopyableId({ id, className }: { id: string; className: string }) {
-  const short = id.length > 8 ? id.slice(0, 8) : id;
-  return (
-    <CopyChip
-      value={markSessionId(id)}
-      label="Copy session id"
-      title={`Copy session id\n${id}`}
-      density="compact"
-      className={className}
-    >
-      {short}
-    </CopyChip>
-  );
-}
 
 /**
  * The running-turn bubble to paint on the FIRST frame of a session, from memory.
@@ -4556,6 +4538,20 @@ export function SessionScreen({
     </ComposerButton>
   ) : null;
 
+  const headerModel: SessionHeaderModel = {
+    title,
+    sessionId: sid,
+    connected,
+    artifacts: { count: artifacts.length, isOpen: artifactsOpen },
+  };
+  const headerCommands: SessionHeaderCommands = {
+    back: onBack,
+    toggleArtifacts: () => {
+      setLinkedAttachmentId(null);
+      setArtifactsOpen((was) => !was);
+    },
+  };
+
   return (
     <AttachImageContext.Provider value={attachCapturedImage}>
       <section className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
@@ -4567,57 +4563,7 @@ export function SessionScreen({
           subscriptions={subscriptions}
           sid={sid}
         />
-        {/* In landscape on a notched phone the horizontal safe-area insets are the
-         ones that bite (the notch on one side, the rounded corner on the other),
-         and this header used to pad only the TOP — so the back button and the
-         share/id cluster ran under the bezel and off the visible screen. The
-         insets live on the two edge children, not on the header, so the dark
-         back-button block and the panel background still reach the physical
-         edge; only their CONTENT is pushed into the safe area.
-
-         THE NOTCH STRIP STANDS ABOVE THE BAND'S OWN ROW, NEVER INSIDE IT
-         (`box-content`, the way `DialogHeader isUnderNotch` clears it): a
-         `min-h-13` is a BORDER-BOX minimum, so the top inset was SUBTRACTED from
-         the band instead of standing over it. Measured at 390px with a 59px
-         inset, the band's row collapsed to the 46px the title block happened to
-         need instead of the 52px it spells, and `BackButton` — which stretches
-         to that row — came down with it, while the same header off a notch kept
-         its full height. With the floor gone the row also FOLLOWED ITS CONTENT,
-         so anything that changed the title block moved the whole heading on a
-         phone and nowhere else. */}
-        <header className="z-10 flex min-h-13 shrink-0 items-stretch gap-0 border-b border-dialog-edge bg-panel-2 box-content pt-[env(safe-area-inset-top)] mouse:min-h-9 mouse:pt-0">
-          <BackButton label="Back to sessions" onClick={onBack} />
-          <div className="min-w-0 flex-1 self-center px-3 py-1.5 mouse:py-1">
-            {/* THE TITLE LEADS THE SCREEN, so it is the largest thing on the bar.
-                It read `text-body` — the transcript's own prose step, set right
-                under it — which left the screen a reader lives in wearing the
-                smallest heading in the app. A two-line row under a finger takes
-                `text-subhead`; a pointer reads the app's own header step. */}
-            <h1 className="truncate font-mono text-subhead font-bold text-white mouse:text-title">
-              {title}
-            </h1>
-            <div className="flex min-w-0 items-center gap-1.5 font-mono text-meta text-dialog-hint">
-              <span
-                className={`size-1.5 shrink-0 ${connected ? "bg-ok" : "animate-pulse bg-turn-edge motion-reduce:animate-none"}`}
-              />
-              <span className="shrink-0">{connected ? "Connected" : "Reconnecting"}</span>
-            </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2 self-center pl-1 pr-[max(0.5rem,env(safe-area-inset-right))] sm:pr-[max(0.75rem,env(safe-area-inset-right))] mouse:gap-1">
-            <CopyableId
-              id={sid}
-              className="max-w-[9rem]"
-            />
-            <ArtifactsChip
-              count={artifacts.length}
-              open={artifactsOpen}
-              onToggle={() => {
-                setLinkedAttachmentId(null);
-                setArtifactsOpen((was) => !was);
-              }}
-            />
-          </div>
-        </header>
+        <SessionHeader model={headerModel} commands={headerCommands} />
 
         {routerOpen && (
           <ProviderRouterDialog

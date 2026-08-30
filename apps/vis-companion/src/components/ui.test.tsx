@@ -47,6 +47,7 @@ import composerAttachmentPickerSource from "./ComposerAttachmentPicker.tsx?raw";
 import composerPayloadShelfSource from "./ComposerPayloadShelf.tsx?raw";
 import composerResponseControlsSource from "./ComposerResponseControls.tsx?raw";
 import composerSuggestionsSource from "./ComposerSuggestions.tsx?raw";
+import sessionHeaderSource from "./SessionHeader.tsx?raw";
 import jumpToLatestSource from "./JumpToLatestButton.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
@@ -65,6 +66,7 @@ const sessionDockSource = [
   composerPayloadShelfSource,
   composerResponseControlsSource,
   composerSuggestionsSource,
+  sessionHeaderSource,
 ].join("\n");
 
 const settingsSource = [
@@ -2479,10 +2481,10 @@ describe("what leads a bar is sized to lead it", () => {
   });
 
   it("gives the session's title a step over the prose it heads", () => {
-    expect(sessionScreenSource).toContain(
+    expect(sessionHeaderSource).toContain(
       'className="truncate font-mono text-subhead font-bold text-white mouse:text-title"',
     );
-    expect(sessionScreenSource).not.toContain(
+    expect(sessionHeaderSource).not.toContain(
       'className="truncate font-mono text-body font-bold text-white"',
     );
   });
@@ -2836,7 +2838,7 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(sessionDockSource).toContain("<MetaButton");
     expect(composerSuggestionsSource).toContain("<OptionRow");
     expect(sessionDockSource).toContain("<TextButton");
-    expect(sessionScreenSource).toContain("<BackButton");
+    expect(sessionHeaderSource).toContain("<BackButton");
     expect(sessionScreenSource).toContain("<JumpToLatestButton");
     // The transcript's "load earlier" is the artifacts sheet's own bar, turned over.
     expect(sessionScreenSource).toContain("<LoadMore");
