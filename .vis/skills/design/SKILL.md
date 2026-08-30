@@ -2,9 +2,9 @@
 name: design
 description: >
   The binding design contract for every Vis surface: companion web/iOS/Android and TUI. Read it
-  before changing or reviewing layout, controls, type, colour, motion, copy, stories or screenshots,
-  and again before calling the result done. Storybook renders the shipped UI; Spel drives, measures
-  and photographs it.
+  before changing or reviewing layout, controls, type, colour, motion, copy, stories, interactive
+  previews or screenshots, and again before calling the result done. Storybook renders the shipped
+  UI; Spel drives and verifies it; companion reviews receive self-contained HTML from the same code.
 ---
 
 # Design
@@ -109,16 +109,24 @@ Reject on sight:
 9. facts removed merely to make the screen look quiet;
 10. a control, token, font or behaviour drawn in a review that does not ship.
 
-## 5. Draw the product: Storybook renders, Spel drives
+## 5. Draw, verify and attach the product
 
 There is no hand-built mockup. A proposal is a small diff in `src/**`, rendered from the app's own
 build, then kept or reverted. Storybook draws components and deterministic states; the running app
 draws screens with real data. **Use stable Storybook as a renderer. Do not add MCP, prerelease agent
-tools or a second browser layer: Spel already navigates, measures and captures it.**
+tools or a second browser layer: Spel already navigates, measures and exercises it.**
+
+Split by ownership, not line count or DOM shape. A screen owns routing, data loading and
+orchestration; a feature component may own one coherent interaction and all of its visible states so
+it can be rendered and tested alone. Keep a one-use screen fragment local. A generic control enters
+`ui.tsx` only at its second real call site, with both callers converted in the same commit. Never
+extract a wrapper, a speculative prop matrix or a preview-only twin of production markup.
 
 Every reusable visual component and meaningful state has a story in the same commit. Vocabulary
 controls live in `ui.stories.tsx`; data-heavy components use their colocated story and the one fixture
 module `src/dev/story-data.ts`. Stories never fetch, wait on timers or generate random data.
+
+### Inspect the shipped render
 
 From `apps/vis-companion`:
 
@@ -130,24 +138,46 @@ SESSION="agent-$(date +%s)"
 spel --session "$SESSION" set device "iPhone 14" &&
 spel --session "$SESSION" --content-boundaries open "$STORY" &&
 spel --session "$SESSION" wait --text '<story-owned copy>' &&
-spel --session "$SESSION" --content-boundaries snapshot -i -c &&
-spel --session "$SESSION" screenshot -a /tmp/vis-story.png &&
-spel --session "$SESSION" close
+spel --session "$SESSION" --content-boundaries snapshot -i -c
 ```
 
 For a fine pointer, replace device emulation with `set viewport 1280 800`. If the story id is unknown,
 open the Storybook manager, take `snapshot -i -c -a`, select the story through its fresh `@ref`, then
 open its isolated iframe route. Wait for copy or a role owned by the story — the preview shell and its
-spinner are not readiness. Use one unique Spel session for the whole task, chain with `&&`, re-snapshot
-after repaint, and close only that session. Read `spel <command> --help` before guessing an argument.
+spinner are not readiness. Use one unique Spel session for the whole task, re-snapshot after repaint,
+and close only that session when every comparison is finished. Read `spel <command> --help` before
+guessing an argument.
 
-Canonical review frames are phone 393×852, tablet 834×1194, desktop 1280×800 and TUI 120×40 cells.
-For each relevant frame and theme:
+Canonical review frames are phone 393×852, tablet 834×1194 and desktop 1280×800. At each relevant
+frame and theme, use `snapshot -i -c`, `get box` and `styles` to settle claims; exercise every changed
+interaction and inspect a screenshot yourself. A green build is not a visual review.
 
-1. `snapshot -i -c` records every interactive box; `get box` and `styles` settle individual claims.
-2. `screenshot -a` produces the annotated evidence and reference legend.
-3. Put the PNG in front of yourself, inspect it, fix source, then repeat. A green build is not a
-   visual review.
+### Attach the interactive render
+
+For companion design choices, the default user-facing artifact is a self-contained **interactive
+`.html` attachment**, not a screenshot. Build it from the current source after the last design change,
+open it with Spel, exercise it, then attach it. Generated HTML is temporary evidence and never enters
+the repository.
+
+**One-to-one means one implementation, not similar pixels:**
+
+1. The artifact imports the exact production component or composed story from `src/**`; it never
+   copies JSX, serializes `outerHTML`, redraws a control or carries preview-only CSS.
+2. It uses the same story args and deterministic fixture, decorators/providers, theme, production
+   `index.css`, fonts, icons, viewport and input mode as the reviewed render. Tailwind scans both
+   `src/**` and the artifact entry so no production class silently disappears.
+3. Vite bundles React and inlines JS, CSS, fonts and images into one file. The result has no
+   `localhost`, network fetch, external script, stylesheet or asset dependency.
+4. A backend, gateway or native API may be replaced only at its existing boundary. Name that fixture
+   or adapter beside the attachment; never claim that boundary is live.
+5. Spel opens both the Storybook/running-app state and the standalone file at the same frame, then
+   checks accessible names and states, representative boxes and styles, and each important
+   interaction result. A mismatch rejects the artifact.
+
+This is exact production rendering and behaviour **inside the component boundary**, with explicit
+fixture data; it is not a claim that the attachment has the app's credentials or native shell.
+Screenshots remain private inspection and measurement evidence. TUI review still uses the real
+`DefaultVirtualTerminal` capture PNG because terminal cells are its shipped surface.
 
 ## 6. Review and finish
 
@@ -160,8 +190,10 @@ Done means:
 - exactly one lead and one signature; no generic reflex survived the comparison pass;
 - type, tokens, marks, contrast and targets satisfy §2 in every relevant theme and input mode;
 - loading, empty, error and partial/stale states exist; motion, 130% type and reduced motion survive;
-- every pictured control and word ships from `src/**`; every reusable state has a deterministic story;
+- every shown control and word ships from `src/**`; every reusable state has a deterministic story;
 - app: relevant tests, `npm run lint`, `npm run test:storybook` and `npm run build` pass;
-- TUI: its capture PNG was inspected and terminal-grid assertions pass;
-- the final artifact came from Storybook or the running app through Spel, not a drawing;
+- companion review: the attached HTML satisfies the one-to-one checks in §5 and its fixture seams
+  are named; TUI review: its capture PNG was inspected and terminal-grid assertions pass;
+- the final artifact came from the production component or running app, never a drawing or copied
+  preview implementation;
 - one last pass removed anything that did not earn its place.
