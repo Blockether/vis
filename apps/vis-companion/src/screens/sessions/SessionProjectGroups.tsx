@@ -35,7 +35,8 @@ import {
   machineKey,
   machineLabel,
   sessionMillis,
-  type Tally,
+  type FleetMachine,
+  type ProjectGroupView,
 } from "../../lib/fleet";
 import type {
   GatewayClient,
@@ -52,6 +53,29 @@ import {
 import type { GatewayConn, Session } from "../../lib/types";
 
 type SessionClient = (conn: GatewayConn) => GatewayClient;
+
+/** Stable services and view facts every session row in these bands shares. */
+export type SessionRowsContext = {
+  getClient: SessionClient;
+  drafts: DraftMessageStore;
+  matches: Map<string, SessionMatch> | null;
+  needle: string;
+  actions: SessionListActions;
+};
+
+/** The reader agreement shared by every project on one machine. */
+export type ProjectGroupReading = {
+  pageSize: number;
+  epoch: OrderEpoch | null;
+  admitted: ReadonlySet<string>;
+  isVisible: boolean;
+};
+
+/** One project-creation lifecycle, shared so headers report the request they started. */
+export type ProjectCreation = {
+  state: { at: string | null; label: string } | null;
+  start: (conn: GatewayConn, root: string) => Promise<void>;
+};
 
 // A page whose read has not answered yet paints nothing rather than rows from
 // another place in the project (`ProjectGroup`).
@@ -76,22 +100,15 @@ const PAGES_AHEAD = 2;
  * where the reader will look for it next time.
  */
 export const NeedsYou = memo(function NeedsYou({
-  rows,
-  getClient,
-  drafts,
-  matches,
-  needle,
-  rowActions,
+  sessions,
+  context,
 }: {
   /** One entry per parked session, carrying the machine it is parked on. */
-  rows: { session: Session; conn: GatewayConn }[];
-  getClient: SessionClient;
-  drafts: DraftMessageStore;
-  matches: Map<string, SessionMatch> | null;
-  needle: string;
-  rowActions: SessionListActions;
+  sessions: { session: Session; conn: GatewayConn }[];
+  context: SessionRowsContext;
 }) {
-  if (rows.length === 0) return null;
+  const { getClient, drafts, matches, needle, actions: rowActions } = context;
+  if (sessions.length === 0) return null;
   return (
     <section aria-label="Sessions waiting on you">
       {/* The band wears the warning hue as its outgoing rule, the same ink the rows
@@ -103,11 +120,11 @@ export const NeedsYou = memo(function NeedsYou({
         />
         <HeaderActions>
           <HeaderMeta>
-            <HeaderTally count={rows.length} unit="session" />
+            <HeaderTally count={sessions.length} unit="session" />
           </HeaderMeta>
         </HeaderActions>
       </SectionHeader>
-      {rows.map(({ session, conn }) => {
+      {sessions.map(({ session, conn }) => {
         const pending =
           rowActions.deletion.target?.session.id === session.id &&
           machineKey(rowActions.deletion.target.conn) === machineKey(conn);
@@ -142,78 +159,28 @@ export const NeedsYou = memo(function NeedsYou({
 // Memoised: a 5.5s poll that changes nothing returns the SAME row objects
 // (`reconcileSessions`), so an unchanged group must not re-render its rows.
 export const ProjectGroup = memo(function ProjectGroup({
-  project,
-  root,
-  sessions,
-  tally,
-  conn,
-  getClient,
-  matches,
-  needle,
-  drafts,
-  rowActions,
-  onNewSession,
-  creating,
-  pageSize,
-  epoch,
-  admitted,
-  isVisible,
-  list,
-  isTop,
+  group,
+  machine,
+  context,
+  reading,
+  creation,
+  initiallyOpen,
 }: {
-  project: string;
-  /** Canonical workspace root — the group's identity, and what its page is asked for by. */
-  root: string;
-  /**
-   * What this device is HOLDING of that project: the rows of the machine's window
-   * (`GatewayClient.listSessions`) that fall in it — never the project, which is read
-   * a page at a time. It is what the group paints before its own page lands, and the
-   * copy a star or a rename made here echoes out of.
-   */
-  sessions: Session[];
-  /**
-   * What this project HOLDS, as its gateway counted it (`projectTally`) — not
-   * the rows this device has paged in, which are a window and read low until the
-   * whole list has drained.
-   */
-  tally: Tally;
-  conn: GatewayConn;
-  getClient: SessionClient;
-  matches: Map<string, SessionMatch> | null;
-  needle: string;
-  /** Unsent composer content for the whole fleet; each row reads its own entry. */
-  drafts: DraftMessageStore;
-  rowActions: SessionListActions;
-  onNewSession: (root: string) => void;
-  /**
-   * The create this very project header started, so its own button can say the word
-   * instead of a label parked on the app bar saying it for the whole fleet.
-   */
-  creating: { at: string | null; label: string } | null;
-  pageSize: number;
-  /** The order this reader agreed to, which the page below is held in (`lib/order-epoch`). */
-  epoch: OrderEpoch | null;
-  /** Rows this reader is not surprised by: what they just started, what holds their words. */
-  admitted: ReadonlySet<string>;
-  /**
-   * Whether this screen is on the glass. A group parked behind an open transcript
-   * asks the gateway for nothing: its page is a READ, and reading a page nobody
-   * can see is the cascade the fleet poll already refuses to run off the glass.
-   */
-  isVisible: boolean;
-  /**
-   * The machine's OWN list, taken by identity alone: a poll that changed nothing
-   * hands back the very array it was handed before (`GatewayClient.listSessions`),
-   * so a page is re-read exactly when the list under it moved — never once per poll
-   * per project, and never on a re-render this device made for itself.
-   */
-  list: Session[] | null;
-  /**
-   * This is the project the machine's own order put ON TOP, and the one project
-   * that opens without being asked. Everything below it starts folded.
-   */
-  isTop: boolean;
+  /** Canonical gateway-owned project identity, counts, and held preview rows. */
+  group: ProjectGroupView;
+  /** The machine is the project namespace and owns the list validator. */
+  machine: Pick<FleetMachine, "conn" | "sessions">;
+  context: SessionRowsContext;
+  reading: ProjectGroupReading;
+  creation: ProjectCreation;
+  /** Only the first project in the machine's own order opens by default. */
+  initiallyOpen: boolean;
 }) {
+  const { label: project, root, sessions, tally } = group;
+  const { conn, sessions: list } = machine;
+  const { getClient, drafts, matches, needle, actions: rowActions } = context;
+  const { pageSize, epoch, admitted, isVisible } = reading;
+  const { state: creating, start: onNewSession } = creation;
   const base = useMemo(() => getClient(conn).base, [conn, getClient]);
   const pendingDeleteId =
     rowActions.deletion.target &&
@@ -271,7 +238,9 @@ export const ProjectGroup = memo(function ProjectGroup({
   // the work that moved last, not four checkouts' history at once. What the reader
   // folds afterwards is theirs and outlives this component — see `lib/project-fold`.
   const foldKey = projectFoldKey(machineKey(conn), root);
-  const [isOpen, setIsOpen] = useState(() => readProjectFold(foldKey) ?? isTop);
+  const [isOpen, setIsOpen] = useState(
+    () => readProjectFold(foldKey) ?? initiallyOpen,
+  );
   // A fold is a DECISION, not a frame: it is written where it was made, so the next
   // screen built from nothing starts where this reader left it.
   const fold = (open: boolean) => {
@@ -595,7 +564,7 @@ export const ProjectGroup = memo(function ProjectGroup({
                   ? creating.label
                   : null
               }
-              onPress={() => onNewSession(root)}
+              onPress={() => void onNewSession(conn, root)}
             />
           </HeaderActions>
         </SectionHeader>

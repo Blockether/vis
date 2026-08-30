@@ -57,7 +57,7 @@ describe("sessions feature boundaries", () => {
 
     expect(looseActions).toEqual([]);
     expect(
-      signatures.every((signature) => /^\s*rowActions,?$/m.test(signature)),
+      signatures.every((signature) => /^\s*context,?$/m.test(signature)),
     ).toBe(true);
   });
 
@@ -83,5 +83,43 @@ describe("sessions feature boundaries", () => {
     expect(looseActions).toEqual([]);
     expect(signature).toMatch(/^\s*commands,?$/m);
     expect(signature).toMatch(/^\s*deletion,?$/m);
+  });
+
+  it("passes project groups through fleet domain contracts", () => {
+    const match = sessionProjectGroupsSource.match(
+      /ProjectGroup = memo\(function ProjectGroup\(\{([\s\S]*?)\}: \{/,
+    );
+    expect(match, "ProjectGroup signature").not.toBeNull();
+    const signature = match?.[1] ?? "";
+    const leakedFields = [
+      "project",
+      "root",
+      "sessions",
+      "tally",
+      "conn",
+      "getClient",
+      "matches",
+      "needle",
+      "drafts",
+      "rowActions",
+      "pageSize",
+      "epoch",
+      "admitted",
+      "isVisible",
+      "list",
+    ].filter((name) => new RegExp(`^\s*${name},?$`, "m").test(signature));
+
+    expect(leakedFields).toEqual([]);
+    expect(signature).toMatch(/^\s*group,?$/m);
+    expect(signature).toMatch(/^\s*machine,?$/m);
+    expect(signature).toMatch(/^\s*context,?$/m);
+    expect(signature).toMatch(/^\s*reading,?$/m);
+  });
+
+  it("lets the rename dialog own its draft and request state", () => {
+    expect(sessionsScreenSource).toContain("<RenameSessionDialog");
+    expect(sessionsScreenSource).not.toContain("const [renameDraft");
+    expect(sessionsScreenSource).not.toContain('title="Rename session"');
+    expect(sessionsScreenSource).not.toContain('placeholder="Session name"');
   });
 });

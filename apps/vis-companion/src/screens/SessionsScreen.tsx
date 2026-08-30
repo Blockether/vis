@@ -1,13 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import {
-  Banner,
-  Button,
-  DialogFrame,
-  Input,
-  LoadMore,
-  Modal,
-  Spinner,
-} from '../components/ui';
+import { Banner, Button, LoadMore, Spinner } from '../components/ui';
 import {
   MachineMark,
   MachineProjectsButton,
@@ -21,12 +13,17 @@ import {
   draftSearchText,
   firstLine,
   sessionSearchText,
-  shortId,
   type SessionListActions,
   type SessionRowAction,
   type SessionRowCommands,
 } from '../components/SessionList';
-import { NeedsYou, ProjectGroup } from './sessions/SessionProjectGroups';
+import { RenameSessionDialog } from '../components/RenameSessionDialog';
+import {
+  NeedsYou,
+  ProjectGroup,
+  type ProjectCreation,
+  type SessionRowsContext,
+} from './sessions/SessionProjectGroups';
 import { FleetRail } from './sessions/FleetRail';
 import {
   Menu,
@@ -481,7 +478,6 @@ export function SessionsScreen({
   // depended on it would abort its own read on the frame it started.
   const forkSourceRef = useRef<{ sid: string; conn: GatewayConn } | null>(null);
   const [rowAction, setRowAction] = useState<SessionRowAction | null>(null);
-  const [renameDraft, setRenameDraft] = useState('');
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -1486,7 +1482,7 @@ export function SessionsScreen({
   }, []);
 
 
-  async function createSession(on: GatewayConn, root: string) {
+  const createSession = useCallback(async (on: GatewayConn, root: string) => {
     setCreating({
       at: `${clientFor(on).base}\u0000${root}`,
       label: 'Creating...',
@@ -1504,12 +1500,11 @@ export function SessionsScreen({
     } finally {
       setCreating(null);
     }
-  }
+  }, [load, onOpen]);
 
 
   const startRename = useCallback((session: Session, conn: GatewayConn) => {
     setRowAction({ mode: 'rename', session, conn });
-    setRenameDraft(session.title?.trim() ?? '');
     setActionError(null);
   }, []);
 
@@ -1665,41 +1660,42 @@ export function SessionsScreen({
     cancelDelete();
   }
 
-  async function commitRowAction() {
-    if (!rowAction) return;
+  const renameSession = useCallback(
+    async (
+      action: Extract<SessionRowAction, { mode: 'rename' }>,
+      title: string,
+    ) => {
+      const api = clientFor(action.conn);
+      const key = machineKey(action.conn);
+      // The gateway echoes the row it stored, so the new name arrives WITH the answer.
+      // Ordering stays untouched: a row that jumps from under the thumb the instant it
+      // is named reads as a bug, and the poll re-ranks it soon enough.
+      const sid = action.session.id;
+      const renamed = await api.renameSession(sid, title);
+      patchMachine(key, (machine) => {
+        const rows = machine.sessions;
+        if (!rows || !rows.some((row) => row.id === sid)) return machine;
+        return {
+          ...machine,
+          sessions: rows.map((row) =>
+            row.id === sid ? { ...row, title, ...renamed, id: sid } : row,
+          ),
+        };
+      });
+    },
+    [patchMachine],
+  );
+
+  async function commitDelete() {
+    if (rowAction?.mode !== 'delete') return;
     const action = rowAction;
-    const api = clientFor(action.conn);
-    const key = machineKey(action.conn);
-    const title = renameDraft.trim();
-    if (action.mode === 'rename' && !title) {
-      setActionError('A session name cannot be empty.');
-      return;
-    }
     setActionBusy(true);
     setActionError(null);
     try {
-      if (action.mode === 'rename') {
-        // The gateway echoes the row it stored, so the new name arrives WITH the answer.
-        // Ordering stays untouched: a row that jumps from under the thumb the instant it
-        // is named reads as a bug, and the poll re-ranks it soon enough.
-        const sid = action.session.id;
-        const renamed = await api.renameSession(sid, title);
-        patchMachine(key, (machine) => {
-          const rows = machine.sessions;
-          if (!rows || !rows.some((row) => row.id === sid)) return machine;
-          return {
-            ...machine,
-            sessions: rows.map((row) =>
-              row.id === sid ? { ...row, title, ...renamed, id: sid } : row,
-            ),
-          };
-        });
-      } else {
-        // Regression, user report: deleting one session used to end in `load()`, a full
-        // walk of every paired machine. The DELETE already names the one row to forget.
-        await api.deleteSession(action.session.id);
-        forgetSessions(action.conn, [action.session.id]);
-      }
+      // Regression, user report: deleting one session used to end in `load()`, a full
+      // walk of every paired machine. The DELETE already names the one row to forget.
+      await clientFor(action.conn).deleteSession(action.session.id);
+      forgetSessions(action.conn, [action.session.id]);
       setRowAction((current) => (current === action ? null : current));
     } catch (cause) {
       setActionError((cause as Error).message);
@@ -1709,11 +1705,11 @@ export function SessionsScreen({
   }
 
   // Deleting ONE session is confirmed IN the row, so the confirm has to reach
-  // `commitRowAction` from inside a memoised row. Through a ref, not a fresh
+  // `commitDelete` from inside a memoised row. Through a ref, not a fresh
   // closure per paint: that would re-render every row of a 700-row list on
   // every poll.
   const commitRef = useRef<() => void>(() => {});
-  commitRef.current = () => void commitRowAction();
+  commitRef.current = () => void commitDelete();
   const confirmDelete = useCallback(() => commitRef.current(), []);
   const deleting = rowAction?.mode === 'delete' ? rowAction : null;
   const rowCommands = useMemo<SessionRowCommands>(
@@ -1746,6 +1742,20 @@ export function SessionsScreen({
       cancelDelete,
     ],
   );
+  const rowContext = useMemo<SessionRowsContext>(
+    () => ({
+      getClient: clientFor,
+      drafts: draftMessages,
+      matches,
+      needle: searchNeedle,
+      actions: rowActions,
+    }),
+    [draftMessages, matches, searchNeedle, rowActions],
+  );
+  const projectCreation = useMemo<ProjectCreation>(
+    () => ({ state: creating, start: createSession }),
+    [creating, createSession],
+  );
 
   const pageSize = useSessionsPerPage();
 
@@ -1766,7 +1776,12 @@ export function SessionsScreen({
         machine: entry.machine,
         // Carried beside the machine because every project group holds a page of its
         // own now, under the same agreement this screen made (`lib/order-epoch`).
-        admitted: entry.admitted,
+        reading: {
+          pageSize,
+          epoch,
+          admitted: entry.admitted,
+          isVisible,
+        },
         // Group identity and every create action keep the gateway's canonical path.
         // Home-shortening is paint only; feeding `~/vis` back as an API root is how an
         // older gateway produced the impossible `/…/vis/~/vis` directory.
@@ -1778,7 +1793,7 @@ export function SessionsScreen({
               (session) => unreadTurnCount(session) > 0,
             ),
       })),
-    [heldRows, searching, readMarks],
+    [heldRows, searching, readMarks, pageSize, epoch, isVisible],
   );
 
   // The projects the "remove sessions" step offers are the ones this machine HAS, as
@@ -2193,14 +2208,7 @@ export function SessionsScreen({
         <div ref={listRef} className="min-h-0 flex-1 touch-pan-y overflow-x-hidden overflow-y-auto overscroll-contain [overflow-anchor:auto] [scrollbar-gutter:stable] py-3 sm:px-3 sm:pt-0">
         {/* Pinned above the list, and it does not scroll away with a machine's
             section: the demand belongs to the whole fleet in view. */}
-        <NeedsYou
-          rows={parked}
-          getClient={clientFor}
-          drafts={draftMessages}
-          matches={matches}
-          needle={searchNeedle}
-          rowActions={rowActions}
-        />
+        <NeedsYou sessions={parked} context={rowContext} />
         {/* A PROMOTION WAITS FOR THE READER, and the arrow points UP because that
             is where those rows go. Rows fresher than the oldest row on screen are
             counted here instead of being inserted under the thumb; the tap is the
@@ -2251,7 +2259,7 @@ export function SessionsScreen({
           </div>
         ) : (
           <div>
-            {sections.map(({ machine, groups, admitted }, sectionIndex) => {
+            {sections.map(({ machine, groups, reading }, sectionIndex) => {
               const key = machineKey(machine.conn);
               return (
                 <section key={key} aria-label={`${machineLabel(machine.conn)} projects`}>
@@ -2291,26 +2299,14 @@ export function SessionsScreen({
                         <Fragment key={`${key}\u0000${group.root}`}>
                         {groupIndex > 0 && <SectionGap />}
                         <ProjectGroup
-                          project={group.label}
-                          root={group.root}
-                          sessions={group.sessions}
-                          tally={group.tally}
-                          conn={machine.conn}
-                          getClient={clientFor}
-                          matches={matches}
-                          needle={searchNeedle}
-                          rowActions={rowActions}
-                           onNewSession={(root) => void createSession(machine.conn, root)}
-                          creating={creating}
-                          pageSize={pageSize}
-                          epoch={epoch}
-                          admitted={admitted}
-                          isVisible={isVisible}
-                          list={machine.sessions}
-                          drafts={draftMessages}
+                          group={group}
+                          machine={machine}
+                          context={rowContext}
+                          reading={reading}
+                          creation={projectCreation}
                           // The order already put the machine's live work on top; the
                           // project it lands on is the one that opens by itself.
-                          isTop={groupIndex === 0}
+                          initiallyOpen={groupIndex === 0}
                         />
                         </Fragment>
                       ))}
@@ -2354,46 +2350,14 @@ export function SessionsScreen({
       </div>
       </div>
 
-      {/* Renaming needs a field. Both destructive questions stay in the row they
-          act on: a session in `SessionRow`, a project in `ManageProjectsSheet`. */}
+      {/* Renaming needs a field. The destructive question stays in `SessionRow`. */}
       {rowAction?.mode === 'rename' && (
-        <Modal size="fit" onDismiss={closeRowAction}>
-          <DialogFrame title="Rename session" onClose={closeRowAction}>
-            <div className="space-y-3 p-4">
-              <p className="truncate font-mono text-meta text-dialog-hint">
-                {rowAction.session.title?.trim() || 'Untitled session'} · {shortId(rowAction.session.id)}
-              </p>
-              <label className="block">
-                <span className="mb-1 block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-                  Session name
-                </span>
-                <Input
-                  autoFocus
-                  value={renameDraft}
-                  maxLength={200}
-                  placeholder="Session name"
-                  onChange={(event) => setRenameDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') void commitRowAction();
-                  }}
-                />
-              </label>
-              {actionError && <Banner kind="err">{actionError}</Banner>}
-              <div className="flex justify-end gap-2">
-                <Button variant="secondary" onClick={closeRowAction}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="primary"
-                  disabled={actionBusy}
-                  onClick={() => void commitRowAction()}
-                >
-                  {actionBusy ? 'Saving...' : 'Save'}
-                </Button>
-              </div>
-            </div>
-          </DialogFrame>
-        </Modal>
+        <RenameSessionDialog
+          key={`${machineKey(rowAction.conn)}:${rowAction.session.id}`}
+          session={rowAction.session}
+          onDismiss={closeRowAction}
+          onRename={(title) => renameSession(rowAction, title)}
+        />
       )}
 
 
