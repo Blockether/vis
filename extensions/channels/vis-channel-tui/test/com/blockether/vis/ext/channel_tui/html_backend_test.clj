@@ -121,18 +121,16 @@
 
 (deftest header-actions-serve-as-an-interactive-html-component-test
   (let [triggered
-        (atom nil)
+        (promise)
 
         panel
-        (header/header-actions-component #(reset! triggered %))
+        (header/header-actions-component #(deliver triggered %))
 
         view
         (HtmlTerminalView/serve panel (.getPreferredSize ^Panel panel) "Interactive Vis header")]
 
     (try (.addInput (.getTerminal view) (KeyStroke. KeyType/Enter))
-         (loop [remaining 200]
-           (when (and (nil? @triggered) (pos? remaining)) (Thread/sleep 5) (recur (dec remaining))))
-         (is (= :header-help @triggered))
+         (is (= :header-help (deref triggered 3000 ::timeout)))
          (is (.contains (.renderHtml view) "help ("))
          (finally (.close view)))))
 
