@@ -17,15 +17,16 @@ owns the scenarios that exercise its surface, beside its `test/` dir):
     extensions/languages/<pack>/e2e/scenarios/<id>/      # that pack's surface
       scenario.json   {lang, prompt, want, wantnot, want_answer?,
                        want_tools?, want_forms?, want_requested_route?,
-                       want_folded_prefix?, want_cache_read?}
+                       want_folded_prefix?, want_cache_read?, want_cache_metrics?}
       files/          real files seeded into a fresh git repo before the run
 
 `want`/`wantnot` are {path: [substring, ...]} checks on the resulting files;
 `want_answer` is substrings the final answer must contain (REPL / non-file
 scenarios); `want_tools` are extension tools that MUST have fired (e.g.
 repl_eval); `want_forms` are source substrings that MUST occur in a top-level
-sandbox form (e.g. fold_session()). The three boolean benchmark guards pin the
-requested route, the canonical oldest-prefix fold, and real provider cache reads.
+sandbox form. The four boolean benchmark guards pin the requested route, the
+canonical oldest-prefix fold, real provider cache reads, and the persisted
+cache-metric arithmetic.
 
 Each scenario runs in its own throwaway git repo through one source-owned gateway on an
 isolated temporary DB, so an already-running installed gateway cannot mask working-tree edits. Runs are parallel. Usage:
@@ -89,10 +90,141 @@ def gateway_eval(env, form, timeout):
     )
 
 
+CACHE_USAGE_FIELDS = (
+    "input_tokens",
+    "input_cache_read_tokens",
+    "prompt_cache_reusable_tokens",
+    "prompt_cache_reused_tokens",
+    "prompt_cache_sample_count",
+    "prompt_cache_estimated_sample_count",
+    "prompt_cache_rebuild_count",
+    "prompt_cache_expired_count",
+    "cache_read_share_percent",
+    "reusable_prefix_coverage_percent",
+)
+
+
+def usage_percent(part, total):
+    """Match the gateway's nonnegative, nearest-integer percentage."""
+    if total <= 0:
+        return 0
+    return min(100, int((100.0 * part / total) + 0.5))
+
+
+def cache_metric_failures(usage, result_tokens, provider_call_count, folded_prefix):
+    """Independently reconcile one real run's provider, DB, and wire cache totals."""
+    failures = []
+    values = {}
+    for key in CACHE_USAGE_FIELDS:
+        value = usage.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            failures.append(f"usage {key} is not a nonnegative integer: {value!r}")
+        else:
+            values[key] = value
+    if failures:
+        return failures
+
+    input_tokens = values["input_tokens"]
+    cached_tokens = values["input_cache_read_tokens"]
+    reusable_tokens = values["prompt_cache_reusable_tokens"]
+    reused_tokens = values["prompt_cache_reused_tokens"]
+    samples = values["prompt_cache_sample_count"]
+    estimated_samples = values["prompt_cache_estimated_sample_count"]
+    rebuilds = values["prompt_cache_rebuild_count"]
+    expired = values["prompt_cache_expired_count"]
+    result_input = int(result_tokens.get("input") or 0)
+    result_cached = int(result_tokens.get("cached") or 0)
+
+    if input_tokens != result_input:
+        failures.append(f"usage input {input_tokens} != provider result {result_input}")
+    if cached_tokens != result_cached:
+        failures.append(
+            f"usage cache read {cached_tokens} != provider result {result_cached}"
+        )
+    if reused_tokens > cached_tokens:
+        failures.append(
+            f"reused prefix {reused_tokens} exceeds cache reads {cached_tokens}"
+        )
+    if reused_tokens > reusable_tokens:
+        failures.append(
+            f"reused prefix {reused_tokens} exceeds reusable prefix {reusable_tokens}"
+        )
+
+    expected_share = usage_percent(cached_tokens, input_tokens)
+    if values["cache_read_share_percent"] != expected_share:
+        failures.append(
+            f"cache-read share {values['cache_read_share_percent']}% != recomputed {expected_share}%"
+        )
+    expected_coverage = usage_percent(reused_tokens, reusable_tokens)
+    if values["reusable_prefix_coverage_percent"] != expected_coverage:
+        failures.append(
+            "reusable-prefix coverage "
+            f"{values['reusable_prefix_coverage_percent']}% != recomputed {expected_coverage}%"
+        )
+
+    expected_samples = max(0, provider_call_count - 1)
+    if samples != expected_samples:
+        failures.append(
+            f"cache samples {samples} != post-baseline calls {expected_samples}"
+        )
+    if estimated_samples > samples:
+        failures.append(
+            f"estimated samples {estimated_samples} exceed all samples {samples}"
+        )
+    if folded_prefix:
+        if estimated_samples != 1:
+            failures.append(
+                f"one prefix fold produced {estimated_samples} estimated samples, expected 1"
+            )
+        if rebuilds != 1:
+            failures.append(f"one prefix fold produced {rebuilds} rebuilds, expected 1")
+        if expired != 0:
+            failures.append(f"fresh run reported {expired} expired prefixes")
+    return failures
+
+
+def fetch_session_usage(env, session_id, gateway_port):
+    """Read persisted usage through the canonical authenticated gateway client."""
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", str(session_id or "")):
+        raise ValueError(f"invalid persisted session id {session_id!r}")
+    path = f"/v1/sessions/{session_id}/usage"
+    form = (
+        "(require '[com.blockether.vis.internal.gateway.client :as gateway-client]) "
+        f'(gateway-client/ensure-gateway! {{:host "127.0.0.1" :port {gateway_port}}}) '
+        f'(let [response (gateway-client/request! :get "{path}" {{:timeout-ms 30000}})] '
+        '(println (str "VIS_E2E_USAGE\t" (:status response) "\t" (:body response))))'
+    )
+    result = gateway_eval(env, form, 60)
+    marker = next(
+        (
+            line
+            for line in reversed(result.stdout.splitlines())
+            if line.startswith("VIS_E2E_USAGE\t")
+        ),
+        None,
+    )
+    if result.returncode or marker is None:
+        lines = (result.stderr or result.stdout or "").strip().splitlines()
+        suffix = f": {lines[-1]}" if lines else ""
+        raise RuntimeError(f"usage query exited {result.returncode}{suffix}")
+    _, status, body = marker.split("\t", 2)
+    return int(status), decode_usage_body(body)
+
+
+def decode_usage_body(body):
+    """Decode the usage endpoint's public `{"usage": ...}` envelope."""
+    payload = json.loads(body)
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    if not isinstance(usage, dict):
+        raise ValueError("usage response has no usage object")
+    return usage
+
+
 def stop_source_gateway(gateway):
     """Stop and remove the isolated source gateway; return its client exit code."""
     form = (
         "(require '[com.blockether.vis.internal.gateway.client :as gateway-client]) "
+        f'(gateway-client/ensure-gateway! {{:host "127.0.0.1" :port {gateway["port"]}}}) '
         "(gateway-client/stop-daemon!)"
     )
     try:
@@ -174,7 +306,7 @@ def seed_files(sc, work):
 
 
 def run_one(job):
-    sc, model, run_env = job
+    sc, model, run_env, gateway_port = job
     work = tempfile.mkdtemp(prefix=f"vis_e2e_{sc['id']}_")
     try:
         seed_files(sc, work)
@@ -190,18 +322,21 @@ def run_one(job):
         t0 = time.time()
         exit_code = None
         try:
+            command = [
+                CLOJURE,
+                f"-J-Duser.dir={work}",
+                "-M:vis",
+                "--full-trace-json-stream",
+                "--provider",
+                PROVIDER,
+                "--model",
+                model,
+            ]
+            if sc.get("want_cache_metrics"):
+                command.append("--persist")
+            command.append(sc["prompt"])
             p = subprocess.run(
-                [
-                    CLOJURE,
-                    f"-J-Duser.dir={work}",
-                    "-M:vis",
-                    "--full-trace-json-stream",
-                    "--provider",
-                    PROVIDER,
-                    "--model",
-                    model,
-                    sc["prompt"],
-                ],
+                command,
                 cwd=REPO,
                 env=run_env,
                 capture_output=True,
@@ -234,6 +369,7 @@ def run_one(job):
         answer = ""
         result_tokens = {}
         result_cost = {}
+        result_session_id = None
         for line in out.splitlines():
             line = line.strip()
             if not line:
@@ -248,6 +384,7 @@ def run_one(job):
             if ev == "result":
                 result_tokens = pl.get("tokens") or {}
                 result_cost = pl.get("cost") or {}
+                result_session_id = pl.get("session-id")
                 a = pl.get("answer")
                 if isinstance(a, dict):
                     answer = a.get("answer", "")
@@ -397,6 +534,35 @@ def run_one(job):
             correct = False
             detail.append("provider reported zero prompt-cache read tokens")
 
+        cache_usage = None
+        if sc.get("want_cache_metrics"):
+            if not result_session_id:
+                correct = False
+                detail.append("persistent run returned no session id")
+            else:
+                try:
+                    usage_status, cache_usage = fetch_session_usage(
+                        run_env, result_session_id, gateway_port
+                    )
+                except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
+                    correct = False
+                    detail.append(f"could not read persisted cache metrics: {exc}")
+                else:
+                    if usage_status != 200 or not isinstance(cache_usage, dict):
+                        correct = False
+                        detail.append(
+                            f"usage endpoint returned status {usage_status} and {type(cache_usage).__name__}"
+                        )
+                    else:
+                        metric_failures = cache_metric_failures(
+                            cache_usage,
+                            result_tokens,
+                            len(provider_calls),
+                            bool(sc.get("want_folded_prefix")),
+                        )
+                        if metric_failures:
+                            correct = False
+                            detail.extend(metric_failures)
         toolset = {t for t in tools if t}
         for t in sc.get("want_tools") or []:
             if t not in toolset:
@@ -422,6 +588,20 @@ def run_one(job):
         if sc.get("want_cache_read"):
             evidence.append(
                 f"cache-read={cached_tokens}/{int(result_tokens.get('input') or 0)} input tokens"
+            )
+        if isinstance(cache_usage, dict):
+            samples = int(cache_usage.get("prompt_cache_sample_count") or 0)
+            estimated = int(cache_usage.get("prompt_cache_estimated_sample_count") or 0)
+            evidence.append(
+                "cache-metrics="
+                f"cost {cache_usage.get('cache_read_share_percent')}% "
+                f"({cache_usage.get('input_cache_read_tokens')}/{cache_usage.get('input_tokens')}), "
+                f"reuse {cache_usage.get('reusable_prefix_coverage_percent')}% "
+                f"({cache_usage.get('prompt_cache_reused_tokens')}/"
+                f"{cache_usage.get('prompt_cache_reusable_tokens')}), "
+                f"samples {samples} ({samples - estimated} exact/{estimated} estimated), "
+                f"rebuilds {cache_usage.get('prompt_cache_rebuild_count')}, "
+                f"expired {cache_usage.get('prompt_cache_expired_count')}"
             )
         return {
             "id": sc["id"],
@@ -458,7 +638,9 @@ def main():
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"could not start source gateway: {exc}", file=sys.stderr)
         sys.exit(2)
-    jobs = [(sc, model, gateway["env"]) for sc in scs for model in MODELS]
+    jobs = [
+        (sc, model, gateway["env"], gateway["port"]) for sc in scs for model in MODELS
+    ]
     print(
         f"running {len(scs)} scenarios × {len(MODELS)} model(s) {MODELS} on {PROVIDER} "
         f"through source gateway 127.0.0.1:{gateway['port']} "

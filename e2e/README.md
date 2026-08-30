@@ -22,7 +22,8 @@ extensions/languages/vis-language-python/e2e/scenarios/<id>/    managed Python R
 
   <id>/
     scenario.json   {lang, prompt, want, wantnot, want_answer?, want_tools?, want_forms?,
-                       want_requested_route?, want_folded_prefix?, want_cache_read?}
+                       want_requested_route?, want_folded_prefix?, want_cache_read?,
+                       want_cache_metrics?}
     files/          real files seeded into a fresh git repo per run
 ```
 
@@ -34,8 +35,11 @@ extensions/languages/vis-language-python/e2e/scenarios/<id>/    managed Python R
 - **want_requested_route** — every provider marker and the billed result must use
   the requested provider/model; a silent fallback fails the run.
 - **want_folded_prefix** — exactly one direct `fold_session("-tN/iK", ...)` must target
-  the immediately prior iteration, its receipt must confirm that prefix, and a provider call must continue.
+  the immediately prior iteration and a provider call must continue after it.
 - **want_cache_read** — the real provider result must report nonzero aggregate cached input tokens.
+- **want_cache_metrics** — persist the run, read `/v1/sessions/:sid/usage` through the
+  canonical gateway client, and independently reconcile provider totals, both percentages,
+  sample counts, and (with `want_folded_prefix`) the one estimated rebuild.
 
 ## Run
 
