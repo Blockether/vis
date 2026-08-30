@@ -233,6 +233,9 @@ export const Rows: Story = {
         <ListRow className="w-full" isFramed>
           Framed, inside a panel
         </ListRow>
+        <ListRow className="w-full" density="compact">
+          Pointer-compact, touch-safe
+        </ListRow>
       </Group>
       <Group of="ChoiceCell, with the action that belongs to the row">
         <div className="w-full" role="group" aria-label="Voices">

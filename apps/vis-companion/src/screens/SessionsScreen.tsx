@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Banner,
   Button,
@@ -27,6 +27,7 @@ import {
   type SessionRowCommands,
 } from '../components/SessionList';
 import { NeedsYou, ProjectGroup } from './sessions/SessionProjectGroups';
+import { FleetRail } from './sessions/FleetRail';
 import {
   Menu,
   MenuHeading,
@@ -383,99 +384,6 @@ interface Props {
  */
 const WHOLE_SESSION_FORK = 'whole-session';
 
-/**
- * THE FLEET STANDS BESIDE THE LIST, NOT ON TOP OF IT.
- *
- * A phone has one column, so the machines have to spend a row of it: the switch
- * above the card is that row. A desk window has a second column to spare and a
- * pointer that can hit a 32px row — the SAME face the list's rows wear, so the two
- * columns march down the window together instead of drifting a pixel per row — so the
- * same two facts, which computers answer and which projects they hold, become a rail
- * that never scrolls away, and the list gets those 40px back as rows.
- *
- * Nothing here is new behaviour. A machine row sets exactly the scope a
- * `MachineTab` sets (and retries a machine that is not answering, instead of
- * scoping to nothing); a project row is an INDEX ENTRY that takes the list to a
- * band already rendered in it. So the rail is quiet: hint ink, one tint on the row
- * the scope is on, counts on the trailing edge in tabular numerals. It draws no
- * right edge — the card's own left border is the seam, and a rail beside a border
- * would be two lines doing one job.
- */
-type RailEntry = {
-  key: string;
-  name: string;
-  count: number;
-  mark?: ReactNode;
-  isActive?: boolean;
-  onPress: () => void;
-};
-
-function FleetRail({
-  machines,
-  projects,
-  action,
-}: {
-  machines: RailEntry[];
-  projects: RailEntry[];
-  action: ReactNode;
-}) {
-  return (
-    <nav
-      aria-label="Fleet"
-      className="flex w-59 shrink-0 flex-col gap-3 overflow-y-auto overscroll-contain border-b border-l border-t border-dialog-edge bg-panel-2 py-3"
-    >
-      <RailGroup label="Machines" entries={machines} />
-      <RailGroup label="Projects" entries={projects} action={action} />
-    </nav>
-  );
-}
-
-/**
- * One named group of the rail. The caption is the smallest type this app owns and
- * it labels a LIST rather than a control, so it never carries a fact of its own —
- * the facts are the rows under it.
- */
-function RailGroup({
-  label,
-  entries,
-  action,
-}: {
-  label: string;
-  entries: RailEntry[];
-  action?: ReactNode;
-}) {
-  if (entries.length === 0 && !action) return null;
-  return (
-    <div>
-      <div className="flex min-h-6 items-center justify-between gap-2 px-3">
-        <h2 className="font-mono text-chip font-semibold uppercase tracking-[0.08em] text-dialog-hint">
-          {label}
-        </h2>
-        {action}
-      </div>
-      <ul>
-        {entries.map((entry) => (
-          <li key={entry.key}>
-            <button
-              type="button"
-              onClick={entry.onPress}
-              aria-current={entry.isActive ? 'true' : undefined}
-              className={`flex min-h-8 w-full items-center gap-2 px-3 text-left font-mono text-ui transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent motion-reduce:transition-none ${
-                entry.isActive
-                  ? 'bg-hover text-white'
-                  : 'text-dialog-hint hover:bg-hover hover:text-white'
-              }`}
-            >
-              {entry.mark}
-              <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-              <span className="shrink-0 tabular-nums text-dialog-hint">{entry.count}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
 export function SessionsScreen({
   conns,
   primary = null,

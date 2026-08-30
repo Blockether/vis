@@ -517,18 +517,26 @@ export function CopyChip({
  * and `min-h-11` there, `hover:bg-hover` with and without a focus paper, a frame
  * on some and none on others — so rows doing one job read as several.
  *
- * `isFramed` is the only real difference: a row standing on the page needs no
- * frame, a row standing INSIDE a card needs one. Selection is the same in both:
- * the amber edge over the raised paper, never a second colour.
+ * Framing and pointer density are the two real differences. A row standing on
+ * the page needs no frame; a row inside a card needs one. `compact` spends less
+ * height only when a mouse is present, so a touch row keeps its full target.
+ * Selection stays the amber edge over raised paper in every form.
  */
 export const ListRow = forwardRef<
   HTMLButtonElement,
   ButtonHTMLAttributes<HTMLButtonElement> & {
     isSelected?: boolean;
     isFramed?: boolean;
+    density?: 'regular' | 'compact';
   }
 >(function ListRow(
-  { isSelected = false, isFramed = false, className = '', ...props },
+  {
+    isSelected = false,
+    isFramed = false,
+    density = 'regular',
+    className = '',
+    ...props
+  },
   ref,
 ) {
   const paper = isFramed
@@ -536,11 +544,12 @@ export const ListRow = forwardRef<
     : isSelected
       ? 'bg-panel-2'
       : '';
+  const spacing = density === 'compact' ? 'mouse:min-h-8 mouse:py-0' : '';
   return (
     <button
       ref={ref}
       type="button"
-      className={`flex min-h-12 w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent motion-reduce:transition-none ${paper} ${className}`}
+      className={`flex min-h-12 w-full min-w-0 items-center gap-2 px-3 py-2 text-left transition-colors duration-150 hover:bg-hover focus-visible:bg-hover focus-visible:outline-none disabled:cursor-default disabled:opacity-50 disabled:hover:bg-transparent motion-reduce:transition-none ${paper} ${spacing} ${className}`}
       {...props}
     />
   );
