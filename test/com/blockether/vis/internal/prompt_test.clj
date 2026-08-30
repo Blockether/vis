@@ -244,9 +244,14 @@
                         "Make the next iteration only" "`fold_session(\"-tN/iK\", gist)`"
                         "last completed research step" "oldest settled prefix folds"
                         "live step stays out" "one cache discontinuity" "One broad fold"
-                        "continue append-only" "gist must stand alone" "exact paths/symbols"
-                        "decisions," "verification, edit/test state and dirty files"
-                        "confirm reduction"]]
+                        ;; Regression, user report: Anthropic, OpenAI and Z.ai all continued from one
+                        ;; multi-turn fold without a read/fold loop, but transcript-like gists retained
+                        ;; raw logs and complete tests. Pin minimum sufficient narrowing, not just survival.
+                        "continue append-only from its gist"
+                        "never re-read settled work to refold it" "minimum sufficient checkpoint"
+                        "not a transcript" "conclusions, unknowns" "exact paths/symbols"
+                        "decisive evidence" "verification, edit/test state and dirty files"
+                        "omit raw outputs and full files/tests" "confirm reduction"]]
         (expect (str/includes? text required)))
       ;; Regression, user report: blanket resource cleanup stopped a healthy dev server
       ;; that the user had explicitly asked the agent to open and keep available.
