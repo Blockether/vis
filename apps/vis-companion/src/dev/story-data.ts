@@ -27,7 +27,13 @@ import { MACHINE_COLORS, type MachineColor } from '../lib/machine-colors';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import liveViewWire from '../lib/live-view.fixture.json';
 import { COMMENTS_HEADING } from '../lib/markdown-annotations';
-import type { GatewayConn, RouterProvider, Session } from '../lib/types';
+import type {
+  GatewayConn,
+  QueuedTurn,
+  QueuePausedInfo,
+  RouterProvider,
+  Session,
+} from '../lib/types';
 import type { GwHealth } from '../components/Machines';
 import type { ManagedProject } from '../components/ManageProjectsSheet';
 import type { ProviderAuth } from '../components/ProviderAuth';
@@ -418,6 +424,35 @@ export const NOTE_ANNOTATED = [
 
 /** A client-shaped value for views whose shown state performs no gateway operation. */
 export const STORY_INERT_CLIENT = {} as GatewayClient;
+
+/** Queue actions settle locally in previews; the rows still remain gateway-owned. */
+export const STORY_QUEUE_CLIENT = {
+  updateQueuedTurn: async () => undefined,
+  deleteQueuedTurn: async () => undefined,
+  resumeQueue: async () => undefined,
+} as unknown as GatewayClient;
+
+export const STORY_QUEUED_TURNS: QueuedTurn[] = [
+  {
+    turnId: 'turn-2',
+    request: 'Inspect the release manifest',
+    preview: 'Inspect the release manifest',
+    attachments: [
+      { filename: 'manifest.png', mediaType: 'image/png', sizeLabel: '24 KB' },
+    ],
+  },
+  {
+    turnId: 'turn-3',
+    request: 'Summarize the failed checks',
+    preview: 'Summarize the failed checks',
+    attachments: [],
+  },
+];
+
+export const STORY_QUEUE_PAUSED: QueuePausedInfo = {
+  held: 2,
+  reason: 'turn_failed',
+};
 
 /** The paired fleet: reachable, unavailable, and long enough to exercise truncation. */
 export const STORY_GATEWAYS: GatewayConn[] = [

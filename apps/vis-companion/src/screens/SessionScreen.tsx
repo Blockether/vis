@@ -54,6 +54,7 @@ import {
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
 import { JumpToLatestButton } from "../components/JumpToLatestButton";
+import { QueuedTurnsTray } from "../components/QueuedTurnsTray";
 import { LiveView, useLiveViews } from "../components/LiveView";
 import { reduceRunningTurnEvent, type RunningTurn } from "../lib/running-turn";
 import { eventString, sessionEventBatch } from "../lib/session-stream";
@@ -801,18 +802,6 @@ export function SessionScreen({
   const [queued, setQueued] = useState<QueuedTurn[]>(
     () => client.cachedQueuedTurns(sid) ?? [],
   );
-  // Turn ids with a queue mutation in flight. The gateway is the ONE writer of the
-  // queue tray (rows appear on `turn.queued` and leave on `.updated`/`.deleted`/
-  // `.drained`), so an edit or removal is NOT applied optimistically — it is
-  // marked busy until the daemon's own event lands. Mirroring the intent locally
-  // is exactly how a row could disappear while the gateway still ran it.
-  const [queueBusy, setQueueBusy] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const [editingQueued, setEditingQueued] = useState<{
-    turnId: string;
-    text: string;
-  } | null>(null);
   // Queue truth arrives on TWO streams that can cross: live `turn.queued*` frames
   // and the `?status=queued` re-reads done on open and on every wake tick. The
   // removals exist only on the live stream (the gateway appends
@@ -845,9 +834,6 @@ export function SessionScreen({
     [client, sid],
   );
   const [queuePaused, setQueuePaused] = useState<QueuePausedInfo | null>(null);
-  // The pause banner is gateway state too: it clears on `queue.resumed`, never
-  // because we asked. This only disables the button while the request is out.
-  const [resumingQueue, setResumingQueue] = useState(false);
   const [showJump, setShowJump] = useState(false);
   // The transcript row that TOOK OVER from the running-turn bubble this visit. It mounts
   // holding pixels the reader is already looking at, so it mounts WHOLE — see
@@ -1241,7 +1227,6 @@ export function SessionScreen({
     setRunningTurn(seed?.turn ?? null);
     setRunning(seed?.turn.status === "running");
     setQueued(client.cachedQueuedTurns(sid) ?? []);
-    setQueueBusy(new Set());
     setQueuePaused(null);
     runningTurnRef.current = seed?.turn ?? null;
     lastRunningTurnSeqRef.current = seed?.seq ?? -1;
@@ -1443,17 +1428,6 @@ export function SessionScreen({
     };
   }, [client, routerOpen]);
 
-  const markQueueBusy = useCallback((turnId: string, busy: boolean) => {
-    setQueueBusy((current) => {
-      const next = new Set(current);
-      if (busy) {
-        next.add(turnId);
-      } else {
-        next.delete(turnId);
-      }
-      return next;
-    });
-  }, []);
 
   // "↓ Latest" is a MEASUREMENT of the scroller, never a memory of the last
   // gesture: the offer stands only while there is something below the fold AND
@@ -4942,154 +4916,14 @@ export function SessionScreen({
             </div>
           )}
 
-          {queuePaused && (
-            <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-field border border-warn-strong bg-warn-surface shadow-[3px_3px_0_var(--dialog-shadow)] px-2.5 py-1.5 font-mono text-meta text-warn-strong">
-              <span
-                className="size-1.5 shrink-0 bg-warn-strong"
-                aria-hidden="true"
-              />
-              <span className="font-bold text-warn-strong">Queue paused</span>
-              <span className="min-w-0 flex-1 truncate">
-                {queuePaused.held} held · {queuePaused.reason.replace(/_/g, " ")}
-              </span>
-              {/* The strip is warn-toned, the VERB is the app's own secondary:
-                  a control that repaints itself per banner is how three
-                  identical "do it anyway" buttons ended up looking unrelated. */}
-              <Button
-                variant="secondary"
-                density="compact"
-                disabled={resumingQueue}
-                className="shrink-0"
-                onClick={() => {
-                  setResumingQueue(true);
-                  void client
-                    .resumeQueue(sid)
-                    .catch((cause) => setError((cause as Error).message))
-                    .finally(() => setResumingQueue(false));
-                }}
-              >
-                {resumingQueue ? "Continuing…" : "Continue queue"}
-              </Button>
-            </div>
-          )}
-
-          {/* THE TRAY IS NOT A PLANE, so the square `index.css` gives a band of the
-            page does not reach it: it arrives over the dock carrying its own paper,
-            at the composer's width and six pixels above it. Two boxes of one object
-            read as one material only at one radius, so it takes the composer's field
-            rung and its 3px shadow — never the panel's 16px, which would make it a
-            second sheet floating over the first. */}
-          {queued.length > 0 && (
-            <div className="mb-1.5 overflow-clip rounded-field border border-dialog-edge bg-panel shadow-[3px_3px_0_var(--dialog-shadow)]">
-              <div className="flex items-center gap-1.5 border-b border-dialog-edge bg-dialog-title px-2.5 py-1 font-mono text-meta font-bold text-dialog-title-foreground">
-                <span aria-hidden="true">┌</span>
-                Queued · {queued.length}
-              </div>
-              {queued.map((item, index) => {
-                const editing = editingQueued?.turnId === item.turnId;
-                const busy = queueBusy.has(item.turnId);
-                return (
-                  <div
-                    key={item.turnId}
-                    className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${busy ? " opacity-50" : ""}`}
-                  >
-                    <span className="shrink-0 font-mono text-meta font-bold text-accent-ink">
-                      #{index + 1}
-                    </span>
-                    {editing ? (
-                      <input
-                        autoFocus
-                        value={editingQueued.text}
-                        onChange={(event) =>
-                          setEditingQueued({
-                            turnId: item.turnId,
-                            text: event.target.value,
-                          })
-                        }
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            const text = editingQueued.text.trim();
-                            if (text && text !== item.request) {
-                              // The gateway owns the row: it is rewritten here only when
-                              // the daemon confirms with `turn.queued.updated`.
-                              markQueueBusy(item.turnId, true);
-                              void client
-                                .updateQueuedTurn(sid, item.turnId, text)
-                                .catch((cause) =>
-                                  setError((cause as Error).message),
-                                )
-                                .finally(() =>
-                                  markQueueBusy(item.turnId, false),
-                                );
-                            }
-                            setEditingQueued(null);
-                          } else if (event.key === "Escape") {
-                            event.preventDefault();
-                            setEditingQueued(null);
-                          }
-                        }}
-                        onBlur={() => setEditingQueued(null)}
-                        className="min-w-0 flex-1 border border-accent bg-input px-1 py-0.5 font-mono text-ui text-dialog-foreground outline-none"
-                        aria-label={`Edit queued message ${index + 1}`}
-                      />
-                    ) : (
-                      <TextButton
-                        disabled={busy}
-                        onClick={() =>
-                          setEditingQueued({
-                            turnId: item.turnId,
-                            text: item.request,
-                          })
-                        }
-                        className="flex flex-1 items-center gap-1"
-                        title="Tap to edit"
-                      >
-                        {/* Image chips first: a queued screenshot reads as its filename,
-                        never as the raw /var/folders path the OS pasted. */}
-                        {item.attachments.map((attachment) => (
-                          <span
-                            key={attachment.filename}
-                            className="inline-flex shrink-0 items-center gap-1 border border-dialog-edge bg-input px-1 text-chip text-dialog-hint"
-                            title={`${attachment.filename}${attachment.sizeLabel ? ` · ${attachment.sizeLabel}` : ""}`}
-                          >
-                            <span className="max-w-[7rem] truncate">
-                              {attachment.filename}
-                            </span>
-                          </span>
-                        ))}
-                        <span className="min-w-0 flex-1 truncate">
-                          {item.preview ||
-                            (item.attachments.length ? "" : "(empty)")}
-                        </span>
-                      </TextButton>
-                    )}
-                    <CloseButton
-                      label={`Remove queued message ${index + 1}`}
-                      // The row is padded for its "#1"; the way out is pulled back
-                      // out of that padding, so it hangs where every other ✕ hangs.
-                      className="-me-2.5"
-                      disabled={busy}
-                      onClick={() => {
-                        setEditingQueued((current) =>
-                          current?.turnId === item.turnId ? null : current,
-                        );
-                        // Removal is the gateway's to make: the row leaves the tray on
-                        // `turn.queued.deleted`. A rejected delete (already started)
-                        // therefore keeps showing the truth instead of hiding a turn
-                        // that still runs.
-                        markQueueBusy(item.turnId, true);
-                        void client
-                          .deleteQueuedTurn(sid, item.turnId)
-                          .catch((cause) => setError((cause as Error).message))
-                          .finally(() => markQueueBusy(item.turnId, false));
-                      }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <QueuedTurnsTray
+            key={sid}
+            client={client}
+            sid={sid}
+            queued={queued}
+            paused={queuePaused}
+            onError={setError}
+          />
 
           <div className="relative rounded-field border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
             {activePastes.length > 0 && (

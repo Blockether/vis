@@ -42,6 +42,7 @@ import humanInputSource from "./HumanInputPrompt.tsx?raw";
 import providerAuthSource from "./ProviderAuth.tsx?raw";
 import routerSource from "../screens/RouterScreen.tsx?raw";
 import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
+import queuedTurnsTraySource from "./QueuedTurnsTray.tsx?raw";
 import jumpToLatestSource from "./JumpToLatestButton.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
@@ -51,7 +52,9 @@ const sessionsListSource = [
   sessionsScreenSource,
   sessionListComponentsSource,
   sessionProjectGroupsSource,
-].join("\n");
+  ].join("\n");
+
+const sessionDockSource = [sessionScreenSource, queuedTurnsTraySource].join("\n");
 
 const settingsSource = [
   machineSettingsSource,
@@ -2181,7 +2184,7 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
     // ✕ — they used to be a 28×28 chip-ender with a hairline of its own.
     it("are the one CloseButton, positioned and nothing more", () => {
       const removes = [
-        ...sessionScreenSource.matchAll(/<CloseButton[\s\S]*?\/>/g),
+        ...sessionDockSource.matchAll(/<CloseButton[\s\S]*?\/>/g),
       ].map(([element]) => element);
       expect(removes).toHaveLength(3);
       for (const element of removes) {
@@ -2294,7 +2297,7 @@ describe("the button's four ranks", () => {
       chatSource,
       settingsSource,
       sessionsListSource,
-      sessionScreenSource,
+      sessionDockSource,
       routerSource,
       providerAuthSource,
       artifactsSheetSource,
@@ -3612,14 +3615,14 @@ describe("Corners", () => {
     // a page: they arrive over the composer at its width, so they take its 12px
     // field and its 3px shadow. Anything floating on the 6px shadow — the two
     // completion lists, the attachment menu — is a 16px panel.
-    expect(sessionScreenSource).toContain(
+    expect(sessionDockSource).toContain(
       "mb-1.5 overflow-clip rounded-field border border-dialog-edge bg-panel shadow-[3px_3px_0_var(--dialog-shadow)]",
     );
-    expect(sessionScreenSource).toContain(
+    expect(sessionDockSource).toContain(
       "rounded-field border border-warn-strong bg-warn-surface shadow-[3px_3px_0_var(--dialog-shadow)]",
     );
     const floating = [
-      ...sessionScreenSource.matchAll(
+      ...sessionDockSource.matchAll(
         /className="[^"]*shadow-\[6px_6px_0_var\(--dialog-shadow\)\][^"]*"/g,
       ),
     ];
