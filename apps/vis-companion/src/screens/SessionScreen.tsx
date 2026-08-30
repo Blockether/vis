@@ -21,6 +21,14 @@ import {
   type ComposerAttachmentSource,
 } from "../components/ComposerAttachmentPicker";
 import {
+  ComposerPayloadShelf,
+  type ComposerPayloadCommands,
+} from "../components/ComposerPayloadShelf";
+import {
+  ComposerResponseControls,
+  type ComposerResponseControlsModel,
+} from "../components/ComposerResponseControls";
+import {
   artifactsFromIndex,
   collapseArtifactVersions,
   collectArtifacts,
@@ -28,27 +36,20 @@ import {
   mergeArtifacts,
 } from "../lib/artifacts";
 import type { SessionArtifact } from "../lib/artifacts";
-import { ExpandableImage } from "../components/ImageViewer";
 import { dropOverlayHandovers } from "../lib/sticky-overlay";
 import {
   BackButton,
   Banner,
-  CloseButton,
   ComposerButton,
   CopyChip,
   LoadMore,
-  MetaButton,
   OptionRow,
   Spinner,
-  TextButton,
 } from '../components/ui';
 import {
-  FastIcon,
   MicIcon,
-  ReasoningIcon,
   SendIcon,
   StopIcon,
-  VerbosityIcon,
   VoiceLoopIcon,
 } from "../components/icons";
 import { HumanInputPrompt } from "../components/HumanInputPrompt";
@@ -69,7 +70,6 @@ import {
   attachmentsFromFiles,
   capturePhotoAttachment,
   editedAttachment,
-  isAudioMediaType,
   isVideoMediaType,
   pickDocumentAttachments,
   pickMediaAttachments,
@@ -3522,6 +3522,13 @@ export function SessionScreen({
     }
   }
 
+  const payloadCommands: ComposerPayloadCommands = {
+    editPaste: openPasteEditor,
+    removePaste,
+    editAttachment: applyAttachmentEdit,
+    removeAttachment,
+  };
+
   function handlePaste(event: ReactClipboardEvent<HTMLTextAreaElement>) {
     // Media paste (screenshots, copied pictures, a clip) — works on web and in
     // the iOS/Android WKWebView, which surface pasted media as clipboard files.
@@ -4110,6 +4117,41 @@ export function SessionScreen({
   const activePastes = Array.from(pastes.values()).filter((paste) =>
     prompt.includes(paste.token),
   );
+  const selectedModel = modelPref?.model ?? defaultPref?.model;
+  const responseControls: ComposerResponseControlsModel = {
+    model: {
+      value: selectedModel ?? "model",
+      title: selectedModel
+        ? `${modelPref?.provider ?? defaultPref?.provider ?? ""}/${selectedModel}`
+        : "Change provider and model",
+      choose: () => setRouterOpen(true),
+    },
+    reasoning:
+      reasoning && (reasoning.choices?.length ?? 0) > 0
+        ? {
+            label: reasoning.label,
+            value: reasoningLevel,
+            busy: reasoningBusy,
+            cycle: cycleReasoning,
+          }
+        : undefined,
+    verbosity:
+      verbosityAvailable && (verbosityAvailable.choices?.length ?? 0) > 0
+        ? {
+            label: verbosityAvailable.label,
+            value: verbosityAvailable.value ?? "default",
+            busy: verbosityBusy,
+            cycle: cycleVerbosity,
+          }
+        : undefined,
+    fast: codexFastAvailable
+      ? {
+          enabled: codexFastAvailable.enabled ?? false,
+          busy: codexFastBusy,
+          toggle: toggleCodexFast,
+        }
+      : undefined,
+  };
   const title = session?.title?.trim() || "Chat";
   const visibleStart = Math.max(0, turns.length - visibleTurnCount);
   // What is mounted this frame: the window, clamped by the hydration ramp.
@@ -4805,83 +4847,11 @@ export function SessionScreen({
           />
 
           <div className="relative rounded-field border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
-            {activePastes.length > 0 && (
-              <div className="flex gap-1 overflow-x-auto overscroll-x-contain border-b border-dialog-edge px-1.5 py-1 [scrollbar-width:thin]">
-                {activePastes.map((paste) => (
-                  <span
-                    key={paste.id}
-                    className="inline-flex min-h-7 shrink-0 items-center overflow-hidden rounded-chip border border-code-edge bg-code font-mono text-chip"
-                  >
-                    <TextButton
-                      isToken
-                      className="max-w-56 shrink"
-                      onMouseDown={keepKeyboard}
-                      onClick={() => openPasteEditor(paste.id)}
-                      aria-label={`Edit pasted block ${paste.id}`}
-                      title="Edit this paste"
-                    >
-                      {paste.token}
-                    </TextButton>
-                    <CloseButton
-                      label={`Remove pasted block ${paste.id}`}
-                      onMouseDown={keepKeyboard}
-                      onClick={() => removePaste(paste.id)}
-                    />
-                  </span>
-                ))}
-              </div>
-            )}
-            {attachments.length > 0 && (
-              <div className="flex gap-1.5 overflow-x-auto overscroll-x-contain border-b border-dialog-edge px-1.5 py-1.5 [scrollbar-width:thin]">
-                {attachments.map((attachment) => (
-                  <div
-                    key={attachment.id}
-                    className="group relative flex min-w-0 max-w-40 shrink-0 items-center gap-1.5 overflow-hidden rounded-chip border border-dialog-edge bg-panel pr-8 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"
-                  >
-                    {isVideoMediaType(attachment.media_type) ? (
-                      <video
-                        src={attachment.previewUrl}
-                        className="size-8 shrink-0 object-cover"
-                        muted
-                        playsInline
-                        preload="auto"
-                      />
-                    ) : isAudioMediaType(attachment.media_type) ? (
-                      // A recording has no thumbnail to show and nothing to draw
-                      // on: what identifies it is its NAME, so the chip says that
-                      // and nothing it cannot honestly paint.
-                      <span className="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-1.5">
-                        <MicIcon className="size-4 shrink-0" />
-                        <span className="truncate font-mono text-chip text-dialog-hint-key">
-                          {attachment.filename}
-                        </span>
-                      </span>
-                    ) : (
-                      <ExpandableImage
-                        src={attachment.previewUrl}
-                        alt={attachment.filename}
-                        loading="eager"
-                        className="size-8 shrink-0 object-cover"
-                        frameClassName="min-w-0 flex-1"
-                        onApply={(edited) =>
-                          applyAttachmentEdit(attachment.id, edited)
-                        }
-                      >
-                        <span className="truncate font-mono text-chip text-dialog-hint-key">
-                          {attachment.filename}
-                        </span>
-                      </ExpandableImage>
-                    )}
-                    <CloseButton
-                      label={`Remove ${attachment.filename}`}
-                      className="absolute inset-y-0 right-0 my-auto"
-                      onMouseDown={keepKeyboard}
-                      onClick={() => removeAttachment(attachment.id)}
-                    />
-                  </div>
-                ))}
-              </div>
-            )}
+            <ComposerPayloadShelf
+              pastes={activePastes}
+              attachments={attachments}
+              commands={payloadCommands}
+            />
 
             {(composerNotice ||
               voiceConversation ||
@@ -5124,84 +5094,7 @@ export function SessionScreen({
           {/* The composer strip now belongs only to response controls. Cumulative
             session usage lives behind the disclosure on the sessions list, where it
             remains available without crowding the active session on a phone. */}
-          <div className="flex w-full items-center gap-2.5 pt-1">
-            <MetaButton
-              isPicker
-              className="min-w-0 shrink truncate"
-              onClick={() => setRouterOpen(true)}
-              aria-label="Change provider and model"
-              title={
-                (modelPref?.model ?? defaultPref?.model)
-                  ? `${modelPref?.provider ?? defaultPref?.provider ?? ""}/${modelPref?.model ?? defaultPref?.model ?? ""}`
-                  : "Change provider and model"
-              }
-            >
-              {modelPref?.model ?? defaultPref?.model ?? "model"}
-            </MetaButton>
-
-            {reasoning && (reasoning.choices?.length ?? 0) > 0 && (
-              <>
-                <span aria-hidden="true" className="h-2.5 w-px shrink-0 bg-dialog-edge" />
-                <MetaButton
-                  className="shrink-0"
-                  onMouseDown={keepKeyboard}
-                  onClick={() => void cycleReasoning()}
-                  disabled={reasoningBusy}
-                  aria-busy={reasoningBusy}
-                  aria-live="polite"
-                  aria-label={`${reasoning.label} — ${reasoningLevel}, tap for the next level`}
-                  title={`${reasoning.label}: ${reasoningLevel} — tap to cycle`}
-                >
-                  <ReasoningIcon className="size-3" />
-                  <span
-                    key={reasoningLevel}
-                    className="inline-block animate-chip-swap motion-reduce:animate-none"
-                  >
-                    {reasoningLevel}
-                  </span>
-                </MetaButton>
-              </>
-            )}
-
-            {verbosityAvailable && (verbosity.choices?.length ?? 0) > 0 && (
-              <>
-                <span aria-hidden="true" className="h-2.5 w-px shrink-0 bg-dialog-edge" />
-                <MetaButton
-                  className="shrink-0"
-                  onMouseDown={keepKeyboard}
-                  onClick={() => void cycleVerbosity()}
-                  disabled={verbosityBusy}
-                  aria-busy={verbosityBusy}
-                  aria-live="polite"
-                  aria-label={`${verbosity.label} — ${verbosity.value}, tap for the next level`}
-                  title={`${verbosity.label}: ${verbosity.value} — tap to cycle`}
-                >
-                  <VerbosityIcon className="size-3" />
-                  {verbosity.value}
-                </MetaButton>
-              </>
-            )}
-
-            {codexFastAvailable && (
-              <>
-                <span aria-hidden="true" className="h-2.5 w-px shrink-0 bg-dialog-edge" />
-                <MetaButton
-                  className="shrink-0"
-                  onMouseDown={keepKeyboard}
-                  onClick={() => void toggleCodexFast()}
-                  disabled={codexFastBusy}
-                  aria-busy={codexFastBusy}
-                  aria-pressed={codexFast.enabled ?? false}
-                  aria-label={`Fast mode — ${codexFast.enabled ? "on" : "off"}`}
-                  title={`Fast mode: ${codexFast.enabled ? "on" : "off"}`}
-                >
-                  <FastIcon className="size-3" />
-                  {codexFast.enabled ? "fast" : "standard"}
-                </MetaButton>
-              </>
-            )}
-
-          </div>
+          <ComposerResponseControls controls={responseControls} />
         </footer>
       </section>
     </AttachImageContext.Provider>

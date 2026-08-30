@@ -22,6 +22,7 @@
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
 import activityWire from '../lib/activity.fixture.json';
 import type { SessionArtifact } from '../lib/artifacts';
+import type { PendingAttachment } from '../lib/attachments';
 import type { GatewayClient } from '../lib/gateway';
 import { MACHINE_COLORS, type MachineColor } from '../lib/machine-colors';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
@@ -485,6 +486,38 @@ export const STORY_COMPOSER_PASTE: ComposerPaste = createComposerPaste(
     '- Notify the mobile release channel',
   ].join('\n'),
 );
+
+const STORY_ATTACHMENT_PREVIEW =
+  'data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"%3E%3Crect width="32" height="32" fill="%23e7c75f"/%3E%3Cpath d="M6 23l7-8 5 5 3-4 5 7z" fill="%2313151a"/%3E%3C/svg%3E';
+
+export const STORY_PENDING_ATTACHMENTS: PendingAttachment[] = [
+  {
+    id: 'release-map',
+    filename: 'release-map.png',
+    media_type: 'image/png',
+    base64: STORY_ATTACHMENT_PREVIEW,
+    previewUrl: STORY_ATTACHMENT_PREVIEW,
+    size: 512,
+  },
+  {
+    id: 'voice-note',
+    filename: 'release-note.m4a',
+    media_type: 'audio/mp4',
+    base64: 'data:audio/mp4;base64,AA==',
+    previewUrl: 'data:audio/mp4;base64,AA==',
+    size: 1024,
+  },
+];
+
+export const STORY_RESPONSE_CONTROL_VALUES = {
+  model: {
+    value: 'claude-opus-5',
+    title: 'anthropic-coding-plan/claude-opus-5',
+  },
+  reasoning: { label: 'Reasoning', value: 'high' },
+  verbosity: { label: 'Verbosity', value: 'medium' },
+  fast: { enabled: true },
+} as const;
 
 /** The paired fleet: reachable, unavailable, and long enough to exercise truncation. */
 export const STORY_GATEWAYS: GatewayConn[] = [

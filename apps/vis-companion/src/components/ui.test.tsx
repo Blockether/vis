@@ -44,6 +44,8 @@ import routerSource from "../screens/RouterScreen.tsx?raw";
 import sessionScreenSource from "../screens/SessionScreen.tsx?raw";
 import queuedTurnsTraySource from "./QueuedTurnsTray.tsx?raw";
 import composerAttachmentPickerSource from "./ComposerAttachmentPicker.tsx?raw";
+import composerPayloadShelfSource from "./ComposerPayloadShelf.tsx?raw";
+import composerResponseControlsSource from "./ComposerResponseControls.tsx?raw";
 import jumpToLatestSource from "./JumpToLatestButton.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
@@ -59,6 +61,8 @@ const sessionDockSource = [
   sessionScreenSource,
   queuedTurnsTraySource,
   composerAttachmentPickerSource,
+  composerPayloadShelfSource,
+  composerResponseControlsSource,
 ].join("\n");
 
 const settingsSource = [
@@ -2827,9 +2831,9 @@ describe("the session screen and the settings dialog spell no control out", () =
 
   it("uses the composer's own vocabulary where it used to repeat itself", () => {
     expect(sessionScreenSource).toContain("<ComposerButton");
-    expect(sessionScreenSource).toContain("<MetaButton");
+    expect(sessionDockSource).toContain("<MetaButton");
     expect(sessionScreenSource).toContain("<OptionRow");
-    expect(sessionScreenSource).toContain("<TextButton");
+    expect(sessionDockSource).toContain("<TextButton");
     expect(sessionScreenSource).toContain("<BackButton");
     expect(sessionScreenSource).toContain("<JumpToLatestButton");
     // The transcript's "load earlier" is the artifacts sheet's own bar, turned over.

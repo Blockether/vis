@@ -42,4 +42,33 @@ describe("session feature boundaries", () => {
     expect(sessionScreenSource).toContain("<ComposerAttachmentPicker");
     expect(sessionScreenSource).toContain("commands={attachmentCommands}");
   });
+
+  it("lets the composer payload shelf own staged content rendering", () => {
+    const leaks = [
+      ["pasted block shelf", /activePastes\.map\(\(paste/],
+      ["attachment shelf", /attachments\.map\(\(attachment/],
+      ["staged media rendering", /isVideoMediaType\(attachment\.media_type\)/],
+    ]
+      .filter(([, pattern]) => (pattern as RegExp).test(sessionScreenSource))
+      .map(([name]) => name);
+
+    expect(leaks).toEqual([]);
+    expect(sessionScreenSource).toContain("<ComposerPayloadShelf");
+    expect(sessionScreenSource).toContain("commands={payloadCommands}");
+  });
+
+  it("lets response controls own their compact option vocabulary", () => {
+    const leaks = [
+      ["response meta controls", /<MetaButton/],
+      ["reasoning option paint", /<ReasoningIcon/],
+      ["verbosity option paint", /<VerbosityIcon/],
+      ["fast option paint", /<FastIcon/],
+    ]
+      .filter(([, pattern]) => (pattern as RegExp).test(sessionScreenSource))
+      .map(([name]) => name);
+
+    expect(leaks).toEqual([]);
+    expect(sessionScreenSource).toContain("<ComposerResponseControls");
+    expect(sessionScreenSource).toContain("controls={responseControls}");
+  });
 });
