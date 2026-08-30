@@ -22,6 +22,7 @@ import appSource from "../App.tsx?raw";
 import storageSource from "../lib/storage.ts?raw";
 import sessionsScreenSource from "../screens/SessionsScreen.tsx?raw";
 import sessionListComponentsSource from "./SessionList.tsx?raw";
+import sessionProjectGroupsSource from "../screens/sessions/SessionProjectGroups.tsx?raw";
 import gatewaySource from "../lib/gateway.ts?raw";
 import settingsScreenSource from "../screens/SettingsScreen.tsx?raw";
 import diagnosticsSettingsSource from "../screens/settings/DiagnosticsPanel.tsx?raw";
@@ -46,7 +47,11 @@ import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
 import notifyVerdictSource from "../lib/notify-verdict.ts?raw";
 
-const sessionsListSource = [sessionsScreenSource, sessionListComponentsSource].join("\n");
+const sessionsListSource = [
+  sessionsScreenSource,
+  sessionListComponentsSource,
+  sessionProjectGroupsSource,
+].join("\n");
 
 const settingsSource = [
   machineSettingsSource,

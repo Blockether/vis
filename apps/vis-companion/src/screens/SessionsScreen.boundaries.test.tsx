@@ -3,10 +3,10 @@ import { describe, expect, it } from "vitest";
 import sessionsScreenSource from "./SessionsScreen.tsx?raw";
 
 describe("sessions feature boundaries", () => {
-  it("leaves session-row rendering outside the fleet orchestrator", () => {
+  it("leaves session presentation outside the fleet orchestrator", () => {
     const ownedRenderers = [
       ...sessionsScreenSource.matchAll(
-        /^(?:const\s+)?(SessionRow|SessionStats|NavigatorSkeleton)\s*=|^function\s+(SessionStats|NavigatorSkeleton)\s*\(/gm,
+        /^(?:const\s+)?(SessionRow|SessionStats|NavigatorSkeleton|NeedsYou|ProjectGroup)\s*=|^function\s+(SessionStats|NavigatorSkeleton|NeedsYou|ProjectGroup)\s*\(/gm,
       ),
     ].map((match) => match[1] ?? match[2]);
 
