@@ -432,35 +432,134 @@
                            {:role "system" :content "changed two"}]))))
       (swap! history assoc-in [[:zai-coding-plan "glm-5.3-flash"] :at-ms] (- now 300001))
       (expect (nil? (apply resume history args)))))
-  (it "rebuilds once after a fold and then keeps the new canonical base stable"
-      (let [canonical-calls
-            (atom 0)
+  (it
+    "carries three turns, falls back once to the stable prefix after a fold, then grows again"
+    (let [history
+          (atom {})
 
-            state
-            (atom
-              {:messages [{:role "system" :content "prior-request"}] :summaries [] :resumed? true})
+          sample!
+          @#'lp/note-prompt-cache-request!
 
-            base!
-            @#'lp/prompt-message-base!
+          complete!
+          @#'lp/mark-prompt-cache-turn-complete!
 
-            canonical
-            (fn []
-              (swap! canonical-calls inc)
-              [{:role "system" :content "canonical-after-fold"}])
+          resume
+          @#'lp/resumable-prompt-message-base
 
-            folded
-            [{"scopes" ["t1/i1"] "gist" "folded"}]
+          base!
+          @#'lp/prompt-message-base!
 
-            switched
-            (base! state folded canonical)
+          common-prefix
+          @#'lp/common-prefix-count
 
-            stable
-            (base! state folded canonical)]
+          provider
+          :zai-coding-plan
 
-        (expect (= 1 @canonical-calls))
-        (expect (false? (:resumed? switched)))
-        (expect (= [{:role "system" :content "canonical-after-fold"}] (:messages switched)))
-        (expect (= switched stable))))
+          model
+          "glm-5.3-flash"
+
+          stable
+          [{:role "system" :content "stable one"} {:role "system" :content "stable two"}]
+
+          summaries
+          []
+
+          user-message
+          (fn [position]
+            {:role "user" :content (str "turn " position)})
+
+          assistant-message
+          (fn [position]
+            {:role "assistant" :content (str "answer " position)})
+
+          started-at
+          (- (util/now-ms) 100)]
+
+      (letfn
+        [(finish-turn! [position request input-tokens]
+           (sample! history provider model request input-tokens 0 (+ started-at position))
+           (complete! history
+                      provider
+                      model
+                      position
+                      summaries
+                      (count stable)
+                      (assistant-message position))
+           request)
+         (next-base [position]
+           (resume history provider model position summaries stable [(user-message position)]))]
+        (let [request-1
+              (finish-turn! 1 (conj stable (user-message 1)) 8000)
+
+              base-2
+              (next-base 2)
+
+              request-2
+              (finish-turn! 2 (:messages base-2) 8200)
+
+              base-3
+              (next-base 3)
+
+              request-3
+              (finish-turn! 3 (:messages base-3) 8400)
+
+              base-4
+              (next-base 4)
+
+              request-before-fold
+              (:messages base-4)
+
+              _
+              (sample! history provider model request-before-fold 8600 8400 (+ started-at 4))
+
+              folded-summaries
+              [{"through" "t3/i1" "gist" "folded"}]
+
+              canonical-calls
+              (atom 0)
+
+              canonical-messages
+              (into stable [{:role "user" :content "folded through turn three"} (user-message 4)])
+
+              base-state
+              (atom base-4)
+
+              post-fold
+              (base! base-state
+                     folded-summaries
+                     (fn []
+                       (swap! canonical-calls inc)
+                       canonical-messages))
+
+              post-fold-again
+              (base! base-state folded-summaries #(throw (ex-info "must stay stable" {})))
+
+              rewrite
+              (sample! history provider model (:messages post-fold) 8700 0 (+ started-at 5))
+
+              request-after-tool
+              (conj (:messages post-fold)
+                    {:role "assistant" :content "tool call"}
+                    {:role "user" :content "tool result"})
+
+              recached
+              (sample! history provider model request-after-tool 8900 8500 (+ started-at 6))]
+
+          (expect (:resumed? base-2))
+          (expect (:resumed? base-3))
+          (expect (:resumed? base-4))
+          (expect (= request-1 (subvec request-2 0 (count request-1))))
+          (expect (= request-2 (subvec request-3 0 (count request-2))))
+          (expect (= request-3 (subvec request-before-fold 0 (count request-3))))
+          (expect (= 1 @canonical-calls))
+          (expect (false? (:resumed? post-fold)))
+          (expect (= post-fold post-fold-again))
+          (expect (= (count stable) (common-prefix request-before-fold (:messages post-fold))))
+          (expect (= :rewrite (:continuity rewrite)))
+          (expect (pos? (:reusable-tokens rewrite)))
+          (expect (< (:reusable-tokens rewrite) 8600))
+          (expect (= :append-only (:continuity recached)))
+          (expect (= 8700 (:reusable-tokens recached)))))))
   (it "does not duplicate prior-turn seeds while an exact carried prefix is active"
       (let [visible
             @#'lp/conversation-trailer-for-base
