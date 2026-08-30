@@ -143,6 +143,32 @@ describe("Activity ownership inside a running turn", () => {
     expect(withProgress).not.toHaveProperty("activity");
   });
 
+  it("accepts settled Activity only from block.activity, never block.output", () => {
+    const settledActivity = { ...activityFixture, state: "succeeded" };
+    const settled = reduceRunningTurnEvent(
+      started(),
+      event({
+        type: "block.activity",
+        iteration: 1,
+        form_index: 0,
+        activity: settledActivity,
+      }),
+    );
+    const afterOutput = reduceRunningTurnEvent(
+      settled,
+      event({
+        type: "block.output",
+        iteration: 1,
+        form_index: 0,
+        code: "work()",
+        result: "done",
+        activity: activityFixture,
+      }),
+    );
+
+    expect(afterOutput?.iterations[0]?.forms?.[0]?.activity?.state).toBe("succeeded");
+  });
+
   it("ignores a form frame that has no owner coordinate", () => {
     const turn = reduceRunningTurnEvent(
       reduceRunningTurnEvent(

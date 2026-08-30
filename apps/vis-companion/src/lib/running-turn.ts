@@ -99,10 +99,6 @@ function formFromEvent(event: SseEvent, running = false): TranscriptForm {
     silent: event.silent === true,
     duration_ms:
       typeof event.duration_ms === "number" ? event.duration_ms : undefined,
-    // A terminal block frame may carry the settled form-owned Activity snapshot.
-    // Undefined keys are ignored by `upsertRunningForm`, so `block.started` does
-    // not wipe a transient snapshot already placed by `block.activity`.
-    activity: activityProjectionFromWire(event.activity) ?? undefined,
   };
 }
 

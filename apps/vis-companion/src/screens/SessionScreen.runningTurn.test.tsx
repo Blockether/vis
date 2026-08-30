@@ -295,7 +295,7 @@ describe("a running transcript row without canonical session state", () => {
     ).toBe(1);
   });
 
-  it("replaces a running snapshot with the settled one the terminal frame carries", async () => {
+  it("replaces a running snapshot with the settled block.activity revision", async () => {
     await withLiveBlock((emit) => {
       emit({
         type: "block.activity",
@@ -304,13 +304,18 @@ describe("a running transcript row without canonical session state", () => {
         activity: activityFixture,
       });
       emit({
+        type: "block.activity",
+        iteration: 41,
+        form_index: 0,
+        activity: { ...activityFixture, state: "succeeded" },
+      });
+      emit({
         type: "block.output",
         iteration: 41,
         form_index: 0,
         code: "inspect_run()",
         result_summary: "done",
         duration_ms: 1_200,
-        activity: { ...activityFixture, state: "succeeded" },
       });
     });
 

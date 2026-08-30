@@ -921,11 +921,10 @@ export interface TranscriptForm {
    *
    * Activity used to be a classified Live View standing beside the transcript,
    * addressed by an `activity_anchor` that named the form from a distance. It
-   * belongs to the form that produced it: a running form's bounded snapshot
-   * arrives on the transient `block.activity` frame and is REPLACED whole (a
-   * saturated queue may drop one, so last-one-wins is the only safe reading),
-   * and the settled value rides the terminal `block.output` — which is what a
-   * reader who missed every transient frame ends on, and what the archive keeps.
+   * belongs to the form that produced it. Running bounded revisions arrive on
+   * transient `block.activity` frames and are REPLACED whole (a saturated queue may
+   * drop one, so last-one-wins is the only safe reading). The settled revision is a
+   * durable `block.activity`, which is what replay and the archive converge on.
    */
   activity?: ActivityProjection;
   [key: string]: unknown;

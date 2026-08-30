@@ -312,9 +312,9 @@
       [turn-id iteration form-index])))
 
 (defn- materialize-form-activity
-  "Keep exactly the latest running Activity snapshot in the replay ring. Its
-   `block.output` removes that transient snapshot because the terminal frame owns
-   the same final Activity."
+  "Keep exactly the latest Activity snapshot per form in the replay ring. Running
+   revisions are transient but replace the materialized value; the settled revision
+   is durable and remains the same canonical snapshot after `block.output`."
   [entry event]
   (let [type
         (get event "type")
@@ -322,7 +322,7 @@
         coordinate
         (form-coordinate event)]
 
-    (if (and coordinate (contains? #{"block.activity" "block.output"} type))
+    (if (and coordinate (= "block.activity" type))
       (let [events
             (remove #(and (= "block.activity" (get % "type")) (= coordinate (form-coordinate %)))
               (:events entry))
@@ -330,10 +330,7 @@
             events
             (into clojure.lang.PersistentQueue/EMPTY events)]
 
-        (assoc entry
-          :events (trim-ring (cond-> events
-                               (= type "block.activity")
-                               (conj event)))))
+        (assoc entry :events (trim-ring (conj events event))))
       entry)))
 
 (defn- fan-out!
@@ -1443,17 +1440,15 @@
          (assoc :label (str label)))])))
 
 (defn- form-activity-chunk->event
-  "TRANSIENT `block.activity` frame `[type store? payload]` carrying one running
+  "`block.activity` frame `[type store? payload]` carrying one full replacement of a
    form's bounded Activity snapshot, or nil.
 
-   The snapshot is a full REPLACEMENT, never a delta: this frame is transient, so a
-   saturated queue is allowed to drop it, and last-one-wins is the only reading a
-    client that missed one can trust. Routing belongs to the envelope alone:
-   `form_index` is the form's position, the same coordinate carried by its start
-   and terminal frames. The terminal `block.output` carries the settled value."
-  [{:keys [phase position activity iteration]}]
+   Running revisions are transient while the reducer is active; the explicit settled
+   revision is durable. Both route on `form_index`, the position shared by the form's
+   start and output frames."
+  [{:keys [phase position activity iteration settled?]}]
   (when (and (= phase :form-activity) (map? activity))
-    ["block.activity" false
+    ["block.activity" (boolean settled?)
      (cond-> {:form_index position :activity activity}
        (some? iteration)
        (assoc :iteration iteration))]))
@@ -1492,24 +1487,19 @@
               ;; The card fields (pre-rendered body + headline + the printed
               ;; result's own op) — projected from ONE canonical list.
               (form/->display (form/with-display chunk))
-              (cond-> {:form_index position
-                       :code code
-                       :result result
-                       :stdout (when-let [s (:stdout chunk)]
-                                 (wire/bounded-str s RESULT_PR_LIMIT))
-                       :error (when (some? error)
-                                (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
-                       :silent (boolean (or silent?
-                                            (and (nil? error) (contains? #{"vis_silent"} result))))
-                       :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
-                                      (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
-                                        (max 0 (- (long finished-at-ms) (long started-at-ms)))))}
-                ;; The form LANDED: what it returned, what it printed, and what it
-                ;; DID. The settled Activity rides here and only here — a running
-                ;; frame is transient, and a client that missed every one of them
-                ;; still ends on the same picture the database keeps.
-                (map? (:activity chunk))
-                (assoc :activity (:activity chunk))))
+              ;; The form's execution output only. Activity has its own event type
+              ;; for both transient revisions and the durable settled snapshot.
+              {:form_index position
+               :code code
+               :result result
+               :stdout (when-let [s (:stdout chunk)]
+                         (wire/bounded-str s RESULT_PR_LIMIT))
+               :error (when (some? error)
+                        (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+               :silent (boolean (or silent? (and (nil? error) (contains? #{"vis_silent"} result))))
+               :duration_ms (let [{:keys [started-at-ms finished-at-ms]} (:envelope chunk)]
+                              (when (and (nat-int? started-at-ms) (nat-int? finished-at-ms))
+                                (max 0 (- (long finished-at-ms) (long started-at-ms)))))})
 
             ;; Live thinking, on its OWN wire event so a client paints it as the
             ;; thinking trace — distinct from prose. `:text` is the INCREMENT

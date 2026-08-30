@@ -65,6 +65,27 @@
           (expect (= "(def x \"doc\" 1)" (:code form)))
           (expect (false? (:silent? form)))))))
 
+(defdescribe
+  progress-form-activity-test
+  (it "keeps the settled Activity revision when block output lands"
+      (let [tracker
+            (progress/make-progress-tracker)
+
+            on
+            (:on-chunk tracker)
+
+            activity
+            {:state "succeeded" :rows [{:id "call-1" :state "succeeded"}]}]
+
+        (on {:phase :form-start :iteration 1 :position 0 :code "work()"})
+        (on {:phase :form-activity :settled? true :iteration 1 :position 0 :activity activity})
+        (on {:phase :form-result :iteration 1 :position 0 :code "work()" :result "done"})
+        (expect (= activity
+                   (-> ((:get-timeline tracker))
+                       first
+                       :forms
+                       first
+                       :activity))))))
 ;; Regression, reported as "I send and nothing happens for seconds": the provider
 ;; wait is the longest silence in a turn (measured on one machine: 6.4s median
 ;; from submit to the first painted token, 10.5s at p90), and everything a channel

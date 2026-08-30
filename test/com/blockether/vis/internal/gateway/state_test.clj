@@ -502,11 +502,10 @@
         (expect (= "block.output" type))
         (expect (= 3 (:iteration payload)))
         (expect (= 0 (:form_index payload)))))
-  ;; Protocol 8: Activity belongs to the form that produced it. The running frame is
-  ;; TRANSIENT — a saturated queue may drop it — so the settled snapshot must ride the
-  ;; terminal event, and a client that missed every live frame still ends on the
-  ;; picture the database keeps.
-  (it "a running form's Activity streams transient and routes on the block position"
+  ;; Activity has one event type for both timing classes: live revisions are
+  ;; transient but materialized last-one-wins; the settled revision is durable.
+  ;; `block.output` owns only the execution result.
+  (it "a running form's Activity streams transient and routes on the form position"
       (let [snapshot
             {:state :running
              :counts {:running 1 :succeeded 0 :failed 0 :cancelled 0}
@@ -520,21 +519,26 @@
         (expect (= "block.activity" type))
         (expect (false? store?))
         (expect (= {:form_index 2 :iteration 3 :activity snapshot} payload))))
-  (it "the settled Activity rides block.output, and only when the form has one"
+  (it "ships the settled Activity as durable block.activity and never on block.output"
       (let [snapshot
             {:state :succeeded
              :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
              :rows [{:id "call-1" :sequence 1 :operation "grep" :state :succeeded}]
              :omitted {:rows 0 :by-classification {}}}
 
-            settled
-            (fn [chunk]
-              (last (#'state/chunk->event
-                     (merge {:phase :form-result :iteration 3 :position 2 :code "grep(...)"}
-                            chunk))))]
+            [type store? activity-payload]
+            (#'state/chunk->event
+             {:phase :form-activity :settled? true :iteration 3 :position 2 :activity snapshot})
 
-        (expect (= snapshot (:activity (settled {:activity snapshot}))))
-        (expect (not (contains? (settled {}) :activity)))))
+            [_ output-store? output-payload]
+            (#'state/chunk->event
+             {:phase :form-result :iteration 3 :position 2 :code "grep(...)" :activity snapshot})]
+
+        (expect (= "block.activity" type))
+        (expect store?)
+        (expect (= {:form_index 2 :iteration 3 :activity snapshot} activity-payload))
+        (expect output-store?)
+        (expect (not (contains? output-payload :activity)))))
   (it "reasoning streams as a replayable typed block delta"
       (let [[type store? payload] (#'state/chunk->event
                                    {:phase :reasoning
@@ -2727,9 +2731,9 @@
 
 (defdescribe
   running-form-activity-resume-test
-  "A reconnect replays the latest Activity snapshot, not the transient stream that led to it."
+  "A reconnect replays one materialized Activity snapshot, not the revisions that led to it."
   (it
-    "materializes one current snapshot until block.output takes ownership"
+    "replaces transient revisions with the durable settled snapshot and keeps it through block.output"
     (let [sid
           (str (java.util.UUID/randomUUID))
 
@@ -2763,10 +2767,15 @@
                (expect (= 1 (count activities)))
                (expect (= 2 (get-in activities [0 "activity" "revision"]))))
              (state/append-event! sid
-                                  "block.output"
+                                  "block.activity"
                                   {:turn_id tid :iteration 1 :form_index 0 :activity {:revision 3}})
-             (expect (empty? (filter #(= "block.activity" (get % "type"))
-                                     (state/events-since sid 0))))
+             (state/append-event! sid
+                                  "block.output"
+                                  {:turn_id tid :iteration 1 :form_index 0 :result "done"})
+             (let [activities (filterv #(= "block.activity" (get % "type"))
+                                (state/events-since sid 0))]
+               (expect (= 1 (count activities)))
+               (expect (= 3 (get-in activities [0 "activity" "revision"]))))
              (finally (state/unsubscribe! sid "activity-resume") (reset! registry saved)))))))
 
 (defdescribe

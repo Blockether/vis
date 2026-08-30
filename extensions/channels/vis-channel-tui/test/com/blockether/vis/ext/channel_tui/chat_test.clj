@@ -533,6 +533,14 @@
                      (expect (= :form-result (:phase chunk)))
                      (expect (= "git_status()" (:code chunk)))
                      (expect (= "ok" (:stdout chunk)))))
+               (it "block.activity projects the form-owned replacement into the progress reducer"
+                   (let [chunk (g->c {"type" "block.activity"
+                                      "iteration" 1
+                                      "form_index" 0
+                                      "activity" {"state" "succeeded" "rows" []}})]
+                     (expect (= :form-activity (:phase chunk)))
+                     (expect (= 0 (:position chunk)))
+                     (expect (= {:state "succeeded" :rows []} (:activity chunk)))))
                (it "typed reasoning block delta projects onto :thinking"
                    (let [chunk (g->c {"type" "content.block.delta"
                                       "iteration" 2

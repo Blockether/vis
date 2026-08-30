@@ -894,7 +894,7 @@ describe("Activity owns the slot after its Python form and result", () => {
   // Regression, issue td-5b6b08: the filed Companion receipt omitted its primary
   // operation and elapsed time. The elapsed time is the FORM's duration now — the
   // very number the terminal frame measured.
-  it("keeps terminal Activity copy and elapsed time at the transcript boundary", () => {
+  it("keeps settled Activity and elapsed time at the transcript boundary", () => {
     const rendered = text(renderToStaticMarkup(
       <AssistantMessage
         turn={turnOf([{

@@ -1781,41 +1781,46 @@
 (defdescribe
   activity-ownership-boundary-test
   (it
-    "uses one final Activity value for the terminal event and persisted form"
+    "emits the persisted final Activity as its own settled chunk before the result"
     (let [env
           (lp/create-environment ::router {:db :memory})
 
           chunks
           (atom [])]
 
-      (try (with-redefs [svar/ask-code!
-                         (fn [_router _opts]
-                           {:stop-reason :tool-calls
-                            :tool-calls [{:id "call_activity"
-                                          :name "python_execution"
-                                          :input
-                                          {:code
-                                           "grep({'query': 'defproject', 'paths': ['deps.edn']})"}}]
-                            :content nil
-                            :reasoning "checking"
-                            :tokens {}})]
-             (let [result (lp/run-iteration env
-                                            []
-                                            {:iteration 0
-                                             :resolved-model {:provider :zai-coding-plan
-                                                              :name "glm-5.1"}
-                                             :on-chunk #(swap! chunks conj %)})
-                   block (first (:blocks result))
-                   terminal (first (filter #(= :form-result (:phase %)) @chunks))
-                   forms (eng/blocks->forms (:blocks result) {:turn 1 :iter 1})
-                   activity (:activity block)]
+      (try
+        (with-redefs [svar/ask-code!
+                      (fn [_router _opts]
+                        {:stop-reason :tool-calls
+                         :tool-calls
+                         [{:id "call_activity"
+                           :name "python_execution"
+                           :input {:code "grep({'query': 'defproject', 'paths': ['deps.edn']})"}}]
+                         :content nil
+                         :reasoning "checking"
+                         :tokens {}})]
+          (let [result (lp/run-iteration env
+                                         []
+                                         {:iteration 0
+                                          :resolved-model {:provider :zai-coding-plan
+                                                           :name "glm-5.1"}
+                                          :on-chunk #(swap! chunks conj %)})
+                block (first (:blocks result))
+                terminal (first (filter #(= :form-result (:phase %)) @chunks))
+                activity-chunks (filterv #(= :form-activity (:phase %)) @chunks)
+                settled (last activity-chunks)
+                forms (eng/blocks->forms (:blocks result) {:turn 1 :iter 1})
+                activity (:activity block)]
 
-               (expect (seq (filter #(= :form-activity (:phase %)) @chunks)))
-               (expect (= activity (:activity terminal) (:activity (first forms))))
-               (expect (= "succeeded" (:state activity)))
-               (expect (seq (:rows activity)))
-               (expect (empty? (:attachments block)))))
-           (finally (lp/dispose-environment! env))))))
+            (expect (seq activity-chunks))
+            (expect (true? (:settled? settled)))
+            (expect (= activity (:activity settled) (:activity (first forms))))
+            (expect (not (contains? terminal :activity)))
+            (expect (< (.indexOf @chunks settled) (.indexOf @chunks terminal)))
+            (expect (= "succeeded" (:state activity)))
+            (expect (seq (:rows activity)))
+            (expect (empty? (:attachments block)))))
+        (finally (lp/dispose-environment! env))))))
 
 
 

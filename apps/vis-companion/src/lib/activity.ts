@@ -7,9 +7,9 @@
  * tool calls that produced them, and never enters the model's context.
  *
  * It is NOT a Live View. Protocol 8 stopped shipping it as a classified view
- * addressed from a distance by an anchor: it belongs to the form that produced
- * it, arrives whole on the transient `block.activity` frame and settles on the
- * terminal block event, so it is parsed here and painted by `ActivityPanel` —
+ * addressed from a distance by an anchor. Protocol 9 gives both running and settled
+ * revisions the one `block.activity` event type; the settled revision is durable. It
+ * is parsed here and painted by `ActivityPanel` —
  * neither of which the Live View rail knows about. The two surfaces share a
  * transport, nothing else.
  *

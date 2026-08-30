@@ -29,10 +29,10 @@
                        (or returning `:vis/silent`) keep their `:silent?`
                        flag so channels can toggle visibility.
 
-     :form-activity    One running block's bounded Activity snapshot — what it
-                       has DONE so far, beside what it will return. A full
-                       REPLACEMENT into the form slot `:position` names, so a
-                       dropped frame costs a repaint and never a wrong picture.
+     :form-activity    One block's bounded Activity snapshot — what it has DONE
+                       beside what it will return. Running and settled revisions are
+                       full REPLACEMENTS into the form slot `:position` names, so a
+                       dropped running frame costs a repaint and never a wrong picture.
      :iteration-final  Iteration is complete. Carries `:final` (nil
                        when the turn isn't done yet) and `:done?`
                        (true when this iteration produced the
@@ -245,9 +245,9 @@
        :result-kind (form-result-kind chunk)
        :result-detail (form-result-detail chunk)
        :error (:error chunk)
-       ;; What the form DID. The terminal chunk is authoritative: a late live
-       ;; frame must not edit the picture the settler froze.
-       :activity (:activity chunk)
+       ;; Activity has its own lifecycle frame. Preserve the latest replacement
+       ;; when the execution output fills in the rest of this form.
+       :activity (:activity prev-form)
        :success? (not errored?)
        :silent? (and (not errored?) (silent-chunk? chunk))})))
 

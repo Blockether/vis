@@ -16,14 +16,14 @@
 import type { GatewayHealth, GatewayProtocol } from './types';
 
 /**
- * Wire protocol number THIS app build speaks. Protocol 8 gives every turn one
- * identity from submit through history, names ticker frames `turn.progress`, and
- * routes form frames by numeric `form_index`.
+ * Wire protocol number THIS app build speaks. Protocol 9 gives Activity one event
+ * throughout its lifecycle: transient/materialized running revisions and one durable
+ * settled `block.activity`; `block.output` carries execution output only.
  */
-export const APP_PROTOCOL = 8;
+export const APP_PROTOCOL = 9;
 
-/** Oldest gateway protocol this app accepts: the canonical protocol 8 shape. */
-export const APP_MIN_GATEWAY_PROTOCOL = 8;
+/** Oldest gateway protocol this app accepts: the canonical protocol 9 shape. */
+export const APP_MIN_GATEWAY_PROTOCOL = 9;
 
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';

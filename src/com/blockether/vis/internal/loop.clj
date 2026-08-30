@@ -975,8 +975,8 @@
    A running snapshot is a convenience, not the record: it rides the bus as a
    TRANSIENT frame a full queue may drop, and every publication also costs a line
    of the turn's journal, which is truncated whole once it passes its file cap. The
-   settled snapshot on the form is what persists, so a tool storm coalesces here
-   instead of spending the turn's replay budget on pictures nobody reads."
+   settled replacement is durable and also persists on the form, so a tool storm
+   coalesces here instead of spending the turn's replay budget on pictures nobody reads."
   120)
 
 (defn- serial-activity-dispatcher
@@ -4789,9 +4789,10 @@
           ;; Stream reasoning chunks to the TUI while the LLM is
           ;; thinking. Every chunk carries `:phase` - consumers
           ;; dispatch on it. Phases:
-          ;;   :reasoning      - LLM streaming reasoning text
-          ;;   :form-start     - the block started evaluating
-          ;;   :form-result    - the block finished evaluating
+          ;;   :reasoning       - LLM streaming reasoning text
+          ;;   :form-start      - the block started evaluating
+          ;;   :form-activity   - one running or settled Activity replacement
+          ;;   :form-result     - the block finished evaluating
           ;;   :iteration-final - iteration complete (final-result
           ;;                      or normal end-of-iteration marker)
           ;;
@@ -5174,59 +5175,63 @@
               ;; on the turn-state atom.
               (swap! turn-state-atom assoc :form-idx idx)
               (let [scope (form-scope idx)
+                    emit-activity! (when (and on-chunk (not suppress-form-start?))
+                                     (fn [snapshot settled?]
+                                       (on-chunk (cond-> {:phase :form-activity
+                                                          :iteration iteration-position
+                                                          :position idx
+                                                          :count total-blocks
+                                                          :scope scope
+                                                          :activity snapshot}
+                                                   settled?
+                                                   (assoc :settled? true)))))
                     raw-result
-                    (cond
-                      preflight-error {:result nil
-                                       :error (op-error preflight-error
-                                                        {:code expr :phase :vis/preflight})
-                                       :duration-ms 0
-                                       :op :vis/guard}
-                      :else
-                      (if-let [err (literal-code-block-error (:python-context environment) expr)]
-                        {:result nil
-                         :error (op-error err {:code expr :phase :vis/guard})
-                         :duration-ms 0
-                         :op :vis/guard}
-                        (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
-                                              (fn [tool-event]
-                                                ;; Turn progress consumes starts only. Terminal truth
-                                                ;; feeds Activity without changing that stream.
-                                                (when (= :start (:phase tool-event))
-                                                  (on-chunk {:phase :tool-start
-                                                             :iteration iteration-position
-                                                             :position idx
-                                                             :count total-blocks
-                                                             :scope scope
-                                                             :code expr
-                                                             :render-segments render-segments
-                                                             :tool-event tool-event}))))
-                              r (let [activity-env (assoc environment
-                                                     ;; Live Activity belongs to the ITERATION
-                                                     ;; protocol and routes on the block's own
-                                                     ;; position — the very coordinate
-                                                     ;; `block.started`/`block.output` already carry.
-                                                     :activity/on-snapshot
-                                                     (when (and on-chunk (not suppress-form-start?))
-                                                       (fn [snapshot]
-                                                         (on-chunk {:phase :form-activity
-                                                                    :iteration iteration-position
-                                                                    :position idx
-                                                                    :count total-blocks
-                                                                    :scope scope
-                                                                    :activity snapshot}))))]
-                                  (if tool-event-fn
-                                    (execute-code activity-env expr :tool-event-fn tool-event-fn)
-                                    (execute-code activity-env expr)))]
+                    (cond preflight-error {:result nil
+                                           :error (op-error preflight-error
+                                                            {:code expr :phase :vis/preflight})
+                                           :duration-ms 0
+                                           :op :vis/guard}
+                          :else
+                          (if-let [err (literal-code-block-error (:python-context environment)
+                                                                 expr)]
+                            {:result nil
+                             :error (op-error err {:code expr :phase :vis/guard})
+                             :duration-ms 0
+                             :op :vis/guard}
+                            (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
+                                                  (fn [tool-event]
+                                                    ;; Turn progress consumes starts only. Terminal truth
+                                                    ;; feeds Activity without changing that stream.
+                                                    (when (= :start (:phase tool-event))
+                                                      (on-chunk {:phase :tool-start
+                                                                 :iteration iteration-position
+                                                                 :position idx
+                                                                 :count total-blocks
+                                                                 :scope scope
+                                                                 :code expr
+                                                                 :render-segments render-segments
+                                                                 :tool-event tool-event}))))
+                                  r
+                                  (let [activity-env (assoc environment
+                                                       ;; Activity belongs to the form and routes on the
+                                                       ;; position shared by all of that form's frames.
+                                                       :activity/on-snapshot
+                                                       (when emit-activity!
+                                                         (fn [snapshot]
+                                                           (emit-activity! snapshot false))))]
+                                    (if tool-event-fn
+                                      (execute-code activity-env expr :tool-event-fn tool-event-fn)
+                                      (execute-code activity-env expr)))]
 
-                          (log-stage! :code-result
-                                      iteration
-                                      {:idx (inc (long idx))
-                                       :total total-blocks
-                                       :duration-ms (:duration-ms r)
-                                       :error (:error r)
-                                       :timeout? (:timeout? r)
-                                       :result (:result r)})
-                          r)))
+                              (log-stage! :code-result
+                                          iteration
+                                          {:idx (inc (long idx))
+                                           :total total-blocks
+                                           :duration-ms (:duration-ms r)
+                                           :error (:error r)
+                                           :timeout? (:timeout? r)
+                                           :result (:result r)})
+                              r)))
                     ;; Carry parinfer's whole-source
                     ;; rebalance flag into the block
                     ;; result. `execute-code` may also
@@ -5259,7 +5264,11 @@
                     displayable (assoc result* :src expr)
                     result-card (form/result-display displayable)
                     result-render (form/result-render displayable)
-                    result-summary (:summary result-card)]
+                    result-summary (:summary result-card)
+                    _ (when (and emit-activity! (map? (:activity result*)))
+                        ;; The last revision has the same event type as the running
+                        ;; replacements, but is durable. Output remains output.
+                        (emit-activity! (:activity result*) true))]
 
                 ;; Per-block streaming chunk (:phase
                 ;; :form-result). Fires the moment a
@@ -5303,10 +5312,6 @@
                      :envelope (:envelope result*)
                      :role (:role result*)
                      :timeout? (boolean (:timeout? result*))
-                     ;; What the block DID, beside what it returned. The terminal
-                     ;; form event is the one authoritative carrier: a running
-                     ;; snapshot is transient and may be dropped.
-                     :activity (:activity result*)
                      :repaired? (boolean (:repaired? result*))}))
                 {:block expr
                  :result result*
@@ -5374,9 +5379,8 @@
                       (:vis/silent result)
                       (assoc :vis/silent true)
 
-                      ;; The settled Activity snapshot travels ON the block, so the
-                      ;; form envelope, the wire and the stored iteration all carry
-                      ;; the one value the settler froze.
+                      ;; Persist the settler's one frozen snapshot on the block;
+                      ;; its own durable wire event carried the same value above.
                       (some? (:activity result))
                       (assoc :activity (:activity result))
 

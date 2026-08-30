@@ -35,21 +35,25 @@
   "Wire protocol number THIS build speaks. Monotonic; bump on every BREAKING
    gateway HTTP/SSE change.
 
+   9 — Activity owns one event type for its whole lifecycle: running revisions are
+   transient/materialized `block.activity`; the settled revision is durable
+   `block.activity`. `block.output` carries execution output only.
+
    8 — One turn id survives submission, execution, persistence, replay, and trace
    lookup. Coarse ticker frames are `turn.progress`; form frames route by the
    truthful numeric `form_index`. The split-id reconciliation contract and the
    overloaded `activity` event name are gone."
-  8)
+  9)
 
 (def min-client-protocol
-  "Oldest client protocol this gateway serves. Protocol 8 requires canonical turn
-   identity and the renamed progress/form coordinates."
-  8)
+  "Oldest client protocol this gateway serves. Protocol 9 requires Activity to settle
+   on durable `block.activity`, never `block.output`."
+  9)
 
 (def min-gateway-protocol
   "Oldest gateway protocol this client accepts: the mirror of
    [[min-client-protocol]]."
-  8)
+  9)
 
 (def protocol-header "Request header carrying the client's own protocol number." "x-vis-protocol")
 

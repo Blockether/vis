@@ -30,8 +30,8 @@ const activityProjection = (
 
 describe("one form's Activity read off the wire", () => {
   // Protocol 7 took Activity off the Live View rail: it is no longer a classified
-  // view with a projection hanging off it, so the projection is parsed on its own
-  // — from the transient `block.activity` frame and from the terminal block event.
+  // view with a projection hanging off it. Protocol 9 carries every revision on
+  // `block.activity`; only the settled replacement is durable.
   it('reads a bare projection off the wire', () => {
     expect(activityProjectionFromWire(activityProjection())).toMatchObject({ state: 'running' });
   });
