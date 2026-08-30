@@ -27,6 +27,7 @@
             [taoensso.telemere :as tel]
             [com.blockether.vis.internal.session-model :as session-model]
             [com.blockether.vis.internal.toggles :as toggles]
+            [com.blockether.vis.internal.util :as util]
             [com.blockether.vis.internal.vision-describe :as vision-describe]
             [lazytest.core :refer [defdescribe describe it expect throws?]]))
 
@@ -332,6 +333,271 @@
                             1400
                             1100
                             600002))))))
+
+;; Regression, user report: a completed turn was reconstructed into a different request on
+;; the next turn, discarding a provider-resident prefix; folds could then rewrite it repeatedly.
+(defdescribe
+  cross-turn-prompt-prefix-test
+  "A successful live turn remains the exact provider prefix of its immediate follow-up;
+   route or semantic-history changes deliberately fall back to the canonical recap."
+  (it
+    "appends the accepted answer and next user message to the exact final request"
+    (let [history
+          (atom {})
+
+          sample!
+          @#'lp/note-prompt-cache-request!
+
+          complete!
+          @#'lp/mark-prompt-cache-turn-complete!
+
+          resume
+          @#'lp/resumable-prompt-message-base
+
+          stable
+          [{:role "system" :content "stable"}]
+
+          request
+          (conj stable
+                {:role "user" :content "turn one"}
+                {:role "assistant" :content "tool call"}
+                {:role "user" :content "tool result"})
+
+          final-assistant
+          {:role "assistant" :content "answer one"}
+
+          next-user
+          [{:role "user" :content "turn two"}]
+
+          summaries
+          [{"scopes" ["t1/i1"] "gist" "settled"}]]
+
+      (sample! history :zai-coding-plan "glm-5.3-flash" request 12000 0 (util/now-ms))
+      (complete! history
+                 :zai-coding-plan
+                 "glm-5.3-flash"
+                 1
+                 summaries
+                 (count stable)
+                 final-assistant)
+      (let [base (resume history :zai-coding-plan "glm-5.3-flash" 2 summaries stable next-user)]
+        (expect (:resumed? base))
+        (expect (= request (subvec (:messages base) 0 (count request))))
+        (expect (= (into (conj request final-assistant) next-user) (:messages base))))))
+  (it
+    "refuses a stale entry, different route, non-adjacent turn, changed ledger, or changed system"
+    (let [history
+          (atom {})
+
+          sample!
+          @#'lp/note-prompt-cache-request!
+
+          complete!
+          @#'lp/mark-prompt-cache-turn-complete!
+
+          resume
+          @#'lp/resumable-prompt-message-base
+
+          stable
+          [{:role "system" :content "stable one"} {:role "system" :content "stable two"}]
+
+          request
+          (conj stable {:role "user" :content "turn one"})
+
+          summaries
+          [{"scopes" ["t1/i1"] "gist" "settled"}]
+
+          args
+          [:zai-coding-plan "glm-5.3-flash" 2 summaries stable [{:role "user" :content "turn two"}]]
+
+          now
+          (util/now-ms)]
+
+      (sample! history :zai-coding-plan "glm-5.3-flash" request 8000 0 now)
+      (complete! history
+                 :zai-coding-plan
+                 "glm-5.3-flash"
+                 1
+                 summaries
+                 (count stable)
+                 {:role "assistant" :content "answer one"})
+      (expect (nil? (apply resume history (assoc args 1 "other-model"))))
+      (expect (nil? (apply resume history (assoc args 2 3))))
+      (expect (nil? (apply resume history (assoc args 3 []))))
+      (expect (nil? (apply resume history (assoc args 4 [(first stable)]))))
+      (expect (nil? (apply resume
+                      history
+                      (assoc args
+                        4 [{:role "system" :content "changed one"}
+                           {:role "system" :content "changed two"}]))))
+      (swap! history assoc-in [[:zai-coding-plan "glm-5.3-flash"] :at-ms] (- now 300001))
+      (expect (nil? (apply resume history args)))))
+  (it "rebuilds once after a fold and then keeps the new canonical base stable"
+      (let [canonical-calls
+            (atom 0)
+
+            state
+            (atom
+              {:messages [{:role "system" :content "prior-request"}] :summaries [] :resumed? true})
+
+            base!
+            @#'lp/prompt-message-base!
+
+            canonical
+            (fn []
+              (swap! canonical-calls inc)
+              [{:role "system" :content "canonical-after-fold"}])
+
+            folded
+            [{"scopes" ["t1/i1"] "gist" "folded"}]
+
+            switched
+            (base! state folded canonical)
+
+            stable
+            (base! state folded canonical)]
+
+        (expect (= 1 @canonical-calls))
+        (expect (false? (:resumed? switched)))
+        (expect (= [{:role "system" :content "canonical-after-fold"}] (:messages switched)))
+        (expect (= switched stable))))
+  (it "does not duplicate prior-turn seeds while an exact carried prefix is active"
+      (let [visible
+            @#'lp/conversation-trailer-for-base
+
+            seeded
+            [1 {:preserved-thinking/replay? false :blocks [{:result "old"}]}]
+
+            current
+            [1 {:preserved-thinking/replay? true :blocks [{:result "new"}]}]
+
+            trailer
+            [seeded current]]
+
+        (expect (= [current] (visible trailer true)))
+        (expect (= trailer (visible trailer false))))))
+
+(defdescribe
+  prompt-cache-turn-completion-test
+  (it
+    "marks and checkpoints a persisted accepted answer, then removes the internal handoff"
+    (let [history
+          (atom {})
+
+          stored
+          (atom nil)
+
+          sample!
+          @#'lp/note-prompt-cache-request!
+
+          request
+          [{:role "system" :content "stable"} {:role "user" :content "turn one"}]
+
+          assistant
+          {:role "assistant" :content "done"}
+
+          standing
+          {:block "<context>exact</context>" :baseline {"session_id" "s1"}}
+
+          env
+          {:db-info ::db
+           :session-id "s1"
+           :session/state-id "state-1"
+           :router (helper-router :zai-coding-plan nil)
+           :turn-state-atom (ctx-loop/make-turn-state-atom)
+           :standing-ctx-atom (atom standing)
+           :prompt-cache-history-atom history}]
+
+      (sample! history :zai-coding-plan "model" request 5000 0 (util/now-ms))
+      (with-redefs [persistance/db-store-session-turn!
+                    (fn [& _]
+                      "turn-1")
+
+                    persistance/db-update-session-turn!
+                    (fn [& _]
+                      true)
+
+                    persistance/db-set-session-prompt-cache-state!
+                    (fn [_db state-id state]
+                      (reset! stored [state-id state])
+                      state)
+
+                    lp/session-turn-position
+                    (fn [& _]
+                      1)
+
+                    titling/maybe-auto-title!
+                    (fn [& _]
+                      nil)
+
+                    lp/iteration-loop
+                    (fn [& _]
+                      {:answer "done"
+                       :iteration-count 1
+                       :duration-ms 1
+                       :prompt-cache-completion {:provider :zai-coding-plan
+                                                 :model "model"
+                                                 :turn-position 1
+                                                 :summaries []
+                                                 :stable-message-count 1
+                                                 :assistant-message assistant}})]
+
+        (let [result (#'lp/run-normal-turn! env "finish" {})]
+          (expect (nil? (:prompt-cache-completion result)))
+          (expect
+            (= {:turn-position 1 :summaries [] :stable-message-count 1 :assistant-message assistant}
+               (get-in @history [[:zai-coding-plan "model"] :completed-turn])))
+          (expect (= "state-1" (first @stored)))
+          (expect (= [:zai-coding-plan "model"] (get-in @stored [1 :route])))
+          (expect (= request (get-in @stored [1 :entry :messages])))
+          (expect (= standing (get-in @stored [1 :standing-ctx])))))))
+  (it
+    "does not mark a terminal that another caller already claimed"
+    (let [history
+          (atom {})
+
+          sample!
+          @#'lp/note-prompt-cache-request!
+
+          env
+          {:db-info ::db
+           :session-id "s1"
+           :router (helper-router :zai-coding-plan nil)
+           :turn-state-atom (ctx-loop/make-turn-state-atom)
+           :prompt-cache-history-atom history}]
+
+      (sample! history :zai-coding-plan "model" [{:role "system" :content "stable"}] 5000 0 1000)
+      (with-redefs [persistance/db-store-session-turn!
+                    (fn [& _]
+                      "turn-1")
+
+                    persistance/db-update-session-turn!
+                    (fn [& _]
+                      true)
+
+                    lp/session-turn-position
+                    (fn [& _]
+                      1)
+
+                    titling/maybe-auto-title!
+                    (fn [& _]
+                      nil)
+
+                    lp/iteration-loop
+                    (fn [& _]
+                      {:answer "done"
+                       :iteration-count 1
+                       :duration-ms 1
+                       :prompt-cache-completion {:provider :zai-coding-plan
+                                                 :model "model"
+                                                 :turn-position 1
+                                                 :summaries []
+                                                 :stable-message-count 1
+                                                 :assistant-message {:role "assistant"
+                                                                     :content "done"}}})]
+
+        (#'lp/run-normal-turn! env "finish" {:hooks {:claim-terminal! (constantly false)}})
+        (expect (nil? (get-in @history [[:zai-coding-plan "model"] :completed-turn])))))))
 
 (defdescribe
   copilot-action-service-headers-test
@@ -721,7 +987,86 @@
             (:python-context environment)]
 
         (lp/dispose-environment! environment)
-        (expect (try (env/run-python-block python-context "1") false (catch Throwable _ true))))))
+        (expect (try (env/run-python-block python-context "1") false (catch Throwable _ true)))))
+  ;; Regression, user report: a rebuilt CLI session defaulted to TUI, removing its
+  ;; autonomous system block and breaking the exact provider prefix between turns.
+  (it
+    "restores the CLI channel and exact provider prefix after process rebuild"
+    (let [dir
+          (.toFile (java.nio.file.Files/createTempDirectory
+                     "vis-prompt-prefix"
+                     (make-array java.nio.file.attribute.FileAttribute 0)))
+
+          db-path
+          (.getPath (java.io.File. dir "vis.mdb"))
+
+          route
+          [:zai-coding-plan "glm-5.3-flash"]
+
+          standing
+          {:block "<context>exact</context>" :baseline {"session_id" "s1"}}
+
+          stable-for
+          (fn [environment]
+            (prompt/assemble-stable-prompt-messages environment
+                                                    {:active-extensions (prompt/active-extensions
+                                                                          environment)
+                                                     :session-context (:block standing)}))
+
+          session-id
+          (atom nil)
+
+          persisted-entry
+          (atom nil)
+
+          first-stable
+          (atom nil)]
+
+      (try (let [first-env (lp/create-environment ::router {:db db-path :channel :cli})]
+             (try (let [stable (stable-for first-env)
+                        request (conj stable {:role "user" :content "turn one"})
+                        entry {:messages request
+                               :weights (vec (repeat (count request) 1))
+                               :input-tokens 12000
+                               :at-ms (util/now-ms)
+                               :completed-turn {:turn-position 1
+                                                :summaries []
+                                                :stable-message-count (count stable)
+                                                :assistant-message {:role "assistant"
+                                                                    :content "done"}}}]
+
+                    (reset! session-id (:session-id first-env))
+                    (reset! persisted-entry entry)
+                    (reset! first-stable stable)
+                    (expect (some #(str/includes? (:content %) "NON-INTERACTIVE ONE-SHOT RUN")
+                                  stable))
+                    (persistance/db-set-session-prompt-cache-state!
+                      (:db-info first-env)
+                      (:session/state-id first-env)
+                      {:route route :entry entry :standing-ctx standing}))
+                  (finally (lp/dispose-environment! first-env))))
+           (let [resumed (lp/create-environment ::router {:db db-path :session @session-id})]
+             (try (let [stable (stable-for resumed)
+                        next-user [{:role "user" :content "turn two"}]
+                        base (#'lp/resumable-prompt-message-base
+                              (:prompt-cache-history-atom resumed)
+                              (first route)
+                              (second route)
+                              2
+                              []
+                              stable
+                              next-user)]
+
+                    (expect (= :cli (:channel resumed)))
+                    (expect (= @first-stable stable))
+                    (expect (= {route @persisted-entry} @(:prompt-cache-history-atom resumed)))
+                    (expect (= standing @(:standing-ctx-atom resumed)))
+                    (expect (:resumed? base))
+                    (expect (= (:messages @persisted-entry)
+                               (subvec (:messages base) 0 (count (:messages @persisted-entry))))))
+                  (finally (lp/dispose-environment! resumed))))
+           (finally (doseq [file (reverse (file-seq dir))]
+                      (.delete ^java.io.File file)))))))
 
 (defdescribe
   permission-config-snapshot-test

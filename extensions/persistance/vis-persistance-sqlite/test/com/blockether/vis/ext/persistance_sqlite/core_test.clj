@@ -773,6 +773,7 @@
           (vis/db-create-connection! dir)]
 
       (try (expect (contains? (table-columns s1 "session_attachment") "audience"))
+           (expect (contains? (table-columns s1 "session_state") "prompt_cache_state"))
            ;; Rewind this store to an OLDER shape of the same canonical V1: the
            ;; table exists, its Flyway history is intact, but it predates the
            ;; columns V1 has grown since. That is exactly what a `~/.vis` database
@@ -780,6 +781,8 @@
            (jdbc/execute! (:datasource s1) ["DROP TABLE session_attachment"])
            (jdbc/execute! (:datasource s1)
                           ["CREATE TABLE session_attachment (id TEXT PRIMARY KEY NOT NULL)"])
+           (jdbc/execute! (:datasource s1)
+                          ["ALTER TABLE session_state DROP COLUMN prompt_cache_state"])
            (jdbc/execute! (:datasource s1) ["CREATE TABLE topup_probe (id INTEGER)"])
            (jdbc/execute! (:datasource s1) ["INSERT INTO topup_probe (id) VALUES (7)"])
            (vis/db-dispose-connection! s1)
@@ -797,6 +800,7 @@
                     ;; NOT NULL without a DEFAULT is not addable in SQLite: left alone
                     ;; rather than failing the open.
                     (expect (not (contains? cols "media_type"))))
+                  (expect (contains? (table-columns s2 "session_state") "prompt_cache_state"))
                   ;; Purely additive: unrelated tables and rows are untouched.
                   (expect (= 1 (raw-count s2 :topup_probe)))
                   (finally (vis/db-dispose-connection! s2))))
@@ -1149,6 +1153,37 @@
         (expect (= "gpt-4o" (:model session)))
         (expect (= "T" (:title session)))
         (expect (= 0 (:version session)))))
+  (it
+    "round-trips one compressed prompt-prefix checkpoint without inheriting it into a fork"
+    (let [s
+          (h/store)
+
+          session-id
+          (h/store-session! s {:channel :tui})
+
+          state-id
+          (persistance/db-latest-session-state-id s session-id)
+
+          checkpoint
+          {:route [:zai-coding-plan "glm-5.3-flash"]
+           :entry {:messages [{:role "system" :content "stable"} {:role "user" :content "turn one"}]
+                   :weights [40 35]
+                   :input-tokens 12000
+                   :at-ms 1000
+                   :completed-turn {:turn-position 1
+                                    :summaries []
+                                    :stable-message-count 1
+                                    :assistant-message {:role "assistant" :content "done"}}}
+           :standing-ctx {:block "<context>exact</context>"
+                          :baseline {"session_id" (str session-id)}}}]
+
+      (expect (= checkpoint (persistance/db-set-session-prompt-cache-state! s state-id checkpoint)))
+      (expect (= checkpoint (persistance/db-get-session-prompt-cache-state s state-id)))
+      (h/fork-session! s session-id {})
+      (expect (nil? (persistance/db-get-session-prompt-cache-state
+                      s
+                      (persistance/db-latest-session-state-id s session-id))))
+      (expect (= checkpoint (persistance/db-get-session-prompt-cache-state s state-id)))))
   (it "resolves :latest"
       (let [s (h/store)]
         (h/store-session! s {:channel :tui})

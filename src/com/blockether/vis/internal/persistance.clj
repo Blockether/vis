@@ -468,6 +468,10 @@
 
 (defdelegate db-latest-session-state-id [db-info session-id])
 
+(defdelegate db-get-session-prompt-cache-state [db-info session-state-id])
+
+(defdelegate db-set-session-prompt-cache-state! [db-info session-state-id state])
+
 ;; Per-session model preference (session_soul.llm_pref_provider + llm_pref_model) — shared by every
 ;; channel; read by the engine at turn start (see session-model + loop.clj).
 (defdelegate db-get-session-model-pref [db-info session-id])

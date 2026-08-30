@@ -3907,9 +3907,11 @@
    message (a tool_result with no answering tool_use is a wire error).
 
    Cross-turn seeds (`:preserved-thinking/replay? false`) from completed turns
-   stay fully excluded because their answer/recap already carries the outcome.
-   Seeds from terminal incomplete turns replay only their settled results as
-   plain text (never opaque thinking or orphaned tool_result blocks), preserving
+   stay fully excluded when the canonical recap carries their outcome. An exact
+   prior-request prefix excludes them one layer earlier as well; otherwise the
+   carried request and the seeded trailer would duplicate the same turn. Seeds
+   from terminal incomplete turns replay only their settled results as plain text
+   (never opaque thinking or orphaned tool_result blocks), preserving
    cancellation/error continuity without duplicating successful-turn evidence.
 
    Compatible entries route through `preserved-thinking-replay-messages`
@@ -4406,10 +4408,10 @@
     (when (and (<= n (count messages)) (= history (subvec messages 0 n))) (subvec messages n))))
 
 (def ^:private PROMPT_CACHE_REUSE_FRESH_MS
-  "How long a same-route prefix is still expected to be resident in the provider
-   cache. It decides the LABEL a sample carries and never whether the sample
-   exists: excluding a miss would leave a metric that can only report its own
-   successes."
+  "How long a same-route prefix is expected to remain resident in the provider
+   cache. It gates exact cross-turn restoration and labels continuity samples; a
+   stale request falls back to the compact canonical recap instead of replaying a
+   large cold prefix."
   300000)
 
 (defn- message-weights
@@ -4513,6 +4515,177 @@
             (assoc routes
               route {:messages messages :weights weights :input-tokens input :at-ms at-ms}))))
       @sample)))
+
+(defn- current-session-summaries
+  "Immutable fold-ledger value used to decide whether a provider prefix is still semantic."
+  [environment]
+  (some-> (:ctx-atom environment)
+          deref
+          (get "session_summaries")))
+
+(defn- prompt-cache-entry-fresh?
+  "True while ENTRY's last request is inside the conservative provider-cache window."
+  [entry]
+  (when (integer? (:at-ms entry))
+    (let [age-ms (- (long (util/now-ms)) (long (:at-ms entry)))]
+      (<= 0 age-ms (long PROMPT_CACHE_REUSE_FRESH_MS)))))
+
+(defn- valid-prompt-cache-state?
+  "Validate the single exact-prefix checkpoint accepted from persistence."
+  [{:keys [route entry standing-ctx]}]
+  (let [[provider model]
+        route
+
+        messages
+        (:messages entry)
+
+        completed
+        (:completed-turn entry)]
+
+    (and (vector? route)
+         (= 2 (count route))
+         (some? provider)
+         (string? model)
+         (map? entry)
+         (vector? messages)
+         (seq messages)
+         (every? map? messages)
+         (vector? (:weights entry))
+         (= (count messages) (count (:weights entry)))
+         (integer? (:input-tokens entry))
+         (map? completed)
+         (integer? (:turn-position completed))
+         (integer? (:stable-message-count completed))
+         (map? (:assistant-message completed))
+         (map? standing-ctx)
+         (string? (:block standing-ctx))
+         (map? (:baseline standing-ctx))
+         (prompt-cache-entry-fresh? entry))))
+
+(defn- load-prompt-cache-state
+  "Load one fresh exact-prefix checkpoint; malformed or stale state is a safe miss."
+  [db-info session-state-id]
+  (when (and db-info session-state-id)
+    (try (let [state (persistance/db-get-session-prompt-cache-state db-info session-state-id)]
+           (when (valid-prompt-cache-state? state) state))
+         (catch Throwable t
+           (tel/log! {:level :warn
+                      :id ::prompt-cache-state-load-failed
+                      :data {:session-state-id (str session-state-id) :error (ex-message t)}
+                      :msg "could not restore the provider prefix checkpoint"})
+           nil))))
+
+(defn- mark-prompt-cache-turn-complete!
+  "Attach one accepted turn boundary to the exact final request for ROUTE.
+
+   The request itself was recorded by `note-prompt-cache-request!`. Completion is
+   marked only after the turn outcome persists, so a cancelled, rejected, or
+   racing terminal can never become the next turn's conversational prefix."
+  [history-atom provider model turn-position summaries stable-message-count assistant-message]
+  (when (and history-atom
+             provider
+             (some? model)
+             (integer? turn-position)
+             (integer? stable-message-count)
+             (map? assistant-message))
+    (let [route [provider (str model)]]
+      (swap! history-atom update
+        route
+        (fn [entry]
+          (if (seq (:messages entry))
+            (assoc entry
+              :completed-turn {:turn-position (long turn-position)
+                               :summaries summaries
+                               :stable-message-count (long stable-message-count)
+                               :assistant-message assistant-message})
+            entry))))))
+
+(defn- persist-prompt-cache-state!
+  "Best-effort overwrite of the one restart-safe exact-prefix checkpoint."
+  [environment provider model]
+  (when (and (:db-info environment)
+             (:session/state-id environment)
+             (:prompt-cache-history-atom environment)
+             provider
+             (some? model))
+    (let [route
+          [provider (str model)]
+
+          entry
+          (get @(:prompt-cache-history-atom environment) route)
+
+          standing-ctx
+          (some-> (:standing-ctx-atom environment)
+                  deref)]
+
+      (when (and (:completed-turn entry) (map? standing-ctx))
+        (try (persistance/db-set-session-prompt-cache-state!
+               (:db-info environment)
+               (:session/state-id environment)
+               {:route route :entry entry :standing-ctx standing-ctx})
+             (catch Throwable t
+               (tel/log! {:level :warn
+                          :id ::prompt-cache-state-store-failed
+                          :data {:session-state-id (str (:session/state-id environment))
+                                 :error (ex-message t)}
+                          :msg "could not store the provider prefix checkpoint"})))))))
+
+(defn- resumable-prompt-message-base
+  "Return an exact cross-turn provider prefix, or nil when any safety key changed.
+
+   A hit preserves the complete final request byte-for-byte, then appends the
+   accepted assistant answer and this turn's user message. Same route, adjacent
+   turn, fresh cache residency, unchanged fold ledger, and an identical stable
+   system prefix are all required; canonical recap assembly owns every miss."
+  [history-atom provider model turn-position summaries stable-messages turn-messages]
+  (when (and history-atom provider (some? model) (integer? turn-position))
+    (let [entry
+          (get @history-atom [provider (str model)])
+
+          completed
+          (:completed-turn entry)
+
+          request
+          (vec (:messages entry))
+
+          stable
+          (vec stable-messages)
+
+          stable-count
+          (count stable)]
+
+      (when (and completed
+                 (prompt-cache-entry-fresh? entry)
+                 (seq stable)
+                 (= (long turn-position) (inc (long (:turn-position completed))))
+                 (= summaries (:summaries completed))
+                 (= stable-count (:stable-message-count completed))
+                 (map? (:assistant-message completed))
+                 (<= stable-count (count request))
+                 (= stable (subvec request 0 stable-count)))
+        {:messages (into (conj request (:assistant-message completed)) turn-messages)
+         :summaries summaries
+         :resumed? true}))))
+
+(defn- prompt-message-base!
+  "Keep BASE while its fold ledger is unchanged; otherwise canonicalize exactly once."
+  [base-atom summaries canonical-messages-fn]
+  (let [base @base-atom]
+    (if (= summaries (:summaries base))
+      base
+      (let [canonical
+            {:messages (vec (canonical-messages-fn)) :summaries summaries :resumed? false}]
+        (reset! base-atom canonical)
+        canonical))))
+
+(defn- conversation-trailer-for-base
+  "Hide cross-turn seeds already present in an exact carried request prefix."
+  [trailer-iters resumed?]
+  (if resumed?
+    (filterv (fn [[_ iter-rec]]
+               (not (false? (:preserved-thinking/replay? iter-rec))))
+      (or trailer-iters []))
+    (vec (or trailer-iters []))))
 
 (defn- same-effective-router?
   "True when two hydrated routers carry the same values and reload generation."
@@ -7374,16 +7547,48 @@
                                                 user-request
                                                 (:attached user-attachments)))
 
-        initial-messages
-        (prompt/assemble-initial-messages {:stable-prompt-messages stable-prompt-messages
-                                           :initial-user-content user-request
+        ;; The current turn is assembled separately so an immediate same-route
+        ;; follow-up can append it to the exact prior request. Canonical assembly
+        ;; remains the fallback and is re-run after any semantic fold changes.
+        current-turn-messages
+        (prompt/assemble-initial-messages {:initial-user-content user-request
                                            :turn-context turn-context
                                            :user-images (:attached user-attachments)
                                            :skipped-images (:skipped user-attachments)
                                            :vision? initial-target-vision?
-                                           :image-descriptions initial-image-descriptions
-                                           :previous-turn-context
-                                           (previous-turn-context environment session-turn-id)})
+                                           :image-descriptions initial-image-descriptions})
+
+        canonical-messages
+        (fn []
+          (prompt/assemble-initial-messages {:stable-prompt-messages stable-prompt-messages
+                                             :initial-user-content user-request
+                                             :turn-context turn-context
+                                             :user-images (:attached user-attachments)
+                                             :skipped-images (:skipped user-attachments)
+                                             :vision? initial-target-vision?
+                                             :image-descriptions initial-image-descriptions
+                                             :previous-turn-context
+                                             (previous-turn-context environment session-turn-id)}))
+
+        summaries-at-turn-start
+        (current-session-summaries environment)
+
+        resumed-message-base
+        (resumable-prompt-message-base (:prompt-cache-history-atom environment)
+                                       (:provider initial-resolved-model)
+                                       (:name initial-resolved-model)
+                                       (or turn-position 1)
+                                       summaries-at-turn-start
+                                       stable-prompt-messages
+                                       current-turn-messages)
+
+        message-base-atom
+        (atom
+          (or resumed-message-base
+              {:messages (canonical-messages) :summaries summaries-at-turn-start :resumed? false}))
+
+        initial-messages
+        (:messages @message-base-atom)
 
         ;; The cumulative `:input-tokens` field sums canonical input tokens
         ;; from every iteration in this turn — useful for billing /
@@ -7715,7 +7920,7 @@
                                  FRESH_ITER_CARRY
                                  (when (seq seeded-trailer-iters)
                                    {:trailer-iters seeded-trailer-iters}))]
-          (let [{:keys [iteration messages trace trailer-iters llm-provider]} loop-state]
+          (let [{:keys [iteration trace trailer-iters llm-provider]} loop-state]
             (ctx-loop/set-turn-state! environment :iteration (inc (long iteration)))
             (cond
               (when cancel-atom @cancel-atom)
@@ -7743,12 +7948,6 @@
                 [raw-reasoning-level (when has-reasoning? base-reasoning-level)
                  reasoning-level
                  (copilot-claude-reasoning-level resolved-model user-request raw-reasoning-level)
-                 _ (log-stage! :iteration/start
-                               iteration
-                               {:message-count (count messages)
-                                :reasoning reasoning-level
-                                :reasoning-effort reasoning-effort
-                                :requested-reasoning raw-reasoning-level})
                  pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
                  ;; The window the NEXT request is actually measured against —
                  ;; the rescued peer's when this turn moved, else the pin's.
@@ -7814,15 +8013,26 @@
                  ;; intact, while an already-collapsed payload is never priced twice.
                  _raw-iter-state (stamp-iter-universe! (:ctx-atom environment) trailer-iters)
                  replay-target (replay-context pre-resolved-model)
-                 summarized-trailer-iters (apply-summaries trailer-iters
-                                                           (some-> (:ctx-atom environment)
-                                                                   deref
-                                                                   (get "session_summaries")))
+                 summaries (current-session-summaries environment)
+                 message-base (prompt-message-base! message-base-atom summaries canonical-messages)
+                 messages (:messages message-base)
+                 _ (log-stage! :iteration/start
+                               iteration
+                               {:message-count (count messages)
+                                :reasoning reasoning-level
+                                :reasoning-effort reasoning-effort
+                                :requested-reasoning raw-reasoning-level})
+                 summarized-trailer-iters (apply-summaries trailer-iters summaries)
                  _visible-iter-state (stamp-iter-universe! (:ctx-atom environment)
                                                            trailer-iters
                                                            summarized-trailer-iters)
+                 ;; An exact carried request already contains every completed prior
+                 ;; turn. Keep only live-turn growth until a fold changes the ledger;
+                 ;; that one semantic rewrite switches the base to canonical recap.
+                 visible-trailer-iters (conversation-trailer-for-base summarized-trailer-iters
+                                                                      (:resumed? message-base))
                  conversation-suffix-msgs (conversation-suffix
-                                            summarized-trailer-iters
+                                            visible-trailer-iters
                                             replay-target
                                             {:describe-images
                                              (replay-image-describer environment user-request)})
@@ -8011,10 +8221,8 @@
                                                  :ctx-atom (:ctx-atom environment)
                                                  :turn-input-tokens (:input-tokens @usage-atom)
                                                  :base-messages messages
-                                                 :trailer-iters trailer-iters
-                                                 :summaries (some-> (:ctx-atom environment)
-                                                                    deref
-                                                                    (get "session_summaries"))
+                                                 :trailer-iters visible-trailer-iters
+                                                 :summaries summaries
                                                  :replay-target replay-target
                                                  :model (or (:name resolved-model)
                                                             (:model resolved-model))})]
@@ -8418,25 +8626,32 @@
                                        ;; context dialog updates DURING the turn,
                                        ;; not only after it ends.
                                        :done? true}))
-                          (let [result (-> (merge {:answer (:answer final-result)
-                                                   :trace (conj trace trace-entry)
-                                                   :iteration-count (inc (long iteration))
-                                                   :utilization
-                                                   (let [u @usage-atom
-                                                         req (if (pos? (long (:iter-count u)))
-                                                               (long (:last-iter-input u))
-                                                               (long (:previous-request-input u)))]
+                          (let [result
+                                (-> (merge {:answer (:answer final-result)
+                                            :trace (conj trace trace-entry)
+                                            :iteration-count (inc (long iteration))
+                                            :utilization
+                                            (let [u @usage-atom
+                                                  req (if (pos? (long (:iter-count u)))
+                                                        (long (:last-iter-input u))
+                                                        (long (:previous-request-input u)))]
 
-                                                     (ctx-engine/with-prompt-cache-status
-                                                       (ctx-engine/utilization
-                                                         req
-                                                         effective-context-limit
-                                                         (:input-tokens u)
-                                                         effective-fold-budget)
-                                                       @prompt-cache-status-atom))}
-                                                  (finalize-cost))
-                                           (attach-llm-routing-summary pre-resolved-model
-                                                                       iteration-result))]
+                                              (ctx-engine/with-prompt-cache-status
+                                                (ctx-engine/utilization req
+                                                                        effective-context-limit
+                                                                        (:input-tokens u)
+                                                                        effective-fold-budget)
+                                                @prompt-cache-status-atom))}
+                                           (finalize-cost))
+                                    (attach-llm-routing-summary pre-resolved-model iteration-result)
+                                    (assoc :prompt-cache-completion
+                                           {:provider (:llm-provider iteration-result)
+                                            :model (:llm-model iteration-result)
+                                            :turn-position (or turn-position 1)
+                                            :summaries (current-session-summaries environment)
+                                            :stable-message-count (count stable-prompt-messages)
+                                            :assistant-message (:assistant-message
+                                                                 iteration-result)}))]
                             (auto-archive-hot-symbols! environment)
                             result))
                       :else
@@ -8935,7 +9150,7 @@
         turn-cost
         (cost-with-route (:cost result) (:name root-route) (:provider root-route))
 
-        _
+        persisted?
         (persist-turn-outcome! (:db-info env)
                                session-turn-id
                                (cond-> {:content turn-content
@@ -8948,11 +9163,28 @@
                                         :ctx ctx-snapshot}
                                  turn-error
                                  (assoc :error turn-error))
-                               (get-in loop-opts [:hooks :claim-terminal!]))]
+                               (get-in loop-opts [:hooks :claim-terminal!]))
 
-    (assoc result
-      :session-turn-id session-turn-id
-      :prior-outcome prior-outcome)))
+        prompt-cache-completion
+        (:prompt-cache-completion result)
+
+        _prompt-cache-complete
+        (when (and persisted? prompt-cache-completion)
+          (mark-prompt-cache-turn-complete! (:prompt-cache-history-atom env)
+                                            (:provider prompt-cache-completion)
+                                            (:model prompt-cache-completion)
+                                            (:turn-position prompt-cache-completion)
+                                            (:summaries prompt-cache-completion)
+                                            (:stable-message-count prompt-cache-completion)
+                                            (:assistant-message prompt-cache-completion))
+          (persist-prompt-cache-state! env
+                                       (:provider prompt-cache-completion)
+                                       (:model prompt-cache-completion)))]
+
+    (-> result
+        (dissoc :prompt-cache-completion)
+        (assoc :session-turn-id session-turn-id
+               :prior-outcome prior-outcome))))
 
 (defn- health-gated-router
   "ONE health gate for every routing entry point: demote unreachable LOCAL
@@ -10133,6 +10365,13 @@
   (let [pending (volatile! nil)]
     (try
       (let [db-info (persistance/db-create-connection! db)
+            resolved-session-id (persistance/db-resolve-session-id db-info session)
+            persisted-session (when resolved-session-id
+                                (persistance/db-get-session db-info resolved-session-id))
+            ;; A rebuild normally receives only the session id. Recover the immutable
+            ;; channel from persistence so channel-owned stable prompt blocks remain
+            ;; byte-identical across processes (notably the autonomous CLI block).
+            resolved-channel (or channel (:channel persisted-session) :tui)
             state-atom (atom {:custom-bindings {} :environment nil :session-id nil})
             environment-atom (atom nil)
             environment-id (str (svar-util/uuid))
@@ -10161,10 +10400,10 @@
             ;; cross-process. Placeholder titles ("Untitled") still fall through to
             ;; auto-title via `usable-existing-title`.
             resolved-title (or (not-empty (str title))
-                               (when (and db-info session)
-                                 (when-let [rid (persistance/db-resolve-session-id db-info session)]
-                                   (not-empty (str (:title (persistance/db-get-session db-info
-                                                                                       rid)))))))
+                               (some-> persisted-session
+                                       :title
+                                       str
+                                       not-empty))
             session-title-atom (atom (or resolved-title ""))
             root-resolved-model (resolve-effective-model router)
             root-model (or (:name root-resolved-model) "unknown")
@@ -10182,7 +10421,6 @@
             ;; Real per-turn assembly goes through `prompt/assemble-stable-prompt-messages`
             ;; with `:active-extensions`, so this snapshot is just metadata.
             system-prompt (prompt/build-system-prompt {})
-            resolved-session-id (persistance/db-resolve-session-id db-info session)
             ;; Workspace pin (1:1 with session_state):
             ;;   - resuming a session       → derive workspace from its latest state
             ;;   - brand-new session        → mint a trunk workspace, pass its id
@@ -10204,7 +10442,7 @@
                 :else (workspace/ensure-workspace! db-info {})))
             session-id (or resolved-session-id
                            (persistance/db-store-session! db-info
-                                                          (cond-> {:channel (or channel :tui)
+                                                          (cond-> {:channel resolved-channel
                                                                    :external-id external-id
                                                                    :model root-model
                                                                    :title title
@@ -10223,6 +10461,8 @@
             ;; it. The per-call re-query intermittently returned nil for fresh sessions.
             session-state-id (when (and db-info session-id)
                                (persistance/db-latest-session-state-id db-info session-id))
+            persisted-prompt-cache-state (when resolved-session-id
+                                           (load-prompt-cache-state db-info session-state-id))
             ;; Context wiring (see ctx-loop). `ctx-atom` carries stable session
             ;; context, while `turn-state-atom` tracks live counters. Seeded fresh;
             ;; reloaded from session_turn_state.ctx (Nippy BLOB) on session resume.
@@ -10500,7 +10740,7 @@
             env (cond-> {:environment-id environment-id
                          :session-id session-id
                          :session/state-id session-state-id
-                         :channel (or channel :tui)
+                         :channel resolved-channel
                          ;; Immutable canonical security policy plus its live workspace overlay.
                          ;; Context, GraalPy, native file tools, shell, managed language processes,
                          ;; and egress all derive from this same environment-owned value.
@@ -10553,11 +10793,10 @@
                   ;; State changes ride as appended `session[...] = …` deltas. A large
                   ;; fold deliberately rebases this block to the current materialized
                   ;; session, bounding the delta chain while spending a cache miss that
-                  ;; compaction already made useful. Holds
-                  ;; `{:block <frozen text> :baseline <last-emitted static map>}`;
-                  ;; nil until the first turn seeds it. A fresh process (resume/restart)
-                  ;; starts nil → renders fresh from current state (cold cache anyway).
-                  :standing-ctx-atom (atom nil)
+                  ;; compaction already made useful. The latest fresh terminal persists
+                  ;; this exact block and baseline so a quick restart can retain the same
+                  ;; provider prefix; stale checkpoints render a fresh canonical block.
+                  :standing-ctx-atom (atom (:standing-ctx persisted-prompt-cache-state))
                   :state-atom state-atom
                   :python-context python-context
                   ;; Owned by THIS env: `dispose-environment!` closes it right after the
@@ -10576,7 +10815,12 @@
                   ;; Exact full-request baselines per provider/model. The next successful
                   ;; call can name how many PRIOR tokens were genuinely reusable instead
                   ;; of dividing cache reads by new tool output that never had a chance.
-                  :prompt-cache-history-atom (atom {})
+                  ;; One fresh accepted terminal survives process restart; only its latest
+                  ;; route is stored, keeping persistence linear rather than per-turn.
+                  :prompt-cache-history-atom (atom (if-let [route (:route
+                                                                    persisted-prompt-cache-state)]
+                                                     {route (:entry persisted-prompt-cache-state)}
+                                                     {}))
                   :session-title-atom session-title-atom
                   :extensions (atom [])
                   :active-extensions (atom []))]

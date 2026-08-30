@@ -223,6 +223,7 @@ CREATE TABLE session_state (
   system_prompt         TEXT,
   llm_root_provider     TEXT,
   llm_root_model        TEXT,
+  prompt_cache_state    BLOB,  -- Nippy: one latest exact provider-prefix checkpoint
   created_at            INTEGER NOT NULL,
 
   UNIQUE (session_soul_id, version)

@@ -1160,6 +1160,29 @@
             project
             (assoc :project-name (:name project))))))))
 
+(defn db-get-session-prompt-cache-state
+  "Return the latest exact provider-prefix checkpoint stored on one session state."
+  [db-info session-state-id]
+  (when (and (ds db-info) session-state-id)
+    (some-> (query-one! db-info
+                        {:select [:prompt_cache_state]
+                         :from :session_state
+                         :where [:= :id (->ref session-state-id)]})
+            :prompt_cache_state
+            <-blob)))
+
+(defn db-set-session-prompt-cache-state!
+  "Overwrite one session state's exact provider-prefix checkpoint. Nil clears it."
+  [db-info session-state-id state]
+  (when (and (ds db-info) session-state-id)
+    (sqlite-write-tx! db-info
+                      (fn [tx-info]
+                        (execute! tx-info
+                                  {:update :session_state
+                                   :set {:prompt_cache_state (when (some? state) (->blob state))}
+                                   :where [:= :id (->ref session-state-id)]})
+                        state))))
+
 (defn db-resolve-session-id
   [db-info selector]
   (cond (nil? selector) nil
