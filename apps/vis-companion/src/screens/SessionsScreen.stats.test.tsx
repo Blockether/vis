@@ -26,6 +26,7 @@ describe("the expanded session card", () => {
     prompt_cache_reusable_tokens: 81_000,
     prompt_cache_reused_tokens: 79_400,
     prompt_cache_sample_count: 4,
+    prompt_cache_estimated_sample_count: 1,
     cost_usd: 0.21,
     duration_ms: 47_000,
     provider: "anthropic-coding-plan",
@@ -76,13 +77,13 @@ describe("the expanded session card", () => {
     expect(screen.getByText("Share of all input served from provider cache")).toBeTruthy();
     expect(
       screen.getByText(
-        "Share of reusable prior input recovered from cache · 4 of 5 calls",
+        "Estimated share of reusable prior input recovered from cache · 4 of 5 calls",
       ),
     ).toBeTruthy();
     expect(cachedInput.closest("dl")).toBe(reuseCoverage.closest("dl"));
     expect(cachedInput.closest("dl")).not.toBe(screen.getByText("Turns").closest("dl"));
     expect(screen.getByText("77%")).toBeTruthy();
-    expect(screen.getByText("98%")).toBeTruthy();
+    expect(screen.getByText("≈98%")).toBeTruthy();
   });
 
   // Regression, user report ("alignment is wrong"): the cache row put its label on the

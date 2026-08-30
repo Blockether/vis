@@ -3338,7 +3338,13 @@
           reusable
           [nil 9463 9857 31867 38330 39868 40578 42789]]
 
-      (doseq [[input read eligible] (map vector inputs cached reusable)]
+      (doseq [[input read eligible continuity] (map vector
+                                                    inputs
+                                                    cached
+                                                    reusable
+                                                    [nil :append-only :rewrite :append-only
+                                                     :cache-context-changed :append-only
+                                                     :append-only :append-only])]
         (h/store-iteration! s
                             (cond-> {:session-turn-id tid
                                      :code ""
@@ -3348,7 +3354,7 @@
                               eligible
                               (assoc :prompt-cache-reusable-tokens
                                 eligible :prompt-cache-continuity
-                                :append-only))))
+                                continuity))))
       (persistance/db-update-session-turn! s
                                            tid
                                            {:status :done
@@ -3362,10 +3368,14 @@
                   :input-cache-read-tokens 209408
                   :prompt-cache-reusable-tokens 212752
                   :prompt-cache-reused-tokens 209408
-                  :prompt-cache-sample-count 7}
+                  :prompt-cache-sample-count 7
+                  :prompt-cache-estimated-sample-count 2
+                  :prompt-cache-rebuild-count 1}
                  (select-keys (persistance/db-session-usage-stats s (str sid))
                               [:input-tokens :input-cache-read-tokens :prompt-cache-reusable-tokens
-                               :prompt-cache-reused-tokens :prompt-cache-sample-count])))))
+                               :prompt-cache-reused-tokens :prompt-cache-sample-count
+                               :prompt-cache-estimated-sample-count
+                               :prompt-cache-rebuild-count])))))
   (it
     "counts the calls of a turn that was stopped before it could write a rollup"
     (let [s

@@ -4223,46 +4223,154 @@
 
 
 ;; Prompt-cache breakpoints (Anthropic `cache_control`; OpenAI-style strips the
-;; marker and uses implicit prefix caching). TWO breakpoints, pi/maki-style:
+;; marker, except GPT-5.6 Responses which reads it back as
+;; `prompt_cache_breakpoint`). Anthropic allows FOUR per call and each one caches
+;; the request UP TO and INCLUDING its block, so all four are spent:
 ;;   1. the last SYSTEM message — the FROZEN `session={…}` prefix (long-lived,
-;;      stable across turns thanks to :standing-ctx-atom), and
-;;   2. the LAST message overall — a MOVING recency breakpoint that caches the
-;;      append-only transcript up to here (grows each iteration).
-;; Manual placement makes svar skip its auto-cache-last-system-block (so we own
-;; both slots); svar honours ≤4 breakpoints per call.
-(defn- tag-block-cached
-  "Mark the LAST content block of message `m` with `:svar/cache true`. Coerces a
-   bare-string `:content` into a text block first; leaves other shapes untouched."
-  [m]
-  (let [content (:content m)]
-    (cond (string? content) (assoc m :content [{:type "text" :text content :svar/cache true}])
-          (and (vector? content) (seq content))
-          (let [i (dec (count content))
-                blk (nth content i)
-                blk (if (map? blk)
-                      (assoc blk :svar/cache true)
-                      {:type "text" :text (str blk) :svar/cache true})]
+;;      stable across turns thanks to :standing-ctx-atom). It is the one anchor a
+;;      fold cannot invalidate, so the rewrite a fold forces still reads it.
+;;   2-4. the last THREE transcript messages. One iteration appends the assistant
+;;      message and its tool result, so the third-from-last IS the previous
+;;      request's write anchor: each call reads back exactly where its
+;;      predecessor wrote instead of trusting the provider's implicit look-back,
+;;      and the nearer two keep the tail warm across a turn boundary that appends
+;;      the human's next message.
+;; Manual placement makes svar skip its auto-cache-last-system-block, so we own
+;; every slot.
+(def ^:private TRANSCRIPT_CACHE_BREAKPOINTS
+  "Trailing transcript messages that carry a breakpoint. Anthropic's cap is four
+   per call and the frozen system prefix always takes the first slot."
+  3)
 
-            (assoc m :content (assoc content i blk)))
+(def ^:private EXTENDED_CACHE_TTL_PROVIDERS
+  "Providers whose endpoint HONOURS Anthropic's 1-hour cache tier: svar turns a
+   `:svar/cache-ttl :1h` block into `cache_control {:ttl \"1h\"}` and adds the
+   `extended-cache-ttl-2025-04-11` beta header the tier requires.
+
+   The 5-minute default dies between two human messages — exactly the gap a
+   resumed session has to cross. An hour covers the pause and only a WRITE costs
+   more (2x base instead of 1.25x), against a read at 0.1x that would otherwise
+   be a full-price miss.
+
+   A provider that silently degrades to 5 minutes must stay OUT: this same set
+   widens [[prompt-cache-window-ms]], and a widened window replays a large cold
+   prefix where the compact recap was cheaper. Membership is MEASURED on the live
+   route, never inferred from the api-style."
+  #{:anthropic :anthropic-coding-plan})
+
+(defn- prompt-cache-policy
+  "Static descriptor shared with Svar's cache-context fingerprint. It describes the
+   placement [[apply-cache-breakpoints]] owns; Vis exposes one provider tool,
+   `python_execution`, whose final wire schema is fingerprinted separately by Svar."
+  [provider]
+  {:version 1
+   :strategy (if (= :openai-codex provider) :server-continuation :explicit-breakpoints)
+   :system-anchor :last-system
+   :transcript-anchors TRANSCRIPT_CACHE_BREAKPOINTS
+   :ttl (if (contains? EXTENDED_CACHE_TTL_PROVIDERS provider) :1h :5m)})
+
+(def ^:private UNCACHEABLE_BLOCK_TYPES
+  "Content-block types that refuse a `cache_control` marker: preserved thinking is
+   signed reasoning, not a cache anchor."
+  #{"thinking" "redacted_thinking"})
+
+(defn- cacheable-block-index
+  "Index of the LAST block of `content` that may carry a breakpoint, or nil when
+   every block refuses one."
+  [content]
+  (last (keep-indexed (fn [i blk]
+                        (when-not (and (map? blk)
+                                       (contains? UNCACHEABLE_BLOCK_TYPES
+                                                  (some-> (or (:type blk) (get blk "type"))
+                                                          name)))
+                          i))
+                      content)))
+
+(defn- tag-block-cached
+  "Mark the last CACHEABLE content block of message `m` with `:svar/cache true`,
+   asking for `ttl` (`:1h`, or nil for the provider's 5-minute default). Coerces a
+   bare-string `:content` into a text block first; leaves other shapes — and a
+   message with nothing cacheable in it — untouched."
+  [m ttl]
+  (let [mark
+        (fn [blk]
+          (cond-> (assoc blk :svar/cache true)
+            ttl
+            (assoc :svar/cache-ttl ttl)))
+
+        content
+        (:content m)]
+
+    (cond (string? content) (assoc m :content [(mark {:type "text" :text content})])
+          (and (vector? content) (seq content))
+          (if-let [i (cacheable-block-index content)]
+            (let [blk (nth content i)
+                  blk (if (map? blk) (mark blk) (mark {:type "text" :text (str blk)}))]
+
+              (assoc m :content (assoc content i blk)))
+            m)
           :else m)))
 
-(defn- apply-cache-breakpoints
-  "Place the two prompt-cache breakpoints on `messages`: the last `:role
-   \"system\"` message (frozen prefix) and the last message overall (moving
-   recency). No-op on empty; idempotent when both land on one message (first
-   call, before any transcript exists)."
+(defn- cache-breakpoint-indexes
+  "Ordered message indexes marked by [[apply-cache-breakpoints]]."
   [messages]
-  (let [messages (vec messages)]
-    (if (empty? messages)
-      messages
-      (let [last-sys (last (keep-indexed (fn [i m]
-                                           (when (= "system" (:role m)) i))
-                                         messages))
-            messages (cond-> messages
-                       last-sys
-                       (update last-sys tag-block-cached))]
+  (let [messages
+        (vec messages)
 
-        (update messages (dec (count messages)) tag-block-cached)))))
+        n
+        (count messages)
+
+        last-system
+        (last (keep-indexed (fn [i message]
+                              (when (= "system"
+                                       (some-> (:role message)
+                                               name))
+                                i))
+                            messages))
+
+        transcript-from
+        (max (long (if last-system (inc (long last-system)) 0))
+             (- (long n) (long TRANSCRIPT_CACHE_BREAKPOINTS)))]
+
+    (vec (cond->> (range transcript-from n)
+           last-system
+           (cons last-system)))))
+
+(defn- apply-cache-breakpoints
+  "Place the four prompt-cache breakpoints on `messages` for `provider`: the last
+   system-role message (frozen prefix) plus the last [[TRANSCRIPT_CACHE_BREAKPOINTS]]
+   messages after it (moving recency and the
+   previous request's write anchor). Anchors COLLAPSE instead of overlapping, so a
+   system-only first call marks exactly one. No-op on empty."
+  [messages provider]
+  (let [messages
+        (vec messages)
+
+        ttl
+        (when (contains? EXTENDED_CACHE_TTL_PROVIDERS provider) :1h)]
+
+    (reduce (fn [ms i]
+              (update ms i tag-block-cached ttl))
+            messages
+            (cache-breakpoint-indexes messages))))
+
+(defn- resolved-prompt-cache-context
+  "Ask Svar for the opaque fixed-prefix/cache-namespace identity of one pinned route."
+  [environment resolved-model routing extra-body]
+  (svar/prompt-cache-context (:router environment)
+                             (cond-> {:routing (pin-routing-to-model (or routing {}) resolved-model)
+                                      ;; There is exactly ONE model-facing tool. Sandbox capabilities alter
+                                      ;; this Python schema, so they alter the context id rather than being
+                                      ;; mistaken for an append-only provider prefix.
+                                      :tools (model-facing-tools (:sandbox-caps environment))
+                                      :tool-choice :auto
+                                      :prompt-cache-policy (prompt-cache-policy (:provider
+                                                                                  resolved-model))}
+                               (:session-id environment)
+                               (assoc :cache-key (str (:session-id environment)))
+
+                               extra-body
+                               (assoc :extra-body extra-body))))
 
 (defn- prose-beyond-code
   "The assistant `prose` (a model `:content` string streamed ALONGSIDE a tool
@@ -4402,10 +4510,45 @@
 
 (def ^:private PROMPT_CACHE_REUSE_FRESH_MS
   "How long a same-route prefix is expected to remain resident in the provider
-   cache. It gates exact cross-turn restoration and labels continuity samples; a
-   stale request falls back to the compact canonical recap instead of replaying a
-   large cold prefix."
+   cache on the DEFAULT 5-minute tier. It gates exact cross-turn restoration and
+   labels continuity samples; a stale request falls back to the compact canonical
+   recap instead of replaying a large cold prefix."
   300000)
+
+(def ^:private EXTENDED_PROMPT_CACHE_REUSE_FRESH_MS
+  "The same window for a route in [[EXTENDED_CACHE_TTL_PROVIDERS]], whose
+   breakpoints are written with `:svar/cache-ttl :1h`."
+  3600000)
+
+(defn- prompt-cache-window-ms
+  "How long `provider`'s prefix is assumed to outlive the request that wrote it —
+   the tier [[apply-cache-breakpoints]] asked THAT provider for, nothing else."
+  ^long [provider]
+  (if (contains? EXTENDED_CACHE_TTL_PROVIDERS provider)
+    (long EXTENDED_PROMPT_CACHE_REUSE_FRESH_MS)
+    (long PROMPT_CACHE_REUSE_FRESH_MS)))
+
+(defn- valid-prompt-cache-context?
+  "True for Svar's persisted opaque cache-context contract."
+  [context]
+  (and (map? context)
+       (util/non-blank-string? (:id context))
+       (integer? (:fixed-prefix-weight context))
+       (<= 0 (long (:fixed-prefix-weight context)))))
+
+(defn- same-prompt-cache-context?
+  [left right]
+  (and (valid-prompt-cache-context? left)
+       (valid-prompt-cache-context? right)
+       (= (:id left) (:id right))
+       (= (:fixed-prefix-weight left) (:fixed-prefix-weight right))))
+
+(defn- shared-cache-breakpoint-prefix-count
+  "Message count through the last prior breakpoint contained in `shared-count`."
+  [messages shared-count]
+  (last (keep (fn [i]
+                (when (< (long i) (long shared-count)) (inc (long i))))
+              (cache-breakpoint-indexes messages))))
 
 (defn- message-weights
   "Serialized size of each message — the proportional stand-in for the
@@ -4422,20 +4565,19 @@
 
 (defn- note-prompt-cache-request!
   "Replace one route's request baseline and answer `{:reusable-tokens n
-   :continuity kw}`: how much of THIS request the previous same-route request
-   could have left in the provider cache, and why.
+   :continuity kw :reuse-kind :exact|:estimated|nil}`.
 
-   `:initial` — no baseline yet on this route, so nothing was recoverable and the
-   denominator is 0. `:append-only` — the whole prior request is still a prefix,
-   so its entire provider-counted input was reusable. `:rewrite` — a fold, a
-   replaced history or a trimmed tool result kept only part of it, and the
-   denominator is the share of that prior input which survived, so a rewrite
-   that loses cache is MEASURED rather than dropped. `:expired` — the prefix
-   survived, the window passed and the provider read nothing back.
+   Exact append-only requests use the prior provider-counted input. Rewrites use a
+   serialized-size estimate in provider cache order: Svar's fixed Python tool/preamble,
+   then Vis messages, but only through the last breakpoint the shared prefix reached.
+   Bytes after that anchor were never independently cacheable. A provider cache-read is
+   hard evidence and floors an estimate; the current input always caps it.
 
-   New suffix tokens stay outside the denominator, but every request answers a
-   sample: a metric that discards its misses reports survivors only."
-  [history-atom provider model messages input-tokens cache-read-tokens request-start-ms]
+   A changed Svar context id means tools, account namespace, adapter preamble, route
+   or cache policy changed. Its baseline rotates under `:cache-context-changed` and
+   cannot authorize replay of the old large request."
+  [history-atom provider model prompt-cache-context messages input-tokens cache-read-tokens
+   request-start-ms]
   (when (and history-atom provider model)
     (let [route
           [provider (str model)]
@@ -4472,41 +4614,77 @@
                 prior-weights
                 (:weights prior)
 
+                same-context?
+                (same-prompt-cache-context? (:prompt-cache-context prior) prompt-cache-context)
+
                 prefix
-                (common-prefix-count prior-messages messages)
-
-                prior-weight
-                (double (reduce + 0 prior-weights))
-
-                prefix-weight
-                (double (reduce + 0 (take prefix prior-weights)))
+                (if same-context? (common-prefix-count prior-messages messages) 0)
 
                 exact?
-                (and (pos? prefix) (= prefix (count prior-messages)))
+                (and same-context? (pos? prefix) (= prefix (count prior-messages)))
+
+                fixed-weight
+                (double (long (or (get-in prior [:prompt-cache-context :fixed-prefix-weight]) 0)))
+
+                message-weight
+                (double (reduce + 0 prior-weights))
+
+                total-weight
+                (+ fixed-weight message-weight)
+
+                cache-prefix-count
+                (long (or (shared-cache-breakpoint-prefix-count prior-messages prefix) 0))
+
+                prefix-message-weight
+                (double (reduce + 0 (take cache-prefix-count prior-weights)))
+
+                prefix-weight
+                (+ prefix-message-weight
+                   (if (and same-context? (pos? cache-prefix-count)) fixed-weight 0.0))
+
+                estimated
+                (long (cond (or (zero? prior-input) (zero? cache-prefix-count)) 0
+                            exact? prior-input
+                            (pos? total-weight) (Math/floor (* prior-input
+                                                               (/ prefix-weight total-weight)))
+                            :else 0))
+
+                measured-floor
+                (min input cached)
 
                 reusable
                 ;; A long: `pos?` on a boxed cond result is boxed math the lint gate names.
-                (long (cond (or (zero? prior-input) (zero? prefix)) 0
-                            exact? (min prior-input input)
-                            (pos? prior-weight)
-                            (min input
-                                 (long (Math/floor (* prior-input (/ prefix-weight prior-weight)))))
-                            :else 0))
+                (long (cond (nil? prior) 0
+                            exact? (min input prior-input)
+                            :else (min input (max measured-floor estimated))))
 
                 age-ms
                 (- at-ms (long (or (:at-ms prior) at-ms)))
 
                 expired?
-                (and (pos? reusable) (zero? cached) (> age-ms (long PROMPT_CACHE_REUSE_FRESH_MS)))]
+                (and exact?
+                     (pos? reusable)
+                     (zero? cached)
+                     (> age-ms (prompt-cache-window-ms provider)))
+
+                continuity
+                (cond (nil? prior) :initial
+                      (not same-context?) :cache-context-changed
+                      expired? :expired
+                      exact? :append-only
+                      :else :rewrite)
+
+                reuse-kind
+                (when (pos? reusable) (if exact? :exact :estimated))]
 
             (vreset! sample
-                     {:reusable-tokens reusable
-                      :continuity (cond (nil? prior) :initial
-                                        expired? :expired
-                                        exact? :append-only
-                                        :else :rewrite)})
+                     {:reusable-tokens reusable :continuity continuity :reuse-kind reuse-kind})
             (assoc routes
-              route {:messages messages :weights weights :input-tokens input :at-ms at-ms}))))
+              route {:messages messages
+                     :weights weights
+                     :input-tokens input
+                     :at-ms at-ms
+                     :prompt-cache-context prompt-cache-context}))))
       @sample)))
 
 (defn- current-session-summaries
@@ -4517,11 +4695,11 @@
           (get "session_summaries")))
 
 (defn- prompt-cache-entry-fresh?
-  "True while ENTRY's last request is inside the conservative provider-cache window."
-  [entry]
+  "True while ENTRY's last request is inside PROVIDER's conservative cache window."
+  [provider entry]
   (when (integer? (:at-ms entry))
     (let [age-ms (- (long (util/now-ms)) (long (:at-ms entry)))]
-      (<= 0 age-ms (long PROMPT_CACHE_REUSE_FRESH_MS)))))
+      (<= 0 age-ms (prompt-cache-window-ms provider)))))
 
 (defn- valid-prompt-cache-state?
   "Validate the single exact-prefix checkpoint accepted from persistence."
@@ -4540,6 +4718,7 @@
          (some? provider)
          (string? model)
          (map? entry)
+         (valid-prompt-cache-context? (:prompt-cache-context entry))
          (vector? messages)
          (seq messages)
          (every? map? messages)
@@ -4553,7 +4732,7 @@
          (map? standing-ctx)
          (string? (:block standing-ctx))
          (map? (:baseline standing-ctx))
-         (prompt-cache-entry-fresh? entry))))
+         (prompt-cache-entry-fresh? provider entry))))
 
 (defn- load-prompt-cache-state
   "Load one fresh exact-prefix checkpoint; malformed or stale state is a safe miss."
@@ -4630,7 +4809,8 @@
    accepted assistant answer and this turn's user message. Same route, adjacent
    turn, fresh cache residency, unchanged fold ledger, and an identical stable
    system prefix are all required; canonical recap assembly owns every miss."
-  [history-atom provider model turn-position summaries stable-messages turn-messages]
+  [history-atom provider model prompt-cache-context turn-position summaries stable-messages
+   turn-messages]
   (when (and history-atom provider (some? model) (integer? turn-position))
     (let [entry
           (get @history-atom [provider (str model)])
@@ -4648,7 +4828,8 @@
           (count stable)]
 
       (when (and completed
-                 (prompt-cache-entry-fresh? entry)
+                 (same-prompt-cache-context? (:prompt-cache-context entry) prompt-cache-context)
+                 (prompt-cache-entry-fresh? provider entry)
                  (seq stable)
                  (= (long turn-position) (inc (long (:turn-position completed))))
                  (= summaries (:summaries completed))
@@ -4751,7 +4932,7 @@
       (do (when (and session-atom @session-atom)
             (locking session-atom (close-llm-session! session-atom)))
           (svar/ask-code! (:router environment)
-                          (update ask-opts :messages apply-cache-breakpoints))))))
+                          (update ask-opts :messages apply-cache-breakpoints provider))))))
 
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
@@ -4960,9 +5141,10 @@
                      ;; :assistant-message}.
                      :tools provider-tools
                      :tool-choice :auto
-                     ;; two prompt-cache breakpoints: frozen system prefix
-                     ;; + moving recency (transcript). See apply-cache-breakpoints.
+                     ;; four prompt-cache breakpoints: the frozen system prefix
+                     ;; plus the trailing transcript. See apply-cache-breakpoints.
                      :messages (vec messages)
+                     :prompt-cache-policy (prompt-cache-policy (:provider resolved-model))
                      :routing sticky-routing
                      :check-context? true
                      :preserved-thinking? true
@@ -5073,12 +5255,14 @@
                                 (:prompt-cache-history-atom environment)
                                 actual-provider
                                 actual-model
+                                (:prompt-cache-context ask-result)
                                 messages
                                 (:input-tokens api-usage)
                                 (get-in api-usage [:input-tokens-details :cache-read])
                                 provider-started-at-ms)
           prompt-cache-reusable-tokens (:reusable-tokens prompt-cache-sample)
           prompt-cache-continuity (:continuity prompt-cache-sample)
+          prompt-cache-reuse-kind (:reuse-kind prompt-cache-sample)
           reasoning-effort-resolution (:routed/reasoning-effort ask-result)
           ;; The model either CALLS `python_execution`
           ;; (`:stop-reason :tool-calls`) or, with NO tool call
@@ -5426,6 +5610,7 @@
              :prompt-cache (:prompt-cache ask-result)
              :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
              :prompt-cache-continuity prompt-cache-continuity
+             :prompt-cache-reuse-kind prompt-cache-reuse-kind
              :duration-ms (or (:duration-ms ask-result) 0)
              :llm-messages messages
              :llm-provider provider
@@ -5446,6 +5631,7 @@
              :prompt-cache (:prompt-cache ask-result)
              :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
              :prompt-cache-continuity prompt-cache-continuity
+             :prompt-cache-reuse-kind prompt-cache-reuse-kind
              :duration-ms (or (:duration-ms ask-result) 0)
              :llm-messages messages
              :llm-provider provider
@@ -5469,6 +5655,7 @@
          :prompt-cache (:prompt-cache ask-result)
          :prompt-cache-reusable-tokens prompt-cache-reusable-tokens
          :prompt-cache-continuity prompt-cache-continuity
+         :prompt-cache-reuse-kind prompt-cache-reuse-kind
          :duration-ms (or (:duration-ms ask-result) 0)
          :llm-messages messages
          :llm-provider (actual-llm-provider resolved-model ask-result)
@@ -7487,6 +7674,9 @@
         initial-resolved-model
         (resolve-effective-model (:router environment) (or routing {}))
 
+        initial-prompt-cache-context
+        (resolved-prompt-cache-context environment initial-resolved-model routing extra-body)
+
         initial-target-vision?
         (or (empty? (:attached user-attachments))
             (target-supports-vision? (replay-context initial-resolved-model)))
@@ -7563,6 +7753,7 @@
         (resumable-prompt-message-base (:prompt-cache-history-atom environment)
                                        (:provider initial-resolved-model)
                                        (:name initial-resolved-model)
+                                       initial-prompt-cache-context
                                        (or turn-position 1)
                                        summaries-at-turn-start
                                        stable-prompt-messages

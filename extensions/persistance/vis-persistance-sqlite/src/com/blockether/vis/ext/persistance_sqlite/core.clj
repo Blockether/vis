@@ -1901,8 +1901,8 @@
    `{:turn-count :iteration-count :duration-ms :input-tokens
      :input-regular-tokens :input-cache-write-tokens :input-cache-read-tokens
      :prompt-cache-reusable-tokens :prompt-cache-reused-tokens
-     :prompt-cache-sample-count :prompt-cache-rebuild-count
-     :prompt-cache-expired-count :output-tokens
+     :prompt-cache-sample-count :prompt-cache-estimated-sample-count
+     :prompt-cache-rebuild-count :prompt-cache-expired-count :output-tokens
      :output-reasoning-tokens :cost-usd :first-turn-at :last-turn-at :provider
      :model :tool-call-count :fold-count}`
 
@@ -1962,6 +1962,11 @@
                        :prompt_cache_reused_tokens]
                       [[:sum [:case [:> :qti.prompt_cache_reusable_tokens 0] 1 :else 0]]
                        :prompt_cache_sample_count]
+                      [[:sum
+                        [:case
+                         [:and [:> :qti.prompt_cache_reusable_tokens 0]
+                          [:in :qti.prompt_cache_continuity ["rewrite" "cache-context-changed"]]] 1
+                         :else 0]] :prompt_cache_estimated_sample_count]
                       [[:sum [:case [:= :qti.prompt_cache_continuity "rewrite"] 1 :else 0]]
                        :prompt_cache_rebuild_count]
                       [[:sum [:case [:= :qti.prompt_cache_continuity "expired"] 1 :else 0]]
@@ -2015,6 +2020,8 @@
                    :prompt-cache-reusable-tokens (long (or (:prompt_cache_reusable_tokens calls) 0))
                    :prompt-cache-reused-tokens (long (or (:prompt_cache_reused_tokens calls) 0))
                    :prompt-cache-sample-count (long (or (:prompt_cache_sample_count calls) 0))
+                   :prompt-cache-estimated-sample-count
+                   (long (or (:prompt_cache_estimated_sample_count calls) 0))
                    :prompt-cache-rebuild-count (long (or (:prompt_cache_rebuild_count calls) 0))
                    :prompt-cache-expired-count (long (or (:prompt_cache_expired_count calls) 0))
                    :output-tokens (long (or (:output_tokens calls) 0))

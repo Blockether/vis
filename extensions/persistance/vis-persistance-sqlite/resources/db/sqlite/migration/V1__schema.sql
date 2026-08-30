@@ -394,11 +394,13 @@ CREATE TABLE session_turn_iteration (
                                   ),
   -- Why that denominator is what it is: 'initial' first call on the route,
   -- 'append-only' the whole prior request is still a prefix, 'rewrite' only part
-  -- of it survived, 'expired' it survived but the provider had let it go.
+  -- of it survived, 'cache-context-changed' the provider prefix or namespace changed,
+  -- 'expired' it survived but the provider had let it go.
   prompt_cache_continuity        TEXT CHECK (
                                     prompt_cache_continuity IS NULL OR
                                     prompt_cache_continuity IN
-                                      ('initial', 'append-only', 'rewrite', 'expired')
+                                      ('initial', 'append-only', 'rewrite',
+                                       'cache-context-changed', 'expired')
                                   ),
   output_tokens                   INTEGER CHECK (
                                     output_tokens IS NULL OR output_tokens >= 0

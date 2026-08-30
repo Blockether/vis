@@ -243,18 +243,154 @@
 
 (def ^:private prose-beyond-code (deref #'lp/prose-beyond-code))
 
+(def ^:private test-prompt-cache-context {:id "pcctx-v1-test" :fixed-prefix-weight 0})
+
+(defn- sample-prompt-cache!
+  [history provider model messages input-tokens cache-read-tokens request-start-ms]
+  (dissoc (#'lp/note-prompt-cache-request!
+           history
+           provider
+           model
+           test-prompt-cache-context
+           messages
+           input-tokens
+           cache-read-tokens
+           request-start-ms)
+    :reuse-kind))
+
+(defn- resume-prompt-cache
+  [history provider model turn-position summaries stable-messages turn-messages]
+  (#'lp/resumable-prompt-message-base
+   history
+   provider
+   model
+   test-prompt-cache-context
+   turn-position
+   summaries
+   stable-messages
+   turn-messages))
+
 (defdescribe
   prompt-cache-reusable-prefix-test
   "The reuse denominator is what the previous same-route request could still have
    left in the provider cache. A fold, a rewrite or an expiry is CLASSIFIED and
    keeps its denominator: a metric that drops its own misses can only report
    survivors."
+  (it
+    "includes the fixed tool prefix, honors measured reads, and names estimated samples"
+    (let [sample!
+          @#'lp/note-prompt-cache-request!
+
+          prior
+          [{:role "system" :content "stable"}
+           {:role "user" :content (apply str (repeat 100 "old"))}]
+
+          rewrite
+          [{:role "system" :content "stable"} {:role "user" :content "folded"}]
+
+          context
+          {:id "pcctx-v1-tools" :fixed-prefix-weight 1000}
+
+          no-fixed
+          {:id "pcctx-v1-no-tools" :fixed-prefix-weight 0}
+
+          with-fixed
+          (atom {})
+
+          without-fixed
+          (atom {})]
+
+      (expect (= {:reusable-tokens 0 :continuity :initial :reuse-kind nil}
+                 (sample! with-fixed :anthropic "opus" context prior 10000 0 0)))
+      (sample! without-fixed :anthropic "opus" no-fixed prior 10000 0 0)
+      (let [estimated
+            (sample! with-fixed :anthropic "opus" context rewrite 8000 7900 1000)
+
+            message-only
+            (sample! without-fixed :anthropic "opus" no-fixed rewrite 8000 0 1000)]
+
+        ;; The one Python tool and provider preamble precede messages on the cache
+        ;; wire. Once the shared system breakpoint survives, that fixed prefix is
+        ;; part of the estimate rather than disappearing from its denominator.
+        (expect (= :estimated (:reuse-kind estimated)))
+        (expect (= :rewrite (:continuity estimated)))
+        (expect (= 7900 (:reusable-tokens estimated)))
+        (expect (> (:reusable-tokens estimated) (:reusable-tokens message-only))))
+      ;; The provider's cache-read count is hard evidence and floors an estimate,
+      ;; but never above this request's total input.
+      (expect (= 8000
+                 (:reusable-tokens (sample! with-fixed
+                                            :anthropic
+                                            "opus"
+                                            context
+                                            [{:role "system" :content "elsewhere"}]
+                                            8000
+                                            9000
+                                            2000))))))
+  (it
+    "never estimates shared bytes beyond the last surviving breakpoint"
+    (let [sample!
+          @#'lp/note-prompt-cache-request!
+
+          context
+          {:id "pcctx-v1-anchors" :fixed-prefix-weight 0}
+
+          prior
+          [{:role "system" :content "stable"} {:role "user" :content "u1"}
+           {:role "assistant" :content "a1"} {:role "user" :content "u2"}
+           {:role "assistant" :content "a2"} {:role "user" :content "u3"}
+           {:role "assistant" :content "a3"}]
+
+          shared-unmarked
+          (conj (subvec (vec prior) 0 4) {:role "assistant" :content "changed"})
+
+          system-only
+          [(first prior) {:role "user" :content "changed"}]
+
+          sample-after
+          (fn [messages]
+            (let [history (atom {})]
+              (sample! history :anthropic "opus" context prior 10000 0 0)
+              (sample! history :anthropic "opus" context messages 10000 0 1000)))
+
+          through-unmarked
+          (sample-after shared-unmarked)
+
+          through-system
+          (sample-after system-only)]
+
+      ;; With seven prior messages, the anchors are the system block and indexes
+      ;; 4-6. Shared messages 1-3 have no independent cache entry, so diverging
+      ;; before index 4 can recover no more than the system-only rewrite.
+      (expect (= :estimated (:reuse-kind through-unmarked)))
+      (expect (pos? (:reusable-tokens through-unmarked)))
+      (expect (= (:reusable-tokens through-system) (:reusable-tokens through-unmarked)))))
+  (it "rotates the baseline when the provider fixed-prefix identity changes"
+      (let [history
+            (atom {})
+
+            sample!
+            @#'lp/note-prompt-cache-request!
+
+            messages
+            [{:role "system" :content "stable"} {:role "user" :content "one"}]
+
+            first-context
+            {:id "pcctx-v1-first" :fixed-prefix-weight 500}
+
+            changed-context
+            {:id "pcctx-v1-changed" :fixed-prefix-weight 500}]
+
+        (sample! history :anthropic "opus" first-context messages 6000 0 0)
+        (expect (= {:reusable-tokens 0 :continuity :cache-context-changed :reuse-kind nil}
+                   (sample! history :anthropic "opus" changed-context messages 6000 0 1000)))
+        (expect (= changed-context (get-in @history [[:anthropic "opus"] :prompt-cache-context])))))
   (it "counts the whole prior request while it is still an exact prefix"
       (let [history
             (atom {})
 
             sample!
-            @#'lp/note-prompt-cache-request!]
+            sample-prompt-cache!]
 
         (expect
           (= {:reusable-tokens 0 :continuity :initial}
@@ -282,7 +418,7 @@
             (atom {})
 
             sample!
-            @#'lp/note-prompt-cache-request!
+            sample-prompt-cache!
 
             msg
             (fn [n]
@@ -307,32 +443,47 @@
           (=
             {:reusable-tokens 0 :continuity :rewrite}
             (sample! history :anthropic "opus" [{:role "user" :content "elsewhere"}] 900 0 2000)))))
-  (it "calls an untouched prefix expired when the window passed and nothing came back"
-      (let [history
-            (atom {})
+  (it
+    "calls an untouched prefix expired when the window passed and nothing came back"
+    (let [history
+          (atom {})
 
-            sample!
-            @#'lp/note-prompt-cache-request!
+          sample!
+          sample-prompt-cache!
 
-            one
-            [{:role "user" :content "one"}]
+          one
+          [{:role "user" :content "one"}]
 
-            two
-            (conj one {:role "assistant" :content "two"})]
+          two
+          (conj one {:role "assistant" :content "two"})]
 
-        (sample! history :anthropic "opus" one 1000 0 0)
-        (expect (= {:reusable-tokens 1000 :continuity :expired}
-                   (sample! history :anthropic "opus" two 1200 0 300001)))
-        ;; The provider proved the prefix is still resident, so age alone must not
-        ;; call it expired.
-        (expect (= {:reusable-tokens 1200 :continuity :append-only}
-                   (sample! history
-                            :anthropic
-                            "opus"
-                            (conj two {:role "user" :content "three"})
-                            1400
-                            1100
-                            600002))))))
+      (sample! history :anthropic "opus" one 1000 0 0)
+      ;; :anthropic writes 1-hour breakpoints, so five minutes is not stale there.
+      (expect (= {:reusable-tokens 1000 :continuity :append-only}
+                 (sample! history :anthropic "opus" two 1200 0 300001)))
+      (expect (= {:reusable-tokens 1200 :continuity :expired}
+                 (sample! history
+                          :anthropic
+                          "opus"
+                          (conj two {:role "user" :content "three"})
+                          1400
+                          0
+                          3900002)))
+      ;; The provider proved the prefix is still resident, so age alone must not
+      ;; call it expired.
+      (expect (= {:reusable-tokens 1400 :continuity :append-only}
+                 (sample!
+                   history
+                   :anthropic
+                   "opus"
+                   (conj two {:role "user" :content "three"} {:role "assistant" :content "four"})
+                   1600
+                   1100
+                   7200002)))
+      ;; A route left on the five-minute tier keeps the tighter window.
+      (sample! history :zai-coding-plan "glm" one 1000 0 0)
+      (expect (= {:reusable-tokens 1000 :continuity :expired}
+                 (sample! history :zai-coding-plan "glm" two 1200 0 300001))))))
 
 ;; Regression, user report: a completed turn was reconstructed into a different request on
 ;; the next turn, discarding a provider-resident prefix; folds could then rewrite it repeatedly.
@@ -341,7 +492,7 @@
   "A successful live turn remains the exact provider prefix of its immediate follow-up;
    route or semantic-history changes deliberately fall back to the canonical recap."
   (it
-    "appends the accepted answer and next user message to the exact final request"
+    "refuses exact replay when the opaque provider cache context changed"
     (let [history
           (atom {})
 
@@ -353,6 +504,50 @@
 
           resume
           @#'lp/resumable-prompt-message-base
+
+          context
+          {:id "pcctx-v1-current" :fixed-prefix-weight 400}
+
+          changed
+          {:id "pcctx-v1-new-tool-schema" :fixed-prefix-weight 450}
+
+          stable
+          [{:role "system" :content "stable"}]
+
+          request
+          (conj stable {:role "user" :content "turn one"})]
+
+      (sample! history :anthropic "opus" context request 5000 0 (util/now-ms))
+      (complete! history :anthropic "opus" 1 [] 1 {:role "assistant" :content "done"})
+      (expect (:resumed? (resume history
+                                 :anthropic
+                                 "opus"
+                                 context
+                                 2
+                                 []
+                                 stable
+                                 [{:role "user" :content "turn two"}])))
+      (expect (nil? (resume history
+                            :anthropic
+                            "opus"
+                            changed
+                            2
+                            []
+                            stable
+                            [{:role "user" :content "turn two"}])))))
+  (it
+    "appends the accepted answer and next user message to the exact final request"
+    (let [history
+          (atom {})
+
+          sample!
+          sample-prompt-cache!
+
+          complete!
+          @#'lp/mark-prompt-cache-turn-complete!
+
+          resume
+          resume-prompt-cache
 
           stable
           [{:role "system" :content "stable"}]
@@ -390,13 +585,13 @@
           (atom {})
 
           sample!
-          @#'lp/note-prompt-cache-request!
+          sample-prompt-cache!
 
           complete!
           @#'lp/mark-prompt-cache-turn-complete!
 
           resume
-          @#'lp/resumable-prompt-message-base
+          resume-prompt-cache
 
           stable
           [{:role "system" :content "stable one"} {:role "system" :content "stable two"}]
@@ -438,13 +633,13 @@
           (atom {})
 
           sample!
-          @#'lp/note-prompt-cache-request!
+          sample-prompt-cache!
 
           complete!
           @#'lp/mark-prompt-cache-turn-complete!
 
           resume
-          @#'lp/resumable-prompt-message-base
+          resume-prompt-cache
 
           base!
           @#'lp/prompt-message-base!
@@ -587,7 +782,7 @@
           (atom nil)
 
           sample!
-          @#'lp/note-prompt-cache-request!
+          sample-prompt-cache!
 
           request
           [{:role "system" :content "stable"} {:role "user" :content "turn one"}]
@@ -656,7 +851,7 @@
           (atom {})
 
           sample!
-          @#'lp/note-prompt-cache-request!
+          sample-prompt-cache!
 
           env
           {:db-info ::db
@@ -1128,6 +1323,7 @@
                                :weights (vec (repeat (count request) 1))
                                :input-tokens 12000
                                :at-ms (util/now-ms)
+                               :prompt-cache-context test-prompt-cache-context
                                :completed-turn {:turn-position 1
                                                 :summaries []
                                                 :stable-message-count (count stable)
@@ -1151,6 +1347,7 @@
                               (:prompt-cache-history-atom resumed)
                               (first route)
                               (second route)
+                              test-prompt-cache-context
                               2
                               []
                               stable
@@ -4138,7 +4335,10 @@
   "Repeated actions are valid work. The loop continues until the model returns an answer."
   (it "does not checkpoint or force-finalize identical actions"
       (let [router-stub
-            {:providers [{:id :zai-coding-plan :models [{:name "glm-5-turbo"}]}]}
+            (svar/make-router [{:id :zai-coding-plan
+                                :api-key "test"
+                                :base-url "https://example.invalid"
+                                :models [{:name "glm-5-turbo"}]}])
 
             env
             (lp/create-environment router-stub {:db :memory})

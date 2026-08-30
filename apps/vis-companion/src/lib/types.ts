@@ -157,6 +157,8 @@ export interface SessionUsage {
   reusable_prefix_coverage_percent?: number;
   /** How many of the session's LLM calls carried a reuse denominator — the sample behind it. */
   prompt_cache_sample_count?: number;
+  /** Reuse denominators derived from rewritten or changed fixed prefixes. */
+  prompt_cache_estimated_sample_count?: number;
   /** Calls whose earlier context had been rewritten: a fold or a replaced history. */
   prompt_cache_rebuild_count?: number;
   /** Calls whose prefix survived but had aged out of the provider cache. */

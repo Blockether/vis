@@ -371,12 +371,26 @@ function SessionStats({
     return () => controller.abort();
   }, [conn, session.id]);
 
+  return <SessionStatsPanel session={session} usage={usage} phase={phase} />;
+}
+
+/** The deterministic paint surface behind the row's on-demand usage read. */
+export function SessionStatsPanel({
+  session,
+  usage,
+  phase,
+}: {
+  session: Session;
+  usage: SessionUsage | null;
+  phase: "loading" | "ready" | "error";
+}) {
   const cacheReadShare = usage?.cache_read_share_percent;
   const reuseCoverage = usage?.reusable_prefix_coverage_percent;
   // The coverage number is only as good as the calls it was measured on, so the
   // card prints its sample beside it: a bold percentage over an undisclosed
   // denominator is the trick this pair exists to refuse.
   const reuseSamples = usage?.prompt_cache_sample_count;
+  const reuseIsEstimated = (usage?.prompt_cache_estimated_sample_count ?? 0) > 0;
 
   return (
     <div
@@ -425,13 +439,13 @@ function SessionStats({
               label="Reuse coverage"
               value={
                 typeof reuseCoverage === "number"
-                  ? `${Math.round(reuseCoverage)}%`
+                  ? `${reuseIsEstimated ? "≈" : ""}${Math.round(reuseCoverage)}%`
                   : "—"
               }
               explanation={
                 typeof reuseSamples === "number"
-                  ? `Share of reusable prior input recovered from cache · ${compactCount(reuseSamples)} of ${compactCount(usage.iteration_count)} calls`
-                  : "Share of reusable prior input recovered from cache"
+                  ? `${reuseIsEstimated ? "Estimated share" : "Share"} of reusable prior input recovered from cache · ${compactCount(reuseSamples)} of ${compactCount(usage.iteration_count)} calls`
+                  : `${reuseIsEstimated ? "Estimated share" : "Share"} of reusable prior input recovered from cache`
               }
             />
           </dl>

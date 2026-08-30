@@ -33,6 +33,7 @@ import type {
   QueuePausedInfo,
   RouterProvider,
   Session,
+  SessionUsage,
 } from '../lib/types';
 import type { GwHealth } from '../components/Machines';
 import type { ManagedProject } from '../components/ManageProjectsSheet';
@@ -285,6 +286,25 @@ export const STORY_SESSION_ROW: Session = {
   created_at: '2030-01-02T11:00:00.000Z',
   modified_at: '2030-01-02T11:59:00.000Z',
   workspace: { root: STORY_SESSION.where, label: STORY_SESSION.project },
+};
+
+export const STORY_SESSION_USAGE: SessionUsage = {
+  turn_count: 2,
+  iteration_count: 5,
+  tool_call_count: 59,
+  fold_count: 0,
+  input_tokens: 85_000,
+  output_tokens: 2_300,
+  cache_read_share_percent: 77,
+  reusable_prefix_coverage_percent: 98,
+  prompt_cache_reusable_tokens: 81_000,
+  prompt_cache_reused_tokens: 79_400,
+  prompt_cache_sample_count: 4,
+  prompt_cache_estimated_sample_count: 1,
+  cost_usd: 0.21,
+  duration_ms: 47_000,
+  provider: 'anthropic-coding-plan',
+  model: 'claude-opus-5',
 };
 
 /**

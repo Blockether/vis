@@ -26,6 +26,7 @@
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.env-digest :as env-digest]
+            [com.blockether.vis.internal.util :as util]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private base-ctx
@@ -174,28 +175,93 @@
 
 (defdescribe
   cache-breakpoints-test
-  "The two prompt-cache breakpoints: the last `:role \"system\"` message (the
-   frozen `session={…}` prefix) and the LAST message overall (moving recency,
-   caches the append-only transcript). pi/maki two-breakpoint pattern."
-  (let [apply-bp @#'lp/apply-cache-breakpoints]
-    (it "tags ONLY the last system message and the last message (not the middle)"
+  "The four prompt-cache breakpoints: the last `:role \"system\"` message (the
+   frozen `session={…}` prefix) plus the three trailing transcript messages, so a
+   request's read anchor lands exactly where its predecessor wrote. The 1-hour
+   tier is asked for only on a route measured to honour it."
+  (let [apply-bp
+        @#'lp/apply-cache-breakpoints
+
+        cached?
+        (fn [m]
+          (let [c (:content m)]
+            (boolean (and (vector? c) (some :svar/cache c)))))
+
+        ttls
+        (fn [out]
+          (into #{} (comp (mapcat :content) (keep :svar/cache-ttl)) out))]
+
+    (it "tags the last system message and the three trailing transcript messages"
         (let [out (apply-bp [{:role "system" :content "core"}
                              {:role "system" :content "session = {…}"} ; frozen block (last system)
-                             {:role "user" :content [{:type "text" :text "prior"}]}
-                             {:role "user" :content [{:type "text" :text "current"}]}])] ; last
-          (expect (not (some :svar/cache
-                             (let [c (:content (nth out 0))]
-                               (if (string? c) nil c)))))
-          (expect (some :svar/cache (:content (nth out 1)))) ; frozen system block
-          (expect (not (some :svar/cache (:content (nth out 2))))) ; middle untouched
-          (expect (some :svar/cache (:content (nth out 3)))))) ; moving recency
+                             {:role "user" :content [{:type "text" :text "settled"}]}
+                             {:role "assistant" :content [{:type "text" :text "settled reply"}]}
+                             {:role "user" :content [{:type "text" :text "previous write anchor"}]}
+                             {:role "assistant" :content [{:type "text" :text "reply"}]}
+                             {:role "user" :content [{:type "text" :text "current"}]}]
+                            :zai-coding-plan)]
+          (expect (not (cached? (nth out 0)))) ; earlier system block
+          (expect (cached? (nth out 1))) ; frozen system prefix
+          (expect (not (cached? (nth out 2)))) ; settled middle stays untouched
+          (expect (not (cached? (nth out 3))))
+          (expect (cached? (nth out 4))) ; the previous request's write anchor
+          (expect (cached? (nth out 5)))
+          (expect (cached? (nth out 6))) ; moving recency
+          (expect (= 4 (count (filter cached? out))))))
+    (it "never spends more than Anthropic's four breakpoints"
+        (let [msgs (into [{:role "system" :content "s"}]
+                         (map (fn [i]
+                                {:role "user" :content [{:type "text" :text (str i)}]}))
+                         (range 20))]
+          (expect (= 4 (count (filter cached? (apply-bp msgs :anthropic-coding-plan)))))))
     (it "coerces a bare-string last message into a cached text block"
-        (let [out (apply-bp [{:role "system" :content "s"} {:role "user" :content "hello"}])
-              last-blk (first (:content (last out)))]
+        (let [out
+              (apply-bp [{:role "system" :content "s"} {:role "user" :content "hello"}]
+                        :zai-coding-plan)
+
+              last-blk
+              (first (:content (last out)))]
 
           (expect (= "hello" (:text last-blk)))
           (expect (true? (:svar/cache last-blk)))))
-    (it "empty list is a no-op; single message gets one breakpoint (idempotent overlap)"
-        (expect (= [] (apply-bp [])))
-        (let [out (apply-bp [{:role "system" :content "only"}])]
-          (expect (some :svar/cache (:content (first out))))))))
+    (it "empty list is a no-op; a system-only call collapses to one breakpoint"
+        (expect (= [] (apply-bp [] :zai-coding-plan)))
+        (let [out (apply-bp [{:role "system" :content "only"}] :zai-coding-plan)]
+          (expect (= 1 (count (filter cached? out))))))
+    (it "asks for the 1-hour tier only on a route measured to honour it"
+        (let [msgs [{:role "system" :content "s"} {:role "user" :content "u"}]]
+          (expect (= #{:1h} (ttls (apply-bp msgs :anthropic-coding-plan))))
+          (expect (= #{:1h} (ttls (apply-bp msgs :anthropic))))
+          (expect (empty? (ttls (apply-bp msgs :zai-coding-plan))))))
+    (it "never marks a preserved thinking block"
+        (let [out (apply-bp [{:role "system" :content "s"}
+                             {:role "assistant"
+                              :content [{:type "thinking" :thinking "…" :signature "sig"}]}
+                             {:role "assistant"
+                              :content [{:type "thinking" :thinking "…" :signature "sig"}
+                                        {:type "text" :text "answer"}]}]
+                            :anthropic-coding-plan)]
+          (expect (not (cached? (nth out 1)))) ; nothing cacheable in it
+          (expect (nil? (:svar/cache (first (:content (nth out 2))))))
+          (expect (true? (:svar/cache (second (:content (nth out 2))))))))))
+
+(defdescribe
+  prompt-cache-window-test
+  "Replaying an exact prefix across a pause is gated by the TIER its route was
+   written with — a 1-hour breakpoint is worthless if the checkpoint carrying it
+   is still discarded after five minutes."
+  (let [window
+        @#'lp/prompt-cache-window-ms
+
+        fresh?
+        @#'lp/prompt-cache-entry-fresh?
+
+        half-hour-old
+        {:at-ms (- (util/now-ms) 1800000)}]
+
+    (it "an extended-tier route still replays a thirty-minute-old checkpoint"
+        (expect (= 3600000 (window :anthropic-coding-plan)))
+        (expect (true? (fresh? :anthropic-coding-plan half-hour-old))))
+    (it "a five-minute route drops it"
+        (expect (= 300000 (window :zai-coding-plan)))
+        (expect (not (fresh? :zai-coding-plan half-hour-old))))))
