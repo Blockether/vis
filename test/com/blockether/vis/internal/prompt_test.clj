@@ -807,12 +807,16 @@
                    (expect (not (str/includes? text "bottom-up")))
                    (expect (str/includes? text "every `patch` edit for a file"))
                    (expect (str/includes? text "FRESH ANCHOR"))
-                   ;; User report: recent sessions copied the primary grep example without
+                   ;; User reports: recent sessions copied the primary grep example without
                    ;; context even though nearby lines often answered the question outright.
+                   ;; Naming the default was still ambiguous: context is counted independently
+                   ;; above and below every match, not split between the two sides.
                    (expect (str/includes?
                              text
                              "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 4})`"))
-                   (expect (str/includes? text "context defaults to 4"))))
+                   (expect (str/includes?
+                             text
+                             "`context: 1` means one line before and one after (default 4)"))))
              ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
              ;; prompt named the method with no arguments at all, so a watcher still
              ;; paged bytes to answer "what did it just print".
