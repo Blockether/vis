@@ -239,7 +239,7 @@ _Terminal UI (Lanterna)._
 
 | Dependency | Version | License | Jar size | Ownership |
 |---|---|---|---|---|
-| `com.blockether/lanterna` | `3.1.5-vis.42` | LGPL-3.0 | 542 KB | Blockether (in-house) |
+| `com.blockether/lanterna` | `3.1.5-vis.43` | LGPL-3.0 | 586 KB | Blockether (in-house) |
 | `org.jcodec/jcodec` | `0.2.5` | BSD | 2.0 MB | 3rd-party |
 
 ### `vis-foundation-voice` extension
@@ -307,7 +307,7 @@ under **Apache-2.0** — **with the copyleft exception(s) below that need legal 
 > relinking obligations. Action: confirm distribution terms with legal, or keep
 > the owning extension as an optional (droppable) jar rather than baking it into
 > the distributed binary (see §4.3).
-> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.42`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
+> **WARNING — `com.blockether/lanterna` (`3.1.5-vis.43`) is LGPL-3.0** (copyleft). LGPL is generally fine for dynamic
 > linking, but **static linking into the GraalVM native image** can trigger
 > relinking obligations. Action: confirm distribution terms with legal, or keep
 > the owning extension as an optional (droppable) jar rather than baking it into
