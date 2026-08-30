@@ -5395,9 +5395,6 @@
                     execution* (assoc execution
                                  :envelope envelope
                                  :role block-role)
-                    ;; Output stays factual: stdout/error only. Human channels derive
-                    ;; presentation locally; the loop never manufactures another value.
-                    result-summary (:result-summary execution*)
                     _ (when (and emit-activity! (map? (:activity execution*)))
                         ;; The last revision has the same event type as the running
                         ;; replacements, but is durable. Output remains output.
@@ -5417,27 +5414,23 @@
                 ;; synthetic error box. Suppress the live chunk when execution stopped
                 ;; at the preflight gate (mirrors `suppress-form-start?`).
                 (when (and on-chunk (not preflight-error))
-                  (on-chunk
-                    {:phase :form-result
-                     :iteration iteration-position
-                     :position idx
-                     :count total-blocks
-                     :scope scope
-                     :code expr
-                     :render-segments render-segments
-                     ;; Python execution succeeds only through printed stdout.
-                     :result-summary result-summary
-                     ;; Provider-call identity for pairing this form with its tool_use.
-                     :vis/tool-name (:vis/tool-name entry)
-                     :stdout (:stdout execution*)
-                     :error (:error execution*)
-                     :envelope (:envelope execution*)
-                     :role (:role execution*)
-                     :timeout? (boolean (:timeout? execution*))
-                     :repaired? (boolean (:repaired? execution*))}))
+                  (on-chunk {:phase :form-result
+                             :iteration iteration-position
+                             :position idx
+                             :count total-blocks
+                             :scope scope
+                             :code expr
+                             :render-segments render-segments
+                             ;; Provider-call identity for pairing this form with its tool_use.
+                             :vis/tool-name (:vis/tool-name entry)
+                             :stdout (:stdout execution*)
+                             :error (:error execution*)
+                             :envelope (:envelope execution*)
+                             :role (:role execution*)
+                             :timeout? (boolean (:timeout? execution*))
+                             :repaired? (boolean (:repaired? execution*))}))
                 {:block expr
                  :execution execution*
-                 :result-summary result-summary
                  :render-segments render-segments
                  :svar/tool-call-id (:svar/tool-call-id entry)
                  :vis/tool-name (:vis/tool-name entry)}))
@@ -5448,7 +5441,6 @@
           form-segments (mapv :render-segments executed)
           form-tool-ids (mapv :svar/tool-call-id executed)
           form-tool-names (mapv :vis/tool-name executed)
-          form-result-summaries (mapv :result-summary executed)
           ;; Preflight gate → synthetic block carries `:vis/preflight? true`
           ;; so channels can suppress the model-facing-only error box. Keep
           ;; the block in the persisted/trailer stream so the model still
@@ -5459,7 +5451,7 @@
                                         code-entries))
           blocks
           (validate-iteration-blocks!
-            (mapv (fn [idx code execution segments tool-call-id tool-name result-summary]
+            (mapv (fn [idx code execution segments tool-call-id tool-name]
                     (cond-> {:id idx
                              :code code
                              ;; What the block PRINTED — Python's one success channel.
@@ -5511,9 +5503,6 @@
                       tool-name
                       (assoc :vis/tool-name tool-name)
 
-                      result-summary
-                      (assoc :result-summary result-summary)
-
                       (get preflight-by-idx idx)
                       (assoc :vis/preflight? true)))
                   (range)
@@ -5521,8 +5510,7 @@
                   form-executions
                   form-segments
                   form-tool-ids
-                  form-tool-names
-                  form-result-summaries))]
+                  form-tool-names))]
 
       (if-let [{value :value} (:answer @turn-state-atom)]
         ;; FINAL path: a plain-text answer reply (svar `:stop-reason :end`),
@@ -9312,19 +9300,28 @@
             (str/starts-with? t "!") (let [cmd (str/trim (subs t 1))]
                                        (when (seq cmd) {:kind :run :cmd cmd}))))))
 
-(defn- bang-result-summary
-  "Compact factual status for a `!`/`!&` form. The command output itself belongs
-   only to stdout; this headline carries no second copy of it."
+(defn- bang-stdout
+  "The one stdout value for a `!`/`!&` form: command bytes followed by its factual
+   completion line. There is no parallel headline field."
   [kind id result]
   (when (map? result)
-    (cond (= kind :bg) (if (get result "already_running")
-                         (str "Background shell " id " was already running")
-                         (str "Started background shell " id))
-          (get result "timed_out") (str "Timed out"
-                                        (when-let [seconds (get result "timeout_secs")]
-                                          (str " after " seconds "s")))
-          (some? (get result "exit")) (str "exit " (get result "exit"))
-          :else (util/non-blank (get result "status")))))
+    (let [out
+          (when (some? (get result "out")) (str (get result "out")))
+
+          status
+          (cond (= kind :bg) (if (get result "already_running")
+                               (str "Background shell " id " was already running")
+                               (str "Started background shell " id))
+                (get result "timed_out") (str "Timed out"
+                                              (when-let [seconds (get result "timeout_secs")]
+                                                (str " after " seconds "s")))
+                (some? (get result "exit")) (str "exit " (get result "exit"))
+                :else (util/non-blank (get result "status")))]
+
+      (cond (and (some? out) status)
+            (str out (when (and (seq out) (not (str/ends-with? out "\n"))) "\n") status)
+            (some? out) out
+            status status))))
 
 (defn- run-bang-turn!
   "LLM-free `!`/`!&` shell-sugar turn: run the shell tool directly, then persist
@@ -9420,10 +9417,7 @@
         (:error envelope)
 
         stdout
-        (when (and (map? result-map) (some? (get result-map "out"))) (str (get result-map "out")))
-
-        result-summary
-        (bang-result-summary kind id result-map)
+        (bang-stdout kind id result-map)
 
         ;; Disabled commands have no executed form to explain the refusal. Every
         ;; executed outcome is already visible on its form, including errors.
@@ -9445,10 +9439,7 @@
           (assoc :stdout stdout)
 
           (some? err)
-          (assoc :error err)
-
-          result-summary
-          (assoc :result-summary result-summary))
+          (assoc :error err))
 
         ;; A bang is an ordinary visible form. The authored source display names
         ;; the shell language without storing a rendered copy of its output.
@@ -9469,7 +9460,6 @@
                                   :display-code cmd
                                   :display-language "bash"
                                   :tag :user-shell
-                                  :result-summary result-summary
                                   :error err
                                   :envelope (:envelope block)}
                            (some? stdout)

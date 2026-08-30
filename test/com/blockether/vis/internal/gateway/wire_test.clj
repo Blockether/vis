@@ -29,7 +29,6 @@
                            :tag :observation
                            :src "print('line one')"
                            :vis/tool-name "python_execution"
-                           :result-summary "1 line"
                            :stdout "line one
 "
                            :activity {:rows [{:operation :print :summary "line one"}]}

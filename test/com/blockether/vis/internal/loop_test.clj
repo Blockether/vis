@@ -4100,12 +4100,9 @@
           (expect (str/includes? (get-in m [:content 0 :content]) "hello"))))
     ;; Regression, reported from the app: a live view interrupted after its tool
     ;; block returned filed a record, but the next model request was never told.
-    (it "puts only semantic live-view records back into the model's tool result"
+    (it "puts semantic live-view records back into the model's tool result"
         (let [m
-              (irm {:forms-vec [{:scope "t1/i1/f1"
-                                 :svar/tool-call-id "c1"
-                                 :stdout "watching"
-                                 :result-summary "PRESENTATION-ONLY-SENTINEL"}]
+              (irm {:forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "c1" :stdout "watching"}]
                     :tool-calls [{:id "c1"}]
                     ;; Protocol 7 files no Activity attachment, so the only record
                     ;; this rail can meet is a semantic one.
@@ -4120,7 +4117,7 @@
           (expect (str/includes? body "native.live.ndjson"))
           (expect (str/includes? body "record-1"))
           (expect (str/includes? body "read_attachment"))
-          (expect (not (str/includes? body "PRESENTATION-ONLY-SENTINEL")))))
+          (expect (str/includes? body "watching"))))
     (it "no summaries ⇒ trailer-iters unchanged"
         (let [tis [[1 {:forms-vec [{:scope "t1/i1/f1" :stdout "x"}]}]]]
           (expect (= tis (apply-summaries tis [])))))))

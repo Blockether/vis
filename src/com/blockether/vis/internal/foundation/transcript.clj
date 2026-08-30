@@ -29,7 +29,7 @@
                      :tokens {:input :output :reasoning :cached}
                      :cost-usd D}
       :timeline    [{:kind :ref :turn-id :iteration-id :content :code
-                     :status :duration-ms :result-summary}]
+                     :status :duration-ms}]
       :turns
        [{:id :user-request :status :prior-outcome :provider :model
          :iteration-count :failure-count
@@ -100,28 +100,24 @@
   "Project one per-form envelope from `:forms` into the transcript's `:blocks`
    shape. Each envelope carries canonical `:stdout` and optional `:error` facts,
    plus a 0-based `:position` derived from its index."
-  [position raw-envelope]
-  (let [envelope raw-envelope]
-    (cond-> {:position position :code (or (:src envelope) "")}
-      (:scope envelope)
-      (assoc :scope (:scope envelope))
+  [position envelope]
+  (cond-> {:position position :code (or (:src envelope) "")}
+    (:scope envelope)
+    (assoc :scope (:scope envelope))
 
-      (:tag envelope)
-      (assoc :tag (:tag envelope))
+    (:tag envelope)
+    (assoc :tag (:tag envelope))
 
-      ;; Printed output is the primary content of a `python_execution` block and
-      ;; can coexist with an error when the block printed before it threw.
-      (some? (:stdout envelope))
-      (assoc :stdout (:stdout envelope))
+    ;; Printed output is the primary content of a `python_execution` block and
+    ;; can coexist with an error when the block printed before it threw.
+    (some? (:stdout envelope))
+    (assoc :stdout (:stdout envelope))
 
-      (contains? envelope :error)
-      (assoc :error (:error envelope))
+    (contains? envelope :error)
+    (assoc :error (:error envelope))
 
-      (some? (:op envelope))
-      (assoc :op (:op envelope))
-
-      (some? (:result-summary envelope))
-      (assoc :result-summary (:result-summary envelope)))))
+    (some? (:op envelope))
+    (assoc :op (:op envelope))))
 
 (defn- attachment-descriptor
   "Lean, byte-free descriptor for ONE persisted iteration attachment (an element
@@ -291,7 +287,6 @@
         (false? success?) :error
         :else :done))
 
-
 (defn- dialog-events
   [turns]
   (vec (mapcat (fn [turn]
@@ -302,7 +297,12 @@
 
 (defn- code-event
   [turn iteration block]
-  (let [error (:error block)]
+  (let [error
+        (:error block)
+
+        card
+        (form/result-card block)]
+
     (cond-> {:kind :code
              :ref (block-ref turn iteration block)
              :turn-id (:id turn)
@@ -313,6 +313,9 @@
              :status (event-status error true (:timeout? block))
              :duration-ms (block-duration-ms block)
              :code (:code block)}
+      card
+      (assoc :cards [card])
+
       error
       (assoc :error error))))
 
@@ -798,24 +801,12 @@
               str/trim)]
     (when-not (str/blank? s) (if (> (count s) 120) (str (subs s 0 120) "\u2026") s))))
 
-(defn- dialog-result-preview
-  "One bounded, single-line preview of a code/tool result-summary, or nil."
-  [rs]
-  (when (map? rs)
-    (let [p (some-> (:preview rs)
-                    str
-                    one-line
-                    str/trim)]
-      (when-not (str/blank? p) (if (> (count p) 220) (str (subs p 0 220) "\u2026") p)))))
-
 (defn- tool-descriptor
-  "One compact tool-call descriptor from a timeline :code event, mirroring the
-   TUI op-card: op label, arg summary, the tool's own rendered result body
-   (ANSI-stripped), and a status. A card carries the printed value's OWN op as
-   data (`nil` for a python block's own output), and THIS export is the only
-   place that turns it into a display name. Python blocks are flagged so the
-   renderer can show the source verbatim with the result folded beneath it."
-  [{:keys [code result-summary status cards]}]
+  "One compact tool-call descriptor from a timeline :code event: operation label,
+   argument summary, the printed stdout body (ANSI-stripped), and status. The form's
+   own op is data (`nil` for a Python block); this export alone turns it into a
+   display name."
+  [{:keys [code status cards]}]
   (when-not (str/blank? (str code))
     (let [c
           (str/trim (str code))
@@ -840,9 +831,7 @@
        :python? python?
        :carded? (some? card)
        :body (strip-ansi (:body card))
-       :status status
-       :preview (some-> (dialog-result-preview result-summary)
-                        strip-ansi)})))
+       :status status})))
 
 (defn- dialog-segments
   "Ordered dialog segments for one turn, interleaving each iteration's reasoning

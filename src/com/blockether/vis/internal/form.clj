@@ -24,14 +24,11 @@
    overrides). Add a new verbatim display field HERE; `->display`/`<-wire` then
    flow it across every boundary without runtime key rewriting.
 
-   Grouped: the source the model wrote, the result headline, the card op, the
-   per-form display projections, the tool-call linkage, and the repair/timeout
-   flags channels surface."
+   Grouped: the source the model wrote, the card op, the per-form display projections,
+   the tool-call linkage, and the repair/timeout flags channels surface."
   [;; source
    [:code "code"] [:display-code "display_code"] [:display-language "display_language"]
    [:comment "comment"] [:scope "scope"] [:started-at-ms "started_at_ms"]
-   ;; concise tool-authored result headline; printed output is bounded separately
-   [:result-summary "result_summary"]
    ;; A form's OWN op ("grep", "attach") — the only identity a card has. It is DATA
    ;; the executed form carried, never a symbol looked up in a registry, so a card
    ;; cannot drift from what actually ran. Absent on a python block: a form is
@@ -126,32 +123,22 @@
       :else nil)))
 
 (defn result-card
-  "Canonical result CARD descriptor — the ONE collapse decision shared by Clojure
-   channels. It combines the form's concise `:result-summary` headline with a body
-   derived locally from canonical `:stdout`:
+  "Canonical result CARD descriptor derived only from the form's `:stdout`:
 
-     {:op           `grep`       — the form's own op, never registry-derived
-      :summary      12 results    — optional tool-authored headline
-      :body         …markdown…    — optional local projection of printed output
-      :collapsible? true}         — true exactly when a body exists
+     {:op           `grep`       — optional form metadata
+      :body         …markdown…    — local projection of printed output
+      :collapsible? true}
 
-   nil means the form has neither headline nor output."
-  [{:keys [op result-summary] :as form}]
-  (let [summary
-        (some-> result-summary
-                str
-                str/trim
-                not-empty)
-
-        body
-        (try (some-> (stdout-display form)
-                     :body
-                     str
-                     str/trimr
-                     not-empty)
-             (catch Throwable _ nil))]
-
-    (when (or summary body) {:op op :summary summary :body body :collapsible? (boolean body)})))
+   nil means the form printed nothing. A label or operation can never manufacture
+   successful output."
+  [{:keys [op] :as form}]
+  (let [body (try (some-> (stdout-display form)
+                          :body
+                          str
+                          str/trimr
+                          not-empty)
+                  (catch Throwable _ nil))]
+    (when body {:op op :body body :collapsible? true})))
 
 (defn with-display
   "Attach the cached ruff rendering of a form's Python source when the form did not

@@ -1188,9 +1188,8 @@
         turns))
 
 (def ^:private painted-block-keys
-  "Presentation metadata excluded from model introspection. Canonical `:stdout`
-   remains; only the card label and headline go."
-  [:op :result-summary])
+  "Presentation metadata excluded from model introspection. Canonical `:stdout` remains."
+  [:op])
 
 (defn- model-iteration
   "One transcript iteration with the presentation-only rows taken out: the painted

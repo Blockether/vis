@@ -76,7 +76,7 @@ function updateRunningIteration(
   return { ...turn, iterations };
 }
 
-function formFromEvent(event: SseEvent, running = false): TranscriptForm {
+function formFromEvent(event: SseEvent): TranscriptForm {
   const cards = Array.isArray(event.cards)
     ? (event.cards as TranscriptForm[])
     : undefined;
@@ -88,8 +88,6 @@ function formFromEvent(event: SseEvent, running = false): TranscriptForm {
     display_language: eventString(event, "display_language") || undefined,
     comment: eventString(event, "comment") || undefined,
     op: eventString(event, "op") || undefined,
-    result_summary:
-      eventString(event, "result_summary") || (running ? "Running…" : undefined),
     result_kind: eventString(event, "result_kind") || undefined,
     error: event.error as TranscriptForm["error"],
     stdout: eventString(event, "stdout") || undefined,
@@ -240,7 +238,7 @@ export function reduceRunningTurnEvent(
   }
 
   if (type === "block.started" || type === "block.output") {
-    const form = formFromEvent(event, type === "block.started");
+    const form = formFromEvent(event);
     if (!form.block_id) return turn;
     const position = eventIterationPosition(event);
     const next = updateRunningIteration(turn, position, (iteration) =>

@@ -3575,10 +3575,10 @@
 (defn- form-fingerprint
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
-  [{:keys [code comment display-code display-language render-segments stdout result-summary
-           result-kind result-detail error success? silent? runs activity]}]
+  [{:keys [code comment display-code display-language render-segments stdout result-kind
+           result-detail error success? silent? runs activity]}]
   [(text-fingerprint code) (text-fingerprint comment) render-segments (text-fingerprint stdout)
-   (text-fingerprint result-summary) result-kind
+   result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
    result-detail error success? silent?
    ;; A settled live view joins this exact form after it closes, and reopening
@@ -4935,12 +4935,10 @@
           (conj pad)))))
 
 (defn- tool-card-entries
-  "Render one op-card (`vis/result-card` descriptor) into TUI line entries: the
-   tool-authored summary on a neutral headline, with the markdown body nested
-   under it (collapsible via `node-id`). A summary-only card has one headline row
-   and no expand triangle."
-  [{:keys [summary body]}
-   {:keys [fill-w session-id detail-expansions node-id duration-ms] :as opts}]
+  "Render one stdout card (`vis/result-card` descriptor) into TUI line entries.
+   RESULT is the stable disclosure label; the Markdown body nests under it and is
+   collapsible via `node-id`."
+  [{:keys [body]} {:keys [fill-w session-id detail-expansions node-id duration-ms] :as opts}]
   (let [body-text
         (some-> body
                 str
@@ -4948,16 +4946,12 @@
                 not-empty)
 
         ;; Op-card sections are compact: keep exactly one spacer row after the
-        ;; headline so expanded cards breathe, but drop markdown/code-fence pad rows
+        ;; disclosure so expanded cards breathe, but drop markdown/code-fence pad rows
         ;; inside COMMAND / RESULT / STDOUT sections. The labels themselves provide
-        ;; the visual structure after that first separator.
-        ;; A card wears NO op-name badge. The title (`GREP`, a private transport's
-        ;; `_SHELL_WAIT`) is gone: a result is its own tally and its own body. A
-        ;; card that carried no tally still needs a word on its disclosure row, and
-        ;; it is the same bold `RESULT` the unlabeled long-result disclosure wears
-        ;; - one name for the band, never a lowercase filler.
+        ;; the visual structure after that first separator. Successful content has one
+        ;; owner, stdout; RESULT names the band without restating its body.
         head-line
-        (or summary (band-label "RESULT"))
+        (band-label "RESULT")
 
         ->result
         (fn [e]
@@ -4975,9 +4969,9 @@
         (some-> body-text
                 vis/markdown->ast)
 
-        ;; A `vis-image` result must NEVER start life collapsed: the whole
-        ;; point is to SEE the picture. Detect one in the body so the op-card
-        ;; defaults to expanded (the image box itself is always allocated).
+        ;; A `vis-image` output must NEVER start life collapsed: the whole point is
+        ;; to SEE the picture. Detect one in stdout so the op-card defaults to expanded
+        ;; (the image box itself is always allocated).
         has-image?
         (boolean (some (fn [n]
                          (and (vector? n) (= :code (first n)) (= "vis-image" (:lang (second n)))))
@@ -5016,11 +5010,9 @@
                                      :node-id node-id
                                      :duration-ms duration-ms})]
 
-        ;; Collapsed op-card gets ONE trailing `result-bg` pad row so the
-        ;; headline reads as its own background BAND (not a lone colored line).
-        ;; Expanded cards keep ONE separator row after the headline — otherwise a
-        ;; nil-result REPL with only STDOUT visually glues the first label to the
-        ;; `▾ REPL ...` row — but no decorative gutters inside the labeled body.
+        ;; A collapsed stdout card gets ONE trailing `result-bg` pad row so the
+        ;; disclosure reads as its own background band. Expanded cards keep one
+        ;; separator after it; labels provide the remaining structure.
         (vec (concat header
                      (if expanded?
                        (into [{:line (str result-marker "") :meta nil}] body-entries)
@@ -5045,7 +5037,7 @@
 
                     ;; The same slot the id badge owns on collapsible heads: the
                     ;; duration rides the LAST wrapped line, re-ellipsized so the
-                    ;; summary and the figure still fit the band together.
+                    ;; band label and figure still fit together.
                     (with-right-suffix wrapped (vis/format-duration duration-ms) w)))
 
             ;; A card can carry a body yet have NO node-id (nothing to fold it
@@ -5054,9 +5046,8 @@
             body-rows
             (when (seq entries) (compact-tool-card-body-entries (mapv ->result entries)))]
 
-        ;; Summary-only cards still get the result-band pad. Body cards keep the
-        ;; same one-row headline separator as collapsible cards, then stay tight
-        ;; inside their labeled sections.
+        ;; Bodyless descriptors still get the result-band pad. Body cards keep the
+        ;; same one-row disclosure separator as collapsible cards.
         (vec (concat headline
                      (when (seq body-rows) [{:line (str result-marker "") :meta nil}])
                      body-rows
@@ -5852,13 +5843,10 @@
                                  visible
                                  (when expanded? hidden)))))
 
-                ;; Human result surface: canonical returned-value cards stay as supplied,
-                ;; while print-only stdout is derived into a RESULT body here as well as
-                ;; at the gateway boundary. That keeps live, restored, and direct renderer
-                ;; inputs from silently dropping what `print` emitted without changing a
-                ;; form that also carries a semantic return value (images included) or
-                ;; reviving the intentionally hidden bare-value surface. Long results
-                ;; mirror thinking and collapse only the surplus.
+                ;; Human output surface: derive the local RESULT body solely from canonical
+                ;; stdout. Strip artifact transport markers first so live, restored, and
+                ;; direct renderer inputs share the same view. Long output mirrors thinking
+                ;; and collapses only the surplus.
                 display-form
                 (cond-> form
                   (seq form-artifacts)
@@ -5866,11 +5854,6 @@
 
                 card
                 (vis/result-card display-form)
-
-                ;; The card HEADLINE — the tally the printed value itself carried
-                ;; ("12 results"), never a first-line slice of the body.
-                head-summary
-                (:summary card)
 
                 result-text
                 (some-> (:body card)
@@ -5885,14 +5868,10 @@
                                    :section :iteration
                                    :kind :result}))
 
-                ;; The trailing figure the companion paints on EVERY tool-card band:
-                ;; `toolCards` returns `[form]` for every non-silent form, so a bare
-                ;; value and a call that returned NOTHING are banded and timed there
-                ;; while the terminal said nothing at all. Those two shapes have no
-                ;; head to carry the figure, so the result band gets one row that
-                ;; carries only it — flush-painted like any no-chevron headline. A card
-                ;; head and the `+N more` disclosure already wear it,
-                ;; and a FAILED call rides its error headline (below): never both.
+                ;; The duration figure the companion paints on every finished form. A form
+                ;; with no stdout has no card head to carry it, so the result band gets one
+                ;; figure-only row. A card head, `+N more` disclosure, or FAILED headline
+                ;; already carries the same figure: never paint it twice.
                 duration-stamp
                 (when-let [d (and (nil? card)
                                   (nil? error)
@@ -5903,14 +5882,11 @@
                               (format-detail-summary-line "" d (max 1 (dec (long fill-w)))))
                    :meta {:kind :result-headline}})
 
-                ;; Result renders as MARKDOWN — same IR pipeline as the answer, in
-                ;; `:channel` mode so plain prose has no answer-bg but headings /
-                ;; lists / code bands still style. This is what makes the trace
-                ;; readable instead of a flat text dump. ONE result per block: a
-                ;; python block that printed several values still paints its whole
-                ;; stdout as a single result.
+                ;; Stdout renders as Markdown through the same IR pipeline as the answer, in
+                ;; `:channel` mode so prose has no answer-bg while headings, lists, and code
+                ;; bands still style. One block owns one stdout body.
                 result-lines
-                (cond (or result-text head-summary)
+                (cond result-text
                       (let [entries
                             (when result-text
                               (tag-copy-block-body (vec (paste-aware-ast->entries
@@ -5949,9 +5925,7 @@
                                 (assoc e :line (str result-marker stripped))))]
 
                         (cond
-                          ;; The value's own headline rides on a neutral row; its locally
-                          ;; derived body nests under it. A headline-only result renders a
-                          ;; plain row with no expand triangle because there is no body.
+                          ;; Stdout nests under the stable RESULT disclosure row.
                           card (tool-card-entries card
                                                   {:fill-w fill-w
                                                    :session-id session-id
@@ -5989,8 +5963,8 @@
                           :else (cond-> entries
                                   duration-stamp
                                   (conj duration-stamp))))
-                      ;; A call that returned nothing at all still took time. Its band is
-                      ;; the figure and nothing else — the companion's empty-summary card.
+                      ;; A call that printed nothing can still have a duration. Its band is
+                      ;; the figure and nothing else, matching the companion's bodyless card.
                       duration-stamp [duration-stamp])
 
                 ;; The FAILURE row of a call. Code bands stay status-neutral, so this line

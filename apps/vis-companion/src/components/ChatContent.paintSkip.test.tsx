@@ -148,7 +148,7 @@ const turn: TranscriptTurn = {
   turn_id: "turn-1",
   status: "completed",
   iterations: [
-    { id: "iteration-1", forms: [{ op: "shell", result_summary: "ok" }] },
+    { id: "iteration-1", forms: [{ op: "shell", stdout: "ok\n" }] },
   ],
 } as TranscriptTurn;
 

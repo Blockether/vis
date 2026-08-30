@@ -314,7 +314,7 @@ describe("a running transcript row without canonical session state", () => {
         iteration: 41,
         form_index: 0,
         code: "inspect_run()",
-        result_summary: "done",
+        stdout: "done\n",
         duration_ms: 1_200,
       });
     });

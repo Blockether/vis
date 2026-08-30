@@ -82,21 +82,21 @@
             (form/<-wire (simulate-wire payload))]
 
         (expect (= "block.output" type))
-        (expect (not (some #{:result} form/display-keys)))
+        (expect (not (some #{:result :result-summary} form/display-keys)))
         ;; The gateway carried, and <-wire recovered, EVERY canonical display key.
         (doseq [k form/display-keys]
           (expect
             (some? (get back k))
             (str k " was dropped on the gateway round-trip — add it to a boundary projection")))))
-  (it "result-card derives one card from canonical facts, and none from an empty form"
-      ;; A block's own printed output becomes exactly one card carrying no invented op.
+  (it "result-card derives one body from stdout, and none from metadata alone"
+      ;; A block's own printed output becomes exactly one card carrying no invented op or headline.
       (let [one (form/result-card {:stdout "printed"})]
         (expect (some? one))
         (expect (nil? (:op one)))
+        (expect (not (contains? one :summary)))
         (expect (str/includes? (:body one) "printed")))
-      ;; The op is carried verbatim — an op nothing registered still reaches a channel.
-      (expect (= "unheard_of" (:op (form/result-card {:op "unheard_of" :result-summary "1 row"}))))
-      ;; A block that printed and returned nothing has no card at all.
+      ;; Neither operation metadata nor the retired summary field can manufacture output.
+      (expect (nil? (form/result-card {:op "unheard_of" :result-summary "1 row"})))
       (expect (nil? (form/result-card {}))))
   (it "->display projects only declared form fields"
       (expect (= {:op "grep"} (form/->display {:op "grep" :internal true})))))

@@ -1183,7 +1183,7 @@ function ToolSummary({
  * THE HEADER BAND OF A TRANSCRIPT CARD, and there is exactly one of it.
  *
  * A tool result with no body, a tool result that opens, and a program's own header
- * are the same row read three times in one column: a name, a summary, a duration and
+ * are the same row read three times in one column: a name, a state, a duration and
  * — where there is something to take — the `Copy` chip. So the band owns the height
  * (`min-h-8`, the app's compact step) and the side inset, and it CENTRES what it
  * carries: a 24px `CopyChip` gets 4px of air above and below without the row spelling
@@ -1197,22 +1197,13 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   const interrupted = interruptedPython(form);
   const resultText = resultBody(form);
   const failed = form.error != null && !interrupted;
-  // Once any real outcome has arrived a stale "Running…" placeholder from the
-  // gateway must not linger — the op is done.
   const hasOutcome =
     interrupted ||
     resultText !== "" ||
     form.duration_ms != null;
-  const placeholderSummary = form.result_summary?.trim() === "Running…";
-  const rawSummary = interrupted
-    ? "Interrupted"
-    : placeholderSummary && hasOutcome
-      ? ""
-      : form.result_summary?.trim() || (failed ? "Failed" : "");
-  const running =
-    !interrupted && !failed && !hasOutcome && (!form.result_summary || placeholderSummary);
+  const stateLabel = interrupted ? "Interrupted" : failed ? "Failed" : "";
+  const running = !interrupted && !failed && !hasOutcome;
   const body = resultText;
-  const summary = rawSummary;
   const duration = formatDuration(form.duration_ms);
   // A COLLAPSED result body is not in the DOM at all. Measured on device on a
   // real transcript: those bodies were 52k of the screen's 72k elements, and
@@ -1223,30 +1214,25 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   // one-way, so re-collapsing keeps the parsed body for the next open, and
   // "Copy result" copies `body` (the string), never the DOM.
   const [wasOpened, setWasOpened] = useState(false);
-  const summaryClass = interrupted
+  const stateClass = interrupted
     ? "text-dialog-hint"
     : failed
       ? "text-err"
       : running
         ? "text-code-result"
         : "text-accent-ink";
-  // A card wears no OP-NAME badge — GREP, a private transport's _SHELL_WAIT, the
-  // op that produced it: a result is its own tally and its own body, and the TUI
-  // card (`tool-card-entries`) paints the same way. What a card with NO tally
-  // wears is the band's own NAME, because the whole content of that row was a
-  // duration: it named nothing, in either channel.
+  // A card wears no OP-NAME badge. Successful content has one owner, stdout, and
+  // the disclosure row names that band RESULT rather than deriving another headline.
   const headline = (
     <div className="flex min-w-0 flex-1 items-baseline gap-1.5">
-      {summary ? (
-        <ToolSummary className={summaryClass}>{summary}</ToolSummary>
+      {stateLabel ? (
+        <ToolSummary className={stateClass}>{stateLabel}</ToolSummary>
       ) : (
         !running && <BandLabel className="min-w-0 flex-1">RESULT</BandLabel>
       )}
-      {/* A finished call that produced NO summary and NO body still says so: a
-          `RESULT 39ms` row reads as a rendering bug rather than as the empty
-          result it is. `running` keeps the spinner-less placeholder quiet until
-          the outcome actually lands. */}
-      {!summary && !body && !running && !failed && (
+      {/* A finished call that produced NO body still says so. `running` keeps the
+          placeholder quiet until the outcome actually lands. */}
+      {!stateLabel && !body && !running && !failed && (
         <span className="shrink-0 truncate font-mono text-chip font-medium text-code-duration">
           none
         </span>
@@ -1445,15 +1431,13 @@ function pythonReceiptText(
 ): string {
   const interrupted = interruptedPython(form);
   const failed = (form.error != null && !interrupted) || activityState === "failed";
-  const placeholder = form.result_summary?.trim() === "Running…";
   const settled =
     interrupted ||
     activityState === "succeeded" ||
     activityState === "cancelled" ||
     failed ||
     form.duration_ms != null ||
-    resultBody(form) !== "" ||
-    Boolean(form.result_summary?.trim() && !placeholder);
+    resultBody(form) !== "";
   const state = interrupted
     ? "INTERRUPTED"
     : failed
@@ -2918,10 +2902,12 @@ export const ContentBlockView = memo(function ContentBlockView({
     case "reasoning":
       return block.text ? <ThinkingBand>{block.text}</ThinkingBand> : null;
     case "tool": {
+      const output = block.output == null ? "" : jsonText(block.output);
+      const status = typeof block.status === "string" ? block.status.trim() : "";
+      const stdout = [status, output].filter(Boolean).join("\n");
       const form: TranscriptForm = {
         op: block.tool ?? undefined,
-        result_summary: block.status,
-        stdout: block.output == null ? undefined : jsonText(block.output),
+        stdout: stdout || undefined,
         error: block.error,
       };
       return <ToolCard form={form} />;

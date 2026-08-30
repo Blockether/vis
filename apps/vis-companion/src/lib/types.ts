@@ -901,7 +901,6 @@ export interface TranscriptForm {
   /** Highlighting language for `display_code`, authored by the tool that rendered it. */
   display_language?: string;
   comment?: string;
-  result_summary?: string;
   result_kind?: string;
   result_detail?: Record<string, JsonValue>;
   render_segments?: JsonValue[];

@@ -1220,11 +1220,7 @@
       ;; nothing stores a result the breadcrumb could point at. A pointer here
       ;; would promise a recovery path that cannot exist.
       (let [tr
-            [[1
-              {:forms-vec [{:scope "t1/i1/f1"
-                            :svar/tool-call-id "toolu_A"
-                            :stdout "a"
-                            :result-summary "2 files"}]}]
+            [[1 {:forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :stdout "a"}]}]
              [2 {:forms-vec [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :stdout "b"}]}]]
 
             folded

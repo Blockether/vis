@@ -38,6 +38,20 @@ const codeRows = (html: string) =>
 const count = (html: string, pattern: RegExp) =>
   (html.match(pattern) ?? []).length;
 
+/** Open the stdout disclosure nested inside an expanded execution receipt. */
+function openResult(container: HTMLElement): void {
+  const summary = Array.from(container.querySelectorAll("details > summary")).find(
+    (candidate) => candidate.textContent?.includes("RESULT"),
+  );
+  expect(summary).not.toBeUndefined();
+  const details = summary?.closest("details");
+  expect(details).not.toBeNull();
+  if (details) {
+    details.open = true;
+    fireEvent(details, new Event("toggle", { bubbles: true }));
+  }
+}
+
 describe("spoken transcript", () => {
   it("opens as justified transcript under a waveform you can seek", () => {
     const html = renderToStaticMarkup(
@@ -508,7 +522,6 @@ describe("collapsed tool results", () => {
           id: "iteration-1",
           forms: Array.from({ length: 400 }, (_, index) => ({
             op: "shell",
-            result_summary: `summary ${index}`,
             stdout: `${bodySentinel} ${index}\n`,
           })),
         },
@@ -518,8 +531,7 @@ describe("collapsed tool results", () => {
     const html = renderToStaticMarkup(<AssistantMessage turn={turn} />);
 
     expect(count(html, /<details/g)).toBe(400);
-    expect(html).toContain("summary 0");
-    expect(html).toContain("summary 399");
+    expect(count(html, /RESULT/g)).toBe(400);
     expect(html).not.toContain(bodySentinel);
   });
 });
@@ -556,7 +568,7 @@ describe("a turn declares no size it has not measured", () => {
           iterations: [
             {
               id: "iteration-1",
-              forms: [{ op: "shell", result_summary: "ok" }],
+              forms: [{ op: "shell", stdout: "ok\n" }],
             },
           ],
         }}
@@ -567,7 +579,7 @@ describe("a turn declares no size it has not measured", () => {
   });
 });
 
-describe("a card wears no op badge, but its band has a name", () => {
+describe("a card gives stdout one stable band and no op badge", () => {
   const card = (form: Record<string, unknown>) =>
     text(
       renderToStaticMarkup(
@@ -581,30 +593,24 @@ describe("a card wears no op badge, but its band has a name", () => {
       ),
     );
 
-  it("shows the tally the printed value carried, never its op", () => {
-    const rendered = card({ op: "grep", result_summary: "12 results" });
-    expect(rendered).toContain("12 results");
+  it("names stdout RESULT without deriving a second headline", () => {
+    const rendered = card({ op: "grep", stdout: "12 results\n" });
+    expect(rendered).toContain("RESULT");
+    expect(rendered).not.toContain("12 results");
     expect(rendered).not.toContain("GREP");
-    // The tally IS the headline; the band's name would only repeat it.
-    expect(rendered).not.toContain("RESULT");
   });
 
-  // The block's own output carries no tally, so this row was a chevron and a
-  // duration with no word at all for what it held. The TUI names it RESULT
-  // (`render/tool-card-entries`); the app said nothing.
-  it("names the band when the value carried no tally", () => {
-    expect(card({ stdout: "printed\n" })).toContain("RESULT");
+  it("names the completed band even when stdout is empty", () => {
     expect(card({ duration_ms: 39 })).toContain("RESULT");
   });
 
   it("names nothing while the op is still running", () => {
     expect(card({})).not.toContain("RESULT");
-    expect(card({ result_summary: "Running…" })).not.toContain("RESULT");
   });
 
   it("never paints a private transport op a handle method answered", () => {
-    const rendered = card({ op: "_shell_wait", result_summary: "exit 0" });
-    expect(rendered).toContain("exit 0");
+    const rendered = card({ op: "_shell_wait", stdout: "exit 0\n" });
+    expect(rendered).toContain("RESULT");
     expect(rendered).not.toContain("_SHELL_WAIT");
   });
 });
@@ -656,8 +662,7 @@ describe("command turns expose one canonical result", () => {
                   tag: "user-shell",
                   op: "shell",
                   src: "!ls",
-                  result_summary: "exit 0",
-                  stdout: "README.md\n",
+                  stdout: "README.md\nexit 0",
                 },
               ],
             },
@@ -670,14 +675,8 @@ describe("command turns expose one canonical result", () => {
     expect(painted.container.textContent).not.toContain("PYTHON");
     expect(painted.container.textContent).toContain("SHELL");
     fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
+    openResult(painted.container);
     expect(painted.container.textContent).toContain("exit 0");
-    const resultSummary = painted.container.querySelector("details > summary");
-    expect(resultSummary).not.toBeNull();
-    const resultDetails = resultSummary?.closest("details");
-    if (resultDetails) {
-      resultDetails.open = true;
-      fireEvent(resultDetails, new Event("toggle", { bubbles: true }));
-    }
     expect(painted.container.textContent).toContain("README.md");
     expect(painted.container.textContent).not.toContain("Reloaded — configuration");
   });
@@ -841,7 +840,7 @@ describe("Activity owns the slot after its Python form and result", () => {
     const painted = render(
       <AssistantMessage
         turn={turnOf([
-          { source: "first_form()", result_summary: "first result" },
+          { source: "first_form()", stdout: "first result\n" },
           { source: "second_form()", stdout: "second result\n" },
         ])}
       />,
@@ -852,6 +851,7 @@ describe("Activity owns the slot after its Python form and result", () => {
     expect(painted.container.textContent).not.toContain("first_form()");
     fireEvent.click(receipts[0]);
     expect(painted.container.textContent).toContain("first_form()");
+    openResult(painted.container);
     expect(painted.container.textContent).toContain("first result");
     expect(painted.container.textContent).not.toContain("second_form()");
     fireEvent.click(receipts[1]);
@@ -868,7 +868,7 @@ describe("Activity owns the slot after its Python form and result", () => {
     const painted = render(
       <AssistantMessage
         turn={turnOf([
-          { source: "first_form()", result_summary: "first result" },
+          { source: "first_form()", stdout: "first result\n" },
           { source: "second_form()", activity: runningActivity },
         ])}
       />,
@@ -922,7 +922,7 @@ describe("Activity owns the slot after its Python form and result", () => {
       <AssistantMessage
         turn={turnOf([{
           source: "work()",
-          result_summary: "done",
+          stdout: "done\n",
           duration_ms: 12_600,
           activity: {
             ...runningActivity,
@@ -942,7 +942,7 @@ describe("Activity owns the slot after its Python form and result", () => {
       <AssistantMessage
         turn={turnOf([{
           source: "work()",
-          result_summary: "done",
+          stdout: "done\n",
           activity: {
             ...runningActivity,
             state: "failed",

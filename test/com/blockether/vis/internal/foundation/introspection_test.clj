@@ -747,7 +747,6 @@
                                               :tag :observation
                                               :src "await grep(...)"
                                               :op "grep"
-                                              :result-summary "1 hit"
                                               :stdout "python-only\n"}]
                                      ;; Protocol 7 files no Activity attachment: the
                                      ;; receipt is a value on the form, so the only
@@ -769,13 +768,11 @@
           ;; The model reads facts, never card metadata.
           (expect (= 1 (count blocks)))
           (expect (= "python-only\n" (get (first blocks) "stdout")))
-          (expect (empty? (filter #(contains? % "result_summary") blocks)))
           (expect (empty? (filter #(contains? % "op") blocks)))
           ;; A semantic live record is still model context.
           (expect (= ["ci-run.live.ndjson"] (mapv #(get % "filename") attachments)))
-          ;; Human exports keep the label/headline and derive the body from stdout.
+          ;; Human exports retain the operation label and the same canonical stdout.
           (expect (= "grep" (:op (first (:blocks human-iteration)))))
-          (expect (= "1 hit" (:result-summary (first (:blocks human-iteration)))))
           (expect (= "python-only\n" (:stdout (first (:blocks human-iteration)))))
           (expect (= #{"ci-run.live.ndjson"} (set (map :filename (:attachments human-iteration))))))
         (finally (vis/db-dispose-connection! s))))))

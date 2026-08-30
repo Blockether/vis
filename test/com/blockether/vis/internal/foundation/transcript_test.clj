@@ -380,7 +380,13 @@
         #'transcript/form-envelope->block
 
         ->md
-        #'transcript/render-block-section]
+        #'transcript/render-block-section
+
+        ->event
+        #'transcript/code-event
+
+        ->descriptor
+        #'transcript/tool-descriptor]
 
     (it "projects :stdout onto the block"
         (let [b (->block 0 {:src "print('hi')" :stdout "hi\n" :scope :block})]
@@ -397,6 +403,22 @@
         (let [md (->md 0 false {:code "print('hi')" :stdout "hello world\n"})]
           (expect (str/includes? md "_stdout:_"))
           (expect (str/includes? md "hello world"))))
+    (it "derives the dialog result body from stdout alone"
+        (let [event
+              (->event {:id "turn-1" :position 1}
+                       {:id "iteration-1" :position 1}
+                       {:position 0
+                        :scope "t1/i1/f1"
+                        :code "await grep(...)"
+                        :op "grep"
+                        :stdout "2 files\n"})
+
+              descriptor
+              (->descriptor event)]
+
+          (expect (= "GREP" (:op descriptor)))
+          (expect (str/includes? (:body descriptor) "2 files"))
+          (expect (not (contains? event :result-summary)))))
     (it "omits the stdout section when there was no printed output"
         (let [md (->md 0 false {:code "value = 1 + 1"})]
           (expect (not (str/includes? md "_stdout:_")))))))

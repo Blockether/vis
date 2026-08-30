@@ -101,15 +101,17 @@
           (expect (= :complete (:prior-outcome result)))
           ;; The raw command is the persisted turn request.
           (expect (= "!echo hi-from-bang" (:user-request (first turns))))
-          ;; One synthetic iteration and one canonical copy of the command output.
+          ;; One synthetic iteration and one canonical stdout carrying output plus status.
           (expect (= 1 (count turns)))
           (expect (= :user-shell (:tag form)))
           (expect (= "shell" (:vis/tool-name form)))
           (expect (= "await shell({\"command\": \"echo hi-from-bang\"})" (:src form)))
-          (expect (= "hi-from-bang\n" (:stdout form)))
+          (expect (= "hi-from-bang\nexit 0" (:stdout form)))
           (expect (not (contains? form :result)))
+          (expect (not (contains? form :result-summary)))
           ;; The same factual shape is streamed live; no answer prose duplicates it.
-          (expect (= "hi-from-bang\n" (:stdout output)))
+          (expect (= "hi-from-bang\nexit 0" (:stdout output)))
+          (expect (not (contains? output :result-summary)))
           (expect (= "" (:answer result))))))))
 
 ;; Regression: a `!`/`!&` bang turn ran in the PROCESS cwd instead of the
@@ -140,11 +142,11 @@
                            iters
                            (persistance/db-list-session-turn-iterations store (:id (first turns)))
 
-                           stdout
-                           (:stdout (first (:forms (first iters))))]
+                           lines
+                           (str/split-lines (:stdout (first (:forms (first iters)))))]
 
                        (expect (= :success (:status result)))
-                       (expect (= root (str/trim stdout))))))))
+                       (expect (= [root "exit 0"] lines)))))))
 
 (defdescribe run-turn-bang-disabled-test
              (it "refuses when the shell layer is OFF, without running the command"

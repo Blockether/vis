@@ -35,6 +35,9 @@
   "Wire protocol number THIS build speaks. Monotonic; bump on every BREAKING
    gateway HTTP/SSE change.
 
+   12 — iteration forms carry no result headline. Tool-authored completion text is
+   ordinary `stdout`; `result_summary` is gone from persistence and wire.
+
    11 — iteration forms have one success channel: `stdout`. The obsolete `result`
    field and its value-return branches are gone from persistence and wire.
 
@@ -49,17 +52,17 @@
    lookup. Coarse ticker frames are `turn.progress`; form frames route by the
    truthful numeric `form_index`. The split-id reconciliation contract and the
    overloaded `activity` event name are gone."
-  11)
+  12)
 
 (def min-client-protocol
-  "Oldest client protocol this gateway serves. Protocol 11 removes the obsolete
-   iteration-form `result`; clients consume `stdout` and `error`."
-  11)
+  "Oldest client protocol this gateway serves. Protocol 12 removes the iteration-form
+   `result_summary`; clients consume `stdout` and `error`."
+  12)
 
 (def min-gateway-protocol
   "Oldest gateway protocol this client accepts: the mirror of
    [[min-client-protocol]]."
-  11)
+  12)
 
 (def protocol-header "Request header carrying the client's own protocol number." "x-vis-protocol")
 

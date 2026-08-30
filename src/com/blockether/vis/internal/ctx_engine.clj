@@ -970,8 +970,8 @@
 
    `:stdout` is the single successful output surface: channels paint it and the
    model reads it back. `:error` may coexist when the block printed before it
-   failed. Duration, tool-call identity, timeout, summary, and Activity metadata
-   are copied when present."
+   failed. Duration, tool-call identity, timeout, and Activity metadata are copied
+   when present."
   ([block position cursor] (block->envelope block position cursor nil))
   ([block _position cursor head-tag-resolver]
    (let [src
@@ -1013,11 +1013,6 @@
            ;; derived from it, so nothing rendered has to travel.
            (:timeout? block)
            (assoc :timeout? true)
-
-           ;; The op-card HEADLINE (tool-authored summary) so a restored trace titles
-           ;; the card the same way the live stream did — not a first-line body slice.
-           (some? (:result-summary block))
-           (assoc :result-summary (:result-summary block))
 
            ;; This projection is a WHITELIST: a key with no branch here is dropped
            ;; in silence. Activity — what the form DID, beside what it printed —

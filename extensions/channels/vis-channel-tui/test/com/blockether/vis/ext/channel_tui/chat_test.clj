@@ -497,7 +497,6 @@
                                       "form_index" 0
                                       "code" "print(4"
                                       "op" "grep"
-                                      "result_summary" "12 results"
                                       "tool_call_id" "call_1"})]
                      (expect (= :tool-preview (:phase chunk)))
                      (expect (= "print(4" (:code chunk)))
@@ -590,20 +589,19 @@
                          :forms
                          first))]
 
-               (it "a restored single-result envelope keeps its card identity"
+               (it "a restored stdout envelope keeps its card identity"
                    (let [rec
                          (restore {:scope "t1/i1"
                                    :tag :host
                                    :src "print(await grep(query='defn', paths=['src']))"
                                    :op "grep"
-                                   :stdout "a.clj:1: x\n"
-                                   :result-summary "8 hits in 1 file"})
+                                   :stdout "a.clj:1: x\n"})
 
                          card
                          (vis/result-card rec)]
 
                      (expect (= "grep" (:op card)))
-                     (expect (= "8 hits in 1 file" (:summary card)))))))
+                     (expect (str/includes? (:body card) "a.clj:1: x"))))))
 
 ;; Regression: a FAILED provider turn's styled card must survive the
 ;; `turn!`/`attach!` fold. Those fold the engine's provider-error IR onto

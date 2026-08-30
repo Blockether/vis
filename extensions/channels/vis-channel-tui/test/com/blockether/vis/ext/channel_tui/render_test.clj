@@ -77,8 +77,8 @@
                      :bg (.getBackgroundColor c0)
                      :sgr (set (.getModifiers c0))}]))))))
 
-(defdescribe result-summary-color-test
-             (it "keeps result headlines flush on the quiet result band"
+(defdescribe result-band-color-test
+             (it "keeps result labels flush on the quiet result band"
                  (expect (= t/result-bg (result-row-bg {:kind :result-headline} false)))
                  (expect (= t/result-bg (result-row-bg {:kind :toggle-details} false))))
              (it "keeps body rows quiet and gives hover the strongest affordance"
@@ -95,9 +95,9 @@
                             (code-row-bg {:kind :toggle-details} true t/code-ok-bg)))))
 
 (defn- result-form
-  "One executed form carrying a printed value's own `:op` and summary."
-  [op summary]
-  {:op op :success? true :code "" :result-summary summary})
+  "One executed form carrying stdout and its optional operation metadata."
+  [op stdout]
+  {:op op :success? true :code "" :stdout stdout})
 
 (defn- render-forms
   [forms]
@@ -114,33 +114,28 @@
        (mapv :line)))
 
 (defdescribe
-  card-wears-its-tally-and-no-badge-test
-  ;; A card says what the value SAID — its own tally — and nothing else. The
-  ;; op-name badge is gone: no `GREP` over a printed result, no `RESULT` over the
-  ;; block's own output, and no private transport name (`_SHELL_WAIT`) leaking
-  ;; onto a card because a handle method happened to answer it.
-  (it "shows a printed result's tally without titling it with the op"
+  stdout-card-has-one-label-test
+  ;; Stdout owns the completion text and body. The UI adds only the stable RESULT
+  ;; band label; it never promotes body text or private operation metadata into
+  ;; another headline.
+  (it "labels stdout RESULT without titling it with the op"
       (let [txt (str/join "\n" (map strip-ansi (render-forms [(result-form "grep" "12 results")])))]
+        (expect (str/includes? txt "RESULT"))
         (expect (str/includes? txt "12 results"))
         (expect (not (str/includes? txt "GREP")))))
   (it "never paints an op name, however unheard-of the op"
       (let [txt (str/join "\n"
                           (map strip-ansi
                                (render-forms [(result-form "totally_unknown_op" "1 row")])))]
+        (expect (str/includes? txt "RESULT"))
         (expect (str/includes? txt "1 row"))
         (expect (not (str/includes? txt "TOTALLY_UNKNOWN_OP")))))
   (it "never paints a private transport op a handle method answered"
       (let [txt (str/join "\n"
                           (map strip-ansi (render-forms [(result-form "_shell_wait" "exit 0")])))]
+        (expect (str/includes? txt "RESULT"))
         (expect (str/includes? txt "exit 0"))
-        (expect (not (str/includes? txt "_SHELL_WAIT")))))
-  (it "leaves the block's own output unlabeled"
-      (let [txt (str/join
-                  "\n"
-                  (map strip-ansi
-                       (render-forms
-                         [{:success? true :code "print(1)" :result-summary "1" :stdout "1"}])))]
-        (expect (not (str/includes? txt "RESULT"))))))
+        (expect (not (str/includes? txt "_SHELL_WAIT"))))))
 
 (defdescribe
   python-failure-compact-test
@@ -291,20 +286,17 @@
             (render-forms [(assoc (result-form "grep" "12 results") :duration-ms 2300)])
 
             head
-            (first (filter #(str/includes? % "12 results") lines))]
+            (first (filter #(str/includes? % "RESULT") lines))]
 
         (expect (some? head) (str "got: " lines))
         (expect (str/ends-with? (str/trimr (strip-sentinels (body-of head))) "2.3s"))))
   (it "paints the duration on the collapsible head, which stays the toggle"
       (let [entries
             (format-iteration-entry-entries
-              (iteration/canonicalize {:position 0
-                                       :thinking nil
-                                       :forms [{:success? true
-                                                :code ""
-                                                :result-summary "12 results"
-                                                :stdout "one hit\n"
-                                                :duration-ms 2300}]})
+              (iteration/canonicalize
+                {:position 0
+                 :thinking nil
+                 :forms [{:success? true :code "" :stdout "one hit\n" :duration-ms 2300}]})
               80
               1
               {:session-id "s1"
@@ -312,15 +304,13 @@
                :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
             head
-            (first (filter #(str/includes? (body-of (:line %)) "12 results") entries))]
+            (first (filter #(str/includes? (body-of (:line %)) "RESULT") entries))]
 
         (expect (some? head) (str "got: " (mapv :line entries)))
         (expect (str/ends-with? (str/trimr (strip-sentinels (strip-ansi (body-of (:line head)))))
                                 "2.3s"))
-        ;; The suffix used to be composed into the summary BEFORE the IR walk,
-        ;; whose pad run collapses to one space: the figure hugged `12 results`
-        ;; while every other head put it on the right edge. It aligns with them
-        ;; now, budgeting the two columns the painter insets a toggle row by
+        ;; The duration is added after the label's IR walk and aligned to the right,
+        ;; budgeting the two columns the painter insets a toggle row by
         ;; (`code-text-inset-cols`) so the figure lands on the same column as a
         ;; flush-painted headline's: 80 - 1 marker - 2 inset.
         (expect (= :toggle-details (:kind (:meta head))))
@@ -4138,7 +4128,6 @@ e = 5
 f = 6
 g = 7
 h = 8"
-                                              :result-summary "ok"
                                               :stdout "ok"}]})
             80
             1
@@ -4206,7 +4195,6 @@ e = 5
 f = 6
 g = 7
 h = 8"
-                                                :result-summary "ok"
                                                 :stdout "ok"}]})
               80
               1
@@ -4223,9 +4211,9 @@ h = 8"
                                  lines))]
 
         (expect (= p/MARKER_CODE_PAD (marker-of (:line (nth entries (inc last-code-i))))))
-        ;; The row under the pad is the result HEADLINE — the value's own tally
-        ;; ("ok"), which is all a card wears now that the badge is gone.
-        (expect (str/includes? (str (:line (nth entries (+ 2 last-code-i)))) "ok")))))
+        ;; The row under the pad is the stable RESULT disclosure; completion text
+        ;; remains inside stdout rather than becoming a second headline.
+        (expect (str/includes? (str (:line (nth entries (+ 2 last-code-i)))) "RESULT")))))
 
 (defdescribe python-code-disclosure-is-clickable-test
              ;; The header row is only a control if the PAINTER publishes its hit target:
@@ -4415,7 +4403,6 @@ h = 8"
                                                       :forms
                                                       [{:op "shell"
                                                         :code "shell({\"command\": \"run.sh\"})"
-                                                        :result-summary "$ run.sh"
                                                         :stdout "phase one ok\n\nphase two ok\n"
                                                         :started-at-ms 1000
                                                         :success? true}]}

@@ -152,6 +152,9 @@
                             ;; provenance string the engine stamped at write time.
                             :scope (get env "scope")
                             :tag (get env "tag")})
+              (contains? env "stdout")
+              (assoc :stdout (get env "stdout"))
+
               (contains? env "error")
               (assoc :error (get env "error"))
 
