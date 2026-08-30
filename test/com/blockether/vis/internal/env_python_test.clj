@@ -288,10 +288,9 @@
 
 (defdescribe
   ntr-is-gone-test
-  "The native-result store is RETIRED. `python_execution` prints instead of
-   returning a stored `:result`, so there is nothing left to index: every name the
-   old accessor exposed must be absent from the sandbox, and no docstring or
-   description may promise a coordinate to re-read a result by."
+  "The stored-result index is retired. `python_execution` prints its visible
+   output, so there is nothing to index: every old accessor name must be absent
+   from the sandbox, and no docstring may promise a coordinate for re-reading it."
   (let [ctx
         (:python-context (ep/create-python-context (ext/builtin-sandbox-bindings (fn []
                                                                                    nil))))

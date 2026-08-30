@@ -13,7 +13,6 @@
    renamed) stay as explicit gateway overrides — they are not carried verbatim, so
    they are NOT in this set."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.pyfmt :as pyfmt]
             [com.blockether.vis.internal.util :as util]))
 
@@ -25,15 +24,14 @@
    overrides). Add a new verbatim display field HERE; `->display`/`<-wire` then
    flow it across every boundary without runtime key rewriting.
 
-   Grouped: the source the model wrote, the canonical result fact, the card op,
-   the per-form display projections, the tool-call linkage, and the repair/timeout
+   Grouped: the source the model wrote, the result headline, the card op, the
+   per-form display projections, the tool-call linkage, and the repair/timeout
    flags channels surface."
   [;; source
    [:code "code"] [:display-code "display_code"] [:display-language "display_language"]
    [:comment "comment"] [:scope "scope"] [:started-at-ms "started_at_ms"]
-   ;; canonical result facts — a structured host/native value OR printed stdout,
-   ;; never a rendered copy of either; the headline is concise tool-authored metadata
-   [:result "result"] [:result-summary "result_summary"]
+   ;; concise tool-authored result headline; printed output is bounded separately
+   [:result-summary "result_summary"]
    ;; A form's OWN op ("grep", "attach") — the only identity a card has. It is DATA
    ;; the executed form carried, never a symbol looked up in a registry, so a card
    ;; cannot drift from what actually ran. Absent on a python block: a form is
@@ -101,60 +99,43 @@
                 " chars" (when hint (str " — " hint))))
          s)))))
 
-(defn result-display
-  "The human-channel DISPLAY for one executed form as `{:body}`:
-     - `:stdout` → verbatim as the body, no summary. This is what a PYTHON form and
-       a `!cmd` form carry: output is one fact, and an unprinted Python value never
-       reaches the form at all;
-     - a structured `:result` → pretty-printed (Python-literal, fenced) as the body.
-       Only a HOST-AUTHORED slash/native form has one, and only when it has no stdout.
-   A wall-clock TIMEOUT gets NO card of its own: it is an error like any other, so
-   the channel paints `:error` where it paints every failure, while output printed
-   before the timeout remains the ordinary stdout body.
+(defn stdout-display
+  "The human-channel DISPLAY for one executed form as `{:body}`. `:stdout` is
+   the only successful output a Python form or `!cmd` form can publish; an
+   unprinted Python value never reaches the form, database, or wire.
 
+   A wall-clock timeout gets no card of its own: it is an error like any other,
+   while output printed before the timeout remains the ordinary stdout body.
    The body is head-clipped to `MAX_FORM_WIRE_CHARS`. Returns nil when there is
-   nothing to show. NO symbol is consulted: the form's own facts determine the view.
+   nothing to show.
 
-   This is a PURE local projection of fields the form ALREADY carries (`:result`,
-   `:stdout`) — live wire and a DB-restored envelope therefore paint the same card
-   without storing or transporting a rendered string."
+   This is a pure local projection of the form's `:stdout`, so live wire and a
+   database-restored envelope paint the same card without storing or transporting
+   a rendered string."
   [form]
-  (let [clip
-        clip-to-wire
-
-        stdout
-        (str (:stdout form))]
-
+  (let [stdout (str (:stdout form))]
     (cond
-      ;; A `vis-image` fence (matplotlib `plt.show()` → inline PNG, ASCII plot
-      ;; carried as its fallback body), a `vis-table` fence (a CSV/TSV artifact
-      ;; carried as its own grid) or a `vis-doc` fence (a PDF/HTML document,
-      ;; carrying only its host path) rides stdout as MARKDOWN so the channel
-      ;; paints it inline; wrapping it in a ``` block would escape the
-      ;; 4-backtick fence. These fences are bounded at their source.
+      ;; These bounded artifact fences ride stdout as Markdown so channels can
+      ;; paint them inline; wrapping one in another fence would escape it.
       (or (str/includes? stdout "````vis-image")
           (str/includes? stdout "````vis-doc")
           (str/includes? stdout "````vis-table"))
       {:body stdout}
-      ;; Plain output is not markdown: fence it so CommonMark preserves newlines.
-      (not (str/blank? stdout)) {:body (util/fenced (clip stdout))}
-      ;; A structured host/native value only exists when stdout does not.
-      (some? (:result form)) (when-let [s (clip (env/ctx->python-str (:result form)))]
-                               {:body (util/fenced s "python")})
+      ;; Plain output is not Markdown: fence it so CommonMark preserves newlines.
+      (not (str/blank? stdout)) {:body (util/fenced (clip-to-wire stdout))}
       :else nil)))
 
 (defn result-card
   "Canonical result CARD descriptor — the ONE collapse decision shared by Clojure
    channels. It combines the form's concise `:result-summary` headline with a body
-   derived locally from canonical `:stdout`/`:result` facts:
+   derived locally from canonical `:stdout`:
 
      {:op           `grep`       — the form's own op, never registry-derived
       :summary      12 results    — optional tool-authored headline
-      :body         …markdown…    — optional local projection of the result fact
+      :body         …markdown…    — optional local projection of printed output
       :collapsible? true}         — true exactly when a body exists
 
-   nil means the form has neither headline nor output. Archived values that can no
-   longer be formatted lose only their body; reopening a transcript must not fail."
+   nil means the form has neither headline nor output."
   [{:keys [op result-summary] :as form}]
   (let [summary
         (some-> result-summary
@@ -163,7 +144,7 @@
                 not-empty)
 
         body
-        (try (some-> (result-display form)
+        (try (some-> (stdout-display form)
                      :body
                      str
                      str/trimr
@@ -182,17 +163,12 @@
     (assoc :display-code (pyfmt/beautify-python (:code form)))))
 
 (defn ->display
-  "Project canonical display fields from a source map. Drops nils, and when stdout
-   exists drops `:result`: one form has one output fact, never two success channels."
+  "Project canonical display fields from a source map, dropping nils."
   [m]
   (reduce (fn [acc k]
-            (if (and (some? (get m k)) (not (and (= k :result) (some? (:stdout m)))))
-              (assoc acc k (get m k))
-              acc))
+            (if (some? (get m k)) (assoc acc k (get m k)) acc))
           {}
           display-keys))
-
-
 
 (defn <-wire
   "Read the canonical display fields back off a gateway WIRE event into a form,

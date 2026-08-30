@@ -285,7 +285,7 @@
       "(allow process-fork process-exec)"
       "(allow sysctl-read)"
       ;; GraalVM Native Image uses a named POSIX semaphore for signal delivery on
-      ;; macOS. Without this narrow IPC permission, native tools such as bb abort
+      ;; macOS. Without this narrow IPC permission, executables such as bb abort
       ;; during VM startup before their main function runs.
       "(allow ipc-posix-sem)"
       ;; Seatbelt denies EVERY Mach lookup by default, which is what breaks macOS

@@ -1091,37 +1091,26 @@ function resultBody(form: TranscriptForm): string {
   if (form.error != null) return jsonText(form.error);
 
   const stdout = form.stdout?.trimEnd();
-  if (stdout) {
-    const rendered = ["````vis-image", "````vis-doc", "````vis-table"].some((marker) =>
-      stdout.includes(marker),
-    )
-      ? stdout
-      : fenced(stdout);
-    return markAnsiHighlights(rendered);
-  }
-
-  if (form.result == null || form.result === "") return "";
-  const raw = jsonText(form.result);
-  return markAnsiHighlights(fenced(raw, typeof form.result === "string" ? "" : "json"));
+  if (!stdout) return "";
+  const rendered = ["````vis-image", "````vis-doc", "````vis-table"].some((marker) =>
+    stdout.includes(marker),
+  )
+    ? stdout
+    : fenced(stdout);
+  return markAnsiHighlights(rendered);
 }
 
-// Slash envelopes are persisted so history and resume retain the command, but their
-// answer band is the whole result. A `!cmd` turn is different: its visible form owns
-// the one canonical stdout body, so hiding it would hide the command's only output.
+// Slash forms are persisted so history and resume retain the command, but their
+// answer band owns the visible output. A `!cmd` turn is different: its visible
+// form owns the one canonical stdout body.
 const HIDDEN_FORM_TAGS = new Set(["user-slash"]);
 
-/** A form the trace paints NOTHING for: engine chrome, an answer, or a slash command. */
+/** A form the trace paints nothing for: explicit engine chrome or a slash command. */
 function hiddenForm(form: TranscriptForm): boolean {
-  return (
-    Boolean(form.silent) ||
-    form.result === "vis_silent" ||
-    form.result === "vis_answer" ||
-    HIDDEN_FORM_TAGS.has(String(form.tag ?? ""))
-  );
+  return Boolean(form.silent) || HIDDEN_FORM_TAGS.has(String(form.tag ?? ""));
 }
 
-// Every visible form is its OWN single card: a block's result is ONE result no
-// matter how many values it printed, so there is no per-result fan-out here.
+// Every visible form is its own card; stdout belongs to that form and is never fanned out.
 function toolCards(form: TranscriptForm): TranscriptForm[] {
   return hiddenForm(form) ? [] : [form];
 }
@@ -1213,7 +1202,6 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   const hasOutcome =
     interrupted ||
     resultText !== "" ||
-    form.result != null ||
     form.duration_ms != null;
   const placeholderSummary = form.result_summary?.trim() === "Running…";
   const rawSummary = interrupted
@@ -1430,10 +1418,10 @@ const CardGrid = memo(function CardGrid({
 }) {
   if (!cards.length) return null;
 
-  // ONE framed stack per RUN of op-cards, whatever produced them: a python block
-  // that printed several results, several native calls in one iteration, or a run
-  // of consecutive tool-only iterations (see `IterationTrace`). A frame per call is
-  // what read as "some cards are joined, some are not" - one run of work, one frame.
+  // ONE framed stack per RUN of op-cards, whatever produced them: a Python block
+  // that printed several operation receipts, or a run of consecutive execution-only
+  // iterations (see `IterationTrace`). A frame per call is what read as "some cards are
+  // joined, some are not" - one run of work, one frame.
   return (
     <div
       className={`grid grid-cols-[minmax(0,1fr)] gap-px${bare ? "" : " overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]"}${live ? ` ${transcriptRiseClass}` : ""}`}
@@ -1465,7 +1453,6 @@ function pythonReceiptText(
     failed ||
     form.duration_ms != null ||
     resultBody(form) !== "" ||
-    form.result != null ||
     Boolean(form.result_summary?.trim() && !placeholder);
   const state = interrupted
     ? "INTERRUPTED"
@@ -2934,7 +2921,7 @@ export const ContentBlockView = memo(function ContentBlockView({
       const form: TranscriptForm = {
         op: block.tool ?? undefined,
         result_summary: block.status,
-        result: block.output ?? undefined,
+        stdout: block.output == null ? undefined : jsonText(block.output),
         error: block.error,
       };
       return <ToolCard form={form} />;

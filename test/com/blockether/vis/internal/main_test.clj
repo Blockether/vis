@@ -564,6 +564,16 @@
         (expect (nil? (note (running {"protocol" {"version" "0.1.41" "build" "cccccccccccc"}}))))
         (expect (nil? (note (running {"protocol" {"version" "dev"}})))))))
 
+(defdescribe pretty-trace-form-output-test
+             (it "prints a completed Python form's stdout"
+                 (let [lines (atom [])]
+                   (with-redefs [main/stdout! #(swap! lines conj %)]
+                     (#'main/print-pretty-trace-chunk!
+                      {:phase :form-result :form-idx 0 :form-of 1 :stdout "hello\n"}))
+                   (let [text (str/join "\n" @lines)]
+                     (expect (str/includes? text "stdout"))
+                     (expect (str/includes? text "hello"))
+                     (expect (not (str/includes? text "nil")))))))
 ;; Regression: the CLI answered `Authenticated:  yes` from `is_authenticated`
 ;; alone, so a key that was merely SAVED read as proven -- while the dialog
 ;; beside it already said "saved, not verified".

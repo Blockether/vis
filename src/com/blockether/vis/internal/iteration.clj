@@ -11,9 +11,9 @@
    ## Vocabulary
 
      form envelope — one block = one form record (the engine `:forms`
-                     BLOB), carrying `:code`, `:result`, `:error`, and
-                     `:stdout` (what the block PRINTED — the single display
-                     surface; op cards / render-fns are gone).
+                     BLOB), carrying `:code`, `:stdout`, `:error`, and its
+                     settled Activity snapshot. Printed stdout is the single
+                     success surface; op cards / render-fns are gone.
 
    ## Canonical iteration-entry
 

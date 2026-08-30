@@ -1458,8 +1458,8 @@
    granularity \u2014 as TRANSIENT (`store? false`) `reasoning.delta` / `content.delta`
    frames; the iteration boundary still ships the complete text on
    `iteration.completed`, which is what persists."
-  [{:keys [phase position code result error silent? done? iteration thinking assistant-prose
-           iteration-id attachment-count stream-delta stream-block-id]
+  [{:keys [phase position code error silent? done? iteration thinking assistant-prose iteration-id
+           attachment-count stream-delta stream-block-id]
     :as chunk}]
   ;; Every streaming chunk carries its iteration POSITION under `:iteration`.
   ;; It MUST ride the wire event, or `make-progress-tracker` silently DROPS the
@@ -1488,13 +1488,9 @@
 
               (merge
                 ;; Canonical facts and authored metadata only. Presentation is derived by
-                ;; each channel; no rendered copy rides beside `:stdout` / `:result`.
+                ;; each channel; no rendered copy rides beside `:stdout`.
                 (form/->display chunk)
-                (cond-> {:form_index position
-                         :code code
-                         :silent (boolean (or silent?
-                                              (and (nil? error)
-                                                   (contains? #{"vis_silent"} result))))}
+                (cond-> {:form_index position :code code :silent (boolean silent?)}
                   stdout
                   (assoc :stdout stdout)
 
@@ -2494,9 +2490,8 @@
       (str "Turn stalled before reaching the provider: " (stall-detail-text stall)))))
 
 (def ^:private stall-exempt-phases
-  "Phases where a running turn may legitimately produce NO chunk for a long time
-   — a slow shell-run / Python-eval / native tool. The stall watchdog NEVER
-   force-cancels while the live phase is one of these. EVERY other phase
+  "Phases where a running turn may legitimately produce no chunk for a long time
+   — a shell run or Python execution. The stall watchdog never
    (provider-call, reasoning/content streaming, response-parse, and the
    between-iteration `:iteration-final` gap) is engine/provider-internal and must
    never sit idle for `TURN_STALL_TIMEOUT_MS`."

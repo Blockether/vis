@@ -497,13 +497,9 @@
         (expect (= 1 (:iteration payload)))
         (expect (= 0 (:form_index payload)))))
   (it "block.output carries one canonical stdout payload"
-      (let [[type _ payload] (#'state/chunk->event
-                              {:phase :form-result
-                               :iteration 3
-                               :position 0
-                               :code "print(42)"
-                               :stdout "42"
-                               :result {"duplicate" true}})]
+      (let [[type _ payload]
+            (#'state/chunk->event
+             {:phase :form-result :iteration 3 :position 0 :code "print(42)" :stdout "42"})]
         (expect (= "block.output" type))
         (expect (= {:form_index 0 :code "print(42)" :stdout "42" :silent false}
                    (dissoc payload :iteration)))
@@ -2788,7 +2784,7 @@
                                   {:turn_id tid :iteration 1 :form_index 0 :activity {:revision 3}})
              (state/append-event! sid
                                   "block.output"
-                                  {:turn_id tid :iteration 1 :form_index 0 :result "done"})
+                                  {:turn_id tid :iteration 1 :form_index 0 :stdout "done"})
              (let [activities (filterv #(= "block.activity" (get % "type"))
                                 (state/events-since sid 0))]
                (expect (= 1 (count activities)))

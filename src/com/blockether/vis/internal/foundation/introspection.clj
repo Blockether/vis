@@ -92,22 +92,15 @@
     {:current (long current-position)}))
 
 (defn- iteration-forms
-  "The executed forms of one iteration row.
-
-   Results and errors live ONLY inside the persisted `:forms` envelope:
-   the row projection carries no top-level `:result`/`:error` column, so
-   `(:error iteration)` is nil even for an iteration that blew up."
+  "The executed forms of one iteration row. Stdout and errors live only inside
+   the persisted `:forms` envelope; the row has no top-level output columns."
   [iteration]
   (let [forms (:forms iteration)]
     (if (sequential? forms) (vec forms) [])))
 
 (defn- attempts-from-iterations
-  "Walk `iterations` (in DB order) and collect every executed
-   expression. Used by the current-turn snapshot and by attempt search.
-
-   One entry per FORM, not per iteration: an iteration is an envelope
-   around the forms the model emitted, and the code/result/error of a
-   round hang off those forms."
+  "Walk `iterations` in database order and collect every executed Python form.
+   One entry exists per form, not per iteration."
   [_db-info iterations]
   (into []
         (mapcat
@@ -124,7 +117,7 @@
                 (mapv (fn [form]
                         (cond-> (assoc base
                                   :code (or (:src form) (:code iteration))
-                                  :result (:result form)
+                                  :stdout (:stdout form)
                                   :error (:error form))
                           (:vis/tool-name form)
                           (assoc :tool (:vis/tool-name form))
@@ -134,7 +127,7 @@
                       forms)
                 [(assoc base
                    :code (:code iteration)
-                   :result nil
+                   :stdout nil
                    :error nil)]))))
         iterations))
 
@@ -861,7 +854,7 @@
         (false? (:success? form)) :error
         :else :done))
 
-(defn- native-tool-calls
+(defn- python-execution-calls
   [turn iteration]
   (->> (:forms iteration)
        (keep-indexed (fn [index form]
@@ -1061,7 +1054,7 @@
 (defn- usage-iteration
   [turn iteration]
   (let [calls
-        (native-tool-calls turn iteration)
+        (python-execution-calls turn iteration)
 
         outcomes
         (tool-outcomes calls)
@@ -1102,8 +1095,8 @@
         (update :outcomes #(merge-with + % (tool-outcomes calls))))))
 
 (defn- usage-tools
-  "Group model iterations by every native tool they invoked. Usage intentionally
-   overlaps across tools, so grouped rows must not be summed."
+  "Group model iterations by the python_execution operations they invoked. Usage
+   intentionally overlaps across operations, so grouped rows must not be summed."
   [iterations]
   (let [by-tool (reduce (fn [by-tool usage]
                           (reduce-kv (fn [by-tool tool calls]
@@ -1195,8 +1188,8 @@
         turns))
 
 (def ^:private painted-block-keys
-  "Presentation metadata excluded from model introspection. Canonical
-   `:stdout` / `:result` facts remain; only the card label and headline go."
+  "Presentation metadata excluded from model introspection. Canonical `:stdout`
+   remains; only the card label and headline go."
   [:op :result-summary])
 
 (defn- model-iteration

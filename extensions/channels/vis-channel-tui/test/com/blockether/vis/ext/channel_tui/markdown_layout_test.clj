@@ -607,7 +607,7 @@
   (it "never stretches a list marker or a code block"
       (let [entries
             (layout/ast->entries
-              [:ast [:ul [:li (str "recover one stored native result each, " "no re-run at all")]]
+              [:ast [:ul [:li (str "recover one stored output each, " "no re-run at all")]]
                [:code {:lang "clojure"} "(a  b  c)"]]
               40
               {:mode :channel :justify? true})

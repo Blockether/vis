@@ -41,7 +41,6 @@
        :render-segments [{:kind :code :source "(git/status)"}
                          {:kind :code :source "(git/add \".\")"}]
        :stdout fence-stdout
-       :result :vis/silent
        :error nil
        :envelope {:started-at-ms 100 :finished-at-ms 912}})
     (first ((:get-timeline tracker)))))

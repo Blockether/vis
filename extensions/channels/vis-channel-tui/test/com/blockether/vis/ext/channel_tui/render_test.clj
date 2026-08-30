@@ -95,11 +95,9 @@
                             (code-row-bg {:kind :toggle-details} true t/code-ok-bg)))))
 
 (defn- result-form
-  "One executed form carrying a printed value's own `:op` — the shape every
-   op-card in a python block wears. Blank `:code`: the card, not the program, is
-   what these tests measure."
+  "One executed form carrying a printed value's own `:op` and summary."
   [op summary]
-  {:op op :success? true :code "" :result-summary summary :result {}})
+  {:op op :success? true :code "" :result-summary summary})
 
 (defn- render-forms
   [forms]
@@ -141,7 +139,7 @@
                   "\n"
                   (map strip-ansi
                        (render-forms
-                         [{:success? true :code "print(1)" :result-summary "1" :result "1"}])))]
+                         [{:success? true :code "print(1)" :result-summary "1" :stdout "1"}])))]
         (expect (not (str/includes? txt "RESULT"))))))
 
 (defdescribe
@@ -165,8 +163,7 @@
                      :error {"message" msg
                              "cause_data" {"type" "clj/bad-args"}
                              "trace" (str "java.util.concurrent.ExecutionException: " msg)
-                             "block" {"source" "run_tests" "phase" "preflight"}}
-                     :result nil}]))]
+                             "block" {"source" "run_tests" "phase" "preflight"}}}]))]
 
       (expect (str/includes? txt "clj_test found no *_test.clj namespaces"))
       (expect (not (str/includes? txt "error: {\"message\"")))
@@ -193,8 +190,7 @@
                                               "   ^")
                                 ;; Runtime metadata may contain only an
                                 ;; excerpt; it must not replace `code`.
-                                :block {:source "RUNTIME_EXCERPT_ONLY" :row 7 :col 1}}
-                        :result nil}]})
+                                :block {:source "RUNTIME_EXCERPT_ONLY" :row 7 :col 1}}}]})
             80
             1
             {:session-id "s1"
@@ -225,8 +221,7 @@
                                 :forms [{:success? false
                                          :code code
                                          :error {:message "ZeroDivisionError: division by zero"
-                                                 :block {:row 9 :col 1}}
-                                         :result nil}]})
+                                                 :block {:row 9 :col 1}}}]})
                              80
                              1
                              {:session-id "s1"
@@ -250,8 +245,7 @@
                        (render-forms [{:success? false
                                        :code "r = await shell({\"op\": \"background\"})"
                                        :error {:message
-                                               "shell op background needs an ERRMARKER id."}
-                                       :result nil}])
+                                               "shell op background needs an ERRMARKER id."}}])
 
                        err-lines
                        (filter #(str/includes? (str %) "ERRMARKER") lines)]
@@ -352,8 +346,9 @@
                                        :thinking nil
                                        :forms [{:success? true
                                                 :code "x = 1"
-                                                :result
-                                                (str/join "\n" (map #(str "line " %) (range 1 40)))
+                                                :stdout
+                                                (str/join "
+" (map #(str "line " %) (range 1 40)))
                                                 :duration-ms 61000}]})
               80
               1
@@ -371,21 +366,14 @@
   ;; returns `[form]` for EVERY non-silent form, so a bare value, a call that
   ;; returned nothing and a FAILED call all wear the figure in the app while the
   ;; terminal said nothing about how long they took.
-  (it "stamps the duration under a bare value that carried no card"
-      (let [lines (render-forms [{:success? true :code "x = 42" :result "42" :duration-ms 2300}])]
-        (expect (some #(str/ends-with? (str/trimr (strip-sentinels (body-of %))) "2.3s") lines)
-                (str "got: " lines))))
   (it "stamps the duration on a call that returned nothing at all"
-      (let [lines (render-forms [{:success? true :code "x = 1" :result nil :duration-ms 9000}])]
+      (let [lines (render-forms [{:success? true :code "x = 1" :duration-ms 9000}])]
         (expect (some #(str/ends-with? (str/trimr (strip-sentinels (body-of %))) "9.0s") lines)
                 (str "got: " lines))))
   (it "rides the duration on a failed call's error row"
       (let [lines
-            (render-forms [{:success? false
-                            :code "boom()"
-                            :error {:message "kaboom"}
-                            :result nil
-                            :duration-ms 2300}])
+            (render-forms
+              [{:success? false :code "boom()" :error {:message "kaboom"} :duration-ms 2300}])
 
             err-line
             (first (filter #(str/includes? (str %) "kaboom") lines))]
@@ -1355,7 +1343,7 @@
         (expect (str/includes? body "(+ 0 1)"))
         (expect (str/includes? body "(+ 11 1)"))
         (expect (not-any? #(= :progress-history (:kind %)) (:line-meta payload))))))
-  (it "toggles :vis/silent forms in live progress traces"
+  (it "toggles explicitly silent forms in live progress traces"
       (with-raw-code-on
         (let [progress
               {:iterations
@@ -1383,10 +1371,7 @@
 
           (expect (not (str/includes? hidden-body "set-session-title!")))
           (expect (str/includes? hidden-body "(+ 1 2)"))
-          (expect (str/includes? shown-body "set-session-title!"))
-          ;; Plain `:value` result bodies (`:vis/silent`, `3`) are hidden
-          ;; per user directive — only tool channel-render output paints.
-          (expect (not (str/includes? shown-body ":vis/silent"))))))
+          (expect (str/includes? shown-body "set-session-title!")))))
   (describe "repeated-error-collapse-test"
             (it "squashes repeated identical provider errors into one counted row"
                 (render/invalidate-cache!)
@@ -2273,8 +2258,8 @@
 ;; the colons are EDN-keyword markers and the spaces are
 ;; semantically meaningful. User-visible damage:
 ;;
-;;   `{:rendering-kind :vis/silent :result title}`
-;;     -> `{:rendering-kind:vis/silent:result title}`
+  ;;   `{:rendering-kind :compact :title title}`
+  ;;     -> `{:rendering-kind:compact:title title}`
 ;;
 ;; Fix: tokenise on backticks first, only tighten prose tokens.
 ;; Mirror of `markdown/normalize-inline-spacing`'s tokenisation.
@@ -3990,7 +3975,6 @@
                                nil
                                [{:forms [{:code "print(attach(\"/tmp/shot.png\"))"
                                           :stdout body
-                                          :result body
                                           :duration-ms 1
                                           :success? true}]}]
                                fill-w
@@ -4142,13 +4126,20 @@
     "puts `PYTHON +N more` ABOVE the peeked code, not after it"
     (let [entries
           (format-iteration-entry-entries
-            (iteration/canonicalize
-              {:position 0
-               :thinking nil
-               :forms [{:success? true
-                        :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
-                        :result-summary "ok"
-                        :result "ok"}]})
+            (iteration/canonicalize {:position 0
+                                     :thinking nil
+                                     :forms [{:success? true
+                                              :code
+                                              "a = 1
+b = 2
+c = 3
+d = 4
+e = 5
+f = 6
+g = 7
+h = 8"
+                                              :result-summary "ok"
+                                              :stdout "ok"}]})
             80
             1
             {:session-id "s1"
@@ -4186,7 +4177,7 @@
             (format-iteration-entry-entries
               (iteration/canonicalize {:position 0
                                        :thinking nil
-                                       :forms [{:success? true :display-code code :result "ok"}]})
+                                       :forms [{:success? true :display-code code :stdout "ok"}]})
               40
               1
               {:session-id "s1"
@@ -4203,13 +4194,20 @@
   (it "uses the code band's bottom edge as Python result spacing"
       (let [entries
             (format-iteration-entry-entries
-              (iteration/canonicalize
-                {:position 0
-                 :thinking nil
-                 :forms [{:success? true
-                          :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
-                          :result-summary "ok"
-                          :result "ok"}]})
+              (iteration/canonicalize {:position 0
+                                       :thinking nil
+                                       :forms [{:success? true
+                                                :code
+                                                "a = 1
+b = 2
+c = 3
+d = 4
+e = 5
+f = 6
+g = 7
+h = 8"
+                                                :result-summary "ok"
+                                                :stdout "ok"}]})
               80
               1
               {:session-id "s1"
@@ -4244,8 +4242,15 @@
                          {:position 0
                           :thinking nil
                           :forms [{:success? true
-                                   :code "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\nf = 6\ng = 7\nh = 8"
-                                   :result "ok"}]})
+                                   :code "a = 1
+b = 2
+c = 3
+d = 4
+e = 5
+f = 6
+g = 7
+h = 8"
+                                   :stdout "ok"}]})
                        80
                        1
                        {:session-id "s1"
@@ -4859,7 +4864,7 @@
     (let [trace
           [{:forms
             [{:code "grep({...})"
-              :result "18 matches"
+              :stdout "18 matches"
               :activity
               {:state "running"
                :counts {:running 1 :succeeded 1 :failed 0 :cancelled 0}
@@ -5022,8 +5027,8 @@
              :omitted {:rows 0 :by-classification {}}})
 
           trace
-          [{:forms [{:code "first()" :result "FIRST RESULT" :activity (activity "FIRST")}
-                    {:code "second()" :result "SECOND RESULT" :activity (activity "SECOND")}]}]
+          [{:forms [{:code "first()" :stdout "FIRST RESULT" :activity (activity "FIRST")}
+                    {:code "second()" :stdout "SECOND RESULT" :activity (activity "SECOND")}]}]
 
           body
           (-> (render/format-answer-with-thinking-data

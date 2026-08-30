@@ -440,23 +440,8 @@
         (expect (not (string/blank? doc)))
         (expect (or (vector? arglists) (seq? arglists)))))
   (it "preview tool retired: no symbol advertises it"
-      (expect (nil? (some #(when (= 'preview (:ext.symbol/symbol %)) %) @editing/editing-symbols))))
-  (it "keeps routing in compact native descriptions and inputs in schemas"
-      (doseq [s
-              @editing/editing-symbols
-
-              :when (:ext.symbol/native-tool? s)]
-
-        (let [description
-              (:ext.symbol/description s)
-
-              schema
-              (:ext.symbol/schema s)]
-
-          (expect (not (string/blank? description)))
-          (expect (< (count description) 500))
-          (expect (= "object" (:type schema)))
-          (expect (false? (:additionalProperties schema)))))))
+      (expect (nil? (some #(when (= 'preview (:ext.symbol/symbol %)) %)
+                          @editing/editing-symbols)))))
 
 (it "defers op classification to the engine contract (no editing-local copy)"
     ;; The classification table + presentation map live in
@@ -3586,17 +3571,17 @@
   (let [find-search (private-fn "find-search")]
     (it "a conceptual phrase surfaces the exact-name file the strict MIN pass dropped"
         (let [_ (write-temp! "findfuzz/render.clj" ";; the visualization renderer\n")
-              _ (write-temp! "findfuzz/native_tool_handlers.md" "# native tool docs\n")
+              _ (write-temp! "findfuzz/stream_call_handlers.md" "# stream call docs\n")
               _ (write-temp! "findfuzz/unrelated_widget.clj" ";; nope\n")
               dir (temp-dir-path "findfuzz")
-              out (find-search [{"query" "native tool call visualization render" "paths" [dir]}])
+              out (find-search [{"query" "stream call visualization render" "paths" [dir]}])
               names (mapv #(last (string/split % #"/")) (get out "paths"))]
 
           ;; strict MIN would need ALL five words in one path → nothing; fuzzy saves it
           (expect (true? (get out "fuzzy")))
           (expect (some #{"render.clj"} names))
           ;; the exact-name bullseye (`render` → render.clj) ranks FIRST, above the
-          ;; two-common-word loose hit (native+tool → native_tool_handlers.md)
+          ;; two-common-word loose hit (stream+call → stream_call_handlers.md)
           (expect (= "render.clj" (first names)))
           ;; the terms that actually landed are reported
           (expect (some #{"render"} (get out "matched_terms")))

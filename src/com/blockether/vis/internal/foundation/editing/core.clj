@@ -874,10 +874,10 @@
 (defn- fs-access-refusal
   "First `:fs/access` refusal among `paths`, or nil when every one is allowed.
 
-   ONE place asks the gate, so a native reader and the sandbox `ls` helper cannot
+   ONE place asks the gate, so Python bindings and sandbox `open(...)` cannot
    drift into two vocabularies. `operation` is the verb the hook sees
    (`\"file-read\"`, `\"file-write\"`) — the same vocabulary `internal/sandbox-fs`
-   passes for guest IO, so one rule covers the tool and `open(p, \"w\")` alike."
+   passes for guest IO."
   [env kind operation paths]
   (when (extension/gate-hooked? :fs/access)
     (some (fn [path]
@@ -1812,9 +1812,9 @@
 
         ;; RELAXED FALLBACK. `find-relevance` takes the MIN across query tokens,
         ;; so EVERY word must land in one path — a multi-word CONCEPT query
-        ;; ("native tool call visualization render") is dropped the moment any
-        ;; term is absent, even when a distinctive term is an exact filename
-        ;; match (`render`). That is why such queries returned nothing. When the
+        ;; ("stream call visualization render") is dropped the moment any term
+        ;; is absent, even when a distinctive term is an exact filename match
+        ;; (`render`). That is why such queries returned nothing. When the
         ;; strict pass is empty and the query has ≥2 usable tokens, search each
         ;; token on its own and surface files ranked by HOW MANY query terms
         ;; they match (coverage) then best term score. It stays a FILENAME tool
@@ -1851,7 +1851,7 @@
 
                       ;; A term that IS the filename stem (`render` → `render.clj`) is a
                       ;; bullseye — it must beat a 2-common-word loose match
-                      ;; (`native`+`tool` → `native-tool-handlers.md`), so it gets a
+                      ;; (`stream`+`call` → `stream-call-handlers.md`), so it gets a
                       ;; score bonus that ranks above raw term coverage.
                       scored
                       (map (fn [it]
@@ -3083,9 +3083,8 @@
 
 ;; write-safe — whole-file write primitive (create or overwrite)
 ;;
-;; INTERNAL: no native tool maps onto it. Python owns whole-file writes
-;; on the model-facing side (`Path.write_text`, `open(p, "w")`), which pass the
-;; same `:fs/access` gate.
+;; Python owns whole-file writes (`Path.write_text`, `open(p, "w")`) on the
+;; model-facing side; both pass the same `:fs/access` gate.
 ;;
 ;; Shape:
 ;;   {:success? true

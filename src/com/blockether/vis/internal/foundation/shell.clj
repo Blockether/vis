@@ -5,9 +5,9 @@
    containment layer while active.
 
    ONE model-facing entry point — the `shell` PYTHON verb, bound BARE in the flat
-   sandbox next to `ls` / `grep`, and NO native tool: a process is started from
-   Python and nowhere else, because every verb after the spawn is a method on the
-   handle the call returns. EVERY run is a background run: the call spawns
+   sandbox next to `ls` / `grep`. A process is started from Python, and every verb
+   after the spawn is a method on the handle the call returns. EVERY run is a
+   background run: the call spawns
    under a real pty and returns the HANDLE now, so there is no `wait` on the
    request and no number that can select a second mode. ONE call runs ONE command:
    an ordered batch was a second budget, a second result shape and a second failure
@@ -2809,9 +2809,8 @@
 
 (defn- shell-ticker
   "LIVE-TICKER phrase for one shell call — what the bubble says while the call is
-   still in flight, completing `Vis is …`. This is the ONLY live presentation a
-   process has: nothing is advertised as a native tool any more, so the spawn and
-   every method on its handle say here what they are doing.
+   still in flight, completing `Vis is …`. The spawn and every method on its
+   handle say here what they are doing.
 
    A transport's own name answers nothing: `_shell-wait tt` names neither the
    command nor the budget, which is exactly how a wait that is doing its job reads
@@ -2888,12 +2887,9 @@
   (vis/symbol
     #'shell
     {:symbol 'shell
-     ;; NOT a native tool: a process is started from PYTHON and nowhere else.
-     ;; A `tool_use` schema can only ever spawn ONE command and then hand back an
-     ;; object the wire cannot hold — every verb after the spawn (`wait`, `logs`,
-     ;; `type`, `stop`) is a METHOD on the handle, so the whole family belongs
-     ;; where the handle already lives. `apropos('shell')` / `doc('shell')` are
-     ;; how it is found, exactly like every other sandbox capability.
+     ;; A process starts from PYTHON, which can retain the returned handle. Every
+     ;; later operation (`wait`, `logs`, `type`, `stop`) is a method on that handle.
+     ;; `apropos('shell')` / `doc('shell')` are how the capability is found.
      :name "shell"
      :result
      (str
@@ -3014,14 +3010,11 @@
 (defn shell-enabled? [_env] (vis/toggle-enabled? "shell"))
 
 (def shell-symbols
-  ;; NO native tool at all, and ONE object to drive what a Python call starts.
   ;; `shell` is an engine-bound sandbox verb; `_shell_logs` / `_shell_wait` /
   ;; `_shell_type` / `_shell_stop` are PRIVATE transport (underscore-prefixed so
-  ;; `apropos` never lists them): the model calls the handle's own `sh.logs()` /
-  ;; `sh.wait()` / `sh.type("y")` / `sh.stop()`, because operations on an object the
-  ;; caller already holds are control flow, not more schemas to disambiguate before
-  ;; running a command. There is no status transport at all: every stage's answer
-  ;; already carries the status block.
+  ;; `apropos` never lists them). The model calls the handle's own `sh.logs()` /
+  ;; `sh.wait()` / `sh.type("y")` / `sh.stop()`. Every stage already carries its
+  ;; status block.
   (mapv #(assoc % :ext.symbol/active-fn shell-enabled?)
         [shell-symbol shell-logs-symbol shell-wait-symbol shell-type-symbol shell-stop-symbol]))
 
@@ -3065,10 +3058,8 @@
 (vis/register-toggle!
   {:id "shell"
    :label "Shell commands"
-   ;; One line: the row is a control, not documentation. The full contract —
-   ;; pty handle ops, "never a native tool", the jail, and the MODEL's-door
-   ;; limit that leaves an installed extension's own `vis.shell` / `subprocess`
-   ;; boundary ungated — lives in this namespace's docstring.
+   ;; The full pty-handle, jail, and extension-boundary contract lives in this
+   ;; namespace's docstring; the settings row stays one line.
    :description "Expose the Python `shell` verb; the model's commands run inside the OS jail."
    :default true
    :owner :vis

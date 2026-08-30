@@ -2,7 +2,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
-            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -149,42 +148,41 @@
           (expect (= :cancelled (:status assistant)))
           (expect (= "notice" (get-in blocks [0 "type"])))
           (expect (str/includes? (:text assistant) "Cancelled by user")))))
-  (it
-    "rebuild-history marks persisted silent engine calls for the TUI visibility toggle"
-    ;; Python engine: an engine-only form (set_session_title) is silent UI chrome,
-    ;; detected by `ctx-engine/engine-form-src?` reading the Python call head.
-    (with-redefs [vis/db-info
-                  (fn []
-                    :db)
+  (it "rebuild-history honors an explicitly silent persisted form"
+      ;; Visibility is data on the form; no return-value sentinel participates.
+      (with-redefs [vis/db-info
+                    (fn []
+                      :db)
 
-                  vis/gateway-transcript
-                  compose-transcript
+                    vis/gateway-transcript
+                    compose-transcript
 
-                  vis/db-list-session-turns
-                  (fn [_db _cid]
-                    [{:id :turn-1 :user-request "siema" :answer-markdown "Siema!"}])
+                    vis/db-list-session-turns
+                    (fn [_db _cid]
+                      [{:id :turn-1 :user-request "siema" :answer-markdown "Siema!"}])
 
-                  vis/db-list-session-turn-iterations
-                  (fn [_db _turn-id]
-                    [{:id :iter-1 :code "set_session_title(\"Greeting\")" :result "vis_silent"}])]
+                    vis/db-list-session-turn-iterations
+                    (fn [_db _turn-id]
+                      [{:id :iter-1
+                        :forms [{:src "set_session_title(\"Greeting\")" :silent true}]}])]
 
-      (let [history
-            ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+        (let [history
+              ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
 
-            trace
-            (-> history
-                second
-                :traces
-                first)
+              trace
+              (-> history
+                  second
+                  :traces
+                  first)
 
-            form
-            (-> trace
-                :forms
-                first)]
+              form
+              (-> trace
+                  :forms
+                  first)]
 
-        (expect (= 1 (count (:forms trace))))
-        (expect (true? (:silent? form)))
-        (expect (str/includes? (str (:code form)) "set_session_title")))))
+          (expect (= 1 (count (:forms trace))))
+          (expect (true? (:silent? form)))
+          (expect (str/includes? (str (:code form)) "set_session_title")))))
   (it "rebuild-history elides synthetic preflight blocks so they don't render as success"
       (with-redefs [vis/db-info
                     (fn []
@@ -212,10 +210,8 @@
 
           (expect (= [] (:forms trace))))))
   (it "rebuild-history preserves mixed-block render segments instead of eliding the answer block"
-      ;; New shape: iteration row carries per-form envelopes under :forms.
-      ;; Each envelope has :src :tag :result :error :channel; the rebuild
-      ;; iterates them rather than treating the whole iteration as one
-      ;; opaque block.
+      ;; Each iteration row carries per-form envelopes; every envelope owns only
+      ;; source, stdout/error and explicit metadata.
       (with-redefs [vis/db-info
                     (fn []
                       :db)
@@ -233,15 +229,13 @@
                         :code (str "(def x 1)\n"
                                    "(set-session-title! \"Mixed\")\n"
                                    "(done [:ast [:p \"Done\"]])")
-                        :forms [{:scope "t1/i1/f1" :tag :host :src "(def x 1)" :result nil}
-                                {:scope "t1/i1/f2"
-                                 :tag :host
-                                 :src "(set-session-title! \"Mixed\")"
-                                 :result "vis_silent"}
-                                {:scope "t1/i1/f3"
-                                 :tag :host
-                                 :src "(done [:ast [:p \"Done\"]])"
-                                 :result "vis_answer"}]}])]
+                        :forms
+                        [{:scope "t1/i1/f1" :tag :host :src "(def x 1)"}
+                         {:scope "t1/i1/f2"
+                          :tag :host
+                          :src "(set-session-title! \"Mixed\")"
+                          :silent true}
+                         {:scope "t1/i1/f3" :tag :host :src "(done [:ast [:p \"Done\"]])"}]}])]
 
         (let [history
               ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
@@ -252,11 +246,8 @@
                   :traces
                   first)]
 
-          ;; Resume keeps ONE restored block PER persisted form envelope —
-          ;; parity with the live tracker (the old regroup collapsed every
-          ;; envelope into a single merged card and lost intermediate
-          ;; results). The structural title segment still survives for
-          ;; render.clj to paint.
+          ;; Resume keeps one restored block per persisted form envelope; the
+          ;; structural title segment still survives for render.clj to paint.
           (expect (= 3 (count (:forms trace))))
           (expect (some (fn [f]
                           (some #(re-find #"Mixed" (str %)) (:render-segments f)))
@@ -286,7 +277,6 @@
                       [{:scope "t24/i1/f1"
                         :tag :mutation
                         :src "(patch [])"
-                        :result :ok
                         :channel
                         [{:position 0 :form "(patch [])" :success? true :result "PATCH ok"}]}]}])]
 
@@ -327,7 +317,6 @@
                         :forms [{:scope "t1/i1/f1"
                                  :tag :observation
                                  :src "(cat \"src/foo.clj\")"
-                                 :result {:op :cat :path "src/foo.clj"}
                                  :channel [{:position 0
                                             :form "(cat \"src/foo.clj\")"
                                             :success? true
@@ -366,56 +355,7 @@
   (it "render-answer projects canonical blocks"
       (expect (= "raw **markdown**"
                  ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer))
-                   [{"id" "b1" "type" "prose" "markdown" "raw **markdown**"}]))))
-  (it "rebuilds tool-result details from canonical op envelope keys"
-      ;; Generic envelope shaped like a tool result with command/target
-      ;; metadata. Asserts chat layer extracts the canonical keys regardless
-      ;; of which extension emitted them. `:cat` is a real foundation op, but
-      ;; this unit test does not load the foundation extension, so its
-      ;; `:observation` tag is unregistered. Envelope construction fails
-      ;; closed on unregistered ops by design (`op-tag`), so stub it to the
-      ;; tag `:cat` carries in production — the envelope is built lazily inside
-      ;; the iteration redef, i.e. while the stub is active.
-      (with-redefs [extension/op-tag
-                    (fn [_op]
-                      :observation)
-
-                    vis/db-info
-                    (fn []
-                      :db)
-
-                    vis/gateway-transcript
-                    compose-transcript
-
-                    vis/db-list-session-turns
-                    (fn [_db _cid]
-                      [{:id :turn-1 :user-request "run" :answer-markdown ""}])
-
-                    vis/db-list-session-turn-iterations
-                    (fn [_db _turn-id]
-                      [{:id :iter-1
-                        :code "(cat \"x.txt\")"
-                        :result (extension/success {:op :cat
-                                                    :result {:path "x.txt" :lines ["ok"]}
-                                                    :metadata {:target {:path "x.txt"}}})}])]
-
-        (let [history
-              ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-
-              trace
-              (-> history
-                  second
-                  :traces
-                  first)
-
-              form
-              (-> trace
-                  :forms
-                  first)]
-
-          (expect (= :tool (:result-kind form)))
-          (expect (= {:symbol "cat" :tag "observation" :target {"path" "x.txt"}}
-                     (:result-detail form)))))))
+                   [{"id" "b1" "type" "prose" "markdown" "raw **markdown**"}])))))
 
 (defdescribe
   turn-options-test

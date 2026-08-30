@@ -82,6 +82,7 @@
             (form/<-wire (simulate-wire payload))]
 
         (expect (= "block.output" type))
+        (expect (not (some #{:result} form/display-keys)))
         ;; The gateway carried, and <-wire recovered, EVERY canonical display key.
         (doseq [k form/display-keys]
           (expect
@@ -97,9 +98,8 @@
       (expect (= "unheard_of" (:op (form/result-card {:op "unheard_of" :result-summary "1 row"}))))
       ;; A block that printed and returned nothing has no card at all.
       (expect (nil? (form/result-card {}))))
-  (it "->display drops nils so a merge never stamps empty keys"
-      (expect (= {} (form/->display {:result nil :op nil})))
-      (expect (= {:op "grep"} (form/->display {:op "grep"})))))
+  (it "->display projects only declared form fields"
+      (expect (= {:op "grep"} (form/->display {:op "grep" :internal true})))))
 
 (defdescribe form-authored-display-code-test
              (it "keeps an authored display instead of re-deriving it from the source"
@@ -120,44 +120,39 @@
 ;; The display is always derived from canonical facts. No rendered copy is stored,
 ;; transported, or accepted as authored input, so live and restored forms use the
 ;; same projection.
-(defdescribe
-  result-display-derivation-test
-  (it "derives a native result's body from the value alone"
-      (let [body (:body (form/result-display {:src "grep({})" :result {"files" ["a.clj"]}}))]
-        (expect (some? body))
-        (expect (str/includes? body "files"))
-        (expect (str/includes? body "a.clj"))))
-  (it "derives a printed block's body from stdout"
-      (expect (str/includes? (:body (form/result-display {:src "print(1)" :stdout "hello"}))
-                             "hello")))
-  (it "has nothing to show for a form that returned and printed nothing"
-      (expect (nil? (form/result-display {:src "x = 1"}))))
-  (it "passes a vis-image fence through verbatim so the channel paints it inline"
-      (expect (= "````vis-image\nx\n````"
-                 (:body (form/result-display {:stdout "````vis-image\nx\n````"})))))
-  ;; Regression: a printed tool result was captured on the side and painted as its
-  ;; own card, replacing stdout, so one block that printed twice read as two results.
-  (it "keeps the whole stdout as the one body, however many results the block printed"
-      (let [body (:body (form/result-display {:stdout "first\nsecond"}))]
-        (expect (str/includes? body "first"))
-        (expect (str/includes? body "second"))))
-  ;; Regression: a timed-out block used to paint a second card under its error line,
-  ;; whose body re-showed the form, stdout and the same timeout message.
-  (it "gives a wall-clock timeout no card of its own"
-      (expect (nil? (form/result-display {:src "time.sleep(99)"
-                                          :timeout? true
-                                          :error {:message "Timeout (30s)"
-                                                  :type :vis/eval-timeout
-                                                  :data {:timeout-ms 30000}}}))))
-  (it "keeps what a timed-out block printed as its ordinary stdout body"
-      (let [card (form/result-display {:src "time.sleep(99)"
-                                       :timeout? true
-                                       :stdout "partial"
-                                       :error {:message "Timeout (30s)"
-                                               :data {:timeout-ms 30000}}})]
-        (expect (nil? (:summary card)))
-        (expect (str/includes? (:body card) "partial"))
-        (expect (not (str/includes? (:body card) "time.sleep(99)"))))))
+(defdescribe stdout-display-derivation-test
+             (it "derives a printed block's body from stdout"
+                 (expect (str/includes? (:body (form/stdout-display {:src "print(1)"
+                                                                     :stdout "hello"}))
+                                        "hello")))
+             (it "has nothing to show for a form that printed nothing"
+                 (expect (nil? (form/stdout-display {:src "x = 1"}))))
+             (it "passes a vis-image fence through verbatim so the channel paints it inline"
+                 (expect (= "````vis-image\nx\n````"
+                            (:body (form/stdout-display {:stdout "````vis-image\nx\n````"})))))
+             ;; Regression: printed output was captured on the side and painted as its own
+             ;; card, replacing stdout, so one block that printed twice read as two cards.
+             (it "keeps the whole stdout as one body, however many lines the block printed"
+                 (let [body (:body (form/stdout-display {:stdout "first\nsecond"}))]
+                   (expect (str/includes? body "first"))
+                   (expect (str/includes? body "second"))))
+             ;; Regression: a timed-out block used to paint a second card under its error line,
+             ;; whose body re-showed the form, stdout and the same timeout message.
+             (it "gives a wall-clock timeout no card of its own"
+                 (expect (nil? (form/stdout-display {:src "time.sleep(99)"
+                                                     :timeout? true
+                                                     :error {:message "Timeout (30s)"
+                                                             :type :vis/eval-timeout
+                                                             :data {:timeout-ms 30000}}}))))
+             (it "keeps what a timed-out block printed as its ordinary stdout body"
+                 (let [card (form/stdout-display {:src "time.sleep(99)"
+                                                  :timeout? true
+                                                  :stdout "partial"
+                                                  :error {:message "Timeout (30s)"
+                                                          :data {:timeout-ms 30000}}})]
+                   (expect (nil? (:summary card)))
+                   (expect (str/includes? (:body card) "partial"))
+                   (expect (not (str/includes? (:body card) "time.sleep(99)"))))))
 
 (defdescribe
   envelope-duration-test

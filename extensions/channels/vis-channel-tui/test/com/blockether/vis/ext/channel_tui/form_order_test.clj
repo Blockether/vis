@@ -1,8 +1,8 @@
 (ns com.blockether.vis.ext.channel-tui.form-order-test
   "Guard: the LIVE form order and the RESTORED form order never diverge.
 
-   Forms run CONCURRENTLY (`await gather(...)`), so their results stream back
-   OUT OF ORDER; the live progress tracker re-slots them by `:position`. The DB
+   Forms run CONCURRENTLY (`await gather(...)`), so their stdout frames stream
+   back OUT OF ORDER; the live progress tracker re-slots them by `:position`. The DB
    stores the forms as ONE ordered vector and restore re-derives order from that
    vector (`map-indexed`). Both must land on the SAME loop-emission order — a
    silent form filtered the same on both sides. If they ever drift (a slotting
@@ -32,7 +32,7 @@
                :iteration 1
                :position pos
                :code code
-               :result (str "r" pos)
+               :stdout (str "r" pos)
                :silent? silent?})]
 
         ;; results land 2, 0, 1 — the WRONG order on the wire
@@ -48,8 +48,8 @@
       (let [it
             {"id" "t1"
              "code" ""
-             "forms" [{"src" "(f0)" "result" "r0"} {"src" "(f1-silent)" "result" "r1" "silent" true}
-                      {"src" "(f2)" "result" "r2"}]}
+             "forms" [{"src" "(f0)" "stdout" "r0"} {"src" "(f1-silent)" "stdout" "r1" "silent" true}
+                      {"src" "(f2)" "stdout" "r2"}]}
 
             restored
             (it->iteration-entry {:produced-answer? false :last-iteration-id nil} it)]
@@ -65,7 +65,7 @@
                :iteration 1
                :position pos
                :code code
-               :result (str "r" pos)
+               :stdout (str "r" pos)
                :silent? silent?})]
 
         (on-chunk (chunk 2 "(f2)" false))
@@ -77,9 +77,9 @@
               it
               {"id" "t1"
                "code" ""
-               "forms" [{"src" "(f0)" "result" "r0"}
-                        {"src" "(f1-silent)" "result" "r1" "silent" true}
-                        {"src" "(f2)" "result" "r2"}]}
+               "forms" [{"src" "(f0)" "stdout" "r0"}
+                        {"src" "(f1-silent)" "stdout" "r1" "silent" true}
+                        {"src" "(f2)" "stdout" "r2"}]}
 
               restored
               (codes (it->iteration-entry {:produced-answer? false :last-iteration-id nil} it))]

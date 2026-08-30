@@ -1661,16 +1661,3 @@
   [form-source]
   (let [src (str/trimr (str (or form-source "")))]
     (if (str/blank? src) [] [{:kind :code :source src}])))
-
-(defn block-structurally-silent?
-  "True when the block source carries NO `:code` segment — it is purely
-   structural engine chrome (a bare title call). The engine stamps such a
-   block + its stream chunk with `:vis/silent? true` so channels drop the
-   whole entry from display (web folds it on `:silent`, the TUI hides the
-   form slot). Any block that DOES carry a `:code` segment flows through and
-   its raw source paints unconditionally."
-  [form-source]
-  (let [src (str (or form-source ""))]
-    (and (not (str/blank? src))
-         (let [segs (parse-block-display src)]
-           (not-any? #(= :code (:kind %)) segs)))))

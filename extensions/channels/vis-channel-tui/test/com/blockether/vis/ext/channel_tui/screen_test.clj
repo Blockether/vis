@@ -1391,7 +1391,7 @@ therapy line 2"
                              :text (format "ANSWER-%02d prose body for turn %d." i i)
                              :traces [{:thinking (format "thinking %02d" i)
                                        :forms [{:code (format "(+ %d 1)" i)
-                                                :result (str (inc i))
+                                                :stdout (str (inc i))
                                                 :success? true
                                                 :silent? false}]}]
                              :iteration-count 1
@@ -1492,9 +1492,9 @@ therapy line 2"
              :traces (vec (repeat 6
                                   {:thinking "thinking line"
                                    :forms
-                                   [{:code "(+ 1 2)" :result "3" :success? true :silent? false}
-                                    {:code "(* 2 3)" :result "6" :success? true :silent? false}
-                                    {:code "(dec 9)" :result "8" :success? true :silent? false}]}))
+                                   [{:code "(+ 1 2)" :stdout "3" :success? true :silent? false}
+                                    {:code "(* 2 3)" :stdout "6" :success? true :silent? false}
+                                    {:code "(dec 9)" :stdout "8" :success? true :silent? false}]}))
              :iteration-count 6
              :timestamp #inst "2026-04-30T00:00:00"}
 

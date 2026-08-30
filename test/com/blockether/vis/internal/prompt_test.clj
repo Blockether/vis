@@ -175,14 +175,14 @@
       (expect (str/includes? text "scoped to real paths"))
       (expect (str/includes? text "locates unknown code"))
       (expect (str/includes? text "**Filesystem work is Python**"))
-      ;; The routing rule sends every filesystem CHANGE to Python; naming the deleted
-      ;; native verbs again would re-open the `mkdir -p`/`test -f` reflex it exists to close.
+      ;; The routing rule sends every filesystem CHANGE to Python; naming the retired
+      ;; verbs again would re-open the `mkdir -p`/`test -f` reflex it exists to close.
       (doseq [verb ["`copy`" "`move`" "`delete`" "`create_directory`" "`file_exists`"]]
         (expect (not (str/includes? text verb))))
       ;; The routing rule survived the arrival of `patch`: a filesystem CHANGE that is not
-      ;; an ADDRESSED edit — create, move, delete — is still Python, never a native verb.
+      ;; an ADDRESSED edit — create, move, delete — is still plain Python.
       (expect (str/includes? text "creating/moving/deleting is plain Python"))
-      ;; The shell is a Python call now, not a native tool: the core must say WHERE it lives.
+      ;; Shell is a Python call, so the core must say WHERE it lives.
       (expect (str/includes? text "`shell(...)` runs programs"))
       (expect (str/includes? text "No shell TOOL"))
       (expect (< (str/index-of text "`grep(...)` FIRST")

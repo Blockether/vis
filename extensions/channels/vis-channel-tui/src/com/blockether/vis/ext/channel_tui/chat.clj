@@ -44,9 +44,6 @@
                   str/trim)]
     (when-not (or (str/blank? (or s "")) (= encrypted-reasoning-placeholder s)) s)))
 
-;; Engine chrome is detected from the RESULT sentinel (vis_silent / the
-;; vis_answer done-call), not a call-head name list — mirrors progress.clj.
-
 (defn- visible-code-segments?
   "True when an iteration block has at least one `:code` segment that
    should reach the user. Mirrors the live progress predicate."
@@ -54,74 +51,30 @@
   (boolean (some #(= :code (:kind %)) (:render-segments b))))
 
 (defn- structurally-silent-block?
-  "True for host-bookkeeping forms that should never appear in user
-   traces: structurally code-free recap blocks, and forms whose RESULT is
-   the `vis_silent` (title) sentinel. (`done`'s `vis_answer` block is
-   elided separately — its answer renders as the turn bubble.)"
+  "True for explicitly host-bookkeeping forms that should never appear in user traces."
   [b]
-  (boolean (or (:vis/structurally-silent? b) (= "vis_silent" (:result b)))))
-
-(defn- restored-tool-envelope?
-  "True when a restored form's `:result` is a tool-result ENVELOPE after the
-   canonical wire hop (`wire/canonical` at the gateway transcript facade):
-   keyword identity values arrive as strings, so the spec-strict
-   `extension/tool-result?` can no longer match — recognize the envelope
-   STRUCTURALLY instead, by the `is_success` flag plus the `:symbol`/`:metadata`
-   identity `envelope-of` always stamps. Also true for a raw in-process
-   envelope, which carries the same keys."
-  [x]
-  (and (map? x) (contains? x "is_success") (or (contains? x "symbol") (contains? x "metadata"))))
+  (boolean (:vis/structurally-silent? b)))
 
 (defn- form-result-kind
-  "Mirror of `progress/form-result-kind` for restored sessions: a
-   form is `:tool`-kind whenever it touched the tool surface, even
-   indirectly via `:channel` sink entries (e.g. `(def r (ls …))`
-   followed by `(select-keys r …)`). Without this the channel's
-   preview pane is hidden because the FENCE's last value
-   is plain data."
-  [{:keys [result error channel]}]
+  "Mirror `progress/form-result-kind` for restored sessions. A form is
+   `:tool`-kind whenever its Python execution touched the tool surface,
+   which is recorded by its channel sink entries."
+  [{:keys [error channel]}]
   (cond error :error
-        (restored-tool-envelope? result) :tool
         (seq channel) :tool
         :else :value))
 
 (defn- form-result-detail
-  "Project tool-result envelope to the small detail map the TUI labels
-   consume. Returns nil for non-tool results.
+  "Project the first restored channel entry to the detail map the TUI labels consume."
+  [{:keys [channel]}]
+  (when (seq channel)
+    (let [first-ok (or (first (filter #(get % "is_success") channel)) (first channel))]
+      (cond-> {}
+        (get first-ok "symbol")
+        (assoc :op (get first-ok "symbol"))
 
-   The transcript arrives in the canonical wire shape (`wire/canonical`
-   at the gateway facade): envelope metadata keys read as snake keywords
-   and keyword identities as strings. Restored forms persisted via
-   `(def x (tool …))` shape have their `:result` deref'd to the inner
-   value before persistence (Python binding semantics), so the envelope
-   check returns false and the path below would never fire. Fall back to
-   the channel slice: every sink entry carries `:symbol` / `:tag`
-   (`write-sink-entries!` stamps them from the originating `sym-entry`).
-   Use the FIRST successful entry's tag/symbol to label the bubble —
-   same shape the live path produces, just sourced from persistance."
-  [{:keys [result channel]}]
-  (cond (restored-tool-envelope? result)
-        (let [metadata (get result "metadata")]
-          (merge (into {}
-                       (keep (fn [[k wk]]
-                               (when-some [v (get result wk)]
-                                 [k v])))
-                       [[:symbol "symbol"] [:tag "tag"]])
-                 (into {}
-                       (keep (fn [[k wk]]
-                               (when-some [v (get metadata wk)]
-                                 [k v])))
-                       [[:spec "spec"] [:paths "paths"] [:hit_count "hit_count"]
-                        [:truncated_by "truncated_by"] [:command "command"] [:cwd "cwd"]
-                        [:target "target"]])))
-        (seq channel) (let [first-ok (or (first (filter #(get % "is_success") channel))
-                                         (first channel))]
-                        (cond-> {}
-                          (get first-ok "symbol")
-                          (assoc :op (get first-ok "symbol"))
-
-                          (get first-ok "tag")
-                          (assoc :tag (get first-ok "tag"))))))
+        (get first-ok "tag")
+        (assoc :tag (get first-ok "tag"))))))
 
 (defn- block->form-record
   "Materialize one DB-iteration block into a `:forms` entry. The shape
@@ -130,10 +83,10 @@
 
    The display metadata is projected through `vis/form->display` — the ONE
    canonical display-key projection (`internal/form.clj`) the live wire and the
-   gateway also use. Canonical `:stdout` / `:result` facts remain on the record;
-   every channel derives presentation locally. On top of the shared projection we
-   layer only bounded output/error, duration/channel, computed op metadata, and
-   restore-only status flags."
+   gateway also use. Canonical `:stdout` remains on the record; every channel
+   derives presentation locally. On top of the shared projection we layer only
+   bounded output/error, duration/channel, computed op metadata, and restore-only
+   status flags."
   [block]
   (merge (vis/form->display (vis/form-with-display block))
          {:started-at-ms nil
@@ -141,18 +94,12 @@
           ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the
           ;; SAME DISPLAY-state ops the live path derives from its `:channel`.
           :channel (vec (:channel block))
-          ;; Stdout is bounded outside the shared verbatim projection; a structured
-          ;; result already comes from `form->display`, which drops it when stdout exists.
           :stdout (:stdout block)
           ;; Op metadata computed from the persisted block.
           :result-kind (form-result-kind block)
           :result-detail (form-result-detail block)
           :error (:error block)
           :success? (nil? (:error block))
-          ;; A restored form is engine chrome (hidden) when structurally code-free
-          ;; (answer / title recaps) OR its result is the `vis_silent` sentinel
-          ;; (set_session_title) — `structurally-silent-block?`. Parity with the
-          ;; live path; `done`'s vis_answer block is elided via answer-position.
           :silent? (and (nil? (:error block))
                         (or (:silent block) (structurally-silent-block? block)))}))
 
@@ -164,14 +111,9 @@
   [{:keys [produced-answer? last-iteration-id]} it]
   ;; The persisted shape that drives a restored bubble is the
   ;; per-form `:forms` envelope vec on the iteration row (one entry
-  ;; per top-level form the model wrote). The legacy code path
-  ;; pretended an iteration was ONE block and pulled non-existent
-  ;; `:result` / `:error` / `:channel` keys off the row itself — so
-  ;; errored forms restored as successful, tool calls lost their
-  ;; pi-style preview, and a multi-form fence collapsed into a single
-  ;; opaque card. Live bubbles read per-form envelopes from the
-  ;; progress tracker; restored bubbles must do the same to render
-  ;; identically.
+  ;; per top-level form the model wrote). Restored bubbles must read those
+  ;; same per-form envelopes as live bubbles, otherwise errors and channel
+  ;; previews collapse into one opaque iteration card.
   (let [iter-code
         (or (get it "code") "")
 
@@ -190,9 +132,6 @@
            (some? (get it "duration_ms"))
            (assoc :duration-ms (get it "duration_ms"))
 
-           (some? (get it "result"))
-           (assoc :result (get it "result"))
-
            (some? (get it "error"))
            (assoc :error (get it "error")))]
 
@@ -205,10 +144,7 @@
                 (vis/parse-block-display src)]
 
             ;; Project the persisted envelope's whole display-key set via
-            ;; `vis/form->display`: the pre-rendered result card and its headline.
-            ;; A hand-listed copy silently dropped those fields on resume; the
-            ;; canonical projection cannot drift.
-            ;; `:code`, `:scope`/`:tag`, and computed render segments are layered on top.
+            ;; `vis/form->display`, then layer provenance and parsed source segments.
             (cond-> (merge (vis/form<-wire env)
                            {:position idx
                             :code src
@@ -216,9 +152,6 @@
                             ;; provenance string the engine stamped at write time.
                             :scope (get env "scope")
                             :tag (get env "tag")})
-              (contains? env "result")
-              (assoc :result (get env "result"))
-
               (contains? env "error")
               (assoc :error (get env "error"))
 
@@ -226,7 +159,10 @@
               (assoc :render-segments segments)
 
               (some? (get env "duration_ms"))
-              (assoc :duration-ms (get env "duration_ms")))))
+              (assoc :duration-ms (get env "duration_ms"))
+
+              (contains? env "silent")
+              (assoc :silent (boolean (get env "silent"))))))
 
         all-blocks
         (if (seq envelopes) (vec (map-indexed envelope->block envelopes)) fallback-blocks)
@@ -258,8 +194,7 @@
 
             (when (and block
                        (not (visible-code-segments? block))
-                       (or (= "vis_answer" (:result block))
-                           (str/includes? (str (:code block)) "done(")))
+                       (str/includes? (str (:code block)) "done("))
               idx)))
 
         elide-idxs
@@ -285,7 +220,6 @@
                                                   str
                                                   str/triml)]
                                   (when (and (nil? (:duration-ms b))
-                                             (not= "vis_answer" (:result b))
                                              (not (str/starts-with? (or src "") "done(")))
                                     idx))))
                 visible))
@@ -295,13 +229,9 @@
           (update visible (first duration-fallback-idxs) assoc :duration-ms (get it "duration_ms"))
           visible)
 
-        ;; One restored block PER persisted form envelope - parity with the
-        ;; live tracker: the loop emits one :form-start/:form-result chunk per
-        ;; top-level form, so live bubbles render one card per form, each with
-        ;; its OWN result. An earlier regroup collapsed every envelope into a
-        ;; single merged card that kept only the LAST form's :result - resumed
-        ;; or switched-to sessions showed the code but lost every intermediate
-        ;; form result. Keep the per-envelope blocks instead.
+        ;; One restored block per persisted form envelope — parity with the live
+        ;; tracker, which emits one start/output pair per top-level form. Keeping
+        ;; those envelopes separate preserves every form's stdout and error.
         ;; `:forms` are the PERSISTED proof envelopes (model-facing, one per
         ;; top-level form). `iteration/canonicalize` derives the DISPLAY-state
         ;; `:ops` from each envelope's `:channel` sink slice — `:ops` is what
@@ -987,9 +917,6 @@
 
         stdout
         (event-get event :stdout)
-
-        _result
-        (event-get event :result)
 
         error
         (event-get event :error)

@@ -77,8 +77,8 @@
   (boolean (and (string? message) (re-find #"(?i)invalid.*signature.*thinking.*block" message))))
 
 (defn tool-schema-rejection-message?
-  "True when a provider rejected a native tool because its input-schema root
-   uses a JSON Schema union that provider tool APIs forbid."
+  "True when a provider rejected the `python_execution` tool because its
+   input-schema root uses a JSON Schema union that provider APIs forbid."
   [message]
   (let [text (some-> message
                      str/lower-case)]

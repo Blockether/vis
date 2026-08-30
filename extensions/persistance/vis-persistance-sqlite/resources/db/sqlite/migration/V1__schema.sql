@@ -412,13 +412,11 @@ CREATE TABLE session_turn_iteration (
                                     cost_usd IS NULL OR cost_usd >= 0
                                   ),
 
-  -- The code this iteration executed (synthesized native tool calls and/or the
-  -- python_execution program). Per-call outcome lives in tool_calls below.
+  -- The python_execution program this iteration executed.
   code                            TEXT NOT NULL,
 
-  -- Nippy-encoded vec of the TOOL-CALL records executed this iteration
-  -- (:result for native tools, :stdout for python_execution, :error on throw).
-  -- NULL/empty on empty iters.
+  -- Nippy-encoded vec of executed forms. Each form carries printed stdout or an
+  -- error; NULL/empty on empty iterations.
   tool_calls                      BLOB,
   -- Sandbox eval wall time for this iteration's block.
   eval_duration_ms                INTEGER CHECK (

@@ -1494,10 +1494,10 @@ print(await patch({'path': css}))"
     (it "IndentationError → an indentation-specific hint"
         (let [m (get-in (ep/run-python-block (mk) "if True:\nx = 1" "t1/i1") [:error :message])]
           (expect (clojure.string/includes? (str m) "INDENTATION"))))
-    (it ".get on a LIST-shaped tool result answers the uniform dict probe"
-        ;; A native result whose top level is a list is re-typed __VisResultList__, so
-        ;; the documented `res.get('op')` sweep works on EVERY stored result instead of
-        ;; blowing up with `'list' object has no attribute 'get'`.
+    (it ".get on a LIST-shaped function return answers the uniform dict probe"
+        ;; A host function value whose top level is a list becomes __VisResultList__,
+        ;; so the documented `res.get('op')` sweep works across return shapes instead
+        ;; of failing with `'list' object has no attribute 'get'`.
         (let [r (ep/run-python-block (mk)
                                      (str "r = await lst()\n"
                                           "print([list(r), r.get('op'), r.get('x', 'dflt')])")

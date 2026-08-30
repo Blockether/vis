@@ -103,37 +103,31 @@
     (vis/db-fork-session-at-turn! store session-id (assoc opts :workspace-id ws-id))))
 
 (defn store-iteration!
-  "Test wrapper for `vis/db-store-iteration!` that wraps the old flat
-   `:code`/`:result`/`:error` test ergonomics into a canonical single-form
-   `:forms` envelope vec — exactly what an iter with one top-level form
-   would produce in production. Fixtures that already pass `:forms`
-   directly are forwarded untouched.
+  "Test wrapper for `vis/db-store-iteration!` that wraps flat
+   `:code`/`:stdout`/`:error` test ergonomics into a canonical single-form
+   `:forms` envelope vec — exactly what an iteration with one Python execution
+   would produce in production. Fixtures that already pass `:forms` directly
+   are forwarded untouched.
 
-   THIS IS A TEST CONVENIENCE ONLY. Production callers (loop.clj) pass
-   `:forms` directly — there is no flat path on the persistance core.
-   Tests get this shim purely so fixtures stay readable as
-   `{:code \"(+ 1 1)\" :result 2}` instead of spelling out the envelope.
-
-   Multi-form fixtures (those passing `:forms`) skip the wrap entirely.
-   Mixing the two (passing BOTH `:forms` and `:result`/`:error`) is a
-   fixture bug — the `:forms` wins and `:result`/`:error` are dropped."
+   THIS IS A TEST CONVENIENCE ONLY. Production callers pass `:forms` directly;
+   there is no flat output path on the persistence core."
   [store opts]
-  (let [{:keys [forms code result error] :as opts}
+  (let [{:keys [forms code stdout error] :as opts}
         opts
 
         forms-vec
         (cond (seq forms) (vec forms)
-              (or (contains? opts :result) (some? error))
+              (or (contains? opts :stdout) (some? error))
               [(cond-> {:scope nil :tag :observation :src (str code)}
-                 (contains? opts :result)
-                 (assoc :result result)
+                 (contains? opts :stdout)
+                 (assoc :stdout stdout)
 
                  (some? error)
                  (assoc :error error))]
               :else nil)
 
         opts
-        (cond-> (dissoc opts :result :error)
+        (cond-> (dissoc opts :stdout :error)
           forms-vec
           (assoc :forms forms-vec))]
 

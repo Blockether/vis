@@ -22,12 +22,11 @@
                        currently-running block before the result lands.
 
      :form-result      One block finished evaluating. Carries
-                       `:position`, `:code`, `:result`/`:error`,
+                       `:position`, `:code`, `:stdout`/`:error`,
                        and `:envelope` timestamps. The tracker writes
                        the completed form record into `:forms` at the
                        chunk's display index. Chunks tagged `:silent?`
-                       (or returning `:vis/silent`) keep their `:silent?`
-                       flag so channels can toggle visibility.
+                       keep their flag so channels can toggle visibility.
 
      :form-activity    One block's bounded Activity snapshot — what it has DONE
                        beside what it will return. Running and settled revisions are
@@ -65,9 +64,8 @@
       :forms     [{:code            str
                    :comment         str-or-nil
                    :render-segments [{:kind ...} ...] ;; source classification
-                   :stdout          str-or-nil        ;; canonical printed output
-                   :result          any-or-nil        ;; structured host/native output
-                   :result-kind     :tool|:value|:error
+                  :stdout          str-or-nil        ;; canonical printed output
+                  :result-kind     :tool|:value|:error
                    :result-detail   map-or-nil        ;; tool metadata
                    :error           map-or-nil
                    :duration-ms     int
@@ -86,20 +84,15 @@
    only in memory (never persisted), and resumed bubbles re-render
    from this single flat layout. One layout path is enough."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.iteration :as iteration]
             [com.blockether.vis.internal.util :as util]))
 
 (defn- empty-iteration-entry
   [iteration]
-  ;; Per-iteration timeline entry. `:forms` is the canonical per-form
-  ;; vector — every form a map carrying primitives (`:code`, `:result`,
-  ;; `:error`, ...) and a few pre-derived display projections (the
-  ;; pre-rendered `:result` IR, the `:result-kind` tag, the
-  ;; `:result-detail` op metadata, and the `:render-segments` source
-  ;; classification). The renderer reads `:forms` directly; no parallel
-  ;; arrays.
+  ;; Per-iteration timeline entry. `:forms` is the canonical per-form vector:
+  ;; every form carries source, stdout/error facts, and small display metadata.
+  ;; The renderer reads it directly; there are no parallel arrays.
   {:iteration iteration
    :thinking nil
    :forms []
@@ -119,42 +112,29 @@
     (if (< c n) (into forms (repeat (- n c) {:position nil})) forms)))
 
 (defn- form-result-kind
-  "Classify a form chunk for the channel's `show-result?` gate.
-
-   Rules:
-     :error  —  the form threw / preflight rejected.
-     :tool   —  the form *touched* the tool surface (either its
-                top-level value is a tool envelope, OR it carries
-                `:channel` sink entries from inner tool calls like
-                `(def r (ls …))`). Without this, a tool
-                preview computed by `format-form-result` would be
-                suppressed by the renderer's `(= :tool result-kind)`
-                gate when the form's last value is plain data
-                (e.g. `(select-keys r …)`).
-     :value  —  everything else (plain Clojure values)."
+  "Classify a form chunk for the channel's result gate. A form is a tool call
+   when its python_execution channel recorded provider operations; otherwise it
+   is an ordinary Python value/output form."
   [chunk]
   (cond (:error chunk) :error
-        (extension/tool-result? (:result chunk)) :tool
         (seq (:channel chunk)) :tool
         :else :value))
 
-(defn- tool-result-detail
-  "Project tool-result envelope to the small detail map TUI labels
-   consume. Envelope is flat (`:symbol`, `:tag`, `:metadata`)."
-  [tool-result]
-  (when (extension/tool-result? tool-result)
-    (let [meta (or (:metadata tool-result) {})]
+(defn- form-result-detail
+  "Project the first provider-operation channel row to the small detail map TUI
+   labels consume."
+  [chunk]
+  (when-let [entry (first (:channel chunk))]
+    (let [meta (or (:metadata entry) entry)]
       (cond-> {}
-        (:symbol tool-result)
-        (assoc :op (:symbol tool-result))
+        (or (:symbol entry) (:op entry))
+        (assoc :op (or (:symbol entry) (:op entry)))
 
-        (:tag tool-result)
-        (assoc :tag (:tag tool-result))
+        (:tag entry)
+        (assoc :tag (:tag entry))
 
         :always
         (merge (select-keys meta [:spec :paths :hit-count :truncated-by :command :cwd :target]))))))
-
-(defn- form-result-detail [chunk] (tool-result-detail (:result chunk)))
 
 (defn- trimmed-text
   "Plain trim, for streamed provider PROSE. Thinking goes through
@@ -176,27 +156,15 @@
     idx))
 
 (defn- silent-chunk?
-  "Whether a chunk's whole form is hidden from the trace. Driven by the
-   loop's structural `:silent?` flag (code-free blocks: answer / title
-   recaps). A bare `vis_silent` RESULT does not hide a code-bearing form —
-   it only suppresses the result echo (see `format-form-result`); the form's
-   call still shows. Full chrome hiding is `structurally-silent-chunk?`."
+  "Whether a chunk's whole form is hidden from the trace. Driven only by the
+   loop's explicit structural `:silent?` flag."
   [chunk]
   (boolean (:silent? chunk)))
 
-;; Engine chrome ("is this form silent UI?") is detected from the RESULT
-;; sentinel, not a call-head name list: a form returning "vis_silent"
-;; suppresses its result echo. Plus structurally code-free recap blocks.
-;; That is the whole rule.
-
 (defn- structurally-silent-chunk?
-  "True for host-bookkeeping forms that should never appear in user traces:
-   structurally code-free recap blocks, and forms whose RESULT is the
-   `vis_silent` (title) sentinel. They may still execute and feed channel
-   chrome, but the code/result row itself is noise in both TUI and CLI
-   trace views."
+  "True for host-bookkeeping forms that should never appear in user traces."
   [chunk]
-  (boolean (or (:vis/structurally-silent? chunk) (= "vis_silent" (:result chunk)))))
+  (boolean (:vis/structurally-silent? chunk)))
 
 (defn- chunk->form-start
   "Build the initial `:forms` entry for a `:form-start` chunk. Only the
@@ -217,8 +185,7 @@
 
 (defn- chunk->form-result
   "Build the completed `:forms` entry for a `:form-result` chunk. Canonical
-   `:stdout` / structured `:result` facts survive verbatim; renderers derive
-   their local card body instead of consuming a stored presentation copy."
+   `:stdout` and `:error` facts survive; renderers derive presentation locally."
   [prev-form chunk]
   (let [errored? (some? (:error chunk))]
     (merge (form/->display chunk)
@@ -475,10 +442,10 @@
             :final (:final chunk)
             :done? (boolean (:done? chunk)))
 
-          ;; Structurally-silent bookkeeping blocks (e.g. title updates)
-          ;; are hidden as chunks arrive. Other successful `:vis/silent`
-          ;; blocks stay in the timeline with `:silent? true`; channel
-          ;; settings decide whether to render them.
+          ;; Structurally silent bookkeeping blocks (for example title updates)
+          ;; are hidden as chunks arrive. Other explicitly silent blocks stay in
+          ;; the timeline with `:silent? true`; channel settings decide whether
+          ;; to render them.
           answer-idx
           (when-not duplicate-final? (when (:final chunk) (:answer-position chunk)))
 

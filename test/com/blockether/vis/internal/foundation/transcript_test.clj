@@ -11,22 +11,10 @@
             [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defn- tool-result
-  [command]
-  {:success? true
-   :result {:exit 0 :timed-out? false :cwd "." :command command :duration-ms 5}
-   :info {:op :v/tool
-          :tool {:symbol 'tool :call "v/tool" :alias 'v}
-          :command command
-          :duration-ms 5
-          :started-at-ms 10
-          :finished-at-ms 15
-          :target {:requested "." :kind :dir}}
-   :error nil})
 
 (defn- seed!
   "Two-turn fixture exercising the full transcript surface: one
-   clean turn with comment / result / a `(def ...)` var /
+   clean turn with comment / stdout / a `(def ...)` var /
    thinking trace / answer-form-idx, and one failing turn with a
    prose-in-code error block + a clean follow-up block.
    Returns the session id."
@@ -49,7 +37,7 @@
     (h/store-iteration! s
                         {:session-turn-id q1
                          :code "(+ 1 1)"
-                         :forms [{:scope "t1/i1/f1" :tag :observation :src "(+ 1 1)" :result 2}]
+                         :forms [{:scope "t1/i1/f1" :tag :observation :src "(+ 1 1)" :stdout "2\n"}]
                          :answer "42"
                          :thinking "Reasoning about arithmetic"
                          :vars [{:name "x" :value 42 :code "(def x 42)"}]
@@ -99,7 +87,7 @@
                    data (transcript/transcript s cid)]
 
                (expect (map? data))
-               (expect (= #{:session :totals :turns :dialog :calls :timeline} (set (keys data))))
+               (expect (= #{:session :totals :turns :dialog :timeline} (set (keys data))))
                ;; Session header carries the canonical fields.
                (expect (= cid (:id (:session data))))
                (expect (= "Transcript fixture" (:title (:session data))))
@@ -219,48 +207,7 @@
 
                ;; Empty-code? is true when the model returned zero executable blocks.
                (expect (true? (:returned-empty-code? iter))))
-             (finally (vis/db-dispose-connection! s)))))
-  (it
-    "normalizes dialog, code blocks, and tool-call envelopes into transcript-level timelines"
-    (let [s (vis/db-create-connection! :memory)]
-      (try
-        (let [cid (h/store-session! s {:channel :tui :title "tool transcript" :model "x"})
-              turn (vis/db-store-session-turn!
-                     s
-                     {:parent-session-id cid :user-request "run a tool" :status :running})
-              code "(v/tool \"echo hi\")"
-              value (tool-result "echo hi")]
-
-          ;; Cross-turn def survival is gone; the iteration row carries
-          ;; the per-form envelope directly. tool-call detection now
-          ;; flows through the block's :result, not a separate :vars
-          ;; sidecar.
-          (h/store-iteration!
-            s
-            {:session-turn-id turn :code code :result value :answer "done" :duration-ms 10})
-          (vis/db-update-session-turn! s
-                                       turn
-                                       {:status :done
-                                        :content [{"id" "b1" "type" "prose" "markdown" "done"}]})
-          (let [data (transcript/transcript s cid)
-                call (first (:calls data))
-                code-row (first (filter #(= :code (:kind %)) (:timeline data)))
-                tool-row (first (filter #(= :tool-call (:kind %)) (:timeline data)))]
-
-            (expect (= [{:role :user :turn-id turn :content "run a tool"}
-                        {:role :assistant
-                         :turn-id turn
-                         :content [{"id" "b1" "type" "prose" "markdown" "done"}]}]
-                       (:dialog data)))
-            (expect (= 1 (count (:calls data))))
-            (expect (= :v/tool (:op call)))
-            (expect (= code (:code call)))
-            (expect (= "echo hi" (:command call)))
-            (expect (= 0 (get-in call [:result-summary :exit])))
-            (expect (= "t1/i1/f1" (:ref code-row)))
-            (expect (= (:parent-ref call) (:ref code-row)))
-            (expect (= call tool-row))))
-        (finally (vis/db-dispose-connection! s))))))
+             (finally (vis/db-dispose-connection! s))))))
 
 ;; Markdown renderer - spot-check a few literals the CLI relies on.
 ;; The data tests above are the real contract.
@@ -312,44 +259,46 @@
                          s
                          {:parent-session-id cid :user-request "huge" :status :running})]
 
-               (h/store-iteration! s
-                                   {:session-turn-id qid
-                                    :code huge
-                                    :forms
-                                    [{:scope "t1/i1/f1" :tag :observation :src huge :result :ok}]})
+               (h/store-iteration!
+                 s
+                 {:session-turn-id qid
+                  :code huge
+                  :forms [{:scope "t1/i1/f1" :tag :observation :src huge :stdout "ok\n"}]})
                (vis/db-update-session-turn! s qid {:status :done})
                (let [out (transcript/transcript-md s cid)]
                  (expect (string? out))
                  (expect (str/includes? out huge))))
              (finally (vis/db-dispose-connection! s)))))
-  (it
-    "renders flat mixed-block code when render segments are not persisted"
-    (let [s (vis/db-create-connection! :memory)]
-      (try
-        (let [cid (h/store-session! s {:channel :tui :title "Mixed"})
-              qid (vis/db-store-session-turn!
-                    s
-                    {:parent-session-id cid :user-request "mixed" :status :running})]
+  (it "renders flat mixed-block code when render segments are not persisted"
+      (let [s (vis/db-create-connection! :memory)]
+        (try (let [cid (h/store-session! s {:channel :tui :title "Mixed"})
+                   qid (vis/db-store-session-turn!
+                         s
+                         {:parent-session-id cid :user-request "mixed" :status :running})]
 
-          (let [fence (str "(def x 1)\n" "(set-session-title! \"Mixed\")\n" "(read-file \"a\")")]
-            (h/store-iteration!
-              s
-              {:session-turn-id qid
-               :code fence
-               :forms
-               [{:scope "t1/i1/f1" :tag :mutation :src "(def x 1)" :result 1}
-                {:scope "t1/i1/f2" :tag :mutation :src "(set-session-title! \"Mixed\")" :result :ok}
-                {:scope "t1/i1/f3" :tag :observation :src "(read-file \"a\")" :result {:path "a"}}]
-               :answer "Done"}))
-          (vis/db-update-session-turn! s
-                                       qid
-                                       {:status :done
-                                        :content [{"id" "b1" "type" "prose" "markdown" "Done"}]})
-          (let [out (transcript/transcript-md s cid)]
-            (expect (str/includes? out "(def x 1)"))
-            (expect (str/includes? out "set-session-title!"))
-            (expect (str/includes? out "(read-file"))))
-        (finally (vis/db-dispose-connection! s)))))
+               (let [fence
+                     (str "(def x 1)\n" "(set-session-title! \"Mixed\")\n" "(read-file \"a\")")]
+                 (h/store-iteration!
+                   s
+                   {:session-turn-id qid
+                    :code fence
+                    :forms
+                    [{:scope "t1/i1/f1" :tag :mutation :src "(def x 1)"}
+                     {:scope "t1/i1/f2"
+                      :tag :mutation
+                      :src "(set-session-title! \"Mixed\")"
+                      :silent? true}
+                     {:scope "t1/i1/f3" :tag :observation :src "(read-file \"a\")" :stdout "a\n"}]
+                    :answer "Done"}))
+               (vis/db-update-session-turn!
+                 s
+                 qid
+                 {:status :done :content [{"id" "b1" "type" "prose" "markdown" "Done"}]})
+               (let [out (transcript/transcript-md s cid)]
+                 (expect (str/includes? out "(def x 1)"))
+                 (expect (str/includes? out "set-session-title!"))
+                 (expect (str/includes? out "(read-file"))))
+             (finally (vis/db-dispose-connection! s)))))
   (it "uses longer Markdown fences when code contains triple-backtick fences"
       (let [s (vis/db-create-connection! :memory)]
         (try (let [inner "```clojure\n(dead)\n```"
@@ -362,8 +311,7 @@
                (h/store-iteration! s
                                    {:session-turn-id qid
                                     :code code
-                                    :forms
-                                    [{:scope "t1/i1/f1" :tag :mutation :src code :result :ok}]})
+                                    :forms [{:scope "t1/i1/f1" :tag :mutation :src code}]})
                (vis/db-update-session-turn! s qid {:status :done})
                (let [data (transcript/transcript s cid)
                      out (transcript/transcript->md data)
@@ -426,22 +374,20 @@
 (defdescribe
   form-envelope-stdout-test
   "Regression for #40: a `python_execution` block's printed output rides
-   `:stdout` on the envelope, NOT `:result`. The forensic projection must
-   surface it (data + Markdown) or every python block reads back as
-   `result: None` with its real content lost."
+   `:stdout` on the envelope. The forensic projection must surface it (data +
+   Markdown) without inventing a second success channel."
   (let [->block
         #'transcript/form-envelope->block
 
         ->md
         #'transcript/render-block-section]
 
-    (it "projects :stdout onto the block for a printed (result-less) envelope"
+    (it "projects :stdout onto the block"
         (let [b (->block 0 {:src "print('hi')" :stdout "hi\n" :scope :block})]
           (expect (= "hi\n" (:stdout b)))
           (expect (not (contains? b :result)))))
-    (it "keeps :result for a value envelope and does not fabricate :stdout"
-        (let [b (->block 1 {:src "1+1" :result 2})]
-          (expect (= 2 (:result b)))
+    (it "does not fabricate stdout when Python printed nothing"
+        (let [b (->block 1 {:src "value = 1 + 1"})]
           (expect (not (contains? b :stdout)))))
     (it "surfaces partial :stdout alongside :error on a failing block"
         (let [b (->block 2 {:src "boom()" :error {:message "e"} :stdout "partial\n"})]
@@ -452,7 +398,7 @@
           (expect (str/includes? md "_stdout:_"))
           (expect (str/includes? md "hello world"))))
     (it "omits the stdout section when there was no printed output"
-        (let [md (->md 0 false {:code "1+1" :result 2})]
+        (let [md (->md 0 false {:code "value = 1 + 1"})]
           (expect (not (str/includes? md "_stdout:_")))))))
 
 (defdescribe

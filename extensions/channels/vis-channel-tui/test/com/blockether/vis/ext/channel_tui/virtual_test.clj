@@ -91,7 +91,7 @@
         mk-form
         (fn [idx op]
           {:code (str "(" (namespace op) "/" (name op) " \"fixture-" idx "\")")
-           :result (case op
+           :stdout (case op
                      :cat
                      preview
 
@@ -142,10 +142,10 @@
              (partition-all 12)
              (mapv (fn [chunk]
                      {:thinking "synthetic 9a55 reasoning chunk"
-                      :forms (vec (map-indexed (fn [idx {:keys [code result kind detail]}]
+                      :forms (vec (map-indexed (fn [idx {:keys [code stdout kind detail]}]
                                                  {:position idx
                                                   :code code
-                                                  :stdout result
+                                                  :stdout stdout
                                                   :result-kind kind
                                                   :result-detail detail
                                                   :duration-ms 1
@@ -786,7 +786,7 @@
           (-> (trace-assistant-msg 2 2 "Answer with some prose.")
               (assoc :session-turn-id "ovs-turn-1")
               (assoc-in [:traces 0 :thinking] long-thinking)
-              (assoc-in [:traces 0 :forms 0 :result] long-result)
+              (assoc-in [:traces 0 :forms 0 :stdout] long-result)
               (assoc-in [:traces 0 :forms 1 :comment] "why this form runs")))
 
         est->real
@@ -1183,7 +1183,7 @@
                 (assoc :session-turn-id (str "turn-" i))
                 (assoc-in [:traces 0 :thinking]
                           (str/join "\n" (map #(str "reasoning " % " msg " i) (range 30))))
-                (assoc-in [:traces 0 :forms 0 :result]
+                (assoc-in [:traces 0 :forms 0 :stdout]
                           (str/join "\n" (map #(str "out " % " msg " i) (range 40))))))
 
           msgs

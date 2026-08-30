@@ -508,7 +508,6 @@ describe("collapsed tool results", () => {
           id: "iteration-1",
           forms: Array.from({ length: 400 }, (_, index) => ({
             op: "shell",
-            result: "ok",
             result_summary: `summary ${index}`,
             stdout: `${bodySentinel} ${index}\n`,
           })),
@@ -633,7 +632,6 @@ describe("command turns expose one canonical result", () => {
       scope: "t1/i1/f1",
       tag: "user-slash",
       src: "/reload",
-      result: { "slash/status": "ok", "slash/title": "Reloaded" },
     });
 
     expect(html).not.toContain("PYTHON");
@@ -709,17 +707,17 @@ describe("a Python evaluation without detected Activity", () => {
     expect(painted.container.textContent).not.toContain("0 activities");
   });
 
-  it("restores one settled receipt with Python and Result evidence", () => {
+  it("restores one settled receipt with Python and stdout evidence", () => {
     const painted = render(
       <AssistantMessage
-        turn={turnWith({ source: "answer = 42", result: 42, duration_ms: 29 })}
+        turn={turnWith({ source: "print(42)", stdout: "42\n", duration_ms: 29 })}
       />,
     );
 
     expect(painted.container.textContent).toContain("DONE · PYTHON · 29ms");
-    expect(painted.container.textContent).not.toContain("answer = 42");
+    expect(painted.container.textContent).not.toContain("print(42)");
     fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
-    expect(painted.container.textContent).toContain("answer = 42");
+    expect(painted.container.textContent).toContain("print(42)");
     expect(painted.container.textContent).toContain("RESULT");
     expect(painted.container.textContent).not.toContain("ACTIVITY");
   });
@@ -797,8 +795,8 @@ describe("a Python evaluation without detected Activity", () => {
     const painted = render(
       <AssistantMessage
         turn={turnWith({
-          source: "answer = 42",
-          result: 42,
+          source: "print(42)",
+          stdout: "42\n",
           duration_ms: 29,
           activity: {
             state: "succeeded",

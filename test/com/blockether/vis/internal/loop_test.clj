@@ -760,10 +760,10 @@
             @#'lp/conversation-trailer-for-base
 
             seeded
-            [1 {:preserved-thinking/replay? false :blocks [{:result "old"}]}]
+            [1 {:preserved-thinking/replay? false :blocks [{:stdout "old"}]}]
 
             current
-            [1 {:preserved-thinking/replay? true :blocks [{:result "new"}]}]
+            [1 {:preserved-thinking/replay? true :blocks [{:stdout "new"}]}]
 
             trailer
             [seeded current]]
@@ -1662,30 +1662,22 @@
         (expect (= :tool-result (reason-of 1)))
         (expect (= :tool-result (reason-of 7))))))
 
-(defdescribe
-  persisted-form-keeps-canonical-facts-test
-  (it "stores a structured host result and derives its card locally"
-      (let [[envelope] (eng/blocks->forms [{:id 0 :code "grep({})" :result {"files" ["a.clj"]}}]
-                                          {:turn 1 :iter 1})]
-        (expect (= {"files" ["a.clj"]} (:result envelope)))
-        (expect (str/includes? (get-in (form/result-card envelope) [:body]) "a.clj"))))
-  (it "stores printed output once as stdout even if an upstream result also exists"
-      (let [[envelope]
-            (eng/blocks->forms
-              [{:id 0 :code "print('hello')" :stdout "hello\n" :result {"duplicate" true}}]
-              {:turn 1 :iter 1})]
-        (expect (= "hello\n" (:stdout envelope)))
-        (expect (not (contains? envelope :result)))
-        (expect (str/includes? (get-in (form/result-card envelope) [:body]) "hello"))))
-  (it "carries the timeout flag and derives no card from it"
-      (let [[envelope] (eng/blocks->forms [{:id 0
-                                            :code "time.sleep(99)"
-                                            :timeout? true
-                                            :error {:message "Timeout (30s)"
-                                                    :data {:timeout-ms 30000}}}]
-                                          {:turn 1 :iter 1})]
-        (expect (true? (:timeout? envelope)))
-        (expect (nil? (form/result-display envelope))))))
+(defdescribe persisted-form-keeps-canonical-facts-test
+             (it "stores printed output once as stdout"
+                 (let [[envelope] (eng/blocks->forms
+                                    [{:id 0 :code "print('hello')" :stdout "hello\n"}]
+                                    {:turn 1 :iter 1})]
+                   (expect (= "hello\n" (:stdout envelope)))
+                   (expect (str/includes? (get-in (form/result-card envelope) [:body]) "hello"))))
+             (it "carries the timeout flag and derives no card from it"
+                 (let [[envelope] (eng/blocks->forms [{:id 0
+                                                       :code "time.sleep(99)"
+                                                       :timeout? true
+                                                       :error {:message "Timeout (30s)"
+                                                               :data {:timeout-ms 30000}}}]
+                                                     {:turn 1 :iter 1})]
+                   (expect (true? (:timeout? envelope)))
+                   (expect (nil? (form/stdout-display envelope))))))
 
 (defdescribe
   guest-interrupt-on-eval-timeout-test
@@ -1737,12 +1729,9 @@
                            (catch Throwable _ nil))))))))
 
 (defdescribe eval-timeout-keeps-partial-stdout-test
-             ;; REGRESSION: the wall-clock BACKSTOP answered with `{:result nil :error
-             ;; "Timeout (120s)"}` and NOTHING else. The guest never reaches its own
-             ;; `{:stdout}` outcome, so every line the block had already printed — the
-             ;; progress log of a long fetch loop, results already computed — died with
-             ;; the frame. The model then re-ran the whole block blind, which is how a
-             ;; serial `httpx` sweep burned two turns instead of one.
+             ;; The wall-clock backstop used to return only a timeout error. The
+             ;; guest never reaches its final stdout outcome, so every line printed
+             ;; before the timeout disappeared and the model reran the block blind.
              (it "surfaces what the block printed before the wall fired"
                  (tpc/with-own [pc {}]
                                (try (let [result (binding [rt/*eval-timeout-ms* 500]
@@ -1771,7 +1760,7 @@
             ;; (temp dirs, `~/.vis`) - reachable ONLY as a bound root. An empty
             ;; directory of its own, never the whole home: the guest `ls` COUNTS
             ;; what it lists, so a home-sized walk outlives the block's eval wall,
-            ;; and the abandoned guest thread is still inside that native call when
+            ;; and the abandoned guest thread is still inside that host call when
             ;; the teardown below closes the context - a close that then waits for
             ;; it forever.
             outside
@@ -1869,7 +1858,7 @@
                                                                                      (:stdout
                                                                                        result)))
                ;; The host derives presentation from the printed fact after execution.
-               (expect (str/includes? (:body (form/result-display result)) "python-only"))
+               (expect (str/includes? (:body (form/stdout-display result)) "python-only"))
                (expect (not (str/includes? (:stdout result) "# Activity"))) (expect (not
                                                                                       (str/includes?
                                                                                         (:stdout
@@ -2036,21 +2025,20 @@
                       "t1"
                       [{:status :done
                         :position 1
-                        :forms
-                        [{:scope "t1/i1/f1" :src "cat(\"a\")" :result {:path "a"}}
-                         {:scope "t1/i1/f2" :src "set_session_title(...)" :result "vis_silent"}]}]
+                        :forms [{:scope "t1/i1/f1" :src "cat(\"a\")" :stdout "a"}
+                                {:scope "t1/i1/f2" :src "set_session_title(...)" :silent? true}]}]
 
                       "t2"
                       [{:status :done
                         :position 1
-                        :forms [{:scope "t2/i1/f1" :src "rg({...})" :result {:hits []}}]}]
+                        :forms [{:scope "t2/i1/f1" :src "rg({...})" :stdout ""}]}]
 
                       []))]
 
       (let [out (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})} "t3")]
         (expect (= 2 (count out))) ; both answered turns, not just latest
         (expect (= "Read a" (:user-request (first out))))
-        (expect (= [{:scope "t1/i1/f1" :src "cat(\"a\")"}] (:results (first out)))) ; sentinel f2 excluded
+        (expect (= [{:scope "t1/i1/f1" :src "cat(\"a\")"}] (:results (first out)))) ; silent f2 excluded
         (expect (= [{:scope "t2/i1/f1" :src "rg({...})"}] (:results (second out)))))))
   ;; Regression, reported from the app: interrupt filed the record after the
   ;; iteration had settled, but the next request's resumed context omitted it.
@@ -2076,7 +2064,7 @@
                     ;; classified sibling here for the replay path to exclude.
                     {"i1" [{:id "record-1"
                             :tool-call-id "call-1"
-                            :filename "native.live.ndjson"
+                            :filename "record.live.ndjson"
                             :media-type "application/vnd.vis.live+ndjson"}]})]
 
       (let [results
@@ -2088,7 +2076,7 @@
             (keep :live-record results)]
 
         (expect (= 1 (count records)))
-        (expect (str/includes? (first records) "native.live.ndjson"))
+        (expect (str/includes? (first records) "record.live.ndjson"))
         (expect (str/includes? (first records) "record-1"))
         (expect (str/includes? (first records) "read_attachment"))
         (expect (not (str/includes? (str/join "\n" records) "activity.live.ndjson"))))))
@@ -2100,11 +2088,10 @@
                                   :content [(content/prose "Changed workspace")]}])
 
                     persistance/db-list-session-turn-iterations
-                    (constantly [{:status :done
-                                  :forms [{:scope "t1/i1/f1"
-                                           :tag :user-slash
-                                           :src "/cd /repo"
-                                           :result {"root" "/repo"}}]}])]
+                    (constantly
+                      [{:status :done
+                        :forms
+                        [{:scope "t1/i1/f1" :tag :user-slash :src "/cd /repo" :silent? true}]}])]
 
         (expect (nil? (previous-turn-context {:session-id "s1" :db-info ::db :ctx-atom (atom {})}
                                              "t2")))))
@@ -2119,7 +2106,7 @@
                     persistance/db-list-session-turn-iterations
                     (constantly [{:status :done
                                   :position 1
-                                  :forms [{:scope "t1/i1/f1" :src "cat(x)" :result {:k 1}}]}])]
+                                  :forms [{:scope "t1/i1/f1" :src "cat(x)" :stdout "x"}]}])]
 
         (let [env {:session-id "s1" :db-info ::db :ctx-atom (atom {})}]
           (expect (= (previous-turn-context env "t9") (previous-turn-context env "t9"))))))
@@ -2139,9 +2126,9 @@
                     persistance/db-list-session-turn-iterations
                     (constantly [{:status :done
                                   :position 1
-                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}
-                                          {:scope "t1/i2/f1" :src "cat(b)" :result {:k 2}}
-                                          {:scope "t1/i2/f2" :src "cat(c)" :result {:k 3}}]}])]
+                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :stdout "a"}
+                                          {:scope "t1/i2/f1" :src "cat(b)" :stdout "b"}
+                                          {:scope "t1/i2/f2" :src "cat(c)" :stdout "c"}]}])]
 
         (let [env
               {:session-id "s1"
@@ -2195,35 +2182,34 @@
                        :interrupted? true
                        :results [{:scope "t1/i1/f1" :src "cat(ui)"}]}]
                      out)))))
-  (it
-    "fold-of-fold removes every covered turn recap; trailer owns one checkpoint"
-    (with-redefs [persistance/db-list-session-turns
-                  (constantly [{:id "t1"
-                                :status :done
-                                :position 1
-                                :user-request "old q1"
-                                :content [(content/prose "old a1")]}
-                               {:id "t2"
-                                :status :done
-                                :position 2
-                                :user-request "old q2"
-                                :content [(content/prose "old a2")]}
-                               {:id "t3" :status :running :position 3 :user-request "now"}])
+  (it "fold-of-fold removes every covered turn recap; trailer owns one checkpoint"
+      (with-redefs [persistance/db-list-session-turns
+                    (constantly [{:id "t1"
+                                  :status :done
+                                  :position 1
+                                  :user-request "old q1"
+                                  :content [(content/prose "old a1")]}
+                                 {:id "t2"
+                                  :status :done
+                                  :position 2
+                                  :user-request "old q2"
+                                  :content [(content/prose "old a2")]}
+                                 {:id "t3" :status :running :position 3 :user-request "now"}])
 
-                  persistance/db-list-session-turn-iterations
-                  (fn [_ id]
-                    [{:status :done
-                      :position 1
-                      :forms
-                      [{:scope (str id "/i1/f1") :src (str "cat(" id ")") :result {:ok true}}]}])]
+                    persistance/db-list-session-turn-iterations
+                    (fn [_ id]
+                      [{:status :done
+                        :position 1
+                        :forms
+                        [{:scope (str id "/i1/f1") :src (str "cat(" id ")") :stdout "ok"}]}])]
 
-      (let [env {:session-id "s1"
-                 :db-info ::db
-                 :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "fine detail"}
-                                                       {"through" "t2/i1"
-                                                        "issued_turn" 3
-                                                        "gist" "one durable checkpoint"}]})}]
-        (expect (nil? (previous-turn-context env "t3"))))))
+        (let [env {:session-id "s1"
+                   :db-info ::db
+                   :ctx-atom (atom {"session_summaries" [{"scopes" #{"t1/i1"} "gist" "fine detail"}
+                                                         {"through" "t2/i1"
+                                                          "issued_turn" 3
+                                                          "gist" "one durable checkpoint"}]})}]
+          (expect (nil? (previous-turn-context env "t3"))))))
   (it "a gist-less whole-turn fold of a no-iteration turn leaves a visible tombstone checkpoint"
       ;; No done iterations → no trailer anchor exists anywhere, so previous-
       ;; turn-context must materialize the checkpoint itself instead of letting
@@ -2263,7 +2249,7 @@
                     persistance/db-list-session-turn-iterations
                     (constantly [{:status :done
                                   :position 1
-                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
+                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :stdout "1"}]}])]
 
         (let [out (previous-turn-context
                     {:session-id "s1"
@@ -2292,7 +2278,7 @@
                   persistance/db-list-session-turn-iterations
                   (constantly [{:status :done
                                 :position 1
-                                :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
+                                :forms [{:scope "t1/i1/f1" :src "cat(a)" :stdout "1"}]}])]
 
       (let [env-base
             {:session-id "s1" :db-info ::db}
@@ -2333,7 +2319,7 @@
                     persistance/db-list-session-turn-iterations
                     (constantly [{:status :done
                                   :position 1
-                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :result {:k 1}}]}])]
+                                  :forms [{:scope "t1/i1/f1" :src "cat(a)" :stdout "1"}]}])]
 
         (expect (nil? (previous-turn-context {:session-id "s1"
                                               :db-info ::db
@@ -2351,8 +2337,7 @@
                     persistance/db-list-session-turn-iterations
                     (constantly [{:status :done
                                   :position 1
-                                  :forms
-                                  [{:scope "t1/i1/f1" :src "cat(src)" :result {:path "src"}}]}
+                                  :forms [{:scope "t1/i1/f1" :src "cat(src)" :stdout "src"}]}
                                  {:status :running
                                   :position 2
                                   :forms [{:scope "t1/i2/f1" :src "patch(src)"}]}])]
@@ -2461,9 +2446,9 @@
           (expect (= s (expand-through s ["t1/i1" "t1/i2"])))))
     (it "apply-summaries collapses a through-range over the trailer, sparing later steps"
         (let [trailer
-              [[0 {:forms-vec [{:scope "t1/i1/f1" :result "a"}]}]
-               [1 {:forms-vec [{:scope "t1/i2/f1" :result "b"}]}]
-               [2 {:forms-vec [{:scope "t1/i3/f1" :result "c"}]}]]
+              [[0 {:forms-vec [{:scope "t1/i1/f1" :stdout "a"}]}]
+               [1 {:forms-vec [{:scope "t1/i2/f1" :stdout "b"}]}]
+               [2 {:forms-vec [{:scope "t1/i3/f1" :stdout "c"}]}]]
 
               out
               (apply-summaries trailer [{"through" "t1/i2" "gist" "early" "at_turn" 1}])]
@@ -2476,8 +2461,8 @@
               [[0
                 {:forms-vec [{:scope "t1/i1/f1"
                               :svar/tool-call-id "call-big"
-                              :result (apply str (repeat 4000 "x"))}]}]
-               [1 {:forms-vec [{:scope "t1/i2/f1" :result (apply str (repeat 400 "y"))}]}]]
+                              :stdout (apply str (repeat 4000 "x"))}]}]
+               [1 {:forms-vec [{:scope "t1/i2/f1" :stdout (apply str (repeat 400 "y"))}]}]]
 
               ca
               (atom {"session_summaries"
@@ -2507,13 +2492,13 @@
 
               seed
               (fn [scope status]
-                {:forms-vec [{:scope scope :result payload}]
+                {:forms-vec [{:scope scope :stdout payload}]
                  :cross-turn/turn-status status
                  :preserved-thinking/replay? false})
 
               trailer
               [[0 (seed "t1/i1/f1" :done)] [1 (seed "t2/i1/f1" :cancelled)]
-               [2 {:forms-vec [{:scope "t3/i1/f1" :result payload}]}]]
+               [2 {:forms-vec [{:scope "t3/i1/f1" :stdout payload}]}]]
 
               ca
               (atom {})]
@@ -2526,9 +2511,9 @@
     ;; saw its own tool results and re-issued the same call for 60+ iterations.
     (it "a fold whose cursor outlives the live turn numbering never collapses the live turn"
         (let [trailer
-              [[0 {:forms-vec [{:scope "t95/i1/f1" :result "a"}]}]
-               [1 {:forms-vec [{:scope "t95/i2/f1" :result "b"}]}]
-               [2 {:forms-vec [{:scope "t95/i3/f1" :result "c"}]}]]
+              [[0 {:forms-vec [{:scope "t95/i1/f1" :stdout "a"}]}]
+               [1 {:forms-vec [{:scope "t95/i2/f1" :stdout "b"}]}]
+               [2 {:forms-vec [{:scope "t95/i3/f1" :stdout "c"}]}]]
 
               out
               (apply-summaries trailer [{"through" "t113/i9" "gist" "stale numbering"}])]
@@ -2540,8 +2525,8 @@
     (it
       "a fold recorded in an EARLIER turn never collapses the live turn"
       (let [trailer
-            [[0 {:forms-vec [{:scope "t96/i1/f1" :result "a"}]}]
-             [1 {:forms-vec [{:scope "t96/i2/f1" :result "b"}]}]]
+            [[0 {:forms-vec [{:scope "t96/i1/f1" :stdout "a"}]}]
+             [1 {:forms-vec [{:scope "t96/i2/f1" :stdout "b"}]}]]
 
             out
             (apply-summaries trailer [{"scopes" #{"t96/i1" "t96/i2"} "gist" "old" "at_turn" 95}])]
@@ -2551,8 +2536,8 @@
                         out))))
     (it "an unstamped fold cannot collapse live-turn iterations"
         (let [trailer
-              [[0 {:forms-vec [{:scope "t96/i1/f1" :result "a"}]}]
-               [1 {:forms-vec [{:scope "t96/i2/f1" :result "b"}]}]]
+              [[0 {:forms-vec [{:scope "t96/i1/f1" :stdout "a"}]}]
+               [1 {:forms-vec [{:scope "t96/i2/f1" :stdout "b"}]}]]
 
               out
               (apply-summaries trailer [{"scopes" #{"t96/i1" "t96/i2"} "gist" "unstamped"}])]
@@ -2560,8 +2545,8 @@
           (expect (= trailer out))))
     (it "a fold recorded in THIS turn still collapses its own live iterations"
         (let [trailer
-              [[0 {:forms-vec [{:scope "t96/i1/f1" :result "a"}]}]
-               [1 {:forms-vec [{:scope "t96/i2/f1" :result "b"}]}]]
+              [[0 {:forms-vec [{:scope "t96/i1/f1" :stdout "a"}]}]
+               [1 {:forms-vec [{:scope "t96/i2/f1" :stdout "b"}]}]]
 
               out
               (apply-summaries trailer [{"through" "t96/i1" "gist" "in-turn" "at_turn" 96}])]
@@ -2571,8 +2556,8 @@
     (it "a stale-numbered fold still collapses PRIOR-turn scopes on the trailer"
         (let [trailer
               [[0
-                {:preserved-thinking/replay? false :forms-vec [{:scope "t94/i1/f1" :result "old"}]}]
-               [1 {:forms-vec [{:scope "t95/i1/f1" :result "live"}]}]]
+                {:preserved-thinking/replay? false :forms-vec [{:scope "t94/i1/f1" :stdout "old"}]}]
+               [1 {:forms-vec [{:scope "t95/i1/f1" :stdout "live"}]}]]
 
               out
               (apply-summaries trailer [{"scopes" #{"t94/i1" "t95/i1"} "gist" "g" "at_turn" 94}])]
@@ -2584,9 +2569,9 @@
         ;; apply to forms carrying FORM scopes (t1/i1/f1, t1/i1/f2) and collapse to
         ;; a SINGLE gist line, not repeat per form.
         (let [forms
-              [{:scope "t1/i1/f1" :result "a" :src "(cat \"x\")"}
-               {:scope "t1/i1/f2" :result "b" :src "(rg \"y\")"}
-               {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
+              [{:scope "t1/i1/f1" :stdout "a" :src "(cat \"x\")"}
+               {:scope "t1/i1/f2" :stdout "b" :src "(rg \"y\")"}
+               {:scope "t1/i2/f1" :stdout "c" :src "(ls)"}]
 
               out
               (prior-scope-index forms [{"scopes" #{"t1/i1"} "gist" "explored"}])]
@@ -2602,7 +2587,7 @@
       ;; turn). Dedup keys on the breadcrumb TEXT, so one fold costs one line.
       (let [forms
             (vec (for [i (range 1 21)]
-                   {:scope (str "t1/i" i "/f1") :result "r" :src "(cat)"}))
+                   {:scope (str "t1/i" i "/f1") :stdout "r" :src "(cat)"}))
 
             out
             (prior-scope-index forms
@@ -2612,10 +2597,10 @@
         (expect (= [{:scope "t1/i1" :gist "one big gist"}] out))))
     (it "prior-turn-scope-index: distinct gists stay distinct while each collapses to one line"
         (let [forms
-              [{:scope "t1/i1/f1" :result "a" :src "(cat)"}
-               {:scope "t1/i2/f1" :result "b" :src "(rg)"}
-               {:scope "t1/i3/f1" :result "c" :src "(ls)"}
-               {:scope "t1/i4/f1" :result "d" :src "(ls)"}]
+              [{:scope "t1/i1/f1" :stdout "a" :src "(cat)"}
+               {:scope "t1/i2/f1" :stdout "b" :src "(rg)"}
+               {:scope "t1/i3/f1" :stdout "c" :src "(ls)"}
+               {:scope "t1/i4/f1" :stdout "d" :src "(ls)"}]
 
               out
               (prior-scope-index forms
@@ -2625,9 +2610,9 @@
           (expect (= [{:scope "t1/i1" :gist "A"} {:scope "t1/i3" :gist "B"}] out))))
     (it "prior-turn-scope-index: a gist-less fold emits ONE dropped breadcrumb"
         (let [forms
-              [{:scope "t1/i1/f1" :result "a" :src "(cat)"}
-               {:scope "t1/i1/f2" :result "b" :src "(rg)"}
-               {:scope "t1/i2/f1" :result "c" :src "(ls)"}]
+              [{:scope "t1/i1/f1" :stdout "a" :src "(cat)"}
+               {:scope "t1/i1/f2" :stdout "b" :src "(rg)"}
+               {:scope "t1/i2/f1" :stdout "c" :src "(ls)"}]
 
               out
               (prior-scope-index forms [{"scopes" #{"t1/i1"} "note" " · saved ~1 token"}])]
@@ -2943,7 +2928,7 @@
     :tool-calls [{:id (str "tc-" id) :name "python_execution" :input {"query" "lmstudio"}}]
     :forms-vec [{:scope (str "t1/i" id)
                  :svar/tool-call-id (str "tc-" id)
-                 :result {"item_count" 2 "paths" ["a.clj" "b.clj"]}}]}])
+                 :stdout "{\"item_count\":2,\"paths\":[\"a.clj\",\"b.clj\"]}"}]}])
 
 (defdescribe
   conversation-suffix-mismatch-test
@@ -4026,12 +4011,11 @@
                                  {:answer "done"}
                                  nil))))
              (it "allows answer-only iterations when no extension tool ran"
-                 (expect (nil? (lp/final-answer-gate-error
-                                 {}
-                                 1
-                                 [{:id 0 :code "1 + 2" :result 3 :error nil}]
-                                 {:answer "done"}
-                                 nil)))))
+                 (expect (nil? (lp/final-answer-gate-error {}
+                                                           1
+                                                           [{:id 0 :code "1 + 2" :error nil}]
+                                                           {:answer "done"}
+                                                           nil)))))
 
 ;; def-sink -> vars-snapshot (per-var precise source extraction)
 
@@ -4179,48 +4163,38 @@
 
 (defdescribe
   tool-result-pairing-test
-  "REARCHITECTURE (same DB schema): an iteration is a LIST of `python_execution`
-   tool-calls. Each tool_use gets its OWN tool_result, carrying ITS OWN forms'
-   return — forms are grouped by `:svar/tool-call-id`. A call's return IS the
-   text it print()s. No more 'first call carries everything, the rest get a
-   stub'."
+  "An iteration is a list of `python_execution` calls. Each tool_use gets its own
+   tool_result containing exactly what that call printed, grouped by
+   `:svar/tool-call-id`."
   (let [irm
         (var-get #'lp/iteration-results-message)
 
         pre
         (var-get #'lp/code-entries-preflight)]
 
-    (it "each parallel tool_use is answered by its OWN result"
+    (it "answers each parallel tool_use with its own stdout"
         (let [m
-              (irm
-                {:tool-calls [{:id "A" :name "python_execution"} {:id "B" :name "python_execution"}
-                              {:id "P" :name "python_execution"}]
-                 ;; A and B returned a value without printing (:result); P printed
-                 ;; (:stdout) — the engine emits ONE channel per call, never both.
-                 :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :result "AAA"}
-                             {:scope "t1/i1/f2" :svar/tool-call-id "B" :result "BBB"}
-                             {:scope "t1/i1/f3" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
+              (irm {:tool-calls [{:id "A" :name "python_execution"}
+                                 {:id "B" :name "python_execution"}
+                                 {:id "P" :name "python_execution"}]
+                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :stdout "AAA"}
+                                {:scope "t1/i1/f2" :svar/tool-call-id "B" :stdout "BBB"}
+                                {:scope "t1/i1/f3" :svar/tool-call-id "P" :stdout "PPP"}]})
 
               by-id
               (into {} (map (juxt :tool_use_id :content)) (:content m))]
 
           (expect (= 3 (count (:content m))))
-          ;; A/B → their RETURN value; not cross-contaminated
           (expect (str/includes? (by-id "A") "AAA"))
           (expect (not (str/includes? (by-id "A") "BBB")))
           (expect (str/includes? (by-id "B") "BBB"))
-          ;; P → its PRINTED string
           (expect (str/includes? (by-id "P") "PPP"))))
-    (it "no tool_result carries a result-recovery handle"
-        ;; Regression guard for the `ntr` removal: nothing stores a call's return
-        ;; any more, so no result may advertise a coordinate to re-read it by — a
-        ;; handle here would promise a store that no longer exists.
+    (it "advertises no recovery handle for printed output"
         (let [m
               (irm {:tool-calls [{:id "toolu_A" :name "python_execution"}
                                  {:id "P" :name "python_execution"}]
-                    :forms-vec
-                    [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :result "AAA"}
-                     {:scope "t1/i1/f2" :svar/tool-call-id "P" :result nil :stdout "PPP"}]})
+                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "toolu_A" :stdout "AAA"}
+                                {:scope "t1/i1/f2" :svar/tool-call-id "P" :stdout "PPP"}]})
 
               all
               (str/join "\n" (map :content (:content m)))]
@@ -4229,32 +4203,30 @@
           (expect (str/includes? all "PPP"))
           (expect (not (str/includes? all "ntr")))
           (expect (not (str/includes? all "# saved:")))))
-    (it "a FAILED call's tool_result is flagged :is_error true; a successful one is not"
+    (it "flags a failed call's tool_result and leaves successful output unflagged"
         (let [m
               (irm {:tool-calls [{:id "ok" :name "python_execution"}
                                  {:id "bad" :name "python_execution"}]
                     :forms-vec
-                    [{:scope "t1/i1/f1" :svar/tool-call-id "ok" :result "FILE"}
+                    [{:scope "t1/i1/f1" :svar/tool-call-id "ok" :stdout "FILE"}
                      {:scope "t1/i1/f2" :svar/tool-call-id "bad" :error "No such file"}]})
 
               by-id
               (into {} (map (juxt :tool_use_id identity)) (:content m))]
 
           ;; svar passes :is_error to Anthropic as `is_error: true`; on OpenAI/Gemini
-          ;; the error TEXT carries the signal.
+          ;; the error text carries the signal.
           (expect (nil? (:is_error (by-id "ok"))))
           (expect (true? (:is_error (by-id "bad"))))
           (expect (str/includes? (:content (by-id "bad")) "No such file"))))
-    (it "a call that produced no output returns the no-return hint"
-        ;; engine emitted neither :stdout nor :result (e.g. python_execution that
-        ;; only did assignments and printed nothing)
+    (it "returns the no-output hint when Python printed nothing"
         (let [m (irm {:tool-calls [{:id "P" :name "python_execution"}]
                       :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "P"}]})]
           (expect (str/includes? (get-in m [:content 0 :content]) "no return"))))
-    (it "an unpaired/fold form folds onto the FIRST call (nothing lost)"
+    (it "folds an unpaired summary onto the first call"
         (let [m
               (irm {:tool-calls [{:id "A" :name "python_execution"}]
-                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :result "body"}
+                    :forms-vec [{:scope "t1/i1/f1" :svar/tool-call-id "A" :stdout "body"}
                                 {:summary? true :summary-iters ["t1/i0"] :summary-gist "ctx"}]})
 
               c
@@ -4291,7 +4263,7 @@
         (var-get #'lp/iteration-results-message)
 
         display
-        form/result-display
+        form/stdout-display
 
         fence
         (str "````vis-table\n" "[Table: fleet.csv 2 rows × 2 cols, 12 B] fleet counts\n"

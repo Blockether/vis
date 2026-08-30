@@ -612,7 +612,7 @@ permissions remain unchanged.
 
 Seatbelt policy is inherited and cannot be replaced inside an already confined
 process. After upgrading from a Vis build without this permission, restart the
-Vis client/gateway before retrying the native tool. An actual egress-policy
+Vis client/gateway before retrying the command. An actual egress-policy
 failure instead reports the rejected host (for example, `host not permitted`);
 add that hostname to `jail.network.allowed_domains` when appropriate.
 

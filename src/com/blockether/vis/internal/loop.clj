@@ -1165,10 +1165,7 @@
                     :reinspect-attachments (mpl-capture/drain-reinspections reinspection-sink))))
               (catch Throwable e
                 (reset! thrown e)
-                {:result nil
-                 :lru {}
-                 :forms []
-                 :error (python-op-error python-context e code cancel-token)}))))
+                {:lru {} :forms [] :error (python-op-error python-context e code cancel-token)}))))
 
         dispose-cancel-hook
         (when cancel-token
@@ -1232,7 +1229,7 @@
             (reset! thrown e)
             (when-not (interrupt-guest! python-context)
               (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil)))
-            {:result nil :lru {} :error (python-op-error python-context e code cancel-token)})
+            {:lru {} :error (python-op-error python-context e code cancel-token)})
           (finally (when dispose-cancel-hook (try (dispose-cancel-hook) (catch Throwable _ nil)))))
 
         execution-result
@@ -1260,8 +1257,7 @@
                 (env/partial-stdout python-context)
 
                 envelope
-                (cond-> {:result nil
-                         :lru {}
+                (cond-> {:lru {}
                          :error {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
                          :timeout? true}
                   out
@@ -1370,8 +1366,7 @@
                                   tool-event-fn
                                   environment)
                  (catch Throwable e
-                   {:result nil
-                    :lru {}
+                   {:lru {}
                     :error (try (extension/ex->op-error e {:form-source code})
                                 (catch Throwable _
                                   {:message (or (ex-message e) (.getName (class e)))
@@ -1997,9 +1992,7 @@
                             [acc seen]
                             [(conj acc {:scope isc :gist gist}) (conj seen k)]))
                         (:live-record f) [(conj acc {:scope sc :live-record (:live-record f)}) seen]
-                        (and sc
-                             (or (some? (:result f)) (some? (:stdout f))) ; live, worth listing
-                             (not= "vis_silent" (:result f)))
+                        (and sc (or (some? (:stdout f)) (some? (:error f)) (some? (:activity f))))
                         [(conj acc {:scope sc :src (ctx-engine/compact-src (:src f))}) seen]
                         :else [acc seen])))
               [[] #{}]
@@ -2484,8 +2477,7 @@
 (s/def ::envelope ::block-envelope)
 
 (s/def ::iteration-block
-  (s/keys :req-un [::id ::code ::error ::envelope]
-          :opt-un [::result ::timeout? ::repaired? ::comment]))
+  (s/keys :req-un [::id ::code ::error ::envelope] :opt-un [::timeout? ::repaired? ::comment]))
 
 (defn validate-iteration-blocks!
   "Fail fast if a stored/evaluated block lost mandatory envelope.
@@ -2852,9 +2844,8 @@
 (defn- compaction-verbs
   "Build the model-facing compaction verb bound into the sandbox as
    `fold_session`, closing over `ctx-atom`. It records a `:session/summaries`
-   intent the wire applies via `apply-summaries`, and RETURNS a visible
-   confirmation string (NOT the `\"vis_silent\"` row-suppression sentinel) so the
-   action shows in the Python result instead of vanishing.
+   intent the wire applies via `apply-summaries`, and returns a visible
+   confirmation string for stdout.
 
     The verb takes exactly TWO arguments: a KEY and an optional GIST. The key is
     a STRING in the `ctx-engine/fold-key` grammar — \"t2/i5\" one step, \"t2\" a
@@ -3422,7 +3413,7 @@
   "Drop the ROWS out of every ````vis-table` fence in model-facing output.
 
    A CSV/TSV `attach` is DATA for the HUMAN: the fence rides the transcript
-   verbatim (see `form/result-display`) and both surfaces paint it as a live
+   verbatim (see `form/stdout-display`) and both surfaces paint it as a live
    grid — sortable, pageable, openable as a full-screen sheet. The model needs
    none of that. Sending the payload would re-upload the whole sheet on EVERY
    later request, because tool results replay: one 500-row export then costs
@@ -3477,7 +3468,7 @@
    `python_execution` calls.
    Falls back to a plain text user message when no tool calls are recorded."
   [iter-record]
-  (let [;; ONE scope source: the `forms-vec` (each `{:scope :result …}`).
+  (let [;; ONE scope source: the `forms-vec` (each carrying stdout/error facts).
         ;; Falls back to scoped `:blocks` forms.
         forms
         (or (:forms-vec iter-record)
@@ -3518,22 +3509,10 @@
         (fn [s]
           (form/clip-to-wire s "narrow next time (slice/filter before reading)."))
 
-        ;; A form has exactly ONE success channel and it is `:stdout` — what the
-        ;; block print()ed. A python block NEVER carries a `:result`: the runtime
-        ;; DISCARDS a bare trailing expression's value, so the model sees what was
-        ;; printed and nothing else. The `:result` branch below is for the
-        ;; HOST-AUTHORED forms, which have no stdout of their own: a `!cmd` shell
-        ;; card, a slash envelope, a native tool entry. An `:error` replaces the
-        ;; RETURN — never the printed output. A raise ends the block, not what it
-        ;; already produced: `run-async-program` hangs the partial `:stdout` off
-        ;; its failure branch and the store and the human card both keep it, so
-        ;; the model gets it too. Otherwise one bad name at the end of a block
-        ;; that batched several calls threw away every call that had already
-        ;; printed, and the whole round had to be run again. Printed output first,
-        ;; then the failure, the way a terminal reads. The ERROR envelope is the
-        ;; one internal keyword-keyed shape rendered here — `error->display`
-        ;; renders it as clean, LLM-legible text with REAL newlines (source
-        ;; excerpt + caret kept readable, never an escaped one-line literal).
+        ;; A form has exactly one successful output channel: `:stdout`, what the
+        ;; block printed. Bare trailing values are discarded. An error does not erase
+        ;; stdout emitted before the failure, so model replay reads output first and
+        ;; then the clean error text.
         stdout-wire
         (fn [f]
           (when-not (str/blank? (str (:stdout f))) (clip-wire (elide-table-fences (:stdout f)))))
@@ -3545,7 +3524,6 @@
                              (if-let [out (stdout-wire f)]
                                (str out "\n" err)
                                err))
-                (some? (:result f)) (clip-wire (env/ctx->python-str (:result f)))
                 :else (stdout-wire f)))
 
         ;; ctx structural delta (executable `ctx["a"]["b"] = …` / `del ctx[…]`),
@@ -4015,17 +3993,10 @@
          iters)))))
 
 (defn- form-wire-chars
-  "Approximate the wire SIZE (chars) one form contributes — error / a
-   HOST-AUTHORED result (`!cmd` card, slash envelope, native tool entry; a python
-   form has none) / stdout — capped at `form/MAX_FORM_WIRE_CHARS` exactly as the
-   real renderer clips it, so a giant read can't over-rank itself. Strings count
-   directly; a non-string result is serialized the way the wire renders it. Pure."
+  "Approximate the bounded wire size one form contributes from stdout or error."
   [f]
   (let [n (long (cond (:summary? f) 0
                       (some? (:error f)) (count (str (:error f)))
-                      (some? (:result f))
-                      (let [r (:result f)]
-                        (if (string? r) (count r) (count (env/ctx->python-str r))))
                       :else (count (str (:stdout f)))))]
     (long (min n (long form/MAX_FORM_WIRE_CHARS)))))
 
@@ -5069,8 +5040,7 @@
                                              :content content-s
                                              :delta delta
                                              :done? (boolean done?)})))
-                              ;; Native tool input previews are intentionally not
-                              ;; surfaced: no teal "native_call" preview card.
+                              ;; Provider transport bookkeeping has no channel projection.
                               nil))))
           copilot-initiator (copilot-initiator-for-iteration iteration)
           effective-llm-headers
@@ -5362,17 +5332,15 @@
                                                           :activity snapshot}
                                                    settled?
                                                    (assoc :settled? true)))))
-                    raw-result
-                    (cond preflight-error {:result nil
-                                           :error (op-error preflight-error
+                    raw-execution
+                    (cond preflight-error {:error (op-error preflight-error
                                                             {:code expr :phase :vis/preflight})
                                            :duration-ms 0
                                            :op :vis/guard}
                           :else
                           (if-let [err (literal-code-block-error (:python-context environment)
                                                                  expr)]
-                            {:result nil
-                             :error (op-error err {:code expr :phase :vis/guard})
+                            {:error (op-error err {:code expr :phase :vis/guard})
                              :duration-ms 0
                              :op :vis/guard}
                             (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
@@ -5406,39 +5374,34 @@
                                            :total total-blocks
                                            :duration-ms (:duration-ms r)
                                            :error (:error r)
-                                           :timeout? (:timeout? r)
-                                           :result (:result r)})
+                                           :timeout? (:timeout? r)})
                               r)))
-                    ;; Carry parinfer's whole-source
-                    ;; rebalance flag into the block
-                    ;; result. `execute-code` may also
-                    ;; set `:repaired?` (extension hook
-                    ;; rescue); both paths converge on
-                    ;; the same flag for the channel.
-                    result (cond-> raw-result
-                             form-repaired?
-                             (assoc :repaired? true)
+                    ;; Carry parinfer's whole-source rebalance flag into the execution
+                    ;; record. `execute-code` may also set `:repaired?` through the
+                    ;; extension rescue hook; both paths converge on the same channel flag.
+                    execution (cond-> raw-execution
+                                form-repaired?
+                                (assoc :repaired? true)
 
-                             (:auto-repaired raw-result)
-                             (assoc :repaired? true))
-                    block-role (eval-block-role result)
+                                (:auto-repaired raw-execution)
+                                (assoc :repaired? true))
+                    block-role (eval-block-role execution)
                     envelope (eval-envelope turn-prefix
                                             iteration-position
                                             idx
                                             total-blocks
-                                            result
+                                            execution
                                             block-role)
-                    result* (assoc result
-                              :envelope envelope
-                              :role block-role)
-                    ;; Output facts stay facts. Human channels derive their card body
-                    ;; locally from `:stdout` or a structured host/native `:result`;
-                    ;; the loop never manufactures a second rendered value.
-                    result-summary (:result-summary result*)
-                    _ (when (and emit-activity! (map? (:activity result*)))
+                    execution* (assoc execution
+                                 :envelope envelope
+                                 :role block-role)
+                    ;; Output stays factual: stdout/error only. Human channels derive
+                    ;; presentation locally; the loop never manufactures another value.
+                    result-summary (:result-summary execution*)
+                    _ (when (and emit-activity! (map? (:activity execution*)))
                         ;; The last revision has the same event type as the running
                         ;; replacements, but is durable. Output remains output.
-                        (emit-activity! (:activity result*) true))]
+                        (emit-activity! (:activity execution*) true))]
 
                 ;; Per-block streaming chunk (:phase
                 ;; :form-result). Fires the moment a
@@ -5449,13 +5412,10 @@
                 ;; consumers branch on `:error nil?`,
                 ;; not on shape.
                 ;;
-                ;; Preflight rejections are MODEL-FACING
-                ;; only: they teach the model to correct
-                ;; its next iteration, but the user does
-                ;; not need to see the synthetic error
-                ;; box. Suppress the live chunk when the
-                ;; result came from a preflight gate
-                ;; (mirrors `suppress-form-start?`).
+                ;; Preflight rejections are MODEL-FACING only: they teach the model
+                ;; to correct its next iteration, but the user does not need the
+                ;; synthetic error box. Suppress the live chunk when execution stopped
+                ;; at the preflight gate (mirrors `suppress-form-start?`).
                 (when (and on-chunk (not preflight-error))
                   (on-chunk
                     {:phase :form-result
@@ -5465,21 +5425,18 @@
                      :scope scope
                      :code expr
                      :render-segments render-segments
-                     ;; Canonical execution facts. A Python block succeeds through stdout;
-                     ;; a structured result belongs only to a host/native form that has
-                     ;; no stdout. Presentation is a channel-local projection.
-                     :result (when (nil? (:stdout result*)) (:result result*))
+                     ;; Python execution succeeds only through printed stdout.
                      :result-summary result-summary
-                     ;; Native tool identity for the result badge.
+                     ;; Provider-call identity for pairing this form with its tool_use.
                      :vis/tool-name (:vis/tool-name entry)
-                     :stdout (:stdout result*)
-                     :error (:error result*)
-                     :envelope (:envelope result*)
-                     :role (:role result*)
-                     :timeout? (boolean (:timeout? result*))
-                     :repaired? (boolean (:repaired? result*))}))
+                     :stdout (:stdout execution*)
+                     :error (:error execution*)
+                     :envelope (:envelope execution*)
+                     :role (:role execution*)
+                     :timeout? (boolean (:timeout? execution*))
+                     :repaired? (boolean (:repaired? execution*))}))
                 {:block expr
-                 :result result*
+                 :execution execution*
                  :result-summary result-summary
                  :render-segments render-segments
                  :svar/tool-call-id (:svar/tool-call-id entry)
@@ -5487,7 +5444,7 @@
             (range)
             code-entries)
           form-sources (mapv :block executed)
-          form-results (mapv :result executed)
+          form-executions (mapv :execution executed)
           form-segments (mapv :render-segments executed)
           form-tool-ids (mapv :svar/tool-call-id executed)
           form-tool-names (mapv :vis/tool-name executed)
@@ -5502,57 +5459,52 @@
                                         code-entries))
           blocks
           (validate-iteration-blocks!
-            (mapv (fn [idx code result segments tool-call-id tool-name result-summary]
+            (mapv (fn [idx code execution segments tool-call-id tool-name result-summary]
                     (cond-> {:id idx
                              :code code
                              ;; What the block PRINTED — Python's one success channel.
                              ;; One block = one tool call, so this is the call's whole
                              ;; stdout (no per-form split).
-                             :stdout (:stdout result)
+                             :stdout (:stdout execution)
                              ;; Artifacts the block PRODUCED (matplotlib
                              ;; show/savefig or an `attach` call),
                              ;; captured at the SOURCE into the sandbox sink —
                              ;; carried down so the DB attachment OWNS the bytes.
-                             :attachments (:attachments result)
+                             :attachments (:attachments execution)
                              ;; Reinspection is ephemeral: it reaches the next request but
                              ;; is never written as a duplicate iteration artifact.
-                             :reinspect-attachments (:reinspect-attachments result)
-                             :error (op-error (:error result)
-                                              {:code code :phase (get-in result [:envelope :op])})
-                             :envelope (:envelope result)
-                             :role (:role result)
-                             :timeout? (:timeout? result)
-                             :repaired? (:repaired? result)
+                             :reinspect-attachments (:reinspect-attachments execution)
+                             :error (op-error (:error execution)
+                                              {:code code
+                                               :phase (get-in execution [:envelope :op])})
+                             :envelope (:envelope execution)
+                             :role (:role execution)
+                             :timeout? (:timeout? execution)
+                             :repaired? (:repaired? execution)
                              ;; Per-block resolve-symbol* LRU stamps:
                              ;; symbol-name -> current-turn-pos for every
                              ;; symbol the engine hook saw resolve during
                              ;; this block's eval. Iteration writer
                              ;; merges into the long-lived per-env LRU.
-                             :lru (or (:lru result) {})
+                             :lru (or (:lru execution) {})
                              ;; If the engine auto-repaired delimiter
                              ;; mistakes (parinferish) before eval, the
                              ;; repaired source flows here so the trailer
                              ;; can disclose the diff and the model can
                              ;; correct itself if the repair was wrong.
-                             :repaired-source (:repaired-source result)}
-                      (and (some? (:result result)) (nil? (:stdout result)))
-                      (assoc :result (:result result))
-
+                             :repaired-source (:repaired-source execution)}
                       ;; Render metadata is optional; `:code` remains the canonical source.
                       (seq segments)
                       (assoc :render-segments segments)
 
-                      (:vis/silent result)
-                      (assoc :vis/silent true)
-
                       ;; Persist the settler's one frozen snapshot on the block;
                       ;; its own durable wire event carried the same value above.
-                      (some? (:activity result))
-                      (assoc :activity (:activity result))
+                      (some? (:activity execution))
+                      (assoc :activity (:activity execution))
 
-                      ;; Tool-call identity rides onto the block so
+                      ;; Provider-call identity rides onto the block so
                       ;; `blocks->forms` stamps each form envelope with the
-                      ;; tool_use it answers (per-call result pairing).
+                      ;; tool_use call its Python execution answers.
                       tool-call-id
                       (assoc :svar/tool-call-id tool-call-id)
 
@@ -5566,7 +5518,7 @@
                       (assoc :vis/preflight? true)))
                   (range)
                   form-sources
-                  form-results
+                  form-executions
                   form-segments
                   form-tool-ids
                   form-tool-names
@@ -5601,7 +5553,6 @@
              :blocks (or (seq blocks)
                          [{:id 0
                            :code "(final-answer-validation)"
-                           :result nil
                            :error (op-error validation-error
                                             {:code "(final-answer-validation)"
                                              :phase :vis/final-answer-validation})}])
@@ -6986,8 +6937,8 @@
      4. 200_000 for unknown models, matching the historical advisory ceiling.
 
    Without (1)-(3) the hint fired off a uniform 200K baseline and either pestered
-   the model too early on a 1M-context Anthropic native call or, worse, under-warned
-   on a 128K Copilot call. The SERVED model outranks the pin because a rescued turn
+   the model too early on a 1M-context Anthropic call or, worse, under-warned on
+   a 128K Copilot call. The SERVED model outranks the pin because a rescued turn
    keeps talking to the peer for the rest of the turn: measuring it against the
     window it left is how a session reads `90% headroom` into a hard rejection.
 
@@ -8062,9 +8013,6 @@
                           ;; the live path uses, so scopes stay consistent.
                           :forms-vec (:forms it)
                           :blocks [(cond-> {:position 0 :code (or (:code it) "")}
-                                     (contains? it :result)
-                                     (assoc :result (:result it))
-
                                      (contains? it :error)
                                      (assoc :error (:error it)))]
                           :llm-provider (:provider it)
@@ -8636,12 +8584,9 @@
                         cursor {:turn (or (:turn-position (ctx-loop/read-turn-state environment)) 1)
                                 :iter (or (:iteration (ctx-loop/read-turn-state environment))
                                           (inc (long (or iteration 0))))}
-                        ;; One block = one tool call = one form: each block maps
-                        ;; 1:1 to a form envelope. The block already carries its
-                        ;; whole :result / :stdout / :error and its `:channel`
-                        ;; slice (the pre-rendered tool sink IR persisted on
-                        ;; `session_turn_iteration.forms`), so `blocks->forms`
-                        ;; projects it directly with no per-statement explosion.
+                        ;; One block = one python_execution call = one form. Each block
+                        ;; already carries its stdout/error facts and Activity snapshot, so
+                        ;; `blocks->forms` projects it directly with no statement splitting.
                         ;; Tag resolver: lift extension-declared
                         ;; observation/mutation tag into `classify-form-tag`
                         ;; so extension tools (`db_commit`,
@@ -8664,15 +8609,10 @@
                         py-name->tag (ctx-renderer/fold-op-index (extension/op-tag-index))
                         head-tag-resolver (fn [head-sym]
                                             (when head-sym (get py-name->tag (str head-sym))))
-                        ;; Native tool calling: an iteration is EITHER tool
-                        ;; calls (→ executable blocks → forms) OR a plain-text
-                        ;; answer (`:stop-reason :end`, finalized above) which
-                        ;; carries NO forms. A no-block iteration therefore has
-                        ;; an empty form vector — never a synthetic
-                        ;; `{:error "empty iteration"}` artifact. With
-                        ;; tools+answer there is no such "empty" reply to flag:
-                        ;; the answer is the answer, and it renders as the answer
-                        ;; (not as a failed form / "empty iteration" card).
+                        ;; A provider reply is either one or more python_execution calls
+                        ;; (executable blocks → forms) or a plain-text terminal answer. A
+                        ;; no-block iteration therefore has an empty form vector, never a
+                        ;; synthetic error artifact.
                         forms-vec (if (seq blocks)
                                     (ctx-engine/blocks->forms blocks cursor head-tag-resolver)
                                     [])
@@ -8933,9 +8873,8 @@
                                               [(inc (long iteration))
                                                {:thinking thinking
                                                 :blocks blocks
-                                                ;; The `forms-vec` (each `{:scope :result …}`) is the
-                                                ;; ONE scope source: persistence and the context
-                                                ;; wire both read it, so scopes stay consistent.
+                                                ;; `forms-vec` is the one scope source: persistence
+                                                ;; and model context both read it.
                                                 :forms-vec forms-vec
                                                 ;; Outbound image artifacts this iteration's
                                                 ;; tool calls produced (matplotlib figures),
@@ -9036,24 +8975,6 @@
         reason (str "**Slash unavailable**\n\n" reason)
         :else "**Slash handled**"))
 
-(defn- slash-result->wire
-  "STRINGS-ONLY view of a slash result for the form envelope `:result`. That
-   envelope is stored and later crosses the Clojure->Python boundary via `->py`,
-   which is strings-only (no silent keyword->string — a keyword there throws).
-   The keyword `:slash/*` map + IR body/data stay Clojure-side (answer-markdown
-   and the live/restored answer bubble render from those); the model only needs
-   the outcome, so keys are strings and enum values are stringified here AT THE
-   SOURCE."
-  [{:keys [result error reason]}]
-  (if result
-    (cond-> {"slash/status" (name (or (:slash/status result) :ok))}
-      (:slash/title result)
-      (assoc "slash/title" (str (:slash/title result))))
-    (cond-> {"slash/status" "error" "slash/title" (str (or error "slash error"))}
-      reason
-      (assoc "slash/reason" (name reason)))))
-
-
 (defn- cost-with-route
   "Attach the selected root route to a turn cost map once, for both durable history
    and the public terminal result. Numeric cost remains the sum of actual serving routes."
@@ -9121,11 +9042,7 @@
           (str "t" turn-pos "/i1/f1")
 
           envelope
-          {:scope scope
-           :tag :user-slash
-           :src user-request
-           ;; STRINGS-ONLY: this crosses the Python boundary via ->py.
-           :result (slash-result->wire slash-result)}
+          {:scope scope :tag :user-slash :src user-request}
 
           answer-md
           (slash-result->answer-markdown slash-result)
@@ -9491,7 +9408,7 @@
                (catch Throwable t
                  (tel/log!
                    {:level :warn :id ::bang-run-threw :data {:cmd cmd :error (ex-message t)}})
-                 {:result nil :error {:message (or (ex-message t) (str t))}})))
+                 {:error {:message (or (ex-message t) (str t))}})))
 
         t1
         (util/now-ms)
@@ -10223,7 +10140,7 @@
       - :trace - Vector of iteration trace entries, each containing:
           {:iteration N
            :response <llm-response-text>
-           :blocks [{:id 0 :code <code-str> :result <value> :error nil
+           :blocks [{:id 0 :code <code-str> :stdout <printed-text> :error nil
                      :envelope {:started-at-ms 10 :finished-at-ms 15 ...}}
                        ...]}
      - :iteration-count - Number of iterations used.
@@ -10361,8 +10278,8 @@
          ;; kept listing and which called as 'NoneType is not callable' —
          ;; a disabled tool must not exist in the sandbox at all.
          (let [target (if alias (clojure.core/symbol (str alias "/" (name sym))) sym)]
-           ;; bound only when the EXTENSION is active AND the symbol's :active-fn
-           ;; holds for env — one gate, native tools and Python verbs alike.
+           ;; Bound only when the extension is active and the symbol's `:active-fn`
+           ;; holds for env — one gate for every Python binding.
            (if (and (contains? active-set (:ext/name ext))
                     (extension/symbol-active? (get by-sym sym) environment))
              (do (env/set-python-binding! python-context target f)
@@ -10790,14 +10707,14 @@
             ;; Engine substrate: embedded GraalPy (env/create-python-context builds a
             ;; deny-by-default polyglot Context, wires the Clojure tools as Python
             ;; callables, and installs doc/apropos introspection). Its live roots are the
-            ;; workspace overlay plus immutable configured read/write roots. Native file
-            ;; tools consume the same configured roots through the environment below.
+            ;; workspace overlay plus immutable configured read/write roots. Python
+            ;; filesystem bindings consume the same roots through the environment below.
             workspace-atom (atom active-workspace)
             sandbox-roots-fn
             (when (or active-workspace (seq configured-rw-roots))
               (fn []
                 (let [ws @workspace-atom
-                      ;; The SAME per-root draft resolution the native tools use, so the
+                      ;; The same per-root draft resolution every Python binding uses, so the
                       ;; Python sandbox cannot reach a root the draft policy withholds
                       ;; (`:denied?`) or write straight into a root this draft only owns
                       ;; a private copy of — the clone is granted in its place.

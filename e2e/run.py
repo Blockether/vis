@@ -225,7 +225,7 @@ def run_one(job):
 
         forms = []
         form_events = []
-        form_results = {}
+        form_outputs = {}
         provider_calls = []
         tools = []
         errs = []
@@ -288,7 +288,7 @@ def run_one(job):
                 if sym:
                     tools.append(sym)
             elif ph == "form-result":
-                form_results[pl.get("scope", "")] = str(pl.get("result") or "")
+                form_outputs[pl.get("scope", "")] = str(pl.get("stdout") or "")
                 if pl.get("error"):
                     e = pl.get("error")
                     errs.append(
@@ -359,7 +359,7 @@ def run_one(job):
                 detail.append(f"expected one prefix fold, observed {len(fold_forms)}")
             else:
                 fold_event = fold_forms[0]
-                fold_receipt = form_results.get(fold_event["scope"], "")
+                fold_receipt = form_outputs.get(fold_event["scope"], "")
                 scope_match = re.match(r"t(\d+)/i(\d+)(?:/|$)", fold_event["scope"])
                 if not scope_match:
                     correct = False

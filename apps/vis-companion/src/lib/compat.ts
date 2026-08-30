@@ -16,13 +16,13 @@
 import type { GatewayHealth, GatewayProtocol } from './types';
 
 /**
- * Wire protocol number THIS app build speaks. Protocol 10 carries only canonical
- * execution facts on `block.output`; each client derives result presentation locally.
+ * Wire protocol number THIS app build speaks. Protocol 11 gives iteration forms
+ * one success channel, `stdout`; the obsolete `result` field is gone.
  */
-export const APP_PROTOCOL = 10;
+export const APP_PROTOCOL = 11;
 
-/** Oldest gateway protocol this app accepts: the canonical protocol 10 shape. */
-export const APP_MIN_GATEWAY_PROTOCOL = 10;
+/** Oldest gateway protocol this app accepts: the canonical protocol 11 shape. */
+export const APP_MIN_GATEWAY_PROTOCOL = 11;
 
 /** How this app names itself in the handshake. */
 export const APP_NAME = 'vis-companion';

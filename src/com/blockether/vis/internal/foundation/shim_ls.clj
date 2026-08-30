@@ -1,16 +1,11 @@
 (ns com.blockether.vis.internal.foundation.shim-ls
-  "Built-in sandbox SHIM: `ls` — the DIRECTORY listing, as a Python call instead
-   of a native tool.
+  "Built-in sandbox SHIM: `ls` — the DIRECTORY listing available inside Python.
 
    Mapping a tree is the cheapest question there is and the one a model asks
-   most, so it must not cost a wire round trip: `ls(dir)` runs inside the
-   `python_execution` block the model is already in, and what it answers is the
-   ANSWER: one compact tree STRING, ready to print, not rows to re-render. As a
-   native tool the same listing spent a whole tool result — plus a schema and a
-   description in every request — to hand back a structure whose only consumer
-   was a formatter. Structured rows cost the reader a second rendering step and
-   cost the context every quoted brace; the tree is the shortest form that still
-   says name, kind, size and shape.
+   most, so `ls(dir)` runs inside the `python_execution` block already in flight.
+   It answers with one compact tree STRING, ready to print. Structured rows would
+   cost the reader a second rendering step and the context every quoted brace; the
+   tree is the shortest form that still says name, kind, size and shape.
 
    The walk itself stays on the HOST: `editing/list-directories` is fff's
    ignore-aware listing (`.gitignore`, `.ignore`, cache directories, the `vis.yml`

@@ -24,8 +24,6 @@
   (it "keeps multi-line Python verbatim (triple-quoted strings are never tokenized)"
       (expect (= [{:kind :code :source "done(\"\"\"\nmulti\nline\n\"\"\")"}]
                  (render/parse-block-display "done(\"\"\"\nmulti\nline\n\"\"\")"))))
-  (it "any non-blank source is code-bearing, so the block is never structurally silent"
-      (expect (false? (render/block-structurally-silent? "compute(1, 2)"))))
   (it "flags (def NAME (qualified/call …)) wrappers as hidden code"
       ;; The model wraps tool calls in `(def …)` for downstream reuse.
       ;; The channel shows the tool result pane anyway, so the def

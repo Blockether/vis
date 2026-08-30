@@ -27,10 +27,12 @@
                   :llm-routing-trace [{:provider "x" :ok? true}]
                   :forms [{:scope "t1/i1/f1"
                            :tag :observation
-                           :src "(cat \"x\")"
-                           :vis/tool-name "cat"
-                           :result-summary "`x` · 3 lines"
-                           :result {:anchors {"1:abc" "line one"}}
+                           :src "print('line one')"
+                           :vis/tool-name "python_execution"
+                           :result-summary "1 line"
+                           :stdout "line one
+"
+                           :activity {:rows [{:operation :print :summary "line one"}]}
                            :duration-ms 5}]}]}])
 
 (defn- all-map-keys

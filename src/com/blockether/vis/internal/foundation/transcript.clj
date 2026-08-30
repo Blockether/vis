@@ -6,7 +6,7 @@
    (system prompt, message envelope, reasoning trace, top-level
    provider error, per-iteration vars, answer-form pointer,
    returned-empty-blocks flag) and the per-block forensic detail
-   (code, comment, result, error, duration, timeout?, repaired?).
+   (code, comment, stdout, error, duration, timeout?, repaired?).
    Pure data. The agent can pattern-match on it; the CLI
    renders Markdown on top; a future TUI screen, JSON exporter, or
    analytics extension consumes the same shape.
@@ -28,10 +28,6 @@
       :totals       {:turns N :iterations N
                      :tokens {:input :output :reasoning :cached}
                      :cost-usd D}
-      :dialog      [{:role :turn-id :content}]
-      :calls       [{:kind :ref :parent-ref :turn-id :iteration-id :op :tool
-                     :var :code :status :duration-ms :command :target
-                     :result :result-summary :info}]
       :timeline    [{:kind :ref :turn-id :iteration-id :content :code
                      :status :duration-ms :result-summary}]
       :turns
@@ -49,7 +45,7 @@
             [{:id :source :tool-call-id :position :kind
               :media-type :filename :version :size :stored}]
             :blocks
-            [{:position :code :comment :result :stdout :error
+            [{:position :code :comment :stdout :error
               :duration-ms :timeout? :repaired?}]}]}]}
 
    The Markdown renderer renders thinking, iteration-level errors,
@@ -101,10 +97,9 @@
           iterations))
 
 (defn- form-envelope->block
-  "Project one per-form envelope from `:forms` into the transcript's
-   `:blocks` shape. Each envelope carries canonical result facts — structured
-   `:result` for host/native output, `:stdout` for what Python printed, and an
-   optional `:error` — plus a 0-based `:position` derived from its index."
+  "Project one per-form envelope from `:forms` into the transcript's `:blocks`
+   shape. Each envelope carries canonical `:stdout` and optional `:error` facts,
+   plus a 0-based `:position` derived from its index."
   [position raw-envelope]
   (let [envelope raw-envelope]
     (cond-> {:position position :code (or (:src envelope) "")}
@@ -113,9 +108,6 @@
 
       (:tag envelope)
       (assoc :tag (:tag envelope))
-
-      (contains? envelope :result)
-      (assoc :result (:result envelope))
 
       ;; Printed output is the primary content of a `python_execution` block and
       ;; can coexist with an error when the block printed before it threw.
@@ -281,71 +273,17 @@
                                          vec)]
                         (when (= 1 (count matches)) (:id (first matches)))))))))
 
-(defn- preview-string
-  [s ^long n]
-  (let [s (str s)]
-    (if (<= (count s) n) s (str (subs s 0 n) "..."))))
-
-(defn- preview-value [v n] (preview-string (pr-str v) n))
-
-(defn- runtime-ref? [v] (and (map? v) (= :expr (:vis/ref v))))
-
-(defn- op-slug
-  [op]
-  (let [s (cond (keyword? op) (if (namespace op) (str (namespace op) "." (name op)) (name op))
-                (symbol? op) (if (namespace op) (str (namespace op) "." (name op)) (name op))
-                :else (str op))]
-    (-> s
-        (str/replace #"/" ".")
-        (str/replace #"[^A-Za-z0-9_.:-]" "-"))))
-
 (defn- form-index [block] (or (:position block) (:idx block) (:id block) 0))
 
 (defn- block-ref
   [turn iteration block]
   (or (get-in block [:envelope :ref])
       (:scope block)
-      ;; Canonical model/CTX scope. Avoid `turn/<uuid-prefix>` refs: they
-      ;; look like impossible turn numbers (`turn/75797678/...`).
       (str "t" (:position turn) "/i" (:position iteration) "/f" (inc (long (form-index block))))))
 
 (defn- block-duration-ms
   [block]
   (or (form/envelope-duration-ms (:envelope block)) (:duration-ms block) 0))
-
-(defn- tool-result-envelope?
-  [value]
-  (and (map? value) (contains? value :success?) (contains? value :info)))
-
-(defn- result-summary
-  "Bounded, data-first result preview for timeline/call rows. The full
-   values remain available where they were persisted (`:blocks` and
-   `:calls :result`); this summary makes the timeline useful without
-   forcing callers to inspect provider/tool-specific payloads."
-  [result]
-  (cond (runtime-ref? result) {:type :runtime-ref
-                               :preview "<runtime value; see matching var/call row>"}
-        (map? result)
-        (cond-> {:type :map :keys (vec (take 16 (keys result))) :preview (preview-value result 400)}
-          (contains? result :exit)
-          (assoc :exit (:exit result))
-
-          (contains? result :timed-out?)
-          (assoc :timed-out? (:timed-out? result))
-
-          (contains? result :command)
-          (assoc :command (:command result))
-
-          (contains? result :duration-ms)
-          (assoc :duration-ms (:duration-ms result)))
-        :else {:type (cond (nil? result) :nil
-                           (string? result) :string
-                           (keyword? result) :keyword
-                           (number? result) :number
-                           (coll? result) :collection
-                           :else :value)
-               :preview (preview-value result 400)}))
-
 (defn- event-status
   [error success? timeout?]
   (cond timeout? :timeout
@@ -353,99 +291,6 @@
         (false? success?) :error
         :else :done))
 
-(defn- tool-call-row
-  [turn iteration block var-row envelope]
-  (let [tool-meta
-        (or (:metadata envelope) (:info envelope))
-
-        result
-        (if (contains? envelope :result) (:result envelope) (:result envelope))
-
-        success?
-        (if (contains? envelope :success?) (:success? envelope) (:success? envelope))
-
-        error
-        (if (contains? envelope :error) (:error envelope) (:error envelope))
-
-        op
-        (or (:symbol envelope) (:op tool-meta) :tool)
-
-        parent-ref
-        (when block (block-ref turn iteration block))
-
-        ref
-        (when parent-ref (str parent-ref "/tool/" (op-slug op)))
-
-        status
-        (event-status error success? (or (:timed-out? result) (:timeout? tool-meta)))
-
-        tool
-        (:tool tool-meta)]
-
-    (cond-> {:kind :tool-call
-             :ref ref
-             :parent-ref parent-ref
-             :turn-id (:id turn)
-             :iteration-id (:id iteration)
-             :iteration (:position iteration)
-             :op op
-             :tool (or (:symbol tool) (:call tool) tool)
-             :status status
-             :success? success?
-             :duration-ms (or (:duration-ms tool-meta) (:duration-ms result) 0)
-             :code (:code block)
-             :result result
-             :result-summary (result-summary result)
-             :info tool-meta}
-      var-row
-      (assoc :var (:name var-row))
-
-      (:command tool-meta)
-      (assoc :command (:command tool-meta))
-
-      (:command result)
-      (assoc :command (:command result))
-
-      (:target tool-meta)
-      (assoc :target (:target tool-meta))
-
-      error
-      (assoc :error error))))
-
-(defn- block-by-code
-  [iteration]
-  (reduce (fn [acc block]
-            (if (contains? acc (:code block)) acc (assoc acc (:code block) block)))
-          {}
-          (:blocks iteration)))
-
-(defn- iteration-tool-calls
-  [turn iteration]
-  (let [_blocks-by-code
-        (block-by-code iteration)
-
-        direct-calls
-        (keep (fn [block]
-                (when (tool-result-envelope? (:result block))
-                  (tool-call-row turn iteration block nil (:result block))))
-              (:blocks iteration))
-
-        {:keys [order rows]}
-        (reduce (fn [{:keys [order rows] :as acc} call]
-                  (let [dedupe-key (or (:ref call) [(:parent-ref call) (:op call) (:code call)])]
-                    (if (contains? rows dedupe-key)
-                      (assoc acc :rows (update rows dedupe-key merge call))
-                      {:order (conj order dedupe-key) :rows (assoc rows dedupe-key call)})))
-                {:order [] :rows {}}
-                direct-calls)]
-
-    (mapv rows order)))
-
-(defn- transcript-calls
-  [turns]
-  (vec (mapcat (fn [turn]
-                 (mapcat #(iteration-tool-calls turn %) (:iterations turn)))
-               turns)))
 
 (defn- dialog-events
   [turns]
@@ -468,28 +313,20 @@
              :status (event-status error true (:timeout? block))
              :duration-ms (block-duration-ms block)
              :code (:code block)}
-      (contains? block :result)
-      (assoc :result-summary (result-summary (:result block)))
-
       error
       (assoc :error error))))
 
 (defn- transcript-timeline
-  [turns calls]
-  (let [calls-by-parent (group-by :parent-ref calls)]
-    (vec (mapcat (fn [turn]
-                   (concat
-                     [{:kind :user-message :turn-id (:id turn) :content (:user-request turn)}]
-                     (mapcat (fn [iteration]
-                               (mapcat (fn [block]
-                                         (let [ref (block-ref turn iteration block)]
-                                           (cons (code-event turn iteration block)
-                                                 (get calls-by-parent ref))))
-                                       (:blocks iteration)))
-                             (:iterations turn))
-                     (when (:answer turn)
-                       [{:kind :assistant-message :turn-id (:id turn) :content (:answer turn)}])))
-                 turns))))
+  [turns]
+  (vec (mapcat (fn [turn]
+                 (concat
+                   [{:kind :user-message :turn-id (:id turn) :content (:user-request turn)}]
+                   (mapcat (fn [iteration]
+                             (map (partial code-event turn iteration) (:blocks iteration)))
+                           (:iterations turn))
+                   (when (:answer turn)
+                     [{:kind :assistant-message :turn-id (:id turn) :content (:answer turn)}])))
+               turns)))
 
 (defn transcript
   "Full session transcript as one Clojure data map. See ns
@@ -507,8 +344,7 @@
     (when-let [session (try (vis/db-get-session db-info resolved-id) (catch Throwable _ nil))]
       (let [turn-rows (try (vis/db-list-session-turns db-info resolved-id) (catch Throwable _ []))
             turns (mapv (partial build-turn db-info) turn-rows)
-            totals (session-totals turns)
-            calls (transcript-calls turns)]
+            totals (session-totals turns)]
 
         {:session (cond-> {:id resolved-id
                            :title (:title session)
@@ -519,8 +355,7 @@
                     (assoc :provider (:provider session)))
          :totals totals
          :dialog (dialog-events turns)
-         :calls calls
-         :timeline (transcript-timeline turns calls)
+         :timeline (transcript-timeline turns)
          :turns turns}))))
 
 ;; Markdown renderer. Pure transformation over `transcript`'s data
@@ -621,20 +456,16 @@
   "Grouped [[group-label [[key value mono?] ...]] ...] rows shared by the
    Markdown summary and the HTML summary card. Pure over the `transcript`
    data map - one canonical summary shape for every surface."
-  [{:keys [session totals calls turns]}]
+  [{:keys [session totals turns]}]
   (let [n-turns
         (max 0 (long (or (:turns totals) 0)))
 
         n-iters
         (long (or (:iterations totals) 0))
 
-        ;; Executed code blocks are the agent's tool-invocation units; the
-        ;; richer `:calls` rows (nested tool envelopes) are used when present.
-        n-blocks
-        (reduce + 0 (map (comp count :blocks) (mapcat :iterations turns)))
-
+        ;; Each executed block is one python_execution call.
         n-calls
-        (max (count calls) (long n-blocks))
+        (reduce + 0 (map (comp count :blocks) (mapcat :iterations turns)))
 
         models
         (->> turns
@@ -697,11 +528,6 @@
 
     (if (str/blank? s) "" (str fence (or lang "") "\n" s "\n" fence "\n"))))
 
-(defn- display-result
-  [result]
-  (if (and (map? result) (= :expr (:vis/ref result)))
-    "<runtime value; re-evaluate expression to restore>"
-    (pr-str result)))
 
 (defn- render-block-code-segments
   [code render-segments]
@@ -725,15 +551,15 @@
 
 (defn- render-block-section
   "Per-block forensic dump: status header, optional comment, full code
-   in a fenced ```python block, result line, fenced error. `answer?`
+   in a fenced ```python block, printed stdout, and fenced error. `answer?`
    flips on the block the iteration's `:answer-position` points at —
    the block that called `done(...)` — so the reader spots the
    terminal block at a glance.
 
-   Verbatim: result strings, error blobs, and code segments are
-   rendered without truncation. Forensic reports are useless when the
-   first place you look has been clipped."
-  [idx answer? {:keys [code comment render-segments result stdout error] :as block}]
+   Verbatim: stdout, error blobs, and code segments are rendered without
+   truncation. Forensic reports are useless when the first place you look has
+   been clipped."
+  [idx answer? {:keys [code comment render-segments stdout error] :as block}]
   (let [marker
         (if error "✗" "✓")
 
@@ -752,10 +578,7 @@
           (conj "error"))
 
         suffix
-        (if (seq flags) (str " [" (str/join ", " flags) "]") "")
-
-        has-result?
-        (and (not error) (contains? block :result))]
+        (if (seq flags) (str " [" (str/join ", " flags) "]") "")]
 
     (str "##### Block "
          idx
@@ -771,7 +594,6 @@
          ;; What the block PRINTED — the primary output of a python_execution
          ;; block; rendered verbatim so forensic review sees the real content.
          (when (not (str/blank? stdout)) (str "\n_stdout:_\n" (render-fenced "text" stdout)))
-         (when has-result? (str "\nResult: `" (display-result result) "`\n"))
          (when error (str "\n_error:_\n" (render-fenced "text" error)))
          "\n")))
 
@@ -1130,8 +952,8 @@
            (str "<details>\n<summary>+" hidden " more</summary>\n\n" more "\n\n</details>\n\n")))))
 
 (defn- render-tool-md
-  "One tool segment as Markdown. Python blocks show their source verbatim with
-   the result folded beneath; native tools stay a collapsible op-card."
+  "One Python execution segment as Markdown, with source shown verbatim and output
+   folded beneath it."
   [{:keys [op summary code status preview body python? carded?]}]
   (if python?
     (str "**"
@@ -1494,8 +1316,8 @@
          "</div>")))
 
 (defn- render-tool-html
-  "One tool segment as HTML. Python blocks show their source verbatim with the
-   result folded beneath; native tools stay a collapsible op-card."
+  "One Python execution segment as HTML, with source shown verbatim and output
+   folded beneath it."
   [{:keys [op summary code status preview body python? carded?]}]
   (if python?
     (str "<div class=\"tool-py status-"

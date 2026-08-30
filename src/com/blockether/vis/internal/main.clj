@@ -973,7 +973,8 @@
                     (when (:timeout? chunk) (str " " (trace-bad "timeout")))
                     (if-let [err (trace-error-summary (:error chunk))]
                       (pretty-block "error" (trace-bad err))
-                      (pretty-block "result" (trace-pr-str (:result chunk))))))
+                      (when-let [stdout (not-empty (:stdout chunk))]
+                        (pretty-block "stdout" stdout)))))
 
       :iteration-final
       (stdout!

@@ -1472,16 +1472,9 @@
                      (expect (= "two words" (str/trim (get (wait* {} (get r "id")) "out"))))))))
 
 (defdescribe
-  shell-native-contract-test
-  ;; Regression, un-unified shell: ONE `shell` tool with an `op` enum made the model
-  ;; disambiguate five mutually-exclusive shapes on every call; five tools then cost
-  ;; five schemas for operations on ONE object. The end of that line is NO native tool
-  ;; at all — a process starts from Python, the one place that can HOLD the handle the
-  ;; call answers with.
-  (it "advertises no native shell tool, because the wire cannot hold a handle"
-      (expect (= [] (mapv :ext.symbol/name (filter :ext.symbol/native-tool? shell/shell-symbols))))
+  shell-python-contract-test
+  (it "exposes process lifecycle through Python handles"
       (expect (= 5 (count shell/shell-symbols)))
-      ;; Still the public, documented Python verb — not a private underscore transport.
       (expect (= "shell" (:ext.symbol/name (first shell/shell-symbols))))
       (expect (contains? (extension/sandbox-symbol-docs) 'shell)))
   (it "points the shell verbs at the HANDLE that replaced a blocking wait"
@@ -1572,8 +1565,8 @@
                       (io/delete-file secret true)
                       (io/delete-file ws true)))))))
 
-;; The PYTHON SANDBOX surface — `python_execution` is the model's main hand, so
-;; the shell has to be usable from ordinary Python, not only as a native tool.
+;; The PYTHON SANDBOX surface — `python_execution` is the model's one call, so
+;; shell must be usable directly from ordinary Python.
 
 (defn- py-ctx
   "A real sandbox Context wired with the REAL built-in bindings, so `shell` here
@@ -2262,13 +2255,7 @@
                                   (do (Thread/sleep 100) (recur (inc n))))))]
                    (expect (str/includes? text "got yes")))
                  (finally (resources/stop-all! sid) (shell-log/delete-session-logs! sid))))))))
-  ;; The whole point of the phase: one process jail, and no schema at all. Everything the
-  ;; family used to advertise operates on a handle the caller already holds, in Python.
-  (it "advertises no native tool for the whole shell family"
-      (expect (= []
-                 (->> shell/shell-symbols
-                      (filter :ext.symbol/native-tool?)
-                      (mapv :ext.symbol/name))))
+  (it "keeps one public constructor and four handle methods"
       (expect (= ["shell" "_shell_logs" "_shell_wait" "_shell_type" "_shell_stop"]
                  (mapv :ext.symbol/name shell/shell-symbols)))))
 

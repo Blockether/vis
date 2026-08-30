@@ -3350,9 +3350,8 @@
 
 (defn- prepare-iteration-columns
   "Prepare the session_turn_iteration payload. The canonical per-form vec
-   lives Nippy-encoded in `:forms`; callers MUST pass it (or omit when the
-   iter executed nothing). There is no legacy fallback — flat `:result` /
-   `:error` are no longer accepted.
+   lives Nippy-encoded in `:forms`; callers MUST pass it (or omit it when the
+   iteration executed nothing). There is no flat output path.
 
    `:duration-ms` is the Python sandbox eval wall time for this iteration's
    block; persisted into the named `eval_duration_ms` column. The LLM

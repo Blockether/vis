@@ -4,7 +4,7 @@
 
 (defdescribe
   progress-tracker-error-test
-  (it "stores form eval errors separately from rendered results"
+  (it "stores form evaluation errors separately from printed output"
       (let [tracker
             (progress/make-progress-tracker)
 
@@ -32,9 +32,8 @@
           (expect (false? (:success? form)))
           (expect (= 5 (:duration-ms form))))))
   (it "tracks a hidden session-title change as a silent entry with no forms (no recap chrome)"
-      ;; Recap chrome was removed in the sentinel-chrome teardown: a structurally
-      ;; silent title change is tracked as an entry with empty :forms and surfaces
-      ;; NO recap line (the field is gone).
+      ;; Explicitly silent title changes stay in the timeline without a visible form
+      ;; or recap line.
       (let [tracker (progress/make-progress-tracker)]
         ((:on-chunk tracker)
           {:phase :form-result
@@ -43,7 +42,6 @@
            :code "(set-session-title! \"New title\")"
            :render-segments [{:kind :title :value "New title"}]
            :vis/structurally-silent? true
-           :result "vis_silent"
            :silent? true})
         (let [entry (first ((:get-timeline tracker)))]
           (expect (= [] (:forms entry)))
@@ -56,7 +54,7 @@
            :position 0
            :code "(def x \"doc\" 1)"
            :render-segments [{:kind :code :source "(def x \"doc\" 1)"}]
-           :result 1
+           :stdout "1"
            :error nil})
         (let [entry (first ((:get-timeline tracker)))
               form (first (:forms entry))]
@@ -79,7 +77,7 @@
 
         (on {:phase :form-start :iteration 1 :position 0 :code "work()"})
         (on {:phase :form-activity :settled? true :iteration 1 :position 0 :activity activity})
-        (on {:phase :form-result :iteration 1 :position 0 :code "work()" :result "done"})
+        (on {:phase :form-result :iteration 1 :position 0 :code "work()" :stdout "done"})
         (expect (= activity
                    (-> ((:get-timeline tracker))
                        first

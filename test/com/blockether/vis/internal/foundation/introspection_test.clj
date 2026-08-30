@@ -345,42 +345,37 @@
   (it
     "a POPULATED read_session (turns/calls/timeline/diagnosis + string-keyed llm maps) crosses the boundary with no keyword leak"
     (let [s (vis/db-create-connection! :memory)]
-      (try
-        (let [cid (h/store-session!
-                    s
-                    {:channel :tui :title "Boundary fixture" :provider :openai :model "gpt-4o"})
-              turn (vis/db-store-session-turn!
+      (try (let [cid (h/store-session!
+                       s
+                       {:channel :tui :title "Boundary fixture" :provider :openai :model "gpt-4o"})
+                 turn (vis/db-store-session-turn!
+                        s
+                        {:parent-session-id cid :user-request "run a tool" :status :running})
+                 _ (h/store-iteration!
                      s
-                     {:parent-session-id cid :user-request "run a tool" :status :running})
-              _ (h/store-iteration!
-                  s
-                  {:session-turn-id turn
-                   :code "(v/tool \"echo hi\")"
-                   ;; nippy `:forms` (keyword-keyed) alongside `<-json`
-                   ;; llm maps (string-keyed) — the mixed shape the verb
-                   ;; must fully stringify at egress.
-                   :forms [{:scope "t1/i1/f1"
-                            :tag :observation
-                            :src "(v/tool \"echo hi\")"
-                            :result {:success? true
-                                     :result {:exit 0 :command "echo hi"}
-                                     :info {:op :v/tool
-                                            :tool {:symbol 'tool :call "v/tool"}
-                                            :command "echo hi"}
-                                     :error nil}}]
-                   :answer "done"
-                   :llm-messages [{:role "system" :content "SYS"} {:role "user" :content "hi"}]
-                   :llm-executable-blocks [{:lang "clojure" :source "(v/tool \"echo hi\")"}]
-                   :duration-ms 10})
-              _ (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
-              data (:result (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid))]
+                     {:session-turn-id turn
+                      :code "(v/tool \"echo hi\")"
+                      ;; Nippy `:forms` (keyword-keyed) alongside `<-json` LLM maps
+                      ;; (string-keyed) — the mixed shape the verb must fully stringify.
+                      :forms [{:scope "t1/i1/f1"
+                               :tag :observation
+                               :src "print('echo hi')"
+                               :op :print
+                               :stdout "echo hi\n"}]
+                      :answer "done"
+                      :llm-messages [{:role "system" :content "SYS"} {:role "user" :content "hi"}]
+                      :llm-executable-blocks [{:lang "clojure" :source "(v/tool \"echo hi\")"}]
+                      :duration-ms 10})
+                 _ (vis/db-update-session-turn! s turn {:status :done :answer-markdown "done"})
+                 data (:result
+                        (@#'introspection/foundation-inspect {:session-id cid :db-info s} cid))]
 
-          ;; The whole model-facing surface survives the strings-only boundary
-          ;; mirror — keyword enum values like `:op :v/tool`, `:kind :code`,
-          ;; `:role :user`, `:status :done` all had to stringify at egress.
-          (expect (map? (env-python/boundary-view data)))
-          (expect (every? string? (keys data))))
-        (finally (vis/db-dispose-connection! s))))))
+             ;; The whole model-facing surface survives the strings-only boundary
+             ;; mirror — keyword enum values like `:op :v/tool`, `:kind :code`,
+             ;; `:role :user`, `:status :done` all had to stringify at egress.
+             (expect (map? (env-python/boundary-view data)))
+             (expect (every? string? (keys data))))
+           (finally (vis/db-dispose-connection! s))))))
 
 (defdescribe list-sessions-envelope-test
              ;; Regression (session 9c829d10): the index verb was the ONE introspection
@@ -471,7 +466,7 @@
                    _ (h/store-iteration! s
                                          {:session-turn-id other-turn
                                           :code "(+ 1 1)"
-                                          :forms [{:src "(+ 1 1)" :result 2}]
+                                          :forms [{:src "print(2)" :stdout "2\n"}]
                                           :duration-ms 1})
                    data (:result
                           (@#'introspection/foundation-inspect {:session-id mine :db-info s} other))
@@ -495,7 +490,7 @@
               _ (h/store-iteration! s
                                     {:session-turn-id turn
                                      :code "(+ 1 1)"
-                                     :forms [{:src "(+ 1 1)" :result 2}]
+                                     :forms [{:src "print(2)" :stdout "2\n"}]
                                      :duration-ms 1})
               env {:session-id cid :db-info s :turn-state-atom (atom {:iteration {:position 3}})}
               current (get (:result (@#'introspection/foundation-inspect env cid)) "current_turn")]
@@ -519,8 +514,8 @@
                        (h/store-iteration! s
                                            {:session-turn-id turn
                                             :code (str "(+ " position " 1)")
-                                            :forms [{:src (str "(+ " position " 1)")
-                                                     :result (inc position)}]
+                                            :forms [{:src (str "print(" (inc position) ")")
+                                                     :stdout (str (inc position) "\n")}]
                                             :duration-ms 1}))
                    env {:session-id cid
                         :db-info s

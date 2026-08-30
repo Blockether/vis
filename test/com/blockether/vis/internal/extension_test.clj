@@ -397,12 +397,12 @@
                    (expect (= draft-root (get result "root")))
                    (expect (= draft-root (get result "env-root"))))))
 
-;; Phase 2: a function is reached by TYPING its name in a python block, so the
-;; registry may not carry a second, schema-shaped door beside that name. This
-;; walks the LIVE registry rather than a fixture, so a symbol that quietly
-;; re-grows a JSON Schema (or a `native-tool?` flag) fails here.
+;; A function is reached by typing its name in a Python block, so the registry
+;; may not carry a second, schema-shaped door beside that name. This walks the
+;; live registry rather than a fixture, so obsolete schema or renderer metadata
+;; cannot quietly return.
 (defdescribe every-function-is-a-python-name-test
-             (it "registers no schema and no native-tool flag on any symbol"
+             (it "registers no schema or replay renderer on any symbol"
                  ;; Reading the docs table loads the built-in extensions, so the walk
                  ;; below sees the same registry a live session does.
                  (extension/sandbox-symbol-docs)
@@ -415,11 +415,10 @@
                                    (filter (fn [k]
                                              ;; `:ext.symbol/call` STAYS: it maps a kwargs dict onto
                                              ;; positional params for a PYTHON call, and is not a schema.
-                                             (contains?
-                                               #{:ext.symbol/schema :ext.symbol/native-tool?
-                                                 :ext.symbol/replay :ext.symbol/render-start-call-fn
-                                                 :ext.symbol/render-finish-call-fn}
-                                               k))))
+                                             (contains? #{:ext.symbol/schema :ext.symbol/replay
+                                                          :ext.symbol/render-start-call-fn
+                                                          :ext.symbol/render-finish-call-fn}
+                                                        k))))
                              entries)]
 
                    (expect (< 20 (count entries)))

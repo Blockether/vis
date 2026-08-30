@@ -705,7 +705,7 @@
         (expect (= ["machine-0" "7" "note, with comma"] (nth (table/parse-csv csv) 1)))))
   (it "the body the engine hands the human is the fence VERBATIM, and it paints"
       (let [card
-            (form/result-display {:stdout wire-fence})
+            (form/stdout-display {:stdout wire-fence})
 
             tbls
             (keep :table (:line-meta (markdown-render (str (:body card)))))]

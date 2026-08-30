@@ -3575,10 +3575,10 @@
 (defn- form-fingerprint
   "Content-derived fingerprint of one form map. Captures every field
    the iteration renderer reads."
-  [{:keys [code comment display-code display-language render-segments result stdout result-summary
+  [{:keys [code comment display-code display-language render-segments stdout result-summary
            result-kind result-detail error success? silent? runs activity]}]
-  [(text-fingerprint code) (text-fingerprint comment) render-segments result
-   (text-fingerprint stdout) (text-fingerprint result-summary) result-kind
+  [(text-fingerprint code) (text-fingerprint comment) render-segments (text-fingerprint stdout)
+   (text-fingerprint result-summary) result-kind
    ;; result-detail is a small op-metadata map; compared structurally.
    result-detail error success? silent?
    ;; A settled live view joins this exact form after it closes, and reopening
@@ -5958,7 +5958,7 @@
                                                    :detail-expansions detail-expansions
                                                    :node-id result-node-id
                                                    :duration-ms duration-ms})
-                          ;; Non-tool, long result: keep the first rows visible and
+                          ;; Long stdout without an op card: keep the first rows visible and
                           ;; collapse only the surplus behind the band's own name.
                           (and result-node-id (seq hidden))
                           (let [expanded?

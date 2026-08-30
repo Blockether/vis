@@ -937,10 +937,8 @@
    resolver. Keeping the core set pure of tool names stops the engine from
    owning extension policy."
   #{})
-;; UI hiding of engine chrome is NOT a head-name concern: a form is
-;; silent iff it is structurally code-free OR its RESULT is a
-;; `vis_silent` sentinel. Channels read the sentinel rather than a
-;; head-name list.
+;; UI hiding of engine chrome is structural and explicit; it is not inferred
+;; from a call-head name or a magic execution result.
 (defn classify-form-tag
   "Classify a form-source string as `:observation` or `:mutation`.
 
@@ -964,75 +962,25 @@
          (if (and nm (contains? core-mutation-heads nm)) :mutation :observation)))))
 ;; blocks→forms — project per-form data captured by the loop's eval pipeline
 ;; into the canonical engine envelope shape
-(defn- realize-value
-  "Force-realize lazy seqs / nested IDeref refs in `v` so the envelope carries
-   DATA, not computations: a `(def …)` result is a Var, a tool may return an
-   atom or a LazySeq. Without this the freeze-safe persist path stores
-   `{:vis/ref :expr}` and the next iteration sees a placeholder, not the
-   collection. Walks maps/vectors/sets/sequentials; scalars pass through;
-   depth-bounded so a self-referential structure cannot loop."
-  ([v] (realize-value v 8))
-  ([v ^long depth]
-   (let [depth
-         depth
-
-         depth'
-         (dec depth)]
-
-     (cond (or (nil? v) (zero? depth)) v
-           (instance? clojure.lang.IDeref v) (try (realize-value (deref v) depth')
-                                                  (catch Throwable _ v))
-           ;; Rebuild into `(empty v)` — the SAME map type — so an ordered map (grep's
-           ;; per-file `matches`, a flatland ordered-map / array-map) keeps its
-           ;; insertion order; `(into {} …)` would demote it to a hash-map and scramble
-           ;; the file's line order on the wire.
-           (map? v) (reduce-kv (fn [m k val]
-                                 (assoc m k (realize-value val depth')))
-                               (empty v)
-                               v)
-           (vector? v) (mapv #(realize-value % depth') v)
-           (set? v) (into #{} (map #(realize-value % depth')) v)
-           (sequential? v) (doall (map #(realize-value % depth') v))
-           :else v))))
-
 (defn block->envelope
-  "Project one loop-side block `{:code :result :error :stdout}` plus its
-   1-based position and the engine cursor into the form envelope shape
-   (one block = one form, 1:1):
+  "Project one loop-side block `{:code :error :stdout}` plus its 1-based position
+   and the engine cursor into the canonical form envelope (one block = one form):
 
-     {:scope :tag :src :duration-ms :result :error :stdout :activity}
+     {:scope :tag :src :duration-ms :error :stdout :activity}
 
-   `:src` carries the block's source text. `:tag` is derived from the source via
-   `classify-form-tag`. `:result` is included only when the block has
-   one (engine convention: drop on default/nil). `:error` is included
-   only when the block errored. `:stdout` (what the block PRINTED) is the
-   single display surface — channels paint it, and the model reads it back.
-   `:duration-ms` is derived from the loop's block envelope so persisted TUI
-   replays keep the same footer timing as live progress bubbles.
-
-   Every result is walked through `realize-value` so any `IDeref` (Var,
-   atom) is derefed and lazy seqs land as data, never as
-   `#:vis{:ref :expr}` placeholders left over from persistence flattening
-   unrealized seqs."
+   `:stdout` is the single successful output surface: channels paint it and the
+   model reads it back. `:error` may coexist when the block printed before it
+   failed. Duration, tool-call identity, timeout, summary, and Activity metadata
+   are copied when present."
   ([block position cursor] (block->envelope block position cursor nil))
   ([block _position cursor head-tag-resolver]
    (let [src
          (or (:code block) (:src block) "")
 
-         ;; ITERATION scope `tN/iM`. One record = one tool call, identified by
-         ;; `:svar/tool-call-id`; there is no per-form `/fK` index any more.
+         ;; ITERATION scope `tN/iM`. One record = one python_execution call,
+         ;; identified by `:svar/tool-call-id`; there is no `/fK` index.
          scope
          (str "t" (:turn cursor) "/i" (:iter cursor))
-
-         raw-result
-         (:result block)
-
-         ;; `realize-value` derefs any `IDeref` it encounters, so every
-         ;; block's result — Var, atom, lazy seq, plain data — lands as
-         ;; fully realised data in the envelope, ready for prompt
-         ;; rendering and introspection.
-         result
-         (realize-value raw-result)
 
          duration-ms
          (form/envelope-duration-ms (:envelope block))
@@ -1042,21 +990,13 @@
            (some? duration-ms)
            (assoc :duration-ms duration-ms)
 
-           (and (contains? block :result) (nil? (:stdout block)))
-           (assoc :result result)
-
-           ;; PRINT-ONLY context: the model sees ONLY what it printed. Carry the
-           ;; form's captured stdout onto the envelope so iteration-results-message
-           ;; can surface it — without this, every print() reads back to the model as
-           ;; "(no output)" (it renders :stdout, not :result; bare values aren't echoed).
+           ;; Carry the block's captured stdout so the next model iteration sees
+           ;; exactly what Python printed; bare expression values are not echoed.
            (some? (:stdout block))
            (assoc :stdout (:stdout block))
 
-           ;; Errors get realized too: an error's `:data` may carry a realized seq
-           ;; (e.g. the protected-name guard's `:names` from `sort`) that the
-           ;; persist path would otherwise flatten to a `{:vis/ref :expr}` placeholder.
            (some? (:error block))
-           (assoc :error (realize-value (:error block)))
+           (assoc :error (:error block))
 
            ;; Tool-call identity: which tool_use (svar id) this form answers, plus
            ;; its name. `iteration-results-message` groups forms by this id so EACH
@@ -1080,13 +1020,11 @@
            (assoc :result-summary (:result-summary block))
 
            ;; This projection is a WHITELIST: a key with no branch here is dropped
-           ;; in silence. Activity — what the form DID, beside what it returned —
-           ;; needs its own, or it survives the reducer and dies at the envelope.
+           ;; in silence. Activity — what the form DID, beside what it printed —
+           ;; needs its own branch, or it dies at the envelope.
            (some? (:activity block))
            (assoc :activity (:activity block)))]
 
-     ;; Presentation is a pure local projection of the canonical result facts;
-     ;; never persist a second rendered copy.
      form-envelope)))
 
 (defn blocks->forms

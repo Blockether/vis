@@ -1223,9 +1223,9 @@
             [[1
               {:forms-vec [{:scope "t1/i1/f1"
                             :svar/tool-call-id "toolu_A"
-                            :result "a"
+                            :stdout "a"
                             :result-summary "2 files"}]}]
-             [2 {:forms-vec [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :result "b"}]}]]
+             [2 {:forms-vec [{:scope "t1/i2/f1" :svar/tool-call-id "toolu_B" :stdout "b"}]}]]
 
             folded
             (apply-summaries tr [{"scopes" #{"t1/i1" "t1/i2"} "at_turn" 1 "gist" "did it"}])

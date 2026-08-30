@@ -1096,7 +1096,7 @@
           worker
           (future (.countDown started)
                   (.await done 1 TimeUnit/SECONDS)
-                  (try (h/store-iteration! s {:session-turn-id tid :code "(+ 1 2)" :result 3})
+                  (try (h/store-iteration! s {:session-turn-id tid :code "(+ 1 2)" :stdout "3\n"})
                        nil
                        (catch Throwable t t)))
 
@@ -1272,7 +1272,7 @@
                           {:session-turn-id tid
                            :assistant-prose "here is the SERVER-side answer"
                            :code "(+ 1 1)"
-                           :result 2})
+                           :stdout "2\n"})
       (expect (= [cid] (vis/db-search-session-ids s :all "server-side")))
       (expect (= [] (vis/db-search-session-ids s :all "clientside")))))
   (it
@@ -1299,14 +1299,14 @@
                   {:parent-session-id rep :user-request "plain q" :status :done})]
         (h/store-iteration!
           s
-          {:session-turn-id tid :assistant-prose "reply with NEEDLE" :code "x" :result 1}))
+          {:session-turn-id tid :assistant-prose "reply with NEEDLE" :code "x" :stdout "1\n"}))
       ;; both: needle in request AND reply
       (let [tid (vis/db-store-session-turn!
                   s
                   {:parent-session-id both :user-request "NEEDLE in ask" :status :done})]
         (h/store-iteration!
           s
-          {:session-turn-id tid :assistant-prose "NEEDLE in answer" :code "x" :result 1}))
+          {:session-turn-id tid :assistant-prose "NEEDLE in answer" :code "x" :stdout "1\n"}))
       (let [by-id
             (into {} (map (juxt :id identity)) (vis/db-search-session-matches s :all "needle"))]
         (expect (= 3 (count by-id)))
@@ -1344,7 +1344,7 @@
                                 {:session-turn-id tid
                                  :assistant-prose (str "needle answer number " i)
                                  :code "x"
-                                 :result 1})))
+                                 :stdout "1\n"})))
         (let [m (first (vis/db-search-session-matches s :all "needle"))]
           (expect (<= 4 (count (:hits m))))
           (expect (every? #(str/includes? (:snippet %) "needle") (:hits m)))
@@ -1374,7 +1374,9 @@
       (let [tid (vis/db-store-session-turn!
                   s
                   {:parent-session-id asked :user-request "needle in the ask" :status :done})]
-        (h/store-iteration! s {:session-turn-id tid :assistant-prose "plain" :code "x" :result 1}))
+        (h/store-iteration!
+          s
+          {:session-turn-id tid :assistant-prose "plain" :code "x" :stdout "1\n"}))
       ;; Distinct instants: the order under test is a TIME order.
       (Thread/sleep 2)
       (let [tid (vis/db-store-session-turn!
@@ -1382,7 +1384,7 @@
                   {:parent-session-id replied :user-request "plain ask" :status :done})]
         (h/store-iteration!
           s
-          {:session-turn-id tid :assistant-prose "needle in the reply" :code "x" :result 1}))
+          {:session-turn-id tid :assistant-prose "needle in the reply" :code "x" :stdout "1\n"}))
       (expect (= [replied asked] (vis/db-search-session-ids s :all "needle")))
       ;; The band still travels — it says WHERE the query hit and breaks a tie
       ;; between two sessions that last moved at the same instant.
@@ -1411,7 +1413,9 @@
             (let [tid (vis/db-store-session-turn!
                         s
                         {:parent-session-id sid :user-request request :status :done})]
-              (h/store-iteration! s (merge {:session-turn-id tid :code "x" :result 1} iteration))))]
+              (h/store-iteration! s
+                                  (merge {:session-turn-id tid :code "x" :stdout "1\n"}
+                                         iteration))))]
 
       ;; Written oldest FIRST, so the freshest session leads the answer.
       (turn! mused "plain ask" {:assistant-prose "plain" :thinking "needle while reasoning"})
@@ -1452,7 +1456,9 @@
             (let [tid (vis/db-store-session-turn!
                         s
                         {:parent-session-id sid :user-request request :status :done})]
-              (h/store-iteration! s (merge {:session-turn-id tid :code "x" :result 1} iteration))))]
+              (h/store-iteration! s
+                                  (merge {:session-turn-id tid :code "x" :stdout "1\n"}
+                                         iteration))))]
 
       ;; The named session is written FIRST and its transcript never says
       ;; "needle": the band used to lift it over two newer body matches, which is
@@ -1507,7 +1513,7 @@
                               {:session-turn-id tid
                                :assistant-prose (str "needle answer number " i)
                                :code "x"
-                               :result 1})))
+                               :stdout "1\n"})))
       (let [by-id (into {}
                         (map (juxt :id (comp count :hits)))
                         (vis/db-search-session-matches s :all "needle"))]
@@ -1992,42 +1998,43 @@
 
 ;; Dedicated ctx stores (task/fact/archive) — write-through + per-session id
 
-(defdescribe retry-test
-             (it "creates session_turn_state version 1 with forked_from ref"
-                 (let [s
-                       (h/store)
+(defdescribe
+  retry-test
+  (it "creates session_turn_state version 1 with forked_from ref"
+      (let [s
+            (h/store)
 
-                       cid
-                       (h/store-session! s {:channel :tui})
+            cid
+            (h/store-session! s {:channel :tui})
 
-                       qid
-                       (vis/db-store-session-turn!
-                         s
-                         {:parent-session-id cid :user-request "hard" :status :running})]
+            qid
+            (vis/db-store-session-turn!
+              s
+              {:parent-session-id cid :user-request "hard" :status :running})]
 
-                   (vis/db-update-session-turn! s qid {:status :error})
-                   (vis/db-retry-session-turn! s qid {:status :running :model "claude-4"})
-                   (expect (= 1 (raw-count s :session_turn_soul)))
-                   (expect (= 2 (raw-count s :session_turn_state)))
-                   (expect (= :running (:status (first (vis/db-list-session-turns s cid)))))))
-             (it "iterations on retry go to new session_turn_state"
-                 (let [s
-                       (h/store)
+        (vis/db-update-session-turn! s qid {:status :error})
+        (vis/db-retry-session-turn! s qid {:status :running :model "claude-4"})
+        (expect (= 1 (raw-count s :session_turn_soul)))
+        (expect (= 2 (raw-count s :session_turn_state)))
+        (expect (= :running (:status (first (vis/db-list-session-turns s cid)))))))
+  (it "iterations on retry go to new session_turn_state"
+      (let [s
+            (h/store)
 
-                       cid
-                       (h/store-session! s {:channel :tui})
+            cid
+            (h/store-session! s {:channel :tui})
 
-                       qid
-                       (vis/db-store-session-turn!
-                         s
-                         {:parent-session-id cid :user-request "x" :status :running})]
+            qid
+            (vis/db-store-session-turn!
+              s
+              {:parent-session-id cid :user-request "x" :status :running})]
 
-                   (h/store-iteration! s {:session-turn-id qid :code "1" :result 1 :duration-ms 10})
-                   (vis/db-update-session-turn! s qid {:status :error})
-                   (vis/db-retry-session-turn! s qid {:status :running :model "better"})
-                   (h/store-iteration! s {:session-turn-id qid :code "2" :result 2 :duration-ms 5})
-                   (expect (= 2 (raw-count s :session_turn_iteration)))
-                   (expect (= 1 (count (vis/db-list-session-turn-iterations s qid)))))))
+        (h/store-iteration! s {:session-turn-id qid :code "1" :stdout "1\n" :duration-ms 10})
+        (vis/db-update-session-turn! s qid {:status :error})
+        (vis/db-retry-session-turn! s qid {:status :running :model "better"})
+        (h/store-iteration! s {:session-turn-id qid :code "2" :stdout "2\n" :duration-ms 5})
+        (expect (= 2 (raw-count s :session_turn_iteration)))
+        (expect (= 1 (count (vis/db-list-session-turn-iterations s qid)))))))
 
 ;; Iteration + stateless blocks
 
@@ -2047,7 +2054,7 @@
 
         (h/store-iteration!
           s
-          {:session-turn-id qid :code "(+ 1 1)" :result 2 :duration-ms 5 :thinking "Computing"})
+          {:session-turn-id qid :code "(+ 1 1)" :stdout "2\n" :duration-ms 5 :thinking "Computing"})
         (expect (= 1 (raw-count s :session_turn_iteration)))
         ;; No more kind='call' rows - the call log lives inline in the
         ;; iteration flat columns. definition_* sidecar tables were
@@ -2062,8 +2069,8 @@
           (expect (= 1 (:position iteration)))
           (expect (= 1 (count blocks)))
           (expect (= "(+ 1 1)" (:src (first blocks))))
-          (expect (= 2 (:result (first blocks)))))))
-  (it "uses flat code/result columns for the inline log"
+          (expect (= "2\n" (:stdout (first blocks)))))))
+  (it "uses code and form columns for the inline log"
       (let [s
             (h/store)
 
@@ -2075,7 +2082,7 @@
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
-        (h/store-iteration! s {:session-turn-id qid :code "(+ 1 1)" :result 2 :duration-ms 5})
+        (h/store-iteration! s {:session-turn-id qid :code "(+ 1 1)" :stdout "2\n" :duration-ms 5})
         (expect (contains? (table-columns s "session_turn_iteration") "code"))
         (expect (not (contains? (table-columns s "session_turn_iteration") "blocks")))
         (expect (some? (:code (first
@@ -2121,7 +2128,7 @@
   ;; block-envelope shape and timeout side-ledger handling have drifted
   ;; from these assertions; structural round-trip is covered by the
   ;; rest of the iteration-blocks suite below.
-  (it "replaces fn results with the {:vis/ref :expr} sentinel (freeze-safe contract)"
+  (it "replaces runtime objects nested in channel evidence with the {:vis/ref :expr} sentinel"
       (let [s
             (h/store)
 
@@ -2135,17 +2142,20 @@
 
         (h/store-iteration! s
                             {:session-turn-id qid
-                             :code "(defn f [x] x)"
-                             :result (fn [x]
-                                       x)
+                             :code "f = lambda x: x"
+                             :forms [{:scope nil
+                                      :tag :observation
+                                      :src "f = lambda x: x"
+                                      :channel [{:result (fn [x]
+                                                           x)}]}]
                              :duration-ms 5})
         (let [iteration
               (first (vis/db-list-session-turn-iterations s qid))
 
-              result
-              (:result (first (:forms iteration)))]
+              value
+              (get-in (first (:forms iteration)) [:channel 0 :result])]
 
-          (expect (= {:vis/ref :expr} result)))))
+          (expect (= {:vis/ref :expr} value)))))
   (it "errors carry the message in the BLOB"
       (let [s
             (h/store)
@@ -2171,8 +2181,7 @@
               (first (:forms iteration))]
 
           (expect (= {:message "Divide by zero"} (:error exec)))
-          ;; :result intentionally omitted on error - cond-> drops nil.
-          (expect (not (contains? exec :result))))))
+          (expect (= #{:scope :tag :src :error} (set (keys exec)))))))
   (it "keeps a realized non-lazy seq (`sort` output) in error data, not {:vis/ref :expr}"
       (let [s
             (h/store)
@@ -2216,7 +2225,7 @@
                             {:session-turn-id qid
                              :code "(+ 1 1)"
                              :comment ";; double-check arithmetic"
-                             :result 2
+                             :stdout "2\n"
                              :duration-ms 5})
         (let [iteration
               (first (vis/db-list-session-turn-iterations s qid))
@@ -2245,9 +2254,9 @@
               s
               {:parent-session-id cid :user-request "x" :status :running})]
 
-        (h/store-iteration! s {:session-turn-id qid :code "1" :result 1 :duration-ms 1})
-        (h/store-iteration! s {:session-turn-id qid :code "2" :result 2 :duration-ms 1})
-        (h/store-iteration! s {:session-turn-id qid :code "3" :result 3 :duration-ms 1})
+        (h/store-iteration! s {:session-turn-id qid :code "1" :stdout "1\n" :duration-ms 1})
+        (h/store-iteration! s {:session-turn-id qid :code "2" :stdout "2\n" :duration-ms 1})
+        (h/store-iteration! s {:session-turn-id qid :code "3" :stdout "3\n" :duration-ms 1})
         (let [iterations
               (vis/db-list-session-turn-iterations s qid)
 
@@ -2280,7 +2289,7 @@
       (h/store-iteration! s
                           {:session-turn-id qid
                            :code "(+ 1 1)"
-                           :result 2
+                           :stdout "2\n"
                            :duration-ms 5
                            ;; :input is TOTAL; subtotals must sum to it.
                            ;; 1200 = regular(?) + cache-write(7000) + cache-read(600)
@@ -2313,7 +2322,7 @@
         (h/store-iteration! s
                             {:session-turn-id qid
                              :code "(+ 1 1)"
-                             :result 2
+                             :stdout "2\n"
                              :duration-ms 5
                              :assistant-prose "I'll bump the **timeout** to 30s, then re-run."})
         (let [iter (first (vis/db-list-session-turn-iterations s qid))]
@@ -2395,7 +2404,7 @@
         ;; distinguish "no usage reported" from "zero tokens" can
         ;; check raw LLM usage columns via a custom query; the
         ;; default API path is always numeric.
-        (h/store-iteration! s {:session-turn-id qid :code "(+ 1 1)" :result 2 :duration-ms 5})
+        (h/store-iteration! s {:session-turn-id qid :code "(+ 1 1)" :stdout "2\n" :duration-ms 5})
         (let [iter (first (vis/db-list-session-turn-iterations s qid))]
           (expect (= 0 (:input-tokens iter)))
           (expect (= 0 (:input-regular-tokens iter)))
@@ -2404,30 +2413,30 @@
           (expect (= 0 (:output-tokens iter)))
           (expect (= 0 (:output-reasoning-tokens iter)))
           (expect (= 0.0 (:cost-usd iter))))))
-  (it "rejects negative token counts via the schema CHECK"
-      (let [s
-            (h/store)
+  (it
+    "rejects negative token counts via the schema CHECK"
+    (let [s
+          (h/store)
 
-            cid
-            (h/store-session! s {:channel :tui})
+          cid
+          (h/store-session! s {:channel :tui})
 
-            qid
-            (vis/db-store-session-turn!
-              s
-              {:parent-session-id cid :user-request "x" :status :running})]
+          qid
+          (vis/db-store-session-turn! s
+                                      {:parent-session-id cid :user-request "x" :status :running})]
 
-        ;; Negative usage is structurally impossible - the schema CHECK
-        ;; is the last line of defence. Any caller that fabricates a
-        ;; negative value gets a SQLite constraint exception (wrapped
-        ;; through next.jdbc). lazytest has no `thrown?` macro; use a
-        ;; plain try/catch and assert the throw landed.
-        (let [thrown?
-              (try (h/store-iteration!
-                     s
-                     {:session-turn-id qid :code "x" :result 1 :tokens {"input" -5 "output" 10}})
-                   false
-                   (catch Throwable _ true))]
-          (expect (true? thrown?))))))
+      ;; Negative usage is structurally impossible - the schema CHECK
+      ;; is the last line of defence. Any caller that fabricates a
+      ;; negative value gets a SQLite constraint exception (wrapped
+      ;; through next.jdbc). lazytest has no `thrown?` macro; use a
+      ;; plain try/catch and assert the throw landed.
+      (let [thrown?
+            (try (h/store-iteration!
+                   s
+                   {:session-turn-id qid :code "x" :stdout "1\n" :tokens {"input" -5 "output" 10}})
+                 false
+                 (catch Throwable _ true))]
+        (expect (true? thrown?))))))
 
 ;; Stateful vars
 
@@ -2445,7 +2454,7 @@
                                         {:parent-session-id cid :user-request "x" :status :running})
 
             _
-            (h/store-iteration! s {:session-turn-id qid :code "1" :result 1 :duration-ms 0})]
+            (h/store-iteration! s {:session-turn-id qid :code "1" :stdout "1\n" :duration-ms 0})]
 
         (vis/db-delete-session-tree! s cid)
         (expect (= 0 (raw-count s :session_soul)))
@@ -2633,28 +2642,29 @@
 
       (let [form (first (:forms (first (vis/db-list-session-turn-iterations s qid))))]
         (expect (= activity (:activity form))))))
-  (it "per-form payload lives on session_turn_iteration.forms (no definition_* sidecar)"
-      (let [s
-            (h/store)
+  (it
+    "per-form payload lives on session_turn_iteration.forms (no definition_* sidecar)"
+    (let [s
+          (h/store)
 
-            cid
-            (h/store-session! s {:channel :tui})
+          cid
+          (h/store-session! s {:channel :tui})
 
-            qid
-            (vis/db-store-session-turn! s
-                                        {:parent-session-id cid :user-request "x" :status :running})
+          qid
+          (vis/db-store-session-turn! s {:parent-session-id cid :user-request "x" :status :running})
 
-            _
-            (h/store-iteration! s {:session-turn-id qid :code "(+ 1 1)" :result 2 :duration-ms 0})]
+          _
+          (h/store-iteration! s
+                              {:session-turn-id qid :code "(+ 1 1)" :stdout "2\n" :duration-ms 0})]
 
-        (let [iteration
-              (first (vis/db-list-session-turn-iterations s qid))
+      (let [iteration
+            (first (vis/db-list-session-turn-iterations s qid))
 
-              form
-              (first (:forms iteration))]
+            form
+            (first (:forms iteration))]
 
-          (expect (= "(+ 1 1)" (:code iteration)))
-          (expect (= 2 (:result form)))))))
+        (expect (= "(+ 1 1)" (:code iteration)))
+        (expect (= "2\n" (:stdout form)))))))
 
 ;; Answer lifecycle (placeholder; live behaviour exercised in loop tests)
 
@@ -3061,7 +3071,7 @@
                              :assistant-prose "replace the expired credential"
                              :thinking "authentication failure analysis"
                              :code "x"
-                             :result 1})
+                             :stdout "1\n"})
         (let [prompt-hits
               (vis/db-search s "provider rejected" {:limit 25})
 
@@ -3495,7 +3505,7 @@
                            :status :done
                            :idx 0
                            :code "cat"
-                           :forms [{:vis/tool-name "cat" :result 1}
+                           :forms [{:vis/tool-name "cat" :stdout "1\n"}
                                    {:vis/tool-name "patch" :error {:message "boom"}}]})
       (h/store-iteration! s
                           {:session-turn-id tid
@@ -3503,7 +3513,7 @@
                            :idx 1
                            :code "cat"
                            :forms [{:vis/tool-name "cat" :success? false}
-                                   {:vis/tool-name "ls" :result "listed"}]})
+                                   {:vis/tool-name "ls" :stdout "listed\n"}]})
       (let [u (stats)]
         (expect (= 4 (:tool-call-count u)))
         (expect (= 2 @decodes))
@@ -3518,7 +3528,7 @@
                            :status :done
                            :idx 2
                            :code "shell"
-                           :forms [{:vis/tool-name "shell" :result "ok"}]})
+                           :forms [{:vis/tool-name "shell" :stdout "ok\n"}]})
       (let [u (stats)]
         (expect (= 5 (:tool-call-count u)))
         (expect (= 3 @decodes))))))
@@ -3550,7 +3560,7 @@
                                     :src (str "print(fold_session('t1/i1', 'first'))\n"
                                               "print(fold_session('t1/i2', 'second'))")
                                     :stdout "folded t1/i1 → first\nfolded t1/i2 → second"}
-                                   {:vis/tool-name "cat" :result "read"}]})
+                                   {:vis/tool-name "cat" :stdout "read\n"}]})
       ;; Source text alone is not proof that a fold ran: no receipt, no fold.
       (h/store-iteration! s
                           {:session-turn-id tid

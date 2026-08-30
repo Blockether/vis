@@ -161,7 +161,7 @@ describe("Activity ownership inside a running turn", () => {
         iteration: 1,
         form_index: 0,
         code: "work()",
-        result: "done",
+        stdout: "done\n",
         activity: activityFixture,
       }),
     );

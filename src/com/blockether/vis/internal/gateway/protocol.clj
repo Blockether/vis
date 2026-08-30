@@ -35,6 +35,9 @@
   "Wire protocol number THIS build speaks. Monotonic; bump on every BREAKING
    gateway HTTP/SSE change.
 
+   11 — iteration forms have one success channel: `stdout`. The obsolete `result`
+   field and its value-return branches are gone from persistence and wire.
+
    10 — `block.output` carries canonical execution facts only. Its duplicated
    presentation field is gone, and `!cmd` writes its output once as `stdout`.
 
@@ -46,17 +49,17 @@
    lookup. Coarse ticker frames are `turn.progress`; form frames route by the
    truthful numeric `form_index`. The split-id reconciliation contract and the
    overloaded `activity` event name are gone."
-  10)
+  11)
 
 (def min-client-protocol
-  "Oldest client protocol this gateway serves. Protocol 10 removes the rendered
-   result duplicate from `block.output`; clients derive presentation from facts."
-  10)
+  "Oldest client protocol this gateway serves. Protocol 11 removes the obsolete
+   iteration-form `result`; clients consume `stdout` and `error`."
+  11)
 
 (def min-gateway-protocol
   "Oldest gateway protocol this client accepts: the mirror of
    [[min-client-protocol]]."
-  10)
+  11)
 
 (def protocol-header "Request header carrying the client's own protocol number." "x-vis-protocol")
 
