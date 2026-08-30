@@ -208,12 +208,17 @@ describe("deleting a session does not re-download the fleet", () => {
         "button[aria-label='Rename']",
       )!,
     );
-    fireEvent.change(await screen.findByPlaceholderText("Session name"), {
-      target: { value: "Renamed" },
-    });
-    fireEvent.click(screen.getByText("Save"));
+    const field = await screen.findByRole("textbox", { name: "Rename First" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.change(field, { target: { value: "Renamed" } });
+    fireEvent.keyDown(field, { key: "Enter" });
 
     await waitFor(() => expect(screen.getByText("Renamed")).toBeTruthy());
+    expect(
+      view.requests
+        .filter((request) => request.method === "PATCH")
+        .map((request) => [request.path, request.body]),
+    ).toEqual([["/v1/sessions/a1", { title: "Renamed" }]]);
     expect(screen.queryByText("Elsewhere")).toBeNull();
     expect(listReads(view)).toEqual([]);
   });

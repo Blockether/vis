@@ -17,7 +17,6 @@ import {
   type SessionRowAction,
   type SessionRowCommands,
 } from '../components/SessionList';
-import { RenameSessionDialog } from '../components/RenameSessionDialog';
 import {
   NeedsYou,
   ProjectGroup,
@@ -1503,11 +1502,6 @@ export function SessionsScreen({
   }, [load, onOpen]);
 
 
-  const startRename = useCallback((session: Session, conn: GatewayConn) => {
-    setRowAction({ mode: 'rename', session, conn });
-    setActionError(null);
-  }, []);
-
   /** Open the conversation-fork question under the row action that invoked it. */
   const startFork = useCallback((session: Session, conn: GatewayConn, anchor: HTMLElement) => {
     forkAnchorEl.current = anchor;
@@ -1656,21 +1650,14 @@ export function SessionsScreen({
     setActionError(null);
   }, []);
 
-  function closeRowAction() {
-    cancelDelete();
-  }
-
   const renameSession = useCallback(
-    async (
-      action: Extract<SessionRowAction, { mode: 'rename' }>,
-      title: string,
-    ) => {
-      const api = clientFor(action.conn);
-      const key = machineKey(action.conn);
+    async (session: Session, conn: GatewayConn, title: string) => {
+      const api = clientFor(conn);
+      const key = machineKey(conn);
       // The gateway echoes the row it stored, so the new name arrives WITH the answer.
       // Ordering stays untouched: a row that jumps from under the thumb the instant it
       // is named reads as a bug, and the poll re-ranks it soon enough.
-      const sid = action.session.id;
+      const sid = session.id;
       const renamed = await api.renameSession(sid, title);
       patchMachine(key, (machine) => {
         const rows = machine.sessions;
@@ -1715,12 +1702,12 @@ export function SessionsScreen({
   const rowCommands = useMemo<SessionRowCommands>(
     () => ({
       open: onOpen,
-      rename: startRename,
+      rename: renameSession,
       fork: startFork,
       requestDelete: startDelete,
       toggleStar,
     }),
-    [onOpen, startRename, startFork, startDelete, toggleStar],
+    [onOpen, renameSession, startFork, startDelete, toggleStar],
   );
   const rowActions = useMemo<SessionListActions>(
     () => ({
@@ -2349,17 +2336,6 @@ export function SessionsScreen({
         )}
       </div>
       </div>
-
-      {/* Renaming needs a field. The destructive question stays in `SessionRow`. */}
-      {rowAction?.mode === 'rename' && (
-        <RenameSessionDialog
-          key={`${machineKey(rowAction.conn)}:${rowAction.session.id}`}
-          session={rowAction.session}
-          onDismiss={closeRowAction}
-          onRename={(title) => renameSession(rowAction, title)}
-        />
-      )}
-
 
        {/* Conversation fork choices, anchored under the row action that opened them. */}
       {forkFlow && (

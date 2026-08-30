@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent } from "storybook/test";
+import { expect, fn, userEvent, within } from "storybook/test";
 
 import {
   STORY_GATEWAYS,
@@ -12,7 +12,7 @@ import { SessionRow } from "./SessionList";
 const onOpen = fn();
 const commands = {
   open: onOpen,
-  rename: fn(),
+  rename: fn(async () => {}),
   fork: fn(),
   requestDelete: fn(),
   toggleStar: fn(),
@@ -45,5 +45,22 @@ export const AwaitingInput: Story = {
       STORY_GATEWAYS[0],
       STORY_SESSION_ROW.id,
     );
+  },
+};
+
+export const Renaming: Story = {
+  play: async ({ canvas }) => {
+    const actions = canvas.getByRole("group", {
+      name: `${STORY_SESSION_ROW.title} actions`,
+    });
+    const rename = within(actions).getByRole("button", { name: "Rename" });
+    rename.focus();
+    await userEvent.keyboard("{Enter}");
+    await expect(
+      await canvas.findByRole("textbox", {
+        name: `Rename ${STORY_SESSION_ROW.title}`,
+      }),
+    ).toHaveValue(STORY_SESSION_ROW.title);
+    await expect(canvas.queryByRole("dialog")).not.toBeInTheDocument();
   },
 };

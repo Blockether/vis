@@ -23,7 +23,6 @@ import storageSource from "../lib/storage.ts?raw";
 import sessionsScreenSource from "../screens/SessionsScreen.tsx?raw";
 import sessionListComponentsSource from "./SessionList.tsx?raw";
 import sessionProjectGroupsSource from "../screens/sessions/SessionProjectGroups.tsx?raw";
-import renameSessionDialogSource from "./RenameSessionDialog.tsx?raw";
 import gatewaySource from "../lib/gateway.ts?raw";
 import settingsScreenSource from "../screens/SettingsScreen.tsx?raw";
 import diagnosticsSettingsSource from "../screens/settings/DiagnosticsPanel.tsx?raw";
@@ -58,7 +57,6 @@ const sessionsListSource = [
   sessionsScreenSource,
   sessionListComponentsSource,
   sessionProjectGroupsSource,
-  renameSessionDialogSource,
 ].join("\n");
 
 const sessionDockSource = [
@@ -1896,11 +1894,6 @@ describe("Modal, fit", () => {
     );
   });
 
-  it("is what the rename question opens in", () => {
-    expect(renameSessionDialogSource).toContain(
-      '<Modal size="fit" onDismiss={dismiss}>',
-    );
-  });
 
   // Regression, user report (rename field hidden under the iOS keyboard, then the
   // note annotator's composer under it): the native keyboard pins only the app

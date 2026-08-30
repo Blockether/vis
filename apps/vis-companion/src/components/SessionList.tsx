@@ -1,6 +1,6 @@
-import { memo, useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
-import { Banner, ConfirmRow, LIST_EDGE } from "./ui";
+import { Banner, ConfirmRow, Input, LIST_EDGE } from "./ui";
 import {
   HeaderActions,
   HeaderTitle,
@@ -36,9 +36,11 @@ const SKELETON_GROUPS = [
 // number only decides when the panel may leave the tree.
 const STATS_MOTION_MS = 200;
 
-export type SessionRowAction =
-  | { mode: "rename"; session: Session; conn: GatewayConn }
-  | { mode: "delete"; session: Session; conn: GatewayConn };
+export type SessionRowAction = {
+  mode: "delete";
+  session: Session;
+  conn: GatewayConn;
+};
 
 export type SessionRowCommands = {
   open: (
@@ -46,7 +48,7 @@ export type SessionRowCommands = {
     sid: string,
     fresh?: boolean,
   ) => void | Promise<void>;
-  rename: (session: Session, conn: GatewayConn) => void;
+  rename: (session: Session, conn: GatewayConn, title: string) => Promise<void>;
   /** Opens the fork question under the very cell that was pressed. */
   fork: (session: Session, conn: GatewayConn, anchor: HTMLElement) => void;
   requestDelete: (session: Session, conn: GatewayConn) => void;
@@ -65,9 +67,10 @@ export type SessionListActions = {
   };
 };
 
-export type SessionRowDeletion =
-  | Omit<SessionListActions["deletion"], "target">
-  | null;
+export type SessionRowDeletion = Omit<
+  SessionListActions["deletion"],
+  "target"
+> | null;
 
 export const SessionRow = memo(function SessionRow({
   session,
@@ -133,6 +136,55 @@ export const SessionRow = memo(function SessionRow({
     setStatsMounted(true);
     setStatsOpen((open) => !open);
   }, []);
+  const [renameDraft, setRenameDraft] = useState<string | null>(null);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const renameSavingRef = useRef(false);
+  const skipRenameBlurRef = useRef(false);
+  const selectRenameOnFocusRef = useRef(false);
+  const beginRename = useCallback(() => {
+    skipRenameBlurRef.current = false;
+    selectRenameOnFocusRef.current = true;
+    setStatsOpen(false);
+    setRenameError("");
+    setRenameDraft(session.title?.trim() ?? "");
+  }, [session.title]);
+  const cancelRename = useCallback(() => {
+    selectRenameOnFocusRef.current = false;
+    setRenameError("");
+    setRenameDraft(null);
+  }, []);
+  const commitRename = useCallback(async () => {
+    if (renameDraft === null || renameSavingRef.current) return;
+    const next = renameDraft.trim();
+    if (!next) {
+      setRenameError("A session name cannot be empty.");
+      return;
+    }
+    if (next === (session.title?.trim() ?? "")) {
+      cancelRename();
+      return;
+    }
+
+    renameSavingRef.current = true;
+    setRenameBusy(true);
+    setRenameError("");
+    try {
+      await commands.rename(session, conn, next);
+      setRenameDraft(null);
+    } catch (cause) {
+      setRenameError(
+        cause instanceof Error
+          ? cause.message
+          : "Session could not be renamed.",
+      );
+      requestAnimationFrame(() => renameInputRef.current?.focus());
+    } finally {
+      renameSavingRef.current = false;
+      setRenameBusy(false);
+    }
+  }, [cancelRename, commands, conn, renameDraft, session]);
   // The star is the GATEWAY's, and the row is holding the only copy of it there is:
   // `favorite_rank`, straight off this session. No device-side store can disagree
   // with it — which is what used to leave one screen starred and another plain.
@@ -147,9 +199,62 @@ export const SessionRow = memo(function SessionRow({
 
   return (
     <div className="[&+&]:border-t [&+&]:border-dialog-edge">
-      {/* The confirm IS the row (`ConfirmRow`, shared with machine and project
-          removal). Only renaming needs a dialog because its answer is a field. */}
-      {deletion ? (
+      {/* A name is edited where its row already stands. The row temporarily gives its
+          width to the field, just like a machine row, instead of opening another surface. */}
+      {renameDraft !== null ? (
+        <div
+          className={`flex min-h-12 items-center gap-2 py-1.5 mouse:min-h-8 mouse:py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
+        >
+          <span className={LIST_MARK} aria-hidden="true" />
+          <Input
+            ref={renameInputRef}
+            autoFocus
+            aria-busy={renameBusy}
+            aria-label={`Rename ${title}`}
+            autoCapitalize="sentences"
+            autoCorrect="off"
+            className="min-w-0 flex-1"
+            disabled={renameBusy}
+            placeholder="Untitled session"
+            value={renameDraft}
+            onBlur={() => {
+              if (skipRenameBlurRef.current) {
+                skipRenameBlurRef.current = false;
+                return;
+              }
+              void commitRename();
+            }}
+            onFocus={(event) => {
+              if (!selectRenameOnFocusRef.current) return;
+              selectRenameOnFocusRef.current = false;
+              event.currentTarget.select();
+            }}
+            onChange={(event) => {
+              setRenameDraft(event.target.value);
+              setRenameError("");
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void commitRename();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                skipRenameBlurRef.current = true;
+                cancelRename();
+              }
+            }}
+          />
+          {renameBusy && (
+            <span
+              role="status"
+              className="shrink-0 font-mono text-chip font-bold uppercase tracking-[0.08em] text-dialog-hint"
+            >
+              Saving
+            </span>
+          )}
+        </div>
+      ) : deletion ? (
         <ConfirmRow
           question={`Delete ${title}?`}
           confirmLabel={deletion.isBusy ? "Deleting..." : "Yes, delete"}
@@ -174,7 +279,7 @@ export const SessionRow = memo(function SessionRow({
               key: "rename",
               label: "Rename",
               icon: <PencilIcon className="size-4" />,
-              onSelect: () => commands.rename(session, conn),
+              onSelect: beginRename,
             },
             {
               key: "fork",
@@ -323,9 +428,9 @@ export const SessionRow = memo(function SessionRow({
           </div>
         </SwipeActions>
       )}
-      {deletion?.error && (
+      {(renameError || deletion?.error) && (
         <div className="px-3 pb-2">
-          <Banner kind="err">{deletion.error}</Banner>
+          <Banner kind="err">{renameError || deletion?.error}</Banner>
         </div>
       )}
       {/* Height eases through a 0fr -> 1fr grid track: the one pure-CSS way to
@@ -401,7 +506,8 @@ export function SessionStatsPanel({
   // card prints its sample beside it: a bold percentage over an undisclosed
   // denominator is the trick this pair exists to refuse.
   const reuseSamples = usage?.prompt_cache_sample_count;
-  const reuseIsEstimated = (usage?.prompt_cache_estimated_sample_count ?? 0) > 0;
+  const reuseIsEstimated =
+    (usage?.prompt_cache_estimated_sample_count ?? 0) > 0;
 
   return (
     <div
@@ -739,9 +845,9 @@ function statusLabel(session: Session): string {
 }
 
 function statusTone(session: Session): string {
-  if (sessionNeedsInput(session)) return "text-warn-strong";
+  if (sessionNeedsInput(session)) return "text-warn";
   if (sessionIsLive(session)) return "text-ok";
-  if (session.status === "suspended") return "text-warn-strong";
+  if (session.status === "suspended") return "text-warn";
   return "text-dialog-hint";
 }
 

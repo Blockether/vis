@@ -78,7 +78,7 @@ describe("sessions feature boundaries", () => {
       "deleteError",
       "onConfirmDelete",
       "onCancelDelete",
-    ].filter((name) => new RegExp(`^\s*${name},?$`, "m").test(signature));
+    ].filter((name) => new RegExp(`^\\s*${name},?$`, "m").test(signature));
 
     expect(looseActions).toEqual([]);
     expect(signature).toMatch(/^\s*commands,?$/m);
@@ -107,7 +107,7 @@ describe("sessions feature boundaries", () => {
       "admitted",
       "isVisible",
       "list",
-    ].filter((name) => new RegExp(`^\s*${name},?$`, "m").test(signature));
+    ].filter((name) => new RegExp(`^\\s*${name},?$`, "m").test(signature));
 
     expect(leakedFields).toEqual([]);
     expect(signature).toMatch(/^\s*group,?$/m);
@@ -116,10 +116,10 @@ describe("sessions feature boundaries", () => {
     expect(signature).toMatch(/^\s*reading,?$/m);
   });
 
-  it("lets the rename dialog own its draft and request state", () => {
-    expect(sessionsScreenSource).toContain("<RenameSessionDialog");
-    expect(sessionsScreenSource).not.toContain("const [renameDraft");
-    expect(sessionsScreenSource).not.toContain('title="Rename session"');
-    expect(sessionsScreenSource).not.toContain('placeholder="Session name"');
+  it("keeps session rename inside the row", () => {
+    expect(sessionListSource).toContain("renameDraft");
+    expect(sessionListSource).toContain("commitRename");
+    expect(sessionsScreenSource).not.toContain("RenameSessionDialog");
+    expect(sessionsScreenSource).not.toContain("mode === 'rename'");
   });
 });
