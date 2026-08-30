@@ -4279,9 +4279,11 @@ def __vis_run_async__(src):
     __vis_prot__ = set(g.get("__vis_protected_names__") or [])
     __vis_shadow__ = [n for n in assigned if n in __vis_prot__ and n in g]
     assigned = [n for n in assigned if n not in __vis_shadow__]
+    # The block's own value is NOT collected. `python_execution` has ONE success
+    # channel — what the block PRINTED — so a trailing bare expression is left an
+    # `Expr` statement: it still EVALUATES (a bare tool call runs, auto-settled
+    # above), and its value is discarded exactly like every other statement's.
     body = list(tree.body)
-    if body and isinstance(body[-1], __vis_ast__.Expr):
-        body[-1] = __vis_ast__.Return(value=body[-1].value)
     seed = [
         __vis_ast__.parse(n + " = globals()[" + repr(n) + "]").body[0]
         for n in __vis_shadow__
@@ -4333,7 +4335,7 @@ def __vis_run_async__(src):
         ) from None
     exec(__vis_code__, g)
     try:
-        g["__vis_async_result__"] = __vis_drive__(g["__vis_main__"]())
+        __vis_drive__(g["__vis_main__"]())
     except BaseException as __vis_err__:
         # Stash the exception ONLY, then re-raise UNCHANGED. Deriving the failing
         # position here would walk its traceback frames, which on a warm (JIT-ed)

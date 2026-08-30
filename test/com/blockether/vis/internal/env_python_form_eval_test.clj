@@ -30,6 +30,12 @@
   []
   (tpc/context ::ctx))
 
+(defn- out
+  "The block's ONE success channel: what it PRINTED, trimmed. A block that printed
+   nothing has no output at all — its own value is never echoed."
+  [r]
+  (str/trim (str (:stdout r))))
+
 (defn- classify
   "Parse `code` (parse-only — never evaluates the forms). On SyntaxError, run it
    through `map-polyglot-error` and return the op-error map; otherwise `:parsed`."
@@ -101,75 +107,76 @@
 (defdescribe
   sandbox-auto-import-test
   (it "makes shlex available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx) "shlex.quote('a b')")]
+      (let [r (ep/run-python-block (py-ctx) "print(shlex.quote('a b'))")]
         (expect (nil? (:error r)))
-        (expect (= "'a b'" (:result r)))))
+        (expect (= "'a b'" (out r)))))
   (it "makes re available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx) "re.sub(r'\\d+', '#', 'a12b3')")]
+      (let [r (ep/run-python-block (py-ctx) "print(re.sub(r'\\d+', '#', 'a12b3'))")]
         (expect (nil? (:error r)))
-        (expect (= "a#b#" (:result r)))))
+        (expect (= "a#b#" (out r)))))
   (it "makes hashlib available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx) "hashlib.sha256(b'hello world').hexdigest()")]
+      (let [r (ep/run-python-block (py-ctx) "print(hashlib.sha256(b'hello world').hexdigest())")]
         (expect (nil? (:error r)))
-        (expect (= "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-                   (:result r)))))
+        (expect (= "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9" (out r)))))
   (it "makes json available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx) "json.dumps({'b': 2, 'a': 1}, sort_keys=True)")]
+      (let [r (ep/run-python-block (py-ctx) "print(json.dumps({'b': 2, 'a': 1}, sort_keys=True))")]
         (expect (nil? (:error r)))
-        (expect (= "{\"a\": 1, \"b\": 2}" (:result r)))))
+        (expect (= "{\"a\": 1, \"b\": 2}" (out r)))))
   (it "makes os available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx) "os.path.join('a', 'b')")]
+      (let [r (ep/run-python-block (py-ctx) "print(os.path.join('a', 'b'))")]
         (expect (nil? (:error r)))
-        (expect (= "a/b" (:result r)))))
+        (expect (= "a/b" (out r)))))
   (it "makes sys available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx) "isinstance(sys.maxsize, int)")]
+      (let [r (ep/run-python-block (py-ctx) "print(isinstance(sys.maxsize, int))")]
         (expect (nil? (:error r)))
-        (expect (= true (:result r)))))
+        (expect (= "True" (out r)))))
   (it "makes collections available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx) "dict(collections.Counter('aab'))")]
+      (let [r (ep/run-python-block (py-ctx) "print(dict(collections.Counter('aab')))")]
         (expect (nil? (:error r)))
-        ;; strings-only boundary: dict keys come back as VERBATIM strings
-        (expect (= {"a" 2 "b" 1} (:result r)))))
+        (expect (= "{'a': 2, 'b': 1}" (out r)))))
   (it "makes Counter available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx) "dict(Counter('abb'))")]
+      (let [r (ep/run-python-block (py-ctx) "print(dict(Counter('abb')))")]
         (expect (nil? (:error r)))
-        (expect (= {"a" 1 "b" 2} (:result r)))))
+        (expect (= "{'a': 1, 'b': 2}" (out r)))))
   (it "makes pathlib and Path available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx)
-                                   "pathlib.Path('a/b').name == 'b' and Path('a/b').name == 'b'")]
+      (let [r (ep/run-python-block
+                (py-ctx)
+                "print(pathlib.Path('a/b').name == 'b' and Path('a/b').name == 'b')")]
         (expect (nil? (:error r)))
-        (expect (= true (:result r)))))
+        (expect (= "True" (out r)))))
   (it "makes textwrap available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx) "textwrap.shorten('alpha beta gamma', width=11)")]
+      (let [r (ep/run-python-block (py-ctx)
+                                   "print(textwrap.shorten('alpha beta gamma', width=11))")]
         (expect (nil? (:error r)))
-        (expect (= "alpha [...]" (:result r)))))
+        (expect (= "alpha [...]" (out r)))))
   (it "makes base64 available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx) "base64.b64encode(b'hi').decode()")]
+      (let [r (ep/run-python-block (py-ctx) "print(base64.b64encode(b'hi').decode())")]
         (expect (nil? (:error r)))
-        (expect (= "aGk=" (:result r)))))
+        (expect (= "aGk=" (out r)))))
   (it "makes math available without an import in run_python code"
-      (let [r (ep/run-python-block (py-ctx) "round(math.sqrt(2) + math.pi, 6)")]
+      (let [r (ep/run-python-block (py-ctx) "print(round(math.sqrt(2) + math.pi, 6))")]
         (expect (nil? (:error r)))
-        (expect (= 4.555806 (:result r)))))
+        (expect (= "4.555806" (out r)))))
   (it
     "makes glob available without an import in run_python code"
-    (let [r (ep/run-python-block (py-ctx) "hasattr(glob, 'glob') and callable(glob.glob)")]
+    (let [r (ep/run-python-block (py-ctx) "print(hasattr(glob, 'glob') and callable(glob.glob))")]
       (expect (nil? (:error r)))
-      (expect (= true (:result r))))
+      (expect (= "True" (out r))))
     (it "makes builtins available without an import in run_python code"
-        (let [r (ep/run-python-block (py-ctx)
-                                     "hasattr(builtins, 'len') and builtins.len([1, 2]) == 2")]
+        (let [r (ep/run-python-block
+                  (py-ctx)
+                  "print(hasattr(builtins, 'len') and builtins.len([1, 2]) == 2)")]
           (expect (nil? (:error r)))
-          (expect (= true (:result r)))))
+          (expect (= "True" (out r)))))
     (it
       "does not expose auto-imported modules as apropos-listed tools/globals"
       (let
         [r
          (ep/run-python-block
            (py-ctx)
-           "names = ['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'Counter', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins']; bool(set(names) & set().union(*({item.name for item in apropos(m)} for m in names)))")]
+           "names = ['shlex', 'json', 're', 'hashlib', 'glob', 'os', 'sys', 'collections', 'Counter', 'pathlib', 'Path', 'textwrap', 'base64', 'math', 'builtins']; bool(set(names) & set().union(*({item.name for item in apropos(m)} for m in names))))")]
         (expect (nil? (:error r)))
-        (expect (= false (:result r)))))))
+        (expect (= "False" (out r)))))))
 
 (defdescribe
   verb-arg-boundary-test
@@ -250,12 +257,12 @@
     (it "lets a block SHADOW a bound tool name and keeps the callable usable after"
         (let [ctx (mk)
               r1 (ep/run-python-block ctx "patch = 'not callable'\nprint(patch)" "t1/i1")
-              r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+              r2 (ep/run-python-block ctx "print(patch({'path': 'x'}))" "t1/i2")]
 
           (expect (nil? (:error r1)))
           (expect (str/includes? (str (:stdout r1)) "not callable"))
           (expect (nil? (:error r2)))
-          (expect (= "patched" (:result r2)))))
+          (expect (= "patched" (out r2)))))
     (it "a READ before the shadowing assignment still sees the tool"
         (let [r (ep/run-python-block
                   (mk)
@@ -264,10 +271,12 @@
           (expect (nil? (:error r)))
           (expect (str/includes? (str (:stdout r)) "patched shadow"))))
     (it "allows ordinary variables while still awaiting protected tools"
-        (let [r (ep/run-python-block (mk) "css = 'app.css'
-await patch({'path': css})" "t1/i1")]
+        (let [r (ep/run-python-block (mk)
+                                     "css = 'app.css'
+print(await patch({'path': css}))"
+                                     "t1/i1")]
           (expect (nil? (:error r)))
-          (expect (= "patched" (:result r)))))
+          (expect (= "patched" (out r)))))
     (it "a tool added after context creation is shadowable and survives the block"
         (let [ctx (tpc/context ::ctx)]
           (ep/set-python-binding! ctx
@@ -275,11 +284,11 @@ await patch({'path': css})" "t1/i1")]
                                   (fn [& _]
                                     "late"))
           (let [r1 (ep/run-python-block ctx "later_patch = 'oops'" "t1/i1")
-                r2 (ep/run-python-block ctx "later_patch()" "t1/i2")]
+                r2 (ep/run-python-block ctx "print(later_patch())" "t1/i2")]
 
             (expect (nil? (:error r1)))
             (expect (nil? (:error r2)))
-            (expect (= "late" (:result r2))))))
+            (expect (= "late" (out r2))))))
     ;; Shadowing is BLOCK-LOCAL, never durable: the facade verbs were also renamed
     ;; off the commonest variable/builtin names (`test`→`run_tests`,
     ;; `format`→`format_code`) so natural variables don't collide at all.
@@ -288,33 +297,34 @@ await patch({'path': css})" "t1/i1")]
                                      {'run_tests (fn [& _]
                                                    "ran")})
               r1 (ep/run-python-block ctx "run_tests = 'oops'" "t1/i1")
-              r2 (ep/run-python-block ctx "run_tests('go')" "t1/i2")]
+              r2 (ep/run-python-block ctx "print(run_tests('go'))" "t1/i2")]
 
           (expect (nil? (:error r1)))
           (expect (nil? (:error r2)))
-          (expect (= "ran" (:result r2)))))
+          (expect (= "ran" (out r2)))))
     ;; A `for`/`with` loop TARGET is transient scratch — it stays function-local
     ;; to the wrapped block, so it neither persists nor clobbers the callable.
     ;; It must NOT trip the durable-rebind guard.
     (it "allows a `for` loop target that shadows a tool name and keeps the callable usable"
         (let [ctx (mk)
               r1 (ep/run-python-block ctx "for patch in ['a', 'b']:\n    pass" "t1/i1")
-              r2 (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+              r2 (ep/run-python-block ctx "print(patch({'path': 'x'}))" "t1/i2")]
 
           (expect (nil? (:error r1)))
           (expect (nil? (:error r2)))
-          (expect (= "patched" (:result r2)))))
+          (expect (= "patched" (out r2)))))
     (it "lets the model bind `test` and `format` as ordinary variables (not tools)"
         (let [ctx (tpc/context-with! ::ctx
                                      {'patch (fn [& _]
                                                "patched")})
-              r (ep/run-python-block
-                  ctx
-                  "test = 'promise_pool.test.ts'\nformat = 'csv'\nawait patch({'path': test})"
-                  "t1/i1")]
+              r
+              (ep/run-python-block
+                ctx
+                "test = 'promise_pool.test.ts'\nformat = 'csv'\nprint(await patch({'path': test}))"
+                "t1/i1")]
 
           (expect (nil? (:error r)))
-          (expect (= "patched" (:result r)))))))
+          (expect (= "patched" (out r)))))))
 
 (defdescribe facade-verb-name-guard-test
              ;; Drift guard: the language facade verbs must NEVER regress to the bare
@@ -371,9 +381,9 @@ await patch({'path': css})" "t1/i1")]
           ctx
           (str "import io\n" "with io.StringIO('x') as fh:\n" "    hk = await echo(fh.read())\n")
           "t1/i1")
-        (let [r (ep/run-python-block ctx "hk" "t1/i2")]
+        (let [r (ep/run-python-block ctx "print(hk)" "t1/i2")]
           (expect (nil? (:error r)))
-          (expect (= "<x>" (:result r))))))
+          (expect (= "<x>" (out r))))))
   ;; A `with` TARGET is still transient scratch: it must NOT go durable, so it
   ;; can never clobber a protected tool name.
   (it "a `with` target that shadows a tool name stays block-local"
@@ -384,9 +394,9 @@ await patch({'path': css})" "t1/i1")]
           ctx
           (str "import io\n" "with io.StringIO('s') as patch:\n" "    got = patch.read()\n")
           "t1/i1")
-        (let [r (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+        (let [r (ep/run-python-block ctx "print(patch({'path': 'x'}))" "t1/i2")]
           (expect (nil? (:error r)))
-          (expect (= "patched" (:result r))))))
+          (expect (= "patched" (out r))))))
   ;; A walrus binds in the ENCLOSING scope from wherever it appears — an `if`
   ;; test, a comprehension, a call argument — so it is a module global too.
   (it "a walrus binding in an if test / comprehension persists"
@@ -425,9 +435,9 @@ await patch({'path': css})" "t1/i1")]
                                    {'patch (fn [& _]
                                              "patched")})]
         (ep/run-python-block ctx "for patch in [1, 2]:\n    pass" "t1/i1")
-        (let [r (ep/run-python-block ctx "patch({'path': 'x'})" "t1/i2")]
+        (let [r (ep/run-python-block ctx "print(patch({'path': 'x'}))" "t1/i2")]
           (expect (nil? (:error r)))
-          (expect (= "patched" (:result r))))))
+          (expect (= "patched" (out r))))))
   ;; `from mod import *` is a SyntaxError INSIDE a function, and every block is
   ;; wrapped in one — GraalPy raised that on a source-less synthesized module,
   ;; which the host could not even render (bare UnsupportedOperationException).
@@ -676,9 +686,18 @@ await patch({'path': css})" "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "<hi>" (clojure.string/trim (str (:stdout r)))))))
     (it "a bare top-level call auto-settles (runs without await)"
-        (let [r (ep/run-python-block (mk) "echo(\"bare\")" "t1/i1")]
+        ;; The statement's VALUE is dropped — nothing printed, nothing echoed — so
+        ;; the settle is observed where it actually happens: the tool ran.
+        (let [ran (atom [])
+              ctx (tpc/context-with! ::ctx
+                                     {'echo (fn [x]
+                                              (swap! ran conj x)
+                                              (str "<" x ">"))})
+              r (ep/run-python-block ctx "echo(\"bare\")" "t1/i1")]
+
           (expect (nil? (:error r)))
-          (expect (= "<bare>" (:result r)))))
+          (expect (= ["bare"] @ran))
+          (expect (= "" (out r)))))
     (it "print auto-settles an UNawaited nested call (shows the value, not the hint)"
         (let [r (ep/run-python-block (mk) "print(echo(\"oops\"))" "t1/i1")]
           (expect (nil? (:error r)))
@@ -690,7 +709,7 @@ await patch({'path': css})" "t1/i1")]
           (expect (nil? (:error r)))
           (expect (= "<x>" (clojure.string/trim (str (:stdout r)))))
           ;; one interpreter — a later call still sees `kept`
-          (expect (= "<x>" (:result (ep/run-python-block ctx "kept"))))))
+          (expect (= "<x>" (out (ep/run-python-block ctx "print(kept)"))))))
     (it "auto-settles a bare deferred assignment in an await-bearing program"
         ;; `c = await echo("a")` forces the async path; the bare `res = echo("b")`
         ;; has NO await, yet must RUN (settle) so `res` is the value, not a thunk.
@@ -1296,18 +1315,24 @@ await patch({'path': css})" "t1/i1")]
                      {'probe-path (fn [path]
                                     {"path" path "exists" (= path "present.txt")})}]
                     (let [via-file
-                          (ep/run-python-block ctx "await probe_path('present.txt')" "t1/i1")
+                          (ep/run-python-block
+                            ctx
+                            "f = await probe_path('present.txt')\nprint(f['path'], f['exists'])"
+                            "t1/i1")
 
                           via-missing
-                          (ep/run-python-block ctx "await probe_path('missing.txt')" "t1/i2")
+                          (ep/run-python-block
+                            ctx
+                            "m = await probe_path('missing.txt')\nprint(m['path'], m['exists'])"
+                            "t1/i2")
 
                           via-old
                           (ep/run-python-block ctx "is_exists('present.txt')" "t1/i3")]
 
                       (expect (nil? (:error via-file)))
                       (expect (nil? (:error via-missing)))
-                      (expect (= {"path" "present.txt" "exists" true} (:result via-file)))
-                      (expect (= {"path" "missing.txt" "exists" false} (:result via-missing)))
+                      (expect (= "present.txt True" (out via-file)))
+                      (expect (= "missing.txt False" (out via-missing)))
                       (expect (str/includes? (get-in via-old [:error :message])
                                              "`is_exists` is not defined")))))
   (it "removing the binding makes probe_path undefined"
@@ -1316,8 +1341,11 @@ await patch({'path': css})" "t1/i1")]
                                 'probe-path
                                 (fn [path]
                                   {"path" path "exists" true}))
-        (expect (= {"path" "dynamic.txt" "exists" true}
-                   (:result (ep/run-python-block ctx "await probe_path('dynamic.txt')" "t1/i3"))))
+        (expect (= "dynamic.txt True"
+                   (out (ep/run-python-block
+                          ctx
+                          "d = await probe_path('dynamic.txt')\nprint(d['path'], d['exists'])"
+                          "t1/i3"))))
         (ep/remove-python-binding! ctx 'probe-path)
         (expect (str/includes? (get-in (ep/run-python-block ctx "probe_path('dynamic.txt')" "t1/i4")
                                        [:error :message])
@@ -1326,25 +1354,34 @@ await patch({'path': css})" "t1/i1")]
 (defdescribe run-python-block-form-eval-test
              ;; (R8 in-fence r["tN/iN/fF"] memory removed: context is print-only — a later
              ;; line uses ordinary Python variables, not an r[] dict.)
-             (it "E1 — comment is not a form; assign + bare expr; last value is the result"
+             ;; ONE success channel: what the block PRINTED. A trailing bare expression is
+             ;; still EVALUATED (a bare tool call runs), but its value is dropped — there is
+             ;; no second, value-shaped channel for a block that printed nothing.
+             (it "E1 — comment is not a form; assign + bare expr echo nothing"
                  (let [r (ep/run-python-block (py-ctx) "# read it\ne1x = 41\ne1x")]
-                   (expect (= 41 (:result r)))
-                   (expect (nil? (:error r)))))
-             (it "E2 — a single value-returning expression echoes its value"
-                 (let [r (ep/run-python-block (py-ctx) "40 + 2")]
-                   (expect (= 42 (:result r)))))
-             (it "E3 — multiple statements; the trailing tuple echoes both"
+                   (expect (nil? (:error r)))
+                   (expect (not (contains? r :result)))
+                   (expect (nil? (:stdout r)))))
+             (it "E2 — print() is the only channel a value comes back on"
+                 (let [r (ep/run-python-block (py-ctx) "print(40 + 2)")]
+                   (expect (nil? (:error r)))
+                   (expect (not (contains? r :result)))
+                   (expect (= "42" (str/trim (str (:stdout r)))))))
+             (it "E3 — a trailing expression nobody printed is gone"
                  (let [r (ep/run-python-block (py-ctx) "e3a = 1\ne3b = 2\n(e3a, e3b)")]
-                   (expect (= [1 2] (:result r)))))
-             (it "E6 — a call expression echoes its return value"
-                 (let [r (ep/run-python-block (py-ctx) "str(99)")]
-                   (expect (= "99" (:result r)))))
+                   (expect (nil? (:error r)))
+                   (expect (not (contains? r :result)))
+                   (expect (nil? (:stdout r)))))
+             (it "E6 — a call expression runs; only what it printed comes back"
+                 (let [r (ep/run-python-block (py-ctx) "e6 = str(99)\nprint(e6)")]
+                   (expect (not (contains? r :result)))
+                   (expect (= "99" (str/trim (str (:stdout r)))))))
              (it "a def is one form; a following call evaluates"
-                 (let [r (ep/run-python-block (py-ctx) "def e_f():\n    return 7\ne_f()")]
-                   (expect (= 7 (:result r)))))
+                 (let [r (ep/run-python-block (py-ctx) "def e_f():\n    return 7\nprint(e_f())")]
+                   (expect (= "7" (str/trim (str (:stdout r)))))))
              (it "E7 — evaluation stops at the first erroring form; later forms do not run"
                  (let [r (ep/run-python-block (py-ctx) "e7x = 1\ne7_boom\ne7y = 2")]
-                   (expect (nil? (:result r)))
+                   (expect (not (contains? r :result)))
                    (expect (= :python/runtime (get-in (:error r) [:data :phase])))))
              (it "E7b — a NameError for an undefined TOOL gets an enrichment hint"
                  (let [r
@@ -1393,7 +1430,7 @@ await patch({'path': css})" "t1/i1")]
    the block-concat causes don't arise; :auto-repaired is always nil."
   (it "GLUED top-level forms ERROR as a SyntaxError (not repaired)"
       (let [r (ep/run-python-block (py-ctx) "len([1,2])abs(-3)")]
-        (expect (nil? (:result r)))
+        (expect (not (contains? r :result)))
         (expect (some? (:error r)))
         (expect (= :python/syntax (get-in r [:error :data :phase])))
         (expect (nil? (:auto-repaired r)))))
@@ -1402,13 +1439,13 @@ await patch({'path': css})" "t1/i1")]
                                    (str "x_e2e = 1\nx_e2e + 41\n"
                                         "```ctx\n[\"env\"][\"nrepl\"] = 7888\n# tool results\n"
                                         "r[\"t4/i1/f1\"] = {\"files\": [\"a.clj\"]}"))]
-        (expect (nil? (:result r)))
+        (expect (not (contains? r :result)))
         (expect (some? (:error r)))
         (expect (= :python/syntax (get-in r [:error :data :phase])))
         (expect (nil? (:auto-repaired r)))))
   (it "clean Python still runs untouched (no false repair)"
-      (let [r (ep/run-python-block (py-ctx) "len([1,2,3])")]
-        (expect (= 3 (:result r)))
+      (let [r (ep/run-python-block (py-ctx) "print(len([1,2,3]))")]
+        (expect (= "3" (out r)))
         (expect (nil? (:error r)))
         (expect (nil? (:auto-repaired r))))))
 
@@ -1448,25 +1485,25 @@ await patch({'path': css})" "t1/i1")]
                   [:error :message])]
           (expect (clojure.string/includes? (str m) "repl_eval"))))))
 
-(defdescribe precise-hint-test
-             "More precise hints by what actually failed — beyond the generic parser error."
-             (let [mk (fn []
-                        (:python-context (ep/create-python-context {(quote lst) (fn []
-                                                                                  [1 2 3])})))]
-               (it "IndentationError → an indentation-specific hint"
-                   (let [m (get-in (ep/run-python-block (mk) "if True:\nx = 1" "t1/i1")
-                                   [:error :message])]
-                     (expect (clojure.string/includes? (str m) "INDENTATION"))))
-               (it ".get on a LIST-shaped tool result answers the uniform dict probe"
-                   ;; A native result whose top level is a list is re-typed __VisResultList__, so
-                   ;; the documented `res.get('op')` sweep works on EVERY stored result instead of
-                   ;; blowing up with `'list' object has no attribute 'get'`.
-                   (let [r (ep/run-python-block (mk)
-                                                (str "r = await lst()\n"
-                                                     "[list(r), r.get('op'), r.get('x', 'dflt')]")
-                                                "t1/i1")]
-                     (expect (nil? (:error r)))
-                     (expect (= [[1 2 3] nil "dflt"] (:result r)))))))
+(defdescribe
+  precise-hint-test
+  "More precise hints by what actually failed — beyond the generic parser error."
+  (let [mk (fn []
+             (:python-context (ep/create-python-context {(quote lst) (fn []
+                                                                       [1 2 3])})))]
+    (it "IndentationError → an indentation-specific hint"
+        (let [m (get-in (ep/run-python-block (mk) "if True:\nx = 1" "t1/i1") [:error :message])]
+          (expect (clojure.string/includes? (str m) "INDENTATION"))))
+    (it ".get on a LIST-shaped tool result answers the uniform dict probe"
+        ;; A native result whose top level is a list is re-typed __VisResultList__, so
+        ;; the documented `res.get('op')` sweep works on EVERY stored result instead of
+        ;; blowing up with `'list' object has no attribute 'get'`.
+        (let [r (ep/run-python-block (mk)
+                                     (str "r = await lst()\n"
+                                          "print([list(r), r.get('op'), r.get('x', 'dflt')])")
+                                     "t1/i1")]
+          (expect (nil? (:error r)))
+          (expect (= "[[1, 2, 3], None, 'dflt']" (out r)))))))
 
 (defdescribe
   source-context-test
@@ -1773,9 +1810,9 @@ await patch({'path': css})" "t1/i1")]
                          "    a = await map_tool()\n" "    n = await nil_tool()\n"
                          "    return [isinstance(a, dict), a['stdout'], a['stderr'] is None,"
                          " n is None, type(n).__name__]\n"
-                         "r = await f()\n" "r"))]
+                         "r = await f()\n" "print(r)"))]
           (expect (nil? (:error res)))
-          (expect (= [true "hi" true true "NoneType"] (:result res))))))
+          (expect (= "[True, 'hi', True, True, 'NoneType']" (out res))))))
   (it "a null field of an awaited result raises a NORMAL python TypeError, not a host NPE"
       (tpc/with-own [ctx
                      {'map_tool (fn map-tool [& _]
@@ -1786,37 +1823,37 @@ await patch({'path': css})" "t1/i1")]
                       (expect (not (str/includes? (:message err) "NullPointerException")))
                       (expect (not (str/includes? (:message err) "Null receiver")))))))
 
-(defdescribe pyify-never-leaks-a-raw-proxy-test
-             ;; REGRESSION: when the one-shot rebuild of a foreign map failed,
-             ;; `__vis_pyify__` returned the RAW proxy. A proxy read of a key it does not
-             ;; have can come back as a HOST NULL, and the next touch (print / slice) dies
-             ;; with Truffle's null-receiver NPE instead of a normal KeyError. The rebuild
-             ;; now degrades key-by-key, so python ALWAYS gets a real dict.
-             (it "degrades a hostile foreign map to a real dict with a normal KeyError"
-                 (let [weird
-                       (ProxyHashMap/from (doto (java.util.LinkedHashMap.)
-                                            (.put "op" "probe")
-                                            ;; A foreign LIST key is unhashable in python, so the dict
-                                            ;; comprehension raises and the fallback path runs.
-                                            (.put (ProxyArray/fromList (java.util.ArrayList. [1 2]))
-                                                  "x")))
+(defdescribe
+  pyify-never-leaks-a-raw-proxy-test
+  ;; REGRESSION: when the one-shot rebuild of a foreign map failed,
+  ;; `__vis_pyify__` returned the RAW proxy. A proxy read of a key it does not
+  ;; have can come back as a HOST NULL, and the next touch (print / slice) dies
+  ;; with Truffle's null-receiver NPE instead of a normal KeyError. The rebuild
+  ;; now degrades key-by-key, so python ALWAYS gets a real dict.
+  (it "degrades a hostile foreign map to a real dict with a normal KeyError"
+      (let [weird
+            (ProxyHashMap/from (doto (java.util.LinkedHashMap.)
+                                 (.put "op" "probe")
+                                 ;; A foreign LIST key is unhashable in python, so the dict
+                                 ;; comprehension raises and the fallback path runs.
+                                 (.put (ProxyArray/fromList (java.util.ArrayList. [1 2])) "x")))
 
-                       pc
-                       (ep/create-python-context {'weird weird})
+            pc
+            (ep/create-python-context {'weird weird})
 
-                       res
-                       (ep/run-python-block (:python-context pc)
-                                            (str "d = __vis_pyify__(weird)\n"
-                                                 "[isinstance(d, dict), list(d.keys()), d['op']]"))
+            res
+            (ep/run-python-block (:python-context pc)
+                                 (str "d = __vis_pyify__(weird)\n"
+                                      "print([isinstance(d, dict), list(d.keys()), d['op']])"))
 
-                       err
-                       (:error (ep/run-python-block (:python-context pc) "d['content']"))]
+            err
+            (:error (ep/run-python-block (:python-context pc) "d['content']"))]
 
-                   (expect (nil? (:error res)))
-                   (expect (= [true ["op"] "probe"] (:result res)))
-                   (expect (str/includes? (:message err) "KeyError"))
-                   (expect (not (str/includes? (:message err) "Null receiver")))
-                   (expect (not (str/includes? (:message err) "NullPointerException"))))))
+        (expect (nil? (:error res)))
+        (expect (= "[True, ['op'], 'probe']" (out res)))
+        (expect (str/includes? (:message err) "KeyError"))
+        (expect (not (str/includes? (:message err) "Null receiver")))
+        (expect (not (str/includes? (:message err) "NullPointerException"))))))
 
 (defdescribe truffle-null-receiver-hint-test
              ;; Truffle's INTERNAL null-receiver NPE is NOT reported as a host exception, so

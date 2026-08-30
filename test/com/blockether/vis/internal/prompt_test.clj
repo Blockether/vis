@@ -137,7 +137,12 @@
       ;; a real Z.ai GLM-5.3 Flash A/B then showed that forcing a 4k-token fold doubled cost, while
       ;; the exact-route benchmark proved one canonical prior-prefix fold and continuation. The runtime's
       ;; measured 75% hint remains the default threshold instead of inventing an unverified lower one.
-      (expect (< (count text) 6650))
+      ;; 6.65k → 6.7k because the sandbox has ONE success channel now. The runtime used to hand a
+      ;; bare trailing expression's value back as a second result, so "print only what the answer
+      ;; needs" read as advice about cost; with that channel deleted an unprinted value is simply
+      ;; GONE, and the shape rule in §2 is where a model reads what a block gives back. It lands
+      ;; at 6 687.
+      (expect (< (count text) 6700))
       (let [steps (mapv #(str/index-of text %)
                         ["`grep` locates unknown code" "a hit IS a `patch` argument"
                          "`patch(path, edits)`"])]
@@ -200,9 +205,11 @@
                         "No shell TOOL" "`sh.logs(-50)`" "`sh.wait(s)`" "`sh.type(\"y\")`"
                         "NEVER paste a near-identical loop or block twice" "Define once and reuse"
                         "factor it out on the second occurrence" "keep results in"
-                        "a value you never printed costs nothing" "gone when the block ends"
-                        "Inspect shape before indexing" "nothing lists one for you"
-                        "tests-only work starts with `run_tests`"
+                        ;; The sandbox has ONE success channel: `print()`. Naming it is what makes
+                        ;; "print only what the answer needs" a contract instead of cost advice.
+                        "`print()` is the ONE channel back" "unprinted value is DISCARDED"
+                        "bare trailing expression is never echoed" "Inspect shape before indexing"
+                        "nothing lists one for you" "tests-only work starts with `run_tests`"
                         "interactive work uses `repl_eval`" "Keep reproduction as a suite test"
                         "rerun after the fix" "unverified until a test covers it"
                         "BATCH inside one block" "Write only files the task asked"

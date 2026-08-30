@@ -1504,51 +1504,54 @@
                    (expect (not (contains? envelope :result-render)))
                    (expect (nil? (form/result-display envelope))))))
 
-(defdescribe guest-interrupt-on-eval-timeout-test
-             ;; REGRESSION: an eval timeout (and Esc cancel) only did `Future.cancel(true)`.
-             ;; GraalPy does NOT observe `Thread.interrupt` inside guest code, so a model
-             ;; block that spins (`while True: ...`) kept burning a whole core FOREVER —
-             ;; measured at 1.01 busy cores with BOTH worker futures already cancelled —
-             ;; and pinned its virtual thread's carrier. Only a Truffle safepoint
-             ;; interrupt unwinds the guest frame, and it must leave the context REUSABLE.
-             (it
-               "unwinds a runaway guest loop and keeps the context usable"
-               (tpc/with-own
-                 [pc {}]
-                 (let [cpu-ns
-                       (fn []
-                         (.getProcessCpuTime
-                           ^com.sun.management.OperatingSystemMXBean
-                           (java.lang.management.ManagementFactory/getOperatingSystemMXBean)))
+(defdescribe
+  guest-interrupt-on-eval-timeout-test
+  ;; REGRESSION: an eval timeout (and Esc cancel) only did `Future.cancel(true)`.
+  ;; GraalPy does NOT observe `Thread.interrupt` inside guest code, so a model
+  ;; block that spins (`while True: ...`) kept burning a whole core FOREVER —
+  ;; measured at 1.01 busy cores with BOTH worker futures already cancelled —
+  ;; and pinned its virtual thread's carrier. Only a Truffle safepoint
+  ;; interrupt unwinds the guest frame, and it must leave the context REUSABLE.
+  (it
+    "unwinds a runaway guest loop and keeps the context usable"
+    (tpc/with-own
+      [pc {}]
+      (let [cpu-ns
+            (fn []
+              (.getProcessCpuTime
+                ^com.sun.management.OperatingSystemMXBean
+                (java.lang.management.ManagementFactory/getOperatingSystemMXBean)))
 
-                       ;; `getProcessCpuTime` is JVM-WIDE, so it also counts the rest of the
-                       ;; suite running in parallel — on a loaded CI runner the absolute
-                       ;; number reached 2.14 cores with no guest alive at all (CI run
-                       ;; 30586924255). Only the DELTA against a baseline sampled under the
-                       ;; same load says anything about the guest, and a live spinning guest
-                       ;; is worth a whole extra core.
-                       busy-cores
-                       (fn [ms]
-                         (let [before (cpu-ns)]
-                           (Thread/sleep (long ms))
-                           (/ (double (- (cpu-ns) before)) (* 1.0e6 (double ms)))))
+            ;; `getProcessCpuTime` is JVM-WIDE, so it also counts the rest of the
+            ;; suite running in parallel — on a loaded CI runner the absolute
+            ;; number reached 2.14 cores with no guest alive at all (CI run
+            ;; 30586924255). Only the DELTA against a baseline sampled under the
+            ;; same load says anything about the guest, and a live spinning guest
+            ;; is worth a whole extra core.
+            busy-cores
+            (fn [ms]
+              (let [before (cpu-ns)]
+                (Thread/sleep (long ms))
+                (/ (double (- (cpu-ns) before)) (* 1.0e6 (double ms)))))
 
-                       ;; 250ms is plenty to see a whole core: a live spinner adds
-                       ;; ~1.0 to the delta, and the threshold below is 0.75.
-                       baseline
-                       (busy-cores 250)]
+            ;; 250ms is plenty to see a whole core: a live spinner adds
+            ;; ~1.0 to the delta, and the threshold below is 0.75.
+            baseline
+            (busy-cores 250)]
 
-                   (try (let [result (binding [rt/*eval-timeout-ms* 400]
-                                       ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
-                          (expect (true? (:timeout? result)))
-                          ;; The guest is GONE: no EXTRA core is spinning after the timeout.
-                          ;; Take the quieter of two samples so one unlucky GC/JIT burst
-                          ;; cannot decide the verdict.
-                          (expect (< (- (min (busy-cores 250) (busy-cores 250)) baseline) 0.75))
-                          ;; ...and the interrupt did not poison the context.
-                          (expect (= 42 (:result ((deref #'lp/run-python-code) pc "40 + 2")))))
-                        (finally (try (.close ^org.graalvm.polyglot.Context pc true)
-                                      (catch Throwable _ nil))))))))
+        (try (let [result (binding [rt/*eval-timeout-ms* 400]
+                            ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
+               (expect (true? (:timeout? result)))
+               ;; The guest is GONE: no EXTRA core is spinning after the timeout.
+               ;; Take the quieter of two samples so one unlucky GC/JIT burst
+               ;; cannot decide the verdict.
+               (expect (< (- (min (busy-cores 250) (busy-cores 250)) baseline) 0.75))
+               ;; ...and the interrupt did not poison the context.
+               (expect (= "42"
+                          (clojure.string/trim
+                            (str (:stdout ((deref #'lp/run-python-code) pc "print(40 + 2)")))))))
+             (finally (try (.close ^org.graalvm.polyglot.Context pc true)
+                           (catch Throwable _ nil))))))))
 
 (defdescribe eval-timeout-keeps-partial-stdout-test
              ;; REGRESSION: the wall-clock BACKSTOP answered with `{:result nil :error
@@ -3696,9 +3699,9 @@
         (try (let [result ((var-get #'lp/execute-code) env "x = 1")]
                (expect (nil? (:error result))))
              ;; Sandbox globals persist REPL-style across evals on the same context.
-             (let [read-back (env/run-python-block (:python-context env) "x")]
+             (let [read-back (env/run-python-block (:python-context env) "print(x)")]
                (expect (nil? (:error read-back)))
-               (expect (= 1 (:result read-back))))
+               (expect (= "1\n" (:stdout read-back))))
              (finally (lp/dispose-environment! env)))))
   (it "gives a plain Python block five minutes before the backstop fires"
       ;; The watchdog is a BACKSTOP for a block that will never finish on its
@@ -3813,17 +3816,17 @@
 
             ;; emoji on the first AND a later line; the second form re-reads the var.
             code
-            (str "msg = \"\"\"# Heading 👆\n\n- bin/ 🚀\n\nPełne ł ó ż 🌳\"\"\"\n" "msg")
+            (str "msg = \"\"\"# Heading 👆\n\n- bin/ 🚀\n\nPełne ł ó ż 🌳\"\"\"\n" "print(msg)")
 
-            {:keys [error result]}
+            {:keys [error stdout]}
             (env/run-python-block python-context code)]
 
         (expect (nil? error))
-        ;; the final expression re-reads the multi-line emoji string unchanged
-        (expect (string? result))
-        (expect (clojure.string/includes? result "👆"))
-        (expect (clojure.string/includes? result "🌳"))
-        (expect (clojure.string/includes? result "Pełne ł ó ż")))))
+        ;; the printed form re-reads the multi-line emoji string unchanged
+        (expect (string? stdout))
+        (expect (clojure.string/includes? stdout "👆"))
+        (expect (clojure.string/includes? stdout "🌳"))
+        (expect (clojure.string/includes? stdout "Pełne ł ó ż")))))
 
 (defdescribe final-answer-gate-test
              ;; `final-answer-gate-error` itself carries ONLY extension
@@ -4688,54 +4691,58 @@
           (expect (not (str/includes? m ";;")))))))
 
 
-(defdescribe only-python-execution-is-advertised-test
-             ;; ONE tool reaches the provider. Every other capability is already a bare Python
-             ;; name inside that sandbox — found with `apropos(pattern)`, read with `doc(name)`,
-             ;; called from inside a block — so a second JSON schema advertises a door the
-             ;; model can open anyway and charges for it on every single request.
-             (it
-               "advertises exactly one tool, and it is python_execution"
-               (let [tools
-                     (@#'lp/model-facing-tools nil)
+(defdescribe
+  only-python-execution-is-advertised-test
+  ;; ONE tool reaches the provider. Every other capability is already a bare Python
+  ;; name inside that sandbox — found with `apropos(pattern)`, read with `doc(name)`,
+  ;; called from inside a block — so a second JSON schema advertises a door the
+  ;; model can open anyway and charges for it on every single request.
+  (it
+    "advertises exactly one tool, and it is python_execution"
+    (let [tools
+          (@#'lp/model-facing-tools nil)
 
-                     tool
-                     (first tools)]
+          tool
+          (first tools)]
 
-                 (expect (= ["python_execution"] (mapv :name tools)))
-                 ;; No extension can add a tool: `model-facing-tools` does not take extensions
-                 ;; at all any more, which is the proof rather than an assertion about them.
-                 (expect (= 1 (count tools)))
-                 ;; Regression: `github-copilot`/`gpt-5.6-terra` 400ed the WHOLE request over a
-                 ;; `:strict true` flag Vis derived from Anthropic's own grammar subset, so every
-                 ;; turn failed before a token. The one tool is advertised unconstrained.
-                 (expect (not-any? :strict tools))
-                 ;; The raw-result contract is FOLDED into the description exactly once, and the
-                 ;; separate `:result` key never reaches a provider.
-                 (expect (= 1 (count (re-seq #"Raw result:" (:description tool)))))
-                 (expect (not (contains? tool :result)))
-                 ;; One tool, one argument: the whole model-facing schema surface.
-                 (expect (= {:type "object"
-                             :properties {"code" {:type "string" :description "Python source."}}
-                             :required ["code"]
-                             :additionalProperties false}
-                            (:schema tool)))
-                 (doseq [fact ["project packages need a project REPL" "plain Python"
-                               "errors surface"
-                               ;; With no result store left, the description states the one rule that
-                               ;; replaces it: what you did not print is gone when the block ends.
-                               "gone from the transcript once the block ends"
-                               ;; The sleep/poll prohibition lives HERE and nowhere else: the core
-                               ;; prompt deliberately dropped its duplicate copy.
-                               "`sh.logs()`" "no tool waits for you"
-                               ;; Sandbox Python does NOT close a dropped file handle, so an
-                               ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
-                               ;; enough of them and no `shell` child can be spawned at
-                               ;; all. The sandbox reclaims and caps them
-                               ;; (`env-python-fd-test`); the description says so, because the
-                               ;; cheapest fix is the block never leaking in the first place.
-                               "Close what you open" "with open(...)" "leaked descriptors"
-                               "VIS_PY_MAX_OPEN_FILES"]]
-                   (expect (str/includes? (:description tool) fact))))))
+      (expect (= ["python_execution"] (mapv :name tools)))
+      ;; No extension can add a tool: `model-facing-tools` does not take extensions
+      ;; at all any more, which is the proof rather than an assertion about them.
+      (expect (= 1 (count tools)))
+      ;; Regression: `github-copilot`/`gpt-5.6-terra` 400ed the WHOLE request over a
+      ;; `:strict true` flag Vis derived from Anthropic's own grammar subset, so every
+      ;; turn failed before a token. The one tool is advertised unconstrained.
+      (expect (not-any? :strict tools))
+      ;; The raw-result contract is FOLDED into the description exactly once, and the
+      ;; separate `:result` key never reaches a provider.
+      (expect (= 1 (count (re-seq #"Raw result:" (:description tool)))))
+      (expect (not (contains? tool :result)))
+      ;; One tool, one argument: the whole model-facing schema surface.
+      (expect (= {:type "object"
+                  :properties {"code" {:type "string" :description "Python source."}}
+                  :required ["code"]
+                  :additionalProperties false}
+                 (:schema tool)))
+      (doseq [fact
+              ["project packages need a project REPL" "plain Python" "errors surface"
+               ;; The sandbox has ONE success channel. The runtime used to hand a
+               ;; bare trailing expression's value back as a second result, so the
+               ;; one tool the model is given has to say that print is all there is.
+               "`print(...)` is the ONLY channel back" "a bare trailing expression is never echoed"
+               ;; With no result store left, the description states the one rule that
+               ;; replaces it: what you did not print is gone when the block ends.
+               "gone from the transcript once the block ends"
+               ;; The sleep/poll prohibition lives HERE and nowhere else: the core
+               ;; prompt deliberately dropped its duplicate copy.
+               "`sh.logs()`" "no tool waits for you"
+               ;; Sandbox Python does NOT close a dropped file handle, so an
+               ;; unclosed `open(...)` leaks a PROCESS descriptor until a GC —
+               ;; enough of them and no `shell` child can be spawned at
+               ;; all. The sandbox reclaims and caps them
+               ;; (`env-python-fd-test`); the description says so, because the
+               ;; cheapest fix is the block never leaking in the first place.
+               "Close what you open" "with open(...)" "leaked descriptors" "VIS_PY_MAX_OPEN_FILES"]]
+        (expect (str/includes? (:description tool) fact))))))
 
 (def ^:private settle-gather-futures! (deref #'lp/settle-gather-futures!))
 

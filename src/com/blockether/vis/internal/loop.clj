@@ -3518,19 +3518,22 @@
         (fn [s]
           (form/clip-to-wire s "narrow next time (slice/filter before reading)."))
 
-        ;; Each form carries exactly ONE success channel (the engine emits one or
-        ;; the other, never both): `:result` = the block's returned value when it
-        ;; printed nothing (rendered), `:stdout` = what it print()ed. An `:error`
-        ;; replaces the RETURN — never the printed output. A raise ends the block,
-        ;; not what it already produced: `run-async-program` hangs the partial
-        ;; `:stdout` off its failure branch and the store and the human card both
-        ;; keep it, so the model gets it too. Otherwise one bad name at the end of a
-        ;; block that batched several calls threw away every call that had already
+        ;; A form has exactly ONE success channel and it is `:stdout` — what the
+        ;; block print()ed. A python block NEVER carries a `:result`: the runtime
+        ;; DISCARDS a bare trailing expression's value, so the model sees what was
+        ;; printed and nothing else. The `:result` branch below is for the
+        ;; HOST-AUTHORED forms, which have no stdout of their own: a `!cmd` shell
+        ;; card, a slash envelope, a native tool entry. An `:error` replaces the
+        ;; RETURN — never the printed output. A raise ends the block, not what it
+        ;; already produced: `run-async-program` hangs the partial `:stdout` off
+        ;; its failure branch and the store and the human card both keep it, so
+        ;; the model gets it too. Otherwise one bad name at the end of a block
+        ;; that batched several calls threw away every call that had already
         ;; printed, and the whole round had to be run again. Printed output first,
-        ;; then the failure, the way a terminal reads. The ERROR envelope is the one
-        ;; internal keyword-keyed shape rendered here — `error->display` renders it
-        ;; as clean, LLM-legible text with REAL newlines (source excerpt + caret
-        ;; kept readable, never an escaped one-line literal).
+        ;; then the failure, the way a terminal reads. The ERROR envelope is the
+        ;; one internal keyword-keyed shape rendered here — `error->display`
+        ;; renders it as clean, LLM-legible text with REAL newlines (source
+        ;; excerpt + caret kept readable, never an escaped one-line literal).
         stdout-wire
         (fn [f]
           (when-not (str/blank? (str (:stdout f))) (clip-wire (elide-table-fences (:stdout f)))))
@@ -4012,10 +4015,11 @@
          iters)))))
 
 (defn- form-wire-chars
-  "Approximate the wire SIZE (chars) one form contributes — error / native result
-   / stdout — capped at `form/MAX_FORM_WIRE_CHARS` exactly as the real renderer
-   clips it, so a giant read can't over-rank itself. Strings count directly; a
-   non-string result is serialized the way the wire renders it. Pure."
+  "Approximate the wire SIZE (chars) one form contributes — error / a
+   HOST-AUTHORED result (`!cmd` card, slash envelope, native tool entry; a python
+   form has none) / stdout — capped at `form/MAX_FORM_WIRE_CHARS` exactly as the
+   real renderer clips it, so a giant read can't over-rank itself. Strings count
+   directly; a non-string result is serialized the way the wire renders it. Pure."
   [f]
   (let [n (long (cond (:summary? f) 0
                       (some? (:error f)) (count (str (:error f)))
@@ -4072,10 +4076,12 @@
   {:name "python_execution"
    :description
    (str
-     "Run Python in the session sandbox — the only call. Batch, filter and chain work here, then print "
-     "only what the answer needs: `await gather(...)` runs independent calls together. State persists; "
+     "Run Python in the session sandbox — the only call. `print(...)` is the ONLY channel back: a value "
+     "the program does not print is DISCARDED — a bare trailing expression is never echoed — so the "
+     "block ends by printing exactly what the answer needs. Batch, filter and chain work here: "
+     "`await gather(...)` runs independent calls together. State persists; "
      "project packages need a project REPL. "
-     "Only `print` returns; bare expressions drop and errors surface. Every capability is a plain Python "
+     "Nothing is silent: errors surface whether the block printed or not. Every capability is a plain Python "
      "name here, so a result is an ordinary value you keep in a variable — but a value you never printed "
      "is gone from the transcript once the block ends. A shell is WATCHED here: `sh = await shell(...)`, then a BOUNDED "
      "loop that calls `sh.logs()` on the handle it got back and breaks on what it read (an error line, "
@@ -4086,7 +4092,7 @@
      (when-let [cap (python-execution-capability-line caps)]
        (str " " cap)))
    :result
-   "Exactly captured `print(...)` output (empty string when none); evaluation failures are failed tool results, not result objects."
+   "Exactly captured `print(...)` output (empty string when the block printed nothing — an unprinted value does not come back); evaluation failures are failed tool results, not result objects."
    :schema {:type "object"
             :properties {"code" {:type "string" :description "Python source."}}
             :required ["code"]

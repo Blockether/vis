@@ -36,10 +36,10 @@
         (let [{:keys [exit out]} (run-src ctx "print('hi', 1 + 1)")]
           (expect (= 0 exit))
           (expect (re-find #"hi 2" out))))
-    (it "a bare trailing expression echoes its repr (CPython-like)"
+    (it "a bare trailing expression prints nothing: print is the one channel"
         (let [{:keys [exit out]} (run-src ctx "40 + 2")]
           (expect (= 0 exit))
-          (expect (re-find #"42" out))))
+          (expect (= "" out))))
     (it "a raised exception renders the error and exits 1"
         (let [{:keys [exit out]} (run-src ctx "raise ValueError('boom')")]
           (expect (= 1 exit))

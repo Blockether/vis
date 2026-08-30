@@ -1892,14 +1892,6 @@
     (let [s (baos->str baos)]
       (when-not (str/blank? s) s))))
 
-(defn- module-value?
-  "True when `v` is the GraalPy `__main__` module Value. A bare statement
-   (`print(...)`, `import os`, …) eval'd as an expression yields the module
-   object rather than a value; surfacing `<module '__main__'>` as a form result
-   is noise, so callers scrub it to nil (and use stdout instead)."
-  [v]
-  (and (instance? Value v) (str/starts-with? (str v) "<module ")))
-
 (def ^:private default-denied-domains
   "Hosts ALWAYS blocked when the sandbox has network — even under an `*` allowlist.
    Cloud-metadata endpoints are the classic SSRF target (credentials / instance
@@ -3296,7 +3288,7 @@
    an `async def` (with `global` decls for its assigned names so they persist in
    the interpreter), the trampoline `__vis_drive__` drives it, and `gather`
    overlaps awaitables on the bounded host platform pool. Returns the FLAT sum
-   `{:stdout <printed>}` | `{:result <value>}` | `{:error <raised> :stdout?}`."
+   `{:stdout <printed>}` | `{:error <raised> :stdout?}`."
   [^Context ctx ^Value g code]
   (let [baos
         (ctx-stdout-baos ctx)
@@ -3329,17 +3321,12 @@
                     #'mpl-capture/*attachment-sink* sink
                     #'mpl-capture/*outbox-seen* outbox-seen}
       (try
-        ;; Run the whole-block coroutine; it stashes the program's value in
-        ;; `__vis_async_result__` and prints to `baos`. (Globals it assigns
-        ;; persist NATURALLY in the live interpreter — no pickle, no rebind.)
+        ;; Run the whole-block coroutine; it prints to `baos` and its own value is
+        ;; DISCARDED — the block's only success channel is what it printed.
+        ;; (Globals it assigns persist NATURALLY in the live interpreter — no
+        ;; pickle, no rebind.)
         (.execute run-async (object-array [code]))
-        (let [res0
-              (->clj (.getMember g "__vis_async_result__"))
-
-              res
-              (if (module-value? res0) nil res0)
-
-              out
+        (let [out
               (read-out)
 
               ;; Artifacts the block PRODUCED (matplotlib show/savefig, or an
@@ -3352,7 +3339,6 @@
               guard-event
               (first (when guard-events @guard-events))]
 
-          (.putMember g "__vis_async_result__" nil) ;; clear stash for the next turn
           (if guard-event
             (cond-> {:error (syntax-guard-op-error ctx code guard-event)}
               out
@@ -3364,21 +3350,16 @@
               ;; A clean block ENDS any failure streak, so the loop breaker only ever
               ;; counts CONSECUTIVE identical failures.
               (clear-block-failures! ctx)
-              ;; FLAT sum type — success is ONE CONTEXT channel, never both:
-              ;;   - printed output (`:stdout`) → the python_execution result; OR
-              ;;   - the returned value (`:result`) → a block that returned without printing.
-              ;; Printed output WINS. `:attachments` ride alongside EITHER — a
+              ;; FLAT sum type — success is ONE channel: what the block PRINTED.
+              ;; A block that printed nothing carries no output at all; its own
+              ;; value is never echoed. `:attachments` ride alongside — a
               ;; produced-artifact channel, not context.
-              (if out
-                (cond-> {:stdout out}
-                  attachments
-                  (assoc :attachments attachments))
-                (cond-> {}
-                  attachments
-                  (assoc :attachments attachments)
+              (cond-> {}
+                out
+                (assoc :stdout out)
 
-                  (some? res)
-                  (assoc :result res))))))
+                attachments
+                (assoc :attachments attachments)))))
         (catch PolyglotException e
           ;; FLAT sum type — failure branch. The raised error IS the result, in
           ;; ONE place; any partial stdout (and any artifact produced before it)
@@ -3429,9 +3410,11 @@
   "Evaluate one Python `code` block in `python-context` as ONE WHOLE-BLOCK
    coroutine, returning the FLAT sum-typed outcome:
 
-     {:stdout <printed>}   ; SUCCESS — python_execution (what it print()ed)
-     {:result <value>}     ; SUCCESS — the block's returned value (nothing printed)
+     {:stdout <printed>}   ; SUCCESS — the python_execution result (what it print()ed)
      {:error  <op-error>}  ; FAILURE — the raised error IS the result
+
+   A block that printed nothing carries NEITHER key: its own value is discarded,
+   so `print()` is the only way anything comes back.
 
    `__vis_run_async__` AST-wraps the block in an `async def`, AUTO-SETTLES every
    bare tool-call STATEMENT at every depth (so `grep(x)` without `await` runs even
@@ -3455,13 +3438,13 @@
         (strip-protected-imports ctx g code)]
 
     (if-let [err (empty-block-error ctx code)]
-      {:result nil :forms [{:source code :error err}] :error err}
+      {:forms [{:source code :error err}] :error err}
       ;; ONE whole-block path. `__vis_run_async__` AST-wraps the program in an
       ;; `async def`, AUTO-SETTLES every bare tool-call STATEMENT at every depth (so
       ;; `grep(x)` without `await` RUNS even inside `try:` or a `def`), drives it as
       ;; a single coroutine, and reports
       ;; any error against the WHOLE source. The block runs as the model wrote it,
-      ;; so its outcome is the flat `{:stdout}` | `{:result}` | `{:error}` sum.
+      ;; so its outcome is the flat `{:stdout}` | `{:error}` sum.
       (run-async-program ctx g code))))
 
 ;; =============================================================================

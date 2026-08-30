@@ -14,7 +14,8 @@
    be crossed — reaching it with handles genuinely held open raises a normal
    Python `OSError(EMFILE)` naming the fix, in the block that caused it, instead
    of leaving the session to die later on an unrelated toolchain error."
-  (:require [com.blockether.vis.test-python-context :as tpc]
+  (:require [charred.api :as json]
+            [com.blockether.vis.test-python-context :as tpc]
             [clojure.string :as str]
             [com.blockether.vis.internal.env-python :as ep]
             [lazytest.core :refer [defdescribe expect it]])
@@ -25,6 +26,13 @@
            [java.nio.charset StandardCharsets]
            [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
+
+(defn- printed
+  "The JSON value a block PRINTED. A python block has ONE success channel - what
+   it printed - so a test that needs a value back ends its block with
+   `print(json.dumps(...))` and reads it here."
+  [r]
+  (json/read-json (str/trim (str (:stdout r)))))
 
 (defn- open-fd-count
   "Descriptors THIS process holds, straight from the JVM. The sandbox cannot read
@@ -78,35 +86,35 @@
       ;; only survive if dropped descriptors are actually being reclaimed.
       (let [r (ep/run-python-block (sandbox)
                                    (str "for _ in range(40):\n" "    h = open(F)\n"
-                                        "    del h\n" "len(__vis_fd_registry__)")
+                                        "    del h\n" "print(json.dumps(len(__vis_fd_registry__)))")
                                    "t1/i2")]
         (expect (nil? (:error r)))
-        (expect (>= 8 (:result r)))))
+        (expect (>= 8 (printed r)))))
   (it "reclaims across blocks, so one leaking block cannot poison the next"
       (let [ctx (sandbox)]
         (dotimes [i 6]
           (ep/run-python-block ctx "h = open(F)\ndel h" (str "t1/i" (+ 2 i))))
-        (let [r (ep/run-python-block ctx "len(__vis_fd_registry__)" "t1/i9")]
+        (let [r (ep/run-python-block ctx "print(json.dumps(len(__vis_fd_registry__)))" "t1/i9")]
           (expect (nil? (:error r)))
-          (expect (>= 8 (:result r))))))
+          (expect (>= 8 (printed r))))))
   (it "never refuses honest code that closes what it opens"
       ;; `with` returns every descriptor immediately: 64 opens against a ceiling
       ;; of 8 must be entirely unremarkable.
       (let [r (ep/run-python-block (sandbox)
                                    (str "n = 0\n"
                                         "for _ in range(64):\n" "    with open(F) as fh:\n"
-                                        "        n += len(fh.read())\n" "n")
+                                        "        n += len(fh.read())\n" "print(json.dumps(n))")
                                    "t1/i2")]
         (expect (nil? (:error r)))
-        (expect (= 384 (:result r)))))
+        (expect (= 384 (printed r)))))
   (it "still flushes a dropped writable handle, so what a block wrote is on disk"
       ;; Reclamation must not cost the write-flush guarantee: the block-end
       ;; flush runs BEFORE the sweep.
       (let [ctx (sandbox)]
         (ep/run-python-block ctx "open(W, 'w').write('hello')" "t1/i2")
-        (let [r (ep/run-python-block ctx "open(W).read()" "t1/i3")]
+        (let [r (ep/run-python-block ctx "print(json.dumps(open(W).read()))" "t1/i3")]
           (expect (nil? (:error r)))
-          (expect (= "hello" (:result r)))))))
+          (expect (= "hello" (printed r)))))))
 
 (defdescribe
   sandbox-fd-ceiling-test
@@ -129,16 +137,19 @@
                                         "kept = []\n" "code = None\n"
                                         "try:\n" "    for _ in range(64):\n"
                                         "        kept.append(open(F))\n" "except OSError as e:\n"
-                                        "    code = e.errno\n" "code == errno.EMFILE")
+                                        "    code = e.errno\n"
+                                        "print(json.dumps(code == errno.EMFILE))")
                                    "t1/i2")]
         (expect (nil? (:error r)))
-        (expect (true? (:result r)))))
+        (expect (true? (printed r)))))
   (it "ships a default ceiling well under any process limit, sweeping at half"
       (tpc/with-own [ctx {}]
-                    (let [r
-                          (ep/run-python-block ctx "(__vis_fd_max__, __vis_fd_sweep_at__)" "t1/i1")]
+                    (let [r (ep/run-python-block
+                              ctx
+                              "print(json.dumps([__vis_fd_max__, __vis_fd_sweep_at__]))"
+                              "t1/i1")]
                       (expect (nil? (:error r)))
-                      (expect (= [512 256] (:result r)))))))
+                      (expect (= [512 256] (printed r)))))))
 
 (defdescribe
   sandbox-fd-hardening-test
@@ -166,14 +177,14 @@
                                  (str "import builtins, io, pathlib\n"
                                       "for _ in range(12):\n" "    h = pathlib.Path(F).open()\n"
                                       "    h = io.open(F)\n" "    h = builtins.open(F)\n"
-                                      "    del h\n" "len(__vis_fd_registry__)")
+                                      "    del h\n" "print(json.dumps(len(__vis_fd_registry__)))")
                                  "t1/i2")
 
             grown
             (- (open-fd-count) before)]
 
         (expect (nil? (:error r)))
-        (expect (>= 8 (:result r)))
+        (expect (>= 8 (printed r)))
         (expect (> 12 grown))))
   (it "tracks the layer that owns the descriptor, not the wrapper around it"
       ;; `open()` hands back a STACK (TextIOWrapper -> BufferedReader -> FileIO) and
@@ -183,16 +194,17 @@
       ;; descriptor the block was still reading through. The identity check is the
       ;; contract itself and needs no collection to happen; the read is the
       ;; consequence.
-      (let [r (ep/run-python-block
-                (sandbox)
-                (str "import gc\n"
-                     "h = open(F, 'rb')\n" "raw = h.raw\n"
-                     "fd = h.fileno()\n" "owned = __vis_fd_registry__[fd][0]() is raw\n"
-                     "del h\n" "gc.collect()\n"
-                     "__vis_reclaim_fds__(True)\n" "[owned, raw.read().decode()]")
-                "t1/i2")]
+      (let [r (ep/run-python-block (sandbox)
+                                   (str "import gc\n"
+                                        "h = open(F, 'rb')\n" "raw = h.raw\n"
+                                        "fd = h.fileno()\n"
+                                        "owned = __vis_fd_registry__[fd][0]() is raw\n"
+                                        "del h\n" "gc.collect()\n"
+                                        "__vis_reclaim_fds__(True)\n"
+                                        "print(json.dumps([owned, raw.read().decode()]))")
+                                   "t1/i2")]
         (expect (nil? (:error r)))
-        (expect (= [true "probe\n"] (:result r)))))
+        (expect (= [true "probe\n"] (printed r)))))
   (it "leaves a borrowed descriptor to its owner"
       ;; `closefd=False` means the wrapper only BORROWED an fd the block opened
       ;; itself. Tracking it closes a descriptor the block still owns and still
@@ -203,10 +215,10 @@
                      "h = open(fd, 'rb', closefd=False)\n" "tracked = fd in __vis_fd_registry__\n"
                      "del h\n" "gc.collect()\n"
                      "__vis_reclaim_fds__(True)\n" "out = os.read(fd, 5).decode()\n"
-                     "os.close(fd)\n" "[tracked, out]")
+                     "os.close(fd)\n" "print(json.dumps([tracked, out]))")
                 "t1/i2")]
         (expect (nil? (:error r)))
-        (expect (= [false "probe"] (:result r)))))
+        (expect (= [false "probe"] (printed r)))))
   (it "keeps its state and its real opener across a runtime reinstall"
       ;; `globals().clear()` is legal Python and makes `ensure-async-runtime!`
       ;; re-eval this whole preamble in the SAME globals. A plain `x = {}` there
@@ -218,27 +230,27 @@
             (sandbox)
 
             f
-            (:result (ep/run-python-block ctx "F" "t1/i2"))
+            (printed (ep/run-python-block ctx "print(json.dumps(F))" "t1/i2"))
 
             _
             (ep/run-python-block ctx "for _ in range(6):\n    h = open(F)\n    del h" "t1/i3")
 
             before
-            (ep/run-python-block ctx "id(__vis_fd_registry__)" "t1/i4")
+            (ep/run-python-block ctx "print(json.dumps(id(__vis_fd_registry__)))" "t1/i4")
 
             _
             (ep/run-python-block ctx "globals().clear()" "t1/i5")
 
             r
-            (ep/run-python-block ctx (str "open(" (pr-str f) ").read()") "t1/i6")
+            (ep/run-python-block ctx (str "print(json.dumps(open(" (pr-str f) ").read()))") "t1/i6")
 
             after
-            (ep/run-python-block ctx "id(__vis_fd_registry__)" "t1/i7")]
+            (ep/run-python-block ctx "print(json.dumps(id(__vis_fd_registry__)))" "t1/i7")]
 
         (expect (nil? (:error r)))
-        (expect (= "probe\n" (:result r)))
+        (expect (= "probe\n" (printed r)))
         (expect (nil? (:error after)))
-        (expect (= (:result before) (:result after)))))
+        (expect (= (printed before) (printed after)))))
   (it "reclaims the raw doors, which never pass through any `open`"
       ;; `io.FileIO(p)` IS the descriptor-owning object and `io.open_code(p)` hands
       ;; one back: neither goes through `open`, so both leaked one descriptor per
@@ -260,14 +272,15 @@
                                       "        c.fileno() in __vis_fd_registry__]\n"
                                       "h.close()\n" "c.close()\n"
                                       "for _ in range(12):\n" "    g = io.FileIO(F)\n"
-                                      "    del g\n" "seen + [len(__vis_fd_registry__) <= 8]")
+                                      "    del g\n"
+                                      "print(json.dumps(seen + [len(__vis_fd_registry__) <= 8]))")
                                  "t1/i2")
 
             grown
             (- (open-fd-count) before)]
 
         (expect (nil? (:error r)))
-        (expect (= [true true true] (:result r)))
+        (expect (= [true true true] (printed r)))
         (expect (> 12 grown))))
   (it "keeps `isinstance` honest after taking over `io.FileIO`"
       ;; The shim is a SUBCLASS, so the raw built INSIDE `open` is not one of its
@@ -280,10 +293,10 @@
                                         "       issubclass(io.FileIO, io.RawIOBase),\n"
                                         "       isinstance(io.FileIO(F), io.FileIO),\n"
                                         "       pathlib.Path(F).read_text()]\n"
-                                        "raw.close()\n" "out")
+                                        "raw.close()\n" "print(json.dumps(out))")
                                    "t1/i2")]
         (expect (nil? (:error r)))
-        (expect (= [true true true "probe\n"] (:result r)))))
+        (expect (= [true true true "probe\n"] (printed r)))))
   (it "leaves a descriptor borrowed through `io.FileIO` to its owner"
       ;; Same contract as `open(fd, closefd=False)`, at the raw door: the block
       ;; opened that fd itself and still reads through it after the wrapper dies.
@@ -294,10 +307,10 @@
                      "h = io.FileIO(fd, 'r', False)\n" "tracked = fd in __vis_fd_registry__\n"
                      "del h\n" "gc.collect()\n"
                      "__vis_reclaim_fds__(True)\n" "out = os.read(fd, 5).decode()\n"
-                     "os.close(fd)\n" "[tracked, out]")
+                     "os.close(fd)\n" "print(json.dumps([tracked, out]))")
                 "t1/i2")]
         (expect (nil? (:error r)))
-        (expect (= [false "probe"] (:result r)))))
+        (expect (= [false "probe"] (printed r)))))
   (it "reclaims a HOST resource a block dropped, not only descriptors it opened"
       ;; `sqlite3` hands the block a Python object wrapping a host connection, and
       ;; dropping that object left the connection — and its descriptor — open for
@@ -316,14 +329,14 @@
                                       "    c = sqlite3.connect(W + str(i) + '.db')\n"
                                       "    c.execute('create table t(x)')\n"
                                       "    del c\n" "gc.collect()\n"
-                                      "__vis_reclaim_fds__(True)\n" "'done'")
+                                      "__vis_reclaim_fds__(True)\n" "print(json.dumps('done'))")
                                  "t1/i2")
 
             grown
             (- (open-fd-count) before)]
 
         (expect (nil? (:error r)))
-        (expect (= "done" (:result r)))
+        (expect (= "done" (printed r)))
         (expect (> 6 grown)))))
 (defn- loopback-server
   "A loopback HTTP server answering every request with `status` and a 5-byte body.
@@ -386,10 +399,10 @@
                      "    c = socket.create_connection(('127.0.0.1', port), timeout=5)\n"
                      "    peer, _addr = srv.accept()\n"
                      "    live.append(peer)\n" "    del c\n"
-                     "gc.collect()\n" "[__vis_reclaim_fds__(True), len(live)]")
+                     "gc.collect()\n" "print(json.dumps([__vis_reclaim_fds__(True), len(live)]))")
                 "t1/i2")]
         (expect (nil? (:error r)))
-        (expect (= [6 6] (:result r)))))
+        (expect (= [6 6] (printed r)))))
   (it "never closes a number another socket has taken over"
       ;; `fstat` on a socket reports `st_dev == st_ino == 0` — every socket looks
       ;; like every other one — so the file identity would have closed the JVM's
@@ -408,10 +421,10 @@
                   "__vis_fd_registry__[fd] = (weakref.ref(stale), ('vis-socket', None, None))\n"
                   "del stale\n"
                   "gc.collect()\n" "closed = __vis_reclaim_fds__(True)\n"
-                  "c.sendall(b'ping')\n" "[peer.recv(4).decode(), closed]")
+                  "c.sendall(b'ping')\n" "print(json.dumps([peer.recv(4).decode(), closed]))")
                 "t1/i2")]
         (expect (nil? (:error r)))
-        (expect (= ["ping" 0] (:result r)))))
+        (expect (= ["ping" 0] (printed r)))))
   (it "counts a connection against the ceiling, which never saw one before"
       ;; The EMFILE ceiling exists so a leak fails HERE, with the message naming
       ;; the fix, instead of wedging the session later on a `shell` that can no
@@ -427,10 +440,11 @@
                   "try:\n" "    for _ in range(24):\n"
                   "        held.append(socket.create_connection(('127.0.0.1', port), timeout=5))\n"
                   "except OSError as e:\n"
-                  "    err = str(e)\n" "[len(held) < 24, 'too many open files' in err]")
+                  "    err = str(e)\n"
+                  "print(json.dumps([len(held) < 24, 'too many open files' in err]))")
                 "t1/i2")]
         (expect (nil? (:error r)))
-        (expect (= [true true] (:result r)))))
+        (expect (= [true true] (printed r)))))
   (it "leaves no connection behind after HTTP through the `requests` shim"
       ;; Every HTTP call in the sandbox rides urllib -> http.client -> a socket,
       ;; and a 4xx used to hand the block a live connection nobody closed: urllib
@@ -445,12 +459,12 @@
                         "codes = [requests.get(URL).status_code for _ in range(12)]\n"
                         "gc.collect()\n"
                         (live-socket-entries)
-                        "[codes[0], len(codes), kept]")
+                        "print(json.dumps([codes[0], len(codes), kept]))")
                    "t1/i2")
                  (finally (.stop server 0)))]
 
         (expect (nil? (:error r)))
-        (expect (= [404 12 0] (:result r)))))
+        (expect (= [404 12 0] (printed r)))))
   (it "reclaims a response whose body the block never read"
       ;; The leak in its rawest form (measured on the shipped build: 20 dropped
       ;; unread responses = +63 process descriptors, untouched by two
@@ -465,12 +479,12 @@
                                            "    ur.urlopen(URL, timeout=5)\n"
                                            "gc.collect()\n"
                                            (live-socket-entries)
-                                           "[closed >= 6, kept]")
+                                           "print(json.dumps([closed >= 6, kept]))")
                                       "t1/i2")
                  (finally (.stop server 0)))]
 
         (expect (nil? (:error r)))
-        (expect (= [true 0] (:result r)))))
+        (expect (= [true 0] (printed r)))))
   (it "keeps the socket doors sane across a runtime reinstall"
       ;; These doors are METHODS on a class the reinstall does not own: capturing
       ;; `socket.socket.__init__` a second time captures the WRAPPER, and the next
@@ -490,8 +504,8 @@
                    "srv.listen(4)\n"
                    "c = socket.create_connection(('127.0.0.1', srv.getsockname()[1]), timeout=5)\n"
                    "tracked = c.fileno() in __vis_fd_registry__\n" "del c\n"
-                   "gc.collect()\n" "[tracked, __vis_reclaim_fds__(True)]")
+                   "gc.collect()\n" "print(json.dumps([tracked, __vis_reclaim_fds__(True)]))")
               "t1/i3")]
 
         (expect (nil? (:error r)))
-        (expect (= [true 1] (:result r))))))
+        (expect (= [true 1] (printed r))))))

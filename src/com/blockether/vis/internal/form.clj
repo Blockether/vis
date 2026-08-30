@@ -139,9 +139,12 @@
 (defn result-display
   "The human-channel DISPLAY for one executed form as `{:summary :body}` — the
    ONE surface both the TUI and the web render, so they're unified:
+     - `:stdout` → verbatim as the body, no summary. This is what a PYTHON form
+       carries: print is its one channel, and a value it never printed does not
+       reach the form at all;
      - a `:result` value → pretty-printed (Python-literal, fenced) as the body,
-       no summary;
-     - `:stdout` → verbatim as the body, no summary.
+       no summary. Only a HOST-AUTHORED form has one (a `!cmd` shell card, a
+       slash envelope, a native tool entry), because it has no stdout of its own.
    A wall-clock TIMEOUT gets NO card of its own: it is an error like any other, so
    the channel paints `:error` — `Timeout (300s)` — where it paints every failure,
    and whatever the block printed before the wall stays its ordinary stdout body.

@@ -3353,13 +3353,14 @@
 (defn- run-python-source!
   "Evaluate one Python source block in `ctx`, rendering its outcome to the
    real terminal. Returns the process exit code (0 ok, 1 on a raised error).
-   Renders like a shell REPL: captured `print(...)` output surfaces; with no
-   stdout but a value, the value's repr is echoed (CPython-like)."
+   The sandbox has ONE success channel, so what surfaces here is exactly what the
+   block `print(...)`ed — a bare trailing expression is never echoed, because the
+   CLI and the model read the same outcome and neither may see more than the
+   other."
   [ctx code]
-  (let [{:keys [stdout result error]} (env/run-python-block ctx code)]
+  (let [{:keys [stdout error]} (env/run-python-block ctx code)]
     (cond error (do (stdout! (or (:message error) (pr-str error))) 1)
           (and (some? stdout) (seq stdout)) (do (write-stdout! stdout) 0)
-          (some? result) (do (stdout! (pr-str result)) 0)
           :else 0)))
 
 (defn- python-repl!

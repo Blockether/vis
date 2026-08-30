@@ -266,8 +266,8 @@
           (expect (= target (get-in result [:error :data :path])))
           (expect (= original (slurp target)))
           ;; The rejection belongs to this block only; a later block is clean.
-          (let [next-result (env-python/run-python-block python-context "40 + 2")]
-            (expect (= 42 (:result next-result)))
+          (let [next-result (env-python/run-python-block python-context "print(40 + 2)")]
+            (expect (= "42\n" (:stdout next-result)))
             (expect (nil? (:error next-result)))))
         (finally (.close ^Context python-context true)
                  (.close ^org.graalvm.polyglot.Engine python-engine))))))
