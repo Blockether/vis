@@ -29,6 +29,10 @@ import {
   type ComposerResponseControlsModel,
 } from "../components/ComposerResponseControls";
 import {
+  ComposerSuggestions,
+  composerSuggestionListId,
+} from "../components/ComposerSuggestions";
+import {
   artifactsFromIndex,
   collapseArtifactVersions,
   collectArtifacts,
@@ -43,7 +47,6 @@ import {
   ComposerButton,
   CopyChip,
   LoadMore,
-  OptionRow,
   Spinner,
 } from '../components/ui';
 import {
@@ -4775,67 +4778,18 @@ export function SessionScreen({
             />
           )}
 
-          {fileMatches.length > 0 && (
-            <div
-              id="file-mention-list"
-              role="listbox"
-              aria-label="File mentions"
-              className="absolute bottom-full left-[max(0.5rem,env(safe-area-inset-left))] right-[max(0.5rem,env(safe-area-inset-right))] mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto rounded-panel border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:left-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:right-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
-            >
-              <div className="bg-dialog-title px-3 py-2 font-mono text-meta font-bold text-dialog-title-foreground">
-                Attach a file
-              </div>
-              {fileMatches.map((file, index) => (
-                <OptionRow
-                  key={file.name}
-                  isActive={index === fileIndex}
-                  className="grid-cols-[1fr_auto] items-center"
-                  onClick={() => completeFile(file.name)}
-                >
-                  <code className="truncate font-mono text-ui font-semibold text-accent-ink">
-                    {file.name}
-                  </code>
-                  <span className="shrink-0 font-mono text-chip text-dialog-hint">
-                    {[
-                      file.size,
-                      file.age,
-                      file.status && file.status !== "clean" ? file.status : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </span>
-                </OptionRow>
-              ))}
-            </div>
-          )}
-
-          {slashMatches.length > 0 && (
-            <div
-              id="slash-command-list"
-              role="listbox"
-              aria-label="Slash commands"
-              className="absolute bottom-full left-[max(0.5rem,env(safe-area-inset-left))] right-[max(0.5rem,env(safe-area-inset-right))] mb-1.5 max-h-[min(20rem,55dvh)] overflow-y-auto rounded-panel border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none sm:left-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:right-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:shadow-[8px_8px_0_var(--dialog-shadow)]"
-            >
-              <div className="bg-dialog-title px-3 py-2 font-mono text-meta font-bold text-dialog-title-foreground">
-                Slash commands
-              </div>
-              {slashMatches.map((command, index) => (
-                <OptionRow
-                  key={command.name}
-                  isActive={index === slashIndex}
-                  className="grid-cols-[7.5rem_1fr] items-start sm:grid-cols-[10rem_1fr]"
-                  onClick={() => completeSlash(command)}
-                >
-                  <code className="break-words font-mono text-ui font-semibold text-accent-ink">
-                    {command.name}
-                  </code>
-                  <span className="line-clamp-2 text-meta text-dialog-hint">
-                    {command.doc}
-                  </span>
-                </OptionRow>
-              ))}
-            </div>
-          )}
+          <ComposerSuggestions
+            kind="files"
+            items={fileMatches}
+            selectedIndex={fileIndex}
+            onSelect={(file) => completeFile(file.name)}
+          />
+          <ComposerSuggestions
+            kind="slashes"
+            items={slashMatches}
+            selectedIndex={slashIndex}
+            onSelect={completeSlash}
+          />
 
           <QueuedTurnsTray
             key={sid}
@@ -4942,9 +4896,9 @@ export function SessionScreen({
                 // so the announced popup must name whichever one is actually open.
                 aria-controls={
                   fileMatches.length
-                    ? "file-mention-list"
+                    ? composerSuggestionListId("files")
                     : slashMatches.length
-                      ? "slash-command-list"
+                      ? composerSuggestionListId("slashes")
                       : undefined
                 }
                 aria-expanded={

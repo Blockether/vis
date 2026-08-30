@@ -46,6 +46,7 @@ import queuedTurnsTraySource from "./QueuedTurnsTray.tsx?raw";
 import composerAttachmentPickerSource from "./ComposerAttachmentPicker.tsx?raw";
 import composerPayloadShelfSource from "./ComposerPayloadShelf.tsx?raw";
 import composerResponseControlsSource from "./ComposerResponseControls.tsx?raw";
+import composerSuggestionsSource from "./ComposerSuggestions.tsx?raw";
 import jumpToLatestSource from "./JumpToLatestButton.tsx?raw";
 import connectSource from "../screens/ConnectScreen.tsx?raw";
 import machinesSource from "./Machines.tsx?raw";
@@ -63,6 +64,7 @@ const sessionDockSource = [
   composerAttachmentPickerSource,
   composerPayloadShelfSource,
   composerResponseControlsSource,
+  composerSuggestionsSource,
 ].join("\n");
 
 const settingsSource = [
@@ -2832,7 +2834,7 @@ describe("the session screen and the settings dialog spell no control out", () =
   it("uses the composer's own vocabulary where it used to repeat itself", () => {
     expect(sessionScreenSource).toContain("<ComposerButton");
     expect(sessionDockSource).toContain("<MetaButton");
-    expect(sessionScreenSource).toContain("<OptionRow");
+    expect(composerSuggestionsSource).toContain("<OptionRow");
     expect(sessionDockSource).toContain("<TextButton");
     expect(sessionScreenSource).toContain("<BackButton");
     expect(sessionScreenSource).toContain("<JumpToLatestButton");
@@ -3630,12 +3632,13 @@ describe("Corners", () => {
     expect(sessionDockSource).toContain(
       "rounded-field border border-warn-strong bg-warn-surface shadow-[3px_3px_0_var(--dialog-shadow)]",
     );
-    const floating = [
-      ...sessionDockSource.matchAll(
-        /className="[^"]*shadow-\[6px_6px_0_var\(--dialog-shadow\)\][^"]*"/g,
-      ),
-    ];
-    expect(floating.length).toBeGreaterThan(2);
+    expect(composerSuggestionsSource).toContain(
+      "shadow-[6px_6px_0_var(--dialog-shadow)]",
+    );
+    expect(composerAttachmentPickerSource).toContain(
+      "shadow-[6px_6px_0_var(--dialog-shadow)]",
+    );
+    expect(sessionScreenSource.match(/<ComposerSuggestions/g)).toHaveLength(2);
   });
 });
 

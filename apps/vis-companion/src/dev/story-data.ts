@@ -30,12 +30,14 @@ import liveViewWire from '../lib/live-view.fixture.json';
 import { createComposerPaste, type ComposerPaste } from '../lib/paste';
 import { COMMENTS_HEADING } from '../lib/markdown-annotations';
 import type {
+  FileSuggestion,
   GatewayConn,
   QueuedTurn,
   QueuePausedInfo,
   RouterProvider,
   Session,
   SessionUsage,
+  SlashCommand,
 } from '../lib/types';
 import type { GwHealth } from '../components/Machines';
 import type { ManagedProject } from '../components/ManageProjectsSheet';
@@ -518,6 +520,18 @@ export const STORY_RESPONSE_CONTROL_VALUES = {
   verbosity: { label: 'Verbosity', value: 'medium' },
   fast: { enabled: true },
 } as const;
+
+export const STORY_FILE_SUGGESTIONS: FileSuggestion[] = [
+  { name: 'src/components/ActivityPanel.tsx', size: '18 KB', age: '2m', status: 'modified' },
+  { name: 'README.md', size: '8 KB', age: '1d', status: 'clean' },
+  { name: 'docs/release-checklist.md', size: '4 KB', age: '3d', status: 'untracked' },
+];
+
+export const STORY_SLASH_COMMANDS: SlashCommand[] = [
+  { name: '/help', doc: 'Show the available slash commands.' },
+  { name: '/rename', doc: 'Rename this session title.' },
+  { name: '/export', doc: 'Export this session transcript to Markdown or HTML.' },
+];
 
 /** The paired fleet: reachable, unavailable, and long enough to exercise truncation. */
 export const STORY_GATEWAYS: GatewayConn[] = [

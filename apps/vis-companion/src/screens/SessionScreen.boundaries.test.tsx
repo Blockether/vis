@@ -71,4 +71,17 @@ describe("session feature boundaries", () => {
     expect(sessionScreenSource).toContain("<ComposerResponseControls");
     expect(sessionScreenSource).toContain("controls={responseControls}");
   });
+
+  it("uses one canonical component for both composer suggestion menus", () => {
+    const leaks = [
+      ["inline file suggestion list", /id="file-mention-list"/],
+      ["inline slash suggestion list", /id="slash-command-list"/],
+      ["inline suggestion option", /<OptionRow/],
+    ]
+      .filter(([, pattern]) => (pattern as RegExp).test(sessionScreenSource))
+      .map(([name]) => name);
+
+    expect(leaks).toEqual([]);
+    expect(sessionScreenSource.match(/<ComposerSuggestions/g)).toHaveLength(2);
+  });
 });
