@@ -7,6 +7,7 @@ import {
   forwardRef,
   useState,
   type ButtonHTMLAttributes,
+  type InputHTMLAttributes,
   type ReactNode,
   type Ref,
 } from 'react';
@@ -146,6 +147,32 @@ export function SectionGap() {
 }
 
 /**
+ * The bare field underneath every name edited directly on a navigator face.
+ *
+ * It removes only browser furniture. The caller supplies the name's existing type face,
+ * while `fit` says whether sibling ink must stay beside a word-sized field or the title owns
+ * the whole track. This became shared when session titles joined header names: two hand-stripped
+ * inputs would be two subtly different definitions of direct editing.
+ */
+export const EditableNameField = forwardRef<
+  HTMLInputElement,
+  Omit<InputHTMLAttributes<HTMLInputElement>, 'className'> & {
+    face: string;
+    fit?: 'content' | 'track';
+  }
+>(function EditableNameField({ face, fit = 'content', ...props }, ref) {
+  return (
+    <input
+      ref={ref}
+      className={`${face} appearance-none border-0 bg-transparent p-0 focus:outline-none ${
+        fit === 'track' ? 'min-w-0 w-full' : ''
+      }`}
+      {...props}
+    />
+  );
+});
+
+/**
  * A name that edits IN PLACE, and does not move when it does.
  *
  * The resting name and the field it becomes are the same box: the same class list,
@@ -196,7 +223,7 @@ export function EditableName({
     if (draft.trim() !== value) onCommit(draft.trim());
   };
   return (
-    <input
+    <EditableNameField
       autoFocus
       aria-label={label}
       value={draft}
@@ -207,7 +234,7 @@ export function EditableName({
         if (event.key === 'Enter') commit();
         if (event.key === 'Escape') setDraft(null);
       }}
-      className={`${face} appearance-none border-0 focus:outline-none`}
+      face={face}
     />
   );
 }

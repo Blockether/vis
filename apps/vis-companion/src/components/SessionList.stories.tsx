@@ -61,6 +61,21 @@ export const Renaming: Story = {
         name: `Rename ${STORY_SESSION_ROW.title}`,
       }),
     ).toHaveValue(STORY_SESSION_ROW.title);
+    await expect(canvas.getByText(STORY_SESSION_ROW.id)).toBeInTheDocument();
+    await expect(
+      canvas.getByText(`${STORY_SESSION_ROW.turn_count} turns`),
+    ).toBeInTheDocument();
+    await expect(canvas.getByText("INPUT NEEDED")).toBeInTheDocument();
+    await expect(
+      canvas.getByRole("button", {
+        name: `Show details for ${STORY_SESSION_ROW.title}`,
+      }),
+    ).toBeInTheDocument();
+    await expect(
+      canvas.queryByRole("group", {
+        name: `${STORY_SESSION_ROW.title} actions`,
+      }),
+    ).not.toBeInTheDocument();
     await expect(canvas.queryByRole("dialog")).not.toBeInTheDocument();
   },
 };

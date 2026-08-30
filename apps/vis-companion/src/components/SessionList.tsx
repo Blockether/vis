@@ -1,7 +1,8 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
-import { Banner, ConfirmRow, Input, LIST_EDGE } from "./ui";
+import { Banner, ConfirmRow, LIST_EDGE } from "./ui";
 import {
+  EditableNameField,
   HeaderActions,
   HeaderTitle,
   LIST_EDGE_END,
@@ -72,6 +73,37 @@ export type SessionRowDeletion = Omit<
   "target"
 > | null;
 
+/** The row's slab keeps one geometry while its title changes from ink to a field. */
+function SessionRowSurface({
+  isEditing,
+  sessionId,
+  onOpen,
+  children,
+}: {
+  isEditing: boolean;
+  sessionId: string;
+  onOpen: () => void;
+  children: ReactNode;
+}) {
+  const layout = `flex min-h-12 min-w-0 flex-1 items-center gap-2 py-1.5 text-left mouse:min-h-8 mouse:py-1 ${LIST_EDGE} ${LIST_EDGE_END}`;
+  if (isEditing) {
+    return (
+      <div className={layout} data-session-id={sessionId}>
+        {children}
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={`${layout} transition-colors duration-150 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none`}
+      data-session-id={sessionId}
+      onClick={onOpen}
+    >
+      {children}
+    </button>
+  );
+}
 export const SessionRow = memo(function SessionRow({
   session,
   draft,
@@ -146,7 +178,6 @@ export const SessionRow = memo(function SessionRow({
   const beginRename = useCallback(() => {
     skipRenameBlurRef.current = false;
     selectRenameOnFocusRef.current = true;
-    setStatsOpen(false);
     setRenameError("");
     setRenameDraft(session.title?.trim() ?? "");
   }, [session.title]);
@@ -199,62 +230,9 @@ export const SessionRow = memo(function SessionRow({
 
   return (
     <div className="[&+&]:border-t [&+&]:border-dialog-edge">
-      {/* A name is edited where its row already stands. The row temporarily gives its
-          width to the field, just like a machine row, instead of opening another surface. */}
-      {renameDraft !== null ? (
-        <div
-          className={`flex min-h-12 items-center gap-2 py-1.5 mouse:min-h-8 mouse:py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
-        >
-          <span className={LIST_MARK} aria-hidden="true" />
-          <Input
-            ref={renameInputRef}
-            autoFocus
-            aria-busy={renameBusy}
-            aria-label={`Rename ${title}`}
-            autoCapitalize="sentences"
-            autoCorrect="off"
-            className="min-w-0 flex-1"
-            disabled={renameBusy}
-            placeholder="Untitled session"
-            value={renameDraft}
-            onBlur={() => {
-              if (skipRenameBlurRef.current) {
-                skipRenameBlurRef.current = false;
-                return;
-              }
-              void commitRename();
-            }}
-            onFocus={(event) => {
-              if (!selectRenameOnFocusRef.current) return;
-              selectRenameOnFocusRef.current = false;
-              event.currentTarget.select();
-            }}
-            onChange={(event) => {
-              setRenameDraft(event.target.value);
-              setRenameError("");
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                void commitRename();
-              }
-              if (event.key === "Escape") {
-                event.preventDefault();
-                skipRenameBlurRef.current = true;
-                cancelRename();
-              }
-            }}
-          />
-          {renameBusy && (
-            <span
-              role="status"
-              className="shrink-0 font-mono text-chip font-bold uppercase tracking-[0.08em] text-dialog-hint"
-            >
-              Saving
-            </span>
-          )}
-        </div>
-      ) : deletion ? (
+      {/* Rename is direct manipulation: the row stays put and only its title becomes ink
+          with a caret. Metadata, status, and disclosure do not blink out around it. */}
+      {deletion ? (
         <ConfirmRow
           question={`Delete ${title}?`}
           confirmLabel={deletion.isBusy ? "Deleting..." : "Yes, delete"}
@@ -265,7 +243,7 @@ export const SessionRow = memo(function SessionRow({
       ) : (
         <SwipeActions
           label={title}
-          actions={[
+          actions={renameDraft !== null ? [] : [
             {
               key: "favorite",
               label: isStarred ? "Unstar" : "Star",
@@ -306,11 +284,10 @@ export const SessionRow = memo(function SessionRow({
           crossing the row lit 948px of a 991px row and left the last 43 in plain
           paper — the trailing strip of the very row under the cursor. */}
           <div className="group flex items-stretch transition-colors duration-150 hover:bg-hover motion-reduce:transition-none">
-            <button
-              type="button"
-              className={`flex min-h-12 min-w-0 flex-1 items-center gap-2 py-1.5 text-left transition-colors duration-150 active:bg-hover focus-visible:bg-hover focus-visible:outline-none motion-reduce:transition-none mouse:min-h-8 mouse:py-1 ${LIST_EDGE} ${LIST_EDGE_END}`}
-              data-session-id={session.id}
-              onClick={() => void commands.open(conn, session.id)}
+            <SessionRowSurface
+              isEditing={renameDraft !== null}
+              sessionId={session.id}
+              onOpen={() => void commands.open(conn, session.id)}
             >
               {/* THE MARK COLUMN, EMPTY — and reserved for exactly that reason. The
             project band above these rows spends it on its fold, so a row that
@@ -341,13 +318,60 @@ export const SessionRow = memo(function SessionRow({
                 machine -> project -> session ladder. It stays the strongest thing in
                 its OWN row — semibold, full ink, against the hint-grey `text-chip`
                 facts beside it — so shrinking it costs the scan nothing. */}
-                  <span
-                    className={`min-w-0 truncate font-mono text-meta font-semibold ${
-                      session.title?.trim() ? "text-white" : "text-white/45"
-                    }`}
-                  >
-                    {title}
-                  </span>
+                  {renameDraft !== null ? (
+                    <EditableNameField
+                      ref={renameInputRef}
+                      autoFocus
+                      aria-busy={renameBusy}
+                      aria-label={`Rename ${title}`}
+                      autoCapitalize="sentences"
+                      autoCorrect="off"
+                      face="font-mono text-meta font-semibold text-white placeholder:text-white/45"
+                      fit="track"
+                      placeholder="Untitled session"
+                      readOnly={renameBusy}
+                      value={renameDraft}
+                      onBlur={() => {
+                        if (skipRenameBlurRef.current) {
+                          skipRenameBlurRef.current = false;
+                          return;
+                        }
+                        void commitRename();
+                      }}
+                      onFocus={(event) => {
+                        if (!selectRenameOnFocusRef.current) return;
+                        selectRenameOnFocusRef.current = false;
+                        const field = event.currentTarget;
+                        field.setSelectionRange(0, field.value.length, "backward");
+                        requestAnimationFrame(() => {
+                          if (renameInputRef.current === field) field.scrollLeft = 0;
+                        });
+                      }}
+                      onChange={(event) => {
+                        setRenameDraft(event.target.value);
+                        setRenameError("");
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void commitRename();
+                        }
+                        if (event.key === "Escape" && !renameBusy) {
+                          event.preventDefault();
+                          skipRenameBlurRef.current = true;
+                          cancelRename();
+                        }
+                      }}
+                    />
+                  ) : (
+                    <span
+                      className={`min-w-0 truncate font-mono text-meta font-semibold ${
+                        session.title?.trim() ? "text-white" : "text-white/45"
+                      }`}
+                    >
+                      {title}
+                    </span>
+                  )}
                 </span>
                 {/* Unread and unsent-message flags share one aligned column. */}
                 <span className="col-start-2 row-start-1 flex min-w-0 items-center justify-end gap-1.5 font-mono text-chip sm:col-start-auto sm:row-start-auto">
@@ -387,6 +411,7 @@ export const SessionRow = memo(function SessionRow({
                 </span>
                 <span
                   data-session-status
+                  role={renameBusy ? "status" : undefined}
                   className={`col-start-3 row-start-1 inline-flex shrink-0 items-center gap-1 justify-self-end font-mono text-chip font-bold tracking-[0.08em] sm:col-start-auto sm:row-start-auto sm:justify-self-start ${statusTone(session)}`}
                 >
                   <span
@@ -405,7 +430,7 @@ export const SessionRow = memo(function SessionRow({
                     aria-hidden="true"
                     className={`size-1.5 shrink-0 ${statusDot(session)} ${live ? "animate-pulse motion-reduce:animate-none" : ""}`}
                   />
-                  <span>{status}</span>
+                  <span>{renameBusy ? "Saving" : status}</span>
                 </span>
                 <span
                   className="col-start-2 col-end-4 row-start-2 justify-self-end whitespace-nowrap font-mono text-meta text-dialog-hint tabular-nums sm:col-start-auto sm:col-end-auto sm:row-start-auto"
@@ -414,7 +439,7 @@ export const SessionRow = memo(function SessionRow({
                   {timeLabel(timestamp)}
                 </span>
               </span>
-            </button>
+            </SessionRowSurface>
             {/* The same box, the same column and the same right edge as the `⋯` in the
             project header directly above: both promise "there is more here", so
             neither is allowed its own geometry. */}

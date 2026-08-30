@@ -59,7 +59,9 @@ function startRename() {
 }
 
 describe("session row inline rename", () => {
-  it("edits where the title stood and saves the trimmed name", async () => {
+  // Regression, user report: entering rename replaced the session row with a field,
+  // so metadata, status, and disclosure disappeared instead of only the title changing.
+  it("edits only the title and saves the trimmed name", async () => {
     const request = deferred();
     const rename = vi.fn(() => request.promise);
     row(rename);
@@ -76,6 +78,20 @@ describe("session row inline rename", () => {
     expect((field as HTMLInputElement).selectionEnd).toBe(
       (field as HTMLInputElement).value.length,
     );
+    expect((field as HTMLInputElement).selectionDirection).toBe("backward");
+    expect(
+      document.querySelector(`[data-session-id="${STORY_SESSION_ROW.id}"]`),
+    ).not.toBeNull();
+    expect(screen.getByText(STORY_SESSION_ROW.id)).toBeTruthy();
+    expect(
+      screen.getByText(`${STORY_SESSION_ROW.turn_count} turns`),
+    ).toBeTruthy();
+    expect(screen.getByText("INPUT NEEDED")).toBeTruthy();
+    expect(
+      screen.getByRole("button", {
+        name: `Show details for ${STORY_SESSION_ROW.title}`,
+      }),
+    ).toBeTruthy();
     expect(
       screen.queryByRole("group", {
         name: `${STORY_SESSION_ROW.title} actions`,
