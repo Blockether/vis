@@ -11,7 +11,8 @@
    `parse-json` ∘ `json-str` yields — snake_case STRING keys — serve it from
    a facade and in-process readers see exactly what a remote client sees."
   (:require [charred.api :as json]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [com.blockether.vis.internal.util :as util]))
 
 (defn wire-key
   "Keyword/symbol map key -> snake_case string. A boolean-style `foo?` key
@@ -122,16 +123,12 @@
   (when-not (str/blank? s) (try (json/read-json s) (catch Throwable _ nil))))
 
 (defn- clamp
-  "Cut `s` to at most `limit` chars and mark it truncated, WITHOUT splitting a
-   surrogate pair — a lone surrogate is not valid text and corrupts every
-   UTF-8 consumer downstream (JSON escape, SQLite, the mobile client)."
+  "Cut `s` to at most `limit` chars and mark it truncated. The cut itself is
+   `util/truncate` — the engine's ONE head-clip, which never splits a surrogate
+   pair, because a lone surrogate is not valid text and corrupts every UTF-8
+   consumer downstream (JSON escape, SQLite, the mobile client)."
   [^String s ^long limit]
-  (if (<= (count s) limit)
-    s
-    (let [cut (if (and (pos? limit) (Character/isHighSurrogate (.charAt s (dec limit))))
-                (dec limit)
-                limit)]
-      (str (subs s 0 (max 0 cut)) " …[truncated]"))))
+  (if (<= (count s) limit) s (str (util/truncate s limit) " …[truncated]")))
 
 (defn bounded-pr
   "Bounded `pr-str` for tool results / errors riding events. Protects the

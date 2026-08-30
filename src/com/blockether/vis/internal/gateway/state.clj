@@ -47,8 +47,6 @@
                                   parse-long)]
            (if (pos? (long (or configured 0))) (long configured) 2000))))
 
-(def ^:private RESULT_PR_LIMIT 4000)
-
 (def ^:private ERROR_PR_LIMIT 2000)
 
 (def ^:private STREAM_CUMULATIVE_LIMIT
@@ -1492,8 +1490,7 @@
               {:form_index position
                :code code
                :result result
-               :stdout (when-let [s (:stdout chunk)]
-                         (wire/bounded-str s RESULT_PR_LIMIT))
+               :stdout (form/clip-to-wire (:stdout chunk))
                :error (when (some? error)
                         (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
                :silent (boolean (or silent? (and (nil? error) (contains? #{"vis_silent"} result))))

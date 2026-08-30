@@ -13,7 +13,23 @@
              (it "stringifies non-strings and is nil-safe"
                  (expect (= "" (util/truncate nil 5)))
                  (expect (= "123" (util/truncate 12345 3)))
-                 (expect (= "[1 2" (util/truncate [1 2 3] 4)))))
+                 (expect (= "[1 2" (util/truncate [1 2 3] 4))))
+             ;; The ONE head-clip in the engine, so it is also the one place that must
+             ;; not hand a lone surrogate to a UTF-8 consumer downstream (JSON escape,
+             ;; SQLite, the mobile client): a cut landing inside an astral char takes
+             ;; one char less instead of splitting the pair.
+             (it "never splits a surrogate pair"
+                 (let [s
+                       "ab👍cd"
+
+                       utf8-clean?
+                       (fn [^String t]
+                         (= t (String. (.getBytes t "UTF-8") "UTF-8")))]
+
+                   (expect (= "ab" (util/truncate s 3)))
+                   (expect (= "ab👍" (util/truncate s 4)))
+                   (doseq [n [2 3 4 5]]
+                     (expect (utf8-clean? (util/truncate s n)))))))
 
 (defdescribe fence-delimiter-test
              (it "never goes below the CommonMark minimum of three backticks"

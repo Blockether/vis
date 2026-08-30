@@ -8,6 +8,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.content :as content]
+            [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
@@ -502,6 +503,20 @@
         (expect (= "block.output" type))
         (expect (= 3 (:iteration payload)))
         (expect (= 0 (:form_index payload)))))
+  ;; ONE form body, ONE ceiling: `stdout` here is a copy of the body the SAME event
+  ;; already carries as `result_render`, and it was clamped at a private 4000-char
+  ;; limit while that body rides at `form/MAX_FORM_WIRE_CHARS` — the wire disagreed
+  ;; with itself about the same printed output by a factor of sixteen.
+  (it "block.output clips stdout at the form-body ceiling, not a private one"
+      (let [printed
+            (apply str (repeat 10000 "x"))
+
+            [_ _ payload]
+            (#'state/chunk->event
+             {:phase :form-result :iteration 3 :position 0 :code "print(1)" :stdout printed})]
+
+        (expect (= printed (:stdout payload)))
+        (expect (= (form/clip-to-wire printed) (:stdout payload)))))
   ;; Activity has one event type for both timing classes: live revisions are
   ;; transient but materialized last-one-wins; the settled revision is durable.
   ;; `block.output` owns only the execution result.

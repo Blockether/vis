@@ -42,6 +42,30 @@
   [payload]
   (wire/canonical payload))
 
+;; ONE form body, ONE ceiling. The same printed output reaches three surfaces — the
+;; model's tool result, the card a channel paints, and the gateway's copy of it on
+;; `block.output` — and each used to hand-roll its own cut at its own size.
+(defdescribe
+  clip-to-wire-test
+  (it "keeps a body under the ceiling verbatim and answers nil for a blank one"
+      (expect (= "printed" (form/clip-to-wire "printed  \n")))
+      (expect (nil? (form/clip-to-wire "   \n")))
+      (expect (nil? (form/clip-to-wire nil))))
+  (it "announces what it dropped"
+      (let [body
+            (apply str (repeat (* 2 (long form/MAX_FORM_WIRE_CHARS)) "x"))
+
+            clipped
+            (form/clip-to-wire body)]
+
+        (expect (str/includes?
+                  clipped
+                  (str "output clipped at " form/MAX_FORM_WIRE_CHARS "/" (count body) " chars")))
+        (expect (< (count clipped) (count body)))))
+  (it "carries the calling surface's own advice in the marker"
+      (let [body (apply str (repeat (* 2 (long form/MAX_FORM_WIRE_CHARS)) "x"))]
+        (expect (str/ends-with? (form/clip-to-wire body "narrow next time.")
+                                " chars — narrow next time.")))))
 (defdescribe
   form-gateway-roundtrip-test
   (it "every display key survives loop chunk -> gateway block.output -> wire -> <-wire"

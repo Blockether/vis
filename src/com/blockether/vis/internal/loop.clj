@@ -3516,20 +3516,7 @@
         ;; printed). A clipped value still lives in the sandbox to re-slice.
         clip-wire
         (fn [s]
-          (let [s
-                (str/trimr (str s))
-
-                n
-                (long (count s))]
-
-            (if (> n (long form/MAX_FORM_WIRE_CHARS))
-              (str (subs s 0 form/MAX_FORM_WIRE_CHARS)
-                   "\n# ⋯ output clipped at "
-                   form/MAX_FORM_WIRE_CHARS
-                   "/"
-                   n
-                   " chars — narrow next time (slice/filter before reading).")
-              s)))
+          (form/clip-to-wire s "narrow next time (slice/filter before reading)."))
 
         ;; Each form carries exactly ONE success channel (the engine emits one or
         ;; the other, never both): `:result` = the block's returned value when it

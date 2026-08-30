@@ -109,24 +109,32 @@
   65536)
 
 (defn clip-to-wire
-  "Head-clip one display string to `MAX_FORM_WIRE_CHARS`, announcing what it
-   dropped. nil for a string that is blank once trailing space is gone."
-  [^String s]
-  (let [s
-        (str/trimr (str s))
+  "Head-clip one form BODY to `MAX_FORM_WIRE_CHARS`, announcing what it dropped —
+   the ONE clip shared by every surface that body reaches: the model's tool
+   result, the card a channel paints, and the gateway's `stdout` copy of the same
+   text. Each used to hand-roll its own cut at its own ceiling, so one printed
+   output rode a single event twice at sizes an order of magnitude apart.
 
-        n
-        (long (count s))]
+   `hint` is the calling surface's own advice, appended to the marker — the model
+   is told to narrow its next read, a human card just says what was dropped. The
+   cut is `util/truncate`, so it never splits a surrogate pair. nil for a string
+   that is blank once trailing space is gone."
+  ([s] (clip-to-wire s nil))
+  ([s hint]
+   (let [s
+         (str/trimr (str s))
 
-    (when (pos? n)
-      (if (> n (long MAX_FORM_WIRE_CHARS))
-        (str (subs s 0 MAX_FORM_WIRE_CHARS)
-             "\n# ⋯ output clipped at "
-             MAX_FORM_WIRE_CHARS
-             "/"
-             n
-             " chars")
-        s))))
+         n
+         (long (count s))]
+
+     (when (pos? n)
+       (if (> n (long MAX_FORM_WIRE_CHARS))
+         (let [head (util/truncate s MAX_FORM_WIRE_CHARS)]
+           (str head
+                "\n# ⋯ output clipped at " (count head)
+                "/" n
+                " chars" (when hint (str " — " hint))))
+         s)))))
 
 (defn result-display
   "The human-channel DISPLAY for one executed form as `{:summary :body}` — the

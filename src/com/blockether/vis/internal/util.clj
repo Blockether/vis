@@ -73,15 +73,21 @@
 ;; ── Strings ──────────────────────────────────────────────────────────────
 
 (defn truncate
-  "Head-clip `s` to at most `n` chars (no ellipsis)."
+  "Head-clip `s` to at most `n` chars (no ellipsis) — the engine's ONE head-clip,
+   so it is also the one place that must never hand a lone surrogate to a UTF-8
+   consumer downstream (JSON escape, SQLite, the mobile client): a cut that would
+   land inside an astral char takes one char less instead of splitting the pair."
   [s ^long n]
-  (let [s
+  (let [^String s
         (str s)
 
         c
         (long (count s))]
 
-    (if (> c n) (subs s 0 n) s)))
+    (if (> c n)
+      (let [cut (if (and (pos? n) (Character/isHighSurrogate (.charAt s (dec n)))) (dec n) n)]
+        (subs s 0 (max 0 cut)))
+      s)))
 
 (defn fence-delimiter
   "Markdown fence delimiter (a backtick run) longer than any backtick run in
