@@ -78,8 +78,9 @@ describe('Menu parts', () => {
     const html = (props: Partial<Parameters<typeof MenuItem>[0]> = {}) =>
       renderToStaticMarkup(<MenuItem title="Manage projects" onSelect={() => {}} {...props} />);
 
-    it('is a menuitem with a real thumb target', () => {
-      expect(html()).toContain('role="menuitem"');
+    it('is an ordinary button in the dialog’s native Tab order', () => {
+      expect(html()).toContain('<button');
+      expect(html()).not.toContain('role="menuitem"');
     });
 
     // A workspace decision is unrecoverable-ish once the agent starts writing, so
@@ -98,7 +99,7 @@ describe('Menu parts', () => {
 
     it('paints a destructive row in the app’s red, and it is still the same row', () => {
       const markup = html({ tone: 'danger', title: 'Remove sessions' });
-      expect(markup).toContain('role="menuitem"');
+      expect(markup).toContain('<button');
     });
 
     // Regression, user report ("fix this misalignment of icons and text", on the

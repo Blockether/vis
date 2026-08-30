@@ -18,7 +18,13 @@ import { DocFrame } from './DocArtifact';
 const meta = {
   title: 'Components/Doc frame',
   component: DocFrame,
-  parameters: { layout: 'padded' },
+  parameters: {
+    layout: 'padded',
+    // The document is deliberately a separate browsing context. Axe still checks
+    // the frame itself; asking it to inject into a data: iframe causes its own
+    // same-window transport error rather than an accessibility verdict.
+    a11y: { options: { iframes: false } },
+  },
   decorators: [
     (Story) => (
       <div className="flex h-[520px] flex-col">

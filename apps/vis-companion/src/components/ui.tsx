@@ -729,7 +729,7 @@ export function ConfirmRow({
         <button
           type="button"
           autoFocus
-          className="flex flex-1 items-center justify-center bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-white/70 transition-colors duration-150 hover:bg-hover hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
+          className="flex flex-1 items-center justify-center bg-panel-2 font-mono text-meta font-bold uppercase tracking-[0.08em] text-dialog-hint transition-colors duration-150 hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 motion-reduce:transition-none"
           onClick={onKeep}
         >
           {keepLabel}
@@ -1462,14 +1462,14 @@ export function ChoiceCell({
         <>
           <span className="min-w-0 truncate font-mono text-ui font-bold">{title}</span>
           {sub && (
-            <span className="ml-auto min-w-0 truncate font-mono text-chip opacity-55">{sub}</span>
+            <span className="ml-auto min-w-0 truncate font-mono text-chip">{sub}</span>
           )}
         </>
       ) : (
         <span className="min-w-0">
           <span className="block truncate font-mono text-ui font-bold">{title}</span>
           {sub && (
-            <span className="block truncate font-mono text-chip uppercase tracking-wider opacity-65">
+            <span className="block truncate font-mono text-chip uppercase tracking-wider">
               {sub}
             </span>
           )}
@@ -2322,6 +2322,7 @@ export function DialogHeader({
 )) {
   return (
     <header
+      role="presentation"
       className={`flex min-h-12 shrink-0 items-stretch overflow-hidden rounded-b-panel bg-dialog-title text-dialog-title-foreground mouse:min-h-9 ${
         isUnderNotch ? 'box-content pt-[env(safe-area-inset-top)] sm:pt-0' : ''
       } ${isStacked ? 'border-t border-dialog-title-foreground/20' : ''} ${className}`}
@@ -2339,7 +2340,7 @@ export function DialogHeader({
           {title}
         </h2>
         {subtitle && (
-          <p className="truncate font-mono text-meta text-dialog-title-foreground/70">
+          <p className="truncate font-mono text-meta text-dialog-title-foreground">
             {subtitle}
           </p>
         )}
@@ -3391,7 +3392,7 @@ export function ProjectStatusCounts({
           dot: 'animate-pulse bg-warn-strong motion-reduce:animate-none',
         }
       : null,
-    unread > 0 ? { label: `${unread} new`, tone: 'text-accent', dot: 'bg-accent' } : null,
+    unread > 0 ? { label: `${unread} new`, tone: 'text-accent-ink', dot: 'bg-accent' } : null,
   ].filter((status): status is NonNullable<typeof status> => status !== null);
 
   return statuses.map((status) => (
@@ -3551,7 +3552,7 @@ export function MachineTab({
       onClick={onClick}
       className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full px-2 font-mono text-meta transition-colors duration-150 motion-reduce:transition-none mouse:h-5 ${
         isDown
-          ? 'text-dialog-hint/60 hover:text-dialog-hint'
+          ? 'text-dialog-hint hover:text-white'
           : isOn
             ? 'bg-panel font-bold text-white shadow-sm'
             : hasUnread

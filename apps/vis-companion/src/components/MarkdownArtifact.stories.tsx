@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { fn } from 'storybook/test';
+import { expect, fn, userEvent } from 'storybook/test';
 
 import { LOG_TEXT, NOTE_ANNOTATED, NOTE_MARKDOWN } from '../dev/story-data';
 import { type DocumentChrome, MarkdownAnnotator } from './MarkdownArtifact';
@@ -39,7 +39,19 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** The note as prose: headings as headings, through the transcript's own renderer. */
-export const Note: Story = {};
+export const Note: Story = {
+  play: async ({ canvas, args }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Comment on the whole document' }));
+    await userEvent.type(canvas.getByRole('textbox', { name: 'Comment' }), 'Worth a second pass.');
+    await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Save' }));
+    await expect(args.onSave).toHaveBeenCalledTimes(1);
+    await expect(args.onSave).toHaveBeenCalledWith(
+      expect.stringContaining('Worth a second pass.'),
+    );
+    await expect(canvas.getByRole('status')).toHaveTextContent('Saved as v2');
+  },
+};
 
 /** The same note after two remarks — one about a passage, one about the whole file. */
 export const Commented: Story = {

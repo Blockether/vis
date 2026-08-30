@@ -29,6 +29,8 @@ describe("every dialog header is the one dialog header", () => {
     );
 
     expect(document.querySelectorAll("header")).toHaveLength(1);
+    // A title band inside a dialog/region is not the application's banner landmark.
+    expect(band().getAttribute("role")).toBe("presentation");
     expect(band().className).not.toContain("rounded-t-panel");
   });
 

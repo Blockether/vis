@@ -2412,9 +2412,11 @@ describe("every screen uses the second vocabulary too", () => {
     );
   });
 
-  it("leaves the composer's three removes as one control and its menu as menu rows", () => {
+  it("keeps the composer's attachment choices as native buttons in a named dialog", () => {
     expect(sessionScreenSource).toContain("<CloseButton");
     expect(sessionScreenSource).toContain("<MenuItem");
+    expect(sessionScreenSource).toContain('role="dialog"');
+    expect(sessionScreenSource).toContain('aria-label="Attach"');
     expect(sessionScreenSource).toContain("<CopyChip");
     expect(sessionScreenSource).not.toContain(
       "hover:bg-warn-surface hover:text-err",
@@ -3891,7 +3893,21 @@ describe("every control is drawn in the gallery", () => {
   }) as Record<string, string>;
 
   const drawn = Object.values(stories).join("\n");
-
+  const componentModules = import.meta.glob(
+    ["./*.tsx", "!./*.test.tsx", "!./*.stories.tsx"],
+    { query: "?raw", import: "default", eager: true },
+  ) as Record<string, string>;
+  // These are pieces of a larger surface rather than gallery entries of their own.
+  // Naming the owner keeps the exception closed: a new component module must either
+  // get its own story or say which existing frame actually exercises it.
+  const indirectStoryOwner: Record<string, string> = {
+    AnnotationLayer: "./MarkdownArtifact.stories.tsx",
+    ChatContent: "./LiveView.stories.tsx",
+    HumanInputPrompt: "../dev/humanInput.stories.tsx",
+    ImageViewer: "./ArtifactsSheet.stories.tsx",
+    LiveArtifact: "./ArtifactsSheet.stories.tsx",
+    PdfArtifact: "./DocArtifact.stories.tsx",
+  };
   it("draws every component ui.tsx exports", () => {
     const undrawn = [...uiSource.matchAll(/export (?:function|const) ([A-Z]\w+)/g)]
       .map(([, name]) => name)
@@ -3901,6 +3917,25 @@ describe("every control is drawn in the gallery", () => {
     expect(undrawn).toEqual([]);
   });
 
+  it("gives every component module a direct story or a named parent frame", () => {
+    const infrastructure = new Set(["icons", "ui"]);
+    const direct = new Set(
+      Object.keys(stories)
+        .filter((path) => path.startsWith("./"))
+        .map((path) => path.replace(/^\.\//, "").replace(".stories.tsx", "")),
+    );
+    const missing = Object.keys(componentModules)
+      .map((path) => path.replace(/^\.\//, "").replace(".tsx", ""))
+      .filter((name) => !infrastructure.has(name))
+      .filter((name) => !direct.has(name) && !(name in indirectStoryOwner));
+
+    expect(missing).toEqual([]);
+    for (const owner of Object.values(indirectStoryOwner)) {
+      expect(stories[owner], `${owner} is named as a component's gallery owner`).toBeTypeOf(
+        "string",
+      );
+    }
+  });
   // A story is a FIXTURE. Anything that fetches, ticks or rolls a die draws a
   // different picture every time it is opened, and two frames of it stop comparing.
   it("draws from fixtures, never from a clock, a die or a gateway", () => {

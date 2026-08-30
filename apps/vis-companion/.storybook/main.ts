@@ -25,16 +25,24 @@ import type { StorybookConfig } from '@storybook/react-vite';
  * here is the exact same `10.6.0-beta.0` and they move together; when 10.6 goes
  * stable this is one `npx storybook upgrade`.
  *
- * Each addon earns its line. `addon-mcp` is what serves those skills and the
- * story-discovery tools; `addon-docs` renders the docstring above each story, so
- * the prose beside a control is READ instead of scrolled past; `addon-a11y` runs
- * axe over whichever story is open, which is the roles-and-labels half of the
- * design contract checked by a machine rather than by eye.
+ * Each addon earns its line. `addon-mcp` serves those skills and the story
+ * discovery tools; `addon-docs` renders the prose beside each component;
+ * `addon-a11y` explains axe's roles, labels and contrast findings; and
+ * `addon-vitest` makes axe plus every `play` flow a Chromium test rather than
+ * an optional panel someone has to remember to open. Change detection is on
+ * because the official skill's `stories changed` and review workflow otherwise
+ * have no source of affected story IDs.
  */
 const config: StorybookConfig = {
   stories: ['../src/**/*.stories.@(ts|tsx)'],
   framework: { name: '@storybook/react-vite', options: {} },
-  addons: ['@storybook/addon-mcp', '@storybook/addon-docs', '@storybook/addon-a11y'],
+  features: { changeDetection: true },
+  addons: [
+    '@storybook/addon-mcp',
+    '@storybook/addon-docs',
+    '@storybook/addon-a11y',
+    '@storybook/addon-vitest',
+  ],
 };
 
 export default config;

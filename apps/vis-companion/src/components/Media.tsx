@@ -43,7 +43,7 @@ export function MediaPlate({
         <figcaption className={mediaCaptionClass}>
           <span className="min-w-0 flex-1 truncate">{name}</span>
           {meta ? (
-            <span className="shrink-0 uppercase tracking-wider opacity-70">
+            <span className="shrink-0 uppercase tracking-wider">
               {meta}
             </span>
           ) : null}
@@ -142,7 +142,7 @@ export function MediaRecording({
           ) : null}
         </div>
       ) : statusLabel ? (
-        <p className="min-w-0 truncate px-2 py-1 text-meta uppercase tracking-wider text-dialog-hint opacity-70">
+        <p className="min-w-0 truncate px-2 py-1 text-meta uppercase tracking-wider text-dialog-hint">
           {statusLabel}
         </p>
       ) : null}
@@ -150,7 +150,7 @@ export function MediaRecording({
         <figcaption className={mediaCaptionClass}>
           <span className="min-w-0 flex-1 truncate">{name}</span>
           {meta ? (
-            <span className="shrink-0 uppercase tracking-wider opacity-70">
+            <span className="shrink-0 uppercase tracking-wider">
               {meta}
             </span>
           ) : null}

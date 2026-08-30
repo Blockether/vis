@@ -318,7 +318,12 @@ function LogRows({
           {isReading ? 'Reading...' : `${knownFrom} earlier lines`}
         </LoadMore>
       )}
-      <pre className="mt-2 max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-words border border-dialog-edge bg-panel-2 p-2 font-mono text-meta text-dialog-hint">
+      <pre
+        role="region"
+        tabIndex={0}
+        aria-label={`${node.label} output`}
+        className="mt-2 max-h-64 overflow-auto overscroll-contain whitespace-pre-wrap break-words border border-dialog-edge bg-panel-2 p-2 font-mono text-meta text-dialog-hint"
+      >
         {earlier && earlier.lines.join('\n')}
         {hole > 0 && `\n... ${hole} lines scrolled past while you were reading\n`}
         {earlier && hole === 0 && node.lines.length > 0 && '\n'}

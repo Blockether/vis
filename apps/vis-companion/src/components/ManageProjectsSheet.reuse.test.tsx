@@ -130,7 +130,7 @@ function skinOf(element: ReactElement, select: string): string[] {
 describe("ManageProjectsSheet paints no box of its own", () => {
   it("is the app’s one anchored panel, not a dialog of its own", async () => {
     const { panel } = sheet();
-    await screen.findByRole("menuitem", { name: /vis/ });
+     await screen.findByRole("button", { name: /^vis/ });
 
     // Byte for byte the canonical browsing panel: the sheet adds no box, no height cap
     // of its own (`max-h-[80vh]` at the call site stopped it 169px short of the glass)
@@ -180,22 +180,22 @@ describe("ManageProjectsSheet paints no box of its own", () => {
 
   it("lists folders with the shipped menu row and its badge", async () => {
     sheet({ isAdding: true });
-    const row = await screen.findByRole("menuitem", { name: /tools/ });
+     const row = await screen.findByRole("button", { name: /tools/ });
 
     expect(paint(row)).toEqual(
       skinOf(
           <MenuItem title="reference" hint="4 entries" onSelect={() => {}} />,
-        '[role="menuitem"]',
+        'button',
       ),
     );
     // The badge is the row's own word, not a chip this file invented: the folder Vis
     // already runs sessions in says so, a bare checkout only says `git`.
     expect(
-      screen.getByRole("menuitem", { name: /demo/ }).textContent,
+        screen.getByRole("button", { name: /^demo/ }).textContent,
     ).toContain("project");
     expect(row.textContent).toContain("git");
     expect(
-      screen.getByRole("menuitem", { name: /notes/ }).textContent,
+       screen.getByRole("button", { name: /notes/ }).textContent,
     ).not.toContain("git");
   });
 
@@ -220,7 +220,7 @@ describe("ManageProjectsSheet paints no box of its own", () => {
   // own amber rule: one control unreadable, one charging the accent twice.
   it("commits with the band's own cells, not with paper parked on the band", async () => {
     sheet({ isAdding: true });
-    await screen.findByRole("menuitem", { name: /vis/ });
+     await screen.findByRole("button", { name: /^vis/ });
     const use = screen.getByRole("button", { name: "Use project" });
     const make = screen.getByRole("button", { name: "New folder" });
 
@@ -265,7 +265,7 @@ describe("ManageProjectsSheet paints no box of its own", () => {
 
   it("keeps the commit verbs in the heading instead of scrolling them away", async () => {
     sheet({ isAdding: true });
-    const row = await screen.findByRole("menuitem", { name: /tools/ });
+     const row = await screen.findByRole("button", { name: /tools/ });
     const use = screen.getByRole("button", { name: "Use project" });
 
     const scroller = row.closest(".overflow-y-auto");
@@ -290,12 +290,12 @@ describe("ManageProjectsSheet paints no box of its own", () => {
     await waitFor(() =>
       expect(client.browse).toHaveBeenCalledWith(HOME, expect.anything()),
     );
-    expect(await screen.findByRole("menuitem", { name: /code/ })).toBeInTheDocument();
+     expect(await screen.findByRole("button", { name: /code/ })).toBeInTheDocument();
   });
 
   it("takes the rows out of play with inert, never with aria-hidden alone", async () => {
     sheet({ isAdding: true });
-    const rows = (await screen.findByRole("menuitem", { name: /tools/ }))
+     const rows = (await screen.findByRole("button", { name: /tools/ }))
       .parentElement;
 
     expect(rows).not.toHaveAttribute("inert");
@@ -325,10 +325,10 @@ describe("browsing opens one level above the current project", () => {
 
   it("is what the sheet opens on", async () => {
     const { client } = sheet({ isAdding: true });
-    await screen.findByRole("menuitem", { name: /tools/ });
+     await screen.findByRole("button", { name: /tools/ });
 
     expect(client.browse.mock.calls[0][0]).toBe(CODE);
-    expect(screen.queryByRole("menuitem", { name: /src/ })).toBeNull();
+     expect(screen.queryByRole("button", { name: /src/ })).toBeNull();
   });
 
   // ...and the project you came from is named in that listing, so a folder one level
@@ -336,12 +336,12 @@ describe("browsing opens one level above the current project", () => {
   it("badges the current project in both lists", async () => {
     sheet();
     expect(
-      (await screen.findByRole("menuitem", { name: /vis/ })).textContent,
+       (await screen.findByRole("button", { name: /^vis/ })).textContent,
     ).toContain("current");
 
     await userEvent.click(screen.getByRole("button", { name: "New project…" }));
     expect(
-      (await screen.findByRole("menuitem", { name: /vis\// })).textContent,
+       (await screen.findByRole("button", { name: /vis\// })).textContent,
     ).toContain("current");
   });
 });
@@ -353,7 +353,7 @@ describe("a folder that is already a project offers no verb", () => {
   it("takes both heading buttons down and says why", async () => {
     sheet({ isAdding: true, knownRoots: new Set([CODE]) });
     // The aim is the folder being LISTED, so the verbs only answer once it lands.
-    await screen.findByRole("menuitem", { name: /vis/ });
+     await screen.findByRole("button", { name: /^vis/ });
     const use = screen.getByRole("button", { name: "Use project" });
 
     expect(use).toBeDisabled();
@@ -364,7 +364,7 @@ describe("a folder that is already a project offers no verb", () => {
   it("leaves the verbs live for a folder the machine does not run yet", async () => {
     const { onChoose } = sheet({ isAdding: true });
     // The aim is the folder being LISTED, so the verbs wake with the listing.
-    await screen.findByRole("menuitem", { name: /vis/ });
+     await screen.findByRole("button", { name: /^vis/ });
     const use = screen.getByRole("button", { name: "Use project" });
 
     expect(use).toBeEnabled();
@@ -381,7 +381,7 @@ describe("a folder that is already a project offers no verb", () => {
 describe("taking the pencil does not move the list", () => {
   it("hands over a path that names the folder itself, and re-lists nothing", async () => {
     const { client } = sheet({ isAdding: true });
-    await screen.findByRole("menuitem", { name: /tools/ });
+     await screen.findByRole("button", { name: /tools/ });
     const reads = client.browse.mock.calls.length;
 
     await userEvent.click(screen.getByRole("button", { name: "Type a path" }));
@@ -392,21 +392,21 @@ describe("taking the pencil does not move the list", () => {
     await new Promise((resolve) => setTimeout(resolve, 250));
     expect(client.browse.mock.calls.length).toBe(reads);
     expect(
-      screen.getByRole("menuitem", { name: /tools/ }),
+       screen.getByRole("button", { name: /tools/ }),
     ).toBeInTheDocument();
   });
 
   it("narrows the same listing as the leaf is typed", async () => {
     const { client } = sheet({ isAdding: true });
-    await screen.findByRole("menuitem", { name: /tools/ });
+     await screen.findByRole("button", { name: /tools/ });
     await userEvent.click(screen.getByRole("button", { name: "Type a path" }));
     const reads = client.browse.mock.calls.length;
 
     await userEvent.type(screen.getByLabelText("Path on this machine"), "to");
     await waitFor(() =>
-      expect(screen.queryByRole("menuitem", { name: /notes/ })).toBeNull(),
+       expect(screen.queryByRole("button", { name: /notes/ })).toBeNull(),
     );
-    expect(screen.getByRole("menuitem", { name: /tools/ })).toBeInTheDocument();
+     expect(screen.getByRole("button", { name: /tools/ })).toBeInTheDocument();
     expect(client.browse.mock.calls.length).toBe(reads);
   });
 });
@@ -420,7 +420,7 @@ describe("the path band", () => {
 
   it("is one fixed-height band under both of its spellings", async () => {
     sheet({ isAdding: true });
-    await screen.findByRole("menuitem", { name: /tools/ });
+     await screen.findByRole("button", { name: /tools/ });
     const crumbs = screen
       .getByRole("button", { name: "~" })
       .closest("div.bg-panel-2")!;
@@ -438,7 +438,7 @@ describe("the path band", () => {
 
   it("gives the new-folder line that same band", async () => {
     sheet({ isAdding: true });
-    await screen.findByRole("menuitem", { name: /tools/ });
+     await screen.findByRole("button", { name: /tools/ });
     await userEvent.click(screen.getByRole("button", { name: "New folder" }));
     const naming = screen.getByLabelText("New folder name").closest("div.h-11");
 
@@ -450,7 +450,7 @@ describe("the path band", () => {
   // where a phone could hide them instead of keeping them with the task they commit.
   it("keeps both project verbs in the task heading, never in a footer", async () => {
     sheet({ isAdding: true });
-    await screen.findByRole("menuitem", { name: /tools/ });
+     await screen.findByRole("button", { name: /tools/ });
 
     const use = screen.getByRole("button", { name: "Use project" });
     const folder = screen.getByRole("button", { name: "New folder" });
@@ -473,7 +473,7 @@ describe("the projects mark opens the inventory", () => {
     const heading = create.closest("header")!;
     expect(heading).toHaveClass("bg-dialog-title");
 
-    const row = await screen.findByRole("menuitem", { name: /vis/ });
+     const row = await screen.findByRole("button", { name: /^vis/ });
     expect(row.textContent).toContain("3 transcripts, 1 running");
     const path = screen.getByText("~/code/vis");
     expect(path).toHaveClass("block");
@@ -485,9 +485,9 @@ describe("the projects mark opens the inventory", () => {
   it("asks to delete inside the project row, from a close-width trash cell", async () => {
     const { client, onRemove, panel } = sheet();
 
-    const row = await screen.findByRole("menuitem", { name: /vis/ });
+     const row = await screen.findByRole("button", { name: /^vis/ });
     expect(row).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /demo/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^demo/ })).toBeInTheDocument();
     // Nothing was asked of the gateway: the inventory is what this device already knows.
     expect(client.browse.mock.calls.length).toBe(0);
 
@@ -503,14 +503,14 @@ describe("the projects mark opens the inventory", () => {
     const question = screen.getByRole("group", { name: "Delete vis?" });
     expect(question.textContent).toContain("3 transcripts");
     expect(question.textContent).toContain("1 running");
-    expect(screen.queryByRole("menuitem", { name: /vis/ })).toBeNull();
-    expect(screen.getByRole("menuitem", { name: /demo/ })).toBeInTheDocument();
+     expect(screen.queryByRole("button", { name: /^vis/ })).toBeNull();
+      expect(screen.getByRole("button", { name: /^demo/ })).toBeInTheDocument();
     // The anchored projects sheet is still the only dialog on screen.
     expect(screen.getAllByRole("dialog")).toEqual([panel()]);
     expect(onRemove).not.toHaveBeenCalled();
 
     await userEvent.click(screen.getByRole("button", { name: "No, keep" }));
-    expect(await screen.findByRole("menuitem", { name: /vis/ })).toBeInTheDocument();
+     expect(await screen.findByRole("button", { name: /^vis/ })).toBeInTheDocument();
     expect(onRemove).not.toHaveBeenCalled();
 
     await userEvent.click(
@@ -522,28 +522,28 @@ describe("the projects mark opens the inventory", () => {
       expect(onRemove).toHaveBeenCalledWith(PROJECTS[0], expect.any(Function)),
     );
     await waitFor(() =>
-      expect(screen.queryByRole("menuitem", { name: /vis/ })).toBeNull(),
+       expect(screen.queryByRole("button", { name: /^vis/ })).toBeNull(),
     );
-    expect(screen.getByRole("menuitem", { name: /demo/ })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^demo/ })).toBeInTheDocument();
     expect(screen.getAllByRole("dialog")).toEqual([panel()]);
   });
 
   it("leaves `New project…` the way it was entered", async () => {
     sheet();
-    await screen.findByRole("menuitem", { name: /vis/ });
+     await screen.findByRole("button", { name: /^vis/ });
 
     await userEvent.click(screen.getByRole("button", { name: "New project…" }));
-    await screen.findByRole("menuitem", { name: /tools/ });
+     await screen.findByRole("button", { name: /tools/ });
 
     await userEvent.click(
       screen.getByRole("button", { name: "Back to projects on tower" }),
     );
-    expect(await screen.findByRole("menuitem", { name: /demo/ })).toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: /^demo/ })).toBeInTheDocument();
   });
 
   it("keeps the way OUT when the caller asked for the browser by name", async () => {
     sheet({ isAdding: true });
-    await screen.findByRole("menuitem", { name: /tools/ });
+     await screen.findByRole("button", { name: /tools/ });
 
     expect(screen.queryByRole("button", { name: /^Back to projects/ })).toBeNull();
     expect(

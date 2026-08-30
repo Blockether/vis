@@ -21,11 +21,15 @@
 
 import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
 import activityWire from '../lib/activity.fixture.json';
+import type { SessionArtifact } from '../lib/artifacts';
+import type { GatewayClient } from '../lib/gateway';
 import { MACHINE_COLORS, type MachineColor } from '../lib/machine-colors';
 import { liveViewFromWire, type LiveView } from '../lib/live-view';
 import liveViewWire from '../lib/live-view.fixture.json';
 import { COMMENTS_HEADING } from '../lib/markdown-annotations';
-import type { RouterProvider } from '../lib/types';
+import type { GatewayConn, RouterProvider } from '../lib/types';
+import type { GwHealth } from '../components/Machines';
+import type { ManagedProject } from '../components/ManageProjectsSheet';
 import type { ProviderAuth } from '../components/ProviderAuth';
 
 /** A hue by its palette name, so a story names a colour the way the fleet does. */
@@ -393,3 +397,73 @@ export const NOTE_ANNOTATED = [
   '- **“the strip reads left to right”** — Say WHY, not what: the left half never starts a turn.',
   '- **Whole document** — Worth a screenshot in the gallery once the stop slot lands.',
 ].join('\n');
+
+/** A client-shaped value for views whose shown state performs no gateway operation. */
+export const STORY_INERT_CLIENT = {} as GatewayClient;
+
+/** The paired fleet: reachable, unavailable, and long enough to exercise truncation. */
+export const STORY_GATEWAYS: GatewayConn[] = [
+  { url: 'http://10.0.0.5:7890', token: 'story', label: 'tower' },
+  { url: 'http://100.64.0.10:7890', token: 'story', label: 'macbook-pro-16-work' },
+  { url: 'http://10.0.0.9:7890', token: 'story', label: 'mini' },
+];
+
+/** Verdicts are deliberately future-dated so a frozen frame never ages into “Checking”. */
+export const STORY_GATEWAY_HEALTH: Record<string, GwHealth> = {
+  [STORY_GATEWAYS[0].url]: { state: 'online', at: Number.MAX_SAFE_INTEGER, ms: 18 },
+  [STORY_GATEWAYS[1].url]: { state: 'online', at: Number.MAX_SAFE_INTEGER, ms: 42 },
+  [STORY_GATEWAYS[2].url]: {
+    state: 'offline',
+    at: Number.MAX_SAFE_INTEGER,
+    why: 'The latest probe timed out',
+  },
+};
+
+/** Two real project states: one running, one settled. */
+export const STORY_PROJECTS: ManagedProject[] = [
+  { name: 'vis', root: '/Users/me/code/vis', projectId: 'project-vis', count: 61, live: 2 },
+  { name: 'demo', root: '/Users/me/code/demo', projectId: 'project-demo', count: 4, live: 0 },
+];
+
+/** Files need no eager byte fetch, so this grid is a deterministic index rather than a mock transport. */
+export const STORY_ARTIFACTS: SessionArtifact[] = [
+  {
+    key: 'i7:0',
+    kind: 'file',
+    name: 'build.log',
+    media: 'LOG',
+    mediaType: 'application/octet-stream',
+    size: 18240,
+    sizeLabel: '18KB',
+    turn: 7,
+    iterationId: 'i7',
+    index: 0,
+    version: 1,
+  },
+  {
+    key: 'i5:0',
+    kind: 'file',
+    name: 'release-notes.txt',
+    media: 'TXT',
+    mediaType: 'application/octet-stream',
+    size: 5400,
+    sizeLabel: '5.4KB',
+    turn: 5,
+    iterationId: 'i5',
+    index: 0,
+    version: 1,
+  },
+  {
+    key: 'i3:0',
+    kind: 'file',
+    name: 'vis-companion-debug-2026-05-14.zip',
+    media: 'ZIP',
+    mediaType: 'application/zip',
+    size: 834000,
+    sizeLabel: '834KB',
+    turn: 3,
+    iterationId: 'i3',
+    index: 0,
+    version: 1,
+  },
+];

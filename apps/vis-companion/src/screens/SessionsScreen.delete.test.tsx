@@ -116,7 +116,7 @@ describe("deleting a project confirms inside its inventory row", () => {
     expect(view.requests.some((request) => request.method === "DELETE")).toBe(false);
 
     fireEvent.click(screen.getByRole("button", { name: "No, keep" }));
-    expect(await screen.findByRole("menuitem", { name: /project/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /^project/ })).toBeTruthy();
 
     fireEvent.click(
       screen.getByRole("button", {

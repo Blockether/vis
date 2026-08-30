@@ -2,7 +2,7 @@
 // The sheet opens in `Modal`, which PORTALS into the document — there is no
 // document in the `node` environment, and a portal cannot be rendered to a
 // string. Every case here renders and then reads the body it landed in.
-import { cleanup, render } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { HumanInputSheet } from './HumanInputPrompt';
 import promptSource from './HumanInputPrompt.tsx?raw';
@@ -117,6 +117,21 @@ describe('human input sheet', () => {
     });
     expect(html).toContain('The engine refused this answer.');
     expect(element(html, 'overflow-y-auto')).toContain('Must look like OPS-1234.');
+  });
+
+  it('connects every written-field label and refusal to its native control', () => {
+    markup('grouped', { errors: { user: 'Use a service account.' } });
+
+    expect(screen.getByRole('textbox', { name: 'User, required' })).toBeTruthy();
+    const password = screen.getByLabelText(/Password/);
+    expect(screen.getByRole('textbox', { name: 'Notes' })).toBeTruthy();
+    const user = screen.getByRole('textbox', { name: 'User, required' });
+    const describedBy = user.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy ?? '')?.textContent).toBe('Use a service account.');
+    expect(user.getAttribute('aria-invalid')).toBe('true');
+    expect(user.getAttribute('aria-required')).toBe('true');
+    expect(password.getAttribute('aria-required')).toBe('true');
   });
 
   it('gives a range field a real slider, its bounds, and a readable value', () => {
@@ -359,7 +374,7 @@ describe('the engine’s whole node vocabulary', () => {
   it('marks what the engine requires, for the eye and for a screen reader', () => {
     const required = nodes(request.fields).filter((field) => field.is_required);
     expect(required.map((field) => field.id).sort()).toEqual(['code', 'host', 'key']);
-    expect(html.match(/<span class="sr-only"> required<\/span>/g) ?? []).toHaveLength(
+    expect(html.match(/<span class="sr-only">, required<\/span>/g) ?? []).toHaveLength(
       required.length,
     );
   });

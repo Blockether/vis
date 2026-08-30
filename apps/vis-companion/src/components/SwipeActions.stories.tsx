@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { fn } from 'storybook/test';
+import { expect, fn, userEvent } from 'storybook/test';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { SESSION_VERBS, STORY_SESSION } from '../dev/story-data';
 import { PencilIcon, StarIcon, TrashIcon } from './icons';
@@ -23,14 +23,16 @@ const MARKS: Record<string, ReactNode> = {
   delete: <TrashIcon className="size-4" />,
 };
 
+const onStar = fn();
 const actions: SwipeAction[] = SESSION_VERBS.map((verb) => ({
   key: verb.key,
   label: verb.label,
   name: verb.name,
   tone: verb.tone,
   icon: MARKS[verb.key],
-  onSelect: fn(),
+  onSelect: verb.key === 'star' ? onStar : () => {},
 }));
+const staticActions = actions.map((action) => ({ ...action, onSelect: () => {} }));
 
 const meta = {
   title: 'Components/Swipe actions',
@@ -49,13 +51,17 @@ export const SessionRow: Story = {
     actions,
     children: <ListRow>{STORY_SESSION.title}</ListRow>,
   },
+  play: async ({ canvas }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Star this session' }));
+    await expect(onStar).toHaveBeenCalledOnce();
+  },
 };
 
 /** One verb: the cell keeps its 72px, so the strip never reads as a half-open row. */
 export const OneVerb: Story = {
   args: {
     label: 'Actions for mini',
-    actions: [actions[0]],
+    actions: staticActions.slice(0, 1),
     children: <ListRow>mini — not answering since 11:20</ListRow>,
   },
 };
@@ -64,7 +70,7 @@ export const OneVerb: Story = {
 export const SelectedRow: Story = {
   args: {
     label: `Actions for ${STORY_SESSION.title}`,
-    actions,
+    actions: staticActions,
     children: <ListRow isSelected>{STORY_SESSION.title}</ListRow>,
   },
 };

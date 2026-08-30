@@ -5268,7 +5268,7 @@ export function SessionScreen({
                         moving focus off the composer — is what takes the iOS
                         keyboard down and puts it straight back up. */}
                     <div
-                      role="menu"
+                      role="dialog"
                       aria-label="Attach"
                       onMouseDown={keepKeyboard}
                       className="absolute bottom-full left-0 z-30 mb-1.5 w-max min-w-40 overflow-hidden rounded-panel border border-dialog-edge bg-panel shadow-[6px_6px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none"

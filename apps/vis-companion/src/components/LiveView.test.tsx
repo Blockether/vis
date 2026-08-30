@@ -66,6 +66,7 @@ describe('a live view on the phone', () => {
     expect(html).toContain('Critical');
     expect(html).toContain('Collect inventory');
     expect(html).toContain('db-2 · 1 critical (openssl)');
+    expect(screen.getByLabelText('Output output').getAttribute('tabindex')).toBe('0');
     expect(screen.getAllByRole('row').length).toBe(3);
     expect(screen.getByRole('link', { name: 'The run on GitHub' })).toHaveProperty(
       'href',

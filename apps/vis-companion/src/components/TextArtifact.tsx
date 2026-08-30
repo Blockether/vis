@@ -62,7 +62,12 @@ export const TextBody = memo(function TextBody({
     );
   }
   return (
-    <pre className="min-w-0 overflow-x-auto bg-code px-3 py-3 font-mono text-meta whitespace-pre-wrap text-foreground sm:px-4">
+    <pre
+      role="region"
+      tabIndex={0}
+      aria-label={name ?? 'Artifact text'}
+      className="min-w-0 overflow-x-auto bg-code px-3 py-3 font-mono text-meta whitespace-pre-wrap text-foreground sm:px-4"
+    >
       {text}
     </pre>
   );

@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { fn } from 'storybook/test';
+import { expect, userEvent } from 'storybook/test';
 import { useState, type ReactNode } from 'react';
 import { RECORDING_PEAKS, STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
 import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
@@ -108,6 +108,8 @@ const meta = {
 export default meta;
 
 type Story = StoryObj<typeof meta>;
+
+const noop = () => {};
 
 /** One captioned group. The caption is prose ABOUT a control, never a label ON one. */
 function Group({ of, children }: { of: string; children: ReactNode }) {
@@ -252,6 +254,16 @@ export const Fields: Story = {
       </Group>
     </Sheet>
   ),
+  play: async ({ canvas }) => {
+    const search = canvas.getByLabelText('Search sessions');
+    await userEvent.type(search, 'vis');
+    await expect(search).toHaveValue('vis');
+
+    const notifications = canvas.getByRole('switch', { name: /^Notify on this machine/ });
+    await expect(notifications).toHaveAttribute('aria-checked', 'true');
+    await userEvent.click(notifications);
+    await expect(notifications).toHaveAttribute('aria-checked', 'false');
+  },
 };
 
 export const Rows: Story = {
@@ -267,26 +279,30 @@ export const Rows: Story = {
         </ListRow>
       </Group>
       <Group of="ChoiceCell, with the action that belongs to the row">
-        <ChoiceCell
-          className="w-full"
-          title="Piper English"
-          sub="downloading, 42%"
-          isSelected={false}
-          leadingAction={{
-            label: 'Download Piper English',
-            icon: <DownloadIcon className="size-3" />,
-            onClick: fn(),
-          }}
-        />
-        <ChoiceCell className="w-full" title="System voice" sub="ready" isSelected />
+        <div className="w-full" role="group" aria-label="Voices">
+          <ChoiceCell
+            className="w-full"
+            title="Piper English"
+            sub="downloading, 42%"
+            isSelected={false}
+            leadingAction={{
+              label: 'Download Piper English',
+              icon: <DownloadIcon className="size-3" />,
+               onClick: noop,
+            }}
+          />
+          <ChoiceCell className="w-full" title="System voice" sub="ready" isSelected />
+        </div>
       </Group>
       <Group of="Disclosure and OptionRow">
         <Disclosure className="w-full" isOpen={false}>
           Thinking
         </Disclosure>
-        <OptionRow className="w-full" isActive>
-          Reasoning, high
-        </OptionRow>
+        <div className="w-full" role="listbox" aria-label="Reasoning effort">
+          <OptionRow className="w-full" isActive>
+            Reasoning, high
+          </OptionRow>
+        </div>
       </Group>
     </Sheet>
   ),
@@ -349,7 +365,7 @@ export const Feedback: Story = {
         <Banner
           kind="err"
           title="Authentication rejected"
-          dismiss={{ label: 'Dismiss', onClick: fn() }}
+           dismiss={{ label: 'Dismiss', onClick: noop }}
         >
           Sign in again to keep this provider.
         </Banner>
@@ -453,12 +469,21 @@ export const Selection: Story = {
           question={`Delete ${STORY_SESSION.title}?`}
           cost="61 turns and every artifact go with it."
           confirmLabel="Delete"
-          onKeep={fn()}
-          onConfirm={fn()}
+           onKeep={noop}
+           onConfirm={noop}
         />
       </Group>
     </Sheet>
   ),
+  play: async ({ canvas }) => {
+    const staging = canvas.getByRole('radio', { name: 'staging' });
+    await userEvent.click(staging);
+    await expect(staging).toHaveAttribute('aria-checked', 'true');
+
+    const lint = canvas.getByRole('button', { name: 'lint' });
+    await userEvent.click(lint);
+    await expect(lint).toHaveAttribute('aria-pressed', 'true');
+  },
 };
 
 /** A name that edits in place has to hold the value it is editing. */
@@ -493,7 +518,7 @@ export const Bands: Story = {
           name={STORY_MACHINES[0].name}
           qualifier={STORY_SESSION.where}
           qualifierTitle={STORY_SESSION.where}
-          onRename={fn()}
+           onRename={noop}
           renameLabel={`Rename ${STORY_MACHINES[0].name}`}
         />
       </Group>
@@ -502,7 +527,7 @@ export const Bands: Story = {
           name={STORY_SESSION.project}
           qualifier={STORY_SESSION.where}
           qualifierTitle={STORY_SESSION.where}
-          disclosure={{ isOpen: true, onToggle: fn(), label: 'Collapse vis' }}
+           disclosure={{ isOpen: true, onToggle: noop, label: 'Collapse vis' }}
         />
       </Group>
       <Group of="What a band counts">
@@ -581,15 +606,15 @@ export const Machines: Story = {
         <NewSessionButton
           machine={STORY_MACHINES[0].name}
           where={STORY_SESSION.where}
-          onPress={fn()}
+           onPress={noop}
         />
         <NewSessionButton
           machine={STORY_MACHINES[0].name}
           busyLabel="Starting…"
-          onPress={fn()}
+           onPress={noop}
         />
-        <MachineProjectsButton machine={STORY_MACHINES[0].name} onPress={fn()} />
-        <MachineProjectsButton machine={STORY_MACHINES[0].name} isQuiet onPress={fn()} />
+         <MachineProjectsButton machine={STORY_MACHINES[0].name} onPress={noop} />
+         <MachineProjectsButton machine={STORY_MACHINES[0].name} isQuiet onPress={noop} />
       </Group>
     </Sheet>
   ),
@@ -610,6 +635,11 @@ function SettingsChoiceDemo() {
           onSelect={() => setEngine('piper')}
           onToggle={() => setOpen((one) => !one)}
         />
+        {open && (
+          <p id="story-piper-settings" className="px-3 py-2 font-mono text-meta text-dialog-hint">
+            English · downloaded
+          </p>
+        )}
       </div>
       <div className="grid bg-input">
         <SettingsChoiceDisclosure
@@ -619,8 +649,11 @@ function SettingsChoiceDemo() {
           isOpen={false}
           controls="story-device-settings"
           onSelect={() => setEngine('device')}
-          onToggle={fn()}
+          onToggle={() => undefined}
         />
+        <p id="story-device-settings" hidden>
+          System voice settings
+        </p>
       </div>
     </div>
   );
@@ -674,13 +707,13 @@ export const Settings: Story = {
         <NotifyConnectionSwitch
           machine={STORY_MACHINES[0].name}
           isOn
-          onClick={fn()}
+           onClick={noop}
         />
         <NotifyConnectionSwitch
           machine={STORY_MACHINES[1].name}
           isOn={false}
           isChecking
-          onClick={fn()}
+           onClick={noop}
         />
       </Group>
       <Group of="A bounded number is dragged, and audio is scrubbed">
@@ -699,21 +732,21 @@ export const Settings: Story = {
  */
 export const Dialogs: Story = {
   render: () => (
-    <Modal size="fit" onDismiss={fn()}>
+     <Modal size="fit" onDismiss={noop}>
       <DialogFrame
         title="Delete this session?"
         subtitle={STORY_SESSION.title}
         actions={<BandButton isPrimary>Delete</BandButton>}
         closeLabel="Close the delete dialog"
-        onClose={fn()}
+         onClose={noop}
       >
         <div className="p-4">
           <ConfirmRow
             question={`Delete ${STORY_SESSION.title}?`}
             cost="61 turns and every artifact go with it."
             confirmLabel="Delete"
-            onKeep={fn()}
-            onConfirm={fn()}
+             onKeep={noop}
+             onConfirm={noop}
           />
         </div>
       </DialogFrame>
@@ -724,13 +757,13 @@ export const Dialogs: Story = {
 /** The full-height dialog: a list inside it gets every pixel the glass has. */
 export const DialogFull: Story = {
   render: () => (
-    <Modal onDismiss={fn()}>
+     <Modal onDismiss={noop}>
       <DialogFrame
         title={`Projects on ${STORY_MACHINES[0].name}`}
         subtitle={STORY_SESSION.where}
         actions={<BandButton isPrimary>Add</BandButton>}
         closeLabel="Close the projects dialog"
-        onClose={fn()}
+         onClose={noop}
       >
         <div className="flex flex-col">
           <ListRow isFramed>vis</ListRow>
@@ -751,7 +784,7 @@ export const Overlay: Story = {
       title="fleet.csv"
       subtitle="7 rows × 5 cols · 268 B"
       actions={<BandButton>Download</BandButton>}
-      onClose={fn()}
+       onClose={noop}
     >
       <div className="p-4">
         <p className="font-mono text-meta text-dialog-hint">
@@ -774,7 +807,7 @@ export const Band: Story = {
             subtitle={`${STORY_MACHINES[0].name} · protocol 7`}
             actions={<BandButton>Export</BandButton>}
             closeLabel="Close settings"
-            onClose={fn()}
+             onClose={noop}
           />
         </div>
       </Group>
@@ -784,7 +817,7 @@ export const Band: Story = {
             title="fleet.csv"
             isStacked
             closeLabel="Close fleet.csv"
-            onClose={fn()}
+             onClose={noop}
           />
         </div>
       </Group>

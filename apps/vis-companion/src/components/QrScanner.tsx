@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type Ref } from 'react';
 import { Button, Spinner } from './ui';
 import {
   decodeFrame,
@@ -203,6 +203,43 @@ export function QrScanner({ onResult, onCancel }: Props) {
     // Mount-only: the camera must not restart on every render.
   }, []);
 
+  return (
+    <QrScannerView
+      phase={phase}
+      error={error}
+      slowStart={slowStart}
+      noHitYet={noHitYet}
+      canTakePhoto={photoScanSupported()}
+      videoRef={videoRef}
+      canvasRef={canvasRef}
+      onCancel={cancel}
+      onPhoto={() => void shootPhoto()}
+    />
+  );
+}
+
+/** The camera-free half: every state a permission prompt or decoder can paint. */
+export function QrScannerView({
+  phase,
+  error,
+  slowStart = false,
+  noHitYet = false,
+  canTakePhoto,
+  videoRef,
+  canvasRef,
+  onCancel,
+  onPhoto,
+}: {
+  phase: Phase;
+  error: string;
+  slowStart?: boolean;
+  noHitYet?: boolean;
+  canTakePhoto: boolean;
+  videoRef?: Ref<HTMLVideoElement>;
+  canvasRef?: Ref<HTMLCanvasElement>;
+  onCancel: () => void;
+  onPhoto: () => void;
+}) {
   const waiting = phase === 'starting' || phase === 'busy';
   const waitingLabel = phase === 'busy' ? 'Reading the photo' : 'Starting the camera';
   const waitingHint =
@@ -271,14 +308,14 @@ export function QrScanner({ onResult, onCancel }: Props) {
           </p>
         )}
         <div className="flex gap-2">
-          <Button variant="secondary" className="flex-1" onClick={cancel}>
+          <Button variant="secondary" className="flex-1" onClick={onCancel}>
             Cancel
           </Button>
-          {photoScanSupported() && (
+          {canTakePhoto && (
             <Button
               variant="secondary"
               className="flex-1"
-              onClick={shootPhoto}
+              onClick={onPhoto}
               disabled={phase === 'busy'}
             >
               {phase === 'busy' ? 'Reading…' : 'Take a photo instead'}

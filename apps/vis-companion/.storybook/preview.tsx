@@ -45,6 +45,7 @@ const preview: Preview = {
   tags: ['autodocs'],
   parameters: {
     layout: 'fullscreen',
+
     viewport: {
       options: {
         phone: { name: 'Phone 393x852', styles: { width: '393px', height: '852px' } },
@@ -52,6 +53,12 @@ const preview: Preview = {
         tablet: { name: 'Tablet 834x1194', styles: { width: '834px', height: '1194px' } },
         desktop: { name: 'Desktop 1280x800', styles: { width: '1280px', height: '800px' } },
       },
+    },
+
+    a11y: {
+      // A story with broken semantics is not a picture to approve. The browser
+      // project runs this same axe pass in CI; the panel is only its explanation.
+      test: 'error',
     },
   },
   initialGlobals: {

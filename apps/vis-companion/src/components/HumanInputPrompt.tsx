@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Banner, Button, ChoiceRow, DialogFrame, Input, Modal, Slider } from './ui';
 import type { GatewayClient } from '../lib/gateway';
 import type { SessionSubscriptionHub } from '../lib/subscriptions';
@@ -320,33 +320,56 @@ export function HumanInputSheet({
 function FieldShell({
   field,
   error,
+  controlId,
   children,
 }: {
   field: HumanInputField;
   error?: string;
+  /** The native control this visible label names; choice groups name themselves. */
+  controlId?: string;
   children: React.ReactNode;
 }) {
+  const label = (
+    <>
+      {field.label}
+      {/* The web's own mark, and the TUI band now draws the same one: a red `*`,
+          not the word REQUIRED shouted beside every label. Screen readers still
+          get the word. */}
+      {field.is_required && (
+        <>
+          <span aria-hidden="true" className="ml-1 text-err">
+            *
+          </span>
+          <span className="sr-only">, required</span>
+        </>
+      )}
+    </>
+  );
+  const labelClass =
+    'block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint';
   return (
     <div className="space-y-1">
-      <span className="block font-mono text-chip uppercase tracking-[0.08em] text-dialog-hint">
-        {field.label}
-        {/* The web's own mark, and the TUI band now draws the same one: a red `*`,
-            not the word REQUIRED shouted beside every label. Screen readers still
-            get the word. */}
-        {field.is_required && (
-          <>
-            <span aria-hidden="true" className="ml-1 text-err">
-              *
-            </span>
-            <span className="sr-only"> required</span>
-          </>
-        )}
-      </span>
+      {controlId ? (
+        <label className={labelClass} htmlFor={controlId}>
+          {label}
+        </label>
+      ) : (
+        <span className={labelClass}>{label}</span>
+      )}
       {field.description && (
-        <p className="font-mono text-chip italic text-dialog-hint">{field.description}</p>
+        <p
+          id={controlId ? `${controlId}-description` : undefined}
+          className="font-mono text-chip italic text-dialog-hint"
+        >
+          {field.description}
+        </p>
       )}
       {children}
-      {error && <p className="font-mono text-chip text-err">{error}</p>}
+      {error && (
+        <p id={controlId ? `${controlId}-error` : undefined} className="font-mono text-chip text-err">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -375,6 +398,11 @@ function HumanInputFieldRow({
   const error = errors[field.id];
   const chosen = Array.isArray(value) ? value : [];
   const options = field.options ?? [];
+  const controlId = useId();
+  const describedBy =
+    [field.description ? `${controlId}-description` : '', error ? `${controlId}-error` : '']
+      .filter(Boolean)
+      .join(' ') || undefined;
 
   // PURE DECORATION: a heading opens a section of a long form and a paragraph
   // explains one. Neither is a control: nothing keys it, it holds no value and
@@ -530,11 +558,15 @@ function HumanInputFieldRow({
 
   if (field.type === 'multiline') {
     return (
-      <FieldShell field={field} {...(error ? { error } : {})}>
+      <FieldShell field={field} controlId={controlId} {...(error ? { error } : {})}>
         <textarea
+          id={controlId}
           rows={4}
           disabled={disabled}
           value={text}
+          aria-describedby={describedBy}
+          aria-invalid={Boolean(error)}
+          aria-required={field.is_required}
           {...(field.max_length ? { maxLength: field.max_length } : {})}
           {...(field.placeholder ? { placeholder: field.placeholder } : {})}
           className="w-full resize-y border border-edge bg-input px-2.5 py-1 font-mono text-meta text-white placeholder:text-dialog-hint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent/30 disabled:text-muted sm:text-ui"
@@ -545,11 +577,15 @@ function HumanInputFieldRow({
   }
 
   return (
-    <FieldShell field={field} {...(error ? { error } : {})}>
+    <FieldShell field={field} controlId={controlId} {...(error ? { error } : {})}>
       <Input
+        id={controlId}
         type={field.type === 'password' ? 'password' : 'text'}
         disabled={disabled}
         value={text}
+        aria-describedby={describedBy}
+        aria-invalid={Boolean(error)}
+        aria-required={field.is_required}
         {...(field.max_length ? { maxLength: field.max_length } : {})}
         {...(field.placeholder ? { placeholder: field.placeholder } : {})}
         onChange={(event) => onChange(field.id, event.target.value)}

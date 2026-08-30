@@ -52,9 +52,11 @@ describe("a written artifact", () => {
         name="a.log"
       />,
     );
-    expect(markup).toContain("<pre");
-    expect(markup).toContain("whitespace-pre-wrap");
-    expect(markup).toContain("# not markdown");
+    expect(markup).toContain('<pre');
+    expect(markup).toContain('tabindex="0"');
+    expect(markup).toContain('aria-label="a.log"');
+    expect(markup).toContain('whitespace-pre-wrap');
+    expect(markup).toContain('# not markdown');
   });
 });
 

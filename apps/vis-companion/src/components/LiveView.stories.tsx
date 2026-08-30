@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { fn } from 'storybook/test';
+import { expect, fn, userEvent } from 'storybook/test';
 
 import { STORY_LIVE_VIEW } from '../dev/story-data';
 import { LiveViewPanel } from './LiveView';
@@ -19,7 +19,7 @@ const meta = {
   title: 'Components/Live view',
   component: LiveViewPanel,
   parameters: { layout: 'padded' },
-  args: { view: STORY_LIVE_VIEW, onInterrupt: fn(), onSelect: fn() },
+  args: { view: STORY_LIVE_VIEW, onInterrupt: fn(), onSelect: () => {} },
 } satisfies Meta<typeof LiveViewPanel>;
 
 export default meta;
@@ -27,7 +27,19 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 /** In flight: the stop is ARMED before it is sent, and the note travels with it. */
-export const Running: Story = {};
+export const Running: Story = {
+  play: async ({ args, canvas }) => {
+    await userEvent.click(canvas.getByRole('button', { name: 'Interrupt' }));
+    const reason = await canvas.findByRole('textbox', {
+      name: 'Why are you stopping Fleet scan?',
+    });
+    await userEvent.type(reason, 'wrong subnet');
+    await expect(reason).toHaveValue('wrong subnet');
+    await userEvent.click(canvas.getByRole('button', { name: 'Interrupt' }));
+    await expect(args.onInterrupt).toHaveBeenCalledWith('wrong subnet');
+    await expect(canvas.queryByRole('textbox')).not.toBeInTheDocument();
+  },
+};
 
 /** The stop was pressed and the engine has not answered yet. */
 export const Interrupting: Story = {

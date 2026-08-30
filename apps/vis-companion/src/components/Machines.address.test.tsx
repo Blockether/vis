@@ -77,12 +77,15 @@ async function openAddresses(machine: string) {
   await user.click(
     screen.getByRole('button', { name: `Bind ${machine} to a different address` }),
   );
-  return { menu: within(await screen.findByRole('menu')), user };
+  return { menu: within(await screen.findByRole('dialog')), user };
 }
 
 /** What one menu row offers: its title, its consequence, and any badge. */
 const rowsOf = (menu: ReturnType<typeof within>) =>
-  menu.getAllByRole('menuitem').map((item: HTMLElement) => (item.textContent ?? '').trim());
+  menu
+    .getAllByRole('button')
+    .map((item: HTMLElement) => (item.textContent ?? '').trim())
+    .filter(Boolean);
 
 describe('binding a machine to one of its addresses', () => {
   it('offers the address as the row\'s own verb, and only where there is a choice', () => {
@@ -105,7 +108,7 @@ describe('binding a machine to one of its addresses', () => {
     fleet();
     const { menu } = await openAddresses('tower');
 
-    expect(screen.getByRole('menu').getAttribute('aria-label')).toBe('Addresses on tower');
+    expect(screen.getByRole('dialog').getAttribute('aria-label')).toBe('Addresses on tower');
     expect(menu.getByText('Bind tower to\u2026')).toBeTruthy();
     // Each row NAMES the address and says what makes it durable; the one this
     // device is talking to wears the only mark on the list, and every one of them
@@ -124,7 +127,7 @@ describe('binding a machine to one of its addresses', () => {
     const bound = fleet();
     const { menu, user } = await openAddresses('tower');
 
-    await user.click(menu.getByRole('menuitem', { name: /100\.64\.0\.10/ }));
+     await user.click(menu.getByRole('button', { name: /100\.64\.0\.10/ }));
     // The row's own machine, the address picked, and the rank that freezes it:
     // asking for a route by name outranks the durability order.
     expect(bound).toEqual([[LAN, TAILSCALE, true]]);
@@ -149,7 +152,7 @@ describe('binding a machine to one of its addresses', () => {
       'AutomaticFollow the most durable address that answers',
     );
 
-    await pinned.user.click(pinned.menu.getByRole('menuitem', { name: /^Automatic/ }));
+     await pinned.user.click(pinned.menu.getByRole('button', { name: /^Automatic/ }));
     expect(bound).toEqual([[LAN, TAILSCALE, false]]);
   });
 
@@ -171,7 +174,7 @@ describe('binding a machine to one of its addresses', () => {
         '100.64.0.11:7890Works from anywhere your tailnet reachesno answer',
       ),
     );
-    await user.click(menu.getByRole('menuitem', { name: /^Automatic/ }));
+     await user.click(menu.getByRole('button', { name: /^Automatic/ }));
 
     expect(bound).toEqual([[LAN, LAN, false]]);
   });

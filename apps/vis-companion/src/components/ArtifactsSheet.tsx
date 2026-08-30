@@ -567,7 +567,7 @@ function Thumb({
       <span className="h-0.5 w-4/5 bg-dialog-hint/25" />
       <span className="h-0.5 w-full bg-dialog-hint/25" />
       <span className="h-0.5 w-1/2 bg-dialog-hint/25" />
-      <span className="absolute right-1 bottom-1 bg-dialog-hint/60 px-1 font-mono text-chip text-white">
+      <span className="absolute right-1 bottom-1 bg-dialog-title px-1 font-mono text-chip text-dialog-title-foreground">
         {artifact.media || "FILE"}
       </span>
     </span>

@@ -131,14 +131,11 @@ export function Menu({
   children: ReactNode;
 }) {
   return (
-    <AnchoredPanel size="menu" role="menu" label={label} at={at} onDismiss={onDismiss}>
-      {/* A menu is one list and scrolls whole; only its own body may take the drag,
-          so a long list of verbs never rubber-bands the screen behind it.
-
-          The LAST row drops its rule: every row draws the line under itself, and the
-          bottom one's line lands exactly on the panel's own bottom edge — two
-          hairlines in one pixel row on desktop, and a rule floating over the home
-          indicator on a phone, where the panel has no bottom edge to agree with. */}
+    <AnchoredPanel size="menu" role="dialog" label={label} at={at} onDismiss={onDismiss}>
+      {/* This is a dialog containing ordinary buttons, not the ARIA `menu` widget:
+          ARIA menus require roving focus and arrow-key navigation, while this sheet
+          deliberately keeps the browser's familiar Tab order and may also contain
+          a heading, an explanation, or an empty-state sentence. */}
       <div className="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain [&>*:last-child]:border-b-0">
         {children}
       </div>
@@ -278,7 +275,6 @@ export function MenuItem({
   const row = (
     <button
       type="button"
-      role="menuitem"
       className={`flex min-h-11 items-center gap-2 px-3 py-2 text-left transition-colors duration-150 focus-visible:outline-none motion-reduce:transition-none mouse:min-h-9 ${
         action ? 'min-w-0 flex-1' : 'w-full border-b border-dialog-edge'
       } ${
