@@ -116,7 +116,8 @@ const mountAnnotator = (
     comments: () => host.querySelector('ul[aria-label="Comments"]'),
     verb: (label: string) =>
       [...host.querySelectorAll("button")].find(
-        (button) => button.textContent === label,
+        (button) =>
+          button.getAttribute("aria-label") === label || button.textContent === label,
       )!,
     done: () => {
       act(() => root.unmount());
@@ -165,8 +166,9 @@ describe("an opened markdown note", () => {
     expect(markup).not.toContain("Tap a passage");
     // The band offers both things done to the WHOLE document, side by side.
     expect(markup).toContain("Comment all");
-    expect(markup).toContain("Save");
-    expect(markup.indexOf("Comment all")).toBeLessThan(markup.indexOf("Save"));
+    expect(markup).toContain('aria-label="Save changes"');
+    expect(markup).not.toContain(">Save<");
+    expect(markup.indexOf("Comment all")).toBeLessThan(markup.indexOf("Save changes"));
   });
 
   it("shows the comments the note already carries, outside its prose", () => {
@@ -245,10 +247,11 @@ describe("picking a passage on a touch screen", () => {
 
     const band = markup.slice(0, markup.indexOf("</header>"));
     const column = markup.slice(markup.indexOf("</header>"));
-    // The ✕'s own cell with a word in it: welded by the band's hairline and as
-    // tall as the band, never a bordered button parked on a title.
-    expect(band).toContain(">Save<");
-    expect(column).not.toContain(">Save<");
+    // The X's neighbouring cell is a named check mark, never a word that competes
+    // with the document title or a footer parked under the prose.
+    expect(band).toContain('aria-label="Save changes"');
+    expect(band).not.toContain(">Save<");
+    expect(column).not.toContain('aria-label="Save changes"');
   });
 });
 
@@ -547,7 +550,7 @@ describe("a document reopened on unsaved work", () => {
     const saved = mountAnnotator(TEXT, async () => 7);
     remark(saved.host, "Stale.");
     await act(async () => {
-      saved.verb("Save").click();
+      saved.verb("Save changes").click();
       await Promise.resolve();
     });
     expect(saved.band().textContent).toContain("Saved as v7");
@@ -631,7 +634,7 @@ describe("the band of an opened document", () => {
     const all = opened.host.querySelector<HTMLButtonElement>(
       'button[aria-label="Comment on the whole document"]',
     )!;
-    const save = opened.verb("Save");
+    const save = opened.verb("Save changes");
 
     expect(all.closest("header")).toBe(opened.band());
     expect(save.previousElementSibling).toBe(all);

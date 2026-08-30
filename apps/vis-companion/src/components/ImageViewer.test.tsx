@@ -47,7 +47,8 @@ function control(label: string): HTMLButtonElement {
 
 function named(text: string): HTMLButtonElement {
   const button = [...document.querySelectorAll("button")].find(
-    (b) => b.textContent === text,
+    (candidate) =>
+      candidate.getAttribute("aria-label") === text || candidate.textContent === text,
   );
   if (!button) throw new Error(`no button named ${text}`);
   return button;
@@ -256,8 +257,9 @@ it("keeps the ink through one Save in the band, one cell from the way out", () =
   );
 
   const header = document.querySelector('[role="dialog"] header');
-  const save = named("Save");
+  const save = named("Save changes");
   expect(header?.contains(save)).toBe(true);
+  expect(save.textContent).toBe("");
   expect(save.nextElementSibling).toBe(control("Close chart.png"));
 
   // The strip never grows a second way to finish: pressed IS drawing.
@@ -287,7 +289,7 @@ it("closes an untouched pending image without preparing a replacement", async ()
     ),
   );
 
-  await act(async () => named("Save").click());
+  await act(async () => named("Save changes").click());
 
   expect(applied).not.toHaveBeenCalled();
   expect(closed).toHaveBeenCalledOnce();

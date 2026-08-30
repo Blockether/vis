@@ -44,7 +44,7 @@ export const Note: Story = {
     await userEvent.click(canvas.getByRole('button', { name: 'Comment on the whole document' }));
     await userEvent.type(canvas.getByRole('textbox', { name: 'Comment' }), 'Worth a second pass.');
     await userEvent.click(canvas.getByRole('button', { name: 'Add comment' }));
-    await userEvent.click(canvas.getByRole('button', { name: 'Save' }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Save changes' }));
     await expect(args.onSave).toHaveBeenCalledTimes(1);
     await expect(args.onSave).toHaveBeenCalledWith(
       expect.stringContaining('Worth a second pass.'),

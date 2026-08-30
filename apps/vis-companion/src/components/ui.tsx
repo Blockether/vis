@@ -1571,46 +1571,48 @@ export function CloseButton({
 /**
  * A VERB IN A BAND, and there is only one of it.
  *
- * `CloseButton isBand` is the cell that ENDS a band; this is that same cell with a
- * WORD in it, for a band that also offers something — re-poll this fleet, go where
- * the accounts live. It fills the band's height, is welded by the band's own
- * hairline, and takes the band's ink, so the trailing end of a title bar reads as
- * one run of cells rather than as buttons parked on a heading.
+ * `CloseButton isBand` is the cell that ENDS a band; this is the same cell for what
+ * the band also OFFERS. A domain verb earns its word. Universal chrome can replace
+ * that word with a mark by supplying `label`; the label names it, the cell becomes
+ * square, and the mark stays optically centred instead of inheriting the text nudge.
  *
  * It is not `Button`: a bordered box on a title band claims a rank chrome has not
- * earned, and a 32px face centred in a 48px band is a smaller target than the ✕ one
- * hairline away from it — two boxes for the two things a band can do.
+ * earned, and a smaller face inside the band gives a finger less target than the X
+ * one hairline away. The cell fills the band and is welded by its own left rule.
  *
- * A CELL WITH SOMETHING TO COMMIT WEARS THE ACCENT (`isPrimary`). Save is the one
- * verb in this app that can be OWED — a note with an unsaved remark, a picture with
- * ink on it — and it stood in the band's own quiet ink whether or not there was
- * anything to save, so the screen never said which of the two it was. Reported as:
- * when there is something to save, it should look like the yellow buttons. It wears
- * the same accent `Button variant="primary"` does, and ONLY while it is live: a cell
- * with nothing to commit is `disabled`, and the colour leaves with the verb rather
- * than fading with it, so the paint IS the report.
+ * A CELL WITH SOMETHING TO COMMIT WEARS THE ACCENT (`isPrimary`). The accent exists
+ * only while the commit is live; a disabled cell drops it instead of dimming a false
+ * promise.
  */
 export function BandButton({
   className = '',
   isPrimary = false,
+  label,
   children,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   /** This cell COMMITS something, and wears the accent while it has something to commit. */
   isPrimary?: boolean;
+  /** The accessible name of an icon-only cell; providing it also gives the mark a square target. */
+  label?: string;
 }) {
   const isLive = isPrimary && !props.disabled;
+  const isIconOnly = Boolean(label);
   return (
     <button
       type="button"
-      className={`grid shrink-0 place-items-center self-stretch whitespace-nowrap border-l border-current/20 px-3 font-mono text-meta font-bold transition-colors duration-150 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent motion-reduce:transition-none sm:px-4 sm:text-ui mouse:px-3 mouse:text-meta ${
+      className={`grid shrink-0 place-items-center self-stretch whitespace-nowrap border-l border-current/20 font-mono text-meta font-bold transition-colors duration-150 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:bg-transparent motion-reduce:transition-none sm:text-ui mouse:text-meta ${
+        isIconOnly ? 'w-12 px-0 mouse:w-9' : 'px-3 sm:px-4 mouse:px-3'
+      } ${
         isLive
           ? 'bg-accent text-accent-foreground hover:bg-accent-2 focus-visible:bg-accent-2'
           : 'text-current hover:bg-current/10 focus-visible:bg-current/10'
       } ${className}`}
+      aria-label={label}
+      title={label}
       {...props}
     >
-      <span className="translate-y-px">{children}</span>
+      <span className={isIconOnly ? '' : 'translate-y-px'}>{children}</span>
     </button>
   );
 }

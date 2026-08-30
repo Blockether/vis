@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
-import { expect, fn, within } from 'storybook/test';
+import { expect, fn, userEvent, within } from 'storybook/test';
 
 import { STORY_ROUTER_CLIENT, STORY_SESSION } from '../dev/story-data';
 import { ProviderRouterDialog } from './RouterScreen';
@@ -26,12 +26,16 @@ export default meta;
 
 type Story = StoryObj<typeof meta>;
 
-/** The body meets the title band on one edge, with the provider fleet underneath it. */
+/** The body meets the title band on one edge, with compact chrome above the fleet. */
 export const Fleet: Story = {
-  play: async ({ canvasElement }) => {
+  play: async ({ args, canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
     await expect(await page.findByRole('dialog', { name: 'Model' })).toBeVisible();
     await expect(page.getByText('Anthropic')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Manage providers' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Refresh models' })).toBeVisible();
+    const settings = page.getByRole('button', { name: 'Open provider settings' });
+    await expect(settings).toBeVisible();
+    await userEvent.click(settings);
+    await expect(args.onManageProviders).toHaveBeenCalledOnce();
   },
 };

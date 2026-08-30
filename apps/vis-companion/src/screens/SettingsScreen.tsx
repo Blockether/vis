@@ -63,6 +63,7 @@ function machineId(conn: GatewayConn): string {
 export function SettingsDialog({
   gateways,
   primaryUrl,
+  providerMachineUrl,
   onAddMachine,
   onMakePrimary,
   onRename,
@@ -72,6 +73,8 @@ export function SettingsDialog({
 }: {
   gateways: GatewayConn[];
   primaryUrl?: string | null;
+  /** Open this machine immediately; Providers is the first panel under its row. */
+  providerMachineUrl?: string;
   /** Pairing is setup, and setup happens HERE — never by leaving this dialog. */
   onAddMachine: (conn: GatewayConn, makeActive?: boolean) => Promise<void>;
   /**
@@ -161,10 +164,15 @@ export function SettingsDialog({
     return next;
   }
 
-  // Settings opens on the fleet, not inside one machine. The reader chooses which
-  // disclosures to open; opening one is never a reason to close another one.
+  // The main cog opens the fleet closed. A route from the model picker already names
+  // both the machine and the job, so that one machine opens directly on Providers.
   const [openIds, setOpenIds] = useState<ReadonlySet<string>>(
-    () => new Set<string>(),
+    () =>
+      new Set(
+        gateways
+          .filter((conn) => conn.url === providerMachineUrl)
+          .map((conn) => machineId(conn)),
+      ),
   );
   const toggleMachine = useCallback((conn: GatewayConn) => {
     setOpenIds((open) => {

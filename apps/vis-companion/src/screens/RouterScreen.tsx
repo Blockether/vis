@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { GatewayClient } from '../lib/gateway';
 import type { ModelPref, RouterProvider } from '../lib/types';
 import { BandButton, Banner, Button, DialogFrame, ListRow, Modal } from '../components/ui';
-import { ChevronIcon, MARK_NUDGE } from '../components/icons';
+import { ChevronIcon, MARK_NUDGE, RefreshIcon, SettingsIcon } from '../components/icons';
 import {
   defaultFirstProviders,
   isProviderAuthed,
@@ -104,20 +104,20 @@ export function ProviderRouterDialog({ client, sid, onClose, onPicked, onManageP
         onClose={onClose}
         actions={
           <>
-            <BandButton disabled={pending === 'reload'} onClick={() => void refresh()}>
-              {pending === 'reload' ? 'Refreshing…' : 'Refresh'}
-            </BandButton>
-            {/* The word is the DESTINATION, and the sentence that used to stand in the
-                footer is on it: sign-in, OAuth and API keys live in machine settings and
-                nowhere else, and every signed-out provider already offers the same trip
-                in its own row. Spelled out, the cell took 121px of a 390px band and left
-                the pinned model — the one fact this band reports — truncating mid-token. */}
             <BandButton
-              aria-label="Manage providers"
+              label={pending === 'reload' ? 'Refreshing models' : 'Refresh models'}
+              title="Refresh models"
+              disabled={pending === 'reload'}
+              onClick={() => void refresh()}
+            >
+              <RefreshIcon isBusy={pending === 'reload'} />
+            </BandButton>
+            <BandButton
+              label="Open provider settings"
               title="Sign-in, OAuth and API keys live in machine settings"
               onClick={manageProviders}
             >
-              Providers
+              <SettingsIcon />
             </BandButton>
           </>
         }

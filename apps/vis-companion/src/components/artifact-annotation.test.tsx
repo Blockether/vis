@@ -184,8 +184,10 @@ describe("an artifact opened from the transcript", () => {
 
     const band = () => host.querySelector("header")!;
     const saves = () =>
-      Array.from(host.querySelectorAll("button")).filter((button) =>
-        /^Sav/.test(button.textContent ?? ""),
+      Array.from(
+        host.querySelectorAll<HTMLButtonElement>(
+          'button[aria-label="Save changes"], button[aria-label="Saving changes"]',
+        ),
       );
 
     // There is ONE of it, it is in the band, and it has nothing to do yet.

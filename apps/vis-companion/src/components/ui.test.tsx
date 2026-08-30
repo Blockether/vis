@@ -561,6 +561,16 @@ describe("BandButton", () => {
     expect(html()).not.toMatch(/class="[^"]*\bborder\s/);
   });
 
+  it("speaks an icon-only cell without putting the name back on screen", () => {
+    const icon = renderToStaticMarkup(
+      <BandButton label="Refresh models">
+        <span aria-hidden="true" />
+      </BandButton>,
+    );
+    expect(icon).toContain('aria-label="Refresh models"');
+    expect(icon).toContain('title="Refresh models"');
+    expect(icon).not.toContain(">Refresh models<");
+  });
   it("takes only the ink of the band it stands in", () => {
     expect(html()).not.toContain("bg-dialog-title");
     expect(html()).not.toContain("text-dialog-title-foreground");
@@ -1939,13 +1949,10 @@ describe("Modal, fit", () => {
     expect(humanInputSource).not.toContain("fixed inset-0 z-50");
   });
 
-  // Regression, user report ("these two buttons should be up and then this dialog can
-  // be smaller"): the model picker was the last surface hand-rolling a scrim, and it
-  // pinned its panel at 92% of the glass whatever it held — so six provider rows ended
-  // half a phone above `Refresh` and `Manage providers`, which were welded to the foot
-  // of all that empty paper. The verbs are cells of the band now and there is no footer
-  // left, so the sheet is the band plus its rows.
-  it("is what the model picker opens in, with its verbs in the band", () => {
+  // Regression, user report (the two actions belonged above so the dialog could shrink):
+  // the model picker pinned its verbs below a 92%-high panel. They now live in the
+  // band as named marks, where universal chrome cannot compete with the model title.
+  it("keeps the model picker compact with named icon actions", () => {
     expect(routerSource).toContain('<Modal size="fit" onDismiss={onClose}>');
     expect(routerSource).toContain("<DialogFrame");
     expect(routerSource).not.toContain("fixed inset-0 z-50");
@@ -1957,11 +1964,19 @@ describe("Modal, fit", () => {
       routerSource.indexOf("actions={"),
       routerSource.indexOf('<div className="space-y-3'),
     );
-    expect(band).toContain("'Refreshing…' : 'Refresh'");
-    // The band's second cell is the door to where the accounts live, and it is named
-    // in full for a screen reader while the band reads the pinned model.
-    expect(band).toContain('aria-label="Manage providers"');
-    expect(band).toContain("Providers");
+    expect(band).toContain("<RefreshIcon");
+    expect(band).toContain(
+      "label={pending === 'reload' ? 'Refreshing models' : 'Refresh models'}",
+    );
+    expect(band).toContain("<SettingsIcon");
+    expect(band).toContain('label="Open provider settings"');
+    expect(band).not.toContain(">Refresh<");
+    expect(band).not.toContain(">Providers<");
+    // The settings door carries the machine the model belongs to across the boundary.
+    expect(appSource).toContain("providerMachineUrl: openTarget.conn.url");
+    expect(appSource).toContain(
+      "providerMachineUrl={settingsDestination.providerMachineUrl}",
+    );
   });
 });
 

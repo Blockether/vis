@@ -50,10 +50,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const open = (gateways: GatewayConn[]) =>
+const open = (gateways: GatewayConn[], providerMachineUrl?: string) =>
   render(
     <SettingsDialog
       gateways={gateways}
+      providerMachineUrl={providerMachineUrl}
       onAddMachine={async () => {}}
       onClose={() => {}}
     />,
@@ -81,6 +82,23 @@ describe("machine settings disclosures", () => {
     view.unmount();
   });
 
+  it("opens the requested machine directly at its provider settings", async () => {
+    const view = open(
+      [
+        { url: URL_A, token: "t", id: "be2c15686eaef0f4" },
+        { url: URL_B, token: "t", id: "cad6247b600f9bbc" },
+      ],
+      URL_B,
+    );
+
+    const [first, second] = screen
+      .getAllByRole("button")
+      .filter((button) => button.hasAttribute("aria-expanded"));
+    expect(first).toHaveAttribute("aria-expanded", "false");
+    expect(second).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(screen.getByText("Providers")).toBeTruthy());
+    view.unmount();
+  });
   // Regression, issue #ea166d2d-d22f-4a89-b117-d058641b7422: a protocol refusal
   // proves the machine answered, so no unreachable-machine panel may follow it.
   it("does not call a protocol-incompatible machine unreachable", async () => {

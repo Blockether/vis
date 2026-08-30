@@ -205,10 +205,19 @@ export function App() {
     sid: string;
     fresh?: boolean;
   } | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  // Settings opens at its two top-level choices. A machine remains collapsed until
-  // the reader presses that machine's own row.
-  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const [settingsDestination, setSettingsDestination] = useState<{
+    providerMachineUrl?: string;
+  } | null>(null);
+  // The app cog opens the fleet. The model picker already knows which machine owns
+  // its providers, so its cog opens that machine instead of asking the question again.
+  const openSettings = useCallback(() => setSettingsDestination({}), []);
+  const openProviderSettings = useCallback(
+    () =>
+      setSettingsDestination(
+        openTarget ? { providerMachineUrl: openTarget.conn.url } : {},
+      ),
+    [openTarget],
+  );
   const [ready, setReady] = useState(false);
   // Set when the sessions screen finds the active gateway unreachable. While it
   // holds a message there is nothing to navigate, so the shell shows Machines
@@ -320,7 +329,7 @@ export function App() {
     const previous = shownScreen.current;
     shownScreen.current = screen;
     if (!isSessionEntered(previous, screen)) return;
-    setSettingsOpen(false);
+    setSettingsDestination(null);
   }, [screen]);
 
   // A share sheet drop, an Android `ACTION_SEND`, or a Shortcuts run carries a
@@ -489,8 +498,8 @@ export function App() {
   const backRef = useRef<() => void>(() => {});
   useEffect(() => {
     backRef.current = () => {
-      if (settingsOpen) {
-        setSettingsOpen(false);
+      if (settingsDestination) {
+        setSettingsDestination(null);
         return;
       }
       if (openTarget) {
@@ -1097,15 +1106,16 @@ export function App() {
             onOpenSession={(sid, fresh) =>
               void openGatewaySession(openTarget.conn, sid, fresh)
             }
-            onManageProviders={openSettings}
+            onManageProviders={openProviderSettings}
           />
         )}
       </main>
 
-      {settingsOpen && (
+      {settingsDestination && (
         <SettingsDialog
           gateways={conns}
           primaryUrl={primary?.url}
+          providerMachineUrl={settingsDestination.providerMachineUrl}
           onAddMachine={addConnection}
           onMakePrimary={async (conn) => {
             await Promise.all([setPrimaryUrl(conn.url), setActiveUrl(conn.url)]);
@@ -1141,7 +1151,7 @@ export function App() {
             if (wasActive) setActive(next);
             await refresh();
           }}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => setSettingsDestination(null)}
         />
       )}
     </Shell>

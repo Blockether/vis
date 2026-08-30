@@ -86,6 +86,7 @@ import {
   Pencil,
   Play,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Share2,
@@ -351,6 +352,24 @@ export function ForkIcon({ className }: { className?: string }) {
   return <Mark icon={GitFork} className={className} />;
 }
 
+/** Re-read a live collection. The same arrows turn while that read is in flight. */
+export function RefreshIcon({
+  isBusy = false,
+  className,
+}: {
+  isBusy?: boolean;
+  className?: string;
+}) {
+  return (
+    <Mark
+      icon={RefreshCw}
+      className={classes(
+        isBusy && "animate-spin motion-reduce:animate-none",
+        className,
+      )}
+    />
+  );
+}
 export function SettingsIcon({ className }: { className?: string }) {
   return <Mark icon={Settings} className={className} />;
 }

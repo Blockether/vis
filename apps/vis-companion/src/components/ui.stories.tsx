@@ -4,10 +4,12 @@ import { useState, type ReactNode } from 'react';
 import { STORY_MACHINES, STORY_SESSION } from '../dev/story-data';
 import { HUMAN_INPUT_CHOICE_MARKS } from '../lib/human-input';
 import {
+  CheckIcon,
   CopyIcon,
   DownloadIcon,
   MicIcon,
   PlusIcon,
+  RefreshIcon,
   SendIcon,
   SettingsIcon,
   StopIcon,
@@ -153,6 +155,16 @@ export const Marks: Story = {
         <IconButton label="Settings" variant="secondary">
           <SettingsIcon />
         </IconButton>
+      </Group>
+      <Group of="Band chrome, named by its mark">
+        <div className="flex min-h-12 justify-end bg-dialog-title text-dialog-title-foreground">
+          <BandButton label="Refresh models">
+            <RefreshIcon />
+          </BandButton>
+          <BandButton label="Save changes" isPrimary>
+            <CheckIcon />
+          </BandButton>
+        </div>
       </Group>
       <Group of="Navigation and the ways out">
         <BackButton label="Back to sessions" />

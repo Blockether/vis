@@ -37,8 +37,8 @@ import {
   PenToolbar,
   type AnnotationSurface,
 } from "./AnnotationLayer";
-import { CopyIcon, DownloadIcon, DrawIcon, ShareIcon, TrimIcon } from "./icons";
-import { BandButton, Button, DialogHeader, IconButton } from "./ui";
+import { CheckIcon, CopyIcon, DownloadIcon, DrawIcon, ShareIcon, TrimIcon } from "./icons";
+import { BandButton, Button, DialogHeader, IconButton, Spinner } from "./ui";
 import { useGalleryStep, type GalleryPicture } from "../lib/gallery";
 import { useStickyOverlay } from "../lib/sticky-overlay";
 
@@ -671,13 +671,26 @@ export function ImageViewer({
         actions={
           onApply ? (
             <BandButton
+              label={
+                applyLabel === "Save"
+                  ? busy === "apply"
+                    ? "Saving changes"
+                    : "Save changes"
+                  : undefined
+              }
               onClick={() => void applyEdit()}
               disabled={busy !== null}
               // Ink on the layer, or a trim taken: the cell wears the accent only
               // when the picture on screen is no longer the picture on the gateway.
               isPrimary={hasEdits}
             >
-              {busy === "apply" ? "Saving…" : applyLabel}
+              {applyLabel === "Save" ? (
+                busy === "apply" ? <Spinner /> : <CheckIcon />
+              ) : busy === "apply" ? (
+                "Saving…"
+              ) : (
+                applyLabel
+              )}
             </BandButton>
           ) : null
         }

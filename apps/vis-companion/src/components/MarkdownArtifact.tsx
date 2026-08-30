@@ -26,8 +26,8 @@ import {
 } from "../lib/annotation-drafts";
 import { Markdown } from "./ChatContent";
 import { readArtifactText } from "./TextArtifact";
-import { TrashIcon } from "./icons";
-import { BandButton, Button, IconButton, PROSE } from "./ui";
+import { CheckIcon, TrashIcon } from "./icons";
+import { BandButton, Button, IconButton, PROSE, Spinner } from "./ui";
 import { useSafeBottomStyle } from "../lib/viewport";
 
 /** The blocks a tap may quote: one paragraph, heading, item or cell. */
@@ -642,11 +642,12 @@ export const MarkdownAnnotator = memo(function MarkdownAnnotator({
         </BandButton>
         <BandButton
           type="button"
+          label={saving ? "Saving changes" : "Save changes"}
           isPrimary
           onClick={save}
           disabled={!dirty || saving}
         >
-          {saving ? "Saving…" : "Save"}
+          {saving ? <Spinner /> : <CheckIcon />}
         </BandButton>
       </>
     ),
