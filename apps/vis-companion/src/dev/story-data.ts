@@ -370,6 +370,14 @@ export const STORY_PROVIDERS: RouterProvider[] = [
   },
 ];
 
+/** The model picker's existing gateway seam, settled locally for a deterministic story. */
+export const STORY_ROUTER_CLIENT = {
+  cachedRouter: () => STORY_PROVIDERS,
+  router: async () => STORY_PROVIDERS,
+  sessionModel: async () => ({ provider: 'anthropic', model: 'claude-opus-5' }),
+  setSessionModel: async (_sid: string, provider: string, model: string) => ({ provider, model }),
+} as unknown as GatewayClient;
+
 /**
  * The `ProviderAuth` the rows are handed: the fields a COLLAPSED fleet reads, plus
  * a stub for every verb a press could reach. The panel asks the gateway only when

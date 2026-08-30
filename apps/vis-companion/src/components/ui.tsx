@@ -1815,10 +1815,10 @@ export function Modal({
  * dead space on both sides to clear a close button that is welded to one of them.
  *
  * The band is the list's own (`min-h-12 mouse:min-h-9`), so a dialog's header and a
- * machine's header are the same height on the same screen. Its top stays flush with the
- * viewport and its lower edge takes the panel radius: rounding all four corners would
- * cut paper out of the notch edge, while leaving the lower edge square made the dark
- * band read as a slab laid over the surface. Child washes are clipped to that curve.
+ * machine's header are the same height on the same screen. The dialog frame owns every
+ * outer radius. The band's lower edge stays square and full width so the scrolling body
+ * meets it on one exact seam; rounding that edge exposed two wedges of body paper and
+ * made the band read as a capsule laid over a second surface.
  */
 /**
  * The way out as ONE value: the handler and the name that goes with it, or nothing
@@ -1897,7 +1897,7 @@ export function DialogHeader({
   return (
     <header
       role="presentation"
-      className={`flex min-h-12 shrink-0 items-stretch overflow-hidden rounded-b-panel bg-dialog-title text-dialog-title-foreground mouse:min-h-9 ${
+      className={`flex min-h-12 shrink-0 items-stretch overflow-hidden bg-dialog-title text-dialog-title-foreground mouse:min-h-9 ${
         isUnderNotch ? 'box-content pt-[env(safe-area-inset-top)] sm:pt-0' : ''
       } ${isStacked ? 'border-t border-dialog-title-foreground/20' : ''} ${className}`}
     >

@@ -34,6 +34,22 @@ describe("every dialog header is the one dialog header", () => {
     expect(band().className).not.toContain("rounded-t-panel");
   });
 
+  // Regression, user report: when dialog rows moved upward, the title band ended in
+  // rounded lower corners while the rectangular scrollport started below it. The two
+  // wedges of body paper made one sheet read as a capsule laid over a second surface.
+  it("meets the scrolling body on one uninterrupted edge", () => {
+    render(
+      <DialogFrame title="Model" onClose={() => {}}>
+        <p>Provider rows</p>
+      </DialogFrame>,
+    );
+
+    const frame = screen.getByRole("dialog", { name: "Model" });
+    const header = frame.querySelector("header")!;
+    expect(header.nextElementSibling).toBeTruthy();
+    expect(header.className).not.toMatch(/\brounded-b-/);
+  });
+
   it("aligns the title left and lets it hold a subtitle", () => {
     render(
       <DialogHeader title="Model" subtitle="gateway.example.com" closeLabel="Close Model" onClose={() => {}} />,
