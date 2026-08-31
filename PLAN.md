@@ -1,367 +1,556 @@
-# PLAN — Six seams, three artifacts, one loader
+# PLAN — One contract, one Core, boring adapters
 
-*A seam nobody wrote down is not a boundary; it is a habit.*
+*If a boundary is real, it has one owner, one direction and one name.*
 
 ## Context
 
-**State before.** Six seams cross this engine. Two are written down. Four are habits.
+**State before.** Vis has the right concepts, but their ownership is encoded in call sites rather
+than in the tree.
 
-| # | seam | crosses | state | where it lives today |
-|---|---|---|---|---|
-| B1 | host ops | extension → engine | frozen | `packages/vis-contract/resources/vis-contract/{python,clojure}-host.edn`, 13 ops, `Host(Protocol)` + `check_host` |
-| B2 | contribution surface | extension → registry | free | 29 `s/def :ext/*` forms, `internal/extension.clj:520-772` |
-| B3 | slots | extension → another extension | free | 4 keyword ids, no registry |
-| B4 | wire | any process → gateway | free | 18 `/v1/*` paths + 7 bare paths, in code only |
-| B5 | journal | gateway → any reader | free | `~/.vis/gateway/events/<id>.ndjson`, shape nowhere stated |
-| B6 | tool verbs | model → engine | frozen | `:ext.symbol/params` + `extension_test.clj` over every live tool |
+- `src/com/blockether/vis/core.clj:792-815` publicly exports both Human Input and Live View by
+  resolving functions from `internal.view`; `src/com/blockether/vis/view.clj:112-340` separately
+  owns the builders. View is therefore a Core primitive with two public entrances and lifecycle
+  names that expose an implementation mode.
+- `src/com/blockether/vis/internal/view.clj:1-15,1720-1950,2382` combines parsing, normalization,
+  secrets, blocking response policy, live lifecycle, storage, wire conversion and Python entry
+  points in 2 672 lines. Its 104 executable schemas live separately in
+  `internal/view/spec.clj:1-1202` even though channels and the Companion consume the same shapes.
+- `src/com/blockether/vis/internal/activity.clj:1-337` plus its `event` and `presenter` children
+  reduce tool observations attached to execution, but the top-level name makes Activity look like
+  a peer of Core and View. Activity is execution trace data; it has no user-action lifecycle.
+- `src/com/blockether/vis/internal/loop.clj:1-12120` owns block execution, iterations, turns,
+  environment lifetime and session caches. `internal/gateway/state.clj:1-5536` owns journal fan-out,
+  sessions, projects, read models, queueing, permits, watchdogs, cancellation and workers.
+- `internal/gateway/server.clj:1-5019` and `internal/gateway/client.clj:1-2719` are legitimately on
+  opposite sides of HTTP/SSE, but each is a monolith. The process boundary should remain; the
+  responsibility pile-up should not.
+- `internal/gateway/wire.clj:56-184` mixes canonical key/JSON conversion with gateway event sets and
+  SSE framing. `internal/gateway/protocol.clj:22-78` mixes pure compatibility declarations with
+  release/build/runtime discovery. About thirty non-gateway namespaces consequently require a
+  namespace named `gateway.wire` merely to encode data.
+- Production Clojure has 19 namespaces and 569 `s/def` forms: 65 are already in
+  `packages/vis-contract`, 471 remain under engine `src/`, and 33 describe private TUI transient
+  state. The largest hidden contracts are `internal/extension.clj` (147),
+  `internal/view/spec.clj` (104), `internal/registry.clj` (44), and
+  `internal/config_spec.clj` (43).
+- `packages/vis-contract/README.md:10-14` currently calls itself the extension host contract, while
+  View, gateway, configuration, execution, provider and persistence contracts remain in the
+  engine. The package already carries `charred`, so canonical wire encoding needs no new
+  dependency.
+- `resources/META-INF/vis/manifest.edn:2-54` registers 25 namespaces called `foundation`, and
+  `src/com/blockether/vis/internal/foundation/` contains 53 implementation files. The same word is
+  also used by the optional `vis-foundation-search` and `vis-foundation-voice` artifacts, so it
+  currently means both internal built-in tooling and independent extensions.
+- Production extension source contains references to 33 distinct `com.blockether.vis.internal.*`
+  namespaces. In particular, the language packs reach through the host boundary at
+  `vis-language-clojure/core.clj:18-27`, `vis-language-clojure/test_runner.clj:23-25`,
+  `vis-language-python/interpreter.clj:9-11`, and `vis-language-python/ruff.clj:25-26`.
 
-- **B2 is 29 keys inside a 143 751-byte file.** Python declares 6 of them — `extension`, `symbol`,
-  `slash`, `op_hook`, `network_filter`, `provider` (`packages/vis-agent/src/vis/__init__.py`,
-  68 841 B). Nothing enumerates the 29, so nothing notices the missing 23.
-- **B3 is four ids in the whole tree**: `:gateway.slot/http-routes` (8 occurrences),
-  `:tui.slot/footer-segment` (8), `:tui.slot/header-row` (7), `:tui.slot/commands` (4). The gateway
-  reads its own slot at `internal/gateway/server.clj:4073,4087` through
-  `extension/channel-contributions-for` (`extension.clj:3035`). There is no registry of ids: a typo
-  contributes to nothing and says nothing. `:api.slot/preamble` was in this list one plan ago and
-  is gone now — nothing noticed in either direction.
-- **B4 has two clients and no document**: `internal/gateway/client.clj` (123 141 B, 2 739 lines —
-  daemon lifecycle, lease, auth, proxy) and the companion's TypeScript.
-- **B5 is stable in fact and unwritten**: measured over the 12 newest journals, 4 565 events —
-  `schema` is `1` in every event; eight envelope keys appear on more than 90 % of them
-  (`type schema seq session_id ts _pid _producer _store`), `turn_id` and `iteration` on some; 14
-  distinct `type` values. The set of types is journal-dependent, which is exactly why it must be
-  enumerated rather than sampled.
-- **`fold_session` belongs to B6, not B1.** Its key grammar is parsed at
-  `internal/ctx_engine.clj:364`. Put it in the host contract and every foreign host has to know how
-  to fold a Vis session before it may be a host at all.
-- **The loader knows WHAT, never WHO.** `resources/META-INF/vis/manifest.edn` holds 42 entries —
-  22 shims, 11 providers, 9 others — each `{:register …/register!}` with optional
-  `:apropos`/`:is-optional`/`:because` (`internal/manifest.clj:24-45`). `initialize!` takes no
-  argument (`manifest.clj:182`), has nine call sites, and is idempotent per process
-  (`manifest.clj:132`). Cold cost measured by `ff57a3c95` on this machine: **9 439 ms**, of which
-  `foundation.core` 4 818, `language-clojure` 2 465, `channel-tui` 769, the shims together 953, the
-  11 providers together ~138 — paid identically by the TUI process and by the gateway process. The
-  one thing that does know better is `deferred-python-dispatch?` (`internal/main.clj:4146`), a
-  literal set of argv prefixes consulted at `main.clj:4530`: the right knowledge in a shape no test
-  can read.
-- **The build boundary is physical, not stylistic.** Only Python can be added to a built binary:
-  GraalPy is compiled in and `.vis/extensions/*.py` is scanned at start and at `/reload`. A native
-  library cannot — `reachability-metadata.json` freezes 23 FFM downcall descriptors at build time.
-  JVM code cannot — there is no class loading. Every "plug into Vis" story that is not Python
-  therefore ends at HTTP, which is what makes B4 and B5 load-bearing rather than documentation.
-- **That Python extensibility is pinned by nothing.** `test-native/` is one file,
-  `native_binary_test.clj`, with zero occurrences of `python`, `graalpy` or `sandbox`.
-- **The core has no floor.** `src/` = 5 126 697 B / 161 files: +381 KB since `6ac932db4` measured
-  it, +19 KB in the two days since `ff57a3c95` did. The budget test both plans asked for was never
-  written. Of the 23 `com.blockether/*` dependencies, `rift` is required by exactly one namespace
-  (`internal/workspace.clj`) and still enters the native image graph.
+**Root problem.** The tree does not express the dependency graph. Declarations live beside their
+current implementation, Core imports adapters, extensions import internals, and the word
+`foundation` pretends that one collection of built-in tools is an architectural layer. This makes
+large files the accidental integration boundary and allows a change in one session, adapter or
+language mirror to affect unrelated behavior.
 
-**Root problem.** The two seams that are written down are the two that were extracted into a
-package; the four that are not are the four where the engine still decides by habit — what an
-extension may contribute, what a slot id means, what the wire is, what an event is. Underneath
-them the loader can only say WHAT initializes, so every capability is a startup tax on every
-process, and the only escape hatch is a literal argv set in the engine.
+**Target.** There are four roles and one dependency direction (arrows mean “may depend on”):
 
-**What we solve.** Every seam becomes a document in `packages/vis-contract`, rendered from EDN and
-pinned by a drift test; the manifest gains WHO needs an entrypoint and WHEN; Python reaches every
-contribution point Clojure reaches; a third artifact (`vis-sdk`) drives a gateway from outside the
-JVM over a wire that is finally written down.
+```text
+extensions/*   internal.base-tooling   internal.gateway   TUI / Companion
+      └───────────────────────┬───────────────────────────────┘
+                              ▼
+          com.blockether.vis.core + internal.core
+                              ▼
+                 packages/vis-contract
+```
 
-**What we do not solve.** Native-image startup — a separate verdict, `.graalvm-version` locked at
-GraalVM CE 25.1.3. Classpath discovery of extensions — `manifest.edn` stays the ONE closed
-document. Perceived startup — `c7679bffb` made the TUI paint and accept typing before it talks to a
-gateway, and no phase here may regress it.
+Sibling adapters do not import one another. The Companion reaches Core through the gateway
+boundary and generated contract mirror; Clojure extensions reach it through the public facade.
+
+`contract` owns every shape, callback and vocabulary crossing an owner, process or language.
+`clojure.spec` is an executable contract mechanism and is used in production only inside
+`packages/vis-contract`. A local implementation invariant is not promoted into a system contract;
+it uses an ordinary predicate or a namespace named `validation`/`state`.
+
+Core owns Session, Turn, View and execution. Human Input is a View with a response contract. Tool
+Activity is execution trace data, not a View. Gateway transports Core commands/events and owns its
+daemon resources; it does not define Core semantics. Client and server stay separate adapters of
+one gateway contract.
+
+`Foundation` is deleted as a concept. The exact replacement for its remaining built-in tool and
+sandbox implementation is:
+
+```text
+path:      src/com/blockether/vis/internal/base_tooling/
+namespace com.blockether.vis.internal.base-tooling.*
+```
+
+`base-tooling` is not an artifact, public API, contract layer or synonym for Core. Before the move,
+anything in the old directory that is actually a contract or Core environment behavior leaves for
+its real owner. Optional search and voice remain extensions and become `vis-search`/`vis-voice`;
+they do not move under `base-tooling`.
 
 **Alternatives considered.**
 
-- *One contract document instead of five.* Lost: the readers are disjoint. A team writing an
-  extension needs B1–B3 and must never learn the wire; a team driving an agent needs B4–B5 and
-  never sees `:ext/*`. One document means every consumer versions against changes that cannot
-  affect it.
-- *A `defprotocol` facade for `com.blockether.vis.core`.* Lost: 493 public vars, one of them a
-  macro, and `defprotocol` carries neither the count nor the macro. The feasible symmetric move is
-  the one Python already made — freeze the surface as data.
-- *An in-process `libvis` SDK.* Lost: the tree has one entrypoint (`main.clj:4570`) and `start!` is
-  internal (`gateway/server.clj:4633`); embedding means a JVM inside the user's process. A client
-  over a frozen `/v1` is the same contract in every language and works today.
-- *Split `manifest.edn` per host.* Lost: three copies of one ordered dependency list drift, and
-  `build.clj` would have to read all of them to union native reachability.
-- *Keep `deferred-python-dispatch?` and add one predicate per capability.* Lost: it becomes a
-  dispatch table in the engine that no manifest test can see.
-- *Make every `register!` lazy and drop eager initialization.* Lost: order in that vector IS
-  dependency order; full laziness moves ordering into whoever demands first and multiplies the
-  first-load races `275c51a79` had to serialize.
-- *Split `foundation.core` before declaring hosts.* Lost: it is the 4 818 ms floor and the hardest
-  move; the host split is what proves which families only the gateway wants, so it should choose
-  the first family to leave.
-- *Do the TypeScript binding now.* Lost for this plan: `vis-language-typescript-bun` left
-  `:initialization` in `2d422f84a`, and the documents a TS mirror would drift-test against are
-  Phases 4 and 6 here. It is cheap after them and speculative before them.
-- *Publish the artifacts first.* Lost: blocked on the publishing-identity decision, and no phase
-  here needs a registry.
+- *Rename `vis-contract` to `vis-sdk`.* Lost: an SDK performs IO, lifecycle, retries and convenience
+  operations; this package must remain a dependency leaf containing declarations, codecs and pure
+  validation. A future external SDK may depend on it after the gateway contract is stable.
+- *Use both `contract` and `spi`.* Lost: two names recreate the same ambiguity. Every boundary is a
+  contract, including host callbacks, channel/provider operations and persistence ports; no
+  `*.spi` namespace is introduced.
+- *Keep specs beside implementations and publish generated copies.* Lost: implementation remains
+  the de facto source, generators acquire reverse dependencies, and Clojure/Python/TypeScript can
+  drift before generation. The source belongs in `vis-contract`.
+- *Move all current `foundation` files mechanically to `base-tooling`.* Lost: that would merely
+  rename the junk drawer. Cross-owner schemas move to `contract.*`, Core environment behavior to
+  `internal.core.*`, and only built-in model tooling/sandbox implementation becomes base tooling.
+- *Make Foundation an extension artifact.* Lost: shell, editing, shims, harness and sandbox support
+  are shipped host implementation, while search and voice already prove what an optional extension
+  looks like. Calling both the same layer hides the distinction.
+- *Merge gateway client and server.* Lost: HTTP/SSE is a real process boundary. They share route,
+  envelope and event declarations, never executable transport code.
+- *Put Activity into View because both render rows.* Lost: presentation vocabulary may be shared,
+  but Activity is a reducer over execution events and accepts no actions; View has lifecycle,
+  patches and optional responses.
+- *Preserve old namespaces as aliases during the move.* Lost: compatibility facades create two
+  owners and this repository deliberately removes obsolete paths. Each vertical slice moves its
+  callers and deletes the old namespace in the same commit.
+- *Split files by a line-count limit.* Lost: file size is evidence, not architecture. A namespace
+  splits at a state owner, state machine or adapter family, and dependency tests prevent the pieces
+  from growing back together.
+- *Rewrite behavior while relocating it.* Lost: this is a boundary refactor. Existing wire,
+  cancellation, View, persistence and rendering behavior is characterized first; semantic changes
+  require their own failing test and commit.
 
-## Phase 1 — The manifest declares who needs an entrypoint, and when
+## Phase 1 — Make the dependency direction executable
 
-**Rationale.** Nothing can be deferred while the document says only "these 42, in this order".
-Declaring first — every entry at all three hosts, every moment eager — changes no behavior, and
-gives Phases 2 and 3 a place to put their answer plus a test that refuses an entry which forgot to
-say who needs it.
+**Rationale.** Moving files before pinning behavior and imports would turn every regression into an
+archaeology exercise. The intended graph must fail in CI before the first namespace moves, while a
+closed debt inventory lets the gate land against the current tree and only shrink.
 
-**Data.** Manifest `:version 2`. The bare-symbol alternative in `::initialization`
-(`manifest.clj:38-44`) is removed rather than kept beside the map form.
+**Data.** The allowed production edges are:
 
-```clojure
-(s/def ::register qualified-var-symbol?)                        ; unchanged
-(s/def ::hosts (s/coll-of #{:host/tui :host/gateway :host/cli} :kind set? :min-count 1))
-(s/def ::moment #{:moment/eager :moment/on-demand})
-(s/def ::demand qualified-keyword?)                             ; what forces an on-demand entry
-(s/def ::entry
-  (s/and (s/keys :req-un [::register ::hosts ::moment]
-                 :opt-un [::apropos ::is-optional ::because ::demand])
-         #(or (= :moment/eager (:moment %)) (contains? % :demand))))
+```text
+contract.*              → Clojure/JDK/leaf libraries only
+internal.core.*         → contract.* + internal leaf utilities
+com.blockether.vis.core → contract.* + internal.core.*
+internal.base-tooling.* → contract.* + internal.core.* + base-tooling children
+internal.gateway.*      → contract.* + internal.core.* + gateway children
+extensions/*            → com.blockether.vis.core + contract.* + their own namespaces
 ```
 
-The closedness check and the `:is-optional`/`:because` pairing stay as they are.
+Tests may depend on the production namespace they exercise. No production rule is inferred from a
+folder name alone; the namespace require graph is the evidence.
 
 **Acceptance criteria.**
 
-- All 42 entries carry `:hosts #{:host/tui :host/gateway :host/cli}` and `:moment/eager`; order
-  unchanged.
-- `initialize!` takes a host keyword; each entrypoint runs at most once per process through a delay
-  PER ENTRY, so a later on-demand force cannot double-register.
-- `build.clj` unions every entry's namespace regardless of host; `native_reachability_test` and the
-  built binary stay green.
-- `manifest_test` refuses an entry with no `:hosts`, an unknown host, an unknown `:moment`, or
-  `:moment/on-demand` without `:demand`.
-- No startup number moves. This phase is a declaration.
+- Add one architecture test that reads every production `ns` form and enforces the graph above,
+  including a closed, exact list of current violations; a new violation fails and every migration
+  commit removes entries until the list is empty.
+- Pin the current route table, gateway event vocabulary, View open/patch/action/close behavior,
+  Human Input validation/secrets, Activity reduction, turn cancellation and cross-session permit
+  isolation with existing suite tests before moving their owners.
+- Record current namespace/byte/public-var measurements as diagnostics, not as arbitrary design
+  limits; final budgets are set only after the new owners exist.
+- Require every subsequent phase to land as small vertical slices with its production namespace,
+  callers and tests moved together; no alias namespace, fallback require or migration layer is
+  accepted.
+- Keep `packages/vis-contract` loadable and testable independently throughout the plan.
 
-**Unknowns.** The nine call sites of `initialize!` — does each name its host, or does a default
-exist? Current answer: each names it, because a default is how one flat list comes back. Second:
-what host does a `--gateway HOST` remote TUI have? Expected `:host/tui` unchanged — remote mode
-makes it thinner, not fatter.
+**Unknowns.** Whether the dependency gate should consume clj-kondo analysis or parse `ns` forms
+itself. Choose the smaller deterministic implementation that runs in the normal JVM suite and
+reports the exact offending edge; do not add a second graph tool.
 
-## Phase 2 — Each process initializes only its own host
+## Phase 2 — Put canonical wire and the gateway protocol in `vis-contract`
 
-**Rationale.** The measurement says where the tax is. The TUI pays 2 465 ms for a language pack it
-never calls, 953 ms for sandbox shims it never evaluates, ~138 ms for providers its own docstring
-forbids it to hold (`extensions/channels/vis-channel-tui/…/provider.clj:21-23` — every provider
-verb goes through the gateway). The gateway pays 769 ms for a terminal it never draws.
+**Rationale.** Canonical encoding is the lowest shared dependency, but its current gateway name
+pulls Core, View, Activity and providers toward an adapter. Splitting pure protocol declarations
+from transport/runtime code creates the leaf the rest of the refactor can depend on.
 
-**Data.** The assignment is this phase's content.
+**Data.** Move by responsibility, not by current file:
 
-| entrypoints | `:hosts` |
+| current symbol/family | target owner |
 |---|---|
-| `foundation.core` | tui, gateway, cli |
-| `channel-tui.core` | tui |
-| 22 `foundation.shim-*`, `foundation.mcp.core`, `foundation.harness.core` | gateway, cli |
-| `foundation-search`, `foundation-voice`, `language-clojure`, `language-python`, `persistance-sqlite` | gateway, cli |
-| 11 `provider-*` | gateway, cli |
+| `wire-key`, `engine-key`, `->wire`, `->engine`, `canonical`, `json-str`, `parse-json` | `com.blockether.vis.contract.wire` |
+| terminal/queue event sets, protocol version, header names, pure compatibility verdict | `com.blockether.vis.contract.gateway` |
+| routes, request/response envelopes, journal envelope and event vocabulary | `resources/vis-contract/gateway.edn` read by `contract.gateway` |
+| `sse-frame`, `job-sse-frame` | `internal.gateway.transport.sse` |
+| bounded printing/pretty diagnostics | the one internal caller or `internal.util` when genuinely shared |
+| release/build identity, checkout inspection, daemon staleness and user messages | `internal.gateway.runtime` |
 
 **Acceptance criteria.**
 
-- `initialize-for-dispatch!` (`main.clj:4524`) derives the host from the dispatched command and
-  passes it on; `deferred-python-dispatch?` and its argv set are DELETED, the deferral it encoded
-  now being `:hosts`/`:moment` data.
-- `test/com/blockether/vis/internal/startup_host_test.clj`: in a clean JVM, after `:host/tui`
-  initialization `loaded-libs` contains no `…ext.provider-*`, no `…ext.language-clojure…`, no
-  `…internal.foundation.shim-…`; after `:host/gateway` it contains no `…ext.channel-tui…`. Loaded
-  namespaces, never a stopwatch — the gate must not be timing-flaky.
-- Recorded here when measured: TUI-host initialization against the 9 439 ms baseline, gateway-host
-  likewise, on the JVM path of this machine.
-- First frame still precedes any gateway call; the `screen_test.clj` startup cases stay green.
+- Client, server, Core event producers, View, Activity, providers and persistence all use
+  `contract.wire`; `internal.gateway.wire` is deleted, not retained as a forwarding namespace.
+- `contract.wire` preserves total encoding of non-string keys, NaN/infinities, UUIDs, dates,
+  symbols and keywords, plus in-process/JSON round-trip parity.
+- `gateway.edn` declares every supported method/path, protocol header, event type and terminal
+  semantic; server routes and emitting call sites are drift-tested against that declaration.
+- Administrative or intentionally private routes are marked as such in the document rather than
+  omitted silently.
+- SSE byte framing and HTTP concerns remain under `internal.gateway.transport`; the contract owns
+  semantics, never Ring responses or client calls.
+- `packages/vis-contract` still has no dependency on any `com.blockether.vis.internal.*` namespace
+  and performs no filesystem, network, process or daemon lifecycle work.
 
-**Unknowns.** Does anything under `extensions/channels/vis-channel-tui/` reach the provider
-registry through the `com.blockether.vis.core` facade rather than the gateway? A grep for
-`registered-providers`/`registry/` in that tree found nothing; the facade must be checked before
-providers leave the TUI host.
+**Unknowns.** Which `/v1/admin/*` routes are intentionally private. Resolve by classifying each live
+route in `gateway.edn`; “not documented” is not a compatibility class.
 
-## Phase 3 — Demand, not eagerness, inside the right host
+## Phase 3 — Make `vis-contract` the only home of executable contracts
 
-**Rationale.** After the split the gateway still eagerly loads what a session may never touch: 22
-shims, 3 language packs, 11 providers. `275c51a79` already proved deferral safe for the largest of
-them; this phase states it as data instead of as one argv predicate.
+**Rationale.** The current 471 engine `s/def` forms are executable connection definitions hidden
+beside implementations. Moving them establishes one source for Clojure validation and gives the
+cross-language mirrors stable input before Core and adapters are split.
 
-**Data.** `:moment/on-demand` plus the key that forces it — `:demand/provider`, `:demand/language`,
-`:demand/python-sandbox`, `:demand/mcp`.
+**Data.** The initial ownership map is:
 
-```clojure
-{:register com.blockether.vis.ext.provider-anthropic/register!
- :hosts #{:host/gateway :host/cli} :moment :moment/on-demand :demand :demand/provider}
+| current source | target contract |
+|---|---|
+| `internal/view/spec.clj` | `contract.view` + `resources/vis-contract/view.edn` |
+| contract portions of `internal/extension.clj` and `internal/registry.clj` | `contract.extension`, `contract.channel`, `contract.provider`, `contract.persistence` |
+| `internal/config_spec.clj` | `contract.config` |
+| `internal/provider_limits.clj` | `contract.provider` |
+| `internal/loop.clj` envelopes | `contract.execution` |
+| `internal/manifest.clj` declarations | `contract.manifest` |
+| `internal/content.clj`, theme and toggles | `contract.content`, `contract.theme`, `contract.toggle` |
+| `internal/test_contract.clj` and shell log shapes | `contract.test-runner`, `contract.shell` |
+| `internal/doc_corpus.clj` | `contract.docs` |
+| `internal/foundation/surface_contract.clj` | `contract.surface` |
+| editing/hashline input/output shapes | `contract.editing` |
+| TUI `transient/spec.clj` | local `transient.validation` predicates, not a Vis contract |
+
+EDN is the source for closed vocabularies and envelopes consumed by more than one language.
+Clojure-only callback contracts may be expressed directly as Clojure specs in the same package;
+this plan does not invent a universal schema language.
+
+**Acceptance criteria.**
+
+- Every production `s/def` is under `packages/vis-contract/src`; a whole-tree test rejects a new
+  production `clojure.spec.alpha` require elsewhere.
+- Cross-owner namespaces are named `contract.*`; architectural `*.spi`, `*.protocol`, `*.spec`,
+  `*_spec` and `*_contract` namespaces are removed. Local implementation validation is named for
+  its owner and does not use `s/def`.
+- Extension registration, contribution points, slot ids, callbacks, manifest entries, provider and
+  channel descriptors, persistence operations, View shapes and execution envelopes all validate
+  against contract-owned definitions.
+- `resources/vis-contract/{extension,view,gateway}.edn` and any other cross-language document render
+  deterministic JSON/TypeScript inputs and have byte-for-byte drift tests.
+- Runtime registries, atoms, IO, lifecycle, security/path policy and mutation remain outside the
+  contract package.
+- `clojure-host.edn` lists only the intended `com.blockether.vis.core` facade and contract
+  namespaces; its temporary internal-debt set can only shrink and is empty by Phase 9.
+
+**Unknowns.** Some current specs may prove to validate only a private intermediate value. During
+migration, classify from callers: if it never crosses an owner, replace it with a local predicate
+instead of expanding the public contract.
+
+## Phase 4 — Delete Foundation; keep only internal base tooling
+
+**Rationale.** `Foundation` currently names both 53 internal implementation files and two optional
+extensions. After Phase 3 extracts declarations, the remaining implementation can receive a plain,
+accurate name without promoting it into a layer.
+
+**Data.** The closed classification is:
+
+| current family | target |
+|---|---|
+| `surface_contract` and cross-owner language/editing shapes | `contract.surface`, `contract.language`, `contract.editing` |
+| session/turn environment behavior used by Core | `internal.core.environment` |
+| editing tools, shell, introspection, rewind, doctor, workspace/session tool verbs | `internal.base-tooling.*` |
+| sandbox shims, Python capture, PTY, MCP and harness implementation | `internal.base-tooling.*` |
+| implementation used only by one channel/extension | that channel/extension, not base tooling |
+| `vis-foundation-search`, `ext.foundation-search` | `vis-search`, `ext.search` |
+| `vis-foundation-voice`, `ext.foundation-voice` | `vis-voice`, `ext.voice` |
+
+The filesystem spelling is `internal/base_tooling`; the Clojure namespace spelling is
+`internal.base-tooling`. There is no `vis-base-tooling` artifact.
+
+**Acceptance criteria.**
+
+- Move each remaining built-in tool/sandbox namespace, its tests, apropos resources, manifest entry
+  and native reachability metadata to `internal.base-tooling.*`; delete the old namespace in the
+  same commit.
+- Move Core environment behavior and contracts out before the mechanical rename so
+  `base-tooling` contains no Session/Turn/View ownership and no contract declarations.
+- Replace the language-pack reaches into `foundation.environment.languages`,
+  `foundation.editing.parse` and `foundation.surface-contract` with contract data, a Core operation
+  or an extension-local helper according to the actual owner; no extension imports base tooling.
+- Rename both optional artifacts, directories, coordinates, namespaces, extension ids, manifest
+  entries, settings copy and tests to `vis-search`/`vis-voice` with no compatibility aliases.
+- A tree gate rejects `foundation` in production paths, namespace symbols, dependency coordinates,
+  manifest registrations and active product copy. Historical release prose need not be rewritten.
+- JVM and native manifest/reachability tests prove that registration order and shipped capability
+  remain unchanged apart from the deliberate names.
+
+**Unknowns.** None about the layer name: it is `internal.base-tooling`. For a file with mixed
+callers, ownership is decided before moving it; base tooling is never used as the default drawer.
+
+## Phase 5 — Make View one Core primitive
+
+**Rationale.** Human Input and Live View already share implementation but expose separate public
+lifecycle names. Core should define one semantic document and lifecycle; blocking submission,
+secrets and validation are response policy on that View.
+
+**Data.** The target ownership is:
+
+```text
+contract.view
+  nodes · fields · actions · patches · events · response schema · closed vocabularies
+
+internal.core.view
+  normalize · lifecycle · response · secrets · materialize · store
+
+com.blockether.vis.core
+  builders · open-view! · patch-view! · view-action! · request! · close-view! · with-view!
+
+internal.gateway.routes.views / client.views
+  HTTP/SSE adaptation only
 ```
 
+`com.blockether.vis.view` and the public `*-live-view!`/`request-human-input!` split are removed;
+there is one public facade through `com.blockether.vis.core`.
+
 **Acceptance criteria.**
 
-- A registry lookup that misses forces every entrypoint carrying that `:demand` exactly once, under
-  the first-load serialization introduced by `275c51a79`; concurrent first calls load once.
-- `/healthz` answers before any provider or language-pack namespace is loaded; the first turn loads
-  only the provider it resolved, asserted through `loaded-libs` as in Phase 2.
-- No test asserts a registry is COMPLETE at boot unless its command declared itself eager.
+- One state machine owns `open`, typed `patch`, user `event` and `close`; a response contract adds
+  one accepted submit, validation, cancellation and blocking wait without creating a second store
+  or transport.
+- Secret fields remain redacted from journals, artifacts and diagnostics and are revealed only
+  through the existing guarded operation.
+- Closing a View, cancelling a response and invoking an execution action such as `interrupt` remain
+  distinct contract events.
+- Existing semantic builders move behind `com.blockether.vis.core`; the old public View namespace
+  and live/human-input aliases are deleted in the same slice.
+- TUI and Companion render the same contract document and send the same action envelope. Channel
+  tests cover input, dashboard/progress, table grouping, repeated patches, reconnect/replay and
+  terminal states.
+- “Live” remains the unlabelled default while a View is open; renderers show only meaningful
+  exceptional/terminal state such as reconnecting, paused, completed or failed.
+- Gateway projection/query code contains no View validation or lifecycle policy after the move.
 
-**Unknowns.** `doctor`, `providers list`, the slash catalog and `apropos`/`doc` enumerate
-registries — do they force everything and make on-demand a lie? If so those commands stay
-`:host/cli` eager and only the daemon gets the lazy path. This must be answered BEFORE any
-tool-contributing pack becomes on-demand: a tool that appears only after its pack loaded is a
-contract break, not a speedup.
+**Unknowns.** Patch syntax is not redesigned in this refactor. Preserve the current typed
+operations unless a characterization test proves that two existing producers already disagree.
 
-## Phase 4 — The contribution surface and the slots become documents
+## Phase 6 — Put execution and Tool Activity under Core, then split the loop
 
-**Rationale.** B2 and B3 are the seams an extension author actually touches, and both are
-invisible: 29 keys inside 143 KB of spec, 4 slot ids with no registry. The failure mode is the
-expensive one — a misspelled key or slot id is accepted in silence and shows up as a missing
-feature, never as an error.
+**Rationale.** Activity belongs to the execution that produced it, and the 12 120-line loop hides
+four state machines. Establishing Core owners before gateway decomposition prevents scheduler and
+domain behavior from being split along accidental call boundaries.
 
-**Data.** Two documents beside the host contract, EDN as source, JSON rendered and pinned
-byte-for-byte, the way `contract.json` already is.
+**Data.** The target families are:
 
-```clojure
-;; packages/vis-contract/resources/vis-contract/extension-points.edn
-{:version 1
- :points [{:point/key         :ext/symbols
-           :point/kind        :contribution          ; :contribution | :callback | :metadata
-           :point/cardinality :many
-           :point/entry       {:req [:ext.symbol/symbol :ext.symbol/fn
-                                     :ext.symbol/doc :ext.symbol/arglists]
-                               :opt [:ext.symbol/params :ext.symbol/tag]}
-           :point/languages   #{:clojure :python}
-           :point/declarator  {:clojure ":ext/symbols" :python "vis.symbol(...)"}
-           :point/moment      #{:moment/eager :moment/on-demand}
-           :point/gap         nil}]}                 ; a Clojure-only point MUST state why
-
-;; packages/vis-contract/resources/vis-contract/slots.edn
-{:version 1
- :slots [{:slot/id :gateway.slot/http-routes
-          :slot/owner :gateway :slot/arity 1
-          :slot/receives {} :slot/returns {}}]}
+```text
+internal/core/block.clj
+internal/core/iteration.clj
+internal/core/turn.clj
+internal/core/environment.clj
+internal/core/session.clj
+internal/core/execution/tool_activity/{event,reducer}.clj
 ```
 
-**Acceptance criteria.**
-
-- The points document is exactly the engine's `:ext/*` keys — a drift test reads
-  `internal/extension.clj` and fails on either side of the difference.
-- An `:ext/*` key not in the document is REFUSED at registration, naming the key; an
-  `:ext/channel-contributions` entry under a slot id not in `slots.edn` is refused, naming the slot.
-- Every point without `:python` in `:point/languages` carries a `:point/gap` reason; a new
-  Clojure-only point with no reason fails the suite.
-- A point whose contributor is `:moment/on-demand` must be enumerable without loading it, or its
-  entry is declared eager instead.
-
-**Unknowns.** Can `:ext/channel-contributions` payloads be described per slot in a shape both the
-TUI and the gateway accept, or does each slot need its own entry schema? Decide from the four live
-slots before inventing a fifth.
-
-## Phase 5 — Python reaches every point, and the binary proves it
-
-**Rationale.** Parity is the test of whether Phase 4 produced a contract or a description of a
-Clojure habit: 6 of 29 points reachable from Python means the document would ship with 23 excuses.
-And the claim that carries this whole plan — a built binary is extensible in Python — is today
-asserted by no test at all.
-
-**Data.** One declarator per data-carrying point, validating its argument against the published
-document before the host op is called; no new wire.
+`contract.execution` owns envelopes and persistence/channel ports. Tool Activity may reuse
+contract-owned presentation nodes, but it does not depend on `internal.core.view` lifecycle.
 
 **Acceptance criteria.**
 
-- Every point with `:point/languages` containing `:python` has a declarator; every point without it
-  has a `:point/gap` reason, and the count of gaps only goes down.
-- The shipped example extension adds, from Python, a `:gateway.slot/http-routes` route and a
-  `:tui.slot/footer-segment` row, and both appear in a running engine.
-- `test-native/` gains the case it never had: that example `.py` beside the built binary, the
-  binary started, the tool and the route present.
+- Move `internal.activity`, `activity.event` and `activity.presenter` under
+  `internal.core.execution.tool-activity`; collapse the presenter registry if its only remaining
+  role is a small reducer detail.
+- Preserve replay, bounding, coalescing, resource references and late-failure behavior with the
+  existing Activity suite; no View action or View store is introduced.
+- Split `internal.loop` by block, iteration, turn, environment and session-cache ownership, moving
+  tests with each slice and deleting the old namespace when its last caller leaves.
+- Core depends on contract-declared provider/channel/persistence/event ports, never on gateway
+  client/server, base tooling or a concrete extension.
+- Preserve environment condemnation, hard cancellation, one-shot permit handoff, terminal landing
+  and cross-session isolation with the issue #161 regressions green after every relevant slice.
+- Distinguish the in-process Core environment/session cache from the daemon session registry; the
+  former belongs here and the latter remains for Phase 7.
+- Resolve definition order without `declare` and reject dependency cycles in the architecture test.
 
-**Unknowns.** Can a Python-contributed gateway route be served without a JVM callback per request,
-or does the route handler have to marshal through the host op boundary each time? Measure before
-declaring the slot open to Python.
+**Unknowns.** Whether block and iteration warrant separate files after dependencies are cut. Keep
+them together if they form one state machine; the acceptance boundary is ownership, not the sample
+filenames.
 
-## Phase 6 — Freeze the process boundary: wire and journal
+## Phase 7 — Split gateway state by the resource it owns
 
-**Rationale.** Nothing but Python can be added to a built binary, so every other integration is
-HTTP plus the journal. Both are stable in practice — `schema` has been `1` for every one of the
-4 565 measured events — and neither is written down, so no second implementation can exist without
-reading the engine's source.
+**Rationale.** A stuck worker affected unrelated sessions because worker capacity, cancellation and
+session state met in one process-wide namespace. The fix is tested, but explicit owners are needed
+to keep future changes local.
 
-**Data.** `wire.edn` — one entry per route with method, path, auth mode, request and response
-shape, and the version it appeared in. `events.edn` — the envelope (8 always-present keys, plus
-`turn_id`/`iteration`) and one entry per `type` with its payload. `NullHost` and `RecordingHost`
-join `Host` in `vis_contract`, still with zero dependencies.
+**Data.** Decompose `gateway.state` into cohesive owners:
 
-**Acceptance criteria.**
+| owner | state/behavior |
+|---|---|
+| `gateway.events` | append/replay, subscribers, fan-out and journal sequencing |
+| `gateway.turns` | queue, worker lease, permits, watchdogs, cancel/backstop and terminal landing |
+| `gateway.sessions` | daemon session/project/workspace registry and current-turn reference |
+| `gateway.read-model` | transcript, trace, artifacts and projections |
+| `gateway.fleet` | gateway fleet/process membership and health |
+| domain integration modules | providers/models, drafts and resources where they own mutation |
 
-- `wire.edn` is drift-tested against the server's own route table, not against a hand-written list;
-  a route added in code and missing from the document fails the suite.
-- `events.edn` enumerates every `type` the engine emits, checked the same way against the emitting
-  call sites.
-- `NullHost` satisfies `check_host`, touches no disk and starts no process; a foreign test suite
-  can exercise extension code with it.
-- `internal/gateway/client.clj` stays the canonical Clojure client and is not rewritten.
-
-**Unknowns.** Which paths stay outside the freeze — `/v1/admin/*` is the obvious candidate, and
-"unfrozen" must be a declared property in `wire.edn`, not an omission.
-
-## Phase 7 — `vis-sdk`: drive a gateway from outside the JVM
-
-**Rationale.** "Start an agent from Python" is a client over Phase 6's wire plus a daemon
-lifecycle. Whoever wants that does not want the sandbox module, and whoever writes an extension
-does not want an HTTP client — so it is a third artifact, depending on `vis-contract` and never on
-`vis-agent`.
-
-**Data.** No new wire. Lifecycle only: find a running daemon, start `visgw` if there is none, wait
-for `/healthz`, then speak `/v1`.
+A namespace owns its atoms, executor and lifecycle; callers use operations rather than reaching
+into those values.
 
 **Acceptance criteria.**
 
-- `vis-sdk` depends on `vis-contract` alone; importing it pulls in no sandbox module.
-- CI starts a gateway, drives one session end-to-end through the SDK, and reads the transcript back
-  through the journal document.
-- `scripts/version.mjs` stamps the third package, as it already stamps the two.
+- Move one owner at a time with its tests and direct callers; do not leave a forwarding
+  `gateway.state` facade or duplicate registry.
+- `gateway.turns` alone owns concurrency permits, worker futures, stall phase, watchdog scheduling,
+  cancellation reason and terminal backstop. Permit release remains a one-shot lease even when an
+  abandoned worker later returns.
+- `gateway.events` alone assigns journal sequence and fans out; projections consume events without
+  mutating the journal implementation.
+- Session A cancellation, stuck execution or persistence failure cannot cancel, starve or rewrite
+  Session B; deterministic multi-session tests exercise each shared resource.
+- Server routes call owner operations and never dereference gateway state atoms directly.
+- The full gateway state/route suite remains green after every extraction, including replay after
+  non-string/NaN payloads and cancellation before provider output.
 
-**Unknowns.** Daemon discovery is engine-private today. Does the SDK get a documented discovery
-path in Phase 6, or does it spawn its own gateway and read the address from that process only?
+**Unknowns.** Provider/model catalogs and drafts currently mix durable data with gateway cache.
+Classify each by who mutates it before extraction; do not create a generic `services` namespace.
 
-## Phase 8 — Give the floor a budget
+## Phase 8 — Split gateway server and client around the same contract
 
-**Rationale.** `src/` grew 381 KB since a plan last measured it and no test could notice. Phases
-2–3 make `foundation.core` the whole remaining cost of every process, so the floor is worth
-watching before the next 381 KB.
+**Rationale.** Client and server should mirror route families while retaining independent transport
+implementation. This makes missing parity visible and keeps daemon discovery, auth and SSE details
+out of domain code.
 
-**Data.** None. Code moves; no persisted, wire or mirrored shape changes.
+**Data.** The intended adapter families are:
+
+```text
+internal.gateway.server                 internal.gateway.client
+  daemon/lifecycle                        connection/discovery
+  transport.http                          transport.http
+  transport.sse                           subscriptions
+  routes.system                           system
+  routes.sessions                         sessions
+  routes.turns                            turns
+  routes.views                            views
+  routes.integrations                     integrations
+  routes.resources                        resources
+```
+
+Small `server` and `client` composition roots may assemble these modules. They do not re-export all
+functions as a second monolith.
 
 **Acceptance criteria.**
 
-- `test/com/blockether/vis/internal/core_budget_test.clj` caps `src/` total bytes and
-  `com.blockether.vis.core` public-var count at today's numbers; growth fails the suite, and each
-  commit that moves a family out lowers the cap.
-- The first family to leave is one the host split proved only the gateway wants; it lands under
-  `extensions/common/vis-foundation-*` with `:ext.engine/builtin? true`, the way
-  `vis-foundation-search` already does, and gets its own manifest entry.
-- `rift`'s single call site (`internal/workspace.clj`) moves behind an extension boundary or the
-  dependency leaves the root `deps.edn`; the native image graph loses that edge.
-- One family per commit; the suite passes unchanged at every step.
+- Extract server route families and matching client operations vertically from
+  `gateway.server`/`gateway.client`; each family consumes methods, paths and envelopes from
+  `contract.gateway`.
+- Keep daemon discovery/start, lease registration, auth headers and canonical
+  `babashka.http-client` transport in the Clojure client adapter; no Core namespace performs HTTP.
+- Keep Ring, SSE byte framing and process lifecycle in the server adapter; no contract or Core
+  namespace depends on Ring.
+- A parity test proves that every public contract route has a server handler and, where the contract
+  marks it client-callable, a Clojure client operation; exceptions are explicit contract metadata.
+- Companion and TUI integration tests exercise the same View/turn/session event envelopes through
+  real adapter boundaries.
+- Delete the old monolithic namespaces when empty; no client/server merge and no route-string copy
+  remains.
 
-**Unknowns.** Which family first — by size and independence the candidates are
-`internal/env_python.clj`, `internal/foundation/editing/core.clj` (265 KB) and attachments. Decide
-with the budget test in front of us.
+**Unknowns.** None about an external SDK in this phase. The canonical Clojure gateway client remains
+internal; a separately published SDK is considered only after this contract and lifecycle settle.
+
+## Phase 9 — Remove extension leaks and generate every cross-language mirror
+
+**Rationale.** A contract is proven only when independent consumers stop importing the engine and
+stop hand-copying closed vocabularies. Clojure extensions, sandbox Python and the Companion must all
+consume the same declarations.
+
+**Data.** Today 89 production extension files reference 33 distinct internal namespaces, while the
+Companion hand-declares protocol, View and event vocabulary and Python receives only the host
+portion of `contract.json`. The allowed extension dependencies are exactly its own code,
+`com.blockether.vis.core` and `com.blockether.vis.contract.*`.
+
+**Acceptance criteria.**
+
+- Replace every production extension import of `com.blockether.vis.internal.*` with a public Core
+  operation, a contract callback/data shape, or extension-owned implementation; a whole-tree test
+  enforces zero such imports.
+- Empty `clojure-host.edn/:internal-debt` and delete the debt mechanism once the architecture gate
+  can state the final rule directly.
+- Render Python `contract.json` and thin generated TypeScript constants/types from the same
+  cross-language EDN documents; generated files are pinned byte-for-byte and never hand-edited.
+- Remove handwritten Companion copies of protocol numbers, View/action/event vocabularies and route
+  strings. Handwritten TypeScript retains behavior and ergonomic domain helpers, not duplicated
+  closed sets.
+- Make Python declarators validate every supported extension contribution against
+  `contract.extension`; a Clojure-only contribution carries an explicit reason in the document.
+- Add the missing built-binary test: a shipped Python extension registers through the rendered
+  contract and its tool/contribution is observable through the gateway.
+- Keep native reachability derived from the one root manifest and update Python, Companion and JVM
+  parity tests in the same slices as each contract document.
+
+**Unknowns.** Generate only closed vocabularies/envelopes that are truly shared. Rich TypeScript
+component/view-model types may remain handwritten when generation would encode UI behavior rather
+than a wire contract.
+
+## Phase 10 — Rebuild composition on the new boundaries and lock the result
+
+**Rationale.** Once ownership and consumers are clean, the manifest can describe which adapter a
+host needs without naming obsolete layers, and final gates can prevent the monoliths and startup tax
+from returning.
+
+**Data.** The one closed `resources/META-INF/vis/manifest.edn` remains the source for registration
+order and native reachability. It gains explicit host and demand metadata only after namespaces have
+their final owners:
+
+```clojure
+{:register com.blockether.vis.internal.base-tooling.shim-yaml/register!
+ :hosts #{:host/gateway :host/cli}
+ :moment :moment/on-demand
+ :demand :demand/python-sandbox}
+```
+
+The prior startup measurements remain diagnostics; loaded namespaces and contract registration are
+the deterministic acceptance signal.
+
+**Acceptance criteria.**
+
+- Contract-owned manifest validation requires `:hosts`, `:moment` and a demand key for on-demand
+  entries; the bare-symbol entry form is removed.
+- TUI, gateway and CLI initialize only entries declared for their host. Provider/language/shim/MCP
+  demand loads exactly once under concurrent first use; health and first TUI frame do not force
+  unrelated adapters.
+- Remove the hard-coded deferred Python argv predicate after manifest data owns the decision;
+  enumeration commands either deliberately force complete registries or are declared eager.
+- Set post-refactor budgets for `core.clj` public vars and each composition root based on the final
+  measured tree. The contract pins the intentional public surface; budgets reject accidental
+  aggregation, not legitimate domain code.
+- The architecture gate has no debt, no old namespace/path remains, and production source contains
+  no architectural `foundation`, `spi`, implementation-owned `spec`, or duplicate route/event
+  vocabulary.
+- Update owning docstrings, docs catalog, examples and generated artifacts to the final names; do
+  not add migration notes or compatibility aliases for removed APIs.
+- Run the smallest suite on every slice and finish with full relevant JVM tests, `lint_code`,
+  `format_code`, native reachability/tests for moved entrypoints, and Companion lint, Storybook tests
+  and build for generated TypeScript changes.
+- Commit and push each independently green vertical slice; the plan state advances in the same
+  commit as the work it records.
+
+**Unknowns.** Registry enumeration (`doctor`, provider listing, slash catalog, `apropos`/`doc`) may
+need all entries. Decide each command's eager/complete semantics before making a contributing pack
+on-demand; a capability that appears only after unrelated use is not acceptable.
 
 ## State of the plan
 
-**REQUIRES WORK** — Phase 1 not started. This plan replaces two plans and keeps both: "The manifest
-says who loads what, and when" (`ff57a3c95`) is Phases 1–3, and "Make every Vis capability an
-extension declared by one cross-language contract" (`6ac932db4`) is Phases 4–5. Neither had begun.
+**REQUIRES WORK** — architecture agreed; Phase 1 not started. This rewrite replaces “Six seams,
+three artifacts, one loader.” No production namespace was moved by the planning change.
 
-Built on, and done:
+Work already available as foundations:
 
-- `93e379fa0`, `4cdcae1a4`, `137d00650` — the host seam as data, `vis-contract` as its own artifact
-  in both registries, `typing.Protocol` + `check_host`, and the Python host as an object.
-- `275c51a79` — the gateway listens before Python loads; the TUI never loads local GraalPy. The
-  first proof that deferral is safe.
-- `2d422f84a` — the disabled TypeScript/Bun pack left `:initialization`; the manifest gained its
-  regression test.
-- `c7679bffb` — the TUI paints and accepts typing before any gateway call, so the remaining wait is
-  work rather than a blank screen.
+- `vis-contract` exists as an independently testable Clojure/Python artifact with host documents.
+- Gateway startup deferral and first-frame work already prove selective loading is feasible.
+- Issue #161 regressions pin stale-context retirement, abandoned-worker capacity reclamation and
+  cross-session cancellation isolation.
 
-TODO, in order: 1 manifest v2 · 2 per-host initialization · 3 on-demand entrypoints · 4
-`extension-points.edn` + `slots.edn` · 5 Python parity and the native extensibility test · 6
-`wire.edn` + `events.edn` + the mock hosts · 7 `vis-sdk` · 8 core budget.
+The unfinished work from the replaced plan is retained where it still belongs: contribution/slot
+contracts and Python parity are Phases 3 and 9; wire/events are Phase 2; host/demand manifest loading
+is Phase 10; the final Core budget is Phase 10. A separately published `vis-sdk` is deliberately
+removed from this plan because it is behavior above the contract, not part of the boundary cleanup.
 
-Deliberately not on this plan: the TypeScript binding (cheap after Phase 6, speculative before it),
-publishing to any registry (waiting on the identity decision, not on code), and `fold_session` in
-the host contract (it is a tool verb, `ctx_engine.clj:364`).
+TODO, in order: 1 dependency/behavior gates · 2 canonical wire and gateway contract · 3 all specs
+and connection contracts · 4 `foundation` deletion and `internal.base-tooling` · 5 Core View · 6
+Core execution and Tool Activity · 7 gateway state owners · 8 server/client adapters · 9 extension
+and cross-language parity · 10 composition, budgets and final deletion gates.
