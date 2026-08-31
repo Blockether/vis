@@ -3,7 +3,7 @@
 // case here renders the ENGINE's own fixture — the same file
 // `gateway/human_input_test.clj` asserts is the engine's projection of a view —
 // and reads the document that landed.
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LiveView as LiveViewList,
@@ -81,6 +81,11 @@ describe('a live view on the phone', () => {
     const panel = screen.getByRole('status');
     expect(panel.getAttribute('aria-live')).toBe('polite');
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('does not repeat the default live state as a badge', () => {
+    paint();
+    expect(within(screen.getByRole('banner')).queryByText('Live')).toBeNull();
   });
 
   it('draws the fraction as a bar and states the count beside it', () => {

@@ -151,20 +151,16 @@ function stepInk(tone: LiveTone): string {
 }
 
 /**
- * WHETHER THE PICTURE IS STILL BEING WRITTEN, in one word.
- *
- * A spinner says "something is happening" and goes on saying it for ninety
- * minutes; what the reader wants from the head is whether this run is still live
- * and, once it is not, how it ended. One word carries both, and it stops moving
- * when the run does — which is also the motion the panel owes a phone.
+ * The verdict of a SEALED record. An open view needs no `Live` badge: it is already
+ * changing on screen and exposed as a live region. Mark only the exception to that
+ * default — the outcome once the picture cannot change again.
  */
 function ViewState({ view, isSettled }: { view: LiveViewModel; isSettled: boolean }) {
+  if (!isSettled) return null;
   const failed = view.nodes.some((node) => node.type === 'status' && node.tone === 'error');
-  const [word, paint] = !isSettled
-    ? (['Live', 'bg-accent text-accent-foreground'] as const)
-    : failed
-      ? (['Failed', 'bg-err/15 text-err'] as const)
-      : (['Done', 'bg-hover text-dialog-hint'] as const);
+  const [word, paint] = failed
+    ? (['Failed', 'bg-err/15 text-err'] as const)
+    : (['Done', 'bg-hover text-dialog-hint'] as const);
   return (
     <span
       className={`shrink-0 px-1.5 py-0.5 font-mono text-meta font-bold uppercase tracking-[0.08em] ${paint}`}
