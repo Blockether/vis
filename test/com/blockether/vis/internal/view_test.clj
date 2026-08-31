@@ -8,7 +8,7 @@
             [com.blockether.vis.internal.view :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.view.sink :as live-sink]
-            [com.blockether.vis.internal.view.spec :as hs]
+            [com.blockether.vis.contract.view :as hs]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [lazytest.core :refer [defdescribe expect it throws?]]
             [taoensso.telemere :as tel]))

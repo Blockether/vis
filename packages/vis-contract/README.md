@@ -22,8 +22,9 @@ Nothing here requires a Vis namespace. The engine reads this project off its own
 classpath, `vis-agent` depends on the wheel, and a tool in somebody else's
 repository can read the same declaration without installing an agent.
 
-The View vocabulary is contract-owned too: Core derives its keyword values from `contract.view`,
-and generated readers receive the same document without passing engine data into the renderer.
+The View contract is executable: `contract.view` owns its predicates, specs and error reports as
+well as the resource vocabulary. Core, gateway and current channels consume those shapes directly,
+and generated readers receive the same document without engine data entering the renderer.
 
 ## Changing the contract
 

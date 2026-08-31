@@ -12,7 +12,8 @@
  ["apps/vis-companion/src/lib/gateway.ts" "apps/vis-companion/src/lib/compat.ts"
   "apps/vis-companion/src/lib/endpoints.ts" "apps/vis-companion/src/lib/types.ts"]
  :contract/internal-debt {:debt/production
-                          {com.blockether.vis.core 41
+                          {com.blockether.vis.contract.view 2
+                           com.blockether.vis.core 41
                            com.blockether.vis.internal.attachments 6
                            com.blockether.vis.internal.cancellation 2
                            com.blockether.vis.internal.config 3
@@ -38,10 +39,10 @@
                            com.blockether.vis.internal.theme 4
                            com.blockether.vis.internal.view 1
                            com.blockether.vis.internal.view.materializer 1
-                           com.blockether.vis.internal.view.spec 2
                            com.blockether.vis.internal.voice 4
                            com.blockether.vis.internal.workspace 4}
-                          :debt/test {com.blockether.vis.core 32
+                          :debt/test {com.blockether.vis.contract.view 2
+                                      com.blockether.vis.core 32
                                       com.blockether.vis.internal.attachments 2
                                       com.blockether.vis.internal.config 2
                                       com.blockether.vis.internal.env-python 1
@@ -70,7 +71,6 @@
                                       com.blockether.vis.internal.theme 1
                                       com.blockether.vis.internal.view 3
                                       com.blockether.vis.internal.view.materializer 1
-                                      com.blockether.vis.internal.view.spec 2
                                       com.blockether.vis.internal.voice 1
                                       com.blockether.vis.view 1}
                           ;; Final-layer violations outside consumers. Contract and future Core/SDK namespaces

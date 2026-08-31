@@ -23,7 +23,7 @@
             [com.blockether.vis.internal.gateway.view :as gw]
             [com.blockether.vis.internal.gateway.state :as gw-state]
             [com.blockether.vis.internal.view :as engine]
-            [com.blockether.vis.internal.view.spec :as hi-spec]
+            [com.blockether.vis.contract.view :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 

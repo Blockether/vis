@@ -29,7 +29,7 @@
    is only how much a surface holds hot, and the model's own budget always says
    how many lines it left behind."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.view.spec :as spec]))
+            [com.blockether.vis.contract.view :as spec]))
 
 ;; The materializer
 

@@ -15,7 +15,7 @@
    never infer behavior from an event name or resource path.
 
    This namespace PARSES extension data against the CLOSED vocabulary declared by
-   [[com.blockether.vis.internal.view.spec]]. Input answers are coerced and checked
+   [[com.blockether.vis.contract.view]]. Input answers are coerced and checked
    once at the settle seam; live patches are normalized and materialized once before
    any surface sees them. Unknown keys are refused, while every declared key is
    preserved through normalization.
@@ -30,7 +30,7 @@
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.view.materializer :as materializer]
             [com.blockether.vis.internal.view.sink :as sink]
-            [com.blockether.vis.internal.view.spec :as view-spec]
+            [com.blockether.vis.contract.view :as view-spec]
             [com.blockether.vis.internal.view.validation :as validation]
             [com.blockether.vis.internal.runtime-settings :as rt]
             [com.blockether.vis.internal.util :as util]
@@ -220,7 +220,7 @@
 (defn- wire-keys
   "The spec vocabulary `ks` in the canonical snake_case spelling a Python/JSON
    spec writes. The keys a parser accepts are exactly the ones
-   [[com.blockether.vis.internal.view.spec]] declares — deriving them here
+   [[com.blockether.vis.contract.view]] declares — deriving them here
    is what keeps the wire from growing a second copy of that table."
   [ks]
   (into #{} (map snake-key) ks))

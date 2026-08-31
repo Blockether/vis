@@ -20,7 +20,7 @@
             [com.blockether.vis.internal.gateway.view :as gw-hi]
             [com.blockether.vis.internal.view :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
-            [com.blockether.vis.internal.view.spec :as hi-spec]
+            [com.blockether.vis.contract.view :as hi-spec]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]))
 
 (defn- spec

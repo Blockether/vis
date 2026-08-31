@@ -25,7 +25,7 @@
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.internal.view :as engine]
-            [com.blockether.vis.internal.view.spec :as hi-spec])
+            [com.blockether.vis.contract.view :as hi-spec])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.gui2 Direction ScrollBar]
            [com.googlecode.lanterna.input KeyStroke KeyType]))

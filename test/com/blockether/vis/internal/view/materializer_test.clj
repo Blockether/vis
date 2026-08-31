@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.view.materializer-test
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.view.materializer :as live]
-            [com.blockether.vis.internal.view.spec :as hs]
+            [com.blockether.vis.contract.view :as hs]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- view

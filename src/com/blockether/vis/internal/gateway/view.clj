@@ -16,7 +16,7 @@
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.view :as view]
             [com.blockether.vis.internal.view.sink :as sink]
-            [com.blockether.vis.internal.view.spec :as view-spec])
+            [com.blockether.vis.contract.view :as view-spec])
   (:import [java.util.concurrent Executors ScheduledExecutorService ThreadFactory TimeUnit]))
 
 (set! *warn-on-reflection* true)

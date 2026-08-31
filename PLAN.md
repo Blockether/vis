@@ -772,9 +772,11 @@ staleness and concrete diagnostics remain in `internal.gateway.runtime`. The sam
 the language-neutral root `contract.json` and the Python wheel's byte-identical copy.
 
 Phase 3 began with `view.edn`: `com.blockether.vis.contract.view` now owns the closed View
-vocabulary and defaults, the engine derives its existing constants from that owner, and package
-rendering is argument-free. Existing View, Human Input, Activity, cancellation and cross-session
-permit suites preserve behavior. Three production namespaces have moved or been removed.
+vocabulary, defaults and every executable View shape. `internal/view/spec.clj` was deleted rather
+than forwarded; the engine and current TUI consumers import the contract owner directly, with the
+TUI edge frozen until its Phase 10 SDK migration. Package rendering remains argument-free. Existing
+View, Human Input, Activity, cancellation and cross-session permit suites preserve behavior. Three
+production namespaces have moved or been removed.
 
 Work already available as foundations:
 
