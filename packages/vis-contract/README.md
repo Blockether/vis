@@ -12,6 +12,8 @@ module may make on its host — the polyglot global, arity and outside-host poli
 `resources/vis-contract/clojure-host.edn` is the executable dependency boundary: it
 names current source inputs and freezes every forbidden Clojure edge and hand-written
 JavaScript/Python wire value by source-file count while consumers move to the SDKs.
+`resources/vis-contract/gateway.edn` owns the built-in route table, protocol headers and
+versions, event vocabularies, terminal/queue semantics and replay anchors.
 
 Nothing here requires a Vis namespace. The engine reads this project off its own
 classpath, `vis-agent` depends on the wheel, and a tool in somebody else's
@@ -23,11 +25,11 @@ closed vocabulary keeps exactly one definition.
 
 ## Changing the contract
 
-1. Edit `resources/vis-contract/python-host.edn` (or `clojure-host.edn`).
-2. Re-render the Python document:
+1. Edit the owning document under `resources/vis-contract/`.
+2. For Python host changes, re-render the Python document:
    `(com.blockether.vis.contract.python-host/write-package-document!
      (com.blockether.vis.internal.view.spec/contract-vocabulary))`.
-3. `python_package_test` and `contract.python-host-test` are what fail when you do not.
+3. The contract, package and gateway characterization tests fail on drift.
 
-Both halves are versioned by the repository's `VIS_VERSION` — one document, one
-version, two registries.
+Both published ecosystems are versioned by the repository's `VIS_VERSION`; generated
+artifacts consume the same owning declarations rather than maintaining a second vocabulary.

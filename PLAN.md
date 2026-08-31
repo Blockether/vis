@@ -73,6 +73,12 @@ consumer uses.
   `requiring-resolve` of `com.blockether.vis.ext.channel-tui.screen/run-chat!`. And there is no root
   `package.json` or npm workspace: `apps/vis-companion` is standalone, and its `scripts/version.mjs` is
   the only thing allowed to write `VIS_VERSION` into package, lock and `pyproject` manifests.
+- The Phase 1 diagnostic baseline records source bytes / public Vars for the largest current owners:
+  `core` 46 304 / 516, `internal.view` 118 995 / 47, `internal.loop` 609 757 / 69, Activity 13 341 /
+  11, gateway state 255 276 / 86, server 229 328 / 9, client 122 037 / 104, wire 10 885 / 17 and
+  protocol 23 471 / 21. Excluding generated/cache trees, package-source baselines are `vis-contract`
+  137 007 bytes, `vis-agent` 437 750, Companion `src/lib` 1 278 122 and TUI `src` 2 254 956. These
+  are migration diagnostics, not budgets; Phase 13 measures the final owners again.
 
 **Root problem.** Repository proximity is being mistaken for API access. In-process consumers call
 Core internals, the out-of-process Companion hand-builds a second client, Python exposes only one
@@ -753,11 +759,14 @@ on-demand; a capability that appears only after unrelated use is not acceptable.
 
 ## State of the plan
 
-**IN PROGRESS** — Phase 1's executable dependency boundary is complete; behavior characterization and
-route/event fixtures remain before Phase 1 closes. `vis-contract` now source-reads Clojure `ns` forms,
-enforces the final Contract → Core → Gateway/SDK → consumer direction where those owners exist, and
-freezes current Clojure plus JavaScript/Python wire debt by source-file count. No production namespace
-or package has moved yet.
+**IN PROGRESS** — Phase 1 is complete and Phase 2 has begun. The executable dependency boundary
+freezes the current Clojure graph and JavaScript/Python wire debt. The contract-owned
+`gateway.edn` now pins all 99 built-in paths / 121 method-path operations, 14 protocol header
+spellings, protocol compatibility numbers, 32 gateway event names, terminal and queue-mirror sets,
+shared View lifecycle events and replay anchors. Runtime route construction plus the prior protocol/wire
+and shared View constants drift-test against it; existing View, Human Input, Activity, cancellation
+and cross-session permit suites preserve behavior before owners move. No production namespace or
+package has moved yet.
 
 Work already available as foundations:
 
@@ -769,16 +778,18 @@ Work already available as foundations:
 - Gateway startup deferral and first-frame work prove selective loading is feasible.
 - Issue #161 regressions pin stale-context retirement, abandoned-worker capacity reclamation and
   cross-session cancellation isolation.
-- `clojure_host_test` now enforces the final graph, exact Clojure debt and the named Companion/Python
+- `clojure_host_test` enforces the final graph, exact Clojure debt and the named Companion/Python
   import/wire migration inputs from the independently loadable `vis-contract` artifact.
+- `gateway_test` replaces route/event literals as the named fixture for the server, TUI/Companion
+  View mirror and future Clojure, JavaScript and Python SDK conformance tests.
 
 The prior plan's contract, wire, View, Activity, gateway and loading work remains in Phases 2-3 and
 5-13. Its `internal.base-tooling` destination is rejected. A separately published SDK is no longer out
 of scope: Clojure, JavaScript and Python SDK artifacts are Phase 4, clients are Phase 9, and
 first-party SDK-only consumption is Phases 10-12.
 
-TODO, in order: 1 dependency/behavior gates · 2 canonical wire/gateway contract · 3 all executable
-contracts · 4 three SDK artifacts · 5 Core Environment and Foundation deletion · 6 Core View · 7 Core
-execution and Tool Activity · 8 gateway state owners · 9 internal server/public SDK clients · 10 TUI on
-the Clojure SDK · 11 Companion transport on the JavaScript SDK · 12 Companion View, extensions and
-facade deletion · 13 manifest, release, budgets and final gates.
+TODO, in order: 2 canonical wire/gateway contract · 3 all executable contracts · 4 three SDK
+artifacts · 5 Core Environment and Foundation deletion · 6 Core View · 7 Core execution and Tool
+Activity · 8 gateway state owners · 9 internal server/public SDK clients · 10 TUI on the Clojure SDK
+· 11 Companion transport on the JavaScript SDK · 12 Companion View, extensions and facade deletion
+· 13 manifest, release, budgets and final gates.
