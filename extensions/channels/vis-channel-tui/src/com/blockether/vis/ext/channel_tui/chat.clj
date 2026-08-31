@@ -87,20 +87,26 @@
    bounded output/error, duration/channel, computed op metadata, and restore-only
    status flags."
   [block]
-  (merge (vis/form->display (vis/form-with-display block))
-         {:started-at-ms nil
-          :duration-ms (or (:duration-ms block) 0)
-          ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the
-          ;; SAME DISPLAY-state ops the live path derives from its `:channel`.
-          :channel (vec (:channel block))
-          :stdout (:stdout block)
-          ;; Op metadata computed from the persisted block.
-          :result-kind (form-result-kind block)
-          :result-detail (form-result-detail block)
-          :error (:error block)
-          :success? (nil? (:error block))
-          :silent? (and (nil? (:error block))
-                        (or (:silent block) (structurally-silent-block? block)))}))
+  (cond-> (merge (vis/form->display (vis/form-with-display block))
+                 {:started-at-ms nil
+                  :duration-ms (or (:duration-ms block) 0)
+                  ;; Keep the raw sink slice so the shared `iteration/entry-ops` derives the
+                  ;; SAME DISPLAY-state ops the live path derives from its `:channel`.
+                  :channel (vec (:channel block))
+                  :stdout (:stdout block)
+                  ;; Op metadata computed from the persisted block.
+                  :result-kind (form-result-kind block)
+                  :result-detail (form-result-detail block)
+                  :error (:error block)
+                  :success? (nil? (:error block))
+                  :silent? (and (nil? (:error block))
+                                (or (:silent block) (structurally-silent-block? block)))})
+    ;; Activity is the form's own bounded receipt, not a display field, so the
+    ;; shared projection above does not carry it. Without this line the record
+    ;; KEEPS what the step did and the reopened session shows none of it — the
+    ;; program and its result survive, the chronology under them does not.
+    (some? (:activity block))
+    (assoc :activity (:activity block))))
 
 (defn- it->iteration-entry
   "Turn one persisted iteration row into the same shape the live
@@ -156,6 +162,14 @@
 
               (contains? env "error")
               (assoc :error (get env "error"))
+
+              ;; Activity is a STRUCTURED snapshot, not a verbatim display field: the
+              ;; envelope carries it in wire spelling, so it is rehydrated exactly like
+              ;; the live `block.activity` frame. Without this the record KEPT the
+              ;; activity and a reopened session painted none of it — every step lost
+              ;; its receipt the moment the turn stopped streaming.
+              (some? (get env "activity"))
+              (assoc :activity (vis/wire->engine (get env "activity")))
 
               (seq segments)
               (assoc :render-segments segments)

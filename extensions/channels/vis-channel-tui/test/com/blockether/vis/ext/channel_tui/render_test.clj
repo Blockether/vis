@@ -5019,6 +5019,12 @@ h = 8"
       (expect (some? status-row))
       (expect (str/blank? (nth expanded-lines (dec status-row))))
       (expect (str/blank? (nth expanded-lines (inc status-row))))
+      ;; The code band wears the same name everywhere. `1 line shown` was a caption
+      ;; no other band said, and only an Activity-bearing step ever showed it — so the
+      ;; one place a reader met a python block beside its chronology looked like a
+      ;; different surface than every other python block in the transcript.
+      (expect (not (str/includes? expanded "line shown")))
+      (expect (str/includes? expanded "PYTHON"))
       (expect (< (.indexOf ^String expanded "PYTHON")
                  (.indexOf ^String expanded "RESULT")
                  (.indexOf ^String expanded "## main...origin/main")

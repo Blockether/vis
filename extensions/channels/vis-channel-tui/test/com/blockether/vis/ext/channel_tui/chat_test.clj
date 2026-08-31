@@ -633,6 +633,25 @@
                          :forms
                          first))]
 
+               ;; Regression: a settled envelope carried the step's Activity and the
+               ;; restore chain dropped it, so a REOPENED session showed each step's
+               ;; program and its result with no record of what the step CALLED.
+               (it "a restored envelope keeps the Activity the step recorded"
+                   (let [rec
+                         (restore {:scope "t1/i1"
+                                   :src "print(1)"
+                                   :stdout "1\n"
+                                   :activity {:state "succeeded"
+                                              :counts {:succeeded 1}
+                                              :rows [{:presenter "observation"
+                                                      :title "Searched"}]}})
+
+                         activity
+                         (:activity rec)]
+
+                     (expect (= "succeeded" (:state activity)))
+                     (expect (= 1 (count (:rows activity))))
+                     (expect (= "Searched" (:title (first (:rows activity)))))))
                (it "a restored stdout envelope keeps its card identity"
                    (let [rec
                          (restore {:scope "t1/i1"
