@@ -653,14 +653,28 @@ describe("an artifact with a history", () => {
     expect(html).not.toMatch(/<button(?:(?!<\/button>)[\s\S])*<button/);
   });
 
-  // Regression, user report ("not visible and goes outside of card!"): the dot wore the
-  // box a `⋯` that ENDS A ROW wears, and that box reclaims the row's trailing gutter
-  // with a negative margin — placed `right-1` on a tile, it hung outside the card.
+  // Regression, user report ("the markers are not in the right places"): after the
+  // row-edge box was removed, the disc's `relative` and the tile's `absolute` still
+  // fought on ONE button. CSS order let `relative` win, so the dot re-entered grid flow
+  // below the card. Position belongs to a separate anchor around the control.
   it("keeps the history control inside the card it belongs to", () => {
-    const dots = classesOf(sheet([threaded]), "versions of chart.png");
-    expect(dots).not.toContain("-mr-3");
-    expect(dots).not.toContain("sm:-mr-4");
-    expect(dots).not.toContain("justify-items-end");
+    render(
+      <ArtifactsSheet
+        client={client}
+        sid="s1"
+        artifacts={[threaded]}
+        onClose={() => {}}
+      />,
+    );
+    const dots = screen.getByRole("button", {
+      name: "Show 3 versions of chart.png",
+    });
+
+    expect(dots.parentElement?.className).toMatch(/(?:^|\s)absolute(?:\s|$)/);
+    expect(dots.className).not.toMatch(/(?:^|\s)absolute(?:\s|$)/);
+    expect(dots.className).not.toContain("-mr-3");
+    expect(dots.className).not.toContain("sm:-mr-4");
+    expect(dots.className).not.toContain("justify-items-end");
   });
 });
 // Regression, user report: the gallery called itself a full-screen surface but was

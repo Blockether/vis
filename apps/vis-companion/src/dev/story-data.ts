@@ -565,6 +565,41 @@ export const STORY_PROJECTS: ManagedProject[] = [
   { name: 'demo', root: '/Users/me/code/demo', projectId: 'project-demo', count: 4, live: 0 },
 ];
 
+const STORY_HISTORY_CUTS: SessionArtifact[] = [
+  {
+    key: 'i8:0',
+    kind: 'file',
+    name: 'build.log',
+    media: 'LOG',
+    mediaType: 'application/octet-stream',
+    size: 20480,
+    sizeLabel: '20KB',
+    turn: 8,
+    iterationId: 'i8',
+    index: 0,
+    version: 2,
+  },
+  {
+    key: 'i7:0',
+    kind: 'file',
+    name: 'build.log',
+    media: 'LOG',
+    mediaType: 'application/octet-stream',
+    size: 18240,
+    sizeLabel: '18KB',
+    turn: 7,
+    iterationId: 'i7',
+    index: 0,
+    version: 1,
+  },
+];
+
+/** The newest cut and the history control that must remain attached to its tile. */
+export const STORY_ARTIFACT_HISTORY: SessionArtifact = {
+  ...STORY_HISTORY_CUTS[0],
+  versions: STORY_HISTORY_CUTS,
+};
+
 /** Files need no eager byte fetch, so this grid is a deterministic index rather than a mock transport. */
 export const STORY_ARTIFACTS: SessionArtifact[] = [
   {

@@ -1,7 +1,11 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 
-import { STORY_ARTIFACTS, STORY_INERT_CLIENT } from '../dev/story-data';
+import {
+  STORY_ARTIFACT_HISTORY,
+  STORY_ARTIFACTS,
+  STORY_INERT_CLIENT,
+} from '../dev/story-data';
 import { ArtifactsSheet } from './ArtifactsSheet';
 
 /** The session's produced files, indexed without eagerly fetching their bytes. */
@@ -30,6 +34,9 @@ export const Files: Story = {
     await expect(args.onClose).toHaveBeenCalledOnce();
   },
 };
+
+/** A rewritten artifact keeps its history control inside the newest tile. */
+export const History: Story = { args: { artifacts: [STORY_ARTIFACT_HISTORY] } };
 
 /** A filter with no matches says so inside the same full sheet. */
 export const Empty: Story = { args: { artifacts: [] } };

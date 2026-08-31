@@ -616,21 +616,23 @@ function Tile({
   );
   // THE DOT. Only an artifact that HAS a history offers to open one, and it is a
   // sibling of the tile rather than a child: a button inside a button is invalid
-  // HTML, and the browser would hand the version menu's clicks to the tile.
+  // HTML, and the browser would hand the version menu's clicks to the tile. Position
+  // belongs to its wrapper too. `IconButton` is `relative` so its invisible hit slop
+  // has an anchor; putting `absolute` on that same node lets CSS order choose one and
+  // can send the control back into grid flow below the tile.
   const dots = versions.length > 1 && (
-    <IconButton
-      label={`Show ${versions.length} versions of ${artifact.name}`}
-      variant="overlay"
-      density="default"
-      className="absolute top-1 right-1 size-8 mouse:size-7"
-      aria-haspopup="menu"
-      onClick={() => onVersions(artifact)}
-    >
-      <DotsIcon className="size-3" />
-    </IconButton>
+    <span className="absolute top-1 right-1 block">
+      <IconButton
+        label={`Show ${versions.length} versions of ${artifact.name}`}
+        variant="overlay"
+        density="default"
+        aria-haspopup="menu"
+        onClick={() => onVersions(artifact)}
+      >
+        <DotsIcon className="size-3" />
+      </IconButton>
+    </span>
   );
-
-
   return (
     <div className="relative min-w-0">
       <button
