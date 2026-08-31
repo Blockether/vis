@@ -315,6 +315,98 @@ export const ACTIVITY_FAILED = projection({
 });
 
 /**
+ * WHAT A BLOCK DID TO THE TREE, with no tool call to hang it on.
+ *
+ * The engine emits one row per KIND — a hard link, a move and three writes are
+ * three rows, not five — so this is the sheet where the count, the two-ended
+ * arrow and the fold under a row are all on screen at once: a move that keeps
+ * its file name must still read as a move (`vis/PLAN.md → docs/PLAN.md`), a
+ * link names both ends, and six deletions show four paths and a `+2 more
+ * files`. Every row is empty of evidence on purpose — a filesystem change has
+ * no arguments and no result, it IS its paths.
+ */
+export const ACTIVITY_TREE_CHANGES = projection({
+  state: 'succeeded',
+  counts: { running: 0, succeeded: 5, failed: 0, cancelled: 0 },
+  rows: [
+    {
+      id: 'fs-mkdir',
+      sequence: 1,
+      operation: 'mkdir',
+      presenter: 'generic',
+      signal: 'mutation',
+      state: 'succeeded',
+      summary: 'created 2 directories',
+      duration_ms: 5,
+      resources: [
+        { type: 'file', id: '/Users/dev/vis/apps/vis-companion/dist' },
+        { type: 'file', id: '/Users/dev/vis/apps/vis-companion/dist/assets' },
+      ],
+      evidence: [],
+    },
+    {
+      id: 'fs-write',
+      sequence: 2,
+      operation: 'write',
+      presenter: 'generic',
+      signal: 'mutation',
+      state: 'succeeded',
+      summary: 'wrote 3 files',
+      duration_ms: 9,
+      resources: [
+        { type: 'file', id: '/Users/dev/vis/apps/vis-companion/dist/index.html' },
+        { type: 'file', id: '/Users/dev/vis/apps/vis-companion/dist/assets/app.css' },
+        { type: 'file', id: '/Users/dev/vis/apps/vis-companion/dist/assets/app.js' },
+      ],
+      evidence: [],
+    },
+    {
+      id: 'fs-move',
+      sequence: 3,
+      operation: 'move',
+      presenter: 'generic',
+      signal: 'mutation',
+      state: 'succeeded',
+      summary: 'moved vis/PLAN.md → docs/PLAN.md',
+      duration_ms: 11,
+      resources: [{ type: 'file', id: '/Users/dev/vis/docs/PLAN.md' }],
+      evidence: [],
+    },
+    {
+      id: 'fs-link',
+      sequence: 4,
+      operation: 'link',
+      presenter: 'generic',
+      signal: 'mutation',
+      state: 'succeeded',
+      summary: 'linked vis-0.1.24.tar.gz → latest.tar.gz',
+      duration_ms: 11,
+      resources: [{ type: 'file', id: '/Users/dev/vis/target/releases/latest.tar.gz' }],
+      evidence: [],
+    },
+    {
+      id: 'fs-delete',
+      sequence: 5,
+      operation: 'delete',
+      presenter: 'generic',
+      signal: 'mutation',
+      state: 'succeeded',
+      summary: 'deleted 6 files',
+      duration_ms: 14,
+      resources: [
+        { type: 'file', id: '/Users/dev/vis/target/scratch/probe-1.json' },
+        { type: 'file', id: '/Users/dev/vis/target/scratch/probe-2.json' },
+        { type: 'file', id: '/Users/dev/vis/target/scratch/probe-3.json' },
+        { type: 'file', id: '/Users/dev/vis/target/scratch/probe-4.json' },
+        { type: 'file', id: '/Users/dev/vis/target/scratch/probe-5.json' },
+        { type: 'file', id: '/Users/dev/vis/target/scratch/probe-6.json' },
+      ],
+      evidence: [],
+    },
+  ],
+  omitted: { rows: 0, by_classification: {} },
+});
+/**
  * A `vis-table` fence exactly as `attach` emits it: five header lines, then the
  * CSV. More columns than a phone can hold and a mixed numeric column, because
  * alignment and the horizontal scroll are what this control is asked about.

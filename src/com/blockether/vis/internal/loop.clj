@@ -1041,9 +1041,27 @@
 
     (if (and i (< (long i) (dec (count s)))) (subs s (inc (long i))) s)))
 
+(defn- path-tail
+  "The last `n` segments of a path, joined back into one name."
+  [path n]
+  (str/join "/" (take-last n (str/split (str path) #"/"))))
+
+(defn- two-ended-names
+  "Names for BOTH ends of a two-ended change, each taken as the shortest tail that still
+   tells the ends apart: a move that keeps the file name reads `notes.md → docs/notes.md`,
+   because `notes.md → notes.md` reads as nothing having happened."
+  [from to]
+  (let [depth (max (count (str/split (str from) #"/")) (count (str/split (str to) #"/")))]
+    (loop [n 1]
+      (let [a (path-tail from n)
+            b (path-tail to n)]
+
+        (if (or (not= a b) (>= n (long depth))) [a b] (recur (inc n)))))))
+
 (defn- fs-mutation-label
-  "One row's words. A single change names its file — and `move`/`copy`, being two-ended,
-   name where it landed; a batch names its count, because forty paths are not a label."
+  "One row's words. A single change names its file — and `move`/`copy`/`link`, being
+   two-ended, name where it landed; a batch names its count, because forty paths are not a
+   label."
   [kind mutations]
   (let [{:keys [verb plural]}
         (get fs-mutation-verbs kind)
@@ -1054,7 +1072,8 @@
     (if (= 1 n)
       (let [{:keys [path to]} (first mutations)]
         (if to
-          (str verb " " (path-leaf path) " → " (path-leaf to))
+          (let [[from-name to-name] (two-ended-names path to)]
+            (str verb " " from-name " → " to-name))
           (str verb " " (path-leaf path))))
       (str verb " " n " " plural))))
 
@@ -1080,7 +1099,6 @@
                                :presenter :generic
                                :classification :mutation
                                :label (fs-mutation-label kind group)
-                               :args []
                                :result {:activity/resources (mapv (fn [{:keys [path to]}]
                                                                     {:type :file
                                                                      :id (str (or to path))})

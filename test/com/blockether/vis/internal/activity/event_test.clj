@@ -273,4 +273,28 @@
           (deref answer 5000 ::timed-out)]
 
       (expect (not= ::timed-out terminal))
-      (expect (<= (event/utf8-bytes (:result-summary terminal)) event/max-detail-bytes)))))
+      (expect (<= (event/utf8-bytes (:result-summary terminal)) event/max-detail-bytes))))
+  (it "shows nothing for a call with no arguments whose result only declares resources"
+      (let [ctx
+            (event/context)
+
+            invocation
+            (event/invocation ctx nil)
+
+            start
+            (event/start-event ctx invocation {:operation :write :presenter :generic :args []})
+
+            terminal
+            (event/terminal-event ctx
+                                  invocation
+                                  {:operation :write
+                                   :presenter :generic
+                                   :started-at-ms (System/currentTimeMillis)
+                                   :outcome :succeeded
+                                   :result {:activity/resources [{:type :file :id "/w/one.txt"}]}})]
+
+        ;; a declaration is addressed to Activity, never to the reader: it names the row's
+        ;; resources and leaves no argument or result text behind
+        (expect (not (contains? start :argument-summary)))
+        (expect (not (contains? terminal :result-summary)))
+        (expect (= [{:type :file :id "/w/one.txt"}] (:resources terminal))))))

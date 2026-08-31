@@ -4,6 +4,7 @@ import {
   ACTIVITY_FAILED,
   ACTIVITY_RUNNING,
   ACTIVITY_SETTLED,
+  ACTIVITY_TREE_CHANGES,
 } from '../dev/story-data';
 import { ActivityPanel } from './ActivityPanel';
 
@@ -55,4 +56,9 @@ export const Idle: Story = {
 /** The thread doing its job: reads, a patch, a failed check, one step still moving. */
 export const Chronology: Story = {
   args: { activity: ACTIVITY_CHRONOLOGY },
+};
+
+/** What a block did to the tree with no tool call of its own: one row per kind. */
+export const TreeChanges: Story = {
+  args: { activity: ACTIVITY_TREE_CHANGES },
 };

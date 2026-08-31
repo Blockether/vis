@@ -874,3 +874,153 @@
       (spit staged "(defn ok [] :better)\n")
       (.move fs (p staged) (p target) (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))
       (expect (= "(defn ok [] :better)\n" (slurp target))))))
+
+;; Regression, issue: every `os.link` / `Path.hardlink_to` inside the sandbox died with
+;; `FileExistsError` naming the SOURCE, whatever destination was asked for, and no link was
+;; ever created. GraalPy 25.1.3's emulated `linkat` converts the new path and then resolves
+;; the OLD one a second time, so the destination never reaches the filesystem at all.
+(defdescribe
+  hard-link-test
+  (it "creates a hard link through the confined filesystem"
+      (let [root
+            (gated-root)
+
+            existing
+            (str root "/origin.txt")
+
+            link
+            (str root "/hard.txt")
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root]))]
+
+        (spit existing "SHARED")
+        (.createLink fs (p link) (p existing))
+        (expect (= "SHARED" (slurp link)))
+        (expect (Files/isSameFile (p link) (p existing)))))
+  (it "confines BOTH ends of a hard link"
+      (let [root
+            (gated-root)
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root]))]
+
+        ;; the new name outside the roots (system temp is deliberately NOT outside — it is
+        ;; the sandbox's own scratch, see `gated-root`)…
+        (expect (denied?
+                  #(.createLink fs (p "/etc/vis-escaped-link") (p (str root "/inside.txt")))))
+        ;; …and the file being linked FROM outside them
+        (expect (denied? #(.createLink fs (p (str root "/stolen.txt")) (p "/etc/hosts"))))))
+  (it "reports the link as a mutation naming what was linked and where"
+      (let [root
+            (gated-root)
+
+            seen
+            (atom [])
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root])
+                                     {:on-mutation (fn [m]
+                                                     (swap! seen conj m))})
+
+            existing
+            (str root "/origin.txt")
+
+            link
+            (str root "/hard.txt")]
+
+        (spit existing "SHARED")
+        (.createLink fs (p link) (p existing))
+        (expect (= [{:kind :link :path existing :to link}] @seen))))
+  (it "refuses a hard link that would install broken syntax at a guarded path"
+      (let [root
+            (gated-root)
+
+            rejections
+            (atom [])
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root])
+                                     {:on-rejection (fn [r]
+                                                      (swap! rejections conj r))})
+
+            staged
+            (str root "/staged.clj")
+
+            target
+            (str root "/core.clj")]
+
+        (spit staged "(defn broken [] :ok\n")
+        (expect (denied? #(.createLink fs (p target) (p staged))))
+        (expect (not (Files/exists (p target) (make-array LinkOption 0))))
+        (expect (= "introduced_parse_error" (:reason (first @rejections))))))
+  (it
+    "links from real Python: os.link and Path.hardlink_to no longer raise"
+    (let [root
+          (gated-root)
+
+          existing
+          (str root "/origin.txt")
+
+          link
+          (str root "/hard.txt")
+
+          via-pathlib
+          (str root "/pathlib.txt")
+
+          {:keys [python-context python-engine]}
+          (env-python/create-python-context {} (constantly [root]))]
+
+      (spit existing "SHARED")
+      (try (let [result (env-python/run-python-block python-context
+                                                     (str "import os\n"
+                                                          "from pathlib import Path\n"
+                                                          "os.link("
+                                                          (pr-str existing)
+                                                          ", "
+                                                          (pr-str link)
+                                                          ")\n"
+                                                          "Path("
+                                                          (pr-str via-pathlib)
+                                                          ").hardlink_to("
+                                                          (pr-str existing)
+                                                          ")\n"
+                                                          "print(open("
+                                                          (pr-str link)
+                                                          ").read())"))]
+             (expect (nil? (:error result)))
+             (expect (= "SHARED\n" (:stdout result)))
+             (expect (= "SHARED" (slurp link)))
+             (expect (= "SHARED" (slurp via-pathlib)))
+             ;; …and the block's tree changes name both ends, which is what Activity reports.
+             (expect (= [{:kind :link :path existing :to link}
+                         {:kind :link :path existing :to via-pathlib}]
+                        (filterv (fn [m]
+                                   (= :link (:kind m)))
+                          (:fs-mutations result)))))
+           (finally (.close ^Context python-context true)
+                    (.close ^org.graalvm.polyglot.Engine python-engine)))))
+  (it "still refuses a hard link out of the roots from real Python"
+      (let [root
+            (gated-root)
+
+            {:keys [python-context python-engine]}
+            (env-python/create-python-context {} (constantly [root]))]
+
+        (try (let [result (env-python/run-python-block
+                            python-context
+                            (str "import os\n"
+                                 "try:\n"
+                                 "    os.link('/etc/hosts', "
+                                 (pr-str (str root "/stolen.txt"))
+                                 ")\n"
+                                 "except OSError as exc:\n"
+                                 "    print('refused', 'sandbox_denied' in str(exc))"))]
+               (expect (= "refused True\n" (:stdout result)))
+               (expect (not (Files/exists (p (str root "/stolen.txt")) (make-array LinkOption 0)))))
+             (finally (.close ^Context python-context true)
+                      (.close ^org.graalvm.polyglot.Engine python-engine))))))

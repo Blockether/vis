@@ -8131,22 +8131,28 @@
             (@#'lp/fs-mutation-events
              ctx
              [{:kind :move :path "/w/a.clj" :to "/w/b.clj"} {:kind :write :path "/w/one.txt"}
-              {:kind :write :path "/w/two.txt"} {:kind :chmod :path "/w/not-a-tree-change"}])
+              {:kind :write :path "/w/two.txt"}
+              {:kind :link :path "/w/dist/app.tar.gz" :to "/w/releases/latest.tar.gz"}
+              {:kind :chmod :path "/w/not-a-tree-change"}])
 
             rows
             (:rows (activity/presentation
                      (reduce activity/reduce-event activity/empty-state events)))]
 
-        ;; two kinds -> two lifecycle pairs; the unknown kind is dropped, never guessed
-        (expect (= 4 (count events)))
-        (expect (= ["wrote 2 files" "moved a.clj → b.clj"] (mapv :summary rows)))
-        (expect (= ["mutation" "mutation"] (mapv :signal rows)))
-        (expect (= ["write" "move"] (mapv :operation rows)))
-        (expect (= [["/w/one.txt" "/w/two.txt"] ["/w/b.clj"]]
+        ;; three kinds -> three lifecycle pairs; the unknown kind is dropped, never guessed
+        (expect (= 6 (count events)))
+        (expect (= ["wrote 2 files" "moved a.clj → b.clj" "linked app.tar.gz → latest.tar.gz"]
+                   (mapv :summary rows)))
+        (expect (= ["mutation" "mutation" "mutation"] (mapv :signal rows)))
+        (expect (= ["write" "move" "link"] (mapv :operation rows)))
+        (expect (= [["/w/one.txt" "/w/two.txt"] ["/w/b.clj"] ["/w/releases/latest.tar.gz"]]
                    (mapv (fn [row]
                            (mapv :id (:resources row)))
                          rows)))
-        (expect (= ["succeeded" "succeeded"] (mapv :state rows)))))
+        (expect (= ["succeeded" "succeeded" "succeeded"] (mapv :state rows)))
+        ;; the paths ARE the row; a filesystem change has no arguments and no result to show
+        (expect (= [[] [] []] (mapv :evidence rows)))
+        (expect (= [nil nil nil] (mapv :result-summary rows)))))
   (it "names the single file it touched, and counts a batch"
       (expect (= "deleted old.txt" (@#'lp/fs-mutation-label :delete [{:path "/w/old.txt"}])))
       (expect (= "created build" (@#'lp/fs-mutation-label :mkdir [{:path "/w/build"}])))
@@ -8155,4 +8161,11 @@
                   :copy
                   (mapv (fn [i]
                           {:path (str "/w/f" i)})
-                        (range 40)))))))
+                        (range 40)))))
+      ;; a move that keeps the file name must not read as `notes.md → notes.md`
+      (expect (= "moved w/notes.md → docs/notes.md"
+                 (@#'lp/fs-mutation-label :move [{:path "/w/notes.md" :to "/w/docs/notes.md"}])))
+      (expect (= "linked vis-0.1.24.tar.gz → latest.tar.gz"
+                 (@#'lp/fs-mutation-label
+                  :link
+                  [{:path "/w/dist/vis-0.1.24.tar.gz" :to "/w/releases/latest.tar.gz"}])))))

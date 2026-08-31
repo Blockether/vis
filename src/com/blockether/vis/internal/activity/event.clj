@@ -367,6 +367,18 @@
                 (when (and type id) {:type type :id (bounded-text id max-summary-bytes)})))
             value))))
 
+(def ^:private activity-declaration-keys
+  "Keys a caller puts in a result to DECLARE something to Activity instead of reporting a
+   value: resources to name, a token to group by. `declared-resources` and
+   `explicit-group-token` are their only readers."
+  [:activity/resources "activity/resources" :activity/group-token "activity/group-token"])
+
+(defn- displayable-result
+  "The part of a result a row can SHOW. A declaration is addressed to Activity, not to the
+   reader, so a result made only of declarations summarizes to nothing — printing it back
+   would put engine data structures where the row's own words belong."
+  [result]
+  (if (map? result) (not-empty (apply dissoc result activity-declaration-keys)) result))
 (defn- shell-presenter?
   [operation declared]
   (= :shell (presenter/presenter-for operation declared)))
@@ -424,12 +436,15 @@
               (first args)))
 
         argument
-        (bounded-summary args max-summary-bytes)]
+        (when (seq args) (bounded-summary args max-summary-bytes))]
 
     (checked
       (cond-> (merge (base-event ctx invocation operation presenter :start)
                      (select-keys invocation [:parent-invocation-id])
-                     {:status :running :argument-summary (:text argument)})
+                     {:status :running})
+        argument
+        (assoc :argument-summary (:text argument))
+
         extension
         (assoc :extension extension)
 
@@ -477,7 +492,8 @@
 
         summary
         (if (= outcome :succeeded)
-          (bounded-summary result max-detail-bytes)
+          (some-> (displayable-result result)
+                  (bounded-summary max-detail-bytes))
           (bounded-rendered (or (some-> error*
                                         ex-message)
                                 (str error*))
@@ -499,7 +515,7 @@
 
                                 :failed)
                       :duration-ms duration})
-        (= outcome :succeeded)
+        (and (= outcome :succeeded) (:text summary))
         (assoc :result-summary (:text summary))
 
         (not= outcome :succeeded)

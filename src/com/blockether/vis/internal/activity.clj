@@ -54,7 +54,9 @@
            :summary (presenter/row-summary event)
            :group-token (:group-token event)
            :resources (vec (take event/max-resources (:resources event)))
-           :evidence [{:kind :arguments :text (:argument-summary event)}]}
+           :evidence (if-let [argument (:argument-summary event)]
+                       [{:kind :arguments :text argument}]
+                       [])}
     (:argument-truncated event)
     (assoc :is-truncated true)))
 
@@ -100,15 +102,19 @@
         (terminal-state event)
 
         refs
-        (vec (take event/max-resources (distinct (concat (:resources row) (:resources event)))))]
+        (vec (take event/max-resources (distinct (concat (:resources row) (:resources event)))))
+
+        summary-evidence
+        (when-let [text (not-empty (or (:error-summary event) (:result-summary event)))]
+          {:kind (if (:error-summary event) :error :result) :text text})]
 
     (cond-> (assoc row
               :state state
               :duration-ms (:duration-ms event)
               :resources refs
-              :evidence (conj (vec (:evidence row))
-                              {:kind (if (:error-summary event) :error :result)
-                               :text (or (:error-summary event) (:result-summary event) "")}))
+              :evidence (cond-> (vec (:evidence row))
+                          summary-evidence
+                          (conj summary-evidence)))
       (:diff-evidence event)
       (update :evidence conj (:diff-evidence event))
 

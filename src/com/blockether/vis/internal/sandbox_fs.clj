@@ -523,14 +523,34 @@ No candidate bytes were committed; the previous file state was left unchanged. "
                (.delete d cp)
                (mutated! :delete cp)))
            ;; move/copy live in the OUTER proxy — the composite below never routes them here.
+           ;;
+           ;; GraalPy 25.1.3 never delivers `os.link`'s DESTINATION to a filesystem: its
+           ;; emulated `linkat` converts the new path and then resolves the OLD one a second
+           ;; time (`EmulatedPosixSupport.linkat`), so the guest call arrives here as
+           ;; `(src, src)` and every `os.link` died with EEXIST naming the source. Nothing can
+           ;; be repaired at this layer — the destination is already lost — so the guest call
+           ;; is re-routed around the broken backend by `vis-python/hard_link.py`, which hands
+           ;; BOTH ends back to this method. A hard link is a new name for existing bytes, so
+           ;; it is confined, syntax-gated and reported exactly like a write.
            (createLink [link existing]
-             (let [^Path cl (c "file-write" link)]
-               (.createLink d cl (c "file-read" existing))
-               (mutated! :link cl)))
+             (let [^Path cl
+                   (c "file-write" link)
+
+                   ^Path ce
+                   (c "file-read" existing)]
+
+               (guard-transfer! ce cl on-rejection)
+               (.createLink d cl ce)
+               (mutated! :link ce cl)))
            (createSymbolicLink [link target attrs]
-             (let [^Path cl (c "file-write" link)]
-               (.createSymbolicLink d cl (c "file-read" target) attrs)
-               (mutated! :link cl)))
+             (let [^Path cl
+                   (c "file-write" link)
+
+                   ^Path ct
+                   (c "file-read" target)]
+
+               (.createSymbolicLink d cl ct attrs)
+               (mutated! :link ct cl)))
            (readSymbolicLink [link] (.readSymbolicLink d (c "file-read" link)))
            (setAttribute [p attr value opts] (.setAttribute d (c "file-write" p) attr value opts))
            ;; default interface methods — proxy does NOT inherit them, so delegate

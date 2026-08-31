@@ -35,7 +35,7 @@
             [taoensso.telemere :as tel])
   (:import [org.graalvm.polyglot Context Context$Builder Engine Value PolyglotAccess
             PolyglotException]
-           [org.graalvm.polyglot.io IOAccess]
+           [org.graalvm.polyglot.io FileSystem IOAccess]
            [org.graalvm.polyglot.proxy ProxyExecutable ProxyArray ProxyHashMap]
            [java.util ArrayList LinkedHashMap]
            [java.util.logging Handler Level LogRecord]))
@@ -1968,6 +1968,14 @@
    stay baseline (not surfaced as model-created live vars)."
   (runtime-python-src "vis-python/network_probe.py"))
 
+(def ^:private hard-link-python
+  "A WORKING `os.link` for the sandbox. GraalPy 25.1.3's emulated `linkat` resolves the
+   SOURCE path twice and never hands the destination to a filesystem, so every guest
+   `os.link` / `Path.hardlink_to` died with `FileExistsError` naming the source. The guest
+   call is re-routed to the `__vis_hard_link__` host callback, which links through the same
+   confined filesystem as every other write — same roots, same path gate, same syntax guard,
+   same Activity row. Eval'd before the initial-ns snapshot so the name stays baseline."
+  (runtime-python-src "vis-python/hard_link.py"))
 (defn- make-outbox
   "DORMANT — not called while `mpl-capture/incidental-capture-enabled?` is false,
    so no context gets an outbox dir and the filesystem tap never arms.
@@ -2120,23 +2128,28 @@
         outbox
         (when (and mpl-capture/incidental-capture-enabled? roots-fn) (make-outbox))
 
+        ;; Hoisted, not inlined into `io-access`: `os.link` is re-routed through this very
+        ;; object by the `__vis_hard_link__` host callback below, because GraalPy loses that
+        ;; call's destination before any filesystem sees it (`vis-python/hard_link.py`).
+        ^FileSystem sandbox-filesystem
+        (when roots-fn
+          (sandbox-fs/confined-filesystem
+            roots-fn
+            {:outbox outbox
+             :gate-fn gate-fn
+             :on-rejection #(swap! syntax-guard-events conj %)
+             :on-mutation (fn [mutation]
+                            (swap! fs-mutations (fn [seen]
+                                                  (cond-> seen
+                                                    (< (count seen) (long max-block-fs-mutations))
+                                                    (conj mutation)))))}))
+
         io-access
         (if (or roots-fn net?)
           (-> (IOAccess/newBuilder)
               (cond->
-                roots-fn
-                (.fileSystem (sandbox-fs/confined-filesystem
-                               roots-fn
-                               {:outbox outbox
-                                :gate-fn gate-fn
-                                :on-rejection #(swap! syntax-guard-events conj %)
-                                :on-mutation (fn [mutation]
-                                               (swap! fs-mutations (fn [seen]
-                                                                     (cond-> seen
-                                                                       (< (count seen)
-                                                                          (long
-                                                                            max-block-fs-mutations))
-                                                                       (conj mutation)))))})))
+                sandbox-filesystem
+                (.fileSystem sandbox-filesystem))
               (.allowHostSocketAccess net?)
               (.build))
           IOAccess/NONE)
@@ -2342,6 +2355,24 @@
           "python"
           "import os as __vis_os__\n__vis_os__.environ['VIS_OUTBOX'] = VIS_OUTBOX\ndel __vis_os__")
         (catch Throwable _ nil)))
+    ;; `os.link` REPAIR. The GraalPy backend loses the destination before any filesystem
+    ;; sees it, so the guest call is served here instead: `__vis_hard_link__` hands BOTH ends
+    ;; to the confined filesystem, which confines them, runs the syntax guard on the
+    ;; destination and reports the change to Activity. Eval'd before the snapshot so the
+    ;; callback's name stays baseline.
+    (when sandbox-filesystem
+      (try (.putMember g
+                       "__vis_hard_link__"
+                       (wrap-ifn (fn [existing link]
+                                   (.createLink sandbox-filesystem
+                                                (.parsePath sandbox-filesystem ^String (str link))
+                                                (.parsePath sandbox-filesystem
+                                                            ^String (str existing)))
+                                   nil)))
+           (.eval ctx "python" hard-link-python)
+           (catch Throwable t
+             (tel/log! {:level :warn :id ::hard-link-runtime-failed}
+                       (str "os.link repair failed to install: " (or (.getMessage t) t))))))
     ;; NETWORK domain allowlist: when sockets are on AND domains are specified,
     ;; patch socket DNS resolution to refuse hosts outside the allowlist. Eval'd
     ;; before the snapshot so the guard's names are BASELINE (not model-visible).
