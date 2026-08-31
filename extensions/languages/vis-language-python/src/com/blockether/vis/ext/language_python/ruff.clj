@@ -22,8 +22,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.ruff :as ruff]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.foundation.surface-contract :as contract]))
+            [com.blockether.vis.contract.surface :as contract]
+            [com.blockether.vis.internal.extension :as extension]))
 
 ;; Paths
 

@@ -24,7 +24,7 @@
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.foundation.surface-contract :as contract]))
+            [com.blockether.vis.contract.surface :as contract]))
 
 ;; Activation
 

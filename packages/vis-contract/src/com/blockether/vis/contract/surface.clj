@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.foundation.surface-contract
+(ns com.blockether.vis.contract.surface
   "clojure.spec CONTRACT for the language-surface tool RESULTS (`format_code`,
    `lint_code`, `run_tests`).
 

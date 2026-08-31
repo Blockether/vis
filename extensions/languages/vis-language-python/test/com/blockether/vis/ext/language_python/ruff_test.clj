@@ -3,8 +3,8 @@
    Everything runs in-process through com.blockether/ruff (no `ruff` binary),
    so these exercise the real formatter/linter against a throwaway project."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.contract.surface :as contract]
             [com.blockether.vis.ext.language-python.ruff :as pyruff]
-            [com.blockether.vis.internal.foundation.surface-contract :as contract]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))

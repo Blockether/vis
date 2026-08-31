@@ -28,7 +28,9 @@ repository can read the same declaration without installing an agent.
 View, canonical content, toggles and provider limits are executable contracts: their namespaces own
 predicates, specs and error data as well as portable resource vocabularies. Core, gateway and channels
 consume those shapes directly, and generated readers receive the same documents without engine
-data entering the renderer.
+data entering the renderer. `com.blockether.vis.contract.surface` is Clojure only: the language
+surface's format, lint and test result shapes never cross a wire, so they are executable specs
+without a portable document.
 
 ## Changing the contract
 

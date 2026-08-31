@@ -8,10 +8,10 @@
   reports it and `repl_stop` ends one. Live REPLs also surface in the ctx
   `resources` block."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.surface :as contract]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.foundation.environment.core :as environment]
-            [com.blockether.vis.internal.foundation.surface-contract :as contract]))
+            [com.blockether.vis.internal.foundation.environment.core :as environment]))
 
 (defn- normalize-language
   [x]

@@ -12,7 +12,8 @@
  ["apps/vis-companion/src/lib/gateway.ts" "apps/vis-companion/src/lib/compat.ts"
   "apps/vis-companion/src/lib/endpoints.ts" "apps/vis-companion/src/lib/types.ts"]
  :contract/internal-debt {:debt/production
-                          {com.blockether.vis.contract.view 2
+                          {com.blockether.vis.contract.surface 3
+                           com.blockether.vis.contract.view 2
                            com.blockether.vis.core 41
                            com.blockether.vis.internal.attachments 6
                            com.blockether.vis.internal.cancellation 2
@@ -23,7 +24,6 @@
                            com.blockether.vis.internal.format 7
                            com.blockether.vis.internal.foundation.editing.parse 1
                            com.blockether.vis.internal.foundation.environment.languages 1
-                           com.blockether.vis.internal.foundation.surface-contract 3
                            com.blockether.vis.internal.header 4
                            com.blockether.vis.internal.iteration 1
                            com.blockether.vis.internal.limits-format 1
@@ -41,7 +41,8 @@
                            com.blockether.vis.internal.view.materializer 1
                            com.blockether.vis.internal.voice 4
                            com.blockether.vis.internal.workspace 4}
-                          :debt/test {com.blockether.vis.contract.view 2
+                          :debt/test {com.blockether.vis.contract.surface 3
+                                      com.blockether.vis.contract.view 2
                                       com.blockether.vis.core 32
                                       com.blockether.vis.internal.attachments 2
                                       com.blockether.vis.internal.config 2
@@ -54,7 +55,6 @@
                                       com.blockether.vis.internal.foundation.gif 1
                                       com.blockether.vis.internal.foundation.shell 1
                                       com.blockether.vis.internal.foundation.shim-pytest 1
-                                      com.blockether.vis.internal.foundation.surface-contract 3
                                       com.blockether.vis.internal.gateway.state 1
                                       com.blockether.vis.internal.gateway.view 1
                                       com.blockether.vis.internal.header 1

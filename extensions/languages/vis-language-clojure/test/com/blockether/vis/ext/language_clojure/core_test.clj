@@ -6,7 +6,7 @@
             [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.language-clojure.core :as core]
-            [com.blockether.vis.internal.foundation.surface-contract :as contract]
+            [com.blockether.vis.contract.surface :as contract]
             [com.blockether.vis.ext.language-clojure.format :as fmt]
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.test-runner :as test-runner]

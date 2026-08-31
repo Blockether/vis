@@ -5,11 +5,11 @@
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as shell]
             [clojure.string :as str]
+            [com.blockether.vis.contract.surface :as contract]
             [com.blockether.vis.ext.language-clojure.nrepl-client :as nc]
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.shadow-cljs :as shadow]
             [com.blockether.vis.ext.language-clojure.test-runner :as tr]
-            [com.blockether.vis.internal.foundation.surface-contract :as contract]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private run-via-repl @#'com.blockether.vis.ext.language-clojure.test-runner/run-via-repl)

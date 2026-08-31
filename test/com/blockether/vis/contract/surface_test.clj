@@ -1,8 +1,8 @@
-(ns com.blockether.vis.internal.foundation.surface-contract-test
+(ns com.blockether.vis.contract.surface-test
   "Contract tests for the clojure.spec language-surface result specs: the shape
    format + lint + run_tests share, and `check`'s accept/reject/pass-through
    behaviour."
-  (:require [com.blockether.vis.internal.foundation.surface-contract :as contract]
+  (:require [com.blockether.vis.contract.surface :as contract]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private format-ok
@@ -37,7 +37,7 @@
    "output" ""})
 
 (defdescribe
-  surface-contract-test
+  surface-test
   (it "accepts a conforming format result and returns it unchanged"
       (expect (contract/valid? :format-fn format-ok))
       (expect (= format-ok (contract/check :format-fn format-ok)))

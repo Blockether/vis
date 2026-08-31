@@ -21,7 +21,7 @@
             [com.blockether.vis.ext.language-clojure.repl-manager :as repl-manager]
             [com.blockether.vis.ext.language-clojure.shadow-cljs :as shadow]
             [com.blockether.vis.internal.test-contract :as contract]
-            [com.blockether.vis.internal.foundation.surface-contract :as surface]
+            [com.blockether.vis.contract.surface :as surface]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.runtime-settings :as rt]))
 

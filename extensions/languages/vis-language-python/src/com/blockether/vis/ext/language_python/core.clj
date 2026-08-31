@@ -336,7 +336,7 @@
          (catch Exception _ nil))))
 
 (defn- graalpy-faults
-  "The hermetic backend's per-test records as surface-contract faults — one map
+  "The hermetic backend's per-test records as surface contract faults — one map
    per test whose `:outcome` is in `outcomes`, carrying the node id, its file,
    the assertion headline and its `\"type\"` (`:errored` -> `\"error\"`, anything
    else -> `\"fail\"`), so ONE `failures` list carries both kinds. Same reason as

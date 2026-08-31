@@ -413,8 +413,9 @@ moves to that channel rather than being hidden in Environment.
   tool children.
 - Contracts and generated SDK declarations leave the old directory first. Environment contains no
   `s/def`, public facade or transport protocol ownership.
-- Language packs replace direct `foundation.environment.languages`, `foundation.editing.parse` and
-  `foundation.surface-contract` imports with SDK operations/types or extension-local behavior.
+- Language packs replace direct `foundation.environment.languages` and `foundation.editing.parse`
+  imports with SDK operations/types or extension-local behavior; the shared language-surface result
+  contract already moved to `contract.surface` in Phase 3.
 - Rename optional artifacts and namespaces from `vis-foundation-search`/`voice` to
   `vis-search`/`vis-voice`; they remain extensions using the SDK and are not Environment children.
 - A tree gate rejects `foundation` and `base-tooling` in production paths, namespace symbols,
@@ -785,7 +786,11 @@ id grammar, kinds, settings-copy bound, boolean tokens and executable contributi
 registry now owns only normalization, mutable values, listeners, persistence and hydration, while
 portable readers receive `TOGGLE`. `provider.edn` and `contract.provider` own the limits vocabulary
 and the whole report envelope every provider answer is judged by; `internal.provider-limits` is fetch,
-cache and normalization only, and portable readers receive `PROVIDER`.
+cache and normalization only, and portable readers receive `PROVIDER`. `contract.surface` now owns
+the language-surface result contract every pack's `format_code`, `lint_code` and `run_tests` answer
+is checked against; `internal/foundation/surface_contract.clj` was deleted rather than forwarded,
+both language packs and the dispatch surface import the contract owner directly, and the frozen
+consumer debt changed key without growing.
 
 Work already available as foundations:
 
