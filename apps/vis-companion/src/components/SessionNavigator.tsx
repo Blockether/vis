@@ -15,7 +15,7 @@ import {
 import type { MachineColor } from '../lib/machine-colors';
 import type { PullPhase } from '../lib/pull-to-search';
 import { ChevronIcon, PlusIcon, ProjectsIcon, SearchIcon } from './icons';
-import { Button, IconButton, LIST_EDGE } from './ui';
+import { Button, IconButton, LIST_EDGE, Spinner } from './ui';
 
 const HEADER_TYPE = 'text-title';
 
@@ -869,51 +869,36 @@ export function MachineTab({
  * than the same phrase on every row. The face stays on the compact 32px header
  * rhythm while `Button` preserves a 44px touch target outside the painted box.
  * `where` remains in the tooltip and `machine` in the accessible name.
+ * While creation is in flight, the same disc stays put and its plus becomes the
+ * shared waiting spinner; progress must not make one project header change width.
  */
 export function NewSessionButton({
   machine,
   where,
   disabled,
-  busyLabel,
+  isBusy = false,
   onPress,
 }: {
   machine: string;
   where?: string | null;
   disabled?: boolean;
-  /** The work this button started, spoken inside the pressed control. */
-  busyLabel?: string | null;
+  isBusy?: boolean;
   onPress: (anchor: HTMLElement) => void;
 }) {
   const label = `New session on ${machine}`;
   const title = where ? `New session on ${machine}, in ${where}` : label;
-  if (busyLabel) {
-    return (
-      <Button
-        type="button"
-        pressEffect="none"
-        density="compact"
-        disabled
-        aria-live="polite"
-        aria-label={label}
-        title={title}
-        className="shrink-0 whitespace-nowrap"
-        onClick={(event) => onPress(event.currentTarget)}
-      >
-        {busyLabel}
-      </Button>
-    );
-  }
   return (
     <IconButton
       variant="primary"
       density="compact"
-      disabled={disabled}
+      disabled={disabled || isBusy}
+      aria-busy={isBusy || undefined}
       aria-live="polite"
       label={label}
       title={title}
       onClick={(event) => onPress(event.currentTarget)}
     >
-      <PlusIcon className="size-4" />
+      {isBusy ? <Spinner /> : <PlusIcon className="size-4" />}
     </IconButton>
   );
 }

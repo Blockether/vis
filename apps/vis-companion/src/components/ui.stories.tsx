@@ -544,15 +544,15 @@ export const Machines: Story = {
         <NewSessionButton
           machine={STORY_MACHINES[0].name}
           where={STORY_SESSION.where}
-           onPress={noop}
+          onPress={noop}
         />
         <NewSessionButton
           machine={STORY_MACHINES[0].name}
-          busyLabel="Starting…"
-           onPress={noop}
+          isBusy
+          onPress={noop}
         />
-         <MachineProjectsButton machine={STORY_MACHINES[0].name} onPress={noop} />
-         <MachineProjectsButton machine={STORY_MACHINES[0].name} isQuiet onPress={noop} />
+        <MachineProjectsButton machine={STORY_MACHINES[0].name} onPress={noop} />
+        <MachineProjectsButton machine={STORY_MACHINES[0].name} isQuiet onPress={noop} />
       </Group>
     </Sheet>
   ),

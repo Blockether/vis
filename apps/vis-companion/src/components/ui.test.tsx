@@ -1852,21 +1852,21 @@ describe("project verbs use distinct marks", () => {
   });
 });
 
-// Regression, user report ("when we create a new session there's this 'Creating' showing
-// but not in the new session button but outside — I want it to show in the button
-// itself"): the busy word was parked on the app bar, so the fleet said it was busy while
-// the button that had actually been pressed sat there looking untouched.
+// Regression, user report: replacing the compact plus with “Creating...” widened one
+// project header while every neighbouring header kept its one-mark rhythm. The pressed
+// control should stay put and turn its mark into progress instead of growing a word.
 describe("NewSessionButton, busy", () => {
   const busy = renderToStaticMarkup(
     <NewSessionButton
       machine="tower"
-      busyLabel="Creating..."
+      isBusy
       onPress={() => {}}
     />,
   );
 
-  it("wears the work in its own face, where the press happened", () => {
-    expect(busy).toContain(">Creating...<");
+  it("turns its mark into progress without growing a word", () => {
+    expect(busy).toContain("animate-spinner-frame");
+    expect(busy).not.toContain("Creating...");
     expect(busy).not.toContain(">New session<");
   });
 
@@ -1875,17 +1875,18 @@ describe("NewSessionButton, busy", () => {
     expect(busy.match(/<button/g)).toHaveLength(1);
   });
 
-  it("still names its machine, so the announcement says which one", () => {
+  it("still names its machine and reports the wait", () => {
     expect(busy).toContain('aria-label="New session on tower"');
+    expect(busy).toContain('aria-busy="true"');
     expect(busy).toContain('aria-live="polite"');
   });
 
   it("is fed by the header that started the create, not by the whole screen", () => {
-    // The busy word is keyed to one project header; the bar keeps it only for a create
-    // started from its own menu, where no button exists to speak for it.
-    expect(sessionsListSource).toContain("busyLabel={");
+    // The busy state is keyed to one project header; the bar keeps its word only for a
+    // create started from its own menu, where no button exists to carry the spinner.
+    expect(sessionsListSource).toContain("isBusy={");
     expect(sessionsListSource).toContain("creating && creating.at === null");
-    expect(sessionsListSource).not.toContain("createBusyLabel");
+    expect(sessionsListSource).not.toContain("busyLabel");
   });
 });
 

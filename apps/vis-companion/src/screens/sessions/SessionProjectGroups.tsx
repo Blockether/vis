@@ -559,11 +559,7 @@ export const ProjectGroup = memo(function ProjectGroup({
             <NewSessionButton
               machine={machineLabel(conn)}
               where={project}
-              busyLabel={
-                creating && creating.at === `${base}\u0000${root}`
-                  ? creating.label
-                  : null
-              }
+              isBusy={creating?.at === `${base}\u0000${root}`}
               onPress={() => void onNewSession(conn, root)}
             />
           </HeaderActions>
