@@ -9,6 +9,7 @@ repository it was rendered from.
 
 import inspect
 import json
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -47,10 +48,37 @@ def test_the_document_is_the_file_shipped_beside_the_module():
 
 def test_gateway_contract_is_generated_whole():
     gateway = vis_contract.GATEWAY
+    operations = [
+        operation
+        for route in gateway["routes"]
+        for operation in route["operations"].values()
+    ]
+    by_path = {route["path"]: route for route in gateway["routes"]}
+
     assert gateway is vis_contract.CONTRACT["gateway"]
-    assert gateway["version"] == 3
+    assert gateway["version"] == 4
     assert len(gateway["routes"]) == 99
-    assert sum(len(route["methods"]) for route in gateway["routes"]) == 121
+    assert len(operations) == 121
+    assert Counter(operation["request"] for operation in operations) == {
+        "none": 84,
+        "json": 34,
+        "binary": 3,
+    }
+    assert Counter(operation["response"] for operation in operations) == {
+        "json": 107,
+        "resource": 2,
+        "sse": 3,
+        "empty": 3,
+        "binary": 3,
+        "negotiated": 1,
+        "html": 1,
+        "markdown": 1,
+    }
+    assert by_path["/v1/speech/voices"]["operations"]["post"] == {
+        "request": "binary",
+        "response": "json",
+    }
+    assert by_path["/v1/events"]["operations"]["get"]["response"] == "sse"
     assert gateway["events"]["session"] == sorted(gateway["events"]["session"])
     assert gateway["envelopes"]["handshake"]["keys"] == {
         "build": "build",

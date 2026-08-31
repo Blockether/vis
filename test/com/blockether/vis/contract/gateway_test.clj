@@ -24,16 +24,20 @@
 
 (defdescribe
   gateway-contract-test
-  (it "loads a closed, independently owned gateway declaration"
-      (expect (= 3 contract/version))
-      (expect (= 99 (count contract/route-table)))
-      (expect (= 121 (count (contract/route-methods))))
-      (expect (= 32 (count contract/event-types)))
-      (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
-      (expect (= ["model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
-                  "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
-                  "utilization"]
-                 contract/turn-meta-keys)))
+  (it
+    "loads a closed, independently owned gateway declaration"
+    (expect (= 4 contract/version))
+    (expect (= 99 (count contract/route-table)))
+    (expect (= 121 (count (contract/route-methods))))
+    (expect (= {:none 84 :json 34 :binary 3}
+               (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
+    (expect (= {:json 107 :resource 2 :sse 3 :empty 3 :binary 3 :negotiated 1 :html 1 :markdown 1}
+               (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
+    (expect (= 32 (count contract/event-types)))
+    (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
+    (expect (= ["model" "provider" "llm_selected" "llm_actual" "is_llm_fallback" "llm_routing_trace"
+                "tokens" "cost" "confidence" "eval" "duration_ms" "utilization"]
+               contract/turn-meta-keys)))
   (it "renders deterministic language-neutral gateway data"
       (let [gateway
             (contract/package-document)
@@ -41,8 +45,9 @@
             devices
             (first (filter #(= "/v1/devices" (get % "path")) (get gateway "routes")))]
 
-        (expect (= 3 (get gateway "version")))
-        (expect (= ["get" "post"] (get devices "methods")))
+        (expect (= 4 (get gateway "version")))
+        (expect (= {"request" "none" "response" "json"} (get-in devices ["operations" "get"])))
+        (expect (= {"request" "json" "response" "json"} (get-in devices ["operations" "post"])))
         (expect (= (sort (get-in gateway ["events" "session"]))
                    (get-in gateway ["events" "session"])))
         (expect (= "subscription.ready"
@@ -55,9 +60,20 @@
                    (get-in gateway ["envelopes" "handshake" "keys"])))
         (expect (= {"message" "message" "type" "type"}
                    (get-in gateway ["envelopes" "error_response" "error_keys"])))))
-  (it "pins every built-in method and path from the runtime router"
-      (expect (= (mapv #(select-keys % [:path :methods]) contract/route-table)
+  (it "pins every built-in operation path and method from the runtime router"
+      (expect (= (mapv (fn [{:keys [path operations]}]
+                         {:path path :methods (set (keys operations))})
+                       contract/route-table)
                  (runtime-route-table))))
+  (it "declares each request and successful response transport"
+      (let [operation contract/operation]
+        (expect (= {:request :none :response :resource} (operation :get "/docs")))
+        (expect (= {:request :none :response :negotiated} (operation :get "/metrics")))
+        (expect (= {:request :binary :response :json} (operation :post "/v1/speech/voices")))
+        (expect (= {:request :none :response :empty} (operation :delete "/v1/sessions/:sid")))
+        (expect (= {:request :none :response :sse} (operation :get "/v1/events")))
+        (expect (= {:request :none :response :binary}
+                   (operation :get "/v1/sessions/:sid/speech/jobs/:job-id/audio")))))
   (it "owns protocol compatibility without a runtime mirror"
       (expect (= 12 contract/protocol-version))
       (expect (= 12 contract/minimum-client-protocol))

@@ -13,6 +13,9 @@
 
 (def ^:private http-methods #{:delete :get :patch :post :put})
 (def ^:private audiences #{:administration :public :sdk})
+(def ^:private request-transports #{:binary :json :none})
+(def ^:private response-transports
+  #{:binary :empty :html :json :markdown :negotiated :resource :sse})
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn- closed-map? [m expected-keys] (and (map? m) (= expected-keys (set (keys m)))))
@@ -23,14 +26,21 @@
        (every? non-blank-string? (vals m))
        (= (count m) (count (set (vals m))))))
 
+(defn- valid-operation?
+  [{:keys [request response] :as operation}]
+  (and (closed-map? operation #{:request :response})
+       (contains? request-transports request)
+       (contains? response-transports response)))
+
 (defn- valid-route?
-  [{:keys [path methods audience] :as route}]
-  (and (closed-map? route #{:path :methods :audience})
+  [{:keys [path operations audience] :as route}]
+  (and (closed-map? route #{:path :operations :audience})
        (non-blank-string? path)
        (str/starts-with? path "/")
-       (set? methods)
-       (seq methods)
-       (every? http-methods methods)
+       (map? operations)
+       (seq operations)
+       (every? http-methods (keys operations))
+       (every? valid-operation? (vals operations))
        (contains? audiences audience)))
 
 (defn- valid-document?
@@ -138,6 +148,19 @@
 (def route-table
   "Complete built-in gateway route table, one record per path."
   (:gateway/routes @document))
+(def route-operations
+  "Complete `[method path]` to request/response transport declaration."
+  (into {}
+        (mapcat (fn [{:keys [path operations]}]
+                  (map (fn [[method operation]]
+                         [[method path] operation])
+                       operations))
+                route-table)))
+
+(defn operation
+  "Request/response transport declaration for built-in `method` and `path`, or nil."
+  [method path]
+  (get route-operations [method path]))
 (def session-event-types
   "Closed built-in vocabulary carried by the session journal and multiplexed session SSE stream."
   (get-in @document [:gateway/events :session]))
@@ -271,10 +294,7 @@
 (defn route-methods
   "Exact built-in `[method path]` pairs declared by the contract."
   []
-  (into #{}
-        (mapcat (fn [{:keys [path methods]}]
-                  (map #(vector % path) methods))
-                route-table)))
+  (set (keys route-operations)))
 
 (defn- ->package-data
   [value]

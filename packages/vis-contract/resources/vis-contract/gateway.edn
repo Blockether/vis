@@ -1,4 +1,4 @@
-{:contract/version 3
+{:contract/version 4
  :gateway/protocol {:minimum-client 12 :minimum-gateway 12 :version 12}
  ;; Every header whose spelling is part of the gateway contract. Keys are semantic;
  ;; values are the canonical lower-case Ring/Fetch spelling.
@@ -18,107 +18,277 @@
                    :suppress-registry-recovery "x-vis-suppress-registry-recovery"}
  ;; Built-in routes only. Extension route contributions are owned by their extension
  ;; contracts and are deliberately absent. One record represents one Reitit path;
- ;; methods are the live operations on that path.
+ ;; each operation declares the request body and successful response transport.
  :gateway/routes
- [{:audience :public :methods #{:get} :path "/docs"}
-  {:audience :public :methods #{:get} :path "/docs/*path"}
-  {:audience :public :methods #{:get} :path "/healthz"}
-  {:audience :administration :methods #{:get} :path "/metrics"}
-  {:audience :public :methods #{:get} :path "/readyz"}
-  {:audience :administration :methods #{:get} :path "/v1/admin/status"}
-  {:audience :administration :methods #{:post} :path "/v1/admin/stop"}
-  {:audience :sdk :methods #{:get} :path "/v1/capabilities"}
-  {:audience :sdk :methods #{:post} :path "/v1/clients"}
-  {:audience :sdk :methods #{:delete} :path "/v1/clients/:cid"}
-  {:audience :sdk :methods #{:get :post} :path "/v1/devices"}
-  {:audience :sdk :methods #{:delete} :path "/v1/devices/:token"}
-  {:audience :sdk :methods #{:post} :path "/v1/devices/actions/test"}
-  {:audience :sdk :methods #{:get} :path "/v1/events"}
-  {:audience :sdk :methods #{:get} :path "/v1/fs"}
-  {:audience :sdk :methods #{:post} :path "/v1/fs/actions/mkdir"}
-  {:audience :sdk :methods #{:get :post} :path "/v1/mcp/servers"}
-  {:audience :sdk :methods #{:delete :put} :path "/v1/mcp/servers/:name"}
-  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/actions/enable"}
-  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/actions/kill"}
-  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/actions/start"}
-  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/auth/cancel"}
-  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/auth/complete"}
-  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/auth/logout"}
-  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/auth/poll"}
-  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/auth/start"}
-  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/actions/test"}
-  {:audience :sdk :methods #{:get} :path "/v1/models"}
-  {:audience :sdk :methods #{:get :post} :path "/v1/projects"}
-  {:audience :sdk :methods #{:delete :get :patch} :path "/v1/projects/:pid"}
-  {:audience :sdk :methods #{:patch} :path "/v1/projects/:pid/sessions"}
-  {:audience :sdk :methods #{:post} :path "/v1/projects/actions/ensure"}
-  {:audience :sdk :methods #{:get} :path "/v1/projects/overview"}
-  {:audience :sdk :methods #{:get} :path "/v1/provider-presets"}
-  {:audience :sdk :methods #{:post} :path "/v1/providers"}
-  {:audience :sdk :methods #{:delete} :path "/v1/providers/:provider-id"}
-  {:audience :sdk :methods #{:post} :path "/v1/providers/:provider-id/auth/cancel"}
-  {:audience :sdk :methods #{:post} :path "/v1/providers/:provider-id/auth/complete"}
-  {:audience :sdk :methods #{:post} :path "/v1/providers/:provider-id/auth/poll"}
-  {:audience :sdk :methods #{:post} :path "/v1/providers/:provider-id/auth/start"}
-  {:audience :sdk :methods #{:get} :path "/v1/providers/:provider-id/limits"}
-  {:audience :sdk :methods #{:post} :path "/v1/providers/:provider-id/logout"}
-  {:audience :sdk :methods #{:get} :path "/v1/providers/:provider-id/models"}
-  {:audience :sdk :methods #{:get} :path "/v1/providers/:provider-id/status"}
-  {:audience :sdk :methods #{:get :patch} :path "/v1/router"}
-  {:audience :sdk :methods #{:get :post} :path "/v1/sessions"}
-  {:audience :sdk :methods #{:delete :get :patch} :path "/v1/sessions/:sid"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/artifacts"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/attachments"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/cancel-current"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/context"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/drain-queue"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/events-since"}
-  {:audience :sdk :methods #{:get :post} :path "/v1/sessions/:sid/forks"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/iterations/:iid/attachments"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/iterations/:iid/attachments/:idx"}
-  {:audience :sdk :methods #{:get :patch} :path "/v1/sessions/:sid/model"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/release"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/resources"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/resources/logs"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/resources/stop"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/resume-queue"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/seq"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/slashes"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/speech"}
-  {:audience :sdk :methods #{:delete :get} :path "/v1/sessions/:sid/speech/jobs/:job-id"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/speech/jobs/:job-id/audio"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/speech/jobs/:job-id/events"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/suggest"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/transcript"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/transcript.html"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/transcript.md"}
-  {:audience :sdk :methods #{:get :post} :path "/v1/sessions/:sid/turns"}
-  {:audience :sdk :methods #{:delete :get :patch} :path "/v1/sessions/:sid/turns/:tid"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/turns/:tid/attachments"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/turns/:tid/cancel"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/turns/:tid/trace"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/usage"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/views/:view-id/actions"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/views/input"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/views/live"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/views/live/:view-id/log/:node-id"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/voice"}
-  {:audience :sdk :methods #{:delete :get} :path "/v1/sessions/:sid/voice/jobs/:job-id"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/voice/jobs/:job-id/events"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/workspace"}
-  {:audience :sdk :methods #{:get :post} :path "/v1/sessions/:sid/workspace/drafts"}
-  {:audience :sdk :methods #{:delete} :path "/v1/sessions/:sid/workspace/drafts/:workspace-id"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/workspace/resume"}
-  {:audience :sdk :methods #{:patch} :path "/v1/sessions/:sid/workspace/root"}
-  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/workspace/stash"}
-  {:audience :sdk :methods #{:get} :path "/v1/sessions/actions/search"}
-  {:audience :sdk :methods #{:get :post} :path "/v1/settings"}
-  {:audience :sdk :methods #{:get} :path "/v1/settings/:id"}
-  {:audience :sdk :methods #{:get :post} :path "/v1/speech/model"}
-  {:audience :sdk :methods #{:get :post} :path "/v1/speech/voices"}
-  {:audience :sdk :methods #{:delete} :path "/v1/speech/voices/:voice-id"}
-  {:audience :sdk :methods #{:get} :path "/v1/speech/voices/:voice-id/sample"}
-  {:audience :sdk :methods #{:get :post} :path "/v1/voice/model"}]
+ [{:audience :public :operations {:get {:request :none :response :resource}} :path "/docs"}
+  {:audience :public :operations {:get {:request :none :response :resource}} :path "/docs/*path"}
+  {:audience :public :operations {:get {:request :none :response :json}} :path "/healthz"}
+  {:audience :administration
+   :operations {:get {:request :none :response :negotiated}}
+   :path "/metrics"}
+  {:audience :public :operations {:get {:request :none :response :json}} :path "/readyz"}
+  {:audience :administration
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/admin/status"}
+  {:audience :administration
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/admin/stop"}
+  {:audience :sdk :operations {:get {:request :none :response :json}} :path "/v1/capabilities"}
+  {:audience :sdk :operations {:post {:request :json :response :json}} :path "/v1/clients"}
+  {:audience :sdk :operations {:delete {:request :none :response :json}} :path "/v1/clients/:cid"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :post {:request :json :response :json}}
+   :path "/v1/devices"}
+  {:audience :sdk :operations {:delete {:request :none :response :json}} :path "/v1/devices/:token"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/devices/actions/test"}
+  {:audience :sdk :operations {:get {:request :none :response :sse}} :path "/v1/events"}
+  {:audience :sdk :operations {:get {:request :none :response :json}} :path "/v1/fs"}
+  {:audience :sdk :operations {:post {:request :json :response :json}} :path "/v1/fs/actions/mkdir"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :post {:request :json :response :json}}
+   :path "/v1/mcp/servers"}
+  {:audience :sdk
+   :operations {:delete {:request :none :response :json} :put {:request :json :response :json}}
+   :path "/v1/mcp/servers/:name"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/mcp/servers/:name/actions/enable"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/mcp/servers/:name/actions/kill"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/mcp/servers/:name/actions/start"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/mcp/servers/:name/auth/cancel"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/mcp/servers/:name/auth/complete"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/mcp/servers/:name/auth/logout"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/mcp/servers/:name/auth/poll"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/mcp/servers/:name/auth/start"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/mcp/servers/actions/test"}
+  {:audience :sdk :operations {:get {:request :none :response :json}} :path "/v1/models"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :post {:request :json :response :json}}
+   :path "/v1/projects"}
+  {:audience :sdk
+   :operations {:delete {:request :none :response :empty}
+                :get {:request :none :response :json}
+                :patch {:request :json :response :json}}
+   :path "/v1/projects/:pid"}
+  {:audience :sdk
+   :operations {:patch {:request :json :response :json}}
+   :path "/v1/projects/:pid/sessions"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/projects/actions/ensure"}
+  {:audience :sdk :operations {:get {:request :none :response :json}} :path "/v1/projects/overview"}
+  {:audience :sdk :operations {:get {:request :none :response :json}} :path "/v1/provider-presets"}
+  {:audience :sdk :operations {:post {:request :json :response :json}} :path "/v1/providers"}
+  {:audience :sdk
+   :operations {:delete {:request :none :response :json}}
+   :path "/v1/providers/:provider-id"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/providers/:provider-id/auth/cancel"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/providers/:provider-id/auth/complete"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/providers/:provider-id/auth/poll"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/providers/:provider-id/auth/start"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/providers/:provider-id/limits"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/providers/:provider-id/logout"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/providers/:provider-id/models"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/providers/:provider-id/status"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :patch {:request :json :response :json}}
+   :path "/v1/router"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :post {:request :json :response :json}}
+   :path "/v1/sessions"}
+  {:audience :sdk
+   :operations {:delete {:request :none :response :empty}
+                :get {:request :none :response :json}
+                :patch {:request :json :response :json}}
+   :path "/v1/sessions/:sid"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/artifacts"}
+  {:audience :sdk
+   :operations {:post {:request :binary :response :json}}
+   :path "/v1/sessions/:sid/attachments"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/sessions/:sid/cancel-current"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/context"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/sessions/:sid/drain-queue"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/events-since"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :post {:request :json :response :json}}
+   :path "/v1/sessions/:sid/forks"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/sessions/:sid/iterations/:iid/attachments"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :binary}}
+   :path "/v1/sessions/:sid/iterations/:iid/attachments/:idx"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :patch {:request :json :response :json}}
+   :path "/v1/sessions/:sid/model"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :empty}}
+   :path "/v1/sessions/:sid/release"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/resources"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/resources/logs"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/sessions/:sid/resources/stop"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/sessions/:sid/resume-queue"}
+  {:audience :sdk :operations {:get {:request :none :response :json}} :path "/v1/sessions/:sid/seq"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/slashes"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/sessions/:sid/speech"}
+  {:audience :sdk
+   :operations {:delete {:request :none :response :json} :get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/speech/jobs/:job-id"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :binary}}
+   :path "/v1/sessions/:sid/speech/jobs/:job-id/audio"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :sse}}
+   :path "/v1/sessions/:sid/speech/jobs/:job-id/events"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/suggest"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/transcript"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :html}}
+   :path "/v1/sessions/:sid/transcript.html"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :markdown}}
+   :path "/v1/sessions/:sid/transcript.md"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :post {:request :json :response :json}}
+   :path "/v1/sessions/:sid/turns"}
+  {:audience :sdk
+   :operations {:delete {:request :none :response :json}
+                :get {:request :none :response :json}
+                :patch {:request :json :response :json}}
+   :path "/v1/sessions/:sid/turns/:tid"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/turns/:tid/attachments"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/sessions/:sid/turns/:tid/cancel"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/turns/:tid/trace"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/usage"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/sessions/:sid/views/:view-id/actions"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/views/input"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/views/live"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/views/live/:view-id/log/:node-id"}
+  {:audience :sdk
+   :operations {:post {:request :binary :response :json}}
+   :path "/v1/sessions/:sid/voice"}
+  {:audience :sdk
+   :operations {:delete {:request :none :response :json} :get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/voice/jobs/:job-id"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :sse}}
+   :path "/v1/sessions/:sid/voice/jobs/:job-id/events"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/:sid/workspace"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :post {:request :json :response :json}}
+   :path "/v1/sessions/:sid/workspace/drafts"}
+  {:audience :sdk
+   :operations {:delete {:request :json :response :json}}
+   :path "/v1/sessions/:sid/workspace/drafts/:workspace-id"}
+  {:audience :sdk
+   :operations {:post {:request :json :response :json}}
+   :path "/v1/sessions/:sid/workspace/resume"}
+  {:audience :sdk
+   :operations {:patch {:request :json :response :json}}
+   :path "/v1/sessions/:sid/workspace/root"}
+  {:audience :sdk
+   :operations {:post {:request :none :response :json}}
+   :path "/v1/sessions/:sid/workspace/stash"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json}}
+   :path "/v1/sessions/actions/search"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :post {:request :json :response :json}}
+   :path "/v1/settings"}
+  {:audience :sdk :operations {:get {:request :none :response :json}} :path "/v1/settings/:id"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :post {:request :none :response :json}}
+   :path "/v1/speech/model"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :post {:request :binary :response :json}}
+   :path "/v1/speech/voices"}
+  {:audience :sdk
+   :operations {:delete {:request :none :response :json}}
+   :path "/v1/speech/voices/:voice-id"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :binary}}
+   :path "/v1/speech/voices/:voice-id/sample"}
+  {:audience :sdk
+   :operations {:get {:request :none :response :json} :post {:request :none :response :json}}
+   :path "/v1/voice/model"}]
  :gateway/events
  {;; Events in the session journal / multiplexed session stream.
   :session #{"block.activity" "block.output" "block.preview" "block.started"
