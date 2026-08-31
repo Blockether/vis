@@ -199,6 +199,18 @@
             "response": "json"
           }
         },
+        "path": "\/openapi.json"
+      },
+      {
+        "audience": "public",
+        "operations":
+        {
+          "get":
+          {
+            "request": "none",
+            "response": "json"
+          }
+        },
         "path": "\/readyz"
       },
       {

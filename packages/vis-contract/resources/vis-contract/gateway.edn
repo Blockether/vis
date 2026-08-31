@@ -26,6 +26,7 @@
   {:audience :administration
    :operations {:get {:request :none :response :negotiated}}
    :path "/metrics"}
+  {:audience :public :operations {:get {:request :none :response :json}} :path "/openapi.json"}
   {:audience :public :operations {:get {:request :none :response :json}} :path "/readyz"}
   {:audience :administration
    :operations {:get {:request :none :response :json}}

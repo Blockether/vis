@@ -18,6 +18,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.contract.openapi :as openapi-contract]
             [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.config :as config]
@@ -1103,6 +1104,27 @@
        :body (prometheus-text snapshot)})))
 
 ;; Route handlers (§5-§6)
+
+(def ^:private openapi-answer
+  ;; The document is a pure function of the built-in contract, so it is rendered
+  ;; once per image: identical bytes for every caller, and a validator that can be
+  ;; compared without hashing the body again.
+  (delay (let [body (wire/json-str (openapi-contract/document))]
+           {:body body :etag (str "\"" (subs (util/sha256-hex body) 0 32) "\"")})))
+
+(defn- openapi-handler
+  "GET /openapi.json — the built-in HTTP surface as an OpenAPI 3.1 document.
+
+   Public, like `/docs`: generating a client against a gateway is what a caller
+   does BEFORE it holds a token, and the document states only what the contract
+   already publishes. Routes contributed by an extension are absent by design."
+  [request]
+  (let [{:keys [body etag]} @openapi-answer]
+    (if (= etag (get-in request [:headers "if-none-match"]))
+      {:status 304 :headers {"ETag" etag "Cache-Control" "no-cache"}}
+      {:status 200
+       :headers {"Content-Type" "application/json" "ETag" etag "Cache-Control" "no-cache"}
+       :body body})))
 
 (defn- health-handler
   [request]
@@ -4056,6 +4078,10 @@
                         ;; pages) — viewable on the tunnel without the token.
                         (= "/docs" uri)
                         (str/starts-with? uri "/docs/")
+                        ;; The API description is public for the same reason: a
+                        ;; client is GENERATED against a gateway before it holds
+                        ;; a token.
+                        (= "/openapi.json" uri)
                         (some #(contains? (or (:open-uris %) #{}) uri) contribs))
               authed? (or (constant-time=? expected
                                            (some-> (get-in request [:headers "authorization"])
@@ -4085,7 +4111,7 @@
   "Paths that answer EVEN an unsupported client. They are HOW a peer learns the
    gateway's protocol and reads the mismatch verdict, so refusing them would
    leave an old client with nothing but an opaque failure."
-  #{"/healthz" "/readyz" "/v1/capabilities"})
+  #{"/healthz" "/readyz" "/v1/capabilities" "/openapi.json"})
 
 (defn- wrap-protocol
   "Wire-protocol gate (§3). API clients must advertise a compatible version.
@@ -4182,7 +4208,7 @@
   (rr/router
     (into
       [["/healthz" {:get health-handler}] ["/readyz" {:get health-handler}]
-       ["/metrics" {:get metrics-handler}]
+       ["/openapi.json" {:get openapi-handler}] ["/metrics" {:get metrics-handler}]
        ;; Embedded docs site (resources/vis-docs/*.md). `docs/handle` owns
        ;; /docs, /docs/<slug>, /docs/assets/**, and re-reads the markdown per
        ;; request (live-reload) so editing a doc during development shows on a

@@ -27,11 +27,11 @@
   (it
     "loads a closed, independently owned gateway declaration"
     (expect (= 4 contract/version))
-    (expect (= 99 (count contract/route-table)))
-    (expect (= 121 (count (contract/route-methods))))
-    (expect (= {:none 84 :json 34 :binary 3}
+    (expect (= 100 (count contract/route-table)))
+    (expect (= 122 (count (contract/route-methods))))
+    (expect (= {:none 85 :json 34 :binary 3}
                (frequencies (map :request (mapcat (comp vals :operations) contract/route-table)))))
-    (expect (= {:json 107 :resource 2 :sse 3 :empty 3 :binary 3 :negotiated 1 :html 1 :markdown 1}
+    (expect (= {:json 108 :resource 2 :sse 3 :empty 3 :binary 3 :negotiated 1 :html 1 :markdown 1}
                (frequencies (map :response (mapcat (comp vals :operations) contract/route-table)))))
     (expect (= 32 (count contract/event-types)))
     (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))

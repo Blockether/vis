@@ -67,6 +67,36 @@
         (health-handler {:headers {}})
         (is (= 1 @repairs))))))
 
+(deftest openapi-json-is-public-and-revalidates
+  (let [handler
+        (rv 'openapi-handler)
+
+        {:keys [status headers body]}
+        (handler {:headers {}})
+
+        etag
+        (get headers "ETag")]
+
+    (is (= 200 status))
+    (is (= "application/json" (get headers "Content-Type")))
+    (testing "the document describes the built-in routes, itself included"
+      (let [document (wire/parse-json body)]
+        (is (= "3.1.1" (get document "openapi")))
+        (is (= (count gateway-contract/route-table) (count (get document "paths"))))
+        (is (contains? (get document "paths") "/openapi.json"))))
+    (testing "the bytes are fixed, so a holder of the validator is answered 304"
+      (is (some? etag))
+      (is (= 304 (:status (handler {:headers {"if-none-match" etag}}))))
+      (is (= etag (get-in (handler {:headers {}}) [:headers "ETag"]))))
+    (testing "a token-gated gateway still answers it, like the docs site"
+      (with-server-state! {:require-token? true :token "secret"}
+                          (fn []
+                            (let [gated ((rv 'wrap-auth) (constantly {:status 200}) "secret" [])]
+                              (is (= 200 (:status (gated {:uri "/openapi.json" :headers {}}))))
+                              (is (= 401 (:status (gated {:uri "/v1/models" :headers {}}))))))))
+    (testing "and answers a client whose protocol this gateway cannot serve"
+      (is (contains? @(rv 'protocol-open-uris) "/openapi.json")))))
+
 (deftest json-errors-use-the-contract-envelope
   (let [seen
         (atom nil)

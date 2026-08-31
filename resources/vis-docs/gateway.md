@@ -300,6 +300,25 @@ Because a non-loopback bind always requires the token, keep
 `--require-token` on for any remote/Tailscale exposure — the bearer token is
 the only thing standing between the tailnet and your sessions.
 
+## The HTTP API, as OpenAPI
+
+Every built-in route is described at:
+
+```bash
+curl -sS http://127.0.0.1:7890/openapi.json -o vis-gateway.json
+```
+
+That document is **OpenAPI 3.1** — which is JSON Schema 2020-12, so any generator reads it
+directly. It is public (no token, no protocol header: you generate a client *before* you have
+either), carries an `ETag`, and is rendered from the same
+`packages/vis-contract/resources/vis-contract/gateway.edn` the gateway routes itself from — a route
+cannot exist without appearing there. It states the path, method, path parameters, media types,
+audience and the shared error envelope; a body shown as an empty schema is one the contract does not
+constrain yet.
+
+Routes contributed by an extension are deliberately absent: they belong to that extension's own
+contract, and including them would make the document depend on what happened to be loaded.
+
 ## Protocol version and compatibility
 
 The gateway, the TUI, and the companion app update on different clocks: a phone
@@ -325,7 +344,7 @@ Every client stamps the mirror image on each request:
 
 A client below `min_client` gets **HTTP 426 Upgrade Required** with a plain
 explanation instead of a payload it would misread; `/healthz`, `/readyz`,
-`/v1/capabilities`, and `/docs` stay open so the refusal can explain itself. A
+`/v1/capabilities`, `/openapi.json`, and `/docs` stay open so the refusal can explain itself. A
 gateway older than the client's floor is caught client-side from the same
 advertised block. Both directions render the SAME verdict — the TUI prints it as
 a panel, the companion replaces its UI with a version-mismatch screen naming
