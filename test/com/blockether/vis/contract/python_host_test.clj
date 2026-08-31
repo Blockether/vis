@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.view :as view]
             [com.blockether.vis.contract.content :as contract-content]
             [com.blockether.vis.contract.python-host :as contract]
+            [com.blockether.vis.contract.toggle :as contract-toggle]
             [com.blockether.vis.contract.view :as contract-view]
             [com.blockether.vis.internal.python-extensions :as pyx]
             [lazytest.core :refer [defdescribe describe expect it]])
@@ -52,6 +53,13 @@
                        "turn.completed" "turn.failed" "turn.cancelled"}
                      (set (get content-document "event_types"))))
           (expect (= content-document (get (contract/package-document) "content")))))
+    (it "renders the canonical toggle vocabulary from its owning document"
+        (let [toggle-document (contract-toggle/package-document)]
+          (expect (= 1 contract-toggle/version))
+          (expect (= #{"boolean" "enum"} (set (get toggle-document "types"))))
+          (expect (= #{"1" "on" "true" "yes"}
+                     (set (get-in toggle-document ["boolean_wire" "true"]))))
+          (expect (= toggle-document (get (contract/package-document) "toggle")))))
     (it "speaks the shell vocabulary the engine dispatches on"
         ;; The outside host reads these names out of the `vis_contract` document; an op
         ;; the engine does not know would make an extension that runs inside Vis

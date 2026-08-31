@@ -17,16 +17,17 @@ JavaScript/Python wire value by source-file count while consumers move to the SD
 versions, event vocabularies, terminal/queue semantics and replay anchors.
 `resources/vis-contract/view.edn` owns both View kinds' field, node, operation and lifecycle
 vocabularies plus renderer bounds. `resources/vis-contract/content.edn` owns canonical roles,
-statuses, blocks, stream events and delta fields.
+statuses, blocks, stream events and delta fields. `resources/vis-contract/toggle.edn` owns toggle
+ids, kinds, settings-copy bounds and boolean wire tokens.
 
 Nothing here requires a Vis namespace. The engine reads this project off its own
 classpath, `vis-agent` depends on the wheel, and a tool in somebody else's
 repository can read the same declaration without installing an agent.
 
-View and canonical content are executable contracts: their namespaces own predicates, specs and
-error data as well as the portable resource vocabularies. Core, gateway and current channels consume
-those shapes directly, and generated readers receive the same documents without engine data entering
-the renderer.
+View, canonical content and toggles are executable contracts: their namespaces own predicates,
+specs and error data as well as portable resource vocabularies. Core, gateway and current channels
+consume those shapes directly, and generated readers receive the same documents without engine
+data entering the renderer.
 
 ## Changing the contract
 

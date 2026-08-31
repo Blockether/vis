@@ -12,7 +12,7 @@
    an extension can compile against the declaration without the engine. [[package-document]]
    ships as the root language-neutral generator input and `vis_contract/contract.json`.
 
-   View and canonical-content vocabularies come from their own contract EDN
+   View, canonical-content and toggle vocabularies come from their own contract EDN
    documents; package rendering therefore needs no engine input.
 
    The document is validated the moment it is read: a malformed contract is a
@@ -25,6 +25,7 @@
             [clojure.string :as str]
             [com.blockether.vis.contract.content :as content]
             [com.blockether.vis.contract.gateway :as gateway]
+            [com.blockether.vis.contract.toggle :as toggle]
             [com.blockether.vis.contract.view :as view]))
 
 (set! *warn-on-reflection* true)
@@ -159,7 +160,7 @@
 
 (defn package-document
   "The portable `contract.json`: gateway semantics, host ops, verb grammars and
-   contract-owned View/content vocabularies."
+   contract-owned View, content and toggle vocabularies."
   []
   (array-map "version" (version)
              "ops" (mapv op->json (ops))
@@ -173,7 +174,8 @@
                                  "flush_ms" flush-ms))
              "gateway" (gateway/package-document)
              "view" (view/package-document)
-             "content" (content/package-document)))
+             "content" (content/package-document)
+             "toggle" (toggle/package-document)))
 
 (def package-document-path
   "Where the rendered document is checked in, from the repository root."

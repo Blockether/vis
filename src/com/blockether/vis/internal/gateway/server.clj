@@ -18,6 +18,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.contract.toggle :as toggle-contract]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.loop :as lp]
@@ -1743,7 +1744,7 @@
         spec
         (when (seq id) (toggles/toggle-spec id))]
 
-    (cond (not (toggles/toggle-id? id))
+    (cond (not (toggle-contract/toggle-id? id))
           (error-response 400 :bad-setting-id "settings id must be a snake_case string")
           (nil? spec) (error-response 404 :unknown-setting "no such setting" :id (str id-str))
           :else (json-response (toggle-json spec)))))
@@ -1780,7 +1781,7 @@
         (when (seq id) (toggles/toggle-spec id))]
 
     (cond
-      (not (toggles/toggle-id? id))
+      (not (toggle-contract/toggle-id? id))
       (error-response 400 :bad-setting-id "settings id must be a snake_case string")
       (nil? spec) (error-response 404 :unknown-setting "no such setting" :id (str id-str))
       (= action "value")

@@ -30,8 +30,8 @@
      - Toggle ids are non-blank snake_case strings (`reasoning_level`,
        `shell`, ...) — no keywords, namespaces, slashes, or kebab-case.
        YAML config uses the same string verbatim (`reasoning_level: deep`).
-     - A `:description` is ONE line of at most `max-description-length`
-       characters (`settings-description?`) — the settings row is a label
+     - A `:description` is ONE line within the portable bound owned by
+       `com.blockether.vis.contract.toggle` — the settings row is a label
        plus a single sentence of help in every channel; longer rationale
        lives in the owning namespace's docstring.
      - `enabled?` is cheap (single atom deref + string lookup), called
@@ -41,75 +41,8 @@
        same id is allowed (idempotent boot path) and merges over
        prior metadata; the live VALUE in `state` is left alone so a
        user override survives a reload."
-  (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]
-            [com.blockether.vis.internal.util :as util]))
-
-;; Specs
-
-(defn toggle-id?
-  "True only for canonical toggle ids: plain lower-case snake_case strings.
-   Keywords, namespaces/slashes, kebab-case, uppercase, blanks, and leading
-   underscores are rejected at the registry boundary."
-  [v]
-  (and (string? v) (boolean (re-matches #"[a-z][a-z0-9]*(?:_[a-z0-9]+)*" v))))
-
-(s/def :toggle/id toggle-id?)
-
-(s/def :toggle/label (s/and string? #(not (str/blank? %))))
-
-(def max-description-length
-  "Longest settings-row description a toggle may register. A row is a LABEL
-   plus ONE line of help: every channel paints that line under the label on a
-   phone-width column, so prose that wraps to four lines buries the control it
-   describes. Rationale, refusal wording and the OFF-path story belong in the
-   owning namespace's docstring, not in the row."
-  100)
-
-(defn settings-description?
-  "True only for a settings-row description: one non-blank SENTENCE on a single
-   line, at most `max-description-length` characters. Multi-line prose and
-   over-long copy are rejected at the registry boundary, the same way a
-   non-canonical id is, so a settings UI never has to truncate."
-  [v]
-  (and (util/non-blank-string? v)
-       (nil? (re-find #"[\r\n]" v))
-       (<= (count v) (long max-description-length))))
-
-(s/def :toggle/description settings-description?)
-
-(s/def :toggle/default any?)            ;; cross-validated against :type below
-
-(s/def :toggle/owner
-  (s/or :internal #{:vis}
-        :extension string?))
-
-(s/def :toggle/since string?)
-
-(s/def :toggle/persist? boolean?)
-
-(s/def :toggle/group keyword?)
-
-(s/def :toggle/type #{:boolean :enum})
-
-(s/def :toggle/choices (s/and (s/coll-of any?) seq))
-
-(s/def :toggle/channels (s/and (s/coll-of keyword?) seq))
-
-(s/def :toggle/visible-fn ifn?) ;; () -> bool; hides irrelevant toggles from settings UIs
-
-(s/def :toggle/spec
-  (s/and (s/keys :req-un [:toggle/id :toggle/label :toggle/default]
-                 :opt-un [:toggle/description :toggle/owner :toggle/since :toggle/persist?
-                          :toggle/group :toggle/type :toggle/choices :toggle/visible-fn
-                          :toggle/channels])
-         (fn cross-validate [{:keys [type choices default]}]
-           (case (or type :boolean)
-             :boolean
-             (boolean? default)
-
-             :enum
-             (and (sequential? choices) (some? default) (contains? (set choices) default))))))
+  (:require [clojure.string :as str]
+            [com.blockether.vis.contract.toggle :as toggle-contract]))
 
 ;; Registries
 
@@ -205,17 +138,17 @@
       (assoc :choices (mapv ->str-choice choices)))))
 
 (defn register-toggle!
-  "Register one toggle. `spec` must satisfy `:toggle/spec`.
+  "Register one toggle that satisfies the contract-owned contribution shape.
 
    Re-registering the same `:id` is idempotent: metadata MERGES, the
    live VALUE in `state` is preserved (user overrides survive reload).
    Returns the canonical registered spec."
   [spec]
-  (when-not (s/valid? :toggle/spec spec)
+  (when-not (toggle-contract/spec-valid? spec)
     (throw (ex-info "Invalid toggle spec"
                     {:type :vis.toggles/invalid-spec
                      :spec spec
-                     :explain (s/explain-data :toggle/spec spec)})))
+                     :explain (toggle-contract/explain-spec spec)})))
   (let [normalized
         (normalize-spec spec)
 
@@ -464,7 +397,8 @@
     (case (:type spec)
       :boolean
       (cond (boolean? v) v
-            (string? v) (contains? #{"true" "1" "yes" "on"} (str/lower-case (str/trim v)))
+            (string? v) (contains? toggle-contract/config-truthy-tokens
+                                   (str/lower-case (str/trim v)))
             :else (boolean v))
 
       :enum
@@ -496,8 +430,9 @@
     :boolean
     (cond (boolean? v) {:value v}
           (string? v) (let [token (str/lower-case (str/trim v))]
-                        (cond (contains? #{"true" "on" "yes" "1"} token) {:value true}
-                              (contains? #{"false" "off" "no" "0"} token) {:value false})))
+                        (cond (contains? toggle-contract/boolean-true-tokens token) {:value true}
+                              (contains? toggle-contract/boolean-false-tokens token) {:value
+                                                                                      false})))
 
     :enum
     (let [target (some-> (cond (keyword? v) (name v)

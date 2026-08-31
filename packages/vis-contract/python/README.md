@@ -1,7 +1,7 @@
 # vis-contract
 
 The contract half of [Vis](https://github.com/Blockether/vis): canonical gateway
-routes/events, View and content vocabularies, plus everything a Vis extension may ask
+routes/events, View, content and toggle vocabularies, plus everything a Vis extension may ask
 its host for. `vis-agent` depends on this package; so can an SDK generator, linter,
 test double or editor that never runs Vis at all.
 
@@ -18,6 +18,7 @@ vis_contract.OPS["shell"]["outside"]  # "local" — what the op does with no Vis
 vis_contract.SHELL["spawn_ops"]  # ["run", "background"]
 vis_contract.VIEW["kinds"]  # ["input", "live"] — one lifecycle, two policies
 vis_contract.CONTENT["block_types"]  # canonical cross-channel content blocks
+vis_contract.TOGGLE["types"]  # ["boolean", "enum"] — portable toggle kinds
 
 
 class MyHost:

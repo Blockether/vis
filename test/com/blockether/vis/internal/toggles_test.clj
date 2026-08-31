@@ -2,7 +2,8 @@
   "Feature-toggle registry contract: register, lookup, override,
    listener fan-out, persistence snapshot + hydrate, and the canonical
    internal toggles. Toggle ids are plain strings (no namespaces)."
-  (:require [com.blockether.vis.internal.toggles :as t]
+  (:require [com.blockether.vis.contract.toggle :as toggle-contract]
+            [com.blockether.vis.internal.toggles :as t]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-clean-state
@@ -238,12 +239,13 @@
                           (expect (= "Expose the thing this row turns on."
                                      (:description (t/toggle-spec "test_short")))))))
   (it "settings-description? draws the line at one line within the cap"
-      (expect (t/settings-description? (apply str (repeat t/max-description-length "x"))))
-      (expect (not (t/settings-description? (apply str
-                                              (repeat (inc t/max-description-length) "x")))))
-      (expect (not (t/settings-description? "two\nlines")))
-      (expect (not (t/settings-description? "   ")))
-      (expect (not (t/settings-description? nil))))
+      (expect (toggle-contract/settings-description?
+                (apply str (repeat toggle-contract/max-description-length "x"))))
+      (expect (not (toggle-contract/settings-description?
+                     (apply str (repeat (inc toggle-contract/max-description-length) "x")))))
+      (expect (not (toggle-contract/settings-description? "two\nlines")))
+      (expect (not (toggle-contract/settings-description? "   ")))
+      (expect (not (toggle-contract/settings-description? nil))))
   (it "a settings row is never a paragraph: over-long copy is refused"
       ;; A settings row is a control plus ONE line of help; a paragraph of
       ;; rationale buried the toggle it described in the TUI and the app.
@@ -251,7 +253,8 @@
                            {:id "test_wordy"
                             :label "Wordy"
                             :default false
-                            :description (apply str (repeat (inc t/max-description-length) "x"))})
+                            :description
+                            (apply str (repeat (inc toggle-contract/max-description-length) "x"))})
                          false
                          (catch clojure.lang.ExceptionInfo e
                            (= :vis.toggles/invalid-spec (:type (ex-data e)))))]
@@ -263,7 +266,7 @@
 
               :when description]
 
-        (expect (t/settings-description? description)))))
+        (expect (toggle-contract/settings-description? description)))))
 
 (defdescribe
   vision-fallback-toggle-test
@@ -278,7 +281,7 @@
         (expect (true? (:persist? spec)))
         (expect (= :vis (:owner spec)))
         (expect (= :provider (:group spec)))
-        (expect (t/settings-description? (:description spec)))))
+        (expect (toggle-contract/settings-description? (:description spec)))))
   (it "reads true by default and follows an override"
       (expect (true? (t/enabled? "vision_fallback_describe")))
       (t/set-value! "vision_fallback_describe" false)
@@ -298,7 +301,7 @@
         (expect (true? (:persist? spec)))
         (expect (= :vis (:owner spec)))
         (expect (= :provider (:group spec)))
-        (expect (t/settings-description? (:description spec)))))
+        (expect (toggle-contract/settings-description? (:description spec)))))
   (it "shows up in the Settings list of BOTH channels from that one declaration"
       ;; No `:channels` set and no `:settings? false`, so the TUI dialog and the
       ;; companion sheet (`/v1/settings`) each render it without their own wiring.
@@ -326,7 +329,7 @@
         (expect (true? (:persist? spec)))
         (expect (= :vis (:owner spec)))
         (expect (= :provider (:group spec)))
-        (expect (t/settings-description? (:description spec)))))
+        (expect (toggle-contract/settings-description? (:description spec)))))
   (it "shows up in the Settings list of BOTH channels from that one declaration"
       (let [ids (fn [specs]
                   (set (map :id specs)))]

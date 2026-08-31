@@ -780,7 +780,10 @@ production namespaces have moved or been removed. TUI `transient/spec.clj` likew
 `transient.validation` predicates, removing 33 production `s/def` forms without making a private
 paint shape public. `content.edn` and `contract.content` now own canonical roles, statuses, blocks,
 stream events and executable content shapes; `internal.content` is builders/projection only and the
-portable package exports the same `CONTENT` vocabulary.
+portable package exports the same `CONTENT` vocabulary. `toggle.edn` and `contract.toggle` own the
+id grammar, kinds, settings-copy bound, boolean tokens and executable contribution shape; the Core
+registry now owns only normalization, mutable values, listeners, persistence and hydration, while
+portable readers receive `TOGGLE`.
 
 Work already available as foundations:
 

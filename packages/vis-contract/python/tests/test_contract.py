@@ -159,6 +159,18 @@ def test_the_content_vocabulary_is_whole():
     assert set(content["delta_fields"]) == {"markdown", "text"}
 
 
+def test_the_toggle_vocabulary_is_whole():
+    toggle = vis_contract.TOGGLE
+    assert toggle is vis_contract.CONTRACT["toggle"]
+    assert toggle["version"] == 1
+    assert toggle["default_type"] in toggle["types"]
+    assert set(toggle["boolean_wire"]) == {"true", "false"}
+    assert not set(toggle["boolean_wire"]["true"]) & set(
+        toggle["boolean_wire"]["false"]
+    )
+    assert set(toggle["config_truthy"]) <= set(toggle["boolean_wire"]["true"])
+
+
 def test_the_view_vocabulary_is_whole():
     view = vis_contract.VIEW
     assert set(view["kinds"]) == {"input", "live"}

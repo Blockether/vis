@@ -3,8 +3,8 @@
 Vis runs an extension's Python inside its own sandbox, with the host seeded into
 the module the extension imports. This package is the DECLARATION of that
 boundary, published on its own so it can be read where Vis is not: gateway
-routes and events, the ops a host answers, shell/View/content vocabularies, and
-[[Host]], the protocol an implementation is checked against.
+routes and events, the ops a host answers, shell/View/content/toggle vocabularies,
+and [[Host]], the protocol an implementation is checked against.
 
 `contract.json` beside this file and the repository's language-neutral copy are
 rendered from the owning EDN documents by
@@ -32,11 +32,12 @@ __all__ = [
     "CONTRACT",
     "CONTENT",
     "GATEWAY",
-    "VIEW",
-    "OPS",
     "LIVE",
+    "OPS",
     "SHELL",
+    "TOGGLE",
     "VERSION",
+    "VIEW",
     "Host",
     "check_host",
     "op",
@@ -76,6 +77,9 @@ VIEW = CONTRACT["view"]
 
 CONTENT = CONTRACT["content"]
 """Canonical roles, statuses, content blocks, stream events and delta fields."""
+
+TOGGLE = CONTRACT["toggle"]
+"""Canonical toggle ids, kinds, bounds and boolean wire tokens."""
 
 
 def op(name):
