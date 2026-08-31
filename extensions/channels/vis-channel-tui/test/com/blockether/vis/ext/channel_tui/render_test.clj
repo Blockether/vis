@@ -642,7 +642,8 @@
         ;; Retired with the recap rail — same-provider retry notices were
         ;; recap-only rows and no longer surface.
         (expect (not (str/includes? body "RECAP")))))
-  (it "renders provider error recap lines above provider error details"
+  ;; Regression, issue #167: structured provider trace rows repeated two form-like labels.
+  (it "renders provider error guidance without redundant labels"
       (let [lines
             (format-iteration-entry {:error {:type :svar.core/http-error
                                              :message "Exceptional status code: 429"
@@ -657,9 +658,12 @@
                  (str/join " "))]
 
         ;; The recap rail is retired; the provider error itself still
-        ;; surfaces its actionable guidance via the error panel.
+        ;; surfaces its diagnosis and actionable guidance via the error panel.
         (expect (not (str/includes? body "RECAP")))
-        (expect (str/includes? body "NEXT STEP: wait and retry, or switch provider/model."))
+        (expect (str/includes? body "the provider rate-limited this request."))
+        (expect (str/includes? body "wait and retry, or switch provider/model."))
+        (expect (not (str/includes? body "WHAT HAPPENED")))
+        (expect (not (str/includes? body "NEXT STEP")))
         (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 429")))))
   (it "paints a running form's OWN source, never the invocation that carried it"
       ;; A `!cmd` bubble authors `:display-code`/`:display-language` — the command
@@ -711,13 +715,15 @@
             (map (comp str/trim strip-sentinels strip-ansi body-of))
             (str/join " "))]
 
-      ;; The recap rail is retired; auth errors still render as action.
+      ;; The recap rail is retired; auth errors still render as plain diagnosis and action.
       (expect (not (str/includes? body "RECAP")))
       (expect (not (str/includes? body "PROVIDER_ERROR  HTTP 401")))
       (expect (str/includes?
                 body
                 "the provider rejected your credentials. Invalid authentication credentials"))
-      (expect (str/includes? body "NEXT STEP: re-authenticate or fix its API key, then retry."))
+      (expect (str/includes? body "re-authenticate or fix its API key, then retry."))
+      (expect (not (str/includes? body "WHAT HAPPENED")))
+      (expect (not (str/includes? body "NEXT STEP")))
       (expect (not (str/includes? body "provider response:")))
       (expect (not (str/includes? body "{\"type\":"))))))
 
@@ -739,13 +745,12 @@
                  (map (comp str/trim strip-sentinels strip-ansi body-of))
                  (str/join " "))]
 
-        ;; It must get the shared provider-error treatment: the split
-        ;; explanation / NEXT STEP / facts rows — NOT the raw wrapper dumped as a
-        ;; single generic "error" line.
-        (expect (str/includes?
-                  body
-                  "WHAT HAPPENED: the connection dropped before any response came back"))
-        (expect (str/includes? body "NEXT STEP: retry. If it keeps failing, check your connection"))
+        ;; It must get the shared provider-error treatment: separate diagnosis,
+        ;; action and facts rows — NOT the raw wrapper dumped as one generic line.
+        (expect (str/includes? body "the connection dropped before any response came back"))
+        (expect (str/includes? body "retry. If it keeps failing, check your connection"))
+        (expect (not (str/includes? body "WHAT HAPPENED")))
+        (expect (not (str/includes? body "NEXT STEP")))
         ;; the wrapper is a compact fact row, not the whole message
         (expect (str/includes? body "Wrapper: HTTP/1.1 header parser received no bytes")))))
 
@@ -4633,6 +4638,8 @@ h = 8"
         (expect (str/includes? text "Provider rate-limited"))
         (expect (str/includes? text "the provider is throttling new requests"))
         (expect (str/includes? text "wait and retry, or switch provider/model"))
+        (expect (not (str/includes? text "WHAT HAPPENED")))
+        (expect (not (str/includes? text "NEXT STEP")))
         (expect (str/includes? text "HTTP 429"))
         (expect (str/includes? text "Provider anthropic"))
         (expect (str/includes? text "Request req_167")))

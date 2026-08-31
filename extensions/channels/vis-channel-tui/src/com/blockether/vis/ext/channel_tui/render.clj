@@ -5565,42 +5565,22 @@
 
                   provider-rows
                   (when provider-error?
-                    (let [;; Bold the leading `WHAT HAPPENED:` / `NEXT STEP:` LABEL so the
-                          ;; live trace reads like styled Markdown (bold label, plain
-                          ;; body). The label/body split uses the SHARED `split-error-label`
-                          ;; (same helper the final-answer renderer uses) so the convention never
-                          ;; diverges between surfaces. Sentinels go on the FIRST wrapped
-                          ;; row only — the label is short and never wraps. `paint-ansi-line!`
-                          ;; (used by the err-result band) translates these to SGR/BOLD.
-                          bold-label-on-first
+                    (let [prose-lines
                           (fn [s]
-                            (let [[fst & rest] (wrap-text s fill-w)
-                                  [label body] (perr/split-error-label fst)]
+                            (when (seq s) (wrap-text (second (perr/split-error-label s)) fill-w)))
 
-                              (when fst
-                                (if (seq label)
-                                  ;; Bold the LABEL on the first wrapped row only;
-                                  ;; `body` is that row's remainder, `rest` are the
-                                  ;; remaining wrapped rows (plain).
-                                  (into [(str p/INLINE_BOLD_ON label p/INLINE_BOLD_OFF body)]
-                                        (or rest []))
-                                  (into [fst] (or rest []))))))]
-                      ;; Same wording + facts the shared provider-error IR renders
-                      ;; for the final answer / Web — one source of truth so a
-                      ;; failure reads identically everywhere.
+                          fact-lines
+                          (concat (mapv (fn [[label value]]
+                                          (str label ": " value))
+                                        (perr/provider-error-facts error))
+                                  (when-let [rb (perr/provider-error-raw-body error)]
+                                    ["Provider response:" rb]))]
+
                       (mapv #(line-entry (str err-result-marker %))
-                            (mapcat bold-label-on-first
-                                    (concat
-                                      ;; NEXT STEP is a SEPARATE block now (split out
-                                      ;; of the explanation) — surface it here too so
-                                      ;; the recap matches the shared IR.
-                                      [(perr/provider-error-explanation error)
-                                       (perr/provider-error-next-step error)]
-                                      (mapv (fn [[label value]]
-                                              (str label ": " value))
-                                            (perr/provider-error-facts error))
-                                      (when-let [rb (perr/provider-error-raw-body error)]
-                                        ["Provider response:" rb]))))))
+                            (concat (mapcat prose-lines
+                                            [(perr/provider-error-explanation error)
+                                             (perr/provider-error-next-step error)])
+                                    (mapcat #(wrap-text % fill-w) fact-lines)))))
 
                   err-message-rows
                   (mapv #(line-entry (str err-result-marker %)) (wrap-text err-headline fill-w))

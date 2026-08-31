@@ -3132,10 +3132,7 @@ export function ErrorBlockCard({ block }: { block: ContentBlock }) {
 
       {nextStep && (
         <div className="border-t border-warn-edge px-3 py-2.5">
-          <p className="font-mono text-chip font-semibold uppercase tracking-wide text-dialog-hint">
-            Next step
-          </p>
-          <p className={`${PROSE} mt-1 text-body text-answer-foreground`}>
+          <p className={`${PROSE} text-body font-medium text-answer-foreground`}>
             {nextStep}
           </p>
         </div>

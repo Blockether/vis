@@ -473,8 +473,10 @@
                                                  "status" 429
                                                  "reason" "rate-limit"}]}])]
                    (expect (str/starts-with? rendered "Provider rate limit reached"))
-                   (expect (str/includes? rendered "**WHAT HAPPENED:** the provider is throttling"))
-                   (expect (str/includes? rendered "**NEXT STEP:** wait and retry"))
+                   (expect (str/includes? rendered "the provider is throttling"))
+                   (expect (str/includes? rendered "wait and retry"))
+                   (expect (not (str/includes? rendered "WHAT HAPPENED")))
+                   (expect (not (str/includes? rendered "NEXT STEP")))
                    (expect (str/includes? rendered "HTTP 429"))
                    (expect (str/includes? rendered "anthropic/claude-opus-4"))
                    (expect (str/includes? rendered "req_167"))

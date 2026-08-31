@@ -355,8 +355,7 @@
 
     (str/join "\n\n"
               (remove str/blank?
-                [title (when explanation (str "**WHAT HAPPENED:** " explanation))
-                 (when next-step (str "**NEXT STEP:** " next-step))
+                [title explanation next-step
                  (when (seq facts) (str/join " · " (map #(str "`" % "`") facts)))
                  (when (seq diagnostics)
                    (str "**Diagnostics**\n\n" (str/join "\n\n" diagnostics)))]))))

@@ -94,6 +94,8 @@ describe("provider failure card", () => {
       const card = view.getByRole("alert");
       expect(card.textContent).toContain("The provider is throttling new requests.");
       expect(card.textContent).toContain("Wait and retry, or switch provider/model.");
+      expect(card.textContent).not.toContain("What happened");
+      expect(card.textContent).not.toContain("Next step");
       expect(card.textContent).toContain("HTTP 429");
       expect(card.textContent).toContain("anthropic");
       expect(card.textContent).toContain("req_167");
