@@ -13,8 +13,6 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.ext.channel-tui.theme :as theme]
-            [com.blockether.vis.internal.gateway.server :as gateway-server]
-            [com.blockether.vis.internal.util :as util]
             [ring.core.protocols :as ring-protocols]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna.terminal.html HtmlTerminal HtmlTerminalRenderer
@@ -27,7 +25,7 @@
 
 (defn- same-secret?
   [a b]
-  (boolean (and (string? a) (string? b) (MessageDigest/isEqual (util/utf8 a) (util/utf8 b)))))
+  (boolean (and (string? a) (string? b) (MessageDigest/isEqual (vis/utf8 a) (vis/utf8 b)))))
 
 (defn- cookie-secret [request] (get-in request [:cookies cookie-name :value]))
 
@@ -152,7 +150,7 @@
 
 (defn- embed-handler
   [request]
-  (let [bridge (util/non-blank (get-in request [:query-params "bridge"]))]
+  (let [bridge (vis/non-blank (get-in request [:query-params "bridge"]))]
     (if (and bridge (<= (count bridge) 128))
       {:status 200
        :headers html-headers
@@ -225,20 +223,20 @@
               close!
               #(try (.close output) (catch Throwable _ nil))]
 
-          (gateway-server/register-contributed-sse! stream-id close!)
+          (vis/gateway-register-contributed-sse! stream-id close!)
           (try (loop [after (long initial-version)]
                  (when-not (.isClosed terminal)
                    (let [frame (.awaitFrame terminal after 15000)
                          version (.version ^HtmlTerminalRenderer$Frame frame)]
 
                      (.write output
-                             (util/utf8 (if (= version after) ": keepalive
+                             (vis/utf8 (if (= version after) ": keepalive
 
 " (frame-event frame))))
                      (.flush output)
                      (recur version))))
                (catch IOException _ nil)
-               (finally (gateway-server/unregister-contributed-sse! stream-id) (close!)))))))
+               (finally (vis/gateway-unregister-contributed-sse! stream-id) (close!)))))))
 
 (defn- events-handler
   [request]

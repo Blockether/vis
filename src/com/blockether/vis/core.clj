@@ -99,6 +99,8 @@
              [gateway-auth-required? gateway/auth-required?]
              [gateway-register-routes! gateway/register-routes!]
              [gateway-deregister-routes! gateway/deregister-routes!]
+             [gateway-register-contributed-sse! gateway/register-contributed-sse!]
+             [gateway-unregister-contributed-sse! gateway/unregister-contributed-sse!]
              [gateway-ensure! gateway-client/ensure-gateway!]
              [gateway-ensure-serving! gateway-client/ensure-gateway-serving!]
              [gateway-daemon-status gateway-client/status]
@@ -507,6 +509,8 @@
 ;; prose uses the correct domain word: Persistence.
 (import-vars [ds persistance/ds]
              [now-ms util/now-ms]
+             [non-blank util/non-blank]
+             [utf8 util/utf8]
              [->id persistance/->id]
              [->uuid persistance/->uuid]
              [->ref persistance/->ref]
