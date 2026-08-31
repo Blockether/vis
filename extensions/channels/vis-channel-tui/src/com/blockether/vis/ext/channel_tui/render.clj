@@ -1476,11 +1476,13 @@
 
 (def ^:private turn-rail-col
   "The column `turn-rail` stands in, counted from the message column's own edge.
-   Column zero would read as the frame of the transcript rather than as this turn's
-   axis, and every band insets its words by `code-text-inset-cols`, so the line
-   keeps a column of paper on either side of it. Spelled once: the Activity band's
-   margin is measured from it, because two lines one column apart are two threads."
-  1)
+
+   Column zero, the same column a user or error bubble paints its own edge bar in,
+   so one axis runs down the whole turn instead of the receipt hanging a second
+   thread one column inside the first. Nothing further left belongs to the turn -
+   that is the screen's selection gutter. Spelled once: the Activity band's margin
+   is measured from it, because two lines one column apart are two threads."
+  0)
 
 (def ^:private turn-rail-markers
   "The bands that HANG OFF the turn's line - the receipt, never the answer. The line
@@ -5474,9 +5476,9 @@
 (def ^:private activity-margin
   "THE PAPER'S OWN EDGE, kept clear before the rail.
 
-   A line flush against the left edge of the transcript reads as the frame of the
-   window rather than as this turn's axis. One column of quiet is what says the
-   rail belongs to the answer and begins inside it."
+   Measured from `turn-rail-col`, so the band's rail lands in the very column the
+   rest of the turn already runs down; at column zero this is empty and the band
+   opens on the axis itself."
   (repeat-str \space turn-rail-col))
 
 (def ^:private activity-rail

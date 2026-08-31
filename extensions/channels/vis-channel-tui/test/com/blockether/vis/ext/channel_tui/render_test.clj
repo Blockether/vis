@@ -5413,11 +5413,10 @@ h = 8"
               strip-sentinels))
 
         ;; The band's own rows are exactly the ones standing on the rail, and the rail
-        ;; stands one margin in from the paper's own edge.
+        ;; stands in the message column's own first column.
         band-lines
         (fn [text]
-          (filterv #(and (str/starts-with? % " ") (contains? #{\│ \├} (nth % 1 nil)))
-            (str/split-lines text)))
+          (filterv #(contains? #{\│ \├} (nth % 0 nil)) (str/split-lines text)))
 
         line-with
         (fn [text needle]
@@ -5432,12 +5431,12 @@ h = 8"
 
           (expect (seq lines) "the expanded receipt paints an Activity band")
           (expect (some #(str/includes? % "ACTIVITY") lines) "the band names itself on the rail")
-          (expect (str/starts-with? (str (line-with text "Patched")) " ├─●")
+          (expect (str/starts-with? (str (line-with text "Patched")) "├─●")
                   "a step's mark is JOINED to the rail by a tick, never floating beside it")
-          (expect (= 5 (long (.indexOf ^String (str (line-with text "Patched")) "Patched")))
-                  "margin, rail, tick, mark, gap: the verb starts in the sixth column")
-          (expect (every? #(str/starts-with? % " ") lines)
-                  "the rail never sits against the paper's edge")
+          (expect (= 4 (long (.indexOf ^String (str (line-with text "Patched")) "Patched")))
+                  "rail, tick, mark, gap: the verb starts in the fifth column")
+          (expect (every? #(contains? #{\│ \├} (nth % 0 nil)) lines)
+                  "the rail stands in the turn's own axis, the message column's first")
           (expect (not-any? #(str/includes? % "✓") lines)
                   "no row wears a check: one mark, and the colour carries the state")))
     (it
@@ -5465,7 +5464,7 @@ h = 8"
         (expect (str/includes? patched-path "\u25be") "a path that opens a patch wears a chevron")
         (expect (str/includes? read-path "\u203a")
                 "a path that only names a file wears the quiet guillemet")
-        (expect (= 5 (long (.indexOf patched-path "▾")))
+        (expect (= 4 (long (.indexOf patched-path "▾")))
                 "paths hang one level in from the step's own mark")
         (expect (str/includes? added "+ (def added-line 1)")
                 "an added line carries its sign exactly once, in the marker column")
@@ -5618,9 +5617,9 @@ h = 8"
                 (str/join (map :ch row)))
               grid)
 
-        ;; `bx` is 2 here and the line stands one column in from the paper's own edge.
+        ;; `bx` is 2 here and the line stands in the message column's own first column.
         rail-col
-        3
+        2
 
         ;; A step's mark stands ON the line, so its own row wears the tick's `├`.
         rail-at?
