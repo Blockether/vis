@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.channel-tui.components-test
-  (:require [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+  (:require [com.blockether.vis.ext.channel-tui.interactions :as interactions]
             [com.blockether.vis.ext.channel-tui.components :as comps]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
@@ -24,20 +24,20 @@
 
 (defdescribe jump-bottom-button-clickable-test
              ;; The `↓ latest` jump-to-bottom chip is a `button!` with `:kind :jump-bottom`;
-             ;; the screen's click handler `cr/lookup`s the cell under the cursor on
+             ;; the screen's click handler `HitRegionMap.lookup`s the cell under the cursor on
              ;; CLICK_DOWN and dispatches by that kind. This locks that the painted chip
              ;; registers a HITTABLE region at its cells (the click half of the feature,
              ;; without synthesizing terminal mouse events).
              (it "paints a hittable :jump-bottom region across exactly its label cells"
-                 (cr/begin-frame!)
+                 (.beginFrame interactions/hit-map)
                  (let [w (comps/button! (noop-graphics) 148 32 " ↓ latest " :jump-bottom)]
-                   (cr/commit-frame!)
-                   (expect (= 10 w))                                    ;; " ↓ latest " is 10 narrow cells
-                   (expect (= :jump-bottom (:kind (cr/lookup 151 32)))) ;; inside the chip
-                   (expect (= :jump-bottom (:kind (cr/lookup 148 32)))) ;; left edge inclusive
-                   (expect (nil? (cr/lookup 158 32)))                   ;; right edge exclusive (148+10)
-                   (expect (nil? (cr/lookup 151 31))))                  ;; a row above → miss
-                 (cr/reset!)))
+                   (.commitFrame interactions/hit-map)
+                   (expect (= 10 w)) ;; " ↓ latest " is 10 narrow cells
+                   (expect (= :jump-bottom (:kind (.lookup interactions/hit-map 151 32)))) ;; inside the chip
+                   (expect (= :jump-bottom (:kind (.lookup interactions/hit-map 148 32)))) ;; left edge inclusive
+                   (expect (nil? (.lookup interactions/hit-map 158 32)))                   ;; right edge exclusive (148+10)
+                   (expect (nil? (.lookup interactions/hit-map 151 31))))                  ;; a row above → miss
+                 (.reset interactions/hit-map)))
 
 (defdescribe
   find-bar-cursor-test

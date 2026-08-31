@@ -2,7 +2,7 @@
   "Bordered, scrollable, single-selection data table for TUI dialogs.
 
    Composes the lower-level `table` border/row primitives with
-   `scrollbar` so callers don't repeat the same boilerplate (top
+   Lanterna's `ScrollBar` so callers don't repeat the same boilerplate (top
    border + header row + middle separator + N body rows + selection
    marker gutter + scrollbar) at every dialog site.
 
@@ -40,9 +40,10 @@
    `└┘` cap. Pass `:closed? true` to draw the closing border (matches
    the navigator-style boxed picker)."
   (:require [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.table :as table]
-            [com.blockether.vis.ext.channel-tui.theme :as t]))
+            [com.blockether.vis.ext.channel-tui.theme :as t])
+  (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.gui2 Direction ScrollBar]))
 
 (set! *unchecked-math* :warn-on-boxed)
 
@@ -142,7 +143,7 @@
 (defn draw!
   "Render a bordered scrollable table in one call.
 
-   Positional arg matches `scrollbar/draw!`:
+   Positional args feed Lanterna's `ScrollBar/draw`:
      `^TextGraphics g` — the live dialog graphics surface.
 
    Required opts:
@@ -275,11 +276,15 @@
       (p/set-colors! g t/dialog-border t/dialog-bg)
       (p/put-str! g table-x (+ body-top body-h) (table/boxed-border-line full-widths :bottom)))
     ;; Scrollbar (own column outside table's right `│` border)
-    (scrollbar/draw! g
-                     {:col scrollbar-col
-                      :top body-top
-                      :track-h body-h
-                      :total-h total
-                      :inner-h body-h
-                      :scroll scroll})
+    (ScrollBar/draw g
+                    Direction/VERTICAL
+                    (TerminalPosition. (int scrollbar-col) (int body-top))
+                    (int body-h)
+                    (int total)
+                    (int body-h)
+                    (when (some? scroll) (Integer/valueOf (int scroll)))
+                    t/dialog-border
+                    t/dialog-bg
+                    t/dialog-hint-key
+                    t/dialog-bg)
     (merge geom row-ix)))

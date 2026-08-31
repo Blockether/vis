@@ -6,7 +6,7 @@
    engine, so a test can only paint shapes an extension can really produce."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.capture :as cap]
-            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.interactions :as interactions]
             [com.blockether.vis.ext.channel-tui.columns :as columns]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.live-view :as lv]
@@ -83,10 +83,10 @@
          (cap/capture! {:cols cols
                         :rows rows
                         :paint! (fn [{:keys [screen]}]
-                                  (cr/begin-frame!)
+                                  (.beginFrame interactions/hit-map)
                                   (let [g (.newTextGraphics ^TerminalScreen screen)]
                                     (reset! geom (lv/paint! g cols rows panes 1 3))
-                                    (cr/commit-frame!)
+                                    (.commitFrame interactions/hit-map)
                                     (.refresh ^TerminalScreen screen)))})]
 
      (assoc cap :geometry @geom))))
@@ -555,29 +555,29 @@
              (mapv #(select-keys % [:item-id :is-selectable :is-selected]) (take 2 table-rows))))
       (is (some #{["click" "select a row"]} (lv/hint p []))
           "the band advertises the mouse control without taking the composer keyboard")
-      (cr/reset!)
+      (.reset interactions/hit-map)
       (try (let [text
                  (cap/frame-text (last (:frames (paint-frames [p] 96 80))))
 
                  controls
-                 (filterv #(= :live-select (:kind %)) (cr/current))]
+                 (filterv #(= :live-select (:kind %)) (.current interactions/hit-map))]
 
              (is (str/includes? text "○ job-0"))
              (is (str/includes? text "● job-1"))
              (is (= (mapv #(str "job-" %) (range 8)) (mapv :item-id controls))))
-           (finally (cr/reset!))))))
+           (finally (.reset interactions/hit-map))))))
 
 ;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: an active
 ;; live surface could consume most of the terminal but had no way to minimize it.
 (deftest live-view-minimize-test
   (testing "an active live surface exposes a minimize control"
-    (cr/reset!)
+    (.reset interactions/hit-map)
     (try (paint-frames [(pane)] 96 26)
-         (let [controls (filterv #(= :live-minimize (:kind %)) (cr/current))]
+         (let [controls (filterv #(= :live-minimize (:kind %)) (.current interactions/hit-map))]
            (is (= 1 (count controls)) "the opening rule has one explicit minimize control")
            (is (= "view-1" (:view-id (first controls))))
            (is (some #{["click ▾" "minimize"]} (lv/hint (pane) []))))
-         (finally (cr/reset!))))
+         (finally (.reset interactions/hit-map))))
   (testing "minimizing keeps the run alive behind one restorable status row"
     (let [full
           (pane :rows 20)
@@ -601,7 +601,7 @@
       (is (not (lv/minimized? (lv/armed compact)))
           "arming an interrupt restores the note field before it takes the keyboard")
       (is (some #{["click ▴" "restore live view"]} (lv/hint compact [])))
-      (cr/reset!)
+      (.reset interactions/hit-map)
       (try (let [{:keys [frames]}
                  (paint-frames [advanced] 96 26)
 
@@ -609,14 +609,14 @@
                  (cap/frame-text (last frames))
 
                  controls
-                 (filterv #(= :live-restore (:kind %)) (cr/current))]
+                 (filterv #(= :live-restore (:kind %)) (.current interactions/hit-map))]
 
              (is (str/includes? text "Still polling · minimized")
                  "patches keep updating the compact status while its body is folded")
              (is (not (str/includes? text "job-0")) "the table body is no longer painted")
              (is (= 2 (count controls)) "both the title chevron and status row restore")
              (is (every? #(= "view-1" (:view-id %)) controls)))
-           (finally (cr/reset!))))))
+           (finally (.reset interactions/hit-map))))))
 
 ;;; ── The screenshot gate ─────────────────────────────────────────────────────
 
@@ -938,11 +938,11 @@
   "Every click region ONE paint of `panes` published — how a test reads what the
    human can press, through the same registry the mouse is answered from."
   [panes]
-  (cr/reset!)
-  (cr/begin-frame!)
+  (.reset interactions/hit-map)
+  (.beginFrame interactions/hit-map)
   (paint-frames panes)
-  (cr/commit-frame!)
-  (cr/current))
+  (.commitFrame interactions/hit-map)
+  (.current interactions/hit-map))
 
 ;; Regression, vis session a64d44c2: `band-rows` measured the band as ONE display
 ;; row while `paint!` drew every row the view asked for, so the wheel owned only

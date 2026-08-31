@@ -2,7 +2,7 @@
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.capture :as cap]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
-            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.interactions :as interactions]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
@@ -2163,49 +2163,6 @@
                    (expect (not (str/includes? painted p/INLINE_CODE_ON)))
                    (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
-(defdescribe
-  scrollbar-thumb-geometry-test
-  ;; Geometry now lives in `scrollbar/geometry` — the single source of
-  ;; truth for painter and hit-test. Test pinned here for back-compat,
-  ;; mirrored in `scrollbar_test.clj`.
-  (let [g (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)]
-    (describe "Returns nil when there's no overflow"
-              (it "total-h < inner-h: nothing to scroll" (expect (nil? (g 10 20 nil))))
-              (it "total-h == inner-h: nothing to scroll" (expect (nil? (g 20 20 nil))))
-              (it "inner-h is zero: no viewport, no thumb" (expect (nil? (g 100 0 0)))))
-    (describe
-      "Standard 100/20 session"
-      (it "Auto-bottom (scroll=nil) places the single-cell thumb at the END of the track"
-          (let [{:keys [thumb-top-rel thumb-h max-scroll]} (g 100 20 nil)]
-            (expect (= 19 thumb-top-rel)) ;; track-h(20) - thumb-h(1) = 19
-            (expect (= 1 thumb-h))
-            (expect (= 80 max-scroll))))  ;; 100 - 20
-      (it "scroll=0 places thumb at the TOP"
-          (expect (= {:thumb-top-rel 0 :thumb-h 1 :max-scroll 80 :track-h 20} (g 100 20 0))))
-      (it "scroll=40 places thumb in the MIDDLE of the free track"
-          (expect (= {:thumb-top-rel 9 :thumb-h 1 :max-scroll 80 :track-h 20} (g 100 20 40))))
-      (it "scroll=80 places thumb at the BOTTOM (== max-scroll)"
-          (expect (= {:thumb-top-rel 19 :thumb-h 1 :max-scroll 80 :track-h 20} (g 100 20 80)))))
-    (describe "Out-of-range scroll values are clamped"
-              (it "Negative scroll clamps to 0 (top)"
-                  (expect (zero? (:thumb-top-rel (g 100 20 -50)))))
-              (it "Excessive scroll clamps to max-scroll (bottom)"
-                  (let [{:keys [thumb-top-rel max-scroll]} (g 100 20 9999)]
-                    (expect (= 19 thumb-top-rel))
-                    (expect (= 80 max-scroll)))))
-    (describe "Viewport height changes keep one visible thumb cell"
-              (it "1000-row content in a 5-row viewport: thumb-h is 1"
-                  (let [{:keys [thumb-h]} (g 1000 5 0)]
-                    (expect (= 1 thumb-h))))
-              (it "360-row content in a maximized 56-row viewport: thumb-h stays 1"
-                  (let [{:keys [thumb-h]} (g 360 56 nil)]
-                    (expect (= 1 thumb-h))))
-              (it "And the thumb still slides through the full track"
-                  (let [top (:thumb-top-rel (g 1000 5 0))
-                        bot (:thumb-top-rel (g 1000 5 995))]
-
-                    (expect (= 0 top))
-                    (expect (= 4 bot))))))) ;; track-h(5) - thumb-h(1) = 4
 
 
 ;; ─────────────────────────────────────────────────────────────────────────
@@ -2690,8 +2647,8 @@
 (defdescribe
   message-footer-test
   (it "does not register a per-message copy button"
-      (cr/reset!)
-      (cr/begin-frame!)
+      (.reset interactions/hit-map)
+      (.beginFrame interactions/hit-map)
       (let [message
             {:role :assistant :text "hello world"}
 
@@ -2718,10 +2675,10 @@
             hit-col
             (+ left 2)]
 
-        (cr/commit-frame!)
+        (.commitFrame interactions/hit-map)
         (expect (= 3 height))
         (expect (every? nil?
-                        (map #(cr/lookup hit-col %)
+                        (map #(.lookup interactions/hit-map hit-col %)
                              (range viewport-top (+ viewport-top start height)))))))
   (it "renders cached token usage in the assistant bubble footer"
       (let [puts
@@ -4217,7 +4174,7 @@ h = 8"
 
 (defdescribe python-code-disclosure-is-clickable-test
              ;; The header row is only a control if the PAINTER publishes its hit target:
-             ;; `cr/register!` feeds BOTH the mouse (`screen/lookup` → `:toggle-detail`) and
+             ;; `HitRegionMap.register` feeds BOTH the mouse (`screen/lookup` → `:toggle-detail`) and
              ;; the `C-x t` jump overlay, which labels the same registered regions. The code
              ;; band used to paint the row and register nothing, so the python disclosure was
              ;; unreachable by mouse AND by keyboard label — collapsed forever unless you
@@ -4253,7 +4210,7 @@ h = 8"
                                           entries))
 
                      _
-                     (do (cr/reset!) (cr/begin-frame!))
+                     (do (.reset interactions/hit-map) (.beginFrame interactions/hit-map))
 
                      _height
                      (render/draw-chat-bubble! (dummy-text-graphics)
@@ -4265,7 +4222,7 @@ h = 8"
                                                80 {:viewport-top 0 :viewport-h 60})
 
                      _
-                     (cr/commit-frame!)
+                     (.commitFrame interactions/hit-map)
 
                      ;; The bubble adds its own chrome row, so the painted screen row of the
                      ;; header is not the entry index. Scan the whole bubble instead: exactly
@@ -4273,7 +4230,7 @@ h = 8"
                      hits
                      (into []
                            (keep (fn [row]
-                                   (when-some [h (cr/lookup 4 (long row))]
+                                   (when-some [h (.lookup interactions/hit-map 4 (long row))]
                                      (assoc h :row row))))
                            (range 0 (+ 2 (count entries) 4)))
 
@@ -4321,7 +4278,7 @@ h = 8"
           (.newTextGraphics screen)
 
           _
-          (do (cr/reset!) (cr/begin-frame!))
+          (do (.reset interactions/hit-map) (.beginFrame interactions/hit-map))
 
           _
           (render/draw-chat-bubble! g
@@ -4333,7 +4290,7 @@ h = 8"
                                     60 {:viewport-top 0 :viewport-h 60})
 
           _
-          (cr/commit-frame!)
+          (.commitFrame interactions/hit-map)
 
           cell
           (fn [col row]
@@ -4347,7 +4304,7 @@ h = 8"
 
           url-hit
           (fn [col row]
-            (let [h (cr/lookup col row)]
+            (let [h (.lookup interactions/hit-map col row)]
               (when (= :url (:kind h)) h)))
 
           table-row

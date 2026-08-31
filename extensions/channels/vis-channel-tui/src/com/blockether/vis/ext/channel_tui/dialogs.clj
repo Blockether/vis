@@ -7,7 +7,6 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
-            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
@@ -15,8 +14,11 @@
             [com.blockether.vis.ext.channel-tui.mcp-model :as mcp-model]
             [com.blockether.vis.internal.theme :as shared-theme]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna Symbols TerminalPosition TerminalSize TextCharacter]
-           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
+  (:import [com.googlecode.lanterna Symbols TerminalPosition TerminalRectangle TerminalSize
+            TextCharacter]
+           [com.googlecode.lanterna.gui2 Direction ScrollBar ScrollBar$DragResult]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseAction$CoalescedInput
+            MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [java.text SimpleDateFormat]
            [java.util Locale TimeZone]))
@@ -239,21 +241,6 @@
           (>= idx (+ start visible-count)) (max 0 (- idx (dec visible-count)))
           :else start)))
 
-(defn modal-wheel-delta
-  "Return list-selection delta for a wheel mouse event, else nil.
-   Negative moves up; positive moves down."
-  [key]
-  (when (instance? MouseAction key)
-    (let [action (.getActionType ^MouseAction key)]
-      (cond (= action MouseActionType/SCROLL_UP) -1
-            (= action MouseActionType/SCROLL_DOWN) 1
-            :else nil))))
-
-(defn modal-wheel-step
-  "Return wheel delta multiplied by any coalesced event count."
-  [key]
-  (when-let [delta (modal-wheel-delta key)]
-    (* (long delta) (max 1 (long (.getButton ^MouseAction key))))))
 
 (defn- key-type [key] (when (instance? KeyStroke key) (.getKeyType ^KeyStroke key)))
 
@@ -306,37 +293,24 @@
 (defn modal-close-click?
   "True when `key` is a mouse click on the dialog close (✕) button."
   [key]
-  (when (instance? MouseAction key)
-    (let [a (.getActionType ^MouseAction key)]
-      (when (= a MouseActionType/CLICK_RELEASE)
-        (when-let [b @(.get ^ThreadLocal modal-close-bounds)]
-          (let [pos (.getPosition ^MouseAction key)
-                cx (.getColumn pos)
-                cy (.getRow pos)]
-
-            (and (= cy (:y b)) (>= (long cx) (long (:x0 b))) (<= (long cx) (long (:x1 b))))))))))
+  (when (and (instance? MouseAction key)
+             (= MouseActionType/CLICK_RELEASE (.getActionType ^MouseAction key)))
+    (when-let [^TerminalRectangle bounds @(.get ^ThreadLocal modal-close-bounds)]
+      (.contains bounds (.getPosition ^MouseAction key)))))
 
 (defn- mouse-row-offset
   "Return the zero-based row under a primary click inside a list rectangle."
   [key left top width height]
-  (when (instance? MouseAction key)
-    (let [action (.getActionType ^MouseAction key)]
-      (when (or (= action MouseActionType/CLICK_DOWN) (= action MouseActionType/CLICK_RELEASE))
-        (let [^TerminalPosition pos (.getPosition ^MouseAction key)
-              x (long (.getColumn pos))
-              y (long (.getRow pos))
-              left (long left)
-              top (long top)
-              width (long width)
-              height (long height)]
+  (when (and (instance? MouseAction key)
+             (let [action (.getActionType ^MouseAction key)]
+               (or (= action MouseActionType/CLICK_DOWN) (= action MouseActionType/CLICK_RELEASE))))
+    (let [bounds
+          (TerminalRectangle. (int left) (int top) (int width) (int height))
 
-          (when (and (pos? width)
-                     (pos? height)
-                     (<= left x)
-                     (< x (+ left width))
-                     (<= top y)
-                     (< y (+ top height)))
-            (- y top)))))))
+          relative
+          (.relativePosition bounds (.getPosition ^MouseAction key))]
+
+      (when relative (long (.getRow ^TerminalPosition relative))))))
 
 (def ^:private modal-close-hover (ThreadLocal/withInitial #(atom false)))
 
@@ -348,13 +322,8 @@
   (when (instance? MouseAction key)
     (let [a (.getActionType ^MouseAction key)]
       (when (or (= a MouseActionType/MOVE) (= a MouseActionType/DRAG))
-        (let [b @(.get ^ThreadLocal modal-close-bounds)
-              pos (.getPosition ^MouseAction key)
-              cx (.getColumn pos)
-              cy (.getRow pos)
-              hit?
-              (boolean
-                (and b (= cy (:y b)) (>= (long cx) (long (:x0 b))) (<= (long cx) (long (:x1 b)))))
+        (let [^TerminalRectangle bounds @(.get ^ThreadLocal modal-close-bounds)
+              hit? (boolean (and bounds (.contains bounds (.getPosition ^MouseAction key))))
               cell (.get ^ThreadLocal modal-close-hover)]
 
           (when (not= @cell hit?) (clojure.core/reset! cell hit?) true))))))
@@ -376,32 +345,40 @@
       (do (Thread/sleep 16) (recur)))))
 
 (defn read-modal-input!
-  "Read one modal input event. Consecutive pending wheel events are drained
-   and returned as one `:scroll-delta`, so a wheel flood costs one redraw.
-   The first non-wheel event encountered while draining is held for the next
-   modal read on this thread. MOVE/DRAG events also refresh the close (X)
-   hover flag so the button can light up under the cursor. A terminal resize
-   clears the old frame and returns `KeyType/Unknown`, waking every modal loop
-   to measure and paint again without waiting for a user keystroke."
+  "Read one modal input event through Lanterna's queued pointer coalescer.
+   The first different event is held for the next modal read; resize wakes remain
+   `KeyType/Unknown`. MOVE/DRAG input also refreshes the close-button hover."
   [^TerminalScreen screen]
   (let [pending-key
         (.get ^ThreadLocal modal-pending-key)
 
-        key
+        first-key
         (normalize-modal-key (or @pending-key (await-modal-key! screen)))]
 
     (reset! pending-key nil)
-    (update-modal-close-hover! key)
-    (cond (modal-close-click? key) {:key (KeyStroke. KeyType/Escape)}
-          :else (if-let [delta (modal-wheel-delta key)]
-                  (loop [acc (long delta)]
-                    (if-let [next-key (some-> (.pollInput screen)
-                                              normalize-modal-key)]
-                      (if-let [next-delta (modal-wheel-delta next-key)]
-                        (recur (+ acc (long next-delta)))
-                        (do (reset! pending-key next-key) {:scroll-delta acc}))
-                      {:scroll-delta acc}))
-                  {:key key}))))
+    (let [^MouseAction$CoalescedInput coalesced
+          (MouseAction/coalesceQueued first-key
+                                      (reify
+                                        java.util.function.Supplier
+                                          (get [_]
+                                            (some-> (.pollInput screen)
+                                                    normalize-modal-key))))
+
+          key
+          (.key coalesced)
+
+          next-key
+          (.nextKey coalesced)
+
+          scroll-delta
+          (some-> (.scrollDelta coalesced)
+                  long)]
+
+      (when next-key (reset! pending-key next-key))
+      (update-modal-close-hover! key)
+      (cond (modal-close-click? key) {:key (KeyStroke. KeyType/Escape)}
+            scroll-delta {:scroll-delta scroll-delta}
+            :else {:key key}))))
 
 (defn modal-input-pending?
   "True when another keystroke or resize wake is ALREADY queued for this modal
@@ -426,10 +403,11 @@
   (let [{:keys [key scroll-delta]} (read-modal-input! screen)]
     (or key
         (when scroll-delta
-          (MouseAction.
-            (if (neg? (long scroll-delta)) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
-            1
-            (TerminalPosition. 0 0))))))
+          (let [delta (long scroll-delta)]
+            (MouseAction. (if (neg? delta) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
+                          (if (neg? delta) 4 5)
+                          (TerminalPosition. 0 0)
+                          (int (Math/abs delta))))))))
 
 (defn drain-modal-paste!
   "After a bracketed-paste START keystroke is seen, drain `screen` until
@@ -442,9 +420,9 @@
 
       (let [k (read-modal-key! screen)]
         (cond (nil? k) (.toString sb)
-              (input/paste-end? k) (.toString sb)
-              :else (do (when-let [ch (input/keystroke->paste-char k)]
-                          (.append sb ^String ch))
+              (= KeyType/PasteEnd (.getKeyType ^KeyStroke k)) (.toString sb)
+              :else (do (when-let [text (.getText ^KeyStroke k)]
+                          (.append sb ^String text))
                         (recur)))))))
 
 (defn fit-hint-pairs
@@ -913,7 +891,8 @@
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g x0 title-row label)
     (p/clear-styles! g)
-    (reset! (.get ^ThreadLocal modal-close-bounds) {:x0 x0 :x1 x1 :y title-row})))
+    (reset! (.get ^ThreadLocal modal-close-bounds)
+      (TerminalRectangle. (int x0) (int title-row) (int (inc (- x1 x0))) 1))))
 
 (defn draw-dialog-chrome!
   "Draw dialog background, shadow, border, and title.
@@ -1320,7 +1299,7 @@
      :on-key
      (fn [{:keys [selected col sort-idx sort-dir] :as state} key {:keys [total visible list-h]}]
        (let [clampf #(p/clamp % 0 (max 0 (dec (long total))))]
-         (if-let [wheel (modal-wheel-step key)]
+         (if-let [wheel (ScrollBar/wheelStep ^KeyStroke key)]
            (assoc state :selected (clampf (+ (long selected) (long wheel))))
            (condp = (key-type key)
              KeyType/Escape {::done nil}
@@ -1452,52 +1431,56 @@
                     (assoc state
                       :selected selected
                       :scroll (visible-window-start selected (:scroll state) list-h total))))
-     :paint (fn [g {:keys [selected scroll query]}
-                 {:keys [cols rows title filtered total footer content-w content-h-req bounds
-                         content-top content-h hint-row list-top list-h filter? placeholder]}]
-              (let [{:keys [left right inner-w]} bounds]
-                (draw-dialog-chrome! g cols rows title content-w content-h-req)
-                (p/set-colors! g t/dialog-fg t/dialog-bg)
-                (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
-                (let [cursor (when filter?
-                               (draw-text-input-field! g
-                                                       left
-                                                       content-top
-                                                       inner-w
-                                                       query
-                                                       (count query)
-                                                       placeholder))]
-                  (when filter?
-                    (p/set-colors! g t/dialog-border t/dialog-bg)
-                    (p/draw-separator! g left right (inc (long content-top))))
-                  (dotimes [i (min (long list-h) (long total))]
-                    (let [idx (+ (long scroll) (long i))
-                          row (+ (long list-top) (long i))]
+     :paint
+     (fn [g {:keys [selected scroll query]}
+          {:keys [cols rows title filtered total footer content-w content-h-req bounds content-top
+                  content-h hint-row list-top list-h filter? placeholder]}]
+       (let [{:keys [left right inner-w]} bounds]
+         (draw-dialog-chrome! g cols rows title content-w content-h-req)
+         (p/set-colors! g t/dialog-fg t/dialog-bg)
+         (p/fill-rect! g (inc (long left)) content-top inner-w content-h)
+         (let [cursor (when filter?
+                        (draw-text-input-field! g
+                                                left
+                                                content-top
+                                                inner-w
+                                                query
+                                                (count query)
+                                                placeholder))]
+           (when filter?
+             (p/set-colors! g t/dialog-border t/dialog-bg)
+             (p/draw-separator! g left right (inc (long content-top))))
+           (dotimes [i (min (long list-h) (long total))]
+             (let [idx (+ (long scroll) (long i))
+                   row (+ (long list-top) (long i))]
 
-                      (when (< (long idx) (long total))
-                        (let [item (nth filtered idx)]
-                          (draw-list-item!
-                            g
-                            left
-                            row
-                            (if (> (long total) (long list-h)) (dec (long inner-w)) inner-w)
-                            (= idx selected)
-                            (:label item)
-                            (:hint item))))))
-                  (when (> (long total) (long list-h))
-                    (scrollbar/draw! g
-                                     {:col (+ (long left) (long inner-w))
-                                      :top list-top
-                                      :track-h list-h
-                                      :total-h total
-                                      :inner-h list-h
-                                      :scroll scroll}))
-                  (draw-hint-bar! g left hint-row inner-w footer)
-                  cursor)))
+               (when (< (long idx) (long total))
+                 (let [item (nth filtered idx)]
+                   (draw-list-item! g
+                                    left
+                                    row
+                                    (if (> (long total) (long list-h)) (dec (long inner-w)) inner-w)
+                                    (= idx selected)
+                                    (:label item)
+                                    (:hint item))))))
+           (when (> (long total) (long list-h))
+             (ScrollBar/draw g
+                             Direction/VERTICAL
+                             (TerminalPosition. (int (+ (long left) (long inner-w))) (int list-top))
+                             (int list-h)
+                             (int total)
+                             (int list-h)
+                             (when (some? scroll) (Integer/valueOf (int scroll)))
+                             t/dialog-border
+                             t/dialog-bg
+                             t/dialog-hint-key
+                             t/dialog-bg))
+           (draw-hint-bar! g left hint-row inner-w footer)
+           cursor)))
      :on-key
      (fn [{:keys [selected query] :as state} key {:keys [total filtered]}]
        (let [clampf #(p/clamp % 0 (max 0 (dec (long total))))]
-         (if-let [wheel (modal-wheel-step key)]
+         (if-let [wheel (ScrollBar/wheelStep ^KeyStroke key)]
            (assoc state :selected (clampf (+ (long selected) (long wheel))))
            (condp = (key-type key)
              KeyType/Escape {::done nil}
@@ -1728,13 +1711,17 @@
               (p/set-colors! g t/dialog-fg t/dialog-bg)
               (p/fill-rect! g (inc (long left)) row inner-w 1)
               (p/put-str! g (+ (long left) 2) row (ellipsize (nth wrapped idx) text-w)))))
-        (scrollbar/draw! g
-                         {:col (+ (long left) (long inner-w))
-                          :top content-top
-                          :track-h content-h
-                          :total-h total
-                          :inner-h content-h
-                          :scroll @scroll})
+        (ScrollBar/draw g
+                        Direction/VERTICAL
+                        (TerminalPosition. (int (+ (long left) (long inner-w))) (int content-top))
+                        (int content-h)
+                        (int total)
+                        (int content-h)
+                        (when (some? @scroll) (Integer/valueOf (int @scroll)))
+                        t/dialog-border
+                        t/dialog-bg
+                        t/dialog-hint-key
+                        t/dialog-bg)
         (draw-hint-bar! g
                         left
                         hint-row
@@ -1751,7 +1738,7 @@
               (read-modal-key! screen)
 
               wheel
-              (modal-wheel-step key)
+              (ScrollBar/wheelStep ^KeyStroke key)
 
               move!
               (fn [f]
@@ -1895,13 +1882,17 @@
             (when (< (long idx) (long total))
               (render/paint-ansi-line! g 0 y (nth painted idx) t/code-block-fg t/code-block-bg))))
         ;; Scrollbar last (over the rightmost column) so a wide line can't hide it.
-        (scrollbar/draw! g
-                         {:col (dec cols)
-                          :top body-top
-                          :track-h body-h
-                          :total-h total
-                          :inner-h body-h
-                          :scroll @scroll})
+        (ScrollBar/draw g
+                        Direction/VERTICAL
+                        (TerminalPosition. (int (dec cols)) (int body-top))
+                        (int body-h)
+                        (int total)
+                        (int body-h)
+                        (when (some? @scroll) (Integer/valueOf (int @scroll)))
+                        t/dialog-border
+                        t/dialog-bg
+                        t/dialog-hint-key
+                        t/dialog-bg)
         ;; Bottom strip: shared hint bar, full width.
         (draw-hint-bar! g
                         0
@@ -1921,7 +1912,7 @@
               (read-modal-key! screen)
 
               wheel
-              (modal-wheel-step key)
+              (ScrollBar/wheelStep ^KeyStroke key)
 
               move!
               (fn [f]
@@ -1931,22 +1922,24 @@
           (cond (nil? key) (recur)
                 wheel (do (move! #(+ (long %) (long wheel))) (recur))
                 (instance? MouseAction key)
-                (let [drag (scrollbar/mouse-drag-step key
-                                                      {:col (dec cols)
-                                                       :top body-top
-                                                       :track-h body-h
-                                                       :total-h total
-                                                       :inner-h body-h
-                                                       :scroll @scroll}
-                                                      @scrollbar-drag-offset)]
-                  (when (= drag :release) (vreset! scrollbar-drag-offset nil))
-                  (when-let [grip (:arm drag)]
-                    (vreset! scrollbar-drag-offset grip))
-                  (when-some [s (:scroll drag)]
-                    ;; A deliberate scrollbar drag is a read, not a follow:
-                    ;; it releases the tail pin like every other scroll.
+                (let [^ScrollBar$DragResult drag
+                      (ScrollBar/dragStep ^MouseAction key
+                                          Direction/VERTICAL
+                                          (TerminalPosition. (int (dec cols)) (int body-top))
+                                          (int body-h)
+                                          (int total)
+                                          (int body-h)
+                                          (Integer/valueOf (int @scroll))
+                                          (when (some? @scrollbar-drag-offset)
+                                            (Integer/valueOf (int @scrollbar-drag-offset)))
+                                          1)]
+                  (when (and drag (.release drag)) (vreset! scrollbar-drag-offset nil))
+                  (when-let [grip (and drag (.gripOffset drag))]
+                    (vreset! scrollbar-drag-offset (long grip)))
+                  (when-let [s (and drag (.scrollPosition drag))]
+                    ;; A deliberate scrollbar drag is a read, not a follow.
                     (reset! follow false)
-                    (reset! scroll s))
+                    (reset! scroll (long s)))
                   (recur))
                 :else (condp = (key-type key)
                         KeyType/Escape nil
@@ -2108,8 +2101,9 @@
               ;; leaking into the dialog value - they break HTTP
               ;; Authorization headers when pasted API keys carry
               ;; them into the Bearer token.
-              (input/paste-start? key) (do (vreset! paste-buffer (StringBuilder.)) (recur))
-              (input/paste-end? key)
+              (= KeyType/PasteStart (.getKeyType ^KeyStroke key))
+              (do (vreset! paste-buffer (StringBuilder.)) (recur))
+              (= KeyType/PasteEnd (.getKeyType ^KeyStroke key))
               (let [^StringBuilder sb @paste-buffer]
                 (when sb
                   (let [payload (.toString sb)
@@ -2122,8 +2116,8 @@
                       (swap! cursor + (count chars)))))
                 (recur))
               ;; Accumulate chars into the paste buffer while open.
-              (some? @paste-buffer) (do (when-let [ch (input/keystroke->paste-char key)]
-                                          (.append ^StringBuilder @paste-buffer ch))
+              (some? @paste-buffer) (do (when-let [text (.getText ^KeyStroke key)]
+                                          (.append ^StringBuilder @paste-buffer ^String text))
                                         (recur))
               ;; -- Regular key dispatch -------------------------
               :else (condp = (key-type key)
@@ -3622,13 +3616,17 @@
                                  (if (> (long total) (long content-h)) (dec (long inner-w)) inner-w)
                                  (= idx @selected)
                                  (:label (nth items idx))))))
-          (scrollbar/draw! g
-                           {:col (+ (long left) (long inner-w))
-                            :top content-top
-                            :track-h content-h
-                            :total-h total
-                            :inner-h content-h
-                            :scroll @scroll})
+          (ScrollBar/draw g
+                          Direction/VERTICAL
+                          (TerminalPosition. (int (+ (long left) (long inner-w))) (int content-top))
+                          (int content-h)
+                          (int total)
+                          (int content-h)
+                          (when (some? @scroll) (Integer/valueOf (int @scroll)))
+                          t/dialog-border
+                          t/dialog-bg
+                          t/dialog-hint-key
+                          t/dialog-bg)
           (draw-hint-bar! g
                           left
                           hint-row
@@ -3639,7 +3637,7 @@
           (let [key (read-modal-key! screen)]
             (when key
               (if (instance? MouseAction key)
-                (if-let [step (modal-wheel-step key)]
+                (if-let [step (ScrollBar/wheelStep ^KeyStroke key)]
                   (do (swap! selected #(p/clamp (+ (long %) (long step)) 0 (max 0 (dec total))))
                       (recur))
                   (if-let [row-offset (mouse-row-offset key
@@ -4304,13 +4302,17 @@
                    (p/put-str! g (inc rail-x) ry (ellipsize lbl lbl-w)))
                  (p/set-colors! g (if active? t/header-active-tab-fg t/dialog-hint) bg)
                  (p/put-str! g (- (+ rail-x rail-w) (count cstr) 1) ry cstr)))))
-         (scrollbar/draw! g
-                          {:col (+ lleft linner)
-                           :top list-top
-                           :track-h visible-h
-                           :total-h visual-n
-                           :inner-h visible-h
-                           :scroll @scroll})
+         (ScrollBar/draw g
+                         Direction/VERTICAL
+                         (TerminalPosition. (int (+ lleft linner)) (int list-top))
+                         (int visible-h)
+                         (int visual-n)
+                         (int visible-h)
+                         (when (some? @scroll) (Integer/valueOf (int @scroll)))
+                         t/dialog-border
+                         t/dialog-bg
+                         t/dialog-hint-key
+                         t/dialog-bg)
          (draw-hint-bar! g
                          left
                          hint-row
@@ -4354,7 +4356,7 @@
              (when key
                (cond
                  (instance? MouseAction key)
-                 (if-let [step (modal-wheel-step key)]
+                 (if-let [step (ScrollBar/wheelStep ^KeyStroke key)]
                    ;; Mouse wheel anywhere in the dialog — selection follows
                    ;; the wheel direction so the cursor stays in the visible
                    ;; window without having to chase it with arrow keys.
@@ -4362,14 +4364,18 @@
                        (swap! selected #(move-settings-selection rows % step))
                        (recur))
                    (let [was-dragging? (some? @scrollbar-drag-offset)
-                         drag (scrollbar/mouse-drag-step key
-                                                         {:col (+ lleft linner)
-                                                          :top list-top
-                                                          :track-h visible-h
-                                                          :total-h visual-n
-                                                          :inner-h visible-h
-                                                          :scroll @scroll}
-                                                         @scrollbar-drag-offset)
+                         ^ScrollBar$DragResult drag
+                         (ScrollBar/dragStep ^MouseAction key
+                                             Direction/VERTICAL
+                                             (TerminalPosition. (int (+ lleft linner))
+                                                                (int list-top))
+                                             (int visible-h)
+                                             (int visual-n)
+                                             (int visible-h)
+                                             (Integer/valueOf (int @scroll))
+                                             (when (some? @scrollbar-drag-offset)
+                                               (Integer/valueOf (int @scrollbar-drag-offset)))
+                                             1)
                          action (.getActionType ^MouseAction key)
                          pointer-target (settings-pointer-target key
                                                                  rows
@@ -4384,20 +4390,18 @@
                                                                   :list-top list-top
                                                                   :visible-h visible-h
                                                                   :selected @selected})
-                         scrollbar-interaction? (or was-dragging? (map? drag))]
+                         scrollbar-interaction? (or was-dragging? (and drag (not (.release drag))))]
 
-                     ;; `mouse-drag-step` reports every release as `:release`, so
-                     ;; only `was-dragging?` distinguishes a scrollbar release
-                     ;; from the release that completes an ordinary row click.
-                     (when (= drag :release) (vreset! scrollbar-drag-offset nil))
-                     (when-let [grip (:arm drag)]
-                       (vreset! scrollbar-drag-offset grip))
-                     (when-some [s (:scroll drag)]
-                       (reset! scroll s)
+                     ;; A release belongs to the scrollbar only when a drag was armed.
+                     (when (and drag (.release drag)) (vreset! scrollbar-drag-offset nil))
+                     (when-let [grip (and drag (.gripOffset drag))]
+                       (vreset! scrollbar-drag-offset (long grip)))
+                     (when-let [s (and drag (.scrollPosition drag))]
+                       (reset! scroll (long s))
                        ;; The window is selection-driven, so the cursor rides along
-                       ;; with the drag - otherwise the next paint recomputes
-                       ;; `scroll` from the old selection and the list snaps back.
-                       (when-let [row (settings-selection-for-window rows entries s visible-h)]
+                       ;; with the drag instead of snapping back on the next paint.
+                       (when-let [row
+                                  (settings-selection-for-window rows entries (long s) visible-h)]
                          (reset! selected row)))
                      (cond scrollbar-interaction? (do (vreset! pointer-down-target nil) (recur))
                            (= action MouseActionType/CLICK_DOWN)
@@ -4782,7 +4786,7 @@
         (.refresh screen Screen$RefreshType/DELTA)
         (let [key (read-modal-key! screen)]
           (when key
-            (if-let [wheel-step (modal-wheel-step key)]
+            (if-let [wheel-step (ScrollBar/wheelStep ^KeyStroke key)]
               (do (swap! selected #(p/clamp (+ (long %) (long wheel-step)) 0 (max 0 (dec total))))
                   (recur))
               (condp = (key-type key)
@@ -5613,13 +5617,17 @@
                             (draw-navigator-hit-line! g body-x hit-row body-w @query hit))))
                       (recur (rest remaining) (+ spacer-row (if spacer? 1 0)))))))
               (when (> total page-rows)
-                (scrollbar/draw! g
-                                 {:col scrollbar-col
-                                  :top body-top
-                                  :track-h list-budget
-                                  :total-h total
-                                  :inner-h page-rows
-                                  :scroll @scroll}))
+                (ScrollBar/draw g
+                                Direction/VERTICAL
+                                (TerminalPosition. (int scrollbar-col) (int body-top))
+                                (int list-budget)
+                                (int total)
+                                (int page-rows)
+                                (when (some? @scroll) (Integer/valueOf (int @scroll)))
+                                t/dialog-border
+                                t/dialog-bg
+                                t/dialog-hint-key
+                                t/dialog-bg))
               (draw-hint-bar! g
                               left
                               hint-row
@@ -5638,8 +5646,9 @@
               (if-not key
                 (recur)
                 (cond
-                  (modal-wheel-step key)
-                  (do (swap! selected #(p/clamp (+ (long %) (long (modal-wheel-step key)))
+                  (some? (ScrollBar/wheelStep ^KeyStroke key))
+                  (do (swap! selected #(p/clamp (+ (long %)
+                                                   (long (ScrollBar/wheelStep ^KeyStroke key)))
                                                 0
                                                 (max 0 (dec total))))
                       (recur))
@@ -5650,53 +5659,35 @@
                              (= action MouseActionType/CLICK_RELEASE)
                              (and (= action MouseActionType/CLICK_DOWN)
                                   (let [pos (.getPosition ^MouseAction key)]
-                                    (scrollbar/on-track? (.getColumn pos)
+                                    (ScrollBar/isOnTrack Direction/VERTICAL
+                                                         (.getColumn pos)
                                                          (.getRow pos)
-                                                         {:col scrollbar-col
-                                                          :top body-top
-                                                          :track-h list-budget
-                                                          :x-band 2}))))))
-                  (let [^MouseAction mouse key
-                        action (.getActionType mouse)
-                        pos (.getPosition mouse)
-                        mouse-x (.getColumn pos)
-                        mouse-y (.getRow pos)
-                        geometry (scrollbar/geometry total page-rows list-budget @scroll)
-                        apply-scroll! (fn [grip]
-                                        (let [next-scroll (or (scrollbar/scroll-from-mouse-y
-                                                                mouse-y
-                                                                body-top
-                                                                list-budget
-                                                                total
-                                                                page-rows
-                                                                grip)
-                                                              0)]
-                                          (reset! scroll next-scroll)
-                                          (swap! selected #(p/clamp %
-                                                                    next-scroll
-                                                                    (min (dec total)
-                                                                         (+ (long next-scroll)
-                                                                            (dec page-rows)))))))]
-
-                    (cond (= action MouseActionType/CLICK_RELEASE)
-                          (do (vreset! scrollbar-drag-offset nil) (recur))
-                          (and (= action MouseActionType/CLICK_DOWN)
-                               (some? geometry)
-                               (scrollbar/on-thumb? mouse-x
-                                                    mouse-y
-                                                    {:col scrollbar-col :top body-top :x-band 2}
-                                                    geometry))
-                          (let [thumb-top (+ body-top (long (:thumb-top-rel geometry)))]
-                            (vreset! scrollbar-drag-offset (- (long mouse-y) thumb-top))
-                            (recur))
-                          (= action MouseActionType/CLICK_DOWN)
-                          (let [grip (long (quot (long (or (:thumb-h geometry) 1)) 2))]
-                            (vreset! scrollbar-drag-offset grip)
-                            (apply-scroll! grip)
-                            (recur))
-                          (and (= action MouseActionType/DRAG) (some? @scrollbar-drag-offset))
-                          (do (apply-scroll! (long @scrollbar-drag-offset)) (recur))
-                          :else (recur)))
+                                                         (TerminalPosition. (int scrollbar-col)
+                                                                            (int body-top))
+                                                         (int list-budget)
+                                                         2))))))
+                  (let [^ScrollBar$DragResult drag
+                        (ScrollBar/dragStep ^MouseAction key
+                                            Direction/VERTICAL
+                                            (TerminalPosition. (int scrollbar-col) (int body-top))
+                                            (int list-budget)
+                                            (int total)
+                                            (int page-rows)
+                                            (Integer/valueOf (int @scroll))
+                                            (when (some? @scrollbar-drag-offset)
+                                              (Integer/valueOf (int @scrollbar-drag-offset)))
+                                            2)]
+                    (when (and drag (.release drag)) (vreset! scrollbar-drag-offset nil))
+                    (when-let [grip (and drag (.gripOffset drag))]
+                      (vreset! scrollbar-drag-offset (long grip)))
+                    (when-let [next-scroll (and drag (.scrollPosition drag))]
+                      (let [next-scroll (long next-scroll)]
+                        (reset! scroll next-scroll)
+                        (swap! selected #(p/clamp %
+                                                  next-scroll
+                                                  (min (dec total)
+                                                       (+ next-scroll (dec page-rows)))))))
+                    (recur))
                   (and (input/ctrl-modifier? key)
                        (= KeyType/Character (key-type key))
                        (= (lower-key-character key) \n))
@@ -5721,11 +5712,12 @@
                     (recur))
                   (input/ctrl-char? key \u)
                   (do (swap! show-empty-untitled? not) (reset-list! false) (recur))
-                  (input/paste-start? key) (do (let [pasted (drain-modal-paste! screen)]
-                                                 (when (seq pasted)
-                                                   (swap! query str (str/replace pasted #"\s+" " "))
-                                                   (reset-list! true)))
-                                               (recur))
+                  (= KeyType/PasteStart (.getKeyType ^KeyStroke key))
+                  (do (let [pasted (drain-modal-paste! screen)]
+                        (when (seq pasted)
+                          (swap! query str (str/replace pasted #"\s+" " "))
+                          (reset-list! true)))
+                      (recur))
                   :else
                   (condp = (key-type key)
                     KeyType/Escape nil

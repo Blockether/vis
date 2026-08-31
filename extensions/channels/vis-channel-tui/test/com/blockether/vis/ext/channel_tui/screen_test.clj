@@ -22,9 +22,9 @@
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.internal.external-opener :as opener]
             [lazytest.core :refer [defdescribe it expect]])
-  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+  (:import [com.googlecode.lanterna TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
-           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
+           [com.googlecode.lanterna.input KeyStroke KeyType]
            [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
@@ -51,11 +51,6 @@
 
 (def ^:private input-only-change? (deref #'screen/input-only-change?))
 
-(def ^:private mouse-wheel-delta (deref #'screen/mouse-wheel-delta))
-
-(def ^:private coalesce-wheel-input (deref #'screen/coalesce-wheel-input))
-
-(def ^:private coalesce-drag-input (deref #'screen/coalesce-drag-input))
 
 (def ^:private coalesced-drag-scroll-amount (deref #'screen/coalesced-drag-scroll-amount))
 
@@ -139,9 +134,9 @@
 
 (def ^:private authenticated-provider-config (deref #'screen/authenticated-provider-config))
 
-(def ^:private enable-terminal-escape-modes! (deref #'screen/enable-terminal-escape-modes!))
+(def ^:private enable-terminal-state! (deref #'screen/enable-terminal-state!))
 
-(def ^:private disable-terminal-escape-modes! (deref #'screen/disable-terminal-escape-modes!))
+(def ^:private disable-terminal-state! (deref #'screen/disable-terminal-state!))
 
 (def ^:private probe-terminal-cell-size! (deref #'screen/probe-terminal-cell-size!))
 
@@ -167,12 +162,6 @@
       (with-redefs [vis/tty-out
                     (delay (java.io.ByteArrayOutputStream.))
 
-                    input/enable-bracketed-paste!
-                    (record :enable-paste)
-
-                    input/enable-sgr-mouse!
-                    (record :enable-mouse)
-
                     input/disable-literal-next!
                     (record :disable-iexten)
 
@@ -181,12 +170,6 @@
 
                     input/set-default-bg!
                     (record :set-bg)
-
-                    input/disable-bracketed-paste!
-                    (record :disable-paste)
-
-                    input/disable-sgr-mouse!
-                    (record :disable-mouse)
 
                     input/reset-default-bg!
                     (record :reset-bg)
@@ -197,10 +180,9 @@
                     input/restore-literal-next!
                     (record :restore-iexten)]
 
-        (enable-terminal-escape-modes! nil)
-        (disable-terminal-escape-modes! nil))
-      (expect (= [:enable-paste :enable-mouse :disable-iexten :disable-ixon :set-bg :disable-paste
-                  :disable-mouse :reset-bg :restore-ixon :restore-iexten]
+        (enable-terminal-state! nil)
+        (disable-terminal-state! nil))
+      (expect (= [:disable-iexten :disable-ixon :set-bg :reset-bg :restore-ixon :restore-iexten]
                  @calls)))))
 
 (defdescribe terminal-cell-size-probe-test
@@ -325,67 +307,6 @@
                                                 nil
                                                 header-region))))))
 
-(defdescribe wheel-coalescing-test
-             (it "classifies wheel actions to signed deltas"
-                 (let [up
-                       (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 10 4))
-
-                       down
-                       (MouseAction. MouseActionType/SCROLL_DOWN 1 (TerminalPosition. 10 4))
-
-                       click
-                       (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 10 4))]
-
-                   (expect (= -1 (mouse-wheel-delta up)))
-                   (expect (= 1 (mouse-wheel-delta down)))
-                   (expect (nil? (mouse-wheel-delta click)))))
-             (it "coalesces wheel floods and preserves first non-wheel key"
-                 (let [first-wheel
-                       (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 3 7))
-
-                       second-wheel
-                       (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 3 7))
-
-                       non-wheel
-                       (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 3 7))
-
-                       queue
-                       (atom [second-wheel non-wheel])
-
-                       poll-next
-                       (fn []
-                         (let [v @queue]
-                           (when-let [k (first v)]
-                             (swap! queue subvec 1)
-                             k)))
-
-                       {:keys [wheel-delta next-key]}
-                       (coalesce-wheel-input first-wheel poll-next)]
-
-                   (expect (= -2 wheel-delta))
-                   (expect (= non-wheel next-key))
-                   (expect (empty? @queue))))
-             (it "drops net-zero wheel jitter (up then down)"
-                 (let [first-wheel
-                       (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 1 1))
-
-                       second-wheel
-                       (MouseAction. MouseActionType/SCROLL_DOWN 1 (TerminalPosition. 1 1))
-
-                       queue
-                       (atom [second-wheel])
-
-                       poll-next
-                       (fn []
-                         (let [v @queue]
-                           (when-let [k (first v)]
-                             (swap! queue subvec 1)
-                             k)))
-
-                       {:keys [wheel-delta]}
-                       (coalesce-wheel-input first-wheel poll-next)]
-
-                   (expect (nil? wheel-delta)))))
 
 ;; Reported in Vis session 22b3489b-336f-42d0-9bc8-806dff2de86f: scrolling a live view
 ;; with a MacBook trackpad crawled at a third of the speed of the transcript beside it,
@@ -502,38 +423,8 @@
           (expect (= ["view-1" {:action :select :node-id "jobs" :item-ids ["macos"]}]
                      (deref local-called 1000 ::timed-out)))))))
 
-(defdescribe drag-coalescing-test
-             (it "coalesces drag bursts and keeps last drag event + first non-drag"
-                 (let [d1
-                       (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 5))
-
-                       d2
-                       (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 6))
-
-                       d3
-                       (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 7))
-
-                       click
-                       (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 5 7))
-
-                       queue
-                       (atom [d2 d3 click])
-
-                       poll-next
-                       (fn []
-                         (let [v @queue]
-                           (when-let [k (first v)]
-                             (swap! queue subvec 1)
-                             k)))
-
-                       {:keys [key drag-events next-key]}
-                       (coalesce-drag-input d1 poll-next)]
-
-                   (expect (= 3 drag-events))
-                   (expect (= d3 key))
-                   (expect (= click next-key))
-                   (expect (empty? @queue))))
-             (it "scales drag auto-scroll amount with a bounded coalesce factor"
+(defdescribe drag-selection-auto-scroll-test
+             (it "scales auto-scroll with Lanterna's bounded coalesced drag count"
                  (expect (= 4 (coalesced-drag-scroll-amount 4 1)))
                  (expect (= 12 (coalesced-drag-scroll-amount 4 3)))
                  ;; bounded by drag-autoscroll-max-coalesce-factor (= 8)
@@ -863,10 +754,10 @@
                                                 nil)
            #'screen/register-terminal-interrupt-handlers! (fn []
                                                             nil)
-           #'screen/enable-terminal-escape-modes! (fn [_]
-                                                    nil)
-           #'screen/disable-terminal-escape-modes! (fn [_]
-                                                     nil)
+           #'screen/enable-terminal-state! (fn [_]
+                                             nil)
+           #'screen/disable-terminal-state! (fn [_]
+                                              nil)
            #'screen/install-ssh-passphrase-prompt! (fn [_]
                                                      nil)
            #'screen/start-provider-limits-thread! (fn []

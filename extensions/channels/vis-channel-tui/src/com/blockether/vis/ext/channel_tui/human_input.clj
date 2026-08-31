@@ -22,12 +22,13 @@
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
-            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.internal.view :as engine]
             [com.blockether.vis.internal.view.spec :as hi-spec])
-  (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
+  (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.gui2 Direction ScrollBar]
+           [com.googlecode.lanterna.input KeyStroke KeyType]))
 
 (set! *warn-on-reflection* true)
 
@@ -1215,7 +1216,7 @@
 
    The scrollbar sits in the LANE every other scrollable dialog uses — the last
    column INSIDE the right rail (`left + inner-w`), painted by the shared
-   `scrollbar/draw!`. That lane is the clear column the body's right lead already
+   Lanterna's `ScrollBar`. That lane is the clear column the body's right lead already
    reserves, so the bar costs the prose nothing and needs no second wrap pass. A
    thumb painted ON the rail turned the band's own border into a control: the box
    gained a moving glyph no other dialog's border has, and there was no gutter
@@ -1297,14 +1298,17 @@
            ;; The gutter lane every scrollable dialog draws its bar in: the last
            ;; column inside the right rail, which the body's own lead keeps clear.
            (when is-overflowing
-             (scrollbar/draw! g
-                              {:col (+ left inner-w)
-                               :top body-top
-                               :track-h body-visible
-                               :total-h total
-                               :inner-h body-visible
-                               :scroll start
-                               :track-fg t/border-fg}))
+             (ScrollBar/draw g
+                             Direction/VERTICAL
+                             (TerminalPosition. (int (+ left inner-w)) (int body-top))
+                             (int body-visible)
+                             (int total)
+                             (int body-visible)
+                             (when (some? start) (Integer/valueOf (int start)))
+                             t/border-fg
+                             t/dialog-bg
+                             t/dialog-hint-key
+                             t/dialog-bg))
            (tr/draw-band-border! g region sep-row rule-at top-limit)
            (p/clear-styles! g)
            cursor))))))

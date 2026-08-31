@@ -100,7 +100,7 @@
                    (try (dotimes [_ 5]
                           (.addInput terminal (wheel-down)))
                         (.addInput terminal (KeyStroke. KeyType/Enter))
-                        (expect (= 1 (:id (dlg/select-dialog! screen "Items" items))))
+                        (expect (= 5 (:id (dlg/select-dialog! screen "Items" items))))
                         (finally (.stopScreen screen))))))
 
 ;; ── run-modal! component spike ──────────────────────────────────────────────
@@ -189,7 +189,7 @@
                        (reconcile init geom)
 
                        burst
-                       (MouseAction. MouseActionType/SCROLL_DOWN 5 (TerminalPosition. 10 10))]
+                       (MouseAction. MouseActionType/SCROLL_DOWN 5 (TerminalPosition. 10 10) 5)]
 
                    (expect (= 5 (:selected (on-key s0 burst geom)))))))
 
@@ -206,7 +206,7 @@
                    (try (dotimes [_ 5]
                           (.addInput terminal (wheel-down)))
                         (.addInput terminal (KeyStroke. KeyType/Enter))
-                        (expect (= {:action :switch :id "1"}
+                        (expect (= {:action :switch :id "5"}
                                    (dlg/session-picker-dialog! screen sessions nil)))
                         (finally (.stopScreen screen))))))
 
@@ -656,22 +656,6 @@
       (expect (zero? @asked))
       (expect (nil? @result)))))
 
-(defdescribe scrollbar-geometry-test
-             (it "scrollbar geometry sanity (canonical primitive)"
-                 ;; Canonical primitive: 20 items in a 10-row viewport, scroll=5
-                 ;; ⇒ 1-cell thumb halfway down the 10-row track. Overflow gone
-                 ;; when total ≤ inner (3 items in a 10-row view).
-                 (let [scrollbar-geom
-                       (requiring-resolve 'com.blockether.vis.ext.channel-tui.scrollbar/geometry)
-
-                       g
-                       (scrollbar-geom 20 10 5)]
-
-                   (expect (= 1 (:thumb-h g)))
-                   (expect (= 10 (:track-h g)))
-                   (expect (= 10 (:max-scroll g)))
-                   (expect (= 4 (:thumb-top-rel g)))
-                   (expect (nil? (scrollbar-geom 3 10 0))))))
 
 (defdescribe settings-dialog-footprint-and-indent-test
              (it "shared dialogs use the same footprint as settings"

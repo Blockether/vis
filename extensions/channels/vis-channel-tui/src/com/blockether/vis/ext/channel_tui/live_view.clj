@@ -38,16 +38,17 @@
    hits the newest one first."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.interactions :as interactions]
             [com.blockether.vis.ext.channel-tui.columns :as columns]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.transient :as tr]
             [com.blockether.vis.internal.view.materializer :as live]
-            [com.blockether.vis.internal.view.spec :as hi-spec]))
+            [com.blockether.vis.internal.view.spec :as hi-spec])
+  (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.gui2 Direction ScrollBar]))
 
 (set! *warn-on-reflection* true)
 
@@ -1293,13 +1294,13 @@
         ;; is what the shared selection patch names; the next live patch repaints every
         ;; attached TUI and Companion from that one engine state.
         (when (:is-selectable entry)
-          (cr/register! {:bounds
-                         {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
-                         :kind :live-select
-                         :view-id view-id
-                         :node-id (:node-id entry)
-                         :item-id (:item-id entry)
-                         :enabled? true})))
+          (.register interactions/hit-map
+                     {:bounds {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                      :kind :live-select
+                      :view-id view-id
+                      :node-id (:node-id entry)
+                      :item-id (:item-id entry)
+                      :enabled? true})))
 
     :link
     (do (paint-segments! g
@@ -1319,21 +1320,22 @@
                           :file
 
                           nil)]
-          (cr/register! {:bounds
-                         {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
-                         :kind kind
-                         :url (:target entry)
-                         :enabled? true})))
+          (.register interactions/hit-map
+                     {:bounds {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                      :kind kind
+                      :url (:target entry)
+                      :enabled? true})))
 
     ;; `+ N more` is a CONTROL, so it wears the accent the rest of the TUI gives
     ;; a thing you can press, and it registers the region that expands its node.
     :more
     (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
-        (cr/register! {:bounds {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
-                       :kind :live-expand
-                       :view-id view-id
-                       :node-id (:node-id entry)
-                       :enabled? true}))
+        (.register interactions/hit-map
+                   {:bounds {:row row :col (+ (long left) 2) :width (max 0 (- (long inner-w) 3))}
+                    :kind :live-expand
+                    :view-id view-id
+                    :node-id (:node-id entry)
+                    :enabled? true}))
 
     ;; Nodes standing SIDE BY SIDE: one plan row carries one cell per column, and
     ;; each cell is painted into its own slice of the band by THIS function — a
@@ -1351,10 +1353,11 @@
     ;; full surface while patches continue to land behind it.
     :minimized
     (do (paint-styled! g left row inner-w t/dialog-hint-key [p/BOLD] (:text entry))
-        (cr/register! {:bounds {:row row :col (inc (long left)) :width (long inner-w)}
-                       :kind :live-restore
-                       :view-id view-id
-                       :enabled? true}))
+        (.register interactions/hit-map
+                   {:bounds {:row row :col (inc (long left)) :width (long inner-w)}
+                    :kind :live-restore
+                    :view-id view-id
+                    :enabled? true}))
 
     ;; A view standing BEHIND the one in front: one line saying where it got to.
     ;; Nothing here is pressable, because a run that has ENDED is not on the band
@@ -1418,10 +1421,11 @@
 
       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
       (p/styled g [p/BOLD] (p/put-str! g col row label))
-      (cr/register! {:bounds {:row row :col col :width width}
-                     :kind (if (minimized? pane) :live-restore :live-minimize)
-                     :view-id (view-id pane)
-                     :enabled? true}))))
+      (.register interactions/hit-map
+                 {:bounds {:row row :col col :width width}
+                  :kind (if (minimized? pane) :live-restore :live-minimize)
+                  :view-id (view-id pane)
+                  :enabled? true}))))
 
 
 (defn- band-title "The Live View title." [pane now-ms] (title-line pane now-ms))
@@ -1600,14 +1604,18 @@
            ;; The gutter lane every scrollable dialog draws its bar in: the last
            ;; column inside the right rail, which the body's own lead keeps clear.
            (when (> total body-visible)
-             (scrollbar/draw! g
-                              {:col (+ left inner-w)
-                               :top (+ (long body-top) (count collapsed))
-                               :track-h body-visible
-                               :total-h total
-                               :inner-h body-visible
-                               :scroll start
-                               :track-fg t/border-fg}))
+             (ScrollBar/draw g
+                             Direction/VERTICAL
+                             (TerminalPosition. (int (+ left inner-w))
+                                                (int (+ (long body-top) (count collapsed))))
+                             (int body-visible)
+                             (int total)
+                             (int body-visible)
+                             (when (some? start) (Integer/valueOf (int start)))
+                             t/border-fg
+                             t/dialog-bg
+                             t/dialog-hint-key
+                             t/dialog-bg))
            (tr/draw-band-border! g region sep-row rule-at top-limit)
            (p/clear-styles! g)
            (if is-minimized

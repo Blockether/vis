@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.header-test
   (:require [clojure.string :as str]
-            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.interactions :as interactions]
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -57,15 +57,15 @@
         (TerminalScreen. terminal)]
 
     (try (.startScreen screen)
-         (cr/reset!)
-         (cr/begin-frame!)
+         (.reset interactions/hit-map)
+         (.beginFrame interactions/hit-map)
          (header/draw-header! (.newTextGraphics screen) db 0 cols)
-         (cr/commit-frame!)
+         (.commitFrame interactions/hit-map)
          {:row (apply str
                  (for [x (range cols)]
                    (.getCharacterString (.getBackCharacter screen (int x) 1))))
           :characters (mapv #(.getBackCharacter screen (int %) 1) (range cols))
-          :tabs (->> (cr/current)
+          :tabs (->> (.current interactions/hit-map)
                      (filter #(and (= :workspace-entry (:kind %)) (integer? (:index %))))
                      (sort-by :index)
                      vec)}
@@ -110,15 +110,15 @@
           writes
           (atom [])]
 
-      (cr/reset!)
-      (cr/begin-frame!)
+      (.reset interactions/hit-map)
+      (.beginFrame interactions/hit-map)
       (header/draw-header! (dummy-text-graphics writes) db 0 cols)
-      (cr/commit-frame!)
+      (.commitFrame interactions/hit-map)
       (let [copy-hit
-            (some #(when (= :copy-id (:kind %)) %) (cr/current))
+            (some #(when (= :copy-id (:kind %)) %) (.current interactions/hit-map))
 
             md-hit
-            (some #(when (= :copy-as-markdown (:kind %)) %) (cr/current))]
+            (some #(when (= :copy-as-markdown (:kind %)) %) (.current interactions/hit-map))]
 
         (expect (= uuid (:text copy-hit)))
         (expect (= {:row 1 :col expected-col :width id-w} (:bounds copy-hit)))
@@ -133,12 +133,12 @@
             g
             (dummy-text-graphics)]
 
-        (cr/reset!)
-        (cr/begin-frame!)
+        (.reset interactions/hit-map)
+        (.beginFrame interactions/hit-map)
         (binding [header/*register-click-regions?* false]
           (header/draw-header! g db 0 80))
-        (cr/commit-frame!)
-        (expect (= [] (cr/current)))))
+        (.commitFrame interactions/hit-map)
+        (expect (= [] (.current interactions/hit-map)))))
   (it
     "renders notifications only on the left and suppresses duplicate channel status text"
     (let [uuid
@@ -174,19 +174,19 @@
           writes
           (atom [])]
 
-      (cr/reset!)
+      (.reset interactions/hit-map)
       (with-redefs-fn {#'header/latest-notification (fn []
                                                       {:text notification :level :success})}
         (fn []
-          (cr/begin-frame!)
+          (.beginFrame interactions/hit-map)
           (header/draw-header! (dummy-text-graphics writes) db 0 cols)
-          (cr/commit-frame!)))
+          (.commitFrame interactions/hit-map)))
       (let [write-by-text
             (fn [text]
               (some #(when (= text (:text %)) %) @writes))
 
             copy-hit
-            (some #(when (= :copy-id (:kind %)) %) (cr/current))]
+            (some #(when (= :copy-id (:kind %)) %) (.current interactions/hit-map))]
 
         (expect (= 1 (:col (write-by-text notification))))
         (expect (= t/footer-fg-strong (:fg (write-by-text notification))))
@@ -213,13 +213,13 @@
             writes
             (atom [])]
 
-        (cr/reset!)
+        (.reset interactions/hit-map)
         (with-redefs-fn {#'header/latest-notification (fn []
                                                         nil)}
           (fn []
-            (cr/begin-frame!)
+            (.beginFrame interactions/hit-map)
             (header/draw-header! (dummy-text-graphics writes) db 0 80)
-            (cr/commit-frame!)))
+            (.commitFrame interactions/hit-map)))
         (let [write-by-text (fn [text]
                               (some #(when (= text (:text %)) %) @writes))]
           (expect (= 1 (:col (write-by-text status-shown))))
@@ -240,19 +240,19 @@
              :channel-status {:voice/piper
                               {:text status :phase :ready :level :info :updated-at-ms 1}}}]
 
-        (cr/reset!)
+        (.reset interactions/hit-map)
         (with-redefs-fn {#'header/latest-notification (fn []
                                                         nil)}
           (fn []
-            (cr/begin-frame!)
+            (.beginFrame interactions/hit-map)
             (header/draw-header! (dummy-text-graphics writes) db 0 80)
-            (cr/commit-frame!)))
+            (.commitFrame interactions/hit-map)))
         (expect (not-any? #(= status (:text %)) @writes)))))
 
 (defdescribe
   draw-header-color-test
   (it "uses a subtly different foreground for the hovered header copy affordance only"
-      (cr/reset!)
+      (.reset interactions/hit-map)
       (let [writes
             (atom [])
 
@@ -265,16 +265,16 @@
             db
             {:title "New Session" :session {:id uuid}}]
 
-        (cr/begin-frame!)
+        (.beginFrame interactions/hit-map)
         (header/draw-header! g db 0 160)
-        (cr/commit-frame!)
-        (let [copy-hit (some #(when (= :copy-id (:kind %)) %) (cr/current))]
+        (.commitFrame interactions/hit-map)
+        (let [copy-hit (some #(when (= :copy-id (:kind %)) %) (.current interactions/hit-map))]
           (expect (some? copy-hit))
-          (expect (true? (cr/set-hovered! copy-hit)))
+          (expect (true? (.setHovered interactions/hit-map copy-hit)))
           (reset! writes [])
-          (cr/begin-frame!)
+          (.beginFrame interactions/hit-map)
           (header/draw-header! g db 0 160)
-          (cr/commit-frame!)
+          (.commitFrame interactions/hit-map)
           (let [title-write
                 (some #(when (and (string? (:text %)) (str/includes? (:text %) "New Session")) %)
                       @writes)
@@ -357,7 +357,7 @@
   draw-header-tab-entries-test
   (it
     "shows clickable arrows when workspaces overflow the 60 percent center slot"
-    (cr/reset!)
+    (.reset interactions/hit-map)
     (let [writes
           (atom [])
 
@@ -375,18 +375,20 @@
            :active-tab-id :tab-5
            :tabs tabs}]
 
-      (cr/begin-frame!)
+      (.beginFrame interactions/hit-map)
       (header/draw-header! g db 0 160)
-      (cr/commit-frame!)
+      (.commitFrame interactions/hit-map)
       (let [left-arrow
-            (some #(when (and (= :workspace-entry (:kind %)) (= :prev (:index %))) %) (cr/current))
+            (some #(when (and (= :workspace-entry (:kind %)) (= :prev (:index %))) %)
+                  (.current interactions/hit-map))
 
             right-arrow
-            (some #(when (and (= :workspace-entry (:kind %)) (= :next (:index %))) %) (cr/current))
+            (some #(when (and (= :workspace-entry (:kind %)) (= :next (:index %))) %)
+                  (.current interactions/hit-map))
 
             active-hit
             (some #(when (and (= :workspace-entry (:kind %)) (= :tab-5 (:workspace-id %))) %)
-                  (cr/current))]
+                  (.current interactions/hit-map))]
 
         ;; The tab strip is shifted right by 4 cols — the leftmost ` + ` new-session
         ;; button (3 cols) plus a 1-col gap — so the prev arrow moved 51→55. The
@@ -396,9 +398,9 @@
         (expect (= {:row 1 :col 55 :width 3} (:bounds left-arrow)))
         (expect (= {:row 1 :col 106 :width 3} (:bounds right-arrow)))
         (expect (some? active-hit))
-        (expect (= left-arrow (cr/lookup 55 1)))
+        (expect (= left-arrow (.lookup interactions/hit-map 55 1)))
         ;; col 51 is now the ` + ` new-session button, ahead of the tab strip.
-        (expect (= :header-new-session (:kind (cr/lookup 51 1))))
+        (expect (= :header-new-session (:kind (.lookup interactions/hit-map 51 1))))
         ;; The right nav arrow sits at the centre's right edge, which the
         ;; right-aligned F1/F2/F3 chip cluster paints over - so it is
         ;; registered + correctly bounded but not the topmost click target.
@@ -411,7 +413,7 @@
     ;; cell is 19 wide.
     ;; tab-entry-padding=1 reserves a space on each side, so the rendered text
     ;; starts and ends with a space even when the label is short.
-    (cr/reset!)
+    (.reset interactions/hit-map)
     (let [writes
           (atom [])
 
@@ -424,9 +426,9 @@
            :active-tab-id :main
            :tabs [{:id :main :label "Main"} {:id :two :label "Two"} {:id :three :label "Three"}]}]
 
-      (cr/begin-frame!)
+      (.beginFrame interactions/hit-map)
       (header/draw-header! g db 0 166)
-      (cr/commit-frame!)
+      (.commitFrame interactions/hit-map)
       (let [tab-writes
             (filter #(and (= 1 (:row %)) (string? (:text %))) @writes)
 
@@ -444,7 +446,7 @@
         (expect (= 16 (p/display-width (:text main-write))))
         (expect (some #(str/includes? (str (:text %)) "✕") tab-writes)))))
   (it "omits the ✕ close button when there's only ONE session (the last tab can't be closed)"
-      (cr/reset!)
+      (.reset interactions/hit-map)
       (let [writes
             (atom [])
 
@@ -457,18 +459,18 @@
              :active-tab-id :main
              :tabs [{:id :main :label "Main"}]}]
 
-        (cr/begin-frame!)
+        (.beginFrame interactions/hit-map)
         (header/draw-header! g db 0 80)
-        (cr/commit-frame!)
+        (.commitFrame interactions/hit-map)
         (let [tab-writes (filter #(and (= 1 (:row %)) (string? (:text %))) @writes)]
           (expect (not-any? #(str/includes? (str (:text %)) "✕") tab-writes))
-          (expect (empty? (filter #(= :close-tab (:kind %)) (cr/current)))))))
+          (expect (empty? (filter #(= :close-tab (:kind %)) (.current interactions/hit-map)))))))
   (it "truncates oversized workspace labels with an ellipsis instead of a hard cut"
       ;; Five long-labelled workspaces in a 48-col centre slot → cell width 9 (or 10
       ;; for the first three with the +1 remainder). After 2-col padding the
       ;; inner area is < label width, so truncation kicks in with the
       ;; ellipsis glyph.
-      (cr/reset!)
+      (.reset interactions/hit-map)
       (let [writes
             (atom [])
 
@@ -483,9 +485,9 @@
                            {:id (keyword (str "t-" i)) :label (str "LongTabLabel" i)})
                          (range 5))}]
 
-        (cr/begin-frame!)
+        (.beginFrame interactions/hit-map)
         (header/draw-header! g db 0 160)
-        (cr/commit-frame!)
+        (.commitFrame interactions/hit-map)
         (let [tab-writes
               (filter #(and (= 1 (:row %)) (string? (:text %))) @writes)
 
@@ -497,7 +499,7 @@
       ;; cols=400 → centre slot ≈ 240. Without a cap fluid layout would show
       ;; all 12 workspaces; the policy caps the visible window at 8 and the rest
       ;; reach via the prev/next arrows.
-      (cr/reset!)
+      (.reset interactions/hit-map)
       (let [writes
             (atom [])
 
@@ -515,15 +517,16 @@
              :active-tab-id :big-0
              :tabs tabs}]
 
-        (cr/begin-frame!)
+        (.beginFrame interactions/hit-map)
         (header/draw-header! g db 0 400)
-        (cr/commit-frame!)
+        (.commitFrame interactions/hit-map)
         (let [tab-hits-by-id
-              (filter #(and (= :workspace-entry (:kind %)) (integer? (:index %))) (cr/current))
+              (filter #(and (= :workspace-entry (:kind %)) (integer? (:index %)))
+                      (.current interactions/hit-map))
 
               has-arrows?
-              (boolean (and (some #(= :prev (:index %)) (cr/current))
-                            (some #(= :next (:index %)) (cr/current))))]
+              (boolean (and (some #(= :prev (:index %)) (.current interactions/hit-map))
+                            (some #(= :next (:index %)) (.current interactions/hit-map))))]
 
           (expect (= 8 (count tab-hits-by-id)))
           (expect has-arrows?))))
@@ -531,7 +534,7 @@
       ;; cols=150 -> centre slot 54, natural fit = quot(54,14) = 3 < min=5,
       ;; so we degrade to the natural fit instead of squeezing five
       ;; unreadable workspaces into 54 cols.
-      (cr/reset!)
+      (.reset interactions/hit-map)
       (let [writes
             (atom [])
 
@@ -549,11 +552,11 @@
              :active-tab-id :narrow-0
              :tabs tabs}]
 
-        (cr/begin-frame!)
+        (.beginFrame interactions/hit-map)
         (header/draw-header! g db 0 150)
-        (cr/commit-frame!)
+        (.commitFrame interactions/hit-map)
         (let [tab-hits-by-id (filter #(and (= :workspace-entry (:kind %)) (integer? (:index %)))
-                                     (cr/current))]
+                                     (.current interactions/hit-map))]
           (expect (= 3 (count tab-hits-by-id)))))))
 
 (defdescribe
@@ -564,7 +567,7 @@
    painted exactly like one getting on with the job, and it stood there until
    somebody happened to open that tab."
   (it "paints a parked background tab's label in the warning colour"
-      (cr/reset!)
+      (.reset interactions/hit-map)
       (let [writes
             (atom [])
 
@@ -584,13 +587,13 @@
             (fn [needle]
               (some #(when (str/includes? (str (:text %)) needle) %) @writes))]
 
-        (cr/begin-frame!)
+        (.beginFrame interactions/hit-map)
         (header/draw-header! g db 0 160)
-        (cr/commit-frame!)
+        (.commitFrame interactions/hit-map)
         (expect (= t/warning-fg (:fg (write-with "Parked"))))
         (expect (not= t/warning-fg (:fg (write-with "Front"))))))
   (it "leaves the strip alone when no tab is waiting on anybody"
-      (cr/reset!)
+      (.reset interactions/hit-map)
       (let [writes
             (atom [])
 
@@ -603,8 +606,8 @@
              :active-tab-id :tab-1
              :tabs [{:id :tab-1 :label "Front"} {:id :tab-2 :label "Quiet"}]}]
 
-        (cr/begin-frame!)
+        (.beginFrame interactions/hit-map)
         (header/draw-header! g db 0 160)
-        (cr/commit-frame!)
+        (.commitFrame interactions/hit-map)
         (expect (not= t/warning-fg
                       (:fg (some #(when (str/includes? (str (:text %)) "Quiet") %) @writes)))))))

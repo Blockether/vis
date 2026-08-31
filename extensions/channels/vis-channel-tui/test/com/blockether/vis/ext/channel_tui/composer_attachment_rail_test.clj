@@ -2,7 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.capture :as cap]
-            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.interactions :as interactions]
             [com.blockether.vis.ext.channel-tui.composer-attachment-rail :as rail]
             [lazytest.core :refer [defdescribe it expect]]))
 
@@ -17,14 +17,14 @@
 
 (defn- paint-rail
   [cols focused?]
-  (cr/begin-frame!)
+  (.beginFrame interactions/hit-map)
   (let [capture (cap/capture!
                   {:cols cols
                    :rows 5
                    :paint! (fn [{:keys [g]}]
                              (rail/draw! g attachments 1 cols {:focused? focused? :focused-index 1})
-                             (cr/commit-frame!))})]
-    {:capture capture :regions (cr/current)}))
+                             (.commitFrame interactions/hit-map))})]
+    {:capture capture :regions (.current interactions/hit-map)}))
 
 (defdescribe composer-attachment-rail
              (it "keeps every staged item individually visible with readable fallback metadata"

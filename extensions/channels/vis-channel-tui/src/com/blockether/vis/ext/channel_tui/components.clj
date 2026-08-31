@@ -14,15 +14,16 @@
    (the click region's `:kind`), keeping `header.clj` a thin layout caller."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.interactions :as interactions]
             [com.blockether.vis.ext.channel-tui.dialogs :as dialogs]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
-            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.header :as vh]
-            [com.blockether.vis.internal.format :as fmt]))
+            [com.blockether.vis.internal.format :as fmt])
+  (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.gui2 Direction ScrollBar]))
 
 (set! *unchecked-math* :warn-on-boxed)
 
@@ -90,7 +91,7 @@
    consumed width (`close-button-width`)."
   [g col row _tab-fg _tab-bg workspace-id register?]
   (let [hovered
-        (cr/hovered)
+        (.hovered interactions/hit-map)
 
         hovered?
         (and (= :close-tab (:kind hovered)) (= workspace-id (:workspace-id hovered)))]
@@ -103,11 +104,12 @@
     (p/put-str! g col row close-button-glyph)
     (p/clear-styles! g)
     (when register?
-      (cr/register! {:bounds {:row row :col col :width close-button-width}
-                     :kind :close-tab
-                     :workspace-id workspace-id
-                     :text workspace-id
-                     :enabled? true}))
+      (.register interactions/hit-map
+                 {:bounds {:row row :col col :width close-button-width}
+                  :kind :close-tab
+                  :workspace-id workspace-id
+                  :text workspace-id
+                  :enabled? true}))
     close-button-width))
 
 (defn button!
@@ -126,7 +128,7 @@
          (p/display-width label)
 
          hov
-         (cr/hovered)
+         (.hovered interactions/hit-map)
 
          hovered?
          (and (= kind (:kind hov))
@@ -157,8 +159,8 @@
      (p/put-str! g col row label)
      (p/clear-styles! g)
      (when register?
-       (cr/register! (merge {:bounds {:row row :col col :width w} :kind kind :enabled? true}
-                            extra)))
+       (.register interactions/hit-map
+                  (merge {:bounds {:row row :col col :width w} :kind kind :enabled? true} extra)))
      w)))
 
 (defn action-button!
@@ -207,8 +209,8 @@
      (p/put-str! g col row (str " " label " "))
      (p/clear-styles! g)
      (when (and register? kind)
-       (cr/register! (merge {:bounds {:row row :col col :width w} :kind kind :enabled? true}
-                            extra)))
+       (.register interactions/hit-map
+                  (merge {:bounds {:row row :col col :width w} :kind kind :enabled? true} extra)))
      w)))
 
 (def ^:private find-bar-buttons
@@ -549,12 +551,13 @@
       (p/put-str! g (+ left lead (count num-str) 1) row "|"))
     (p/clear-styles! g)
     (when register?
-      (cr/register! {:bounds {:row row :col left :width width}
-                     :kind :workspace-entry
-                     :index index
-                     :workspace-id workspace-id
-                     :text workspace-id
-                     :enabled? true}))
+      (.register interactions/hit-map
+                 {:bounds {:row row :col left :width width}
+                  :kind :workspace-entry
+                  :index index
+                  :workspace-id workspace-id
+                  :text workspace-id
+                  :enabled? true}))
     (when show-close? (close-button! g (+ left inner-w) row fg bg workspace-id register?))
     ;; Status border LAST, over the fully painted cell:
     ;;   :ready   -> fold a steady UNDERLINE into every cell (solid green line);
@@ -730,7 +733,7 @@
         bounds
 
         hovered
-        (cr/hovered)
+        (.hovered interactions/hit-map)
 
         hovered?
         (= kind (:kind hovered))
@@ -754,7 +757,8 @@
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g col title-row label)
     (p/clear-styles! g)
-    (cr/register! {:bounds {:row title-row :col col :width w} :kind kind :enabled? true})
+    (.register interactions/hit-map
+               {:bounds {:row title-row :col col :width w} :kind kind :enabled? true})
     nil))
 
 (defn- box-grid-lines
@@ -836,7 +840,7 @@
   "Paint the scroll plumbing both modal overlays (F1 help, F2 context) share:
    clamp `scroll` to `[0, (- (count lines) content-h)]`, window `lines` by that
    effective offset and paint each visible row via `paint-line` (a
-   `(fn [screen-row-i line])`), draw the shared `scrollbar/draw!` in `sb-col`
+   `(fn [screen-row-i line])`), draw Lanterna's `ScrollBar` in `sb-col`
    when the content overflows, and a right-aligned `N-M / total` position hint
    on `hint-row` (anchored to `body-right`). `geom` is
    `{:content-top :content-h :hint-row :sb-col :body-right}`. Returns
@@ -861,13 +865,17 @@
     (dotimes [i shown-n]
       (paint-line i (nth lines (+ (long eff) i))))
     (when sb?
-      (scrollbar/draw! g
-                       {:col sb-col
-                        :top content-top
-                        :track-h content-h
-                        :total-h n
-                        :inner-h content-h
-                        :scroll eff}))
+      (ScrollBar/draw g
+                      Direction/VERTICAL
+                      (TerminalPosition. (int sb-col) (int content-top))
+                      (int content-h)
+                      (int n)
+                      (int content-h)
+                      (when (some? eff) (Integer/valueOf (int eff)))
+                      t/dialog-border
+                      t/dialog-bg
+                      t/dialog-hint-key
+                      t/dialog-bg))
     (when (and hint-row sb?)
       (let [pos
             (str (inc (long eff)) "–" (+ (long eff) (long shown-n)) " / " n)
@@ -1519,12 +1527,13 @@
             ;; A meta row tagged with :fact-key gets a click region so
             ;; clicking the `> N files` glyph toggles its path list.
             (when-let [fk (:fact-key (meta segs))]
-              (cr/register! {:bounds {:row r
-                                      :col (+ (long left) 1)
-                                      :width (max 0 (- (long text-right) (+ (long left) 1)))}
-                             :kind :toggle-fact-files
-                             :fact-key fk
-                             :enabled? true}))
+              (.register interactions/hit-map
+                         {:bounds {:row r
+                                   :col (+ (long left) 1)
+                                   :width (max 0 (- (long text-right) (+ (long left) 1)))}
+                          :kind :toggle-fact-files
+                          :fact-key fk
+                          :enabled? true}))
             (loop [x (+ (long left) 1)
                    ss segs]
 

@@ -998,20 +998,16 @@
           (expect (= "Open a session first to choose its model" (first @notified)))))))
 
 (defdescribe scrollbar-state-test
-             (let [scroll-to-y-fn (-> #'state/event-registry
-                                      deref
-                                      deref
-                                      (get :scroll-to-y)
-                                      :fn)]
-               (it "a scrollbar drag above the bottom parks at the mapped offset (mode :at)"
-                   ;; total-h 360, inner-h 56 -> max-s 304; track-h 56, denom 55;
-                   ;; mouse-y 28 -> fraction 28/55 -> offset round(.509*304)=155.
-                   (let [r (scroll-to-y-fn {:scroll scroll/follow} [:scroll-to-y 28 0 56 360 56])]
+             (let [scrollbar-to-fn (-> #'state/event-registry
+                                       deref
+                                       deref
+                                       (get :scrollbar-to)
+                                       :fn)]
+               (it "a scrollbar position above the bottom parks the transcript"
+                   (let [r (scrollbar-to-fn {:scroll scroll/follow} [:scrollbar-to 155 304])]
                      (expect (= {:mode :at :offset 155} (:scroll r)))))
-               (it "a scrollbar drag to the very bottom re-enters FOLLOW"
-                   ;; fraction 1.0 -> offset == max-scroll -> stick-to-bottom again, so
-                   ;; streamed content keeps the latest message in view.
-                   (let [r (scroll-to-y-fn {:scroll scroll/follow} [:scroll-to-y 55 0 56 360 56])]
+               (it "the bottom position re-enters FOLLOW"
+                   (let [r (scrollbar-to-fn {:scroll scroll/follow} [:scrollbar-to 304 304])]
                      (expect (= scroll/follow (:scroll r)))))))
 
 ;; The scroll model is ONE tagged `:scroll` value (see scroll.clj). These

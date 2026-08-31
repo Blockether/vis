@@ -5,7 +5,7 @@
             [com.blockether.vis.ext.channel-tui.attachment-intake :as attachment-intake]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.composer-attachment-rail :as attachment-rail]
-            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.interactions :as interactions]
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
             [com.blockether.vis.ext.channel-tui.components :as components]
             [com.blockether.vis.ext.channel-tui.file-suggest :as file-suggest]
@@ -21,7 +21,6 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
-            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
@@ -37,7 +36,10 @@
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize]
-           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
+           [com.googlecode.lanterna.gui2 Direction ScrollBar ScrollBar$DragResult
+            ScrollBar$Geometry]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseAction$CoalescedInput
+            MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
            [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour UnixTerminal]
@@ -265,39 +267,6 @@
   "Upper bound for per-loop drag auto-scroll amplification."
   8)
 
-(defn- mouse-wheel-delta
-  "Return wheel direction as -1 / +1 for a MouseAction, else nil."
-  [key]
-  (when (instance? MouseAction key)
-    (let [atype (.getActionType ^MouseAction key)]
-      (cond (= atype MouseActionType/SCROLL_UP) -1
-            (= atype MouseActionType/SCROLL_DOWN) 1
-            :else nil))))
-
-(defn- drag-action?
-  [key]
-  (and (instance? MouseAction key) (= MouseActionType/DRAG (.getActionType ^MouseAction key))))
-
-(defn- coalesce-wheel-input
-  "Collapse one run of consecutive wheel events into a single delta.
-
-   Input:
-   - `key`: first event already read from the input queue
-   - `poll-next`: zero-arg fn returning next queued event or nil
-
-   Output map:
-   - `:key`         original first key
-   - `:wheel-delta` signed accumulated wheel steps (or nil when zero)
-   - `:next-key`    first non-wheel event encountered while draining"
-  [key poll-next]
-  (if-let [delta (mouse-wheel-delta key)]
-    (loop [acc (long delta)]
-      (if-let [next-key (poll-next)]
-        (if-let [next-delta (mouse-wheel-delta next-key)]
-          (recur (+ acc (long next-delta)))
-          {:key key :wheel-delta (when-not (zero? acc) acc) :next-key next-key})
-        {:key key :wheel-delta (when-not (zero? acc) acc)}))
-    {:key key}))
 
 (defn- smooth-wheel!
   "Push one raw coalesced wheel `delta` through a SURFACE'S OWN momentum pair —
@@ -352,26 +321,6 @@
                            (name surface)
                            ")")})
       (vreset! mom-vol 0))))
-(defn- coalesce-drag-input
-  "Collapse consecutive DRAG events into one terminal event.
-
-   Keeps the LAST drag event (latest cursor position) and returns how
-   many drag events were merged so selection auto-scroll can scale one
-   dispatch instead of flooding the reducer/render loop."
-  [key poll-next]
-  (if (drag-action? key)
-    (loop [last-key
-           key
-
-           n
-           1]
-
-      (if-let [next-key (poll-next)]
-        (if (drag-action? next-key)
-          (recur next-key (inc n))
-          {:key last-key :drag-events n :next-key next-key})
-        {:key last-key :drag-events n}))
-    {:key key :drag-events 1}))
 
 (defn- coalesced-drag-scroll-amount
   [amount drag-events]
@@ -392,19 +341,6 @@
   (let [s @pending-keys]
     (when (seq s) (vreset! pending-keys (subvec s 1)) (nth s 0))))
 
-(defn- coalesce-chat-input
-  "Coalesce wheel/drag floods behind `first-key`; the first non-coalescible
-   event drained is stashed back at the FRONT of `pending-keys` (it is older
-   than anything still queued behind it)."
-  [first-key poll-next pending-keys]
-  (let [{:keys [key wheel-delta next-key] :as wheel-pass} (coalesce-wheel-input first-key
-                                                                                poll-next)]
-    (if wheel-delta
-      (do (when next-key (vreset! pending-keys (into [next-key] @pending-keys)))
-          {:key key :wheel-delta wheel-delta :drag-events 1})
-      (let [{:keys [key drag-events next-key]} (coalesce-drag-input (:key wheel-pass) poll-next)]
-        (when next-key (vreset! pending-keys (into [next-key] @pending-keys)))
-        {:key key :wheel-delta nil :drag-events drag-events}))))
 
 (defn- swallow-post-dialog-escape?
   "True (and consumes the marker) when a bare Escape lands within
@@ -418,30 +354,29 @@
          (compare-and-set! dialog-closed-at closed 0))))
 
 (defn- read-chat-input!
-  "Read one chat-loop input event, coalescing wheel and drag floods.
+  "Read one chat-loop input event through Lanterna's queued pointer coalescer.
 
-   `pending-keys` is a volatile VECTOR stash (oldest first) for events
-   consumed by drain loops that belong to later iterations. A bare Escape
-   first runs `input/drain-sgr-leak!` so a literal `<65;32;43M` tail that
-   leaked past the decoder (split-read SGR mouse report) is swallowed
-   together with its phantom Escape instead of being typed into the input."
+   `pending-keys` is a volatile vector stash (oldest first) for the first
+   non-coalescible event Lanterna consumed while draining a pointer burst."
   [^TerminalScreen screen pending-keys]
   (let [poll-next #(or (pop-pending! pending-keys) (.pollInput screen))]
     (loop []
 
       (let [first-key (poll-next)]
-        (if-not (input/bare-escape? first-key)
-          (coalesce-chat-input first-key poll-next pending-keys)
-          ;; A bare Escape within `post-dialog-escape-window-ms` of a modal
-          ;; dialog close is the DUPLICATE of the Esc that closed the dialog
-          ;; (terminals/tmux/SSH can echo a second ESC after the modal already
-          ;; consumed the first). Swallow it so it can't fall through to
-          ;; `handle-key` and wipe the editor draft the user was typing.
-          (if (swallow-post-dialog-escape?)
-            (recur)
-            (let [{:keys [swallowed? replay]} (input/drain-sgr-leak! poll-next)]
-              (vreset! pending-keys (into (vec replay) @pending-keys))
-              (if swallowed? (recur) (coalesce-chat-input first-key poll-next pending-keys)))))))))
+        (if (and (input/bare-escape? first-key) (swallow-post-dialog-escape?))
+          (recur)
+          (let [^MouseAction$CoalescedInput coalesced (MouseAction/coalesceQueued
+                                                        first-key
+                                                        (reify
+                                                          java.util.function.Supplier
+                                                            (get [_] (poll-next))))
+                next-key (.nextKey coalesced)]
+
+            (when next-key (vreset! pending-keys (into [next-key] @pending-keys)))
+            {:key (.key coalesced)
+             :wheel-delta (some-> (.scrollDelta coalesced)
+                                  long)
+             :drag-events (long (.dragCount coalesced))}))))))
 
 (defn- throwable-log-data
   [^Throwable t]
@@ -2773,11 +2708,11 @@
     ;; `paint-phase-detail`) so a stutter warning names the pass that regressed
     ;; instead of one lumped paint number (issue #24 lived in `messages`).
     (let [;; Messages area draws FIRST. It opens a new click-region staging
-          ;; pass via `cr/begin-frame!` and registers every painted chrome
+          ;; pass via `HitRegionMap.beginFrame` and registers every painted chrome
           ;; row (links, image markers, file links). The header then
           ;; registers its :copy-id region. The published click-region
-          ;; registry is unchanged until `cr/commit-frame!` runs at the end
-          ;; of this fn - so the input thread can `cr/lookup` at any time
+          ;; registry is unchanged until `HitRegionMap.commitFrame` runs at the end
+          ;; of this fn - so the input thread can `HitRegionMap.lookup` at any time
           ;; during the paint and still get a complete previous frame back
           ;; instead of a half-filled buffer (the bug that made the header
           ;; copy-id button feel "sometimes broken" when the spinner was
@@ -2960,9 +2895,9 @@
                                    composer-h
                                    (System/currentTimeMillis))]
           (state/dispatch [:live-view-painted (:view-id geom) geom])))
-      (cr/commit-frame!)
+      (.commitFrame interactions/hit-map)
       ;; Vim-style jump-label overlay for disclosures (C-x t). Painted AFTER
-      ;; the commit so `cr/current` holds this frame's fresh toggle regions and
+      ;; the commit so `interactions/hit-map` holds this frame's fresh toggle regions and
       ;; each letter badge lands on the chevron the user sees. No-op when off.
       (render/draw-detail-labels! g (:detail-labels-active? db) (:detail-labels db))
       (when-not *skip-frame-refresh?*
@@ -3297,17 +3232,17 @@
 
 (defn- render-scrollbar!
   [g cols bar-top inner-h track-h total-h eff-scroll]
-  (scrollbar/draw! g
-                   {:col (- (long cols) 2)
-                    :top bar-top
-                    :track-h track-h
-                    :total-h total-h
-                    :inner-h inner-h
-                    :scroll eff-scroll
-                    :track-fg t/border-fg
-                    :track-bg t/terminal-bg
-                    :thumb-fg t/dialog-hint-key
-                    :thumb-bg t/terminal-bg}))
+  (ScrollBar/draw g
+                  Direction/VERTICAL
+                  (TerminalPosition. (int (- (long cols) 2)) (int bar-top))
+                  (int track-h)
+                  (int total-h)
+                  (int inner-h)
+                  (when (some? eff-scroll) (Integer/valueOf (int eff-scroll)))
+                  t/border-fg
+                  t/terminal-bg
+                  t/dialog-hint-key
+                  t/terminal-bg))
 
 (defn- render-live-bubble-frame!
   "Fast path for 80ms live ticks. Recompute virtual layout, but only
@@ -3326,7 +3261,7 @@
    cursor blink during a turn would feel frozen until the next full
    render. Header + footer + input boxes are cheap text ops; do
    them every tick. Click regions stay valid because the prior full
-   frame's `cr/commit-frame!` is still authoritative - we don't
+   frame's `HitRegionMap.commitFrame` is still authoritative - we don't
    begin/commit a new region pass here, so transcript chrome stays
    clickable too."
   [^TerminalScreen screen cols rows
@@ -3499,7 +3434,7 @@
                                        long)
                         :messages-scroll messages-scroll}}))
     ;; ── Click-region republish (live-aware) ────────────────────
-    ;; The previous frame's `regions-atom` is used by `cr/lookup` while
+    ;; The previous frame's `regions-atom` is used by `HitRegionMap.lookup` while
     ;; partial frames tick. That works for STABLE bubbles (their pixels
     ;; aren't repainted, so old regions still match what's on screen),
     ;; but the LIVE bubble grows: every new iteration shifts its
@@ -3531,14 +3466,15 @@
               (render/draw-messages-area! g layout messages-top messages-bottom cols))
             ;; Carry only chrome regions OUTSIDE the messages band; the
             ;; in-band ones were just re-registered fresh above.
-            (doseq [r (cr/current)]
+            (doseq [r (.current interactions/hit-map)]
               (let [row (long (:row (:bounds r)))]
-                (when (or (< row messages-top) (>= row messages-bottom)) (cr/register! r))))
+                (when (or (< row messages-top) (>= row messages-bottom))
+                  (.register interactions/hit-map r))))
             (header/draw-header! g db header-top cols)
             (paint-search-bar! g cols text-top db)
             (footer/draw-echo-area! g db echo-row cols now-ms)
             (footer/draw-footer! g db footer-row cols now-ms)
-            (cr/commit-frame!))
+            (.commitFrame interactions/hit-map))
         ;; ── Cheap live-band path (transcript did NOT shift) ──────────
         (let [prev-text-top (long (or (:text-top previous-layout) text-top))
               live-row-band (when prev-live-entry
@@ -3560,11 +3496,11 @@
                                             ;; click-regions: dirs / resources) — drop
                                             ;; stale copies so the fresh ones win.
                                             (>= row (long footer-row)))))
-                                (cr/current)))]
+                                (.current interactions/hit-map)))]
 
-          (cr/begin-frame!)
+          (.beginFrame interactions/hit-map)
           (doseq [r carry-over]
-            (cr/register! r))
+            (.register interactions/hit-map r))
           (when live-entry
             (let [clip
                   (.newTextGraphics g (TerminalPosition. 0 text-top) (TerminalSize. cols inner-h))
@@ -3590,7 +3526,7 @@
           ;; every spinner tick instead of waiting for the next full
           ;; frame. Header re-registers its click rectangles into the
           ;; staged frame above so they survive the upcoming
-          ;; `cr/commit-frame!`.
+          ;; `HitRegionMap.commitFrame`.
           (header/draw-header! g db header-top cols)
           ;; Find bar overlay + its prev/next/close click regions, staged into
           ;; THIS frame so they stay clickable while a turn streams.
@@ -3608,7 +3544,7 @@
                                   :focused-index (:attachment-index db)})
           (footer/draw-echo-area! g db echo-row cols now-ms)
           (footer/draw-footer! g db footer-row cols now-ms)
-          (cr/commit-frame!))))
+          (.commitFrame interactions/hit-map))))
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols nil)]
       (if-let [[sx sy] (components/find-bar-cursor cols text-top (:search db))]
         ;; Active find bar owns the keyboard — cursor sits in its query field
@@ -3785,13 +3721,14 @@
     ;; Carry over chrome click regions (rows OUTSIDE the messages band). The
     ;; transcript regions in-band were just re-registered by draw-messages-area!
     ;; at their new scrolled rows, so they are deliberately NOT carried.
-    (doseq [r (cr/current)]
+    (doseq [r (.current interactions/hit-map)]
       (let [row (long (:row (:bounds r)))]
-        (when (or (< row messages-top) (>= row messages-bottom)) (cr/register! r))))
+        (when (or (< row messages-top) (>= row messages-bottom))
+          (.register interactions/hit-map r))))
     ;; Jump-to-bottom chip is scroll-dependent and registers its own click
     ;; region — repaint it every scroll frame, BEFORE commit.
     (paint-jump-bottom! g cols messages-bottom (max 0 (- (long (:total-h layout)) inner-h)) db)
-    (cr/commit-frame!)
+    (.commitFrame interactions/hit-map)
     ;; scrolled-up? ⇒ input cursor hidden (matches draw-bottom-chrome!).
     (.setCursorPosition screen nil)
     (let [refresh-start-ns (System/nanoTime)]
@@ -4183,7 +4120,7 @@
                         (and (= last-cols cols) (= last-rows rows))
 
                         current-hover
-                        (cr/hovered)
+                        (.hovered interactions/hit-map)
 
                         path
                         (choose-frame-path (frame-change-flags {:last-db last-db
@@ -5002,7 +4939,6 @@
 (defn- configure-terminal-input!
   [terminal _opts]
   (when (instance? UnixTerminal terminal)
-    (input/register-custom-patterns! terminal)
     (try (.setMouseCaptureMode ^UnixTerminal terminal MouseCaptureMode/CLICK_RELEASE_DRAG_MOVE)
          (catch Throwable _ nil))))
 
@@ -5062,22 +4998,18 @@
                         "Detected terminal cell pixel size for inline-image box sizing.")))))
       (catch Throwable _ nil))))
 
-(defn- enable-terminal-escape-modes!
+(defn- enable-terminal-state!
   [opts]
   (when-not (:html? opts)
-    (input/enable-bracketed-paste! @vis/tty-out)
-    (input/enable-sgr-mouse! @vis/tty-out)
     ;; Free control bytes that the tty line discipline would otherwise consume.
     (input/disable-literal-next!)
     (input/disable-software-flow-control!)
     (let [^com.googlecode.lanterna.TextColor$RGB c t/terminal-bg]
       (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c)))))
 
-(defn- disable-terminal-escape-modes!
+(defn- disable-terminal-state!
   [opts]
   (when-not (:html? opts)
-    (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
-    (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil))
     (try (input/reset-default-bg! @vis/tty-out) (catch Throwable _ nil))
     (try (input/restore-software-flow-control!) (catch Throwable _ nil))
     (try (input/restore-literal-next!) (catch Throwable _ nil))))
@@ -5388,23 +5320,9 @@
            ;; Clicks anywhere outside the thumb itself - the messages area, the track
            ;; above/below the thumb, the right gutter columns - are deliberately ignored (no
            ;; jump-to-position). Wheel scroll, keyboard PageUp/PageDown and arrows remain the
-           ;; supported ways to move the viewport without grabbing the thumb. Bracketed-paste
-           ;; mode is opt-in per terminal. Send the `ESC[?2004h` enable sequence right after
-           ;; the screen is up so xterm-class terminals (Apple Terminal, iTerm, Alacritty,
-           ;; kitty, gnome-terminal, mintty, vscode) wrap subsequent pastes in `ESC[200~ ...
-           ;; ESC[201~`. Disabling happens in the outer `finally` block, so a crashed TUI
-           ;; can't leave the user's shell stuck with bracketing on.
-           (enable-terminal-escape-modes! opts)
-           ;; SGR mouse mode (1006). Lanterna's `setMouseCaptureMode`
-           ;; above already enabled legacy 1003 on the native terminal
-           ;; backend, but its parser only understands the X10 binary
-           ;; encoding - which corrupts coordinates the moment
-           ;; `col + 32` exceeds 0x7F (i.e. col >= 96), because the JVM
-           ;; UTF-8 decoder replaces the high byte with U+FFFD. SGR sends
-           ;; the same payload as pure ASCII text, so wide terminals (the
-           ;; copy-id glyph lives near the right edge!) survive intact.
-           ;; The custom pattern registered above turns SGR sequences into
-           ;; `MouseAction` instances with correct integer mx/my.
+           ;; Lanterna owns bracketed-paste and mouse-protocol lifecycle; Vis only
+           ;; adjusts application-specific tty controls and the themed window rim.
+           (enable-terminal-state! opts)
            (let [scrollbar-drag-offset (volatile! nil)
                  ;; `click-action-fired?` is set to true when the
                  ;; CLICK_DOWN branch already handled a click region
@@ -6121,8 +6039,8 @@
                      ;; C-g is Emacs `keyboard-quit`, and it is Esc EVERYWHERE: rewriting it
                      ;; ONCE here hands it to every mode this loop drives - the draft
                      ;; dispatcher, the find bar, the human-input form, the C-x prefix.
-                     ;; AFTER `read-chat-input!` on purpose, so the post-dialog escape
-                     ;; swallow and the SGR-leak drain only ever see a REAL Esc.
+                     ;; AFTER `read-chat-input!` so the post-dialog duplicate-Escape
+                     ;; guard only ever sees a real Escape.
                      key (input/normalize-abort-key (:key chat-input))]
 
                  (cond
@@ -6169,8 +6087,9 @@
                    ;; paste buffer therefore can't silently swallow
                    ;; clicks on the header copy affordance or the
                    ;; scrollbar.
-                   (input/paste-start? key) (do (vreset! paste-buffer (StringBuilder.)) (recur))
-                   (input/paste-end? key)
+                   (= KeyType/PasteStart (.getKeyType ^KeyStroke key))
+                   (do (vreset! paste-buffer (StringBuilder.)) (recur))
+                   (= KeyType/PasteEnd (.getKeyType ^KeyStroke key))
                    (let [^StringBuilder sb @paste-buffer]
                      (when sb
                        (let [pasted (.toString sb)
@@ -6223,7 +6142,7 @@
                              ;; file handler drops the line. Flip
                              ;; min-level to `:debug` (or attach a
                              ;; console handler) to get it back.
-                             (try (let [hit-kind (some-> (cr/lookup mx my)
+                             (try (let [hit-kind (some-> (.lookup interactions/hit-map mx my)
                                                          :kind)]
                                     (tel/log!
                                       {:level :debug
@@ -6244,28 +6163,26 @@
                          track-h (+ (long inner-h)
                                     (long render/MESSAGE_MARGIN_TOP)
                                     (long render/MESSAGE_MARGIN_BOTTOM))
-                         ;; Single source of truth for thumb geometry
-                         ;; lives in `scrollbar/geometry` so painter
-                         ;; and hit-test cannot drift apart. A nil
-                         ;; return means there is no overflow — no
-                         ;; thumb is painted, and every click below is
-                         ;; correctly classified as off-thumb.
-                         geom (scrollbar/geometry total-h
-                                                  inner-h
-                                                  track-h
-                                                  (scroll/layout-offset
-                                                    (:scroll db)
-                                                    (max 0 (- (long total-h) (long inner-h)))))
-                         thumb-top (when geom (+ (long bar-top) (long (:thumb-top-rel geom))))
-                         thumb-h (long (or (:thumb-h geom) 0))
-                         ;; Hit-zone: the thumb's actual rows, with a
-                         ;; 3-column-wide x-band on the right gutter so
-                         ;; the user doesn't need pixel-perfect aim.
-                         on-thumb? (and (some? geom)
-                                        (>= mx (- (long cols) (long render/MESSAGE_MARGIN_RIGHT)))
-                                        (< mx (long cols))
-                                        (>= my (long thumb-top))
-                                        (< my (+ (long thumb-top) thumb-h)))
+                         scroll-position (scroll/layout-offset
+                                           (:scroll db)
+                                           (max 0 (- (long total-h) (long inner-h))))
+                         ^ScrollBar$Geometry geom (ScrollBar/geometry (int total-h)
+                                                                      (int inner-h)
+                                                                      (int track-h)
+                                                                      (Integer/valueOf
+                                                                        (int scroll-position)))
+                         ^ScrollBar$DragResult scrollbar-drag
+                         (ScrollBar/dragStep ma
+                                             Direction/VERTICAL
+                                             (TerminalPosition. (int (- (long cols) 2))
+                                                                (int bar-top))
+                                             (int track-h)
+                                             (int total-h)
+                                             (int inner-h)
+                                             (Integer/valueOf (int scroll-position))
+                                             (when (some? @scrollbar-drag-offset)
+                                               (Integer/valueOf (int @scrollbar-drag-offset)))
+                                             (int render/MESSAGE_MARGIN_RIGHT))
                          selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))
                          transcript-selectable-ranges
                          (get-in db [:layout :transcript-selectable-ranges])
@@ -6311,7 +6228,7 @@
                            ;; identity viewport for :overlay selections so screen==doc.
                            (and over-panel?
                                 (= atype MouseActionType/CLICK_DOWN)
-                                (not (cr/lookup mx my)))
+                                (not (.lookup interactions/hit-map mx my)))
                            (let [p (selection/point mx my)]
                              (vreset! mouse-selection-anchor p)
                              (vreset! mouse-selection-focus p)
@@ -6355,7 +6272,8 @@
                                  (when-not (str/blank? payload) (copy-selection! payload :overlay)))
                                (do
                                  (state/dispatch [:clear-mouse-selection])
-                                 (when-let [hit (and (not already-handled?) (cr/lookup mx my))]
+                                 (when-let [hit (and (not already-handled?)
+                                                     (.lookup interactions/hit-map mx my))]
                                    (case (:kind hit)
                                      :table
                                      (open-table-viewer! screen hit)
@@ -6407,7 +6325,7 @@
                                      nil))))
                              (recur))
                            (= atype MouseActionType/MOVE)
-                           (do (when (cr/set-hovered! (cr/lookup mx my))
+                           (do (when (.updateHovered interactions/hit-map ^MouseAction key)
                                  (state/dispatch [:bump-render-version]))
                                (recur))
                            :else (recur)))
@@ -6486,49 +6404,19 @@
                              (state/dispatch [:scroll-down (* (long step) (long eff)) total-h
                                               inner-h])))
                          (recur))
-                       ;; CLICK_DOWN on the thumb itself: arm a drag.
-                       ;; Record the offset between the click row and
-                       ;; the thumb's top so subsequent DRAG events can
-                       ;; preserve the grip-point. Crucially we do NOT
-                       ;; dispatch any scroll mutation here - a bare
-                       ;; click without movement must not move content.
-                       (and (= atype MouseActionType/CLICK_DOWN) on-thumb?)
-                       (do (vreset! scrollbar-drag-offset (- my (long thumb-top))) (recur))
-                       ;; CLICK_DOWN on the scrollbar TRACK (right
-                       ;; gutter, anywhere in the messages-area rows,
-                       ;; off-thumb): jump the thumb so it CENTERS on
-                       ;; the cursor row, then arm a drag with the same
-                       ;; centered grip offset so a follow-up motion
-                       ;; tracks naturally. This is the modern macOS
-                       ;; \"jump to spot\" behaviour - a click anywhere
-                       ;; on the scrollbar moves you there, instead of
-                       ;; the legacy paged \"click-above-thumb = page-up\"
-                       ;; convention. The previous build silently
-                       ;; ignored every off-thumb click in the gutter,
-                       ;; which felt broken (\"I'm clicking on the
-                       ;; scrollbar and nothing scrolls\").
-                       (and (= atype MouseActionType/CLICK_DOWN)
-                            (some? geom)
-                            (>= mx (- (long cols) (long render/MESSAGE_MARGIN_RIGHT)))
-                            (< mx (long cols))
-                            (>= my (long bar-top))
-                            (< my (+ (long bar-top) (long inner-h))))
-                       (let [grip (long (quot thumb-h 2))]
-                         (vreset! scrollbar-drag-offset grip)
-                         (state/dispatch [:scroll-to-y (- my grip) bar-top track-h total-h inner-h])
-                         (recur))
-                       ;; Drag continues to track the cursor's Y as
-                       ;; long as the user is holding the button after
-                       ;; a thumb grab. We feed `(my - drag-offset)` to
-                       ;; `:scroll-to-y` so the row under the user's
-                       ;; finger stays glued to the same point on the
-                       ;; thumb - no jump, no snap. X is intentionally
-                       ;; ignored once dragging starts so the thumb
-                       ;; doesn't pop loose if the cursor strays out
-                       ;; of the right gutter.
-                       (and (= atype MouseActionType/DRAG) (some? @scrollbar-drag-offset))
-                       (do (state/dispatch [:scroll-to-y (- my (long @scrollbar-drag-offset))
-                                            bar-top track-h total-h inner-h])
+                       ;; Lanterna owns thumb/track hit geometry and grip-preserving drag.
+                       (and (= atype MouseActionType/CLICK_DOWN) scrollbar-drag)
+                       (do (when-let [grip (.gripOffset scrollbar-drag)]
+                             (vreset! scrollbar-drag-offset (long grip)))
+                           (when-let [offset (.scrollPosition scrollbar-drag)]
+                             (state/dispatch [:scrollbar-to (long offset)
+                                              (long (.maximumPosition ^ScrollBar$Geometry geom))]))
+                           (recur))
+                       (and (= atype MouseActionType/DRAG)
+                            scrollbar-drag
+                            (some? (.scrollPosition scrollbar-drag)))
+                       (do (state/dispatch [:scrollbar-to (long (.scrollPosition scrollbar-drag))
+                                            (long (.maximumPosition ^ScrollBar$Geometry geom))])
                            (recur))
                        (and selection-copy?
                             (= atype MouseActionType/DRAG)
@@ -6605,7 +6493,7 @@
                                  ;; sits inside the whole-bubble copy rectangle, so
                                  ;; resolve it FIRST and gate the copy hits on it.
                                  toggle-detail-hit (when (and simple-click? (not= source :input))
-                                                     (let [h (cr/lookup mx my)]
+                                                     (let [h (.lookup interactions/hit-map mx my)]
                                                        (when (= :toggle-details (:kind h)) h)))
                                  disclosure-hit (when (and simple-click?
                                                            (not= source :input)
@@ -6660,7 +6548,7 @@
                                    (and (not simple-click?) (not (str/blank? payload)))
                                    (copy-selection! payload source)))
                            (when (and (not was-dragging?) (not already-handled?))
-                             (if-let [hit (cr/lookup mx my)]
+                             (if-let [hit (.lookup interactions/hit-map mx my)]
                                (case (:kind hit)
                                  :table
                                  (open-table-viewer! screen hit)
@@ -6771,10 +6659,10 @@
                        ;; cursor; if it changed, update the hover
                        ;; pointer and bump the render version so the
                        ;; renderer repaints the highlighted row. The
-                       ;; bump is gated by `set-hovered!` returning
-                       ;; true so a cursor twitch inside the same
-                       ;; chrome row doesn't trigger a repaint storm.
-                       (= atype MouseActionType/MOVE) (do (when (cr/set-hovered! (cr/lookup mx my))
+                       ;; bump is gated by Lanterna reporting a changed hover target,
+                       ;; so a cursor twitch inside the same chrome row does not repaint.
+                       (= atype MouseActionType/MOVE) (do (when (.updateHovered interactions/hit-map
+                                                                                ^MouseAction key)
                                                             (state/dispatch [:bump-render-version]))
                                                           (recur))
                        ;; CLICK_DOWN that didn't grab the scrollbar:
@@ -6785,7 +6673,7 @@
                        ;; freeze the input loop's redraw cadence.
                        (= atype MouseActionType/CLICK_DOWN)
                        (do
-                         (let [hit (cr/lookup mx my)]
+                         (let [hit (.lookup interactions/hit-map mx my)]
                            (if (and hit (not= :toggle-details (:kind hit)))
                              (do
                                ;; Tell the matching CLICK_RELEASE in
@@ -6971,8 +6859,8 @@
                    ;; branch so a stuck paste bracket can't swallow
                    ;; clicks. The buffer only collects character-bearing
                    ;; KeyStrokes; a MouseAction would have matched above.
-                   (some? @paste-buffer) (do (when-let [ch (input/keystroke->paste-char key)]
-                                               (.append ^StringBuilder @paste-buffer ^String ch))
+                   (some? @paste-buffer) (do (when-let [text (.getText ^KeyStroke key)]
+                                               (.append ^StringBuilder @paste-buffer ^String text))
                                              (recur))
                    ;; Placeholder smart-delete: a single
                    ;; Backspace right after the closing `]` of a
@@ -7093,7 +6981,8 @@
                          ;; mode opened from a dialog with nothing to freeze), so a
                          ;; typed letter hits the fold under its badge even as a
                          ;; live stream repaints beneath it.
-                         frozen (or (seq (:detail-labels db)) (cr/assign-labels (cr/current)))
+                         frozen (or (seq (:detail-labels db))
+                                    (interactions/assign-labels (.current interactions/hit-map)))
                          hit (when (and chr (not (.isCtrlDown ks)) (not (.isAltDown ks)))
                                (get (into {} frozen) (str (Character/toLowerCase ^char chr))))
                          ;; Toggle against the fold's CURRENT collapsed state when
@@ -7105,7 +6994,7 @@
                                                          (= (:session-id r) (:session-id hit))
                                                          (= (:node-id r) (:node-id hit)))
                                                 r))
-                                            (cr/current))
+                                            (.current interactions/hit-map))
                                       hit))]
 
                      (when target
@@ -7261,7 +7150,8 @@
 
                                   :toggle-detail-labels
                                   (state/dispatch [:set-detail-labels true
-                                                   (cr/assign-labels (cr/current))])
+                                                   (interactions/assign-labels
+                                                     (.current interactions/hit-map))])
 
                                   :close-tab
                                   (close-tab-with-prompt! screen
@@ -7686,7 +7576,8 @@
                          (do
                            (if (:detail-labels-active? @state/app-db)
                              (state/dispatch [:set-detail-labels false])
-                             (let [labels (cr/assign-labels (cr/current))]
+                             (let [labels (interactions/assign-labels (.current
+                                                                        interactions/hit-map))]
                                (if (seq labels)
                                  (do
                                    (state/dispatch [:set-detail-labels true labels])
@@ -7714,9 +7605,8 @@
              ;; instead of re-entering the TUI dispatcher.
              (when-let [cleanup @terminal-signal-cleanup]
                (try (cleanup) (catch Throwable _ nil)))
-             ;; Tell native terminals to stop wrapping pastes and reporting
-             ;; SGR mouse events.
-             (disable-terminal-escape-modes! opts)
+             ;; Restore application-specific tty state.
+             (disable-terminal-state! opts)
              ;; Drop the notifications watcher so the next TUI session
              ;; doesn't accumulate stale hooks (the screen is short-lived
              ;; relative to the JVM - leaving stale watchers around would

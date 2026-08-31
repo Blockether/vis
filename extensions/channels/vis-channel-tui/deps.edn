@@ -74,7 +74,10 @@
         ;;  17. Headless HTML terminal protocol plus shared GUI2 HitRegionMap and interactive,
         ;;      one-cell ScrollBar primitives own browser hit-testing, endpoint semantics,
         ;;      geometry, painting and pointer interaction inside Lanterna instead of Vis.
-        com.blockether/lanterna {:mvn/version "3.1.5-vis.45"}
+        ;;  18. ANSI and HTML share Lanterna's input protocol: SGR mouse coordinates, bracketed
+        ;;      paste, modified keys, exact decoder timeouts, queue coalescing and private-mode
+        ;;      lifecycle are decoded once and exposed as ordinary KeyStroke/MouseAction values.
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.47"}
         ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
         ;; (channel-tui.cinema). CORE ONLY: com.blockether/imaging renders the frames
         ;; and hands them over as jcodec RGB `Picture`s, so the java.desktop-bound

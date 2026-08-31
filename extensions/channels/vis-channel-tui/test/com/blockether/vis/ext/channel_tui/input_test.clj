@@ -1,29 +1,11 @@
 (ns com.blockether.vis.ext.channel-tui.input-test
-  "Coverage for `channel-tui.input`.
-
-   Two surfaces under test:
-
-     1. The pure input-buffer helpers (`empty-input`, `insert-char`,
-        `insert-newline`, `delete-backward`, `move-*`, `paste-text`)
-        - used by every keystroke handled in the screen poll loop.
-     2. The bracketed-paste sentinels + helpers
-        (`paste-start?`, `paste-end?`, `keystroke->paste-char`).
-        These power the multi-line paste flow added so a clipboard
-        payload with embedded newlines doesn't fire mid-paste sends.
-
-   Every namespace ships with a test
-   file. This is that file."
+  "Coverage for the TUI application's editor, key policy, paste presentation,
+   clipboard integration, and attachment helpers. Lanterna owns terminal protocol decoding."
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [lazytest.core :refer [defdescribe expect it]])
-  (:import [com.googlecode.lanterna.input CharacterPattern InputDecoder KeyDecodingProfile KeyStroke
-            KeyType]
-           [java.io StringReader]))
+  (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 
-(defn- pat-match
-  "Typed `.match` so the CharacterPattern (and its Matching result) don't reflect."
-  ^com.googlecode.lanterna.input.CharacterPattern$Matching [^CharacterPattern p chars]
-  (.match p chars))
 
 (defdescribe input-buffer-test
              (it "empty-input is one empty line, cursor at 0,0"
@@ -251,26 +233,10 @@
           (expect (= :continue (:action n)))
           (expect (= (:lines state) (:lines (:state p))))
           (expect (= (:lines state) (:lines (:state n)))))))
-  (it "C-x C-h opens help; a LONE Ctrl+H is inert (help moved to the C-x prefix)"
-      ;; ctrl-h-pattern still decodes a lone 0x08 to Ctrl+H (physical Backspace
-      ;; sends 0x7f, so it stays Backspace) — that decode is what lets the SECOND
-      ;; key of C-x C-h arrive as Ctrl+H. Help is no longer a direct chord, so a
-      ;; lone Ctrl+H does nothing; only C-x then Ctrl+H toggles help.
-      (let [ctrl-h-pattern
-            @#'input/ctrl-h-pattern
-
-            m
-            (pat-match ctrl-h-pattern [(Character. (char 0x08))])
-
-            ks
-            (.fullMatch m)]
-
-        (expect (= \h (.getCharacter ks)))
-        (expect (true? (.isCtrlDown ks))))
-      ;; lone Ctrl+H is inert now
+  (it "C-x C-h opens help; a lone Ctrl+H is inert"
+      ;; Lanterna decodes Ctrl+H. Vis decides that it is an app verb only after C-x.
       (expect (= :continue
                  (:action (input/handle-key (ctrl-key (Character. \h)) (input/empty-input)))))
-      ;; C-x then Ctrl+H fires help
       (let [armed (:state (input/handle-key (ctrl-key (Character. \x)) (input/empty-input)))]
         (expect (= :toggle-help (:action (input/handle-key (ctrl-key (Character. \h)) armed))))))
   (it "@ inserts a literal char; it does not open the file picker"
@@ -390,64 +356,6 @@
         (expect (= {:action :continue :state line-gone}
                    (input/handle-key (ctrl-key (Character. \u)) state))))))
 
-(defn- custom-decoder
-  ^InputDecoder [s]
-  (let [decoder (InputDecoder. (StringReader. s))]
-    (.addProfile decoder
-                 (reify
-                   KeyDecodingProfile
-                     (getPatterns [_] [input/escape-pattern input/alt-enter-pattern
-                                       input/alt-backspace-pattern input/modified-arrow-pattern
-                                       input/paste-start-pattern input/paste-end-pattern
-                                       input/sgr-mouse-pattern])))
-    decoder))
-
-(defdescribe escape-pattern-test
-             (it "bare ESC decodes immediately instead of poisoning the next key"
-                 (let [decoder
-                       (custom-decoder (str (char 0x1b)))
-
-                       key
-                       (.getNextCharacter decoder false)]
-
-                   (expect (= KeyType/Escape (.getKeyType key)))
-                   (expect (not (.isAltDown key)))))
-             (it "ESC+Enter still decodes as Alt+Enter when both bytes are queued"
-                 (let [decoder
-                       (custom-decoder (str (char 0x1b) \newline))
-
-                       key
-                       (.getNextCharacter decoder false)]
-
-                   (expect (= KeyType/Enter (.getKeyType key)))
-                   (expect (.isAltDown key)))))
-
-(defdescribe modified-arrow-pattern-test
-             (it "decodes xterm modified arrows so Alt+arrow works on macOS terminals"
-                 (let [alt-up
-                       (let [decoder (custom-decoder (str (char 0x1b) "[1;3A"))]
-                         (.getNextCharacter decoder false))
-
-                       shift-down
-                       (let [decoder (custom-decoder (str (char 0x1b) "[1;2B"))]
-                         (.getNextCharacter decoder false))]
-
-                   (expect (= KeyType/ArrowUp (.getKeyType alt-up)))
-                   (expect (.isAltDown alt-up))
-                   (expect (not (.isShiftDown alt-up)))
-                   (expect (= KeyType/ArrowDown (.getKeyType shift-down)))
-                   (expect (.isShiftDown shift-down))
-                   (expect (not (.isAltDown shift-down))))))
-
-(defdescribe alt-backspace-pattern-test
-             (it "ESC+DEL and ESC+Ctrl-H decode as Alt+Backspace"
-                 (doseq [ch [(Character. (char 0x7f)) (Character. (char 0x08))]]
-                   (let [match (pat-match input/alt-backspace-pattern [(Character. (char 0x1b)) ch])
-                         key (.-fullMatch match)]
-
-                     (expect (= KeyType/Backspace (.getKeyType key)))
-                     (expect (.isAltDown key))
-                     (expect (not (.isCtrlDown key)))))))
 
 (defdescribe tty-control-mode-test
              (it "disables XOFF while active and restores IXON on teardown"
@@ -462,29 +370,6 @@
                           (input/restore-software-flow-control!)))
                    (expect (= ["-ixon" "ixon"] @calls)))))
 
-(defdescribe bracketed-paste-helpers-test
-             (it "paste-start? is true ONLY for a KeyStroke carrying PASTE_START_CHAR"
-                 (expect (input/paste-start? (char-key (Character. input/PASTE_START_CHAR))))
-                 (expect (not (input/paste-start? (char-key (Character. \a)))))
-                 (expect (not (input/paste-start? (KeyStroke. KeyType/Enter false false))))
-                 (expect (not (input/paste-start? (char-key (Character. input/PASTE_END_CHAR))))))
-             (it "paste-end? is true ONLY for a KeyStroke carrying PASTE_END_CHAR"
-                 (expect (input/paste-end? (char-key (Character. input/PASTE_END_CHAR))))
-                 (expect (not (input/paste-end? (char-key (Character. input/PASTE_START_CHAR)))))
-                 (expect (not (input/paste-end? (KeyStroke. KeyType/Tab false false))))))
-
-(defdescribe
-  keystroke->paste-char-test
-  (it "Character key returns its char"
-      (expect (= "x" (input/keystroke->paste-char (char-key (Character. \x))))))
-  (it "Enter becomes a newline char so multi-line pastes survive"
-      (expect (= "\n" (input/keystroke->paste-char (KeyStroke. KeyType/Enter false false)))))
-  (it "Tab becomes \\t - preserves indentation in pasted code"
-      (expect (= "\t" (input/keystroke->paste-char (KeyStroke. KeyType/Tab false false)))))
-  (it "non-text keys (function keys, arrows) drop to nil"
-      (expect (nil? (input/keystroke->paste-char (KeyStroke. KeyType/F2 false false))))
-      (expect (nil? (input/keystroke->paste-char (KeyStroke. KeyType/ArrowLeft false false))))
-      (expect (nil? (input/keystroke->paste-char (KeyStroke. KeyType/Escape false false))))))
 
 (defdescribe
   placeholder-format-test
@@ -714,115 +599,6 @@
                  (expect (some? (input/clipboard-copy! "line1\nline2\nline3")))
                  (expect (some? (input/clipboard-copy! "tab\there\u00e9 \u4e2d\u6587")))))
 
-(defn- mk-chars
-  [^String s]
-  ;; Helper: java.util.List<Character> from a String, the shape
-  ;; Lanterna feeds CharacterPattern.match. Renamed from `chars`
-  ;; to dodge the `clojure.core/chars` shadow warning.
-  (let [v (java.util.ArrayList.)]
-    (doseq [c s]
-      (.add v (Character. ^char c)))
-    v))
-
-(defn- sgr [button col row final-ch] (str "\u001B[<" button ";" col ";" row final-ch))
-
-(defdescribe
-  sgr-mouse-pattern-test
-  (it "NOT_YET on empty / partial prefixes"
-      (let [m (pat-match input/sgr-mouse-pattern (mk-chars ""))]
-        (expect (= com.googlecode.lanterna.input.CharacterPattern$Matching/NOT_YET m)))
-      (let [m (pat-match input/sgr-mouse-pattern (mk-chars "\u001B"))]
-        (expect (= com.googlecode.lanterna.input.CharacterPattern$Matching/NOT_YET m)))
-      (let [m (pat-match input/sgr-mouse-pattern (mk-chars "\u001B[<0;1"))]
-        (expect (= com.googlecode.lanterna.input.CharacterPattern$Matching/NOT_YET m))))
-  (it "nil on shape violation (third byte is not '<')"
-      ;; Plain CSI sequences (no '<') belong to other patterns -
-      ;; sgr-mouse-pattern must reject them so Lanterna keeps trying.
-      (expect (nil? (pat-match input/sgr-mouse-pattern (mk-chars "\u001B[A")))))
-  (it "left-button press at column 50, row 1 decodes correctly"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 50 1 \M)))
-
-            ks
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
-
-        (expect (instance? com.googlecode.lanterna.input.MouseAction ks))
-        (let [^com.googlecode.lanterna.input.MouseAction ma
-              ks
-
-              pos
-              (.getPosition ma)]
-
-          (expect (= 49 (.getColumn pos))) ; SGR is 1-based, ours is 0-based
-          (expect (= 0 (.getRow pos)))
-          (expect (= com.googlecode.lanterna.input.MouseActionType/CLICK_DOWN
-                     (.getActionType ma))))))
-  (it "left-button release uses lowercase 'm' as terminator"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 112 1 \m)))
-
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
-
-        (expect (= com.googlecode.lanterna.input.MouseActionType/CLICK_RELEASE (.getActionType ma)))
-        ;; Critically: column 112 (the copy-id range) decodes to 111,
-        ;; NOT to the broken 65500 the legacy parser produced.
-        (expect (= 111 (.getColumn (.getPosition ma))))))
-  (it "wheel-up button (64) maps to SCROLL_UP"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 64 10 5 \M)))
-
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
-
-        (expect (= com.googlecode.lanterna.input.MouseActionType/SCROLL_UP (.getActionType ma)))))
-  (it "wheel-down button (65) maps to SCROLL_DOWN without reflection warnings"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 65 10 5 \M)))
-
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
-
-        (expect (= com.googlecode.lanterna.input.MouseActionType/SCROLL_DOWN (.getActionType ma))))
-      (let [err (java.io.StringWriter.)]
-        (binding [*warn-on-reflection* true
-                  *err* err]
-
-          (require 'com.blockether.vis.ext.channel-tui.input :reload))
-        (expect (not (str/includes? (str err) "input.clj")))))
-  (it "drag with button held (32) maps to DRAG"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 32 10 5 \M)))
-
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
-
-        (expect (= com.googlecode.lanterna.input.MouseActionType/DRAG (.getActionType ma)))))
-  (it "plain motion (35: bits=3 + drag bit) maps to MOVE"
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 35 10 5 \M)))
-
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
-
-        (expect (= com.googlecode.lanterna.input.MouseActionType/MOVE (.getActionType ma)))))
-  (it "wide-column press at column 200 decodes faithfully"
-      ;; The whole point of switching to SGR: legacy X10 corrupted
-      ;; this case to mx=65500. SGR is ASCII text so col 200 stays 200.
-      (let [m
-            (pat-match input/sgr-mouse-pattern (mk-chars (sgr 0 200 50 \M)))
-
-            ma
-            ^com.googlecode.lanterna.input.MouseAction
-            (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
-
-        (expect (= 199 (.getColumn (.getPosition ma))))
-        (expect (= 49 (.getRow (.getPosition ma)))))))
 
 (defdescribe
   file-mention-expand-test

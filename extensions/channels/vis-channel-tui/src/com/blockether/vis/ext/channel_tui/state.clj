@@ -994,8 +994,7 @@
     (tui-theme/apply-theme! (:theme-name local-merged))
     ;; Re-emit OSC 11 so the emulator's window padding (the un-themed
     ;; "outer" rim around the Lanterna grid) is recolored to the NEW
-    ;; theme background. `enable-terminal-escape-modes!` sets this once at
-    ;; startup; a LIVE theme switch must refresh it too, otherwise the rim
+    ;; startup applies this once; a LIVE theme switch must refresh it too, otherwise the rim
     ;; keeps the previous theme's background.
     (let [^com.googlecode.lanterna.TextColor$RGB c tui-theme/terminal-bg]
       (try (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c))
@@ -3798,28 +3797,11 @@
                   (log-scroll! :scroll-down pre (scroll-snapshot sc) {:amount amount :max-s max-s})
                   (assoc db :scroll sc))))
 
-(reg-event-db :scroll-to-y
-              ;; Scrollbar drag / track click: map the cursor row to an offset and SNAP
-              ;; (1:1, no ease - animation would lag the thumb). The very bottom
-              ;; re-enters FOLLOW. Mirrors the thumb math in `scrollbar/geometry`:
-              ;; `bar-top` is the top track row, `track-h` the track length, and
-              ;; `total-h`/`inner-h` the layout sizes the render thread published.
-              (fn [db [_ mouse-y bar-top track-h total-h inner-h]]
-                (if (or (<= (long total-h) (long inner-h)) (<= (long track-h) 0))
-                  db
-                  (let [max-s
-                        (max 0 (- (long total-h) (long inner-h)))
-
-                        denom
-                        (max 1 (- (long track-h) 1))
-
-                        fraction
-                        (max 0.0 (min 1.0 (double (/ (- (long mouse-y) (long bar-top)) denom))))
-
-                        offset
-                        (long (Math/round (* fraction (double max-s))))]
-
-                    (assoc db :scroll (scroll/to-y offset max-s))))))
+(reg-event-db :scrollbar-to
+              ;; Lanterna has already mapped pointer geometry to an exact offset.
+              ;; This application seam only preserves FOLLOW-at-bottom semantics.
+              (fn [db [_ offset max-s]]
+                (assoc db :scroll (scroll/to-y (long offset) (long max-s)))))
 
 (defn- turn-extra-body
   "Per-turn wire extras captured when the turn is enqueued. `text.verbosity` is

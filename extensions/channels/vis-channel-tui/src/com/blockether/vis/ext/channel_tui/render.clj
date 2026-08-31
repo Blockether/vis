@@ -2,17 +2,17 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.attachments :as attach]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.interactions :as interactions]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.markdown-layout :as layout]
             [com.blockether.vis.ext.channel-tui.highlight :as hl]
-            [com.blockether.vis.ext.channel-tui.scrollbar :as scrollbar]
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.provider-error :as perr])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
+           [com.googlecode.lanterna.gui2 Direction ScrollBar]
            [java.util LinkedHashMap]
            [java.util.concurrent.atomic AtomicLong]))
 
@@ -1225,20 +1225,23 @@
              (p/set-colors! g t/dialog-fg t/dialog-bg)
              (draw-slash-suggestion-row! g row left inner-w suggestion)))
          ;; Right-side scrollbar when more matches exist than visible rows.
-         ;; Bespoke thumb math is gone — routes through the shared
-         ;; `scrollbar/draw!` so the slash overlay scrolls with the same
+         ;; Lanterna's ScrollBar keeps this overlay aligned with every other
          ;; feel and the same 1-row thumb as every other modal. The
          ;; suggestion list is item-windowed: total = number of
          ;; matches, viewport = visible count, scroll = first visible.
          (when (and (pos? (long n)) (> (long inner-w) 2))
-           (scrollbar/draw! g
-                            {:col (+ (long left) (dec (long inner-w)))
-                             :top first-sug
-                             :track-h n
-                             :total-h total
-                             :inner-h n
-                             :scroll first-idx
-                             :thumb-fg t/dialog-title-bg})))))))
+           (ScrollBar/draw g
+                           Direction/VERTICAL
+                           (TerminalPosition. (int (+ (long left) (dec (long inner-w))))
+                                              (int first-sug))
+                           (int n)
+                           (int total)
+                           (int n)
+                           (when (some? first-idx) (Integer/valueOf (int first-idx)))
+                           t/dialog-border
+                           t/dialog-bg
+                           t/dialog-title-bg
+                           t/dialog-bg)))))))
 
 (defn fill-background!
   "Fill entire screen with the terminal background color."
@@ -1788,14 +1791,16 @@
         {:row (+ (long viewport-top) (long y)) :col x :width (long (or (:click-width meta) iw))}]
     (case (:kind meta)
       :toggle-details
-      (cr/register! {:bounds bounds
-                     :kind :toggle-details
-                     :session-id (:session-id meta)
-                     :node-id (:node-id meta)
-                     :collapsed? (:collapsed? meta)})
+      (.register interactions/hit-map
+                 {:bounds bounds
+                  :kind :toggle-details
+                  :session-id (:session-id meta)
+                  :node-id (:node-id meta)
+                  :collapsed? (:collapsed? meta)})
 
       :live-reopen
-      (cr/register! {:bounds bounds :kind :live-reopen :view-id (:view-id meta) :enabled? true})
+      (.register interactions/hit-map
+                 {:bounds bounds :kind :live-reopen :view-id (:view-id meta) :enabled? true})
 
       nil)))
 
@@ -2208,35 +2213,39 @@
                   ;; target: clicking the picture opens the file in the OS
                   ;; previewer (`:image` branch of `open-click-target!`).
                   (when-let [img (and (contains? #{:image :image-pad} (:kind meta)) (:img meta))]
-                    (cr/register! {:bounds {:row (+ (long viewport-top) (long y))
-                                            :col x
-                                            :width (long (max 1 (long (or (:cols img) 1))))}
-                                   :kind :image
-                                   :url (:path img)}))
+                    (.register interactions/hit-map
+                               {:bounds {:row (+ (long viewport-top) (long y))
+                                         :col x
+                                         :width (long (max 1 (long (or (:cols img) 1))))}
+                                :kind :image
+                                :url (:path img)}))
                   ;; Every painted row of a `vis-table` grid is a click target:
                   ;; clicking the table opens the WHOLE data set in the sortable,
                   ;; pageable table dialog (`:table` branch of the click case) —
                   ;; the transcript only ever shows a preview of the rows.
                   (when-let [tbl (:table meta)]
-                    (cr/register! {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
-                                   :kind :table
-                                   :table tbl}))
+                    (.register interactions/hit-map
+                               {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                :kind :table
+                                :table tbl}))
                   ;; Every painted row of a `vis-doc` card is a click target: a
                   ;; PDF/HTML document has nothing a terminal can paint, so the
                   ;; card is a HANDLE and the click hands the host file to the
                   ;; system viewer (`:doc` branch of `open-click-target!`).
                   (when-let [doc (:doc meta)]
-                    (cr/register! {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
-                                   :kind :doc
-                                   :url (:path doc)}))
+                    (.register interactions/hit-map
+                               {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                :kind :doc
+                                :url (:path doc)}))
                   ;; Canonical iteration artifacts carry durable identity, not a
                   ;; cache path. The click resolves bytes through the same policy
                   ;; as the session-wide attachment inspector.
                   (when-let [artifact (:artifact meta)]
-                    (cr/register! {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
-                                   :kind :artifact
-                                   :session-id (:session-id meta)
-                                   :artifact artifact}))
+                    (.register interactions/hit-map
+                               {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                :kind :artifact
+                                :session-id (:session-id meta)
+                                :artifact artifact}))
                   (cond
                     ;; ── Iteration header - right-aligned, subtle ──
                     (str/starts-with? line iteration-hdr-marker)
@@ -2249,11 +2258,12 @@
                           (let [abs-row (+ (long viewport-top) (long y))
                                 click-width (long (or (:click-width meta) iw))]
 
-                            (cr/register! {:bounds {:row abs-row :col x :width click-width}
-                                           :kind :toggle-details
-                                           :session-id (:session-id meta)
-                                           :node-id (:node-id meta)
-                                           :collapsed? (:collapsed? meta)}))))
+                            (.register interactions/hit-map
+                                       {:bounds {:row abs-row :col x :width click-width}
+                                        :kind :toggle-details
+                                        :session-id (:session-id meta)
+                                        :node-id (:node-id meta)
+                                        :collapsed? (:collapsed? meta)}))))
                     ;; ── Iteration recap — triple-zone paint ──
                     ;;
                     ;; Each recap line carries `:meta {:recap-kind :task |
@@ -2433,12 +2443,13 @@
                       (p/fill-rect! g fbx y iw 1)
                       (p/styled g [p/BOLD] (p/put-str! g x y raw))
                       (when (= :toggle-details (:kind meta))
-                        (cr/register!
-                          {:bounds {:row abs-row :col x :width (long (or (:click-width meta) iw))}
-                           :kind :toggle-details
-                           :session-id (:session-id meta)
-                           :node-id (:node-id meta)
-                           :collapsed? (:collapsed? meta)})))
+                        (.register interactions/hit-map
+                                   {:bounds
+                                    {:row abs-row :col x :width (long (or (:click-width meta) iw))}
+                                    :kind :toggle-details
+                                    :session-id (:session-id meta)
+                                    :node-id (:node-id meta)
+                                    :collapsed? (:collapsed? meta)})))
                     ;; Activity is a compact timeline grid on its own quiet surface.
                     (str/starts-with? line activity-marker)
                     (let [raw (subs line 1)
@@ -2485,12 +2496,13 @@
                             ;; invocation's bounded evidence through the one detail
                             ;; expansion store, so bulk fold and `C-x t` reach it too.
                             (when (:node-id meta)
-                              (cr/register!
-                                {:bounds {:row (+ (long viewport-top) (long y)) :col x :width iw}
-                                 :kind :toggle-details
-                                 :session-id (:session-id meta)
-                                 :node-id (:node-id meta)
-                                 :collapsed? (:collapsed? meta)})))
+                              (.register interactions/hit-map
+                                         {:bounds
+                                          {:row (+ (long viewport-top) (long y)) :col x :width iw}
+                                          :kind :toggle-details
+                                          :session-id (:session-id meta)
+                                          :node-id (:node-id meta)
+                                          :collapsed? (:collapsed? meta)})))
 
                         nil))
                     (str/starts-with? line thinking-marker)
@@ -2516,17 +2528,19 @@
                         (let [abs-row (+ (long viewport-top) (long y))
                               click-width (long (or (:click-width meta) iw))]
 
-                          (cr/register! {:bounds {:row abs-row :col x :width click-width}
-                                         :kind :toggle-details
-                                         :session-id (:session-id meta)
-                                         :node-id (:node-id meta)
-                                         :collapsed? (:collapsed? meta)}))))
+                          (.register interactions/hit-map
+                                     {:bounds {:row abs-row :col x :width click-width}
+                                      :kind :toggle-details
+                                      :session-id (:session-id meta)
+                                      :node-id (:node-id meta)
+                                      :collapsed? (:collapsed? meta)}))))
                     ;; ── Code (success) - light green bg ──
                     (str/starts-with? line code-ok-marker)
                     (let [raw (subs line 1)
                           abs-row (+ (long viewport-top) (long y))
                           hovered? (and (= :toggle-details (:kind meta))
-                                        (= abs-row (:row (:bounds (cr/hovered)))))
+                                        (= abs-row
+                                           (:row (:bounds (.hovered interactions/hit-map)))))
                           row-bg (code-row-bg meta hovered? t/code-ok-bg)
                           row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
 
@@ -2543,7 +2557,8 @@
                     (let [raw (subs line 1)
                           abs-row (+ (long viewport-top) (long y))
                           hovered? (and (= :toggle-details (:kind meta))
-                                        (= abs-row (:row (:bounds (cr/hovered)))))
+                                        (= abs-row
+                                           (:row (:bounds (.hovered interactions/hit-map)))))
                           row-bg (code-row-bg meta hovered? t/code-err-bg)
                           row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
 
@@ -2555,7 +2570,8 @@
                     (str/starts-with? line code-marker)
                     (let [abs-row (+ (long viewport-top) (long y))
                           hovered? (and (= :toggle-details (:kind meta))
-                                        (= abs-row (:row (:bounds (cr/hovered)))))
+                                        (= abs-row
+                                           (:row (:bounds (.hovered interactions/hit-map)))))
                           row-bg (code-row-bg meta hovered? t/code-block-bg)
                           row-fg (if hovered? t/link-chrome-hover-fg t/code-block-fg)]
 
@@ -2570,7 +2586,8 @@
                     ;; path chip remain immediately scannable.
                     (let [abs-row (+ (long viewport-top) (long y))
                           hovered? (and (= :toggle-details (:kind meta))
-                                        (= abs-row (:row (:bounds (cr/hovered)))))
+                                        (= abs-row
+                                           (:row (:bounds (.hovered interactions/hit-map)))))
                           row-bg (result-row-bg meta hovered?)
                           res-fg (if hovered? t/link-chrome-hover-fg t/code-result-fg)]
 
@@ -2589,11 +2606,12 @@
                       (paint-turn-stamp! g x y (subs line 1) row-bg)
                       (when (= :toggle-details (:kind meta))
                         (let [click-width (long (or (:click-width meta) iw))]
-                          (cr/register! {:bounds {:row abs-row :col x :width click-width}
-                                         :kind :toggle-details
-                                         :session-id (:session-id meta)
-                                         :node-id (:node-id meta)
-                                         :collapsed? (:collapsed? meta)}))))
+                          (.register interactions/hit-map
+                                     {:bounds {:row abs-row :col x :width click-width}
+                                      :kind :toggle-details
+                                      :session-id (:session-id meta)
+                                      :node-id (:node-id meta)
+                                      :collapsed? (:collapsed? meta)}))))
                     ;; ── Result (error) - neutral code-block bg ──
                     (str/starts-with? line err-result-marker)
                     (do
@@ -2605,11 +2623,12 @@
                         (let [abs-row (+ (long viewport-top) (long y))
                               click-width (long (or (:click-width meta) iw))]
 
-                          (cr/register! {:bounds {:row abs-row :col x :width click-width}
-                                         :kind :toggle-details
-                                         :session-id (:session-id meta)
-                                         :node-id (:node-id meta)
-                                         :collapsed? (:collapsed? meta)}))))
+                          (.register interactions/hit-map
+                                     {:bounds {:row abs-row :col x :width click-width}
+                                      :kind :toggle-details
+                                      :session-id (:session-id meta)
+                                      :node-id (:node-id meta)
+                                      :collapsed? (:collapsed? meta)}))))
                     ;; ── Code block padding (running / neutral) ──
                     ;; These rows are usually blank top/bottom band edges,
                     ;; but the per-form footer deliberately rides the same
@@ -2729,7 +2748,8 @@
                     (str/starts-with? line md-summary-marker)
                     (let [abs-row (+ (long viewport-top) (long y))
                           hovered? (and (= :toggle-details (:kind meta))
-                                        (= abs-row (:row (:bounds (cr/hovered)))))
+                                        (= abs-row
+                                           (:row (:bounds (.hovered interactions/hit-map)))))
                           bg (if hovered? t/link-chrome-hover-bg t/md-summary-bg)
                           fg (if hovered? t/link-chrome-hover-fg t/md-summary-fg)]
 
@@ -2748,11 +2768,12 @@
                       (case (:kind meta)
                         :toggle-details
                         (let [click-width (long (or (:click-width meta) iw))]
-                          (cr/register! {:bounds {:row abs-row :col fbx :width click-width}
-                                         :kind :toggle-details
-                                         :session-id (:session-id meta)
-                                         :node-id (:node-id meta)
-                                         :collapsed? (:collapsed? meta)}))
+                          (.register interactions/hit-map
+                                     {:bounds {:row abs-row :col fbx :width click-width}
+                                      :kind :toggle-details
+                                      :session-id (:session-id meta)
+                                      :node-id (:node-id meta)
+                                      :collapsed? (:collapsed? meta)}))
 
                         nil))
                     ;; ── `vis-table` card ── a sheet, not a source listing
@@ -3008,7 +3029,8 @@
                     (str/starts-with? line th-md-summary-marker)
                     (let [abs-row (+ (long viewport-top) (long y))
                           hovered? (and (= :toggle-details (:kind meta))
-                                        (= abs-row (:row (:bounds (cr/hovered)))))
+                                        (= abs-row
+                                           (:row (:bounds (.hovered interactions/hit-map)))))
                           bg (if hovered? t/link-chrome-hover-bg t/th-md-summary-bg)
                           fg (if hovered? t/link-chrome-hover-fg t/th-md-summary-fg)]
 
@@ -3027,11 +3049,12 @@
                       (case (:kind meta)
                         :toggle-details
                         (let [click-width (long (or (:click-width meta) iw))]
-                          (cr/register! {:bounds {:row abs-row :col fbx :width click-width}
-                                         :kind :toggle-details
-                                         :session-id (:session-id meta)
-                                         :node-id (:node-id meta)
-                                         :collapsed? (:collapsed? meta)}))
+                          (.register interactions/hit-map
+                                     {:bounds {:row abs-row :col fbx :width click-width}
+                                      :kind :toggle-details
+                                      :session-id (:session-id meta)
+                                      :node-id (:node-id meta)
+                                      :collapsed? (:collapsed? meta)}))
 
                         nil))
                     ;; Thinking fenced code: visible code-block bg, italic dim text.
@@ -3170,7 +3193,7 @@
                   ;; first visible column of the body.
                   (when-let [links (:links meta)]
                     (let [abs-row (+ (long viewport-top) (long y))
-                          hovered (cr/hovered)
+                          hovered (.hovered interactions/hit-map)
                           hover-url? (= :url (:kind hovered))
                           ;; A markdown TABLE row is one flat `:table` run: its cells are
                           ;; flattened for the grid painter, so a link inside a cell carries
@@ -3185,9 +3208,10 @@
 
                       (doseq [{:keys [col width url]} links]
                         (let [abs-col (+ (long x) (long col))]
-                          (cr/register! {:bounds {:row abs-row :col abs-col :width (long width)}
-                                         :kind :url
-                                         :url url})
+                          (.register interactions/hit-map
+                                     {:bounds {:row abs-row :col abs-col :width (long width)}
+                                      :kind :url
+                                      :url url})
                           ;; Hover affordance: when the pointer is over this
                           ;; link span, brighten its already-underlined cells
                           ;; to the link-chrome hover fg so the link lights up
@@ -7316,9 +7340,9 @@
     ;; their chrome rows during paint; downstream painters (header,
     ;; ...) register theirs too. The published registry that the
     ;; input thread reads doesn't change until the screen calls
-    ;; `cr/commit-frame!` after every painter has run - so the
+    ;; `HitRegionMap.commitFrame` after every painter has run - so the
     ;; input thread never lookup-misses on a half-filled buffer.
-    (cr/begin-frame!)
+    (.beginFrame interactions/hit-map)
     (let [clip (.newTextGraphics g (TerminalPosition. 0 text-top) (TerminalSize. cols inner-h))]
       (doseq [{:keys [^long top projected]} visible]
         (draw-chat-bubble! clip
@@ -7334,48 +7358,48 @@
         ;; overlaps message content. The track spans the whole message
         ;; panel, including top/bottom breathing-room rows; otherwise a
         ;; one-row blank gap appears above the scrollbar.
-        (scrollbar/draw! g
-                         {:col (- cols 2)
-                          :top bar-top
-                          :track-h track-h
-                          :total-h total-h
-                          :inner-h inner-h
-                          :scroll eff-scroll
-                          :track-fg t/border-fg
-                          :track-bg t/terminal-bg
-                          :thumb-fg t/dialog-hint-key
-                          :thumb-bg t/terminal-bg})))))
+        (ScrollBar/draw g
+                        Direction/VERTICAL
+                        (TerminalPosition. (int (- cols 2)) (int bar-top))
+                        (int track-h)
+                        (int total-h)
+                        (int inner-h)
+                        (when (some? eff-scroll) (Integer/valueOf (int eff-scroll)))
+                        t/border-fg
+                        t/terminal-bg
+                        t/dialog-hint-key
+                        t/terminal-bg)))))
 
 (defn draw-detail-labels!
   "Vim-style jump-label overlay for collapsible disclosures.
 
    `frozen` is the `[label region]` assignment captured ONCE when the mode
-   opened (`cr/assign-labels` on that frame), read from `db` — NOT re-derived
+   opened (`interactions/assign-labels` on that frame), read from `db` — NOT re-derived
    per frame. Freezing matters mid-turn: a live stream keeps re-registering
-   `cr/current` as the trace grows, so a per-frame `assign-labels` would
+   `interactions/hit-map` as the trace grows, so a per-frame `assign-labels` would
    reshuffle the letters under the user's fingers and race the keypress. With a
    frozen map the letter→fold binding is stable. Each badge is re-anchored to
    its fold's CURRENT painted position — the region is matched by
-   `[session-id node-id]` against this frame's `cr/current`, so the letter
+   `[session-id node-id]` against this frame's `interactions/hit-map`, so the letter
    tracks the fold as the transcript scrolls and is simply dropped when the
    fold scrolls off. Falls back to a live `assign-labels` when no frozen set is
    present (the command-palette entry can open the mode from a dialog frame
    that had nothing to freeze). Inactive / empty ⇒ paints nothing.
 
-   Called by the full-frame painter right AFTER `cr/commit-frame!`, so
-   `cr/current` holds this frame's freshly-registered regions. The input
+   Called by the full-frame painter right AFTER `HitRegionMap.commitFrame`, so
+   `interactions/hit-map` holds this frame's freshly-registered regions. The input
    handler resolves a typed letter against the SAME frozen map, so a badge and
    its keypress always point at the same fold without shared mutable state."
   [^TextGraphics g active? frozen]
   (when active?
     (let [labels
-          (if (seq frozen) frozen (cr/assign-labels (cr/current)))
+          (if (seq frozen) frozen (interactions/assign-labels (.current interactions/hit-map)))
 
           live-by-node
           (reduce (fn [m r]
                     (if (= :toggle-details (:kind r)) (assoc m [(:session-id r) (:node-id r)] r) m))
                   {}
-                  (cr/current))]
+                  (.current interactions/hit-map))]
 
       (doseq [[label region]
               labels

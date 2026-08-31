@@ -7,7 +7,7 @@
    one row; C-x i enters that keyboard surface without moving the text cursor."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.interactions :as interactions]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.format :as fmt])
@@ -109,13 +109,15 @@
         (.setForegroundColor g t/dialog-hint)
         (.setBackgroundColor g t/terminal-bg)
         (p/put-str! g body-w row remove-label)
-        (cr/register! {:bounds {:row row :col 0 :width body-w}
-                       :kind :attachment-inspect
-                       :attachment attachment
-                       :attachment-id id
-                       :enabled? true})
-        (cr/register! {:bounds {:row row :col body-w :width remove-w}
-                       :kind :attachment-remove
-                       :attachment-id id
-                       :enabled? true})))
+        (.register interactions/hit-map
+                   {:bounds {:row row :col 0 :width body-w}
+                    :kind :attachment-inspect
+                    :attachment attachment
+                    :attachment-id id
+                    :enabled? true})
+        (.register interactions/hit-map
+                   {:bounds {:row row :col body-w :width remove-w}
+                    :kind :attachment-remove
+                    :attachment-id id
+                    :enabled? true})))
     (rail-height attachments)))
