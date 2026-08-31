@@ -24,6 +24,15 @@
   []
   (set (map second (re-seq #"([a-z_]+)=__vis_host_" pyx/bootstrap-python))))
 
+(defn- document-parts
+  "Every map key and every scalar in a rendered document, tagged, so one pass can
+   ask what a consumer in another language actually receives."
+  [x]
+  (cond (map? x) (mapcat (fn [[k v]]
+                           (cons [:key k] (document-parts v)))
+                         x)
+        (coll? x) (mapcat document-parts x)
+        :else [[:value x]]))
 (defdescribe
   python-host-contract-test
   (describe
@@ -45,6 +54,24 @@
                      (get-in view-document ["live" "ops"])))
           (expect (= view-document (get (contract/package-document) "view")))
           (expect (string? (contract/package-document-json)))))
+    (it "hands a consumer strings, never a Clojure keyword"
+        ;; The document is read by Python, by JavaScript and by whoever curls it.
+        ;; A keyword that survived the render would arrive as ":gateway/routes" -
+        ;; a spelling no other language has, and one no JSON reader repairs.
+        (let [parts
+              (document-parts (contract/package-document))
+
+              ks
+              (map second (filter #(= :key (first %)) parts))
+
+              vs
+              (map second (filter #(= :value (first %)) parts))]
+
+          (expect (seq ks))
+          (expect (every? string? ks))
+          (expect (not-any? #(or (str/starts-with? % ":") (str/includes? % "/")) ks))
+          (expect (every? #(or (string? %) (number? %) (boolean? %) (nil? %)) vs))
+          (expect (not-any? #(and (string? %) (str/starts-with? % ":")) vs))))
     (it "renders canonical content from its owning document"
         (let [content-document (contract-content/package-document)]
           (expect (= 1 contract-content/version))
