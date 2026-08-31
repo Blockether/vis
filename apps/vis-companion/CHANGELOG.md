@@ -2,6 +2,30 @@
 
 What each TestFlight build changed. Edit before uploading; the release script never rewrites an existing entry.
 
+## 0.1.41 (5118) — 2026-08-31
+<!-- commit: 0005909e61bdfd8d8fa006eda5f3a6667c235f4a -->
+
+- Keep the retired bridge's name out of the gallery config
+- Embed responsive terminal in Companion
+- Simplify dialog header actions
+- Align dialog header with its body
+- Render every surface through Lanterna grids
+- Edit only the session title
+- Rename sessions inline
+- Strengthen session list boundaries
+- Extract session header
+- Unify composer suggestions
+- Fold completion text into stdout
+- Extract composer feature surfaces
+- Extract canonical fleet rail
+- Remove iteration form results
+- Strengthen feature component boundaries
+- Make prompt reuse context-safe
+- Extract queued turn tray
+- Extract session project groups
+- Extract screen feature boundaries
+- Canonicalize block output facts
+
 ## 0.1.41 (5066) — 2026-08-29
 <!-- commit: 876103f5b201162aa8cfe0922e7b3fb4f9a46e4c -->
 
