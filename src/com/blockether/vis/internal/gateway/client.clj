@@ -246,12 +246,12 @@
    trip. A daemon without a `protocol` block records all-nils and is rejected.
    Returns the body unchanged."
   [body]
-  (reset! gateway-handshake* (protocol/wire->handshake (get body "protocol")))
+  (reset! gateway-handshake* (gateway-contract/wire->handshake (get body "protocol")))
   body)
 
 (defn compatibility
   "This client's verdict on the daemon it last probed — the SAME pure comparison
-   the gateway runs on us ([[protocol/verdict]]), so the two halves never
+   the gateway runs on us ([[gateway-contract/verdict]]), so the two halves never
    disagree about which one is out of date."
   []
   (protocol/client-verdict client-label @gateway-handshake*))
@@ -268,7 +268,7 @@
   []
   (let [{:keys [reason gateway-protocol]} (compatibility)]
     (when (and (= "gateway-too-old" reason) gateway-protocol)
-      {"X-Vis-Min-Gateway-Protocol" (str gateway-protocol)})))
+      {(gateway-contract/header :minimum-gateway-protocol) (str gateway-protocol)})))
 
 (defn- assert-compatible!
   "Refuse to drive a daemon whose wire protocol this build cannot speak, with the

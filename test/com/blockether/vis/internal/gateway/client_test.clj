@@ -6,6 +6,7 @@
    \"leave it alone\", and never confuses either with a real 404."
   (:require [babashka.http-client :as http]
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.discovery :as discovery]))
 
@@ -395,7 +396,7 @@
          #'http/request
          (fn [{:keys [method headers] :as request}]
            (swap! calls conj request)
-           (if (= "2" (get headers "X-Vis-Min-Gateway-Protocol"))
+           (if (= "2" (get headers (gateway-contract/header :minimum-gateway-protocol)))
              {:status 200
               :body
               (if (= :get method)
@@ -406,7 +407,9 @@
           (let [result (client/stop-daemon-if-idle!)]
             (is (true? (:stopped? result)))
             (is (= [:get :post] (mapv :method @calls)))
-            (is (every? #(= "2" (get-in % [:headers "X-Vis-Min-Gateway-Protocol"])) @calls)))))
+            (is (every?
+                  #(= "2" (get-in % [:headers (gateway-contract/header :minimum-gateway-protocol)]))
+                  @calls)))))
       (finally (reset! handshake previous)))))
 
 ;; The state `vis-agent update` leaves behind when a session was open: the daemon
@@ -588,8 +591,7 @@
                ;; What this process starts in its place speaks this build's
                ;; protocol — READ, not spelled out, so raising the floor never
                ;; leaves this fixture pretending to be a daemon it just refused.
-               (let [now (deref (requiring-resolve
-                                  'com.blockether.vis.internal.gateway.protocol/protocol-version))]
+               (let [now gateway-contract/protocol-version]
                  (reset! handshake
                    {:protocol now :min-client now :min-gateway now :version "0.1.40"})))
              {:entry (if (> attach 1) new-entry fake-entry)}))

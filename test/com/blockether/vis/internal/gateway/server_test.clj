@@ -3,11 +3,11 @@
             [babashka.http-client :as http]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp-core]
             [com.blockether.vis.internal.gateway.client :as client]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
-            [com.blockether.vis.internal.gateway.protocol :as protocol]
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]
@@ -1448,14 +1448,16 @@
               (app {:request-method :get
                     :uri "/v1/sessions"
                     :headers {"origin" origin
-                              protocol/protocol-header (str protocol/protocol-version)}})
+                              (gateway-contract/header :protocol)
+                              (str gateway-contract/protocol-version)}})
 
               authed
               (app {:request-method :get
                     :uri "/v1/sessions"
                     :headers {"origin" origin
                               "authorization" "Bearer sekret"
-                              protocol/protocol-header (str protocol/protocol-version)}})]
+                              (gateway-contract/header :protocol)
+                              (str gateway-contract/protocol-version)}})]
 
           (testing "preflight OPTIONS short-circuits auth with 204"
             (is (= 204 (:status preflight)))

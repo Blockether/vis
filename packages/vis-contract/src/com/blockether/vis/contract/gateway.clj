@@ -136,3 +136,72 @@
   "True when `event-type` belongs to the closed session-stream vocabulary."
   [event-type]
   (contains? session-event-types event-type))
+
+(defn- ->protocol-number
+  [x]
+  (cond (integer? x) (long x)
+        (number? x) (long x)
+        (string? x) (try (Long/parseLong (str/trim x)) (catch Exception _ nil))
+        :else nil))
+
+(defn wire->handshake
+  "Read a peer's advertised handshake from its canonical string-keyed wire map.
+   Missing fields remain nil so [[verdict]] rejects an unversioned peer explicitly."
+  [m]
+  {:protocol (->protocol-number (get m "protocol"))
+   :min-client (->protocol-number (get m "min_client"))
+   :min-gateway (->protocol-number (get m "min_gateway"))
+   :version (some-> (get m "version")
+                    str
+                    not-empty)
+   :build (some-> (get m "build")
+                  str
+                  not-empty)})
+
+(defn verdict
+  "Pure compatibility verdict between a gateway and a client.
+
+   Reasons are `ok`, `client-too-old`, `gateway-too-old`, or `unknown` when a peer
+   did not advertise a protocol. `:upgrade` names the half that must be updated."
+  [{:keys [gateway-protocol gateway-min-client gateway-version client-protocol client-min-gateway
+           client-version client-name]}]
+  (let [gp
+        (->protocol-number gateway-protocol)
+
+        cp
+        (->protocol-number client-protocol)
+
+        gmin
+        (or (->protocol-number gateway-min-client) gp)
+
+        cmin
+        (or (->protocol-number client-min-gateway) cp)
+
+        reason
+        (cond (or (nil? gp) (nil? cp)) "unknown"
+              (< (long cp) (long gmin)) "client-too-old"
+              (< (long gp) (long cmin)) "gateway-too-old"
+              :else "ok")]
+
+    {:is-compatible (= "ok" reason)
+     :reason reason
+     :upgrade (case reason
+                "client-too-old"
+                "client"
+
+                "gateway-too-old"
+                "gateway"
+
+                "unknown"
+                (cond (nil? cp) "client"
+                      (nil? gp) "gateway"
+                      :else nil)
+
+                nil)
+     :gateway-protocol gp
+     :gateway-min-client gmin
+     :gateway-version gateway-version
+     :client-protocol cp
+     :client-min-gateway cmin
+     :client-version client-version
+     :client-name (or client-name "client")}))

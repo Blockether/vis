@@ -1,88 +1,20 @@
 (ns com.blockether.vis.internal.gateway.protocol
-  "THE single source of truth for gateway <-> client version compatibility.
+  "Runtime identity, daemon staleness and compatibility diagnostics.
 
-   Vis ships three INDEPENDENTLY updatable halves that share one HTTP/SSE
-   wire: the gateway daemon, the TUI/CLI client, and the Vis Companion app.
-   Any of them can lag. A daemon started by yesterday's binary keeps running
-   across `brew upgrade`; a phone holds a cached web build for weeks; a
-   Tailscale peer runs last month's release. Without an explicit contract a
-   breaking wire change surfaces as a mystery 404, a missing field, or an
-   event type nobody renders.
-
-   So every peer publishes two numbers next to its human release version:
-
-     `protocol`     the wire protocol IT speaks
-     `min-*`        the OLDEST counterpart it still speaks to
-
-   Compatibility is then a pure comparison ([[verdict]]) — never feature
-   sniffing, never guessing from a release string. Both halves advertise, both
-   halves judge, so whichever side is newer can explain the mismatch even when
-   the other side is too old to know the concept exists.
-
-   Bump [[protocol-version]] on any BREAKING wire change (a removed field, a
-   renamed event type, a changed status shape). Raise [[min-client-protocol]]
-   or [[min-gateway-protocol]] only when the old shape genuinely stops
-   working — additive changes keep the number and are negotiated through
-   `/v1/capabilities` features instead.
-
-   Wire shape (snake_case strings, per the gateway wire contract):
-
-     {\"protocol\": 1, \"min_client\": 1, \"min_gateway\": 1, \"version\": \"0.1.5\"}"
+   Canonical protocol numbers, headers, handshake parsing and the pure compatibility
+   verdict live in `com.blockether.vis.contract.gateway`. This namespace contributes
+   the release/build identity of the running process and the concrete client/server
+   adapters that combine it with that contract."
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as contract]))
 
-(def protocol-version
-  "Wire protocol number THIS build speaks. Monotonic; bump on every BREAKING
-   gateway HTTP/SSE change.
-
-   12 — iteration forms carry no result headline. Tool-authored completion text is
-   ordinary `stdout`; `result_summary` is gone from persistence and wire.
-
-   11 — iteration forms have one success channel: `stdout`. The obsolete `result`
-   field and its value-return branches are gone from persistence and wire.
-
-   10 — `block.output` carries canonical execution facts only. Its duplicated
-   presentation field is gone, and `!cmd` writes its output once as `stdout`.
-
-   9 — Activity owns one event type for its whole lifecycle: running revisions are
-   transient/materialized `block.activity`; the settled revision is durable
-   `block.activity`. `block.output` carries execution output only.
-
-   8 — One turn id survives submission, execution, persistence, replay, and trace
-   lookup. Coarse ticker frames are `turn.progress`; form frames route by the
-   truthful numeric `form_index`. The split-id reconciliation contract and the
-   overloaded `activity` event name are gone."
-  12)
-
-(def min-client-protocol
-  "Oldest client protocol this gateway serves. Protocol 12 removes the iteration-form
-   `result_summary`; clients consume `stdout` and `error`."
-  12)
-
-(def min-gateway-protocol
-  "Oldest gateway protocol this client accepts: the mirror of
-   [[min-client-protocol]]."
-  12)
-
-(def protocol-header "Request header carrying the client's own protocol number." "x-vis-protocol")
-
-(def min-gateway-header
-  "Request header carrying the oldest gateway protocol the client accepts."
-  "x-vis-min-gateway-protocol")
-
-(def client-header
-  "Request header naming the client (`vis-tui`, `vis-cli`, `vis-companion`)."
-  "x-vis-client")
-
-(def client-version-header
-  "Request header carrying the client's human release version."
-  "x-vis-client-version")
 
 (defn release-version
   "Human release version of this build: the `vis/VERSION` resource written at
    build time from the repo-root VIS_VERSION, verbatim (`0.1.28`), else
-   \"dev\". Ordered ONLY for staleness ([[newer-release?]]) - never for
-   compatibility, which is [[protocol-version]]'s job alone."
+   `dev`. Ordered ONLY for staleness ([[newer-release?]]) - never for
+   compatibility, which is [[contract/protocol-version]]'s job alone."
   []
   (or (some-> (io/resource "vis/VERSION")
               slurp
@@ -273,146 +205,71 @@
         :else (boolean (and our-build their-build (not= our-build their-build)))))
 
 (defn handshake
-  "What THIS build advertises about itself. Emitted by the gateway on
-   `/healthz`, `/v1/admin/status`, and `/v1/capabilities` so even the cheapest
-   probe a client already makes carries the verdict inputs."
+  "What THIS build advertises on health, status and capabilities responses."
   []
-  {:protocol protocol-version
-   :min-client min-client-protocol
-   :min-gateway min-gateway-protocol
+  {:protocol contract/protocol-version
+   :min-client contract/minimum-client-protocol
+   :min-gateway contract/minimum-gateway-protocol
    :version (release-version)
    :build (build-id)})
 
 (defn client-headers
-  "Headers every Vis client stamps on every gateway request so the gateway can
-   judge it without a separate negotiation round-trip. `client-name` is a short
-   stable id (`vis-tui`, `vis-cli`)."
+  "Headers every Vis client stamps on a gateway request."
   [client-name]
-  {"X-Vis-Protocol" (str protocol-version)
-   "X-Vis-Min-Gateway-Protocol" (str min-gateway-protocol)
-   "X-Vis-Client" (str client-name)
-   "X-Vis-Client-Version" (release-version)})
+  {(contract/header :protocol) (str contract/protocol-version)
+   (contract/header :minimum-gateway-protocol) (str contract/minimum-gateway-protocol)
+   (contract/header :client) (str client-name)
+   (contract/header :client-version) (release-version)})
 
-(defn- ->int
-  [x]
-  (cond (integer? x) (long x)
-        (number? x) (long x)
-        (string? x) (try (Long/parseLong (str/trim x)) (catch Exception _ nil))
-        :else nil))
-
-(defn wire->handshake
-  "Read a peer's advertised handshake out of the canonical string-keyed wire
-   map (`{\"protocol\" 2 \"min_client\" 2 ...}`). Missing fields remain nil so the
-   compatibility verdict can reject an unversioned peer explicitly."
-  [m]
-  {:protocol (->int (get m "protocol"))
-   :min-client (->int (get m "min_client"))
-   :min-gateway (->int (get m "min_gateway"))
-   :version (some-> (get m "version")
-                    str
-                    not-empty)
-   :build (some-> (get m "build")
-                  str
-                  not-empty)})
 
 (defn request->client
-  "Read the client's advertised protocol out of a Ring request's headers.
-   Missing protocol headers identify an unsupported client and are rejected by
-   [[verdict]]."
+  "Read the client's advertised protocol from a Ring request's normalized headers."
   [request]
-  (let [h (:headers request)]
-    {:protocol (->int (get h protocol-header))
-     :min-gateway (->int (get h min-gateway-header))
-     :name (some-> (get h client-header)
+  (let [h
+        (:headers request)
+
+        parsed
+        (contract/wire->handshake {"protocol" (get h (contract/header :protocol))
+                                   "min_gateway"
+                                   (get h (contract/header :minimum-gateway-protocol))})]
+
+    {:protocol (:protocol parsed)
+     :min-gateway (:min-gateway parsed)
+     :name (some-> (get h (contract/header :client))
                    str
                    not-empty)
-     :version (some-> (get h client-version-header)
+     :version (some-> (get h (contract/header :client-version))
                       str
                       not-empty)}))
 
-(defn verdict
-  "PURE compatibility verdict between a gateway and a client. Both sides pass
-   the same keys and get the same answer, so the TUI, the companion app, and
-   the gateway itself never disagree about who is out of date.
-
-   Reasons:
-     `ok`               both halves speak a protocol the other accepts
-     `client-too-old`   client protocol < the gateway's `min-client`
-     `gateway-too-old`  gateway protocol < the client's `min-gateway`
-     `unknown`          a peer did not advertise a protocol and is unsupported
-
-   `:upgrade` names WHICH half the user must update, so a UI can render one
-   unambiguous instruction instead of \"something is out of date\"."
-  [{:keys [gateway-protocol gateway-min-client gateway-version client-protocol client-min-gateway
-           client-version client-name]}]
-  (let [gp
-        (->int gateway-protocol)
-
-        cp
-        (->int client-protocol)
-
-        gmin
-        (or (->int gateway-min-client) gp)
-
-        cmin
-        (or (->int client-min-gateway) cp)
-
-        reason
-        (cond (or (nil? gp) (nil? cp)) "unknown"
-              (< (long cp) (long gmin)) "client-too-old"
-              (< (long gp) (long cmin)) "gateway-too-old"
-              :else "ok")]
-
-    {:is-compatible (= "ok" reason)
-     :reason reason
-     :upgrade (case reason
-                "client-too-old"
-                "client"
-
-                "gateway-too-old"
-                "gateway"
-
-                "unknown"
-                (cond (nil? cp) "client"
-                      (nil? gp) "gateway"
-                      :else nil)
-
-                nil)
-     :gateway-protocol gp
-     :gateway-min-client gmin
-     :gateway-version gateway-version
-     :client-protocol cp
-     :client-min-gateway cmin
-     :client-version client-version
-     :client-name (or client-name "client")}))
 
 (defn gateway-verdict
-  "The gateway's own judgement of one inbound request: [[verdict]] with this
-   build filled in as the gateway half."
+  "The gateway's own judgement of one inbound request: [[contract/verdict]] with
+   this build filled in as the gateway half."
   [request]
   (let [{:keys [protocol min-gateway name version]} (request->client request)]
-    (verdict {:gateway-protocol protocol-version
-              :gateway-min-client min-client-protocol
-              :gateway-version (release-version)
-              :client-protocol protocol
-              :client-min-gateway min-gateway
-              :client-name name
-              :client-version version})))
+    (contract/verdict {:gateway-protocol contract/protocol-version
+                       :gateway-min-client contract/minimum-client-protocol
+                       :gateway-version (release-version)
+                       :client-protocol protocol
+                       :client-min-gateway min-gateway
+                       :client-name name
+                       :client-version version})))
 
 (defn client-verdict
   "A client's judgement of the gateway it just probed, given that gateway's
-   ENGINE handshake map (the [[wire->handshake]] of its advertised `protocol`
+   ENGINE handshake map (the [[contract/wire->handshake]] of its advertised `protocol`
    block; nil/all-nil = a gateway too old to advertise one). `client-name` names
    this client in the rendered copy."
   [client-name gateway-handshake]
   (let [{:keys [protocol min-client version]} (or gateway-handshake {})]
-    (verdict {:gateway-protocol protocol
-              :gateway-min-client min-client
-              :gateway-version version
-              :client-protocol protocol-version
-              :client-min-gateway min-gateway-protocol
-              :client-name client-name
-              :client-version (release-version)})))
+    (contract/verdict {:gateway-protocol protocol
+                       :gateway-min-client min-client
+                       :gateway-version version
+                       :client-protocol contract/protocol-version
+                       :client-min-gateway contract/minimum-gateway-protocol
+                       :client-name client-name
+                       :client-version (release-version)})))
 
 (defn explain
   "Human copy for a verdict: a title, one plain-language summary, and ORDERED

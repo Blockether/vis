@@ -17,6 +17,7 @@
    is doing via `start!`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.loop :as lp]
@@ -665,7 +666,7 @@
    this decides for itself does not have to be re-derived the next time the
    oldest served client changes."
   [request]
-  (>= (long (or (some-> (get-in request [:headers protocol/protocol-header])
+  (>= (long (or (some-> (get-in request [:headers (gateway-contract/header :protocol)])
                         parse-long)
                 0))
       (long SETTLED_PICTURE_PROTOCOL)))
