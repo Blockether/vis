@@ -714,6 +714,9 @@
       :invalid-thinking-signature
       "Provider rejected the request"
 
+      :invalid-request
+      "Provider rejected the request"
+
       :tool-schema
       (if-let [field (gateway-tool-field-rejection err)]
         (str "Gateway sent an unsupported tool field: " field)
@@ -922,6 +925,9 @@
           (output-budget-too-small-error? (:status data) (str provider-message "\n" message))
           :output-budget-too-small
           :else (case (:category (svar-classification err))
+                  :invalid-request
+                  :invalid-request
+
                   :auth
                   :auth
 

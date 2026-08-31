@@ -208,8 +208,8 @@
                      (expect (= "Provider unavailable" (perr/provider-error-title closed-err)))
                      (expect (str/includes? (perr/provider-error-explanation closed-err)
                                             "provider call failed"))))
-               (it "a real HTTP status is NOT mistaken for a transport failure"
-                   (expect (= :generic
+               (it "a real HTTP status is a request rejection, not a transport failure"
+                   (expect (= :invalid-request
                               (perr/provider-error-kind
                                 {:message "Exceptional status code: 400"
                                  :data {:status 400
@@ -464,13 +464,13 @@
           (expect (false? (perr/context-overflow-error? err)))
           (expect (= :context-length-exceeded (:category (perr/svar-classification err))))
           (expect (= :context-overflow (perr/provider-error-kind err)))))
-    (it "keeps the separate Extra inputs request-schema failure generic"
+    (it "keeps the separate Extra inputs rejection out of context-overflow presentation"
         (let [err {:message "Provider stream failed"
                    :data {:type :svar.core/stream-failed
                           :status 400
                           :provider-error-code "invalid_request_error"
                           :provider-message "Extra inputs are not permitted"}}]
-          (expect (= :generic (perr/provider-error-kind err)))
+          (expect (= :invalid-request (perr/provider-error-kind err)))
           (expect (not= "Context window exceeded" (perr/provider-error-title err)))))))
 
 ;; Regression, issue #105: Vis used to override Svar's 402 quota verdict with
@@ -505,10 +505,27 @@
         (expect (= "Provider quota exhausted" (perr/provider-error-title err)))
         (expect (str/includes? (perr/provider-error-explanation err) "no usable quota or credits"))
         (expect (false? (perr/provider-error-retryable? err))))
-    (it "does not independently recognize Anthropic's provider prose"
+    (it "follows Svar's invalid-request verdict without parsing Anthropic prose"
         (with-redefs [perr/svar-classification (constantly {:category :invalid-request
                                                             :retryable? false})]
-          (expect (= :generic (perr/provider-error-kind err)))))))
+          (expect (= :invalid-request (perr/provider-error-kind err)))))))
+
+;; Regression, reported session b30f87ac-f20e-4d7f-9fd2-416788d10527:
+;; an Anthropic 400 was titled "Provider unavailable" even though the body named
+;; the invalid service-tier value precisely.
+(defdescribe
+  invalid-request-presentation-test
+  (let [err {:message "Exceptional status code: 400"
+             :data {:status 400
+                    :body (str "{\"type\":\"error\",\"error\":{\"type\":"
+                               "\"invalid_request_error\",\"message\":"
+                               "\"service_tier: Input should be 'auto' or 'standard_only'\"}}")}}]
+    (it "presents the provider's invalid request as a rejection, not an outage"
+        (expect (= :invalid-request (:category (perr/svar-classification err))))
+        (expect (= :invalid-request (perr/provider-error-kind err)))
+        (expect (= "Provider rejected the request" (perr/provider-error-title err)))
+        (expect (str/includes? (perr/provider-error-explanation err) "service_tier"))
+        (expect (false? (perr/provider-error-retryable? err))))))
 
 ;; Regression, issue #105: Svar's model-unavailable verdict used to fall through
 ;; Vis's legacy prose/status heuristics and become an unrelated generic failure.

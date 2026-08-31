@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { renderSessionScreen } from "./session-screen-harness";
+import { renderSessionScreen, subscriptionHub } from "./session-screen-harness";
 
 const toggle = (id: string, label: string, value: string, choices: string[]) => ({
   id,
@@ -89,5 +89,81 @@ describe("composer response controls", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /verbosity — medium/i })).toBeInTheDocument(),
     );
+  });
+  // Regression, reported session b30f87ac-f20e-4d7f-9fd2-416788d10527:
+  // Fast mode was encoded as an OpenAI-only request field before routing finished.
+  it("submits Fast mode as a provider-neutral turn feature", async () => {
+    const user = userEvent.setup();
+    const fast = { id: "codex_fast_mode", label: "Fast mode", type: "boolean", enabled: true };
+    const submitTurn = vi.fn(
+      (
+        _sid: string,
+        _request: string,
+        _options?: {
+          extraBody?: Record<string, unknown>;
+          turnFeatures?: Record<string, boolean>;
+        },
+      ) => Promise.resolve({ turn_id: "turn-1", status: "running" }),
+    );
+    const codex = { provider: "openai-codex", model: "gpt-5.6" };
+
+    renderSessionScreen({
+      client: {
+        cachedSessionModel: () => codex,
+        sessionModel: () => Promise.resolve(codex),
+        cachedSetting: (id: string) => (id === "codex_fast_mode" ? fast : null),
+        setting: (id: string) => Promise.resolve(id === "codex_fast_mode" ? fast : null),
+        submitTurn,
+      },
+    });
+
+    await user.type(screen.getByRole("textbox", { name: "Message Vis" }), "hello");
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(submitTurn).toHaveBeenCalled());
+    const options = submitTurn.mock.calls[0]?.[2];
+    expect(options?.extraBody).toBeUndefined();
+    expect(options?.turnFeatures).toEqual({ codex_fast_mode: true });
+  });
+
+  it("does not let an initial model read overwrite a newer gateway model event", async () => {
+    let resolveSessionModel!: (pref: { provider: string; model: string }) => void;
+    const sessionModel = vi.fn(
+      () =>
+        new Promise<{ provider: string; model: string }>((resolve) => {
+          resolveSessionModel = resolve;
+        }),
+    );
+    const hub = subscriptionHub();
+    const noteSessionModel = vi.fn((_sid: string, pref: unknown) => pref);
+    const fast = { id: "codex_fast_mode", label: "Fast mode", type: "boolean", enabled: true };
+    const codex = { provider: "openai-codex", model: "gpt-5.6" };
+
+    renderSessionScreen({
+      client: {
+        cachedSessionModel: () => codex,
+        sessionModel,
+        noteSessionModel,
+        cachedSetting: (id: string) => (id === "codex_fast_mode" ? fast : null),
+        setting: (id: string) => Promise.resolve(id === "codex_fast_mode" ? fast : null),
+      },
+      subscriptions: hub,
+    });
+
+    expect(await screen.findByRole("button", { name: /fast mode — on/i })).toBeInTheDocument();
+    hub.emit({
+      type: "session.model_updated",
+      provider: "anthropic-coding-plan",
+      model: "claude-opus-5",
+    } as never);
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /fast mode/i })).not.toBeInTheDocument(),
+    );
+
+    await act(async () => {
+      resolveSessionModel(codex);
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole("button", { name: /fast mode/i })).not.toBeInTheDocument();
   });
 });

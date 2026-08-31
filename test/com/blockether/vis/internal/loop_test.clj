@@ -3680,32 +3680,88 @@
 ;; mode yields <=1 block, so multi-fence merge + fence-dropped diagnostics are
 ;; unreachable). See refactor "remove dead fenced-era code-block machinery".
 
-(defdescribe token-cost-test
-             (it "applies an explicit service-tier cost multiplier to every billed token class"
-                 (let [estimate
-                       (deref #'lp/estimate-token-cost)
+(defdescribe
+  token-cost-test
+  (it "applies an explicit service-tier cost multiplier to every billed token class"
+      (let [estimate
+            (deref #'lp/estimate-token-cost)
 
-                       usage
-                       {:input-tokens 8298 :output-tokens 6}
+            usage
+            {:input-tokens 8298 :output-tokens 6}
 
-                       standard
-                       (estimate "gpt-5.6-sol" 8298 6 {:api-usage usage})
+            standard
+            (estimate "gpt-5.6-sol" 8298 6 {:api-usage usage})
 
-                       priority
-                       (estimate "gpt-5.6-sol" 8298 6 {:api-usage usage :cost-multiplier 2.0})]
+            priority
+            (estimate "gpt-5.6-sol" 8298 6 {:api-usage usage :cost-multiplier 2.0})]
 
-                   (doseq [k ["input_cost" "output_cost" "total_cost"]]
-                     (expect (< (Math/abs (- (* 2.0 (double (get standard k)))
-                                             (double (get priority k))))
-                                1.0E-12)))))
-             (it "recognizes Priority pricing only for the Codex provider"
-                 (let [multiplier (deref (ns-resolve 'com.blockether.vis.internal.loop
-                                                     'codex-fast-cost-multiplier))]
-                   (expect (= 2.0 (multiplier {:service_tier "priority"} :openai-codex)))
-                   (expect (= 2.0 (multiplier {"service_tier" "PRIORITY"} "openai-codex")))
-                   (expect (= 1.0 (multiplier {:service_tier "priority"} :openai)))
-                   (expect (= 1.0 (multiplier {} :openai-codex))))))
+        (doseq [k ["input_cost" "output_cost" "total_cost"]]
+          (expect (< (Math/abs (- (* 2.0 (double (get standard k))) (double (get priority k))))
+                     1.0E-12)))))
+  (it "prices Fast intent only when Codex serves the request"
+      (let [multiplier
+            (deref (ns-resolve 'com.blockether.vis.internal.loop 'codex-fast-cost-multiplier))
 
+            fast
+            {"codex_fast_mode" true}]
+
+        (expect (= 2.0 (multiplier {} fast :openai-codex)))
+        (expect (= 2.0 (multiplier {"service_tier" "PRIORITY"} {} "openai-codex")))
+        (expect (= 1.0 (multiplier {:service_tier "priority"} fast :openai)))
+        (expect (= 1.0 (multiplier {} {} :openai-codex))))))
+
+;; Regression, reported session b30f87ac-f20e-4d7f-9fd2-416788d10527:
+;; a channel chose Codex Priority before the final provider route was known.
+(defdescribe
+  codex-fast-request-projection-test
+  (let [project-router
+        (deref #'lp/codex-fast-router)
+
+        sanitize
+        (deref #'lp/provider-extra-body)
+
+        fast
+        {"codex_fast_mode" true}
+
+        verbosity
+        {:text {:verbosity "high"}}
+
+        router
+        {:providers [{:id :openai-codex :extra-body {:service_tier "auto" :provider-option true}}
+                     {:id :anthropic-coding-plan
+                      :extra-body {:service_tier "standard_only" :max_tokens 1024}}]}
+
+        provider-body
+        (fn [r provider-id]
+          (:extra-body (some #(when (= provider-id (:id %)) %) (:providers r))))]
+
+    (it "scopes Fast to the Codex router entry before Svar can fall back"
+        (let [projected
+              (project-router router verbosity fast)
+
+              caller-body
+              (sanitize verbosity)]
+
+          (expect (= {:service_tier "priority" :provider-option true :text {:verbosity "high"}}
+                     (merge (provider-body projected :openai-codex) caller-body)))
+          (expect (= {:service_tier "standard_only" :max_tokens 1024 :text {:verbosity "high"}}
+                     (merge (provider-body projected :anthropic-coding-plan) caller-body)))))
+    (it "moves legacy caller Priority to Codex without deleting valid tiers"
+        (let [legacy
+              {"service_tier" "PRIORITY" :max_tokens 512}
+
+              projected
+              (project-router router legacy {})
+
+              caller-body
+              (sanitize legacy)]
+
+          (expect (= {:service_tier "priority" :provider-option true :max_tokens 512}
+                     (merge (provider-body projected :openai-codex) caller-body)))
+          (expect (= {:service_tier "standard_only" :max_tokens 512}
+                     (merge (provider-body projected :anthropic-coding-plan) caller-body)))
+          (expect (= {:service_tier "auto" :max_tokens 1024}
+                     (sanitize {:service_tier "auto" :max_tokens 1024})))))))
 (defdescribe ask-code-block-observation-test
              (it "reports the block count (lenient mode: only the count is meaningful)"
                  (expect (= {:form-count 1}

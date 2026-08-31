@@ -3823,15 +3823,19 @@
 
 (defn- turn-extra-body
   "Per-turn wire extras captured when the turn is enqueued. `text.verbosity` is
-   capability-gated; `service_tier` is provider-specific and rides only for a
-   Codex session while its persisted Fast mode switch is on."
+   capability-gated; provider-specific Fast intent travels separately as a turn
+   feature so the engine can project it after routing."
   [{:keys [settings] :as db}]
   (not-empty (cond-> {}
                (verbosity-configurable? db)
-               (assoc-in [:text :verbosity] (name (or (:verbosity settings) "low")))
+               (assoc-in [:text :verbosity] (name (or (:verbosity settings) "low"))))))
 
-               (and (codex-session? db) (vis/toggle-value "codex_fast_mode"))
-               (assoc :service_tier "priority"))))
+(defn- turn-features
+  "Provider-neutral turn intent captured with the submission."
+  [db]
+  (cond-> {}
+    (and (codex-session? db) (vis/toggle-value "codex_fast_mode"))
+    (assoc "codex_fast_mode" true)))
 
 (defonce ^:private process-submission-id (str (java.util.UUID/randomUUID)))
 
@@ -4007,7 +4011,7 @@
             (when gateway?
               [[:gateway-enqueue workspace-id session entry
                 (when (reasoning-effort-configurable? db) (get-in db [:settings :reasoning-level]))
-                (turn-extra-body source-db) {} workspace]])]
+                (turn-extra-body source-db) (turn-features source-db) workspace]])]
 
         {:db (update-tab db
                          workspace-id
@@ -4081,7 +4085,7 @@
               (turn-extra-body source-db)
 
               turn-features
-              {}
+              (turn-features source-db)
 
               reasoning-level
               (when (reasoning-effort-configurable? db) (get-in db [:settings :reasoning-level]))

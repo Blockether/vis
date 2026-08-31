@@ -30,7 +30,7 @@
                      :flushed))))
 
 (defdescribe
-  turn-extra-body-test
+  turn-request-options-test
   ;; Regression: verbosity was gated on `(= :openai-codex provider)`, so a
   ;; GitHub Copilot GPT session — the SAME `/v1/responses` wire — was denied
   ;; a field its endpoint accepts, while the chip stayed hidden. The gate is
@@ -59,24 +59,35 @@
                       {:session {:id "s1"}
                        :session-model-pref {:provider (name provider) :model "gpt-5.6-sol"}
                        :settings {:verbosity "high"}}))))))
-  (it "adds priority only for Codex while Fast mode is enabled"
+  (it "keeps Codex Fast out of provider-native extra body"
       (try (vis/toggle-set-value! "codex_fast_mode" true)
-           (doseq [[provider expected] [[:openai-codex
-                                         {:text {:verbosity "high"} :service_tier "priority"}]
-                                        [:github-copilot {:text {:verbosity "high"}}]]]
+           (doseq [provider [:openai-codex :github-copilot]]
              (with-redefs [vis/get-router (constantly :router)
                            vis/resolve-model-info (fn [_ _provider _model]
                                                     {:provider provider
                                                      :name "gpt-5.6-sol"
                                                      :verbosity-style :openai-text})]
 
-               (expect (= expected
+               (expect (= {:text {:verbosity "high"}}
                           (#'state/turn-extra-body
                            {:session {:id "s1"}
                             :session-model-pref {:provider (name provider) :model "gpt-5.6-sol"}
                             :settings {:verbosity "high"}})))))
            (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
-  (it "omits priority when Fast mode is disabled"
+  (it "captures enabled Fast mode as provider-neutral turn intent"
+      (try
+        (vis/toggle-set-value! "codex_fast_mode" true)
+        (doseq [[provider expected] [[:openai-codex {"codex_fast_mode" true}] [:github-copilot {}]]]
+          (with-redefs [vis/get-router (constantly :router)
+                        vis/resolve-model-info (fn [_ _provider _model]
+                                                 {:provider provider :name "gpt-5.6-sol"})]
+
+            (expect (= expected
+                       (#'state/turn-features
+                        {:session {:id "s1"}
+                         :session-model-pref {:provider (name provider) :model "gpt-5.6-sol"}})))))
+        (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
+  (it "returns empty turn intent when the toggle is disabled"
       (try (vis/toggle-set-value! "codex_fast_mode" false)
            (with-redefs [vis/get-router
                          (constantly :router)
@@ -85,10 +96,10 @@
                          (fn [& _]
                            {:provider :openai-codex :name "gpt-5.6-sol"})]
 
-             (expect (nil? (#'state/turn-extra-body
-                            {:session {:id "s1"}
-                             :session-model-pref {:provider "openai-codex" :model "gpt-5.6-sol"}
-                             :settings {}}))))
+             (expect (= {}
+                        (#'state/turn-features
+                         {:session {:id "s1"}
+                          :session-model-pref {:provider "openai-codex" :model "gpt-5.6-sol"}}))))
            (finally (vis/toggle-reset-to-default! "codex_fast_mode"))))
   (it "toggles Fast for Codex and refuses other providers"
       (let [handler (-> #'state/event-registry

@@ -665,10 +665,17 @@ export function SessionScreen({
   const [error, setError] = useState<string | null>(null);
   // The session's provider/model pick. Seeded from the client's snapshot so the
   // header chip names the model on the FIRST frame instead of reading "model"
-  // until the gateway answers, then written through by the router dialog.
+  // until the gateway answers, then written through by authoritative events and picks.
   const [modelPref, setModelPref] = useState<ModelPref | null>(() =>
     client.cachedSessionModel(sid),
   );
+  // An initial GET may finish after a gateway model event. The revision makes that
+  // older read observational only instead of letting it roll the session backward.
+  const modelPrefRevisionRef = useRef(0);
+  const commitModelPref = useCallback((pref: ModelPref | null) => {
+    modelPrefRevisionRef.current += 1;
+    setModelPref(pref);
+  }, []);
   // The gateway's default route, shown when this session pins nothing. Same
   // seed: resolving it costs a `/v1/router` probe on a cold daemon.
   const [defaultPref, setDefaultPref] = useState<ModelPref | null>(() =>
@@ -1155,7 +1162,7 @@ export function SessionScreen({
     setRouterOpen(false);
     // Switching sessions swaps the pin, so paint the NEW session's last known
     // one rather than blanking the chip back to the placeholder word.
-    setModelPref(client.cachedSessionModel(sid));
+    commitModelPref(client.cachedSessionModel(sid));
   }, [sid, fresh, draftMessageId]);
 
   // Reasoning effort is the other per-turn dial you change mid-session, so it
@@ -1275,17 +1282,24 @@ export function SessionScreen({
   // registered knob's destination. Other providers need model-level wire
   // capability in the session-model response before this control may appear.
   const verbosityAvailable = activeProvider === "openai-codex" && verbosity;
-  const turnExtraBody =
-    codexFastAvailable && codexFast.enabled ? { service_tier: "priority" } : undefined;
+  function turnFeaturesFor(voiceProjection: boolean): Record<string, boolean> | undefined {
+    const codexFastMode = Boolean(codexFastAvailable && codexFast.enabled);
+    if (!voiceProjection && !codexFastMode) return undefined;
+    return {
+      ...(voiceProjection ? { voice_projection: true } : {}),
+      ...(codexFastMode ? { codex_fast_mode: true } : {}),
+    };
+  }
 
   // The header chip shows whatever model this session actually runs on, so read
   // the gateway's answer rather than assuming the global default.
   useEffect(() => {
     let live = true;
+    const revision = modelPrefRevisionRef.current;
     void client
       .sessionModel(sid)
       .then((pref) => {
-        if (live) setModelPref(pref);
+        if (live && revision === modelPrefRevisionRef.current) setModelPref(pref);
       })
       .catch(() => {
         /* A missing pick is not an error worth interrupting the transcript for. */
@@ -2659,7 +2673,7 @@ export function SessionScreen({
           // projects the same event onto its footer chip). Blank provider AND
           // model means the override was cleared.
           case "session.model_updated":
-            setModelPref(
+            commitModelPref(
               client.noteSessionModel(sid, {
                 provider: eventString(event, "provider"),
                 model: eventString(event, "model"),
@@ -2850,6 +2864,7 @@ export function SessionScreen({
     };
   }, [
     client,
+    commitModelPref,
     loadTranscript,
     sid,
     subscriptions,
@@ -3702,8 +3717,7 @@ export function SessionScreen({
         const submitted = await client.submitTurn(sid, request, {
           displayRequest,
           attachments: sent,
-          extraBody: turnExtraBody,
-          turnFeatures: voiceProjection ? { voice_projection: true } : undefined,
+          turnFeatures: turnFeaturesFor(voiceProjection),
         });
         const queuedId = submitted.turn_id;
         if (voiceProjection)
@@ -3790,8 +3804,7 @@ export function SessionScreen({
       const submitted = await client.submitTurn(sid, request, {
         displayRequest,
         attachments: sent,
-        extraBody: turnExtraBody,
-        turnFeatures: voiceProjection ? { voice_projection: true } : undefined,
+        turnFeatures: turnFeaturesFor(voiceProjection),
       });
       const submittedId = submitted.turn_id;
       if (voiceProjection)
@@ -4570,7 +4583,7 @@ export function SessionScreen({
             client={client}
             sid={sid}
             onClose={() => setRouterOpen(false)}
-            onPicked={setModelPref}
+            onPicked={commitModelPref}
             onManageProviders={onManageProviders}
           />
         )}

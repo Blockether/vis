@@ -7107,29 +7107,63 @@
     ["input_cost" "input_uncached_cost" "input_cached_cost" "input_cache_write_cost"
      "cache_read_cost" "cache_write_cost" "output_cost" "total_cost"])
   (def ^:private codex-fast-price-multiplier 2.0)
+  (def ^:private service-tier-keys [:service_tier "service_tier" :service-tier "service-tier"])
+  (defn- priority-service-tier?
+    [extra-body]
+    (boolean (some (fn [k]
+                     (= "priority"
+                        (some-> (get extra-body k)
+                                str
+                                str/lower-case)))
+                   service-tier-keys)))
+  (defn- codex-provider?
+    [provider]
+    (= "openai-codex"
+       (cond (keyword? provider) (name provider)
+             (some? provider) (str provider))))
+  (defn- codex-fast?
+    [extra-body turn-features]
+    (or (true? (get turn-features "codex_fast_mode")) (priority-service-tier? extra-body)))
+  (defn- codex-fast-router
+    "Put Priority only on the Codex provider so Svar fallback cannot carry it
+     to another provider. Caller-level Priority also activates this projection
+     for requests from clients predating the provider-neutral turn feature."
+    [router extra-body turn-features]
+    (if-not (codex-fast? extra-body turn-features)
+      router
+      (update router
+              :providers
+              (fn [providers]
+                (mapv (fn [provider]
+                        (if (codex-provider? (:id provider))
+                          (update provider
+                                  :extra-body
+                                  (fn [body]
+                                    (assoc (apply dissoc (or body {}) service-tier-keys)
+                                      :service_tier "priority")))
+                          provider))
+                      providers)))))
+  (defn- provider-extra-body
+    "Remove Codex Priority from caller-level options after it has been scoped to
+     the Codex router entry. Provider-valid tiers and unrelated fields remain."
+    [extra-body]
+    (not-empty (reduce (fn [body k]
+                         (if (= "priority"
+                                (some-> (get body k)
+                                        str
+                                        str/lower-case))
+                           (dissoc body k)
+                           body))
+                       (or extra-body {})
+                       service-tier-keys)))
   (defn- codex-fast-cost-multiplier
     "OpenAI Codex Fast mode uses Priority processing, currently billed at 2x
        Standard for input, cached input, cache writes, and output. Keep the
-       multiplier provider-gated: `service_tier` is an open wire extension and
-       must not change another provider's accounting if a caller sends it there."
-    [extra-body provider]
-    (let [tier
-          (or (:service_tier extra-body)
-              (get extra-body "service_tier")
-              (:service-tier extra-body)
-              (get extra-body "service-tier"))
-
-          provider-id
-          (cond (keyword? provider) (name provider)
-                (some? provider) (str provider))]
-
-      (if (and (= "priority"
-                  (some-> tier
-                          str
-                          str/lower-case))
-               (= "openai-codex" provider-id))
-        codex-fast-price-multiplier
-        1.0)))
+       multiplier provider-gated so Fast intent cannot change fallback pricing."
+    [extra-body turn-features provider]
+    (if (and (codex-fast? extra-body turn-features) (codex-provider? provider))
+      codex-fast-price-multiplier
+      1.0))
   (defn- estimate-token-cost
     "Estimate cost from provider usage while preserving cached/non-cached input split.
        `:cost-multiplier` scales every monetary component after svar prices the
@@ -7453,6 +7487,9 @@
           (seq workspace-overrides)
           (merge workspace-overrides)
 
+          true
+          (update :router codex-fast-router extra-body turn-features)
+
           ;; Surface the cancellation token on the environment
           ;; so `run-python-code` can call
           ;; `cancellation/on-cancel!` to register a hard
@@ -7480,9 +7517,6 @@
 
         effective-model
         (:name resolved-model)
-
-        root-cost-multiplier
-        (codex-fast-cost-multiplier extra-body (:provider resolved-model))
 
         _
         (assert effective-model "Router must resolve a root model")
@@ -7613,8 +7647,17 @@
         initial-resolved-model
         (resolve-effective-model (:router environment) (or routing {}))
 
+        initial-extra-body
+        (provider-extra-body extra-body)
+
+        root-cost-multiplier
+        (codex-fast-cost-multiplier extra-body turn-features (:provider initial-resolved-model))
+
         initial-prompt-cache-context
-        (resolved-prompt-cache-context environment initial-resolved-model routing extra-body)
+        (resolved-prompt-cache-context environment
+                                       initial-resolved-model
+                                       routing
+                                       initial-extra-body)
 
         initial-target-vision?
         (or (empty? (:attached user-attachments))
@@ -7836,6 +7879,12 @@
                                                             ;; pre-resolved root model is the fallback
                                                             ;; pricing key only when routing metadata
                                                             ;; is absent (e.g. error before a response).
+                                                            served-provider
+                                                            (or actual-provider
+                                                                (:llm-provider api-usage)
+                                                                (:provider api-usage)
+                                                                (:provider initial-resolved-model))
+
                                                             cost-map
                                                             (estimate-token-cost
                                                               (or (some-> actual-model
@@ -7848,10 +7897,8 @@
                                                                :cost-multiplier
                                                                (codex-fast-cost-multiplier
                                                                  extra-body
-                                                                 (or actual-provider
-                                                                     (:llm-provider api-usage)
-                                                                     (:provider api-usage)
-                                                                     (:provider resolved-model)))})
+                                                                 turn-features
+                                                                 served-provider)})
 
                                                             total
                                                             (when (map? cost-map)
@@ -8062,6 +8109,7 @@
                  reasoning-level
                  (copilot-claude-reasoning-level resolved-model user-request raw-reasoning-level)
                  pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
+                 iteration-extra-body (provider-extra-body extra-body)
                  ;; The window the NEXT request is actually measured against —
                  ;; the rescued peer's when this turn moved, else the pin's.
                  ;; Priority and history live on `iteration-context-limit`.
@@ -8168,7 +8216,7 @@
                  ;; the max-token budget; `:current-extra-body` carries its bump.
                  (loop [attempt 0
                         max-tokens-attempt 0
-                        current-extra-body extra-body
+                        current-extra-body iteration-extra-body
                         ;; `env` is threaded so the auth-refresh retry can
                         ;; reseat its `:router` to the rebuilt one (the
                         ;; in-flight env captured the pre-refresh router).
