@@ -802,12 +802,21 @@
 ;; into the terminal, had no case for any of the three.
 
 (defn- live-events-of
-  "Every collected event of `type` naming `view-id`. Scoped by view id so a sibling
-   test's traffic can never satisfy an assertion here."
-  [seen type view-id]
-  (filterv (fn [[_ event]]
-             (and (= type (get event "type")) (= view-id (get event "view_id"))))
-    @seen))
+  "Every collected event at lifecycle `stage` naming `view-id`. Payload shape, not a
+   duplicated transport spelling, selects open, patch or close."
+  [seen stage view-id]
+  (let [payload-key (case stage
+                      :open
+                      "view"
+
+                      :patch
+                      "patch"
+
+                      :close
+                      "result")]
+    (filterv (fn [[_ event]]
+               (and (contains? event payload-key) (= view-id (get event "view_id"))))
+      @seen)))
 
 (defn- chunk-of
   "What the terminal's ONE projection of the session stream makes of `event`."
@@ -836,9 +845,9 @@
 
         (try (testing "the in-process bus reached no terminal — that IS the bug"
                (is (empty? (:live-views @state/app-db))))
-             (is (await-true #(seq (live-events-of seen gw/view-open-event vid))))
+             (is (await-true #(seq (live-events-of seen :open vid))))
              (testing "the open PROJECTS, and rehydrates the ENGINE's own materialized view"
-               (let [chunk (chunk-of (first (live-events-of seen gw/view-open-event vid)))]
+               (let [chunk (chunk-of (first (live-events-of seen :open vid)))]
                  (is (= :live-view-open (:phase chunk)))
                  (is (= view (hi/live-view<-wire (:view chunk)))
                      "byte for byte the view the in-process channel event carried")
@@ -850,16 +859,16 @@
                                 [{:op :set :node-id "now" :text "Deploying"}
                                  {:op :append :node-id "out" :lines ["one" "two"]}])]
                  (gw/flush-live-patches!)
-                 (is (await-true #(seq (live-events-of seen gw/view-patch-event vid))))
-                 (let [chunk (chunk-of (first (live-events-of seen gw/view-patch-event vid)))]
+                 (is (await-true #(seq (live-events-of seen :patch vid))))
+                 (let [chunk (chunk-of (first (live-events-of seen :patch vid)))]
                    (is (= :live-view-patch (:phase chunk)))
                    (state/dispatch [:live-view-patch (hi/live-patch<-wire (:patch chunk))])
                    (is (= advanced (:view (first (:live-views @state/app-db))))
                        "the terminal never interprets a patch itself"))))
              (testing "and the close settles the pane with the verdict the model reads"
                (engine/close-live! vid {:reason :completed})
-               (is (await-true #(seq (live-events-of seen gw/view-close-event vid))))
-               (let [chunk (chunk-of (first (live-events-of seen gw/view-close-event vid)))]
+               (is (await-true #(seq (live-events-of seen :close vid))))
+               (let [chunk (chunk-of (first (live-events-of seen :close vid)))]
                  (is (= :live-view-close (:phase chunk)))
                  (is (= vid (:view-id chunk)))
                  (let [result (hi/live-result<-wire (:result chunk))]
@@ -934,7 +943,4 @@
       (testing "the shared lifecycle and operator seam are closed"
         (is (= (set (keys hi-spec/view-kinds)) (set (ts-strings lifecycle-source "VIEW_KINDS"))))
         (is (= (set (keys hi-spec/view-actions))
-               (set (ts-strings lifecycle-source "VIEW_ACTIONS"))))
-        (is (= [gw/view-open-event gw/view-patch-event gw/view-close-event]
-               (mapv (partial ts-literal lifecycle-source)
-                     ["VIEW_OPEN_EVENT" "VIEW_PATCH_EVENT" "VIEW_CLOSE_EVENT"])))))))
+               (set (ts-strings lifecycle-source "VIEW_ACTIONS"))))))))

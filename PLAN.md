@@ -766,10 +766,11 @@ protocol compatibility numbers, 32 gateway event names, terminal and queue-mirro
 lifecycle events, directional job streams, settled-turn metadata and replay anchors. Canonical total
 encoding now lives in independently loadable `com.blockether.vis.contract.wire`; Core producers,
 server and engine tests import it directly; current extension consumers stay behind the Core facade. Concrete
-transport, and bounded diagnostics live beside their sole state caller, so `internal.gateway.wire`
+transport and bounded diagnostics live beside their sole callers, so `internal.gateway.wire`
 has been deleted rather than forwarded. `com.blockether.vis.contract.gateway` also owns handshake
-parsing and the pure compatibility verdict, while release/build identity, daemon staleness and
-concrete runtime diagnostics live in `internal.gateway.runtime`. Existing View, Human Input,
+parsing, the pure compatibility verdict and the View event constants consumed by the gateway bridge,
+while release/build identity, daemon staleness and concrete runtime diagnostics live in
+`internal.gateway.runtime`. Existing View, Human Input,
 Activity, cancellation and cross-session permit suites preserve behavior. Three production
 namespaces have moved or been removed.
 

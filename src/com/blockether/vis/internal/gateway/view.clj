@@ -11,6 +11,7 @@
    and one kind-independent REST resource; the engine owns the closed action
    vocabulary and capability checks."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.channel-events :as channel-events]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.view :as view]
@@ -24,15 +25,6 @@
 
 (def ^:private listener-id ::gateway)
 
-(def view-open-event
-  "Session event that mounts either View kind with its complete starting document."
-  "view.open")
-
-(def view-patch-event
-  "Session event carrying accepted operations against an open View."
-  "view.patch")
-
-(def view-close-event "Session event that ends either View kind with its result." "view.close")
 
 (defn- session-of
   "Session id a request view / close event belongs to, as a string, or nil."
@@ -151,7 +143,7 @@
   [frame]
   (when (seq (:ops frame))
     (state/append-event! (:session-id frame)
-                         view-patch-event
+                         gateway-contract/view-patch-event
                          {:kind :live
                           :view-id (:view-id frame)
                           :first-seq (:first-seq frame)
@@ -240,7 +232,7 @@
     :view/open
     (when-let [sid (session-of event)]
       (state/append-event! sid
-                           view-open-event
+                           gateway-contract/view-open-event
                            {:kind (:kind event) :view-id (:view-id event) :view (:view event)}))
 
     :view/patch
@@ -252,7 +244,7 @@
       ;; An ending never overtakes buffered live work.
       (when (= :live (:kind event)) (flush-view! (:view-id event)))
       (state/append-event! sid
-                           view-close-event
+                           gateway-contract/view-close-event
                            {:kind (:kind event) :view-id (:view-id event) :result (:result event)}))
 
     nil)

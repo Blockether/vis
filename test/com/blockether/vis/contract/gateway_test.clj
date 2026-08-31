@@ -1,8 +1,8 @@
 (ns com.blockether.vis.contract.gateway-test
   "Characterization gates for the gateway surface before its implementation owners move."
-  (:require [com.blockether.vis.contract.gateway :as contract]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as contract]
             com.blockether.vis.internal.gateway.server
-            [com.blockether.vis.internal.gateway.view :as gateway-view]
             [lazytest.core :refer [defdescribe expect it]]
             [reitit.core :as reitit]))
 
@@ -56,8 +56,14 @@
                                              :gateway-min-client 2
                                              :client-protocol 1
                                              :client-min-gateway 1})))))
-  (it "pins shared View event semantics"
-      (expect (= contract/view-events
-                 {:open gateway-view/view-open-event
-                  :patch gateway-view/view-patch-event
-                  :close gateway-view/view-close-event}))))
+  (it "exports generated View event constants"
+      (expect (= {:open contract/view-open-event
+                  :patch contract/view-patch-event
+                  :close contract/view-close-event}
+                 contract/view-events))
+      (let [source (slurp "apps/vis-companion/src/lib/view.ts")]
+        (expect (every? (fn [[constant event]]
+                          (str/includes? source (str "export const " constant " = '" event "';")))
+                        [["VIEW_OPEN_EVENT" contract/view-open-event]
+                         ["VIEW_PATCH_EVENT" contract/view-patch-event]
+                         ["VIEW_CLOSE_EVENT" contract/view-close-event]])))))

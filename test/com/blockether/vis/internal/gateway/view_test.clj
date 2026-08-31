@@ -12,11 +12,12 @@
    bridge at the same time — is
    `com.blockether.vis.ext.channel-tui.view-cross-channel-test`."
   (:require [clojure.java.io :as io]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.activity :as activity]
-            [com.blockether.vis.internal.gateway.view :as gw-hi]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.gateway.view :as gw-hi]
             [com.blockether.vis.internal.view :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.view.spec :as hi-spec]
@@ -622,8 +623,10 @@
                 (:id view)]
 
             (try (testing "the open crosses as an ordinary session event, in snake_case"
-                   (is (await-true #(seq (live-events-of seen gw-hi/view-open-event view-id))))
-                   (let [[[event-sid event]] (live-events-of seen gw-hi/view-open-event view-id)]
+                   (is (await-true
+                         #(seq (live-events-of seen gateway-contract/view-open-event view-id))))
+                   (let [[[event-sid event]]
+                         (live-events-of seen gateway-contract/view-open-event view-id)]
                      (is (= sid event-sid))
                      (is (= "CI" (get-in event ["view" "title"])))
                      (is (= ["now" "tail"] (mapv #(get % "id") (get-in event ["view" "nodes"]))))))
@@ -633,9 +636,10 @@
                                   {:op "set" :node-id "now" :text "Building"}])
                  (testing "patches ride ONE coalesced frame that says which of them it carries"
                    (gw-hi/flush-live-patches!)
-                   (is (await-true #(seq (live-events-of seen gw-hi/view-patch-event view-id))))
+                   (is (await-true
+                         #(seq (live-events-of seen gateway-contract/view-patch-event view-id))))
                    (let [frames
-                         (live-events-of seen gw-hi/view-patch-event view-id)
+                         (live-events-of seen gateway-contract/view-patch-event view-id)
 
                          [_ event]
                          (first frames)]
@@ -651,8 +655,9 @@
                      (is (= ["one" "two" "three"] (get-in event ["patch" "ops" 0 "lines"])))))
                  (finally (hi/close-live! view-id)))
             (testing "and the ending carries the picture the model reads, not a rendering of it"
-              (is (await-true #(seq (live-events-of seen gw-hi/view-close-event view-id))))
-              (let [[[_ event]] (live-events-of seen gw-hi/view-close-event view-id)]
+              (is (await-true #(seq
+                                 (live-events-of seen gateway-contract/view-close-event view-id))))
+              (let [[[_ event]] (live-events-of seen gateway-contract/view-close-event view-id)]
                 (is (true? (get-in event ["result" "is_completed"])))
                 (is (= "completed" (get-in event ["result" "reason"])))
                 (is (= ["now" "tail"]
@@ -682,14 +687,15 @@
 
                 (try (hi/patch-live! view-id [{:op "append" :node-id "tail" :lines ["one"]}])
                      (testing "a patch waits for the tick, and the tick is nowhere near due"
-                       (is (empty? (live-events-of seen gw-hi/view-patch-event view-id))))
+                       (is (empty?
+                             (live-events-of seen gateway-contract/view-patch-event view-id))))
                      (testing "so the gateway leaving is what publishes it"
                        ;; Subscribe again at once: the bus is process-local, so this one
                        ;; listener is also serving every sibling test's view.
                        (gw-hi/uninstall!)
                        (gw-hi/install!)
                        (let [frames
-                             (live-events-of seen gw-hi/view-patch-event view-id)
+                             (live-events-of seen gateway-contract/view-patch-event view-id)
 
                              [[_ event]]
                              frames]
@@ -822,24 +828,25 @@
                 view-id
                 (:id view)]
 
-            (try (testing "no view refuses the stop: it asks nothing, so nothing is left unanswered"
-                   (let [body (json-body (view-action-response
-                                           sid
-                                           view-id
-                                           {:action "interrupt"
-                                            :note "wrong subnet — I will re-run it"}))]
-                     (is (true? (get body "is_accepted")))
-                     (is (= "interrupt" (get body "action")))
-                     (is (nil? (gw-hi/live-view-of sid view-id)))))
-                 (testing "and the run reads WHO stopped it, and why, before it reads the picture"
-                   (is (await-true #(seq (live-events-of seen gw-hi/view-close-event view-id))))
-                   (let [[[_ event]] (live-events-of seen gw-hi/view-close-event view-id)]
-                     (is (= "interrupted" (get-in event ["result" "reason"])))
-                     (is (true? (get-in event ["result" "is_from_human"])))
-                     (is (= "wrong subnet — I will re-run it" (get-in event ["result" "note"])))
-                     (is (= ["now"]
-                            (mapv #(get % "id") (get-in event ["result" "view" "nodes"]))))))
-                 (finally (hi/close-live! view-id))))
+            (try
+              (testing "no view refuses the stop: it asks nothing, so nothing is left unanswered"
+                (let [body (json-body (view-action-response sid
+                                                            view-id
+                                                            {:action "interrupt"
+                                                             :note
+                                                             "wrong subnet — I will re-run it"}))]
+                  (is (true? (get body "is_accepted")))
+                  (is (= "interrupt" (get body "action")))
+                  (is (nil? (gw-hi/live-view-of sid view-id)))))
+              (testing "and the run reads WHO stopped it, and why, before it reads the picture"
+                (is (await-true
+                      #(seq (live-events-of seen gateway-contract/view-close-event view-id))))
+                (let [[[_ event]] (live-events-of seen gateway-contract/view-close-event view-id)]
+                  (is (= "interrupted" (get-in event ["result" "reason"])))
+                  (is (true? (get-in event ["result" "is_from_human"])))
+                  (is (= "wrong subnet — I will re-run it" (get-in event ["result" "note"])))
+                  (is (= ["now"] (mapv #(get % "id") (get-in event ["result" "view" "nodes"]))))))
+              (finally (hi/close-live! view-id))))
           (let [sid
                 (str (random-uuid))
 
@@ -852,8 +859,9 @@
                    (let [body (json-body (view-action-response sid bare {:action "interrupt"}))]
                      (is (true? (get body "is_accepted")))
                      (is (= "interrupt" (get body "action"))))
-                   (is (await-true #(seq (live-events-of seen gw-hi/view-close-event bare))))
-                   (let [[[_ event]] (live-events-of seen gw-hi/view-close-event bare)]
+                   (is (await-true
+                         #(seq (live-events-of seen gateway-contract/view-close-event bare))))
+                   (let [[[_ event]] (live-events-of seen gateway-contract/view-close-event bare)]
                      (is (true? (get-in event ["result" "is_from_human"])))
                      (is (nil? (get-in event ["result" "note"])))))
                  (finally (hi/close-live! bare)))))))))

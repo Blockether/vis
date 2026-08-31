@@ -135,6 +135,9 @@
 (def view-events
   "Open, patch and close event names for both View kinds."
   (get-in @document [:gateway/events :view]))
+(def view-open-event "Session event that mounts either View kind." (:open view-events))
+(def view-patch-event "Session event carrying accepted View operations." (:patch view-events))
+(def view-close-event "Session event that ends either View kind." (:close view-events))
 (def envelopes "Canonical gateway envelope declarations." (:gateway/envelopes @document))
 (def turn-meta-keys
   "Wire keys copied from a settled turn row into blocking submit/attach results."
