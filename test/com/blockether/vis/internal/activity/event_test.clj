@@ -126,6 +126,10 @@
 
       (expect (= :diff (:kind evidence)))
       (expect (= [:hunk :context :deletion :addition] (mapv :kind (take 4 (:lines evidence)))))
+      ;; Regression, T121: the KIND is the sign. Leaving `+`/`-` on the text too made
+      ;; every renderer, which draws its own marker column, print `+ +` and `- -`.
+      (expect (not-any? #(re-find #"^[-+]" (str (:text %)))
+                        (filter (comp #{:addition :deletion :context} :kind) (:lines evidence))))
       (expect (= ["[REDACTED]" "[REDACTED]"] (mapv :text (take 2 (drop 2 (:lines evidence))))))
       (expect (:is-redacted evidence))
       (expect (:is-truncated evidence))

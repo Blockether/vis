@@ -13,6 +13,7 @@ import {
 import activityPanelSource from "./ActivityPanel.tsx?raw";
 import activityFixture from "../lib/activity.fixture.json";
 import { ACTIVITY_TREE_CHANGES } from "../dev/story-data";
+import * as storyData from "../dev/story-data";
 import { WorkspaceRootsContext } from "../lib/workspace-roots";
 import {
   activityProjectionFromWire,
@@ -649,5 +650,38 @@ describe("a path reads short and stays addressable", () => {
     expect(pathOf(written)?.textContent).toBe(
       "~/vis/apps/vis-companion/src/lib/path.ts",
     );
+  });
+});
+
+// Regression, T121: a story fixture spelled a diff line's own `+`/`-` into its text
+// while the renderer draws that sign in its own marker column, so the review picture
+// showed `+ +` and `- -` on a surface the engine never feeds that way — it strips the
+// sign in `internal/activity/event.clj` and leaves the column to say it.
+describe("a diff line carries its sign only once", () => {
+  const SIGNED = new Set(["addition", "deletion", "context"]);
+
+  it("leaves the sign to the marker column in every story fixture", () => {
+    const doubled: string[] = [];
+    const seen = new Set<unknown>();
+    const visit = (value: unknown) => {
+      if (!value || typeof value !== "object" || seen.has(value)) return;
+      seen.add(value);
+      if (Array.isArray(value)) {
+        value.forEach(visit);
+        return;
+      }
+      const node = value as Record<string, unknown>;
+      if (node.kind === "diff" && Array.isArray(node.lines)) {
+        for (const line of node.lines as { kind: string; text: string }[]) {
+          if (SIGNED.has(line.kind) && /^[-+]/.test(line.text)) {
+            doubled.push(`${line.kind}: ${line.text}`);
+          }
+        }
+      }
+      Object.values(node).forEach(visit);
+    };
+
+    visit(storyData);
+    expect(doubled).toEqual([]);
   });
 });

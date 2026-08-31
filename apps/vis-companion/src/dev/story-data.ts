@@ -414,9 +414,9 @@ export const ACTIVITY_TREE_CHANGES = projection({
               lines: [
                 { kind: 'hunk', text: '@@ -328,6 +328,7 @@' },
                 { kind: 'context', text: "  state: 'succeeded'," },
-                { kind: 'deletion', text: "-  summary: 'wrote 3 files'," },
-                { kind: 'addition', text: "+  summary: '3 files'," },
-                { kind: 'addition', text: "+  summary_format: 'inline'," },
+                { kind: 'deletion', text: "  summary: 'wrote 3 files'," },
+                { kind: 'addition', text: "  summary: '3 files'," },
+                { kind: 'addition', text: "  summary_format: 'inline'," },
                 { kind: 'context', text: '  resources: [' },
               ],
               additions: 2,
@@ -432,8 +432,8 @@ export const ACTIVITY_TREE_CHANGES = projection({
               lines: [
                 { kind: 'hunk', text: '@@ -415,7 +415,9 @@' },
                 { kind: 'context', text: '  return (' },
-                { kind: 'deletion', text: '-    <ActivityFiles resources={touched} />' },
-                { kind: 'addition', text: '+    <ActivityFiles resources={touched} diffs={diffs} />' },
+                { kind: 'deletion', text: '    <ActivityFiles resources={touched} />' },
+                { kind: 'addition', text: '    <ActivityFiles resources={touched} diffs={diffs} />' },
               ],
               additions: 1,
               deletions: 1,
@@ -448,7 +448,7 @@ export const ACTIVITY_TREE_CHANGES = projection({
               lines: [
                 { kind: 'hunk', text: '@@ -23,6 +23,7 @@' },
                 { kind: 'context', text: '  const candidates = roots' },
-                { kind: 'addition', text: '+    .flatMap((root) => [root, homeifyPath(root)])' },
+                { kind: 'addition', text: '    .flatMap((root) => [root, homeifyPath(root)])' },
               ],
               additions: 1,
               deletions: 0,
