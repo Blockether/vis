@@ -13,6 +13,7 @@
    lives here - this namespace owns wire bookkeeping (events, turn
    records, subscribers), nothing else."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
             [com.blockether.vis.internal.attachments :as attachments]
             [com.blockether.vis.internal.cancellation :as cancellation]
@@ -3975,16 +3976,6 @@
             (get event "error")
             "turn failed")))))
 
-(def ^:private queue-mirror-event-types
-  "Queue lifecycle events forwarded to a turn-scoped subscriber even though
-   they belong to a DIFFERENT (queued) turn of the same session: every
-   attached channel mirrors the gateway's queued backlog live from these,
-   so a message queued in one TUI shows up in every sibling attached to
-   the session (see the TUI's :sync-queued-turn). Canonical set:
-   `wire/queue-mirror-event-types` — the SSE client (`gateway.client`)
-   forwards the SAME set, so both transports stay in lockstep."
-  wire/queue-mirror-event-types)
-
 (defn submit-turn-sync!
   "Submit one turn through the gateway and block until that turn reaches a terminal event.
 
@@ -4019,7 +4010,7 @@
 
             (cond (= turn_id tid)
                   (do (when on-event (on-event event))
-                      (when (contains? wire/turn-terminal-event-types type)
+                      (when (contains? gateway-contract/turn-terminal-event-types type)
                         (deliver terminal event))
                       ;; Our own queued record deleted before it ever ran
                       ;; (pulled back into a sibling's editor): synthesize a
@@ -4029,7 +4020,8 @@
                                  {"type" "turn.completed" "turn_id" turn_id "status" "cancelled"})))
                   ;; ANOTHER turn's queue event: forward so the channel can
                   ;; mirror the session's queued backlog; never terminal here.
-                  (contains? queue-mirror-event-types type) (when on-event (on-event event)))))
+                  (contains? gateway-contract/queue-mirror-event-types type) (when on-event
+                                                                               (on-event event)))))
 
         handle-event!
         (fn [event]
@@ -4119,7 +4111,7 @@
 
             (cond (= turn_id tid)
                   (do (when on-event (on-event event))
-                      (when (contains? wire/turn-terminal-event-types type)
+                      (when (contains? gateway-contract/turn-terminal-event-types type)
                         (deliver terminal event))
                       ;; The queued record was deleted before it ever ran
                       ;; (pulled back into a sibling's editor): synthesize a
@@ -4129,7 +4121,8 @@
                                  {"type" "turn.completed" "turn_id" tid "status" "cancelled"})))
                   ;; ANOTHER turn's queue event: forward so the channel can
                   ;; mirror the session's queued backlog; never terminal here.
-                  (contains? queue-mirror-event-types type) (when on-event (on-event event)))))]
+                  (contains? gateway-contract/queue-mirror-event-types type) (when on-event
+                                                                               (on-event event)))))]
 
     (try (let [replay (subscribe! sid sub-id handle-event! started-cursor)]
            (doseq [event replay]

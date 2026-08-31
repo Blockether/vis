@@ -4,7 +4,6 @@
             [com.blockether.vis.internal.gateway.protocol :as protocol]
             com.blockether.vis.internal.gateway.server
             [com.blockether.vis.internal.gateway.view :as gateway-view]
-            [com.blockether.vis.internal.gateway.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]
             [reitit.core :as reitit]))
 
@@ -42,9 +41,7 @@
                             protocol/min-gateway-header))
                  (expect (= (contract/header :client) protocol/client-header))
                  (expect (= (contract/header :client-version) protocol/client-version-header)))
-             (it "pins terminal, queue-mirror and shared View event semantics"
-                 (expect (= contract/turn-terminal-event-types wire/turn-terminal-event-types))
-                 (expect (= contract/queue-mirror-event-types wire/queue-mirror-event-types))
+             (it "pins shared View event semantics"
                  (expect (= contract/view-events
                             {:open gateway-view/view-open-event
                              :patch gateway-view/view-patch-event

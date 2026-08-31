@@ -13,6 +13,7 @@
    and never spawned, restarted or stopped from here."
   (:require [babashka.http-client :as http]
             [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
@@ -2625,7 +2626,7 @@
    Returns `[action event']`:
      :terminal — the wanted turn reached a terminal event (return `event'`)
      :forward  — hand to on-event (own-turn progress OR a sibling turn's
-                 queue-mirror event — see `wire/queue-mirror-event-types`),
+                  queue-mirror event — see `gateway-contract/queue-mirror-event-types`),
                  then keep reading
      :skip     — another turn's non-queue event, drop it.
    A `turn.queued.deleted` for the WANTED turn is terminal too: the queued
@@ -2638,13 +2639,13 @@
         own?
         (= (str (get event "turn_id")) (str wanted-turn-id))]
 
-    (cond (and own? (contains? wire/turn-terminal-event-types type)) [:terminal event]
+    (cond (and own? (contains? gateway-contract/turn-terminal-event-types type)) [:terminal event]
           (and own? (= "turn.queued.deleted" type)) [:terminal
                                                      (assoc event
                                                        "type" "turn.completed"
                                                        "status" "cancelled")]
           own? [:forward event]
-          (contains? wire/queue-mirror-event-types type) [:forward event]
+          (contains? gateway-contract/queue-mirror-event-types type) [:forward event]
           :else [:skip event])))
 
 (defn- read-sse-stream!

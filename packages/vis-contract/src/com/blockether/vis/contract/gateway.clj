@@ -105,10 +105,14 @@
   "Event names used by relay push payloads."
   (get-in @document [:gateway/events :push]))
 (def turn-terminal-event-types
-  "Session events that end one turn for every blocking reader."
+  "Every built-in event type that ENDS a turn for every blocking reader.
+   `turn.cancelled` is terminal: a user stop or stall force-cancel lands exactly like
+   completion/failure, so omitting it leaves the reader and its live stream parked."
   (get-in @document [:gateway/events :turn-terminal]))
 (def queue-mirror-event-types
-  "Queue lifecycle events forwarded to attached readers for sibling turns."
+  "Queue lifecycle events attached channels mirror for a DIFFERENT turn of the same
+   session. `turn.queued.drained` removes the head when Core starts it; pause/resume
+   events keep every sibling channel on the same held-backlog state."
   (get-in @document [:gateway/events :queue-mirror]))
 (def view-events
   "Open, patch and close event names for both View kinds."

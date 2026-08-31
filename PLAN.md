@@ -761,12 +761,14 @@ on-demand; a capability that appears only after unrelated use is not acceptable.
 
 **IN PROGRESS** — Phase 1 is complete and Phase 2 has begun. The executable dependency boundary
 freezes the current Clojure graph and JavaScript/Python wire debt. The contract-owned
-`gateway.edn` now pins all 99 built-in paths / 121 method-path operations, 14 protocol header
-spellings, protocol compatibility numbers, 32 gateway event names, terminal and queue-mirror sets,
-shared View lifecycle events and replay anchors. Runtime route construction plus the prior protocol/wire
-and shared View constants drift-test against it; existing View, Human Input, Activity, cancellation
-and cross-session permit suites preserve behavior before owners move. No production namespace or
-package has moved yet.
+`gateway.edn` pins all 99 built-in paths / 121 method-path operations, 14 protocol header spellings,
+protocol compatibility numbers, 32 gateway event names, terminal and queue-mirror sets, shared View
+lifecycle events and replay anchors. The first production ownership move is complete: both blocking
+readers import the terminal/queue sets directly from `com.blockether.vis.contract.gateway`, and the
+duplicate definitions are gone from `internal.gateway.wire`. Runtime route construction plus the
+remaining protocol/wire and shared View constants still drift-test against the fixture; existing View,
+Human Input, Activity, cancellation and cross-session permit suites preserve behavior. No production
+namespace or package has moved yet.
 
 Work already available as foundations:
 

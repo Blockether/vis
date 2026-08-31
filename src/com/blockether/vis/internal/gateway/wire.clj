@@ -145,31 +145,6 @@
   [s ^long limit]
   (clamp (str s) limit))
 
-(def queue-mirror-event-types
-  "Queue lifecycle event types every attached channel mirrors LIVE even when
-   they belong to a DIFFERENT (queued) turn of the same session — the ONE set
-   both transports forward (the in-process `gateway.state` subscriptions AND
-   the SSE loop in `gateway.client`), so a message queued/edited/deleted in
-   one channel shows up in every sibling. `turn.queued.drained` marks the
-   queue head leaving the queue because the gateway auto-STARTED it, so
-   mirrors drop the entry and a replayed history nets to zero
-   (`turn.queued` … `turn.queued.drained`). `queue.paused`/`queue.resumed` carry
-   the held count so every sibling shows the same paused banner and unpauses
-   together."
-  #{"turn.queued" "turn.queued.updated" "turn.queued.deleted" "turn.queued.drained" "queue.paused"
-    "queue.resumed"})
-
-(def turn-terminal-event-types
-  "Every event type that ENDS a turn — the ONE set both blocking readers use
-   (`gateway.state`'s in-process submit/attach subscriptions AND the SSE loop in
-   `gateway.client`). `turn.cancelled` belongs here: a user stop (or a stall
-   force-cancel) lands a turn exactly like a completion, and a reader that only
-   watched for `turn.completed`/`turn.failed` parked on that turn FOREVER —
-   its SSE connection stayed open, its channel kept a live spinner, and a
-   queued turn draining behind it streamed into a tab whose previous stream
-   had never closed."
-  #{"turn.completed" "turn.failed" "turn.cancelled"})
-
 (def turn-meta-keys
   "Wire keys of a settled turn's META (usage/routing/timing) — the fields
    `terminal-event->result` (both the in-process `gateway.state` impl and the
