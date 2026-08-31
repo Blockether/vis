@@ -5354,3 +5354,149 @@ h = 8"
               "unmarked text stays literal: a glob is not emphasis")
       (expect (not (str/includes? text "buried-fourth-level"))
               "the tree stops at three levels: step, change, paths"))))
+
+;; Regression, T124: the TUI painted Activity as a flat list of verbs — no line down the
+;; band's left edge, no mark standing on it, no paths under a step and no patch at all,
+;; while the web drew all four from the very same projection.
+(defdescribe
+  activity-web-parity-test
+  (let [activity
+        {:state "succeeded"
+         :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+         :omitted {:rows 0}
+         :rows [{:id "patch-1"
+                 :sequence 1
+                 :operation "patched"
+                 :summary "5 files"
+                 :state "succeeded"
+                 :duration-ms 42
+                 :resources
+                 [{:type "file" :id "/w/vis/src/com/blockether/vis/internal/loop.clj"}
+                  {:type "file" :id "/w/vis/deps.edn"} {:type "file" :id "/w/vis/README.md"}
+                  {:type "file" :id "/w/vis/VIS_VERSION"} {:type "file" :id "/w/vis/CHANGELOG.md"}]
+                 :evidence [{:kind "diff"
+                             :text "/w/vis/src/com/blockether/vis/internal/loop.clj"
+                             :additions 2
+                             :deletions 1
+                             :omitted-lines 3
+                             :lines [{:kind "hunk" :text "@@ -1,4 +1,5 @@"}
+                                     {:kind "context" :text "(ns loop)"}
+                                     {:kind "addition" :text "(def added-line 1)"}
+                                     {:kind "deletion" :text "(def removed-line 2)"}]}]}]}
+
+        trace
+        [{:forms [{:code "patch(path, edits)"
+                   :stdout ""
+                   :result-kind :none
+                   :duration-ms 42
+                   :silent? false
+                   :success? true
+                   :activity activity}]}]
+
+        render-text
+        (fn [expansions]
+          (render/invalidate-cache!)
+          (-> (render/format-answer-with-thinking-data* "Done."
+                                                        trace
+                                                        120
+                                                        {:show-thinking true :show-iterations true}
+                                                        nil
+                                                        false
+                                                        {:session-id "s1"
+                                                         :detail-expansions expansions})
+              :text
+              strip-ansi
+              strip-sentinels))
+
+        ;; The band's own rows are exactly the ones standing on the rail.
+        band-lines
+        (fn [text]
+          (filterv #(contains? #{\u2502 \u251c} (first %)) (str/split-lines text)))
+
+        line-with
+        (fn [text needle]
+          (last (filter #(str/includes? % needle) (band-lines text))))]
+
+    (it "runs one line down the whole band and stands every mark on it"
+        (let [text
+              (render-text {:vis.channel-tui/expand-all-details? true})
+
+              lines
+              (band-lines text)]
+
+          (expect (seq lines) "the expanded receipt paints an Activity band")
+          (expect (some #(str/includes? % "ACTIVITY") lines) "the band names itself on the rail")
+          (expect (str/starts-with? (str (line-with text "PATCHED")) "\u251c\u2500")
+                  "a step's mark is JOINED to the rail by a tick, never floating beside it")
+          (expect (= 4 (long (.indexOf ^String (str (line-with text "PATCHED")) "PATCHED")))
+                  "rail, tick, mark, gap: the verb starts in the fifth column")))
+    (it
+      "hangs the paths a step touched under it, and the patch under its path"
+      (let [text
+            (render-text {:vis.channel-tui/expand-all-details? true})
+
+            head
+            (str (line-with text "PATCHED"))
+
+            patched-path
+            (str (line-with text "loop.clj"))
+
+            read-path
+            (str (line-with text "README.md"))
+
+            added
+            (str (line-with text "added-line"))
+
+            removed
+            (str (line-with text "removed-line"))]
+
+        (expect (str/includes? head "+2 -1")
+                "the head sums what every patch under it added and removed")
+        (expect (str/includes? patched-path "\u25be") "a path that opens a patch wears a chevron")
+        (expect (str/includes? read-path "\u203a")
+                "a path that only names a file wears the quiet guillemet")
+        (expect (= 4 (long (.indexOf patched-path "\u25be")))
+                "paths hang one level in from the step's own mark")
+        (expect (str/includes? added "+ (def added-line 1)")
+                "an added line carries its sign exactly once, in the marker column")
+        (expect (str/includes? removed "- (def removed-line 2)")
+                "a removed line carries its sign exactly once, in the marker column")
+        (expect (not (str/includes? text "++"))
+                "the engine strips the sign and the renderer draws it")
+        (expect (str/includes? text "+3 more lines") "a clipped patch says how much it kept back")
+        (expect (some? (line-with text "CHANGELOG.md"))
+                "an opened count shows the paths it was folding away")))
+    (it
+      "shows four paths and then a count, with every patch still folded"
+      (let [entries
+            ((deref #'render/activity-detail-entries)
+              {:node-id "n1" :activity-rows (:rows activity) :activity-expanded? #{"patch-1"}}
+              120
+              "s1")
+
+            lines
+            (mapv :line entries)]
+
+        (expect (= 4 (count (filter #(str/includes? % "/w/vis/") lines)))
+                "four paths, then a count")
+        (expect (some #(str/includes? % "+1 more files") lines) "and the count says what it folded")
+        (expect (not-any? #(str/includes? % "CHANGELOG.md") lines) "the fifth path waits behind it")
+        (expect (not-any? #(str/includes? % "added-line") lines)
+                "a patch opens on its own path, never with the step")
+        (expect (str/includes? (str (some #(when (str/includes? % "loop.clj") %) lines)) "\u25b8")
+                "a folded patch shows a closed chevron on the path that opens it")))
+    (it
+      "keeps the paths and the patch behind the step until it is opened"
+      (let [entries
+            ((deref #'render/activity-detail-entries)
+              {:node-id "n1" :activity-rows (:rows activity) :activity-expanded? (constantly false)}
+              120
+              "s1")
+
+            lines
+            (mapv :line entries)]
+
+        (expect (some #(str/includes? % "PATCHED") lines) "the step itself is always on the page")
+        (expect (not-any? #(str/includes? % "/w/vis/") lines)
+                "its paths wait behind the step's own fold")
+        (expect (not-any? #(str/includes? % "added-line") lines) "and so does the patch")))))
