@@ -5,7 +5,8 @@
    `--session-id` / `--resume` argument parser, where a silent
    accept of unknown flags previously masked typos like
    `--sessions-id`."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.capture :as cap]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
@@ -24,7 +25,7 @@
             [lazytest.core :refer [defdescribe it expect]])
   (:import [com.googlecode.lanterna TerminalSize]
            [com.googlecode.lanterna.screen TerminalScreen]
-           [com.googlecode.lanterna.input KeyStroke KeyType]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction]
            [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]
            [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
@@ -147,44 +148,44 @@
   [f]
   (try (f) false (catch clojure.lang.ExceptionInfo e (true? (:vis/user-error (ex-data e))))))
 
-(defdescribe
-  terminal-control-mode-lifecycle-test
-  (it
-    "disables IXON on screen setup and restores it on teardown"
-    (let [calls
-          (atom [])
+(defdescribe terminal-window-state-lifecycle-test
+             (it "applies and resets only the application window background"
+                 (let [calls
+                       (atom [])
 
-          record
-          (fn [event]
-            (fn [& _]
-              (swap! calls conj event)))]
+                       record
+                       (fn [event]
+                         (fn [& _]
+                           (swap! calls conj event)))]
 
-      (with-redefs [vis/tty-out
-                    (delay (java.io.ByteArrayOutputStream.))
+                   (with-redefs [vis/tty-out
+                                 (delay (java.io.ByteArrayOutputStream.))
 
-                    input/disable-literal-next!
-                    (record :disable-iexten)
+                                 input/set-default-bg!
+                                 (record :set-bg)
 
-                    input/disable-software-flow-control!
-                    (record :disable-ixon)
+                                 input/reset-default-bg!
+                                 (record :reset-bg)]
 
-                    input/set-default-bg!
-                    (record :set-bg)
+                     (enable-terminal-state! nil)
+                     (disable-terminal-state! nil))
+                   (expect (= [:set-bg :reset-bg] @calls)))))
 
-                    input/reset-default-bg!
-                    (record :reset-bg)
-
-                    input/restore-software-flow-control!
-                    (record :restore-ixon)
-
-                    input/restore-literal-next!
-                    (record :restore-iexten)]
-
-        (enable-terminal-state! nil)
-        (disable-terminal-state! nil))
-      (expect (= [:disable-iexten :disable-ixon :set-bg :reset-bg :restore-ixon :restore-iexten]
-                 @calls)))))
-
+(defdescribe lanterna-input-ownership-test
+             (it "keeps terminal decoding, coalescing, geometry, and tty modes out of Vis"
+                 (let [source (->> ["dialogs" "input" "screen" "scroll"]
+                                   (map #(str "com/blockether/vis/ext/channel_tui/" % ".clj"))
+                                   (map io/resource)
+                                   (map slurp)
+                                   (str/join "\\n"))]
+                   (doseq [duplicate ["CharacterPattern" "DefaultKeyDecodingProfile"
+                                      "MouseAction$CoalescedInput" "MouseAction/coalesceQueued"
+                                      "(MouseAction." ".scrollDelta" ".dragCount"
+                                      "merge-wheel-delta" "decay-wheel-momentum"
+                                      "disable-literal-next!" "disable-software-flow-control!"
+                                      "modal-close-bounds" "(defn- stty!" "IEXTEN" "IXON"
+                                      "\u001B[?100" "\\u001B[?100"]]
+                     (expect (not (str/includes? source duplicate)))))))
 (defdescribe terminal-cell-size-probe-test
              ;; Regression, issue td-03018d: cmux's trailing CSI 18 t reply was typed into the composer.
              (it
@@ -361,7 +362,8 @@
 
         (release-wheel-momentum! mom at :live-view)
         (expect (= 5 (long @mom)))
-        (vreset! at (- (System/currentTimeMillis) (* 2 (long scroll/momentum-hold-ms))))
+        (vreset! at
+                 (- (System/currentTimeMillis) (* 2 (long MouseAction/WHEEL_MOMENTUM_HOLD_MILLIS))))
         (release-wheel-momentum! mom at :live-view)
         (expect (zero? (long @mom))))))
 ;; Reported in Vis session a64d44c2-8228-455f-926e-b3381f19a93b: wheel input

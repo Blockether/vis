@@ -258,14 +258,9 @@
   (it "ignores keystrokes the form has no meaning for"
       (expect (nil? (hi/key->event (KeyStroke. KeyType/MouseEvent))))
       (expect (nil? (hi/key->event (KeyStroke. (Character/valueOf \k) true false false)))))
-  (it "C-g cancels the form, exactly like Esc"
-      ;; The chat loop feeds this form RAW keystrokes, so Emacs `keyboard-quit`
-      ;; has to be decoded here or C-g does nothing while a request is open.
+  (it "canonical C-g cancels the form, exactly like Esc"
       (expect (= :cancel
                  (:kind (hi/key->event (KeyStroke. (Character/valueOf \g) true false false)))))
-      (expect (= :cancel
-                 (:kind (hi/key->event
-                          (KeyStroke. (Character/valueOf (char 7)) false false false)))))
       (expect (= :char
                  (:kind (hi/key->event (KeyStroke. (Character/valueOf \g) false false false))))))
   (it "carries the typed character through"

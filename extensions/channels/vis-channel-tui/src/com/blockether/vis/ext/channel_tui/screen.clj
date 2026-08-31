@@ -38,8 +38,8 @@
   (:import [com.googlecode.lanterna SGR TerminalPosition TerminalSize]
            [com.googlecode.lanterna.gui2 Direction ScrollBar ScrollBar$DragResult
             ScrollBar$Geometry]
-           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseAction$CoalescedInput
-            MouseActionType]
+           [com.googlecode.lanterna.input InputCoalescer KeyStroke KeyType MouseAction
+            MouseAction$WheelMomentum MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
            [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour UnixTerminal]
@@ -269,31 +269,28 @@
 
 
 (defn- smooth-wheel!
-  "Push one raw coalesced wheel `delta` through a SURFACE'S OWN momentum pair —
-   `mom-vol` and `at-vol`, the wall-clock ms of that surface's last wheel event —
-   returning `{:old-mom :new-mom :eff}` and storing both back.
-
-   Every scrollable surface keeps its own pair. One shared running momentum meant
-   the live-view band had to zero the transcript's on entry (the hitch beside a
-   live table) and then ran raw itself, so a slow macOS trackpad's sign-flipping
-   inertia tail reached the pane as real reversals.
-
-   `:eff` is nil when the tick was fully absorbed as such a reversal: the caller
-   scrolls nothing and recurs."
+  "Store one surface's wheel momentum while Lanterna owns the smoothing protocol.
+   Returns `{:old-mom :new-mom :eff}`; `:eff` is nil when inertia-tail jitter was absorbed."
   [mom-vol at-vol delta]
   (let [now-ms
         (System/currentTimeMillis)
 
         old-mom
-        (long (scroll/decay-wheel-momentum (long @mom-vol) (- now-ms (long @at-vol))))
+        (long (MouseAction/decayWheelMomentum (int @mom-vol) (long (- now-ms (long @at-vol)))))
 
-        [new-mom eff]
-        (scroll/merge-wheel-delta old-mom (long delta))]
+        ^MouseAction$WheelMomentum merged
+        (MouseAction/mergeWheelDelta (int old-mom) (int delta))
 
-    (vreset! mom-vol (long new-mom))
+        new-mom
+        (long (.momentum merged))
+
+        eff
+        (.delta merged)]
+
+    (vreset! mom-vol new-mom)
     (vreset! at-vol now-ms)
     {:old-mom old-mom
-     :new-mom (long new-mom)
+     :new-mom new-mom
      :eff (some-> eff
                   long)}))
 
@@ -309,7 +306,7 @@
         idle-ms
         (- (System/currentTimeMillis) (long @at-vol))]
 
-    (when (and (not (zero? old-mom)) (>= idle-ms (long scroll/momentum-hold-ms)))
+    (when (and (not (zero? old-mom)) (>= idle-ms (long MouseAction/WHEEL_MOMENTUM_HOLD_MILLIS)))
       (tel/log! {:level :debug
                  :id ::wheel-momentum-decay
                  :data {:surface surface :mom old-mom :idle-ms idle-ms}
@@ -335,12 +332,6 @@
 
     (long (* amount factor))))
 
-(defn- pop-pending!
-  "Pop the oldest stashed keystroke from the pending vector stash, or nil."
-  [pending-keys]
-  (let [s @pending-keys]
-    (when (seq s) (vreset! pending-keys (subvec s 1)) (nth s 0))))
-
 
 (defn- swallow-post-dialog-escape?
   "True (and consumes the marker) when a bare Escape lands within
@@ -354,29 +345,15 @@
          (compare-and-set! dialog-closed-at closed 0))))
 
 (defn- read-chat-input!
-  "Read one chat-loop input event through Lanterna's queued pointer coalescer.
-
-   `pending-keys` is a volatile vector stash (oldest first) for the first
-   non-coalescible event Lanterna consumed while draining a pointer burst."
-  [^TerminalScreen screen pending-keys]
-  (let [poll-next #(or (pop-pending! pending-keys) (.pollInput screen))]
+  "Read one canonical chat-loop event through Lanterna's stateful input coalescer."
+  ^KeyStroke [^TerminalScreen screen ^InputCoalescer input-coalescer]
+  (let [poller (reify
+                 java.util.function.Supplier
+                   (get [_] (.pollInput screen)))]
     (loop []
 
-      (let [first-key (poll-next)]
-        (if (and (input/bare-escape? first-key) (swallow-post-dialog-escape?))
-          (recur)
-          (let [^MouseAction$CoalescedInput coalesced (MouseAction/coalesceQueued
-                                                        first-key
-                                                        (reify
-                                                          java.util.function.Supplier
-                                                            (get [_] (poll-next))))
-                next-key (.nextKey coalesced)]
-
-            (when next-key (vreset! pending-keys (into [next-key] @pending-keys)))
-            {:key (.key coalesced)
-             :wheel-delta (some-> (.scrollDelta coalesced)
-                                  long)
-             :drag-events (long (.dragCount coalesced))}))))))
+      (let [key (.next input-coalescer poller poller)]
+        (if (and (input/bare-escape? key) (swallow-post-dialog-escape?)) (recur) key)))))
 
 (defn- throwable-log-data
   [^Throwable t]
@@ -5001,18 +4978,12 @@
 (defn- enable-terminal-state!
   [opts]
   (when-not (:html? opts)
-    ;; Free control bytes that the tty line discipline would otherwise consume.
-    (input/disable-literal-next!)
-    (input/disable-software-flow-control!)
     (let [^com.googlecode.lanterna.TextColor$RGB c t/terminal-bg]
       (input/set-default-bg! @vis/tty-out (.getRed c) (.getGreen c) (.getBlue c)))))
 
 (defn- disable-terminal-state!
   [opts]
-  (when-not (:html? opts)
-    (try (input/reset-default-bg! @vis/tty-out) (catch Throwable _ nil))
-    (try (input/restore-software-flow-control!) (catch Throwable _ nil))
-    (try (input/restore-literal-next!) (catch Throwable _ nil))))
+  (when-not (:html? opts) (try (input/reset-default-bg! @vis/tty-out) (catch Throwable _ nil))))
 
 ;; Encrypted SSH key passphrase prompt — retired.
 ;;
@@ -5319,9 +5290,8 @@
            ;;
            ;; Clicks anywhere outside the thumb itself - the messages area, the track
            ;; above/below the thumb, the right gutter columns - are deliberately ignored (no
-           ;; jump-to-position). Wheel scroll, keyboard PageUp/PageDown and arrows remain the
-           ;; Lanterna owns bracketed-paste and mouse-protocol lifecycle; Vis only
-           ;; adjusts application-specific tty controls and the themed window rim.
+           ;; jump-to-position). Lanterna owns bracketed paste, mouse protocols, and
+           ;; line-discipline input lifecycle; Vis only applies the themed window rim.
            (enable-terminal-state! opts)
            (let [scrollbar-drag-offset (volatile! nil)
                  ;; `click-action-fired?` is set to true when the
@@ -5351,24 +5321,13 @@
                  ;; kept in a StringBuilder so accumulation stays
                  ;; allocation-cheap even for kilobyte pastes.
                  paste-buffer (volatile! nil)
-                 ;; One-event stash used by wheel coalescing. When
-                 ;; `read-chat-input!` drains wheel floods and sees a
-                 ;; non-wheel event, it parks it here for the next loop
-                 ;; iteration instead of dropping it.
-                 pending-input-key (volatile! [])
-                 ;; Running wheel-momentum for `scroll/merge-wheel-delta`: one pair —
-                 ;; momentum plus the wall-clock ms of the LAST wheel event — PER
-                 ;; SCROLLABLE SURFACE. A slow macOS trackpad emits a stream of
-                 ;; sign-flipping inertia tail events; smoothing here (the input
-                 ;; layer) absorbs the spurious reversals so the viewport can't
-                 ;; bounce up/down mid-gesture. Decay is TIME-based
-                 ;; (scroll/momentum-hold-ms) and computed at USE time from the
-                 ;; timestamp — a poll-based decay died between two events of a slow
-                 ;; trackpad inertia tail — and the `(nil? key)` branch only releases
-                 ;; the lock once its window has expired. The band keeps its OWN pair
-                 ;; because a gesture crossing its edge must neither carry the
-                 ;; transcript's acceleration into a compact table nor reach the pane
-                 ;; unsmoothed.
+                 ;; Lanterna owns queued lookahead and pointer burst coalescing. The same
+                 ;; input queue also retains application-replayed keys without a Vis stash.
+                 input-coalescer (InputCoalescer.)
+                 ;; Running wheel momentum per scrollable surface. Lanterna owns the
+                 ;; inertia-tail smoothing and hold window; Vis stores only each surface's
+                 ;; independent state and last-event time so crossing an edge cannot leak one
+                 ;; pane's gesture into another.
                  scroll-momentum (volatile! 0)
                  last-wheel-at-ms (volatile! 0)
                  live-scroll-momentum (volatile! 0)
@@ -6034,14 +5993,14 @@
                      total-h (or total-h 0)
                      inner-h (or inner-h 0)
                      messages-top (or messages-top 0)
-                     {:keys [wheel-delta drag-events] :as chat-input}
-                     (read-chat-input! screen pending-input-key)
+                     raw-key (read-chat-input! screen input-coalescer)
                      ;; C-g is Emacs `keyboard-quit`, and it is Esc EVERYWHERE: rewriting it
-                     ;; ONCE here hands it to every mode this loop drives - the draft
-                     ;; dispatcher, the find bar, the human-input form, the C-x prefix.
-                     ;; AFTER `read-chat-input!` so the post-dialog duplicate-Escape
-                     ;; guard only ever sees a real Escape.
-                     key (input/normalize-abort-key (:key chat-input))]
+                     ;; once here hands canonical Lanterna input to every app mode.
+                     key (input/normalize-abort-key raw-key)
+                     wheel-delta (some-> (ScrollBar/wheelStep ^KeyStroke key)
+                                         long)
+                     drag-events (when (instance? MouseAction key)
+                                   (long (.getCount ^MouseAction key)))]
 
                  (cond
                    (:shutdown? db) nil
@@ -6065,8 +6024,10 @@
                      (if (and (not (startup-pending?))
                               (zero? (long @scroll-momentum))
                               (zero? (long @live-scroll-momentum)))
-                       (when-let [k (.readInput ^TerminalScreen screen)]
-                         (vswap! pending-input-key conj k))
+                       (.inputPending input-coalescer
+                                      (reify
+                                        java.util.function.Supplier
+                                          (get [_] (.readInput ^TerminalScreen screen))))
                        (Thread/sleep 16))
                      (recur))
                    ;; ── Bracketed paste ───────────────────────────────────────────────────
@@ -6936,16 +6897,11 @@
                                (do (state/dispatch [:update-input
                                                     (input-state-from-text (slash/completion-text
                                                                              suggestion))])
-                                   ;; Enter = complete AND run in one keystroke: re-inject
-                                   ;; the Enter at the FRONT of the pending stash so the
-                                   ;; next loop iteration (overlay now gone — the completed
-                                   ;; token ends in a space) routes it through the normal
-                                   ;; `:send` path, which resolves prompt-arg / navigator /
-                                   ;; exact-slash execution. Tab stays completion-only so
-                                   ;; the user can keep typing arguments.
-                                   (when (= ktype KeyType/Enter)
-                                     (vreset! pending-input-key
-                                              (into [key] @pending-input-key)))))))
+                                   ;; Enter = complete AND run in one keystroke: replay it
+                                   ;; through Lanterna's input queue so the next iteration
+                                   ;; routes it through the normal `:send` path. Tab stays
+                                   ;; completion-only so the user can keep typing arguments.
+                                   (when (= ktype KeyType/Enter) (.replay input-coalescer key))))))
                      (recur))
                    ;; C-x i moves keyboard focus onto the rail without modifying the draft.
                    ;; Arrow keys inspect adjacent metadata rows, Enter opens the selected

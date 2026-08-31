@@ -14,14 +14,13 @@
             [com.blockether.vis.ext.channel-tui.mcp-model :as mcp-model]
             [com.blockether.vis.internal.theme :as shared-theme]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna Symbols TerminalPosition TerminalRectangle TerminalSize
-            TextCharacter]
-           [com.googlecode.lanterna.gui2 Direction ScrollBar ScrollBar$DragResult]
-           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseAction$CoalescedInput
-            MouseActionType]
-           [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
-           [java.text SimpleDateFormat]
-           [java.util Locale TimeZone]))
+  (:import
+    [com.googlecode.lanterna Symbols TerminalPosition TerminalRectangle TerminalSize TextCharacter]
+    [com.googlecode.lanterna.gui2 Direction HitRegionMap ScrollBar ScrollBar$DragResult]
+    [com.googlecode.lanterna.input InputCoalescer KeyStroke KeyType MouseAction MouseActionType]
+    [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
+    [java.text SimpleDateFormat]
+    [java.util Locale TimeZone]))
 
 (set! *unchecked-math* :warn-on-boxed)
 
@@ -254,29 +253,12 @@
   [^Character c]
   (boolean (and c (Character/isISOControl (.charValue c)))))
 
-(def ^:private modal-pending-key (ThreadLocal/withInitial #(atom nil)))
+(def ^:private modal-input-coalescer (ThreadLocal/withInitial #(InputCoalescer.)))
 
 (defn normalize-modal-key
-  "Normalize raw terminal CR/LF/ESC character keystrokes to Lanterna
-   Enter/Escape key types, and C-g to Escape. Some terminals surface modal
-   Enter/Escape as `KeyType/Character`; modal code should not need to
-   special-case that.
-
-   C-g (Emacs `keyboard-quit`) is rewritten here too, so EVERY dialog closes on
-   it through the `KeyType/Escape` branch it already has - one rewrite instead of
-   an abort clause per key loop."
+  "Apply the app-wide C-g abort policy to input already decoded by Lanterna."
   [key]
-  (if (and key (not (instance? MouseAction key)) (= KeyType/Character (key-type key)))
-    (cond (input/ctrl-abort-key? key) (KeyStroke. KeyType/Escape)
-          :else (case (key-character key)
-                  (\newline \return)
-                  (KeyStroke. KeyType/Enter)
-
-                  \u001B
-                  (KeyStroke. KeyType/Escape)
-
-                  key))
-    key))
+  (input/normalize-abort-key key))
 
 (defn modal-enter-key?
   [key]
@@ -288,15 +270,17 @@
   (let [key (normalize-modal-key key)]
     (and key (not (instance? MouseAction key)) (= KeyType/Escape (key-type key)))))
 
-(def ^:private modal-close-bounds (ThreadLocal/withInitial #(atom nil)))
+(def ^:private modal-close-target :modal-close)
+
+(def ^:private modal-close-regions (ThreadLocal/withInitial #(HitRegionMap.)))
 
 (defn modal-close-click?
-  "True when `key` is a mouse click on the dialog close (✕) button."
+  "True when Lanterna resolves `key` to the dialog close target."
   [key]
   (when (and (instance? MouseAction key)
              (= MouseActionType/CLICK_RELEASE (.getActionType ^MouseAction key)))
-    (when-let [^TerminalRectangle bounds @(.get ^ThreadLocal modal-close-bounds)]
-      (.contains bounds (.getPosition ^MouseAction key)))))
+    (= modal-close-target
+       (.lookup ^HitRegionMap (.get ^ThreadLocal modal-close-regions) ^MouseAction key))))
 
 (defn- mouse-row-offset
   "Return the zero-based row under a primary click inside a list rectangle."
@@ -308,25 +292,18 @@
           (TerminalRectangle. (int left) (int top) (int width) (int height))
 
           relative
-          (.relativePosition bounds (.getPosition ^MouseAction key))]
+          (.relativePosition ^TerminalRectangle bounds
+                             ^TerminalPosition (.getPosition ^MouseAction key))]
 
       (when relative (long (.getRow ^TerminalPosition relative))))))
 
-(def ^:private modal-close-hover (ThreadLocal/withInitial #(atom false)))
-
 (defn update-modal-close-hover!
-  "On a MOVE/DRAG event, set the thread-local close-hover flag when the cursor
-   is within the recorded close-button bounds, clear it otherwise. Lets the
-   modal close (X) button light up on hover like the header/overlay buttons."
+  "Publish MOVE/DRAG hover through the modal's Lanterna hit map."
   [key]
   (when (instance? MouseAction key)
-    (let [a (.getActionType ^MouseAction key)]
-      (when (or (= a MouseActionType/MOVE) (= a MouseActionType/DRAG))
-        (let [^TerminalRectangle bounds @(.get ^ThreadLocal modal-close-bounds)
-              hit? (boolean (and bounds (.contains bounds (.getPosition ^MouseAction key))))
-              cell (.get ^ThreadLocal modal-close-hover)]
-
-          (when (not= @cell hit?) (clojure.core/reset! cell hit?) true))))))
+    (let [action (.getActionType ^MouseAction key)]
+      (when (or (= action MouseActionType/MOVE) (= action MouseActionType/DRAG))
+        (.updateHovered ^HitRegionMap (.get ^ThreadLocal modal-close-regions) ^MouseAction key)))))
 
 (defn- poll-modal-key!
   "Return queued input, or one harmless wake key after applying a resize."
@@ -345,69 +322,39 @@
       (do (Thread/sleep 16) (recur)))))
 
 (defn read-modal-input!
-  "Read one modal input event through Lanterna's queued pointer coalescer.
-   The first different event is held for the next modal read; resize wakes remain
-   `KeyType/Unknown`. MOVE/DRAG input also refreshes the close-button hover."
+  "Read one canonical modal event through Lanterna's stateful input coalescer.
+   Resize wakes remain `KeyType/Unknown`; MOVE/DRAG refreshes close-button hover."
   [^TerminalScreen screen]
-  (let [pending-key
-        (.get ^ThreadLocal modal-pending-key)
+  (let [^InputCoalescer coalescer
+        (.get ^ThreadLocal modal-input-coalescer)
 
-        first-key
-        (normalize-modal-key (or @pending-key (await-modal-key! screen)))]
+        key
+        (.next coalescer
+               (reify
+                 java.util.function.Supplier
+                   (get [_] (normalize-modal-key (await-modal-key! screen))))
+               (reify
+                 java.util.function.Supplier
+                   (get [_]
+                     (some-> (.pollInput screen)
+                             normalize-modal-key))))]
 
-    (reset! pending-key nil)
-    (let [^MouseAction$CoalescedInput coalesced
-          (MouseAction/coalesceQueued first-key
-                                      (reify
-                                        java.util.function.Supplier
-                                          (get [_]
-                                            (some-> (.pollInput screen)
-                                                    normalize-modal-key))))
-
-          key
-          (.key coalesced)
-
-          next-key
-          (.nextKey coalesced)
-
-          scroll-delta
-          (some-> (.scrollDelta coalesced)
-                  long)]
-
-      (when next-key (reset! pending-key next-key))
-      (update-modal-close-hover! key)
-      (cond (modal-close-click? key) {:key (KeyStroke. KeyType/Escape)}
-            scroll-delta {:scroll-delta scroll-delta}
-            :else {:key key}))))
+    (update-modal-close-hover! key)
+    {:key (if (modal-close-click? key) (KeyStroke. KeyType/Escape) key)}))
 
 (defn modal-input-pending?
-  "True when another keystroke or resize wake is ALREADY queued for this modal
-   loop. The peeked event is stashed in the same thread-local slot
-   `read-modal-input!` drains, so nothing is lost.
-
-   This is the TUI's DEBOUNCE primitive: an expensive per-keystroke effect (the
-   gateway transcript search) can skip itself while the user is still typing and
-   run once on the keystroke that lands in a pause — no threads, no timers, and
-   no repaint problem from an async result arriving while the loop waits."
+  "True when another modal input is already queued. Lanterna retains the peeked event
+   so debounce checks never consume it."
   [^TerminalScreen screen]
-  (let [pending (.get ^ThreadLocal modal-pending-key)]
-    (boolean (or (some? @pending)
-                 (when-let [k (poll-modal-key! screen)]
-                   (reset! pending k)
-                   true)))))
+  (.inputPending ^InputCoalescer (.get ^ThreadLocal modal-input-coalescer)
+                 (reify
+                   java.util.function.Supplier
+                     (get [_] (poll-modal-key! screen)))))
 
 (defn read-modal-key!
-  "Like `Screen/readInput`, but drains wheel floods into one synthetic wheel
-   event. Existing modal loops can use it without bespoke scroll-delta code."
+  "Like `Screen/readInput`, with pointer bursts canonicalized by Lanterna."
   ^KeyStroke [^TerminalScreen screen]
-  (let [{:keys [key scroll-delta]} (read-modal-input! screen)]
-    (or key
-        (when scroll-delta
-          (let [delta (long scroll-delta)]
-            (MouseAction. (if (neg? delta) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
-                          (if (neg? delta) 4 5)
-                          (TerminalPosition. 0 0)
-                          (int (Math/abs delta))))))))
+  (:key (read-modal-input! screen)))
 
 (defn drain-modal-paste!
   "After a bracketed-paste START keystroke is seen, drain `screen` until
@@ -864,16 +811,10 @@
      (p/cursor-pos (+ (long text-left) (- (long cursor) (long h-off))) row))))
 
 (defn draw-dialog-close-button!
-  "Paint a clickable X close button at a dialog's top-right title row and
-   record its click bounds (thread-local) so `read-modal-input!` can turn a
-   click into Escape. Every dialog inherits it via `draw-dialog-chrome!`.
-   Lights up to the red pill (`close-button-hover-fg` + bold) when the
-   thread-local close-hover flag is set - the same affordance the header and
-   help/tasks overlay close buttons use - so modal X buttons are no longer
-   static."
+  "Paint the dialog close button and publish its target through Lanterna's hit map."
   [g box-right title-row]
   (let [label
-        " \u2715 "
+        " ✕ "
 
         x1
         (- (long box-right) 1)
@@ -881,18 +822,25 @@
         x0
         (- (long x1) (dec (p/display-width label)))
 
-        hovered?
-        @(.get ^ThreadLocal modal-close-hover)]
+        ^HitRegionMap regions
+        (.get ^ThreadLocal modal-close-regions)
 
+        bounds
+        (TerminalRectangle. (int x0) (int title-row) (int (inc (- x1 x0))) 1)
+
+        hovered?
+        (= modal-close-target (.hovered regions))]
+
+    (.beginFrame regions)
+    (.register regions bounds modal-close-target)
+    (.commitFrame regions)
     (p/clear-styles! g)
     (p/set-colors! g
                    (if hovered? t/header-active-tab-fg t/dialog-title-bg)
                    (if hovered? t/close-button-hover-fg t/dialog-title-fg))
     (when hovered? (p/enable! g p/BOLD))
     (p/put-str! g x0 title-row label)
-    (p/clear-styles! g)
-    (reset! (.get ^ThreadLocal modal-close-bounds)
-      (TerminalRectangle. (int x0) (int title-row) (int (inc (- x1 x0))) 1))))
+    (p/clear-styles! g)))
 
 (defn draw-dialog-chrome!
   "Draw dialog background, shadow, border, and title.

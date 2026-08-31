@@ -86,13 +86,10 @@
 ;; ran the `C-x <letter>` verb instead of aborting the prefix.
 (defdescribe
   abort-key-test
-  (it "recognizes both advertised abort keys, and only those"
+  (it "recognizes canonical advertised abort keys, and only those"
       (expect (input/abort-key? (special-key KeyType/Escape)))
       (expect (input/abort-key? (ctrl-key (Character. \g))))
       (expect (input/abort-key? (ctrl-key (Character. \G))))
-      ;; The raw BEL byte IS C-g: a terminal that hands the control character
-      ;; over without setting the Ctrl modifier must still abort.
-      (expect (input/abort-key? (char-key (Character. (char 0x07)))))
       (expect (false? (input/abort-key? (char-key (Character. \g)))))
       (expect (false? (input/abort-key? (ctrl-key (Character. \k)))))
       (expect (false? (input/abort-key? (special-key KeyType/Enter))))
@@ -357,18 +354,6 @@
                    (input/handle-key (ctrl-key (Character. \u)) state))))))
 
 
-(defdescribe tty-control-mode-test
-             (it "disables XOFF while active and restores IXON on teardown"
-                 (let [calls
-                       (atom [])
-
-                       stty-var
-                       (ns-resolve 'com.blockether.vis.ext.channel-tui.input 'stty!)]
-
-                   (with-redefs-fn {stty-var #(swap! calls conj %)}
-                     #(do (input/disable-software-flow-control!)
-                          (input/restore-software-flow-control!)))
-                   (expect (= ["-ixon" "ixon"] @calls)))))
 
 
 (defdescribe

@@ -26,32 +26,23 @@
                  (expect (fn? (var-get #'dlg/text-input-dialog!)))))
 
 (defdescribe
-  modal-key-normalization-test
-  (it "modal helpers accept Lanterna Enter/Escape and raw terminal CR/LF/ESC strokes"
+  modal-key-policy-test
+  (it "modal helpers consume canonical Lanterna Enter/Escape strokes"
       (expect (dlg/modal-enter-key? (KeyStroke. KeyType/Enter)))
-      (expect (dlg/modal-enter-key? (KeyStroke. (Character/valueOf \newline) false false false)))
-      (expect (dlg/modal-enter-key? (KeyStroke. (Character/valueOf \return) false false false)))
-      (expect (dlg/modal-escape-key? (KeyStroke. KeyType/Escape)))
-      (expect (dlg/modal-escape-key? (KeyStroke. (Character/valueOf (char 27)) false false false))))
-  (it "C-g is Escape for every modal, so keyboard-quit closes any dialog"
-      ;; Emacs `keyboard-quit`: lanterna delivers it as `g` + Ctrl, some
-      ;; terminals as the raw BEL byte. Both normalize to Escape, so the
-      ;; `KeyType/Escape` branch of every dialog key loop fires without the
-      ;; dialog knowing anything about C-g.
+      (expect (dlg/modal-escape-key? (KeyStroke. KeyType/Escape))))
+  (it "C-g is the application abort key for every modal"
       (expect (dlg/modal-escape-key? (KeyStroke. (Character/valueOf \g) true false false)))
-      (expect (dlg/modal-escape-key? (KeyStroke. (Character/valueOf (char 7)) false false false)))
       (expect (= KeyType/Escape
                  (.getKeyType ^KeyStroke
                               (dlg/normalize-modal-key
                                 (KeyStroke. (Character/valueOf \g) true false false)))))
-      ;; A plain `g` stays a plain `g` - dialog filters type it.
       (expect (not (dlg/modal-escape-key? (KeyStroke. (Character/valueOf \g) false false false))))))
 
 
 (defn- wheel-down [] (MouseAction. MouseActionType/SCROLL_DOWN 0 (TerminalPosition. 10 10)))
 
 (defdescribe modal-wheel-input-test
-             (it "modal input coalesces wheel floods and preserves the next non-wheel key"
+             (it "modal input receives Lanterna's canonical wheel batch and preserves the next key"
                  (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
                        (term/virtual-screen)
 
@@ -61,11 +52,27 @@
                    (try (dotimes [_ 300]
                           (.addInput terminal (wheel-down)))
                         (.addInput terminal (KeyStroke. KeyType/Enter))
-                        (expect (= {:scroll-delta 300} (read-modal-input! screen)))
+                        (let [^MouseAction wheel (:key (read-modal-input! screen))]
+                          (expect (= MouseActionType/SCROLL_DOWN (.getActionType wheel)))
+                          (expect (= 5 (.getButton wheel)))
+                          (expect (= 300 (.getCount wheel)))
+                          (expect (= 300 (.getScrollDelta wheel)))
+                          (expect (= (TerminalPosition. 10 10) (.getPosition wheel))))
                         (expect (= KeyType/Enter
-                                   (.getKeyType ^com.googlecode.lanterna.input.KeyStroke
-                                                (:key (read-modal-input! screen)))))
+                                   (.getKeyType ^KeyStroke (:key (read-modal-input! screen)))))
                         (finally (.stopScreen screen))))))
+
+(defdescribe
+  modal-close-hit-test
+  (it "publishes the close target through Lanterna's hit map"
+      (let [{:keys [^TerminalScreen screen]} (term/virtual-screen)]
+        (try (dlg/draw-dialog-close-button! (.newTextGraphics screen) 20 2)
+             (expect (dlg/modal-close-click?
+                       (MouseAction. MouseActionType/CLICK_RELEASE 1 (TerminalPosition. 18 2))))
+             (expect (not (dlg/modal-close-click? (MouseAction. MouseActionType/CLICK_RELEASE
+                                                                1
+                                                                (TerminalPosition. 16 2)))))
+             (finally (.stopScreen screen))))))
 
 (defdescribe modal-input-pending-test
              (it "reports a queued keystroke so a per-key search can debounce itself"

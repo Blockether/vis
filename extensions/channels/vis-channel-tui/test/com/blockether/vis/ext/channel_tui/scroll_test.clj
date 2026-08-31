@@ -82,85 +82,6 @@
       (is (= {:mode :at :offset 40 :pos 90} (scroll/settle {:mode :at :offset 40 :pos 90}))))
     (testing "missing/legacy scroll settles to FOLLOW" (is (= scroll/follow (scroll/settle nil))))))
 
-;; ── Wheel-momentum smoother ────────────────────────────────────────────────
-;; The input-side debouncer that stops a slow trackpad's sign-flipping inertia
-;; tail from bouncing the viewport. Drives the bounce-repro stream end-to-end
-;; so a regression here would surface as a non-monotonic dispatched sequence.
-(defn- drive-stream
-  "Feed `raws` through `merge-wheel-delta` from rest momentum, returning the
-   sequence of non-nil effective deltas (what actually dispatches)."
-  [raws]
-  (loop [rs
-         raws
-
-         m
-         0
-
-         out
-         []]
-
-    (if (empty? rs)
-      out
-      (let [[nm eff] (scroll/merge-wheel-delta m (first rs))]
-        (recur (rest rs) nm (if eff (conj out eff) out))))))
-
-(deftest merge-wheel-delta-passes-clean-streams-through
-  (testing "a clean same-direction drag dispatches every tick verbatim"
-    (is (= [1 1 1 1 1] (drive-stream [1 1 1 1 1]))))
-  (testing "a solo tap from rest dispatches immediately (responsive)"
-    (is (= [3] (drive-stream [3]))))
-  (testing "a zero delta is a no-op that preserves momentum" (is (= [2] (drive-stream [2 0])))))
-
-(deftest merge-wheel-delta-absorbs-inertia-tail-reversals
-  (testing "the bounce repro: an up run with a sign-flipping tail stays monotonic"
-    (let [eff (drive-stream [3 2 1 1 1 -1 1 -1 1])]
-      ;; every dispatched tick is positive (same direction) — no reversal leaked
-      (is (every? pos? eff))
-      ;; the three stray -1 ticks are absorbed, so only the genuine ups dispatch
-      (is (= [3 2 1 1 1 1 1] eff)))))
-
-(deftest merge-wheel-delta-lets-a-strong-reversal-through
-  (testing "an opposing delta larger than remaining momentum re-seeds and dispatches the net"
-    ;; +3 +3 builds momentum +6 (down); a -8 (up) then overwhelms: 6 cancels,
-    ;; -2 net leftover re-seeds up and dispatches (not the full -8 — that would
-    ;; double-count the cancelled portion).
-    (let [eff (drive-stream [3 3 -8])]
-      (is (= [3 3 -2] eff))))
-  (testing "an exact cancellation swallows the tick and zeroes momentum"
-    (let [[m eff] (scroll/merge-wheel-delta 3 -3)]
-      (is (zero? m))
-      (is (nil? eff)))))
-
-(deftest merge-wheel-delta-caps-runaway-momentum
-  (testing "a very long continuous drag can't accumulate unbounded stickiness"
-    ;; twenty +1 ticks: dispatches all pass through, but momentum is capped
-    (let [final-mom
-          (loop [rs (repeat 20 1)
-                 m 0]
-
-            (if (empty? rs) m (recur (rest rs) (first (scroll/merge-wheel-delta m (first rs))))))]
-      (is (<= final-mom scroll/momentum-cap)))))
-
-(deftest decay-wheel-momentum-is-time-based
-  (testing "zero momentum stays zero at any idle time"
-    (is (zero? (scroll/decay-wheel-momentum 0 0)))
-    (is (zero? (scroll/decay-wheel-momentum 0 999))))
-  (testing "momentum is held (verbatim) immediately after a wheel event"
-    (is (= 10 (scroll/decay-wheel-momentum 10 0)))
-    (is (= -10 (scroll/decay-wheel-momentum -10 0))))
-  (testing "inside the hold window the lock NEVER fully releases (sign floor)"
-    ;; the whole point: a slow trackpad tail leaves only ±1-2 of momentum and
-    ;; events arrive 50-100ms apart — the directional lock must survive that
-    ;; gap or the tail's sign-flipped tick dispatches as a real reversal.
-    (is (= -1 (scroll/decay-wheel-momentum -1 100)))
-    (is (= 1 (scroll/decay-wheel-momentum 1 149)))
-    (is (neg? (scroll/decay-wheel-momentum -12 100))))
-  (testing "momentum shrinks with idle time (deliberate reversals stay responsive)"
-    (is (< (Math/abs (long (scroll/decay-wheel-momentum 12 100)))
-           (Math/abs (long (scroll/decay-wheel-momentum 12 20))))))
-  (testing "the window's expiry releases the lock exactly to zero"
-    (is (zero? (scroll/decay-wheel-momentum 12 scroll/momentum-hold-ms)))
-    (is (zero? (scroll/decay-wheel-momentum -12 99999)))))
 
 ;; Reported in Vis session 22b3489b-336f-42d0-9bc8-806dff2de86f: the live band scrolled
 ;; one row per wheel row while the transcript beside it scrolled three.
@@ -174,44 +95,6 @@
   (testing "a surface tall enough reaches the shared notch and stops there"
     (is (= scroll/wheel-step-rows (scroll/wheel-step 12)))
     (is (= scroll/wheel-step-rows (scroll/wheel-step 200)))))
-(defn- drive-timed-stream
-  "Feed `[raw gap-ms]` wheel events through USE-time decay + merge exactly as
-   the input loop does: momentum decays by the wall-clock gap since the
-   previous event BEFORE each merge. Returns the dispatched effective deltas."
-  [events]
-  (loop [es
-         events
-
-         m
-         0
-
-         out
-         []]
-
-    (if (empty? es)
-      out
-      (let [[raw gap]
-            (first es)
-
-            [nm eff]
-            (scroll/merge-wheel-delta (scroll/decay-wheel-momentum m gap) raw)]
-
-        (recur (rest es) nm (if eff (conj out eff) out))))))
-
-(deftest slow-trackpad-inertia-tail-cannot-bounce
-  (testing
-    "the streaming bounce repro: SPARSE up ticks (50-90ms apart, slower than
-            any poll-based decay window) ending in a sign-flipped tick — the flip is
-            absorbed, so no :scroll-down can re-arm FOLLOW under the user"
-    (let [eff (drive-timed-stream [[-1 0] [-1 80] [-1 80] [-1 90] [1 60]])]
-      (is (every? neg? eff))
-      (is (= [-1 -1 -1 -1] eff))))
-  (testing "a deliberate reversal AFTER the hold window dispatches immediately"
-    (is (= [-1 -1 1] (drive-timed-stream [[-1 0] [-1 80] [1 200]]))))
-  (testing "a strong reversal INSIDE the window still crosses (only the net leaks)"
-    (let [eff (drive-timed-stream [[-1 0] [-1 40] [4 40]])]
-      (is (= [-1 -1] (subvec eff 0 2)))
-      (is (pos? (long (peek eff)))))))
 
 ;; ── Jump-to-bottom chip visibility ────────────────────────────────────
 (deftest jump-chip-visible?-requires-a-real-park

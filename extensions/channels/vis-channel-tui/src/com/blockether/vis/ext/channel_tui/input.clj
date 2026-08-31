@@ -4,8 +4,7 @@
    Clipboard read/write goes through OS shell helpers only: `pbcopy` /
    `pbpaste` on macOS (always present since 10.0), `wl-copy` /
    `wl-paste` on Wayland, `xclip` / `xsel` on X11."
-  (:require [babashka.process :as process]
-            [clojure.java.io :as io]
+  (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.keymap :as keymap]
             [com.blockether.vis.internal.config :as config]
@@ -33,10 +32,8 @@
   (.isCtrlDown key))
 
 (defn ctrl-char?
-  "True for Ctrl + character `c`, case-insensitive. The reliable, cross-platform
-   modifier for in-modal toggles (Alt/Option is eaten by stock macOS terminals).
-   Pick `c` to avoid the terminal control codes (I=Tab, M=Enter, H=BS, S/Q=flow
-   control, O=stty DISCARD), which never arrive as a Character keystroke."
+  "True for Ctrl + character `c`, case-insensitive. The reliable cross-platform
+   modifier for in-modal toggles; Lanterna owns line-discipline and key decoding."
   [^KeyStroke key c]
   (and (ctrl-modifier? key)
        (let [ch (.getCharacter key)]
@@ -61,20 +58,15 @@
        (= KeyType/Escape (.getKeyType ^KeyStroke k))))
 
 (defn ctrl-abort-key?
-  "True for C-g, Emacs `keyboard-quit` - the Ctrl half of `keymap/abort-keys`.
-
-   Terminals spell that byte two ways: `g` carrying the Ctrl modifier (lanterna's
-   `CtrlAndCharacterPattern`) or the raw BEL control character. Both count, so
-   the key never depends on how the terminal happened to decode it."
+  "True for canonical Ctrl+g, Emacs `keyboard-quit`. Lanterna owns decoding BEL."
   [k]
   (boolean (and k
                 (instance? KeyStroke k)
                 (not (instance? MouseAction k))
                 (= KeyType/Character (.getKeyType ^KeyStroke k))
+                (.isCtrlDown ^KeyStroke k)
                 (when-let [c (.getCharacter ^KeyStroke k)]
-                  (or (= \u0007 (char c))
-                      (and (.isCtrlDown ^KeyStroke k)
-                           (= keymap/abort-key (Character/toLowerCase (char c)))))))))
+                  (= keymap/abort-key (Character/toLowerCase (char c)))))))
 
 (defn abort-key?
   "True for ANY key that means ABORT: C-g or its Esc mirror - `keymap/abort-keys`
@@ -115,44 +107,6 @@
   [^java.io.OutputStream out]
   (try (.write out (.getBytes "\u001B]111\u0007" "UTF-8")) (.flush out) (catch Throwable _ nil)))
 
-(defn- stty!
-  "Best-effort `stty <flag> < /dev/tty` — Unix only. Bounded + never throws."
-  [flag]
-  (when (.exists (io/file "/dev/tty"))
-    (try (let [p (process/process {:cmd ["sh" "-c" (str "stty " flag " < /dev/tty")] :err :string})]
-           (.waitFor ^Process (:proc p) 400 java.util.concurrent.TimeUnit/MILLISECONDS)
-           nil)
-         (catch Throwable _ nil))))
-
-(defn disable-literal-next!
-  "Disable the tty's IEXTEN so Ctrl+V (VLNEXT — the line discipline's \"literal
-   next\" quoting char) and Ctrl+O (VDISCARD) reach the app as real keystrokes
-   instead of being swallowed before lanterna ever decodes them. This is the SAME
-   raw-mode move Emacs (and every terminal Emacs) makes so `C-v` can scroll. Best
-   effort; a host without stty simply keeps Ctrl+V as literal-next. Paired with
-   `restore-literal-next!` on teardown."
-  []
-  (stty! "-iexten"))
-
-(defn restore-literal-next!
-  "Re-enable IEXTEN on teardown so the user's shell gets its literal-next /
-   discard quoting back, regardless of whether lanterna restores termios itself."
-  []
-  (stty! "iexten"))
-
-(defn disable-software-flow-control!
-  "Disable tty IXON while the TUI owns the terminal. Otherwise Ctrl+S is handled
-   as XOFF by the line discipline: rendering continues in memory, but terminal
-   output freezes until Ctrl+Q, making the live TUI look crashed. Best effort;
-   paired with `restore-software-flow-control!` on teardown."
-  []
-  (stty! "-ixon"))
-
-(defn restore-software-flow-control!
-  "Re-enable tty IXON on teardown so the user's shell regains Ctrl+S/Ctrl+Q
-   software flow control."
-  []
-  (stty! "ixon"))
 
 
 ;;; ── Clipboard (shell helpers) ───────────────────────────────────────────────
