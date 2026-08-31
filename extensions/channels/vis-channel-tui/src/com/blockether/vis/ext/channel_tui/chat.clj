@@ -10,7 +10,6 @@
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.internal.attachments :as attach]
             [com.blockether.vis.internal.iteration :as iteration]
-            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
@@ -295,16 +294,16 @@
   "One canonical provider attempt as `provider/model: status reason`."
   [attempt]
   (let [provider
-        (util/non-blank (get attempt "provider"))
+        (vis/non-blank (get attempt "provider"))
 
         model
-        (util/non-blank (get attempt "model"))
+        (vis/non-blank (get attempt "model"))
 
         status
-        (util/non-blank (get attempt "status"))
+        (vis/non-blank (get attempt "status"))
 
         reason
-        (util/non-blank (get attempt "reason"))
+        (vis/non-blank (get attempt "reason"))
 
         route
         (str/join "/" (remove nil? [provider model]))
@@ -318,30 +317,30 @@
   "Project one structured provider block without parsing its fallback message."
   [block]
   (let [title
-        (util/non-blank (get block "title"))
+        (vis/non-blank (get block "title"))
 
         explanation
-        (util/non-blank (get block "explanation"))
+        (vis/non-blank (get block "explanation"))
 
         next-step
-        (util/non-blank (get block "next_step"))
+        (vis/non-blank (get block "next_step"))
 
         code
-        (util/non-blank (get block "code"))
+        (vis/non-blank (get block "code"))
 
         body
-        (util/non-blank (get block "body"))
+        (vis/non-blank (get block "body"))
 
         provider-label
         (if (= "unroutable" (get block "kind")) "Route" "Provider")
 
         facts
         (remove nil?
-          [(when-let [status (util/non-blank (get block "status"))]
+          [(when-let [status (vis/non-blank (get block "status"))]
              (str "HTTP " status))
-           (when-let [provider (util/non-blank (get block "provider"))]
+           (when-let [provider (vis/non-blank (get block "provider"))]
              (str provider-label " " provider))
-           (when-let [request-id (util/non-blank (get block "request_id"))]
+           (when-let [request-id (vis/non-blank (get block "request_id"))]
              (str "Request " request-id))])
 
         attempts
