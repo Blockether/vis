@@ -1712,22 +1712,94 @@
             ;; 250ms is plenty to see a whole core: a live spinner adds
             ;; ~1.0 to the delta, and the threshold below is 0.75.
             baseline
-            (busy-cores 250)]
+            (busy-cores 250)
 
-        (try (let [result (binding [rt/*eval-timeout-ms* 400]
-                            ((deref #'lp/run-python-code) pc "while True:\n    pass"))]
+            retired
+            (atom false)
+
+            environment
+            {:python-context-retired-atom retired}]
+
+        (try (let [result
+                   (binding [rt/*eval-timeout-ms* 400]
+                     ((deref #'lp/run-python-code) pc "while True:\n    pass" :env environment))]
                (expect (true? (:timeout? result)))
                ;; The guest is GONE: no EXTRA core is spinning after the timeout.
                ;; Take the quieter of two samples so one unlucky GC/JIT burst
                ;; cannot decide the verdict.
                (expect (< (- (min (busy-cores 250) (busy-cores 250)) baseline) 0.75))
-               ;; ...and the interrupt did not poison the context.
+               ;; ...and the interrupt did not retire or poison the context.
+               (expect (false? @retired))
                (expect (= "42"
-                          (clojure.string/trim
-                            (str (:stdout ((deref #'lp/run-python-code) pc "print(40 + 2)")))))))
+                          (clojure.string/trim (str (:stdout ((deref #'lp/run-python-code)
+                                                               pc
+                                                               "print(40 + 2)"
+                                                               :env
+                                                               environment)))))))
              (finally (try (.close ^org.graalvm.polyglot.Context pc true)
                            (catch Throwable _ nil))))))))
 
+;; Regression, issue #161: a failed Context.interrupt fell back to a Java thread
+;; interrupt but left the session context eligible for reuse. The returning host
+;; thread could then die while reacquiring GraalPy's GIL and wedge the next turn.
+(defdescribe
+  hard-cancelled-host-wait-retires-context-test
+  (it
+    "rejects the context before hard-interrupting non-interruptible host work"
+    (let [environment
+          (lp/create-environment ::router {:db :memory})
+
+          python-context
+          (:python-context environment)
+
+          token
+          (cancellation/cancellation-token)
+
+          entered
+          (promise)
+
+          release
+          (promise)
+
+          exited
+          (promise)
+
+          block
+          (fn []
+            (deliver entered true)
+            (try (loop []
+
+                   (when-not (realized? release)
+                     (try (Thread/sleep 10) (catch InterruptedException _ nil))
+                     (recur)))
+                 "released"
+                 (finally
+                   ;; Do not carry Future.cancel's Java interrupt back across
+                   ;; the host boundary during test cleanup.
+                   (Thread/interrupted)
+                   (deliver exited true))))]
+
+      (env/set-python-binding! python-context 'vis_test_block block)
+      (try (with-redefs-fn {#'lp/GUEST_INTERRUPT_GRACE_MS 150}
+             (fn []
+               (let [run (future ((deref #'lp/run-python-code)
+                                   python-context
+                                   "await gather(vis_test_block())"
+                                   :env
+                                   (assoc environment :cancel-token token)))]
+                 (try
+                   (expect (= true (deref entered 10000 ::host-not-entered)))
+                   (cancellation/cancel! token :client-cancel-turn)
+                   (let [result (deref run 5000 ::run-did-not-return)]
+                     (expect (not= ::run-did-not-return result))
+                     (expect (= :vis/interrupted (get-in result [:error :type]))))
+                   ;; The host call still owns a context thread while its GIL is
+                   ;; released. A probe can answer now, but reuse is no longer safe.
+                   (expect (false? (env/context-enterable? environment)))
+                   (finally (deliver release true) (deref exited 5000 nil) (deref run 5000 nil))))))
+           (finally (deliver release true)
+                    (deref exited 5000 nil)
+                    (try (lp/dispose-environment! environment) (catch Throwable _ nil)))))))
 (defdescribe eval-timeout-keeps-partial-stdout-test
              ;; The wall-clock backstop used to return only a timeout error. The
              ;; guest never reaches its final stdout outcome, so every line printed

@@ -893,8 +893,8 @@
    `Context.interrupt` (or a cancelling close) unwinds guest frames. Safe from
    any thread that is not itself executing this context (the loop/eval-timeout
    thread and the canceller are not), never throws, and leaves the context
-   REUSABLE for the next turn — the interrupt is NON-DESTRUCTIVE, so nothing here
-   ever needs a fresh interpreter.
+   REUSABLE when it returns true. A false result is proof that the interpreter
+   must be retired before the Java worker interrupt can race another turn.
 
    Returns TRUE when it landed, i.e. every thread executing the context left it
    inside the grace. FALSE is the javadoc's own failure mode — \"a context thread
@@ -911,6 +911,20 @@
                   true
                   (catch java.util.concurrent.TimeoutException _ false)
                   (catch Throwable _ false)))))
+
+(defn- interrupt-or-retire!
+  "Try the non-destructive GraalPy interrupt, then retire the environment before
+   hard-interrupting its worker when the guest cannot unwind.
+
+   Retirement MUST happen first. Extension-owned host work may still be executing
+   with GraalPy's GIL released, so a next-turn probe can temporarily enter the old
+   context. The interrupted host thread can then return and die while reacquiring
+   the GIL. The retired context is deliberately not closed here because that host
+   work may still be inside it."
+  [environment python-context exec-future]
+  (when-not (interrupt-guest! python-context)
+    (env/retire-context! environment)
+    (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil))))
 
 (defn attachment-descriptor
   "One `session_attachment` row as the compact DESCRIPTOR `list_attachments()` and
@@ -1171,16 +1185,12 @@
         (when cancel-token
           (cancellation/on-cancel! cancel-token
                                    (fn []
-                                     ;; The DOCUMENTED cancel first: it unwinds guest
+                                     ;; The documented cancel first: it unwinds guest
                                      ;; frames and every host wait that polls
-                                     ;; `rt/guest-safepoint!`, and leaves the context
-                                     ;; reusable. Fall back on the Java interrupt only
-                                     ;; when that did not land — it hits GraalPy's
-                                     ;; uninterruptible GIL re-acquire, where an
-                                     ;; abandoned worker dies owning the GIL.
-                                     (when-not (interrupt-guest! python-context)
-                                       (try (.cancel ^java.util.concurrent.Future exec-future true)
-                                            (catch Throwable _ nil))))))
+                                     ;; `rt/guest-safepoint!`. A context that refuses
+                                     ;; that interrupt is retired before the Java
+                                     ;; interrupt can strand its GIL.
+                                     (interrupt-or-retire! env python-context exec-future))))
 
         settle-activity!
         (fn [envelope]
@@ -1223,14 +1233,13 @@
         (Object.)
 
         raw-execution-result
-        (try
-          (rt/await-wall exec-future eval-deadline timeout-sentinel)
-          (catch Throwable e
-            (reset! thrown e)
-            (when-not (interrupt-guest! python-context)
-              (try (.cancel ^java.util.concurrent.Future exec-future true) (catch Throwable _ nil)))
-            {:lru {} :error (python-op-error python-context e code cancel-token)})
-          (finally (when dispose-cancel-hook (try (dispose-cancel-hook) (catch Throwable _ nil)))))
+        (try (rt/await-wall exec-future eval-deadline timeout-sentinel)
+             (catch Throwable e
+               (reset! thrown e)
+               (interrupt-or-retire! env python-context exec-future)
+               {:lru {} :error (python-op-error python-context e code cancel-token)})
+             (finally (when dispose-cancel-hook
+                        (try (dispose-cancel-hook) (catch Throwable _ nil)))))
 
         execution-result
         (if (and (cancellation/cancelled? cancel-token) (:error raw-execution-result))
@@ -1239,11 +1248,9 @@
           raw-execution-result)]
 
     (if (identical? timeout-sentinel execution-result)
-      ;; Eval timeout: the guest frame is unwound by a Truffle safepoint interrupt,
-      ;; and only a guest that refuses to unwind is worth the Java interrupt on top
-      ;; of it.
-      (do (when-not (interrupt-guest! python-context)
-            (.cancel ^java.util.concurrent.Future exec-future true))
+      ;; Eval timeout: prefer a Truffle safepoint interrupt. A guest that
+      ;; refuses to unwind retires its context before the Java interrupt.
+      (do (interrupt-or-retire! env python-context exec-future)
           ;; The unwinding guest cannot reach the host any more, so its `with` never
           ;; closes: the wall that killed the block ends its views too, and the model
           ;; still reads the picture they held.
@@ -10921,6 +10928,10 @@
                   :standing-ctx-atom (atom (:standing-ctx persisted-prompt-cache-state))
                   :state-atom state-atom
                   :python-context python-context
+                  ;; A failed Context.interrupt makes reuse permanently unsafe even
+                  ;; while a probe can still enter around extension-owned host work.
+                  ;; The next turn abandons this environment instead.
+                  :python-context-retired-atom (atom false)
                   ;; Owned by THIS env: `dispose-environment!` closes it right after the
                   ;; context, which is what frees the session's Python heap.
                   :python-engine python-engine
@@ -11778,19 +11789,17 @@
    CONDEMNED one is detached and rebuilt rather than waited on; `tryLock` is
    interruptible, so a queued turn's own cancel finally reaches it.
 
-   A FREE lock is not enough. The turn that a stop button cancels unwinds and
-   releases this lock normally, but the guest thread it abandoned inside GraalPy
-   dies OWNING the GIL (`env-python/context-enterable?`), and that context can
-   never be entered again. The next turn then took the lock, walked into the
-   engine, and parked in `PythonContext.acquireGil` before its first iteration:
-   the same wedge one level in, and one cancel bricked the session for every
-   message the user sent afterwards — each new turn started, produced nothing,
-   and was buried by the stall watchdog two minutes later. So an entry is only
-   handed back once its context PROVES it can still be entered; an unenterable
-   one is detached and rebuilt. Nothing is disposed: closing a context requires
-   entering it, which is the one thing nobody can do here. The rescue is taken at
-   most once per acquisition — a FRESH context that still refuses is a real
-   failure for the turn to report, not a reason to keep minting interpreters."
+   A FREE lock is not enough. A failed `Context.interrupt` retires the
+   environment before the Java worker interrupt: extension-owned host work may
+   have released the GIL, so a probe can answer now and the returning host thread
+   can still die while reacquiring it later. A context whose GIL is already leaked
+   instead fails the probe. `env-python/context-enterable?` rejects both states,
+   so the next turn detaches and rebuilds the environment before entering Python.
+   Nothing is disposed: host work may still be inside a retired context, and
+   closing a context with an already leaked GIL cannot safely enter it. The rescue
+   is taken at most once per acquisition — a FRESH context that still refuses is
+   a real failure for the turn to report, not a reason to keep minting
+   interpreters."
   [id]
   (let [k (cache-key id)]
     (loop [rescued? false]
@@ -11805,8 +11814,8 @@
               (.unlock lock)
               (detach-entry! k entry)
               (tel/log!
-                {:level :warn :id ::engine-unenterable :data {:session k}}
-                "Session Python context can no longer be entered - a cancelled turn left its GIL owned by a dead thread; starting a fresh context")
+                {:level :warn :id ::engine-context-unsafe :data {:session k}}
+                "Session Python context is retired or cannot be entered; starting a fresh context")
               (recur true)))
           (do
             (when (and condemned (.get condemned) (detach-entry! k entry))

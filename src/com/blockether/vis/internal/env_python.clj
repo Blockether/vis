@@ -13,7 +13,8 @@
      validate-no-banned-defs! / persist-session-defs! / restore-session-defs! /
      SYSTEM_VAR_NAMES /
      system-var-sym? / *lru-atom* / *current-turn-position* / fresh-lru-atom /
-     run-python-block / map-polyglot-error / bind-ctx! / ctx->python-str
+     run-python-block / map-polyglot-error / bind-ctx! / ctx->python-str /
+     retire-context! / context-enterable?
 
    The `:python-context` slot holds the GraalPy `Context`; the Python top scope is
    `context.getBindings(\"python\")`. GraalPy ships in the default deps (runs on
@@ -2533,30 +2534,48 @@
    LEAKED GIL is never released by anyone, so no budget is too short to catch it."
   20000)
 
-(defn context-enterable?
-  "Bounded proof that `environment`'s Python context can still be ENTERED - that
-   its GIL still has a living owner.
+(defn retire-context!
+  "Permanently mark `environment`'s Python context ineligible for another turn.
 
-   TRUE when a trivial guest evaluation answers inside [[context-probe-budget-ms]],
-   and TRUE for an environment carrying no context at all: there is nothing to
-   enter, so there is nothing wedged. A context that is CLOSED answers by throwing,
-   which is still an answer - only silence means the GIL is LEAKED (see
-   [[run-detached-guest-work!]]).
-
-   FALSE is terminal, and it is why this exists: nothing will ever enter that
-   context again, so a caller must ABANDON it instead of parking on it. A turn that
-   parks there is deaf to its own cancel forever - the stop button lands the
-   gateway's synthetic terminal, the thread stays parked for the life of the
-   daemon, and every later message the user sends parks behind it too."
+   This is the safe response when `Context.interrupt` cannot unwind extension-owned
+   host work. It only marks the environment; it must not close a context while a
+   host thread may still be executing inside it. Idempotent."
   [environment]
-  (if-let [^Context ctx (:python-context environment)]
-    (boolean (run-detached-guest-work! [(System/identityHashCode ctx) :enterable]
-                                       "vis-python-probe"
-                                       context-probe-budget-ms
-                                       (fn []
-                                         (try (.eval ctx "python" "None") (catch Throwable _ nil))
-                                         true)))
-    true))
+  (when-let [retired (:python-context-retired-atom environment)]
+    (reset! retired true))
+  nil)
+
+(defn context-enterable?
+  "Bounded proof that `environment`'s Python context is safe to ENTER again.
+
+   FALSE immediately for an explicitly retired context. A failed soft interrupt
+   is itself terminal even when a trivial probe could temporarily enter while an
+   extension-owned host call has released GraalPy's GIL.
+
+   Otherwise, TRUE when a trivial guest evaluation answers inside
+   [[context-probe-budget-ms]], and TRUE for an environment carrying no context at
+   all: there is nothing to enter, so there is nothing wedged. A context that is
+   CLOSED answers by throwing, which is still an answer - only silence means the
+   GIL is LEAKED (see [[run-detached-guest-work!]]).
+
+   FALSE is terminal: nothing may enter that context again, so a caller must
+   ABANDON it instead of parking on it. A turn that parks there is deaf to its own
+   cancel forever - the stop button lands the gateway's synthetic terminal, the
+   thread stays parked for the life of the daemon, and every later message the
+   user sends parks behind it too."
+  [environment]
+  (if (true? (some-> environment
+                     :python-context-retired-atom
+                     deref))
+    false
+    (if-let [^Context ctx (:python-context environment)]
+      (boolean (run-detached-guest-work! [(System/identityHashCode ctx) :enterable]
+                                         "vis-python-probe"
+                                         context-probe-budget-ms
+                                         (fn []
+                                           (try (.eval ctx "python" "None") (catch Throwable _ nil))
+                                           true)))
+      true)))
 
 (defn collect-garbage!
   "Best-effort GC between turns. Two steps, because GraalPy reclaims
