@@ -68,7 +68,6 @@ import {
   CircleCheck,
   CircleDashed,
   CircleDot,
-  CircleSlash,
   CircleX,
   Copy,
   Crop,
@@ -463,11 +462,6 @@ export function CircleDotIcon({ className }: { className?: string }) {
 /** Queued — the ring drawn as a dashed outline, because nothing has happened yet. */
 export function CircleDashedIcon({ className }: { className?: string }) {
   return <Mark icon={CircleDashed} className={className} />;
-}
-
-/** Skipped or cancelled: the ring, struck through. Not a failure — a non-event. */
-export function CircleSlashIcon({ className }: { className?: string }) {
-  return <Mark icon={CircleSlash} className={className} />;
 }
 
 /** A warning that belongs in the status column, where the triangle would not fit the ring. */

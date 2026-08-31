@@ -12,7 +12,6 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotIcon,
-  CircleSlashIcon,
   CircleXIcon,
   ClipIcon,
   CloseIcon,
@@ -37,7 +36,7 @@ import {
 } from "./icons";
 
 /**
- * THE STATUS COLUMN, and it is a SET: these six are chosen for each other rather
+ * THE STATUS COLUMN, and it is a SET: these five are chosen for each other rather
  * than for the control they lead. They stack in the live view's first column, so
  * they are measured against one another and not against the strip of controls.
  */
@@ -46,7 +45,6 @@ const STATUS_COLUMN = {
   CircleXIcon: <CircleXIcon />,
   CircleDotIcon: <CircleDotIcon />,
   CircleDashedIcon: <CircleDashedIcon />,
-  CircleSlashIcon: <CircleSlashIcon />,
   CircleAlertIcon: <CircleAlertIcon />,
 };
 
@@ -255,7 +253,7 @@ describe("the icon set", () => {
   // for a strip of unlike controls that is the right trade. For a COLUMN it is the
   // wrong one: the same mark repeats down fifty rows there, and a difference in
   // weight between two of them reads as a difference in meaning. So the column is
-  // ONE RING with five interiors, and this is the test that keeps it one.
+  // ONE RING with four interiors, and this is the test that keeps it one.
   it("keeps a column of marks to one ring", () => {
     const measured = Object.entries(STATUS_COLUMN).map(([name, icon]) => ({
       name,
@@ -324,7 +322,7 @@ describe("the icon set", () => {
 
     // The column has no such licence: a ring is a ring, and fifty of them stack.
     const column = centres.filter(({ name }) => name in STATUS_COLUMN);
-    expect(column).toHaveLength(6);
+    expect(column).toHaveLength(5);
     expect(
       column.filter(
         ({ centre }) => centre[0] !== 12 || centre[1] !== 12,

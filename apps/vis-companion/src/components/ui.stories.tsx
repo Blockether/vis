@@ -269,6 +269,9 @@ export const Rows: Story = {
         <Disclosure className="w-full" isOpen={false}>
           Thinking
         </Disclosure>
+        <Disclosure className="w-full" isOpen={false} tone="chronology">
+          Searched · 18 matches
+        </Disclosure>
         <div className="w-full" role="listbox" aria-label="Reasoning effort">
           <OptionRow className="w-full" isActive>
             Reasoning, high

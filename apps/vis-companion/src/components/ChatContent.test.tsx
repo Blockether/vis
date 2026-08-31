@@ -7,11 +7,16 @@ import {
   AttachmentRail,
   ContentBlockView,
   InlineMarkdown,
+  IterationTrace,
   Markdown,
   SpeechBlock,
   ThinkingBand,
   UserMessage,
 } from "./ChatContent";
+import {
+  STORY_TURN_ITERATIONS,
+  STORY_TURN_ITERATIONS_SETTLED,
+} from "../dev/story-data";
 import type { GatewayClient } from "../lib/gateway";
 import {
   mediaFrameClass,
@@ -40,9 +45,9 @@ const count = (html: string, pattern: RegExp) =>
 
 /** Open the stdout disclosure nested inside an expanded execution receipt. */
 function openResult(container: HTMLElement): void {
-  const summary = Array.from(container.querySelectorAll("details > summary")).find(
-    (candidate) => candidate.textContent?.includes("RESULT"),
-  );
+  const summary = Array.from(
+    container.querySelectorAll("details > summary"),
+  ).find((candidate) => candidate.textContent?.includes("RESULT"));
   expect(summary).not.toBeUndefined();
   const details = summary?.closest("details");
   expect(details).not.toBeNull();
@@ -132,7 +137,9 @@ describe("spoken transcript", () => {
       fireEvent.click(view.getByRole("button", { name: /Transcript/ }));
 
       expect(view.container.querySelector("p")).toBeNull();
-      expect(view.getByRole("slider", { name: "Speech position" })).not.toBeNull();
+      expect(
+        view.getByRole("slider", { name: "Speech position" }),
+      ).not.toBeNull();
       expect(view.getByRole("button", { name: "Play" })).not.toBeNull();
     } finally {
       view.unmount();
@@ -172,7 +179,9 @@ describe("spoken transcript", () => {
     }
   });
   it("draws a flat rule until real samples exist, and never a made-up shape", () => {
-    const view = render(<SpeechBlock text="Nothing has been synthesised yet." />);
+    const view = render(
+      <SpeechBlock text="Nothing has been synthesised yet." />,
+    );
     try {
       const bars = [
         ...view
@@ -198,7 +207,9 @@ describe("spoken transcript", () => {
       html.indexOf("</button>"),
     );
 
-    expect(disclosure.indexOf("<svg")).toBeLessThan(disclosure.indexOf("Transcript"));
+    expect(disclosure.indexOf("<svg")).toBeLessThan(
+      disclosure.indexOf("Transcript"),
+    );
   });
 
   it("restarts speech at the position pressed on the wave", async () => {
@@ -207,11 +218,15 @@ describe("spoken transcript", () => {
     const pending = new Promise<void>((resolve) => {
       finish = resolve;
     });
-    const speak = vi.spyOn(speechOutput, "speak").mockImplementation((value) => {
-      calls.push(value);
-      return pending;
-    });
-    const stop = vi.spyOn(speechOutput, "stop").mockImplementation(() => undefined);
+    const speak = vi
+      .spyOn(speechOutput, "speak")
+      .mockImplementation((value) => {
+        calls.push(value);
+        return pending;
+      });
+    const stop = vi
+      .spyOn(speechOutput, "stop")
+      .mockImplementation(() => undefined);
     const view = render(<SpeechBlock text="one two three four five six" />);
 
     try {
@@ -242,7 +257,9 @@ describe("spoken transcript", () => {
       .mockImplementation((owner?: object) => {
         if (owner === undefined) voiceModeStopped = true;
       });
-    const view = render(<SpeechBlock text="The same answer appears in the transcript." />);
+    const view = render(
+      <SpeechBlock text="The same answer appears in the transcript." />,
+    );
 
     view.unmount();
 
@@ -618,7 +635,10 @@ describe("a card gives stdout one stable band and no op badge", () => {
 // A slash envelope is hidden behind its answer; a bang turn has no duplicate answer,
 // so its persisted `user-shell` form is the one visible owner of command output.
 describe("command turns expose one canonical result", () => {
-  const trace = (form: Record<string, unknown>, answer = "Reloaded — configuration") =>
+  const trace = (
+    form: Record<string, unknown>,
+    answer = "Reloaded — configuration",
+  ) =>
     renderToStaticMarkup(
       <AssistantMessage
         turn={{
@@ -674,23 +694,28 @@ describe("command turns expose one canonical result", () => {
 
     expect(painted.container.textContent).not.toContain("PYTHON");
     expect(painted.container.textContent).toContain("SHELL");
-    fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
+    fireEvent.click(
+      painted.getByRole("button", { name: "Expand execution trace" }),
+    );
     openResult(painted.container);
     expect(painted.container.textContent).toContain("exit 0");
     expect(painted.container.textContent).toContain("README.md");
-    expect(painted.container.textContent).not.toContain("Reloaded — configuration");
+    expect(painted.container.textContent).not.toContain(
+      "Reloaded — configuration",
+    );
   });
 });
 
 // Regression, issue td-546817: Python evaluations without detected Activity
 // retained the old always-expanded frame instead of the canonical execution receipt.
 describe("a Python evaluation without detected Activity", () => {
-  const turnWith = (form: Record<string, unknown>, status = "completed") => ({
-    id: "python-only",
-    status,
-    iterations: [{ id: "iteration-1", position: 41, forms: [form] }],
-    content: [],
-  }) as unknown as TranscriptTurn;
+  const turnWith = (form: Record<string, unknown>, status = "completed") =>
+    ({
+      id: "python-only",
+      status,
+      iterations: [{ id: "iteration-1", position: 41, forms: [form] }],
+      content: [],
+    }) as unknown as TranscriptTurn;
 
   it("is the running execution before any semantic activity appears", () => {
     const painted = render(
@@ -700,7 +725,9 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    expect(painted.getByRole("button", { name: "Expand execution trace" })).toBeTruthy();
+    expect(
+      painted.getByRole("button", { name: "Expand execution trace" }),
+    ).toBeTruthy();
     expect(painted.container.textContent).toContain("RUNNING · PYTHON");
     expect(painted.container.textContent).not.toContain("answer = 42");
     expect(painted.container.textContent).not.toContain("0 activities");
@@ -709,13 +736,19 @@ describe("a Python evaluation without detected Activity", () => {
   it("restores one settled receipt with Python and stdout evidence", () => {
     const painted = render(
       <AssistantMessage
-        turn={turnWith({ source: "print(42)", stdout: "42\n", duration_ms: 29 })}
+        turn={turnWith({
+          source: "print(42)",
+          stdout: "42\n",
+          duration_ms: 29,
+        })}
       />,
     );
 
     expect(painted.container.textContent).toContain("DONE · PYTHON · 29ms");
     expect(painted.container.textContent).not.toContain("print(42)");
-    fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
+    fireEvent.click(
+      painted.getByRole("button", { name: "Expand execution trace" }),
+    );
     expect(painted.container.textContent).toContain("print(42)");
     expect(painted.container.textContent).toContain("RESULT");
     expect(painted.container.textContent).not.toContain("ACTIVITY");
@@ -724,12 +757,18 @@ describe("a Python evaluation without detected Activity", () => {
   it("keeps a failed Python execution in the same receipt anatomy", () => {
     const painted = render(
       <AssistantMessage
-        turn={turnWith({ source: "raise Error()", error: "failed", duration_ms: 29 })}
+        turn={turnWith({
+          source: "raise Error()",
+          error: "failed",
+          duration_ms: 29,
+        })}
       />,
     );
 
     expect(painted.container.textContent).toContain("FAILED · PYTHON · 29ms");
-    expect(painted.getByRole("button", { name: "Expand execution trace" })).toBeTruthy();
+    expect(
+      painted.getByRole("button", { name: "Expand execution trace" }),
+    ).toBeTruthy();
   });
 
   it("shows an interrupted Python execution as a stop, not a JVM failure", () => {
@@ -746,9 +785,13 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    expect(painted.container.textContent).toContain("INTERRUPTED · PYTHON · 29ms");
+    expect(painted.container.textContent).toContain(
+      "INTERRUPTED · PYTHON · 29ms",
+    );
     expect(painted.container.textContent).not.toContain("FAILED · PYTHON");
-    fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
+    fireEvent.click(
+      painted.getByRole("button", { name: "Expand execution trace" }),
+    );
     expect(painted.container.textContent).toContain("Interrupted");
     expect(painted.container.textContent).not.toContain("FutureTask/awaitDone");
   });
@@ -756,7 +799,9 @@ describe("a Python evaluation without detected Activity", () => {
   it("enhances the same receipt when semantic activity arrives", () => {
     const runningTurn = turnWith({ source: "answer = search()" }, "running");
     const painted = render(<AssistantMessage turn={runningTurn} streaming />);
-    const receipt = painted.getByRole("button", { name: "Expand execution trace" });
+    const receipt = painted.getByRole("button", {
+      name: "Expand execution trace",
+    });
     expect(painted.container.textContent).toContain("RUNNING · PYTHON");
 
     // Protocol 7: the snapshot arrives ON the form, from `block.activity`.
@@ -768,15 +813,17 @@ describe("a Python evaluation without detected Activity", () => {
             activity: {
               state: "running",
               counts: { running: 1, succeeded: 0, failed: 0, cancelled: 0 },
-              rows: [{
-                id: "grep-1",
-                sequence: 1,
-                operation: "grep",
-                state: "running",
-                summary: "searching",
-                resources: [],
-                evidence: [],
-              }],
+              rows: [
+                {
+                  id: "grep-1",
+                  sequence: 1,
+                  operation: "grep",
+                  state: "running",
+                  summary: "searching",
+                  resources: [],
+                  evidence: [],
+                },
+              ],
               omitted: { rows: 0, by_classification: {} },
             },
           },
@@ -786,8 +833,13 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    expect(painted.getByRole("button", { name: "Expand execution trace" })).toBe(receipt);
-    expect(painted.container.textContent).toContain("RUNNING · GREP · searching");
+    expect(
+      painted.getByRole("button", { name: "Expand execution trace" }),
+    ).toBe(receipt);
+    // The band is NAMED and its margin carries the facts: the sentence that used
+    // to narrate the call ("RUNNING · GREP · searching") is now the chronology's job.
+    expect(painted.container.textContent).toContain("INVOCATION");
+    expect(painted.container.textContent).toContain("RUNNING · 0 mutations");
   });
 
   it("does not invent Activity when an empty projection settles", () => {
@@ -809,7 +861,9 @@ describe("a Python evaluation without detected Activity", () => {
 
     expect(painted.container.textContent).toContain("DONE · PYTHON · 29ms");
     expect(painted.container.textContent).not.toContain("0 activities");
-    fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
+    fireEvent.click(
+      painted.getByRole("button", { name: "Expand execution trace" }),
+    );
     expect(painted.container.textContent).not.toContain("ACTIVITY");
   });
 });
@@ -820,8 +874,28 @@ describe("a Python evaluation without detected Activity", () => {
 // there is no anchor to resolve and no way for it to land under the wrong one.
 describe("Activity owns the slot after its Python form and result", () => {
   const rows = [
-    { id: "call-1", sequence: 1, operation: "grep", presenter: "observation", signal: "observation", state: "succeeded", summary: "18 matches", resources: [], evidence: [] },
-    { id: "call-2", sequence: 2, operation: "run_tests", presenter: "tests", signal: "verification", state: "running", summary: "companion suite", resources: [], evidence: [] },
+    {
+      id: "call-1",
+      sequence: 1,
+      operation: "grep",
+      presenter: "observation",
+      signal: "observation",
+      state: "succeeded",
+      summary: "18 matches",
+      resources: [],
+      evidence: [],
+    },
+    {
+      id: "call-2",
+      sequence: 2,
+      operation: "run_tests",
+      presenter: "tests",
+      signal: "verification",
+      state: "running",
+      summary: "companion suite",
+      resources: [],
+      evidence: [],
+    },
   ];
   const runningActivity = {
     state: "running",
@@ -845,7 +919,9 @@ describe("Activity owns the slot after its Python form and result", () => {
         ])}
       />,
     );
-    const receipts = painted.getAllByRole("button", { name: "Expand execution trace" });
+    const receipts = painted.getAllByRole("button", {
+      name: "Expand execution trace",
+    });
 
     expect(receipts).toHaveLength(2);
     expect(painted.container.textContent).not.toContain("first_form()");
@@ -873,12 +949,18 @@ describe("Activity owns the slot after its Python form and result", () => {
         ])}
       />,
     );
-    const receipts = painted.getAllByRole("button", { name: "Expand execution trace" });
+    const receipts = painted.getAllByRole("button", {
+      name: "Expand execution trace",
+    });
     expect(receipts).toHaveLength(2);
     // Only the SECOND form carries a snapshot, so only its receipt says so.
-    expect(painted.container.textContent).toContain("RUNNING · RUN_TESTS · companion suite");
+    expect(painted.container.textContent).toContain(
+      "INVOCATIONRUNNING · 0 mutations",
+    );
     receipts.forEach((receipt) => fireEvent.click(receipt));
-    expect(painted.container.textContent?.match(/ACTIVITY/g)).toHaveLength(1);
+    expect(
+      painted.container.querySelectorAll("[data-activity-axis]"),
+    ).toHaveLength(1);
     expect(painted.container.textContent).not.toContain("Loading Activity");
   });
 
@@ -887,74 +969,106 @@ describe("Activity owns the slot after its Python form and result", () => {
   it.each([320, 390, 768, 1440])(
     "collapses one honest execution receipt and opens its three evidence bands at %ipx",
     (width) => {
-    const painted = render(
-      <div style={{ width }}>
-        <AssistantMessage
-          turn={turnOf([{
-            source: "line_1()\nline_2()\nline_3()\nline_4()\nline_5()\nline_6()",
-            stdout: "result body\n",
-            activity: runningActivity,
-          }])}
-        />
-      </div>,
-    );
-    expect(painted.container.firstElementChild).toHaveStyle({ width: `${width}px` });
+      const painted = render(
+        <div style={{ width }}>
+          <AssistantMessage
+            turn={turnOf([
+              {
+                source:
+                  "line_1()\nline_2()\nline_3()\nline_4()\nline_5()\nline_6()",
+                stdout: "result body\n",
+                activity: runningActivity,
+              },
+            ])}
+          />
+        </div>,
+      );
+      expect(painted.container.firstElementChild).toHaveStyle({
+        width: `${width}px`,
+      });
 
-    expect(painted.getByRole("button", { name: "Expand execution trace" })).toBeTruthy();
-    expect(painted.container.textContent).toContain("RUNNING · RUN_TESTS · companion suite · and more");
-    expect(painted.container.textContent).not.toContain("line_1()");
-    expect(painted.container.textContent).not.toContain("RESULT");
-    expect(painted.container.textContent).not.toContain("18 matches");
-    fireEvent.click(painted.getByRole("button", { name: "Expand execution trace" }));
-    expect(painted.container.textContent).toContain("PYTHON +1 more");
-    expect(painted.container.textContent).toContain("line_5()");
-    expect(painted.container.textContent).not.toContain("line_6()");
-    expect(painted.container.textContent).toContain("RESULT");
-    expect(painted.container.textContent).toContain("ACTIVITY");
-    expect(painted.container.textContent).toContain("18 matches");
-  });
+      expect(
+        painted.getByRole("button", { name: "Expand execution trace" }),
+      ).toBeTruthy();
+      expect(painted.container.textContent).toContain(
+        "INVOCATIONRUNNING · 0 mutations",
+      );
+      expect(painted.container.textContent).not.toContain("line_1()");
+      expect(painted.container.textContent).not.toContain("RESULT");
+      // The axis is not behind the chevron: what the form DID is on the page
+      // before it is opened, and only the program and its bytes are inside.
+      expect(painted.container.textContent).toContain("18 matches");
+      fireEvent.click(
+        painted.getByRole("button", { name: "Expand execution trace" }),
+      );
+      expect(painted.container.textContent).toContain("PYTHON +1 more");
+      expect(painted.container.textContent).toContain("line_5()");
+      expect(painted.container.textContent).not.toContain("line_6()");
+      expect(painted.container.textContent).toContain("RESULT");
+      expect(painted.container.textContent).toContain("0 mutations");
+      expect(painted.container.textContent).toContain("18 matches");
+    },
+  );
 
   // Regression, issue td-5b6b08: the filed Companion receipt omitted its primary
   // operation and elapsed time. The elapsed time is the FORM's duration now — the
   // very number the terminal frame measured.
   it("keeps settled Activity and elapsed time at the transcript boundary", () => {
-    const rendered = text(renderToStaticMarkup(
-      <AssistantMessage
-        turn={turnOf([{
-          source: "work()",
-          stdout: "done\n",
-          duration_ms: 12_600,
-          activity: {
-            ...runningActivity,
-            state: "succeeded",
-            counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
-            rows: rows.map((row) => ({ ...row, state: "succeeded" })),
-          },
-        }])}
-      />,
-    ));
+    const rendered = text(
+      renderToStaticMarkup(
+        <AssistantMessage
+          turn={turnOf([
+            {
+              source: "work()",
+              stdout: "done\n",
+              duration_ms: 12_600,
+              activity: {
+                ...runningActivity,
+                state: "succeeded",
+                counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
+                rows: rows.map((row) => ({ ...row, state: "succeeded" })),
+              },
+            },
+          ])}
+        />,
+      ),
+    );
 
-    expect(rendered).toContain("DONE · GREP and more · 2 activities · 12.6s");
+    expect(rendered).toContain("DONE · 12.6s · 0 mutations");
+    // The count of calls is no longer part of the sentence: the margin says what
+    // they COST, which is the question the sentence could not answer — and it
+    // says only that, because the reads and the checks are rows on the axis.
+    expect(rendered).not.toContain("1 read");
+    expect(rendered).not.toContain("1 check");
   });
 
   it("uses only the actual terminal Activity count after settlement", () => {
-    const rendered = text(renderToStaticMarkup(
-      <AssistantMessage
-        turn={turnOf([{
-          source: "work()",
-          stdout: "done\n",
-          activity: {
-            ...runningActivity,
-            state: "failed",
-            counts: { running: 0, succeeded: 5, failed: 1, cancelled: 0 },
-            rows: [],
-            omitted: { rows: 6, by_classification: { observation: 6 } },
-          },
-        }])}
-      />,
-    ));
+    const rendered = text(
+      renderToStaticMarkup(
+        <AssistantMessage
+          turn={turnOf([
+            {
+              source: "work()",
+              stdout: "done\n",
+              activity: {
+                ...runningActivity,
+                state: "failed",
+                counts: { running: 0, succeeded: 5, failed: 1, cancelled: 0 },
+                rows: [],
+                omitted: { rows: 6, by_classification: { observation: 6 } },
+              },
+            },
+          ])}
+        />,
+      ),
+    );
 
-    expect(rendered).toContain("FAILED · 6 activities");
+    // The dropped rows still count where the count is the margin's own — but a
+    // tally of reads is not: six dropped OBSERVATIONS are what the axis's own
+    // tail says, and repeating them beside INVOCATION prints them twice.
+    expect(rendered).toContain("FAILED");
+    expect(rendered).toContain("0 mutations");
+    expect(rendered).not.toContain("6 reads");
     expect(rendered).not.toContain("finished 6/");
   });
 
@@ -1195,7 +1309,11 @@ describe("a markdown table", () => {
   // back to a ragged edge, removing the transcript's intended justified column.
   it("fully justifies Markdown prose while every code surface stays left-aligned", () => {
     const markdown = renderToStaticMarkup(
-      <Markdown>{"Release `update version files for v0.7.126, bump next dev version`.\n\n```shell\ngit status --short\n```"}</Markdown>,
+      <Markdown>
+        {
+          "Release `update version files for v0.7.126, bump next dev version`.\n\n```shell\ngit status --short\n```"
+        }
+      </Markdown>,
     );
     const inline = renderToStaticMarkup(
       <InlineMarkdown>{"Run `update version files` now"}</InlineMarkdown>,
@@ -1286,7 +1404,9 @@ describe("the trace a settled row inherits from the running-turn bubble", () => 
   } as unknown as TranscriptTurn;
 
   it("mounts every segment in the first paint", () => {
-    const html = renderToStaticMarkup(<AssistantMessage turn={finished} whole />);
+    const html = renderToStaticMarkup(
+      <AssistantMessage turn={finished} whole />,
+    );
 
     for (let step = 0; step < 20; step += 1)
       expect(text(html)).toContain(`step ${step}`);
@@ -1309,7 +1429,9 @@ describe("the trace a settled row inherits from the running-turn bubble", () => 
   // `SEGMENT_FIRST_PAINT` exactly as before for every handover that took more
   // than one tick.
   it("takes the whole trace even when it mounted before the handover", () => {
-    const { container, rerender } = render(<AssistantMessage turn={finished} />);
+    const { container, rerender } = render(
+      <AssistantMessage turn={finished} />,
+    );
 
     // Mounted cold: the ramp is holding everything but the tail.
     expect(container.textContent).not.toContain("step 0");
@@ -1325,11 +1447,108 @@ describe("the trace a settled row inherits from the running-turn bubble", () => 
   // trace that showed everything only while the flag was up dropped back to the
   // tail the moment it moved on.
   it("keeps the whole trace after the flag moves to the next turn's row", () => {
-    const { container, rerender } = render(<AssistantMessage turn={finished} />);
+    const { container, rerender } = render(
+      <AssistantMessage turn={finished} />,
+    );
     rerender(<AssistantMessage turn={finished} whole />);
     rerender(<AssistantMessage turn={finished} />);
 
     expect(container.textContent).toContain("step 0");
     expect(container.textContent).toContain("step 19");
+  });
+});
+
+// The turn is drawn as ONE thread: a line down the gutter, a marker where each
+// step sits on it. Two things went wrong the first time and both are pinned
+// here — the marker was drawn once per SEGMENT, so steps that shared a
+// reasoning band lost their own mark, and every step called itself the page's
+// "Execution trace" REGION, which put three identical landmarks on one screen.
+describe("a turn drawn as one thread", () => {
+  /** Which ring each step is wearing, top to bottom. */
+  const marks = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("[data-step-node] svg")).flatMap(
+      (mark) => {
+        const kind = Array.from(mark.classList).find((name) =>
+          /^lucide-circle-(check|dot|x)$/.test(name),
+        );
+        return kind ? [kind.replace("lucide-circle-", "")] : [];
+      },
+    );
+
+  it("marks every step, not every segment", () => {
+    const { container } = render(
+      <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
+    );
+
+    // Three steps, three markers — and the middle one carries no reasoning of
+    // its own, which is exactly the step a per-segment marker used to skip.
+    expect(marks(container)).toHaveLength(STORY_TURN_ITERATIONS_SETTLED.length);
+  });
+
+  it("keeps a step that ended badly findable from the gutter alone", () => {
+    const { container } = render(
+      <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
+    );
+
+    expect(marks(container)).toEqual(["check", "x", "check"]);
+  });
+
+  it("leaves exactly one ring open while the turn is still moving", () => {
+    const { container } = render(
+      <IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />,
+    );
+
+    // The open ring is the LAST thing on the thread: work in progress is where
+    // the line has got to, never something the reader has to hunt for.
+    expect(marks(container)).toEqual(["check", "check", "dot"]);
+  });
+
+  // Regression, seen in the story sheet the moment the thread drew one marker
+  // per step: a step that had ALREADY finished said RUNNING for as long as the
+  // turn did, because the receipt asked the turn instead of the step. With one
+  // receipt row on screen it read as a stale word; with a column of rings it
+  // read as three things happening at once.
+  it("closes a step that measured itself, even while the turn runs on", () => {
+    const { container } = render(
+      <IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />,
+    );
+
+    // The middle step detected no operations at all — its 940 ms is the only
+    // thing saying it is over, and that has to be enough.
+    const rows = Array.from(
+      container.querySelectorAll('[aria-label="Execution trace"]'),
+    ).map((row) => row.textContent ?? "");
+
+    expect(rows[1]).toContain("DONE");
+    expect(rows[1]).not.toContain("RUNNING");
+    expect(rows[2]).toContain("RUNNING");
+  });
+  it("gives a multi-step trace no repeated landmark", () => {
+    const { container } = render(
+      <IterationTrace iterations={STORY_TURN_ITERATIONS_SETTLED} whole />,
+    );
+
+    const traces = container.querySelectorAll('[aria-label="Execution trace"]');
+
+    expect(traces).toHaveLength(STORY_TURN_ITERATIONS_SETTLED.length);
+    // A labelled `section` is a landmark, and three of them with the same name
+    // is an axe `landmark-unique` failure: a step is a step, not a region.
+    expect(
+      container.querySelectorAll('section[aria-label="Execution trace"]'),
+    ).toHaveLength(0);
+  });
+
+  it("still says RUNNING out loud for the step that is moving", () => {
+    const { container } = render(
+      <IterationTrace iterations={STORY_TURN_ITERATIONS} live whole />,
+    );
+
+    // The ring is `aria-hidden`; the row beside it is what a screen reader gets,
+    // and the two are read from ONE `formStep` so they cannot disagree.
+    const live = container.querySelectorAll(
+      '[role="status"][aria-label="Execution trace"]',
+    );
+
+    expect(live).toHaveLength(1);
   });
 });

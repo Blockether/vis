@@ -668,6 +668,10 @@ const BAND_NAME = 'font-extrabold tracking-[0.06em]';
  * ink INCLUDING the slant: the reasoning a thinking band opens is set in italic,
  * so that band's own name is italic, and bold with it.
  *
+ * `chronology` is the odd one because what it opens is not a band at all: it is
+ * one step of a run, a sentence in the transcript's own result ink, so the row
+ * keeps the weight it is read at and only the chevron says it opens.
+ *
  * A `caption` also stops at its own words (`w-auto`): every other tone fills the row
  * it shares, but a caption owns the space above a block, and a press target running
  * the whole width of that block would open the text from empty paper.
@@ -688,7 +692,7 @@ export function Disclosure({
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   isOpen: boolean;
-  tone?: 'step' | 'thinking' | 'muted' | 'caption' | 'branch';
+  tone?: 'step' | 'thinking' | 'muted' | 'caption' | 'branch' | 'chronology';
   /**
    * Gives the row's own gutter back: the chevron lines its ink up with the card's
    * leading edge while the press target keeps the padding a finger needs. It is
@@ -706,7 +710,9 @@ export function Disclosure({
           ? 'uppercase tracking-[0.08em] text-dialog-hint hover:text-accent-ink'
           : tone === 'branch'
             ? 'font-bold text-white hover:bg-hover'
-            : 'text-footer-muted hover:bg-hover';
+            : tone === 'chronology'
+              ? 'text-code-result hover:bg-hover'
+              : 'text-footer-muted hover:bg-hover';
   return (
     <button
       type="button"

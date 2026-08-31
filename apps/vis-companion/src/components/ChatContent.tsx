@@ -15,9 +15,23 @@ import Prism from "prismjs";
 import { DataTable } from "./DataTable";
 import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
 import { LiveRunRow } from "./LiveArtifact";
-import { ActivityPanel, activityReceiptText } from "./ActivityPanel";
+import {
+  ActivityPanel,
+  activityCostText,
+  activityReceiptText,
+  activityStateText,
+} from "./ActivityPanel";
 import type { ActivityProjection } from "../lib/activity";
-import { AlertIcon, ArrowOutIcon, ChevronIcon, PauseIcon, PlayIcon } from "./icons";
+import {
+  AlertIcon,
+  ArrowOutIcon,
+  ChevronIcon,
+  CircleCheckIcon,
+  CircleDotIcon,
+  CircleXIcon,
+  PauseIcon,
+  PlayIcon,
+} from "./icons";
 import {
   attachmentBytes,
   attachmentIsAudio,
@@ -628,9 +642,7 @@ export const Markdown = memo(function Markdown({
             </blockquote>
           ),
           code: ({ children: inline }) => (
-            <code className={`${INLINE_CODE_CLASS} break-all`}>
-              {inline}
-            </code>
+            <code className={`${INLINE_CODE_CLASS} break-all`}>{inline}</code>
           ),
           h1: ({ children: heading1 }) => (
             <h1
@@ -1006,9 +1018,12 @@ function turnFallbackNote(turn: TranscriptTurn): string | null {
   // A `session-pick` event records that the SESSION was repointed off a dead
   // credential, not how this turn was routed: it is reported at the end of the line,
   // never as the reason the turn moved (issue #154).
-  const pickMove = routing.trace.find((item) => scopeOf(item) === "session-pick");
+  const pickMove = routing.trace.find(
+    (item) => scopeOf(item) === "session-pick",
+  );
   const fallbackEvent = routing.trace.find(
-    (item) => fallbackTypes.has(eventType(item)) && scopeOf(item) !== "session-pick",
+    (item) =>
+      fallbackTypes.has(eventType(item)) && scopeOf(item) !== "session-pick",
   );
   // A changed provider or model means the peer never saw the cache the previous route
   // built, so every following request re-sends the whole context.
@@ -1076,7 +1091,8 @@ function fenced(body: string, lang = ""): string {
 
 function interruptedPython(form: TranscriptForm): boolean {
   const error = form.error;
-  if (typeof error === "string") return error === "java.lang.InterruptedException";
+  if (typeof error === "string")
+    return error === "java.lang.InterruptedException";
   if (error == null || typeof error !== "object") return false;
   const record = error as Record<string, unknown>;
   return (
@@ -1092,8 +1108,8 @@ function resultBody(form: TranscriptForm): string {
 
   const stdout = form.stdout?.trimEnd();
   if (!stdout) return "";
-  const rendered = ["````vis-image", "````vis-doc", "````vis-table"].some((marker) =>
-    stdout.includes(marker),
+  const rendered = ["````vis-image", "````vis-doc", "````vis-table"].some(
+    (marker) => stdout.includes(marker),
   )
     ? stdout
     : fenced(stdout);
@@ -1198,9 +1214,7 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   const resultText = resultBody(form);
   const failed = form.error != null && !interrupted;
   const hasOutcome =
-    interrupted ||
-    resultText !== "" ||
-    form.duration_ms != null;
+    interrupted || resultText !== "" || form.duration_ms != null;
   const stateLabel = interrupted ? "Interrupted" : failed ? "Failed" : "";
   const running = !interrupted && !failed && !hasOutcome;
   const body = resultText;
@@ -1359,25 +1373,25 @@ const CollapsibleFormCode = memo(function CollapsibleFormCode({
             with a `Disclosure` in it measured 33 beside a plain one at 32. */}
         <div className="border-b border-code-edge">
           <div className={CARD_BAND}>
-          {collapsible ? (
-            <Disclosure
-              isOpen={expanded}
-              tone="step"
-              bleed
-              className="min-w-0 flex-1"
-              onClick={() => setExpanded((current) => !current)}
-            >
-              <span className="min-w-0 truncate">
-                {label}
-                {!expanded && <BandTally> +{hiddenLines} more</BandTally>}
-              </span>
-            </Disclosure>
-          ) : (
-            <BandLabel className="min-w-0 flex-1">{label}</BandLabel>
-          )}
-          <CopyChip value={value} label="Copy code" className="shrink-0">
-            Copy
-          </CopyChip>
+            {collapsible ? (
+              <Disclosure
+                isOpen={expanded}
+                tone="step"
+                bleed
+                className="min-w-0 flex-1"
+                onClick={() => setExpanded((current) => !current)}
+              >
+                <span className="min-w-0 truncate">
+                  {label}
+                  {!expanded && <BandTally> +{hiddenLines} more</BandTally>}
+                </span>
+              </Disclosure>
+            ) : (
+              <BandLabel className="min-w-0 flex-1">{label}</BandLabel>
+            )}
+            <CopyChip value={value} label="Copy code" className="shrink-0">
+              Copy
+            </CopyChip>
           </div>
         </div>
         <SyntaxCodeBlock
@@ -1430,7 +1444,8 @@ function pythonReceiptText(
   activityDurationMs?: number,
 ): string {
   const interrupted = interruptedPython(form);
-  const failed = (form.error != null && !interrupted) || activityState === "failed";
+  const failed =
+    (form.error != null && !interrupted) || activityState === "failed";
   const settled =
     interrupted ||
     activityState === "succeeded" ||
@@ -1446,14 +1461,72 @@ function pythonReceiptText(
         ? "CANCELLED"
         : activityState === "succeeded"
           ? "DONE"
-          : live || !settled
-            ? "RUNNING"
-            : "DONE";
+          : // A step that MEASURED itself is over, whether or not the turn is.
+            // The duration is the terminal frame's own number, and asking the
+            // turn instead made every finished step of a live turn say RUNNING —
+            // invisible while only the last step was on screen, and a whole
+            // column of open rings once the thread drew one marker per step.
+            // Streamed output is NOT that marker: a shell prints for minutes
+            // while it runs, so a live turn wants the duration and a settled one
+            // takes any result at all.
+            (live ? form.duration_ms != null : settled)
+            ? "DONE"
+            : "RUNNING";
   const duration = activityDurationMs ?? form.duration_ms;
   const role = form.tag === "user-shell" ? "SHELL" : "PYTHON";
   return [state, role, state === "RUNNING" ? "" : formatDuration(duration)]
     .filter(Boolean)
     .join(" · ");
+}
+
+/**
+ * WHAT A FORM'S ROW SAYS, AND WHETHER IT IS STILL MOVING.
+ *
+ * Read ONCE, because two things paint it: the receipt row, in words, and the
+ * marker on the thread line beside it, as a ring. A step whose marker had gone
+ * quiet while its own row still said RUNNING would be the transcript lying to
+ * itself, and that is exactly what two copies of this reading drift into.
+ */
+function formStep(
+  form: TranscriptForm,
+  live: boolean,
+): {
+  activity?: ActivityProjection;
+  detected: boolean;
+  settled: boolean;
+  receipt: string;
+  running: boolean;
+  /** A step that ENDED badly — it stays findable in a transcript scrolled past. */
+  failed: boolean;
+} {
+  // Activity rides the form itself now, so there is no artifact to fetch and no
+  // loading or unavailable state to paint: either this form did something and
+  // carries the record of it, or it did not. The form's own `duration_ms` is
+  // the elapsed time — the projection no longer keeps window timestamps of its
+  // own, and the settled duration is exactly what the terminal frame measured.
+  const activity = form.activity;
+  const detected = Boolean(
+    activity &&
+    (activity.rows.length > 0 ||
+      activity.omitted.rows > 0 ||
+      Object.values(activity.counts).some((count) => count > 0)),
+  );
+  const settled =
+    activity != null &&
+    activity.state !== "running" &&
+    activity.state !== "idle";
+  const receipt =
+    detected && activity
+      ? activityReceiptText(activity, form.duration_ms)
+      : pythonReceiptText(form, live, activity?.state, form.duration_ms);
+  return {
+    activity,
+    detected,
+    settled,
+    receipt,
+    running: detected ? !settled : receipt.startsWith("RUNNING"),
+    failed: activity?.state === "failed" || Boolean(form.error),
+  };
 }
 
 const FormTrace = memo(function FormTrace({
@@ -1472,25 +1545,25 @@ const FormTrace = memo(function FormTrace({
   const codeLabel = "PYTHON";
   const comment = showCode && form.comment?.trim();
 
-  // Activity rides the form itself now, so there is no artifact to fetch and no
-  // loading or unavailable state to paint: either this form did something and
-  // carries the record of it, or it did not. The form's own `duration_ms` is
-  // the elapsed time — the projection no longer keeps window timestamps of its
-  // own, and the settled duration is exactly what the terminal frame measured.
-  const activity = form.activity;
-  const detectedActivity = Boolean(
-    activity &&
-      (activity.rows.length > 0 ||
-        activity.omitted.rows > 0 ||
-        Object.values(activity.counts).some((count) => count > 0)),
-  );
-  const activitySettled = activity != null && activity.state !== "running" && activity.state !== "idle";
-  const receipt = detectedActivity
-    ? activityReceiptText(activity, form.duration_ms)
-    : pythonReceiptText(form, live, activity?.state, form.duration_ms);
-  const running = detectedActivity
-    ? !activitySettled
-    : receipt.startsWith("RUNNING");
+  // Activity rides the form itself, so there is nothing to fetch and no loading
+  // state to paint: either this form did something and carries the record of
+  // it, or it did not. `formStep` reads it once, for the row and for the axis.
+  const {
+    activity,
+    detected: detectedActivity,
+    receipt,
+    running,
+  } = formStep(form, live);
+  // The band is NAMED, not narrated: how the call ended and what it cost the
+  // repository stand in its own margin, and the chronology under it says which
+  // program is running. The margin counts only mutations — reads, checks and
+  // failures are rows on the axis, and counting them here prints them twice.
+  const margin = [
+    activityStateText(activity, form.duration_ms),
+    activityCostText(activity),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : "min-w-0"}>
@@ -1499,7 +1572,13 @@ const FormTrace = memo(function FormTrace({
           <Markdown compact>{comment}</Markdown>
         </div>
       )}
-      <section
+      {/* Not a landmark: a transcript holds dozens of these, and a page whose
+          landmark list is forty identical "Execution trace" regions has no
+          landmark list at all. It stays a labelled live region while it runs,
+          which is the only time it has something to announce — and the axis
+          inside it turns that off for itself, so a thirteenth step does not
+          re-announce the twelve above it. */}
+      <div
         className="min-w-0"
         role={running ? "status" : undefined}
         aria-live={running ? "polite" : undefined}
@@ -1508,13 +1587,26 @@ const FormTrace = memo(function FormTrace({
         <Disclosure
           isOpen={expanded}
           tone="step"
-          className="w-full min-w-0"
-          aria-label={expanded ? "Collapse execution trace" : "Expand execution trace"}
+          className="w-full min-w-0 flex-wrap"
+          aria-label={
+            expanded ? "Collapse execution trace" : "Expand execution trace"
+          }
           onClick={() => setExpanded((open) => !open)}
         >
-          <span className="min-w-0 flex-1 truncate font-mono text-chip font-bold text-code-result">
-            {receipt}
+          {/* The state keeps a floor the margin cannot squeeze it under: on a
+              phone the cost wraps to its own line rather than clipping the one
+              word — "RUNNING" — that says whether to wait. */}
+          <span className="min-w-[9rem] flex-1 truncate font-mono text-chip font-bold text-code-result">
+            {detectedActivity ? "INVOCATION" : receipt}
           </span>
+          {/* WHAT IT COST, in the row's own margin: "did this change anything"
+              is the one question a closed invocation is asked, and it is
+              answered without opening it. */}
+          {detectedActivity && margin && (
+            <span className="shrink-0 font-mono text-chip font-normal normal-case tracking-normal text-dialog-hint">
+              {margin}
+            </span>
+          )}
         </Disclosure>
         {expanded && (
           <div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
@@ -1527,16 +1619,13 @@ const FormTrace = memo(function FormTrace({
               />
             )}
             <CardGrid cards={cards} bare />
-            {detectedActivity && activity && (
-              <ActivityPanel
-                activity={activity}
-                isSettled={activitySettled}
-                initiallyExpanded
-              />
-            )}
           </div>
         )}
-      </section>
+        {/* The axis is NOT behind the disclosure. What the iteration DID is the
+            one thing a reader must never open a box to see; the program that
+            did it, and the bytes it printed, are exactly what a box is for. */}
+        {detectedActivity && activity && <ActivityPanel activity={activity} />}
+      </div>
     </div>
   );
 });
@@ -1608,7 +1697,10 @@ function scheduleBoxes(boxes: Iterable<Element>) {
   boxFrame = window.requestAnimationFrame(flushBoxes);
 }
 
-function observeBox(box: Element, measure: () => (() => void) | void): () => void {
+function observeBox(
+  box: Element,
+  measure: () => (() => void) | void,
+): () => void {
   boxMeasures.set(box, measure);
   observedBoxes.add(box);
   if (typeof ResizeObserver !== "undefined") {
@@ -1630,10 +1722,66 @@ function observeBox(box: Element, measure: () => (() => void) | void): () => voi
   };
 }
 
+// THE THREAD'S OWN GEOMETRY, in one place.
+//
+// A turn is a column of steps hung on one vertical line: the line sits 7px in,
+// the steps 24px in, and a step's marker straddles the line so the eye reads
+// "this happened, then this" without a single word for it. The three numbers
+// are one number three ways — move the gutter and the marker follows — which is
+// why they are spelled here and never at a call site. `RAIL_NODE` is measured
+// from the step's own left edge, so 7 - 24 = -17.
+const RAIL_GUTTER = "pl-6";
+const RAIL_LINE =
+  "before:absolute before:left-[7px] before:top-0 before:z-[1] before:w-px before:bg-code-edge before:content-['']";
+const RAIL_NODE = "absolute -left-[17px] top-0 z-[2] -translate-x-1/2";
+const RAIL_BLEED = "-ml-6 pl-6";
+
+/**
+ * ONE STEP, MARKED ON THE LINE.
+ *
+ * A ring straddling the thread, on the page's own paper, so the line reads as
+ * broken BY the step instead of passing behind it. Three rings and no fourth:
+ * moving, ended badly, done — the same three the run's own panel draws, in the
+ * same order, so a column of them can be read at a glance from the gutter alone.
+ *
+ * It carries no words and no label: the receipt row it sits beside says the same
+ * thing in text, and a screen reader is given that row rather than this ring twice.
+ */
+function StepNode({ running, failed }: { running: boolean; failed: boolean }) {
+  return (
+    <span
+      aria-hidden
+      data-step-node
+      className={`${RAIL_NODE} flex h-8 items-center mouse:h-6`}
+    >
+      {/* Only the mark's own box clears the line — a full-height clearing would
+          rub the thread out for the whole step and leave the marker floating. */}
+      <span className="flex bg-page py-[3px]">
+        {running ? (
+          <CircleDotIcon className="text-accent-ink" />
+        ) : failed ? (
+          <CircleXIcon className="text-err-ink" />
+        ) : (
+          <CircleCheckIcon className="text-dialog-hint" />
+        )}
+      </span>
+    </span>
+  );
+}
+
 export const ThinkingBand = memo(function ThinkingBand({
   children,
+  railed = false,
 }: {
   children: string;
+  /**
+   * Bleed the band's paper LEFT, under the thread line, and set its words in the
+   * same column the steps are set in. A step's reasoning is not a block standing
+   * beside the thread — it is the first thing that step did — so the band crosses
+   * the line instead of starting politely inside it. Off wherever the band stands
+   * alone: a single reasoning block has no thread to cross.
+   */
+  railed?: boolean;
 }) {
   const normalized = normalizeReasoning(children);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -1675,7 +1823,9 @@ export const ThinkingBand = memo(function ThinkingBand({
     // block of that section and the transcript stack has already spaced it.
     // Spelling the gap twice is what made the whitespace under a picture wider
     // than the whitespace over it.
-    <section className="my-2 min-w-0 bg-thinking-surface px-3 py-2 text-ui text-thinking first:mt-0">
+    <section
+      className={`my-2 min-w-0 bg-thinking-surface py-2 text-ui text-thinking first:mt-0 ${railed ? `relative z-0 pr-3 ${RAIL_BLEED}` : "px-3"}`}
+    >
       {collapsible && (
         <Disclosure
           isOpen={expanded}
@@ -1858,10 +2008,7 @@ const AttachmentTile = memo(function AttachmentTile({
 
   if (isTile) return <MediaTile>{body}</MediaTile>;
   return (
-    <MediaPlate
-      name={name}
-      meta={mediaMeta(attachment)}
-    >
+    <MediaPlate name={name} meta={mediaMeta(attachment)}>
       {body}
     </MediaPlate>
   );
@@ -2040,8 +2187,7 @@ export const AttachmentRail = memo(function AttachmentRail({
   // log. It is an artifact this app can open, so it gets an artifact's row.
   const runs = collapseAttachmentVersions(
     attachments.filter(
-      (entry) =>
-        attachmentIsLive(entry) && entry.iteration_id,
+      (entry) => attachmentIsLive(entry) && entry.iteration_id,
     ),
   ).map((thread) => thread[0]);
   const files = recordedFiles(
@@ -2350,6 +2496,8 @@ function buildSegments(
 type TraceSegmentProps = {
   segment: TraceSegmentData;
   live: boolean;
+  /** The turn's last step: the thread stops at it instead of running on past it. */
+  isLast: boolean;
   client?: GatewayClient;
   sid?: string;
 };
@@ -2368,12 +2516,10 @@ function sameTraceEntry(a: TraceEntry, b: TraceEntry): boolean {
   );
 }
 
-function sameTraceSegment(
-  a: TraceSegmentProps,
-  b: TraceSegmentProps,
-): boolean {
+function sameTraceSegment(a: TraceSegmentProps, b: TraceSegmentProps): boolean {
   if (
     a.live !== b.live ||
+    a.isLast !== b.isLast ||
     a.client !== b.client ||
     a.sid !== b.sid
   )
@@ -2395,6 +2541,7 @@ function sameTraceSegment(
 const TraceSegment = memo(function TraceSegment({
   segment,
   live,
+  isLast,
   client,
   sid,
 }: TraceSegmentProps) {
@@ -2431,9 +2578,13 @@ const TraceSegment = memo(function TraceSegment({
   );
 
   return (
-    <section className={live ? `min-w-0 ${transcriptEnterClass}` : "min-w-0"}>
+    <section
+      className={`relative min-w-0 pb-2.5 ${RAIL_GUTTER} ${RAIL_LINE} ${
+        isLast ? "before:bottom-2.5" : "before:bottom-0"
+      } ${live ? transcriptEnterClass : ""}`}
+    >
       {segment.head.thinking && (
-        <ThinkingBand>{segment.head.thinking}</ThinkingBand>
+        <ThinkingBand railed>{segment.head.thinking}</ThinkingBand>
       )}
       {segment.head.prose && (
         // Same rhythm as every other block in the stack: the gap above this
@@ -2449,11 +2600,20 @@ const TraceSegment = memo(function TraceSegment({
       {chunks.length > 0 && (
         <div className="grid min-w-0 gap-2.5">
           {chunks.map((chunk) => {
-            if (chunk.kind === "code") {
-              return <FormTrace key={chunk.key} form={chunk.form} live={live} />;
-            }
+            const form = chunk.kind === "code" ? chunk.form : chunk.cards[0];
+            const step = form ? formStep(form, live) : undefined;
             return (
-              <CardGrid key={chunk.key} cards={chunk.cards} live={live} />
+              <div key={chunk.key} className="relative min-w-0">
+                <StepNode
+                  running={step ? step.running : live}
+                  failed={step?.failed ?? false}
+                />
+                {chunk.kind === "code" ? (
+                  <FormTrace form={chunk.form} live={live} />
+                ) : (
+                  <CardGrid cards={chunk.cards} live={live} />
+                )}
+              </div>
             );
           })}
         </div>
@@ -2586,12 +2746,13 @@ export const IterationTrace = memo(function IterationTrace({
   const shown = rampDone ? segments : segments.slice(hidden);
 
   return (
-    <div ref={rootRef} className="mb-2.5 grid gap-2.5">
-      {shown.map((segment) => (
+    <div ref={rootRef} className="mb-2.5 grid">
+      {shown.map((segment, index) => (
         <TraceSegment
           key={segment.key}
           segment={segment}
           live={live}
+          isLast={index === shown.length - 1}
           client={client}
           sid={sid}
         />
@@ -2610,7 +2771,10 @@ const speechTime = (seconds: number) => {
 
 const speechFrom = (text: string, position: number) => {
   if (position <= 0) return text;
-  const approximate = Math.min(text.length - 1, Math.floor(text.length * position));
+  const approximate = Math.min(
+    text.length - 1,
+    Math.floor(text.length * position),
+  );
   const boundary = text.indexOf(" ", approximate);
   return text.slice(boundary < 0 ? approximate : boundary + 1).trimStart();
 };
@@ -2627,7 +2791,10 @@ const WAVE_ROOM = 3;
 const cutWaveTo = (source: number[], count: number) =>
   Array.from({ length: count }, (_, index) => {
     const from = Math.floor((index * source.length) / count);
-    const to = Math.max(from + 1, Math.floor(((index + 1) * source.length) / count));
+    const to = Math.max(
+      from + 1,
+      Math.floor(((index + 1) * source.length) / count),
+    );
     let peak = 0;
     for (let at = from; at < to; at += 1) peak = Math.max(peak, source[at]);
     return peak;
@@ -2654,12 +2821,15 @@ function SpeechWaveform({
   useEffect(() => {
     const node = frame.current;
     if (!node || typeof ResizeObserver === "undefined") return;
-    const watch = new ResizeObserver(([entry]) => setRoom(entry.contentRect.width));
+    const watch = new ResizeObserver(([entry]) =>
+      setRoom(entry.contentRect.width),
+    );
     watch.observe(node);
     return () => watch.disconnect();
   }, []);
   const source = peaks.length ? peaks : new Array<number>(WAVE_FLAT).fill(0);
-  const fits = room > 0 ? Math.max(8, Math.floor(room / WAVE_ROOM)) : source.length;
+  const fits =
+    room > 0 ? Math.max(8, Math.floor(room / WAVE_ROOM)) : source.length;
   const bars = fits >= source.length ? source : cutWaveTo(source, fits);
   const played = value * bars.length;
   const clamp = (next: number) => onSeek(Math.max(0, Math.min(1, next)));
@@ -2765,7 +2935,8 @@ export function SpeechBlock({ text }: { text: string }) {
       fromRef.current = from;
       measuredRef.current = false;
       rememberPosition(from);
-      startedAtRef.current = performance.now() - from * durationRef.current * 1000;
+      startedAtRef.current =
+        performance.now() - from * durationRef.current * 1000;
       setError(null);
       setSpeaking(true);
       void speechOutput
@@ -2806,7 +2977,10 @@ export function SpeechBlock({ text }: { text: string }) {
       // audio starts reporting its own clock - and then never again.
       if (measuredRef.current) return;
       rememberPosition(
-        Math.min(0.995, (performance.now() - startedAtRef.current) / (duration * 1000)),
+        Math.min(
+          0.995,
+          (performance.now() - startedAtRef.current) / (duration * 1000),
+        ),
       );
     }, 200);
     return () => window.clearInterval(timer);
@@ -2870,7 +3044,9 @@ export function SpeechBlock({ text }: { text: string }) {
               {text}
             </p>
             {error && (
-              <p className="px-2.5 pb-2 font-mono text-meta text-err">{error}</p>
+              <p className="px-2.5 pb-2 font-mono text-meta text-err">
+                {error}
+              </p>
             )}
           </div>
         )}
@@ -2889,7 +3065,9 @@ export const ContentBlockView = memo(function ContentBlockView({
   switch (block.type) {
     case "prose":
       return block.markdown ? (
-        <Markdown onOpenAttachment={onOpenAttachment}>{block.markdown}</Markdown>
+        <Markdown onOpenAttachment={onOpenAttachment}>
+          {block.markdown}
+        </Markdown>
       ) : null;
     case "speech":
       return block.text ? <SpeechBlock text={block.text} /> : null;
@@ -2903,7 +3081,8 @@ export const ContentBlockView = memo(function ContentBlockView({
       return block.text ? <ThinkingBand>{block.text}</ThinkingBand> : null;
     case "tool": {
       const output = block.output == null ? "" : jsonText(block.output);
-      const status = typeof block.status === "string" ? block.status.trim() : "";
+      const status =
+        typeof block.status === "string" ? block.status.trim() : "";
       const stdout = [status, output].filter(Boolean).join("\n");
       const form: TranscriptForm = {
         op: block.tool ?? undefined,
@@ -3139,7 +3318,8 @@ function neighbourhoodFor(root: Element | null): Neighbourhood | null {
   const observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
-        if (seen.has(entry.target)) seen.set(entry.target, entry.isIntersecting);
+        if (seen.has(entry.target))
+          seen.set(entry.target, entry.isIntersecting);
       }
       settle(hood);
     },
@@ -3420,7 +3600,11 @@ export const AssistantMessage = memo(function AssistantMessage({
   const paintSkip = useMeasuredPaintSkip(streaming);
 
   return (
-    <article className="flow-root mt-4 w-full" aria-busy={streaming} ref={paintSkip}>
+    <article
+      className="flow-root mt-4 w-full"
+      aria-busy={streaming}
+      ref={paintSkip}
+    >
       <div
         className={`mb-1 font-mono text-meta font-bold ${cancelled ? "text-dialog-hint" : "text-vis-role"}`}
       >
@@ -3457,7 +3641,9 @@ export const AssistantMessage = memo(function AssistantMessage({
             !fallback &&
             !cancelled &&
             turn.status !== "completed" &&
-            turn.status !== "running" && <span>{turn.status ?? "No response"}</span>}
+            turn.status !== "running" && (
+              <span>{turn.status ?? "No response"}</span>
+            )}
         </div>
         {liveViewPanel}
         {streaming ? (

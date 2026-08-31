@@ -38,6 +38,7 @@ import type {
   Session,
   SessionUsage,
   SlashCommand,
+  TranscriptIteration,
 } from '../lib/types';
 import type { GwHealth } from '../components/Machines';
 import type { ManagedProject } from '../components/ManageProjectsSheet';
@@ -129,6 +130,146 @@ export const ACTIVITY_SETTLED = projection({
     },
   ],
   omitted: { rows: 0, by_classification: {} },
+});
+
+/**
+ * A TURN OF REAL WORK, which is what the axis is FOR: reads that answered a
+ * question, a patch the repository REFUSED, the patch that landed, a check that
+ * failed and a step still moving — plus the two rows the engine's own bound
+ * dropped, because a chronology that hides its ceiling lies about what it shows.
+ *
+ * Every shape the axis can draw is here on purpose: a summary sentence, a list
+ * of paths with their kinds, a diff's `+7 −3`, and two errors that open
+ * themselves and are clamped to their own head.
+ */
+export const ACTIVITY_CHRONOLOGY = projection({
+  state: 'running',
+  counts: { running: 1, succeeded: 5, failed: 2, cancelled: 0 },
+  rows: [
+    {
+      id: 'call-1',
+      sequence: 1,
+      operation: 'grep',
+      presenter: 'observation',
+      signal: 'observation',
+      state: 'succeeded',
+      summary: '73 files',
+      duration_ms: 340,
+      result_summary: 'Found 50 matches across the app and the TUI',
+      resources: [],
+      evidence: [{ kind: 'arguments', text: '{query: ["ActivityPanel"], paths: ["src"]}' }],
+    },
+    {
+      id: 'call-2',
+      sequence: 2,
+      operation: 'cat',
+      presenter: 'observation',
+      signal: 'observation',
+      state: 'succeeded',
+      summary: '4 files',
+      duration_ms: 120,
+      resources: [
+        { type: 'file', id: 'src/components/ActivityPanel.tsx' },
+        { type: 'file', id: 'src/components/ChatContent.tsx' },
+        { type: 'file', id: 'src/index.css' },
+        { type: 'file', id: 'src/com/blockether/vis/internal/render.clj' },
+      ],
+      evidence: [{ kind: 'result', text: '612 lines read' }],
+    },
+    {
+      id: 'call-3',
+      sequence: 3,
+      operation: 'patch',
+      presenter: 'patch',
+      signal: 'mutation',
+      state: 'failed',
+      summary: 'src/components/ChatContent.tsx',
+      duration_ms: 88,
+      error_summary: 'no match',
+      resources: [],
+      evidence: [
+        {
+          kind: 'error',
+          text: [
+            'patch refused: hunk 2 of 3, from 208 to 213',
+            '  expected  const face = ACTIVITY_FACE[row.state];',
+            '  found     const face = ACTIVITY_FACE[row.signal];',
+            '  the anchor moved when the file was formatted',
+            '  re-read the region and retry',
+          ].join('\n'),
+        },
+      ],
+    },
+    {
+      id: 'call-4',
+      sequence: 4,
+      operation: 'patch',
+      presenter: 'patch',
+      signal: 'mutation',
+      state: 'succeeded',
+      summary: '2 files',
+      duration_ms: 96,
+      resources: [
+        { type: 'file', id: 'src/components/ActivityPanel.tsx' },
+        { type: 'file', id: 'src/components/ChatContent.tsx' },
+      ],
+      evidence: [
+        {
+          kind: 'diff',
+          text: '+7 -3',
+          lines: [
+            { kind: 'header', text: 'src/components/ActivityPanel.tsx' },
+            { kind: 'context', text: '  const face = ACTIVITY_FACE[row.state];' },
+            { kind: 'deletion', text: '  className="border-t border-code-edge bg-result"' },
+            { kind: 'addition', text: '  className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-1.5"' },
+            { kind: 'addition', text: '  data-activity-row={row.id}' },
+          ],
+          additions: 7,
+          deletions: 3,
+          modifications: 3,
+          omitted_lines: 5,
+          is_truncated: true,
+          is_redacted: false,
+        },
+      ],
+    },
+    {
+      id: 'call-5',
+      sequence: 5,
+      operation: 'run_tests',
+      presenter: 'tests',
+      signal: 'verification',
+      state: 'failed',
+      summary: 'ui.test.tsx',
+      duration_ms: 3980,
+      error_summary: '2 failed',
+      resources: [],
+      evidence: [
+        {
+          kind: 'error',
+          text: [
+            'FAIL  src/components/ui.test.tsx > the control vocabulary is closed',
+            '  expected the composer to reserve the stop slot, found none',
+            '  at src/components/ui.test.tsx:412:7',
+            'FAIL  src/components/ui.test.tsx > a disabled send loses its paper',
+            '  expected 3:1 on the arrow, measured 1.96:1',
+          ].join('\n'),
+        },
+      ],
+    },
+    {
+      id: 'call-6',
+      sequence: 6,
+      operation: 'shell',
+      presenter: 'shell',
+      signal: 'generic',
+      state: 'running',
+      summary: 'running: npm run build',
+      resources: [],
+      evidence: [],
+    },
+  ],
+  omitted: { rows: 2, by_classification: { observation: 2 } },
 });
 
 /** The state a panel must not swallow: one row failed and says why. */
@@ -640,5 +781,121 @@ export const STORY_ARTIFACTS: SessionArtifact[] = [
     iterationId: 'i3',
     index: 0,
     version: 1,
+  },
+];
+
+/**
+ * A TURN AS A THREAD — the fixture the transcript's own shape is drawn from.
+ *
+ * Three steps of one answer: two settled, the third still moving. It is written
+ * as ITERATIONS rather than as finished markup because `IterationTrace` is what
+ * groups them — thinking, program, receipt and activity all come out of these
+ * objects — so a change to that grouping shows up here instead of in a screen.
+ *
+ * The shapes that matter for the picture: step one reasons THEN calls (the band
+ * has to cross the line above its own step), step two only calls (a step with no
+ * reasoning must not leave a hole in the thread), and step three is unfinished,
+ * which is the only state that draws the live marker and runs the line past its
+ * own step.
+ */
+export const STORY_TURN_ITERATIONS: TranscriptIteration[] = [
+  {
+    id: 'i1',
+    position: 1,
+    thinking:
+      'The rail has to be one line per turn, not one per step, or a turn with six steps reads as six unrelated things.\n\nSo the line belongs to the section and the step marker straddles it. Find where the transcript groups iterations before changing anything.',
+    forms: [
+      {
+        scope: 'python',
+        display_code:
+          'r = grep({"query": ["TraceSegment", "buildSegments"],\n          "paths": ["src/components"], "context": 4})\nprint(r)',
+        duration_ms: 1840,
+        result_kind: 'ok',
+        activity: ACTIVITY_SETTLED,
+      },
+    ],
+    duration_ms: 6100,
+  },
+  {
+    id: 'i2',
+    position: 2,
+    forms: [
+      {
+        scope: 'python',
+        display_code:
+          'print(patch("src/components/ChatContent.tsx", edits))',
+        duration_ms: 940,
+        result_kind: 'ok',
+        // No activity at all: a bare edit that reported nothing but its own
+        // result. The thread still marks it — a step is a step whether or not
+        // the engine detected operations inside it — and a finished step must
+        // carry a finished record, or the turn shows two open rings.
+      },
+    ],
+    duration_ms: 2300,
+  },
+  {
+    id: 'i3',
+    position: 3,
+    thinking:
+      'Now prove it: the suite first, then the story sheet at both widths.',
+    forms: [
+      {
+        scope: 'python',
+        display_code: 'sh = await shell("npm test", cwd=companion)\nprint(sh.logs(-20))',
+        activity: ACTIVITY_RUNNING,
+      },
+    ],
+  },
+];
+
+/**
+ * The same turn once it has landed. Nothing is moving, so every marker is closed
+ * and the thread stops at the last step — the state a transcript is READ in, and
+ * the one a running-only fixture never shows.
+ */
+export const STORY_TURN_ITERATIONS_SETTLED: TranscriptIteration[] = STORY_TURN_ITERATIONS.map(
+  (iteration) => ({
+    ...iteration,
+    duration_ms: iteration.duration_ms ?? 3100,
+    forms: (iteration.forms ?? []).map((form) => ({
+      ...form,
+      duration_ms: form.duration_ms ?? 3100,
+      result_kind: iteration.id === 'i2' ? 'error' : 'ok',
+      // The middle step FAILED, and the turn carried on past it. A settled sheet
+      // where everything worked is the one sheet that proves nothing: the marker
+      // for a step that ended badly has to be findable from the gutter alone,
+      // months later, in a transcript nobody is reading closely.
+      activity: iteration.id === 'i2' ? ACTIVITY_FAILED : ACTIVITY_SETTLED,
+    })),
+  }),
+);
+
+/**
+ * THE AXIS WITH SOMETHING ON IT — the same turn, drawn over a real chronology.
+ *
+ * `STORY_TURN_ITERATIONS` proves the THREAD (a line, its markers, a band that
+ * crosses it). This one proves what hangs OFF it: the invocation's margin
+ * counting what the iteration cost, the paths a read touched with their kinds,
+ * a diff's `+7 −3`, and the two steps that ended badly opening themselves with
+ * the head of their output already on the page.
+ */
+export const STORY_TURN_ITERATIONS_ACTIVITY: TranscriptIteration[] = [
+  {
+    id: 'i1',
+    position: 1,
+    thinking:
+      'The axis has to say what the iteration DID without being opened, and the program that did it has to stay behind one chevron.\n\nSo: counters in the invocation margin, chronology always on the page, raw text inside.',
+    forms: [
+      {
+        scope: 'python',
+        display_code:
+          'r = grep({"query": ["ActivityPanel", "activityCounters"],\n          "paths": ["src/components"], "context": 4})\nprint(r)',
+        duration_ms: 8420,
+        result_kind: 'ok',
+        activity: ACTIVITY_CHRONOLOGY,
+      },
+    ],
+    duration_ms: 9100,
   },
 ];

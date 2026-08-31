@@ -2148,6 +2148,13 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
       expect(first(html({ tone: "thinking" }))).not.toContain("not-italic");
       expect(first(html({ tone: "step" }))).not.toContain("italic");
     });
+
+    // A step of a run is a SENTENCE — `Searched · 18 matches` — not the name of a
+    // band, so it must not wear the weight a tool header wears above a block.
+    it("reads a chronology step as a sentence, not a band name", () => {
+      expect(first(html({ tone: "chronology" }))).not.toContain("font-extrabold");
+      expect(first(html({ tone: "step" }))).toContain("font-extrabold");
+    });
   });
 
   // A band says in ONE word what it holds — `PYTHON` over a program, `RESULT`

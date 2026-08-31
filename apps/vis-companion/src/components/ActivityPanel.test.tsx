@@ -1,119 +1,471 @@
 // @vitest-environment jsdom
 // Activity is a FIELD of the form that produced it, so every case here hands the
-// panel the engine's own bounded snapshot — the fixture the host projects — and
+// axis the engine's own bounded snapshot — the fixture the host projects — and
 // reads the document that landed. Nothing here opens, patches or closes a view:
 // that is the Live View rail, and it is a different file for that reason.
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
-import { ActivityPanel, activityReceiptText } from './ActivityPanel';
-import activityPanelSource from './ActivityPanel.tsx?raw';
-import activityFixture from '../lib/activity.fixture.json';
-import { activityProjectionFromWire, type ActivityProjection } from '../lib/activity';
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  ActivityPanel,
+  activityCostText,
+  activityReceiptText,
+} from "./ActivityPanel";
+import activityPanelSource from "./ActivityPanel.tsx?raw";
+import activityFixture from "../lib/activity.fixture.json";
+import {
+  activityProjectionFromWire,
+  type ActivityProjection,
+} from "../lib/activity";
 
 afterEach(cleanup);
 
 /**
  * The engine's own Activity fixture, parsed. Protocol 7 ships it as a bare
  * projection on the form that produced it, not as a classified view, so the
- * panel takes the snapshot itself.
+ * axis takes the snapshot itself.
  */
 function activityProjection(): ActivityProjection {
   const projection = activityProjectionFromWire(activityFixture);
-  if (!projection) throw new Error('the engine Activity fixture must be paintable');
+  if (!projection)
+    throw new Error("the engine Activity fixture must be paintable");
   return projection;
 }
 
-function paintActivity(props: Partial<Parameters<typeof ActivityPanel>[0]> = {}) {
-  const { activity = activityProjection(), isSettled = false, ...rest } = props;
-  render(<ActivityPanel activity={activity} isSettled={isSettled} {...rest} />);
+function paintActivity(
+  props: Partial<Parameters<typeof ActivityPanel>[0]> = {},
+) {
+  const { activity = activityProjection(), ...rest } = props;
+  render(<ActivityPanel activity={activity} {...rest} />);
   return document.body.innerHTML;
 }
 
 describe("one form's Activity on the phone", () => {
-  it('uses the first in-progress task as the collapsed Activity preview', () => {
+  it("draws the chronology without being asked, in engine sequence", () => {
     paintActivity();
 
-    expect(screen.getByText('ACTIVITY')).toBeTruthy();
-    expect(screen.getByText('Running')).toBeTruthy();
-    expect(screen.getByText('RUN_TESTS · suite')).toBeTruthy();
-    expect(screen.queryByText(/2 operations|24 passed|truncated/)).toBeNull();
-    expect(screen.queryByRole('button', { name: /interrupt/i })).toBeNull();
-    expect(screen.queryByRole('list', { name: 'Invocation chronology' })).toBeNull();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    const chronology = screen.getByRole('list', { name: 'Invocation chronology' });
-    const chronologyText = chronology.textContent ?? '';
-    expect(chronologyText.indexOf('grep · 18 matches')).toBeLessThan(
-      chronologyText.indexOf('run_tests · suite'),
+    const chronology = screen.getByRole("list", {
+      name: "Invocation chronology",
+    });
+    const chronologyText = chronology.textContent ?? "";
+    expect(chronologyText.indexOf("Searched 18 matches")).toBeLessThan(
+      chronologyText.indexOf("Running tests suite"),
     );
-    expect(chronologyText).not.toContain('[{query: needle}]');
-    expect(chronologyText).not.toContain('24 passed');
-    expect(screen.getByRole('button', { name: 'Collapse Activity' })).toBeTruthy();
-  });
-
-  it('matches the compact result-band height without a leading status mark', () => {
-    paintActivity();
-    const receipt = screen.getByLabelText('Activity');
-    const header = receipt.querySelector('header');
-    const disclosure = screen.getByRole('button', { name: 'Expand Activity' });
-
-    expect(receipt.classList.contains('border')).toBe(false);
-    expect(header?.classList.contains('min-h-8')).toBe(true);
-    expect(header?.classList.contains('min-h-10')).toBe(false);
-    expect(header?.querySelector('.animate-spinner-frame')).toBeNull();
-    expect(header?.querySelector('.text-code-duration')).toBeNull();
-    expect(disclosure.className).toContain('motion-reduce:transition-none');
+    // The program and the bytes it printed stay behind the invocation's own
+    // disclosure. What the iteration DID is not something a reader opens, so
+    // the axis has no expander of its own and no second live region either.
+    expect(chronologyText).not.toContain("[{query: needle}]");
+    expect(chronologyText).not.toContain("24 passed");
+    expect(screen.queryByRole("button", { name: /Activity/ })).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByRole("button", { name: /interrupt/i })).toBeNull();
   });
 
   // Regression, issue td-5b6b08: settled Companion receipts said SUCCEEDED,
   // omitted the operation and elapsed time, and retained "activities run".
-  it('matches the settled TUI receipt grammar and durations', () => {
+  it("matches the settled TUI receipt grammar and durations", () => {
     const projection = activityProjection();
     const settled = {
       ...projection,
-      state: 'succeeded' as const,
+      state: "succeeded" as const,
       counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
-      rows: projection.rows.map((row: ActivityProjection['rows'][number], index: number) => ({
-        ...row,
-        state: 'succeeded' as const,
-        ...(index === 0
-          ? { operation: 'shell', summary: 'running: git status', duration_ms: 66 }
-          : { duration_ms: 12_500 }),
-      })),
+      rows: projection.rows.map(
+        (row: ActivityProjection["rows"][number], index: number) => ({
+          ...row,
+          state: "succeeded" as const,
+          ...(index === 0
+            ? {
+                operation: "shell",
+                summary: "running: git status",
+                duration_ms: 66,
+              }
+            : { duration_ms: 12_500 }),
+        }),
+      ),
     };
 
-    paintActivity({ activity: settled, isSettled: true });
+    paintActivity({ activity: settled });
 
     expect(activityReceiptText(settled, 12_600)).toBe(
-      'DONE · SHELL and more · 2 activities · 12.6s',
+      "DONE · SHELL and more · 12.6s",
     );
-    expect(screen.getByText('Done')).toBeTruthy();
-    expect(screen.getByText('SHELL and more')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    expect(screen.getByText('shell · cmd: git status')).toBeTruthy();
-    expect(screen.getByText('66ms')).toBeTruthy();
-    expect(screen.getByText('12.5s')).toBeTruthy();
-    expect(screen.getByLabelText('Activity').querySelector('header')?.textContent).not.toContain('✓');
-    expect(screen.queryByRole('status')).toBeNull();
+    expect(
+      screen.getByLabelText("Invocation chronology").textContent,
+    ).toContain("Ran git status");
+    expect(screen.getByText("66ms")).toBeTruthy();
+    expect(screen.getByText("12.5s")).toBeTruthy();
   });
 
-  it('shows an explicit quiet empty state', () => {
-    paintActivity({ activity: { ...activityProjection(), state: 'idle', rows: [] } });
-    expect(screen.getByText('Idle')).toBeTruthy();
-    expect(screen.getByText('No operation yet')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Expand Activity' }));
-    expect(screen.getByText('No operations yet')).toBeTruthy();
-  });});
+  it("shows an explicit quiet empty state", () => {
+    paintActivity({
+      activity: { ...activityProjection(), state: "idle", rows: [] },
+    });
+    expect(screen.getByText("No operations yet")).toBeTruthy();
+  });
+});
 
-describe('the panel is built from the closed vocabulary', () => {
+// "Did this iteration change anything" is the one question a closed invocation
+// is asked, and no row answers it: the verbs do not carry the classification and
+// `0 mutations` is about the rows that are NOT there. Everything else the margin
+// used to count — reads, checks, failures — is a row on the axis below it.
+describe("what the iteration cost the repository", () => {
+  it("states the mutations and nothing the axis already shows", () => {
+    const cost = activityCostText(activityProjection());
+
+    expect(cost).toBe("0 mutations");
+    expect(cost).not.toContain("read");
+    expect(cost).not.toContain("check");
+    expect(cost).not.toContain("error");
+  });
+
+  it("leaves the failures to the marks and the state word", () => {
+    const projection = activityProjection();
+    const [first, ...rest] = projection.rows;
+
+    expect(
+      activityCostText({
+        ...projection,
+        counts: { running: 0, succeeded: 1, failed: 1, cancelled: 0 },
+        rows: [
+          { ...first, signal: "mutation" as const, state: "failed" as const },
+          ...rest,
+        ],
+      }),
+    ).toBe("1 mutation");
+  });
+
+  // The ENGINE's own bound is what drops rows, so the cost covers the whole run:
+  // a chronology that shows four of ten calls must not report the cost of four.
+  it("counts the rows the engine dropped, so a bounded axis cannot under-report", () => {
+    const projection = activityProjection();
+
+    expect(
+      activityCostText({
+        ...projection,
+        rows: [],
+        omitted: { rows: 6, by_classification: { mutation: 6 } },
+      }),
+    ).toBe("6 mutations");
+  });
+});
+
+describe("the axis is built from the closed vocabulary", () => {
   it("borrows the app's controls and writes no styles of its own", () => {
-    expect(activityPanelSource).toContain('<Disclosure');
-    expect(activityPanelSource).toContain('<BandLabel');
+    expect(activityPanelSource).toContain("<Disclosure");
+    // The patch is the one thing on the axis long enough to fold, so it owns the
+    // one chevron: a step itself never opens.
+    expect((activityPanelSource.match(/<Disclosure/g) ?? []).length).toBe(1);
     // No spinner: a mark that turns says only "still here", while one word says
     // whether the form is still working and, once it is not, how it ended.
-    expect(activityPanelSource).not.toContain('<Spinner');
-    expect(activityPanelSource).not.toContain('<button');
-    expect(activityPanelSource).not.toContain('style={');
+    expect(activityPanelSource).not.toContain("<Spinner");
+    expect(activityPanelSource).not.toContain("<button");
+    expect(activityPanelSource).not.toContain("style={");
     expect(activityPanelSource).not.toContain('style="');
+  });
+});
+
+// A run is a chronology, so the axis draws one: the marks hang on a single line
+// in engine sequence, the line stops where the work stopped, and a step owns no
+// box of its own. These cases pin that line, the words on it, and the evidence
+// that opens under one step without moving the others.
+describe("a run reads as one thread", () => {
+  it("hangs every step on one branch, bracketed against the invocation above it", () => {
+    paintActivity();
+
+    // One hairline down the left of the marks, and a bracket closing the group
+    // top and bottom against the row that produced it — that is the whole frame.
+    const branch = screen.getByRole("list", { name: "Invocation chronology" });
+    expect(branch.className).toContain("before:w-px");
+    expect(branch.className).toContain("after:border-y");
+
+    const steps = [...document.querySelectorAll("[data-activity-row]")];
+    expect(steps).toHaveLength(2);
+    for (const step of steps) {
+      // A step owns no box of its own, and its mark is a ring rather than a glyph.
+      expect(step.className).not.toContain("border-t");
+      expect(step.className).not.toContain("bg-result");
+      expect(step.querySelector("span.absolute")?.className ?? "").toContain(
+        "rounded-full",
+      );
+      expect(step.querySelector("svg")).toBeNull();
+    }
+  });
+
+  it("names the work with a verb", () => {
+    paintActivity();
+
+    const chronology =
+      screen.getByLabelText("Invocation chronology").textContent ?? "";
+    expect(chronology).toContain("Searched 18 matches");
+    expect(chronology).toContain("Running tests suite");
+  });
+
+  it("answers a patch with what it changed, and folds only the patch itself", () => {
+    const projection = activityProjection();
+    const [first, ...rest] = projection.rows;
+
+    paintActivity({
+      activity: {
+        ...projection,
+        rows: [
+          {
+            ...first,
+            operation: "patch",
+            summary: "2 files",
+            resources: [{ type: "file", id: "src/components/ui.tsx" }],
+            evidence: [
+              {
+                kind: "diff" as const,
+                text: "+added",
+                lines: [{ kind: "addition" as const, text: "added" }],
+                additions: 7,
+                deletions: 3,
+                modifications: 0,
+                omitted_lines: 0,
+                is_truncated: false,
+                is_redacted: false,
+              },
+            ],
+          },
+          ...rest,
+        ],
+      },
+    });
+
+    // The head names what OPENS. The row above already printed the count and the
+    // totals, so the card says neither a second time.
+    expect(screen.getByText("Patch")).toBeTruthy();
+    expect(screen.queryByText("Changed files")).toBeNull();
+    expect(screen.queryByText("1 file")).toBeNull();
+    expect(screen.getByText("TSX")).toBeTruthy();
+    expect(
+      document.querySelector('[data-path="src/components/ui.tsx"]'),
+    ).toBeTruthy();
+
+    // Only the patch text folds.
+    expect(screen.queryByText("added")).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Expand the patch of Patched · 2 files",
+      }),
+    );
+    expect(screen.getByText("added")).toBeTruthy();
+  });
+
+  it("gives a step no chevron and no toggle of its own", () => {
+    paintActivity();
+
+    // The axis never closes and a step never opens: what the iteration DID is the
+    // one thing a reader is not asked to go looking for. The program and the bytes
+    // it printed stay behind the invocation's own disclosure, one level up.
+    expect(screen.queryByRole("button", { name: /Searched/ })).toBeNull();
+    expect(document.querySelectorAll("[data-disclosure-toggle]")).toHaveLength(
+      0,
+    );
+  });
+
+  it("lists the paths a step touched under its own line", () => {
+    const projection = activityProjection();
+    const [first, ...rest] = projection.rows;
+
+    paintActivity({
+      activity: {
+        ...projection,
+        rows: [
+          {
+            ...first,
+            resources: [{ type: "file", id: "src/components/ui.tsx" }],
+          },
+          ...rest,
+        ],
+      },
+    });
+
+    expect(
+      document.querySelector('[data-path="src/components/ui.tsx"]'),
+    ).toBeTruthy();
+    // A read is a path and nothing else: the type mark belongs to the change card,
+    // where a file is one of several and its kind is what tells them apart.
+    expect(screen.queryByText("TSX")).toBeNull();
+  });
+});
+
+// An error is the one thing on the axis nobody should have to go looking for,
+// and also the one thing that can be forty lines long. It opens itself, and it
+// opens CLAMPED — the whole of it lives in the raw result the invocation opens.
+describe("a step that ended badly", () => {
+  function paintFailure(text: string) {
+    const projection = activityProjection();
+    const [first, ...rest] = projection.rows;
+
+    paintActivity({
+      activity: {
+        ...projection,
+        state: "failed" as const,
+        rows: [
+          {
+            ...first,
+            state: "failed" as const,
+            error_summary: "no match",
+            evidence: [{ kind: "error" as const, text }],
+          },
+          ...rest,
+        ],
+      },
+    });
+  }
+
+  it("says how it failed on its own line and opens itself", () => {
+    paintFailure("patch refused: no anchor matched");
+
+    expect(
+      document.querySelector('[data-activity-row="call-1"]')?.textContent,
+    ).toContain("NO MATCH");
+    expect(screen.getByText("patch refused: no anchor matched")).toBeTruthy();
+  });
+
+  it("clamps the output to its head and says how much it kept back", () => {
+    paintFailure(["one", "two", "three", "four", "five"].join("\n"));
+
+    expect(screen.getByText("one")).toBeTruthy();
+    expect(screen.getByText("three")).toBeTruthy();
+    expect(screen.queryByText("four")).toBeNull();
+    expect(screen.getByText("+2 more lines")).toBeTruthy();
+  });
+});
+
+// One fact, one place. The mark, the verb and the pill each said "this failed",
+// the error card repeated the row it hangs under, and a row counted the very list
+// of paths printed below it — four spellings of two facts.
+describe("the axis says a thing once", () => {
+  function paintStep(row: Partial<ActivityProjection["rows"][number]>) {
+    const projection = activityProjection();
+    const [first] = projection.rows;
+    paintActivity({
+      activity: {
+        ...projection,
+        state: "failed" as const,
+        rows: [{ ...first, ...row }],
+      },
+    });
+  }
+
+  const refusedPatch = {
+    operation: "patch",
+    summary: "src/components/ui.tsx",
+    state: "failed" as const,
+    error_summary: "no match",
+    evidence: [
+      { kind: "error" as const, text: "patch refused: no anchor matched" },
+    ],
+  };
+
+  it("gives a failed step its own verb instead of the settled one", () => {
+    paintStep(refusedPatch);
+
+    const chronology =
+      screen.getByLabelText("Invocation chronology").textContent ?? "";
+    expect(chronology).toContain("Patch refused");
+    expect(chronology).not.toContain("Patched");
+  });
+
+  it("names the operation and its object once, never again as a card head", () => {
+    paintStep(refusedPatch);
+
+    const chronology =
+      screen.getByLabelText("Invocation chronology").textContent ?? "";
+    expect(chronology.match(/NO MATCH/g) ?? []).toHaveLength(1);
+    expect(chronology.match(/src\/components\/ui\.tsx/g) ?? []).toHaveLength(1);
+  });
+
+  it("drops the pill when it would only spell out the mark beside it", () => {
+    paintStep({
+      state: "failed" as const,
+      error_summary: "the provider closed the stream before the first token",
+      evidence: [],
+    });
+
+    const chronology =
+      screen.getByLabelText("Invocation chronology").textContent ?? "";
+    expect(chronology).not.toContain("FAILED");
+    expect(chronology).toContain(
+      "the provider closed the stream before the first token",
+    );
+  });
+
+  it("lets the paths stand for a summary that does nothing but count them", () => {
+    paintStep({
+      operation: "cat",
+      summary: "2 files",
+      state: "succeeded" as const,
+      resources: [
+        { type: "file", id: "src/components/ui.tsx" },
+        { type: "file", id: "src/index.css" },
+      ],
+      evidence: [],
+    });
+
+    const chronology =
+      screen.getByLabelText("Invocation chronology").textContent ?? "";
+    expect(chronology).toContain("Read");
+    expect(chronology).not.toContain("2 files");
+    expect(document.querySelector('[data-path="src/index.css"]')).toBeTruthy();
+  });
+
+  it("keeps the file name whole and lets the directory be the part that gives way", () => {
+    paintStep({
+      operation: "cat",
+      summary: "one file",
+      state: "succeeded" as const,
+      resources: [
+        { type: "file", id: "src/com/blockether/vis/internal/render.clj" },
+      ],
+      evidence: [],
+    });
+
+    const path = document.querySelector(
+      '[data-path="src/com/blockether/vis/internal/render.clj"]',
+    );
+    const name = path?.lastElementChild;
+
+    expect(name?.textContent).toBe("render.clj");
+    expect(name?.className ?? "").not.toContain("truncate");
+  });
+});
+
+// A chronology inside a live region is re-read from the top on every render, and a
+// running step whose time column stands empty reads as a number that went missing.
+describe("what the axis does while the work is still moving", () => {
+  it("says the clock is still counting instead of leaving the column empty", () => {
+    const projection = activityProjection();
+    const [first] = projection.rows;
+    const running = { ...first, state: "running" as const };
+    delete running.duration_ms;
+
+    paintActivity({ activity: { ...projection, rows: [running] } });
+
+    expect(
+      screen.getByLabelText("Invocation chronology").textContent,
+    ).toContain("…");
+  });
+
+  it("silences the live region it sits inside", () => {
+    paintActivity();
+
+    expect(
+      document.querySelector("[data-activity-axis]")?.getAttribute("aria-live"),
+    ).toBe("off");
+  });
+
+  it("ends on a mark of its own when the engine dropped the tail", () => {
+    paintActivity({
+      activity: {
+        ...activityProjection(),
+        omitted: { rows: 6, by_classification: { observation: 6 } },
+      },
+    });
+
+    const tail = screen.getByText("+6 more", { exact: false });
+
+    expect(tail.querySelector('span[aria-hidden="true"]')).toBeTruthy();
   });
 });
