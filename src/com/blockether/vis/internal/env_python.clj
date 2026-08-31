@@ -1870,6 +1870,20 @@
 
 (defn- ctx-syntax-guard-events [^Context ctx] (.get ctx->syntax-guard-events ctx))
 
+(defonce ^:private ^java.util.Map ctx->fs-mutations
+  ;; Context -> atom of the tree changes the sandbox made through the confined FS
+  ;; (`sandbox-fs` `:on-mutation`). Drained per block so a move/copy/delete that no tool
+  ;; call announced still becomes an Activity row. Bounded: a `copytree` over a huge
+  ;; directory must not grow this without limit.
+  (java.util.Collections/synchronizedMap (java.util.WeakHashMap.)))
+
+(def ^:private max-block-fs-mutations
+  "Tree changes retained per block. The rows are grouped by KIND, so the cap only bounds
+   how many PATHS a row can name — well past the eight `activity/max-resources` shows."
+  512)
+
+(defn- ctx-fs-mutations [^Context ctx] (.get ^java.util.Map ctx->fs-mutations ctx))
+
 (defn- ctx-stdout-baos ^java.io.ByteArrayOutputStream [^Context ctx] (.get ctx->stdout ctx))
 
 (defn- baos->str
@@ -2050,6 +2064,9 @@
         syntax-guard-events
         (atom [])
 
+        fs-mutations
+        (atom [])
+
         net?
         (boolean (:enabled? network-opts))
 
@@ -2108,10 +2125,18 @@
           (-> (IOAccess/newBuilder)
               (cond->
                 roots-fn
-                (.fileSystem (sandbox-fs/confined-filesystem roots-fn
-                                                             outbox
-                                                             gate-fn
-                                                             #(swap! syntax-guard-events conj %))))
+                (.fileSystem (sandbox-fs/confined-filesystem
+                               roots-fn
+                               {:outbox outbox
+                                :gate-fn gate-fn
+                                :on-rejection #(swap! syntax-guard-events conj %)
+                                :on-mutation (fn [mutation]
+                                               (swap! fs-mutations (fn [seen]
+                                                                     (cond-> seen
+                                                                       (< (count seen)
+                                                                          (long
+                                                                            max-block-fs-mutations))
+                                                                       (conj mutation)))))})))
               (.allowHostSocketAccess net?)
               (.build))
           IOAccess/NONE)
@@ -2166,6 +2191,9 @@
 
         _
         (.put ctx->syntax-guard-events ctx syntax-guard-events)
+
+        _
+        (.put ctx->fs-mutations ctx fs-mutations)
 
         g
         (.getBindings ctx "python")]
@@ -3315,8 +3343,20 @@
         guard-events
         (ctx-syntax-guard-events ctx)
 
+        fs-mutations
+        (ctx-fs-mutations ctx)
+
+        drain-fs-mutations
+        (fn []
+          (when fs-mutations
+            (let [seen @fs-mutations]
+              (reset! fs-mutations [])
+              (not-empty seen))))
+
         _
-        (do (when baos (.reset baos)) (when guard-events (reset! guard-events [])))
+        (do (when baos (.reset baos))
+            (when guard-events (reset! guard-events []))
+            (when fs-mutations (reset! fs-mutations [])))
 
         ;; (The per-block print-capture list is reset INSIDE `__vis_run_async__` as
         ;; a real python list — resetting it from here with `->py []` would make it
@@ -3355,6 +3395,12 @@
               attachments
               (mpl-capture/drain sink)
 
+              ;; What the block CHANGED on disk through the confined FS — the move,
+              ;; copy or delete that no tool call announced. The loop turns these into
+              ;; Activity rows; they are never model-facing output.
+              mutations
+              (drain-fs-mutations)
+
               guard-event
               (first (when guard-events @guard-events))]
 
@@ -3364,7 +3410,10 @@
               (assoc :stdout out)
 
               attachments
-              (assoc :attachments attachments))
+              (assoc :attachments attachments)
+
+              mutations
+              (assoc :fs-mutations mutations))
             (do
               ;; A clean block ENDS any failure streak, so the loop breaker only ever
               ;; counts CONSECUTIVE identical failures.
@@ -3378,7 +3427,10 @@
                 (assoc :stdout out)
 
                 attachments
-                (assoc :attachments attachments)))))
+                (assoc :attachments attachments)
+
+                mutations
+                (assoc :fs-mutations mutations)))))
         (catch PolyglotException e
           ;; FLAT sum type — failure branch. The raised error IS the result, in
           ;; ONE place; any partial stdout (and any artifact produced before it)
@@ -3387,7 +3439,10 @@
                 (read-out)
 
                 attachments
-                (mpl-capture/drain sink)]
+                (mpl-capture/drain sink)
+
+                mutations
+                (drain-fs-mutations)]
 
             (cond-> {:error (if-let [guard-event (first (when guard-events @guard-events))]
                               (syntax-guard-op-error ctx code guard-event)
@@ -3396,7 +3451,10 @@
               (assoc :stdout out)
 
               attachments
-              (assoc :attachments attachments))))
+              (assoc :attachments attachments)
+
+              mutations
+              (assoc :fs-mutations mutations))))
         (finally (log-block-eval!))))))
 
 (defn- strip-protected-imports
@@ -3434,6 +3492,10 @@
 
    A block that printed nothing carries NEITHER key: its own value is discarded,
    so `print()` is the only way anything comes back.
+
+   Either outcome may carry `:attachments` (artifacts the block produced) and
+   `:fs-mutations` (what it changed on disk through the confined FS, drained per block).
+   Neither is model-facing: the loop owns them.
 
    `__vis_run_async__` AST-wraps the block in an `async def`, AUTO-SETTLES every
    bare tool-call STATEMENT at every depth (so `grep(x)` without `await` runs even

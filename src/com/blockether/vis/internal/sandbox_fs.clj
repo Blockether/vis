@@ -371,6 +371,25 @@ No candidate bytes were committed; the previous file state was left unchanged. "
                         (finally (Files/deleteIfExists stage)))))))
            (catch Throwable t (Files/deleteIfExists stage) (throw t))))))
 
+(defn- guard-transfer!
+  "Apply the guarded-write verdict to a move/copy DESTINATION. `newByteChannel` stages
+   and re-parses every write that lands in a code file, but a real `move`/`copy` never
+   opens one — without this the guard would be bypassed by `os.replace(tmp, \"core.clj\")`.
+   A source that is not readable as text (a directory, a binary) carries no verdict and
+   passes untouched."
+  [^Path src ^Path dst on-rejection]
+  (when-let [lang (parse/guarded-language (str dst))]
+    (when-let [candidate (try (Files/readString src StandardCharsets/UTF_8)
+                              (catch Throwable _ nil))]
+      (let [original (if (Files/exists dst no-link-opts)
+                       (try (Files/readString dst StandardCharsets/UTF_8) (catch Throwable _ ""))
+                       "")
+            {:keys [status after]} (parse/transition-verdict lang original candidate)]
+
+        (when (= :introduced-error status)
+          (let [rejection (syntax-rejection dst lang after)]
+            (try (when on-rejection (on-rejection rejection)) (catch Throwable _ nil))
+            (throw (IOException. (str "[vis:syntax_guard] " (:message rejection))))))))))
 (defn confined-filesystem
   "A GraalPy `FileSystem` confined to the filesystem roots returned by `roots-fn`
    (a 0-arg fn → seq of root path strings). Delegates real I/O to the default FS
@@ -378,10 +397,21 @@ No candidate bytes were committed; the previous file state was left unchanged. "
    resources stay readable. Uses `proxy` (runtime dispatch) so the interface's
    overloaded `parsePath` + varargs + void methods bind cleanly.
 
+   TWO proxy layers, and the outer one is not optional. `allowInternalResourceAccess` +
+   `allowLanguageHomeAccess` answer a `CompositeFileSystem` that implements NEITHER
+   `move` NOR `copy`, so both fall through to the interface DEFAULTS — and the default
+   `move` REFUSES `ATOMIC_MOVE` outright, which is why `os.replace`, `os.rename` and
+   `Path.rename` all died with `[Errno 5] Atomic move not supported`, while the default
+   `copy` quietly degrades a directory rename into copy-then-delete. So the composite is
+   wrapped once more: every method delegates to it EXCEPT `move`/`copy`, which confine
+   both paths and hand the real operation to the default FS, where a rename is a rename.
+
    `root-cache` lives for the FS's lifetime and memoizes the per-root `toRealPath`
    so confinement doesn't re-stat every root on every path operation.
 
-   `outbox` (optional, DORMANT — the engine passes nil, see
+   Options:
+
+   `:outbox` (optional, DORMANT — the engine passes nil, see
    `mpl-capture/incidental-capture-enabled?`) —
    `{:dir <existing dir path string> :on-close (fn [^Path])}`.
    Its real path is treated as an always-allowed root (so the sandbox can write
@@ -390,13 +420,20 @@ No candidate bytes were committed; the previous file state was left unchanged. "
    write closed under any system temp root (`/tmp`, `$TMPDIR`), so plain /tmp
    scratch streams to the DB too, not just `$VIS_OUTBOX`. Nil ⇒ no tap.
 
-   `on-rejection` (optional) receives a structured map whenever a guarded write is
+   `:gate-fn` (optional) — the per-path prefix-rule verdict consulted by `confine!`.
+
+   `:on-rejection` (optional) receives a structured map whenever a guarded write is
    rejected. The agent context uses it to surface close-time failures that GraalPy
-   suppresses as a model-facing python_execution error."
-  (^FileSystem [roots-fn] (confined-filesystem roots-fn nil nil nil))
-  (^FileSystem [roots-fn outbox] (confined-filesystem roots-fn outbox nil nil))
-  (^FileSystem [roots-fn outbox gate-fn] (confined-filesystem roots-fn outbox gate-fn nil))
-  (^FileSystem [roots-fn outbox gate-fn on-rejection]
+   suppresses as a model-facing python_execution error.
+
+   `:on-mutation` (optional) receives `{:kind :write|:move|:copy|:delete|:mkdir|:link
+   :path <string> :to <string>?}` AFTER the sandbox changed the tree, so what a block did
+   to disk can become Activity rows. Scratch is not the tree: anything under the outbox or
+   a system temp root is excluded, and so are metadata-only edits (`setAttribute`, i.e.
+   chmod/utime) — this reports what moved bytes. Best-effort, and its own failure never
+   reaches the sandbox."
+  (^FileSystem [roots-fn] (confined-filesystem roots-fn nil))
+  (^FileSystem [roots-fn {:keys [outbox gate-fn on-rejection on-mutation]}]
    (let [^FileSystem d
          (FileSystem/newDefaultFileSystem)
 
@@ -418,6 +455,31 @@ No candidate bytes were committed; the previous file state was left unchanged. "
          (fn [operation p]
            (confine! roots-fn root-cache extra-roots gate-fn operation p))
 
+         ;; The outbox and the system temp dirs are the sandbox's scratch space, not the
+         ;; user's tree: a NamedTemporaryFile is not a file the session changed.
+         scratch?
+         (fn [^Path p]
+           (try (let [^Path rp (real-path p)]
+                  (boolean (or (and outbox-real (.startsWith rp outbox-real))
+                               (some (fn [^Path tr]
+                                       (.startsWith rp tr))
+                                     @temp-roots))))
+                (catch Throwable _ false)))
+
+         mutated!
+         (fn mutated! ([kind ^Path p] (mutated! kind p nil)) ([kind ^Path p ^Path to]
+                                                              (when (and on-mutation (not (scratch?
+                                                                                            (or to
+                                                                                              p))))
+                                                                (try (on-mutation (cond-> {:kind
+                                                                                           kind
+                                                                                           :path
+                                                                                           (str p)}
+                                                                                    to
+                                                                                    (assoc :to
+                                                                                      (str to))))
+                                                                  (catch Throwable _ nil)))))
+
          confined
          (proxy [FileSystem] []
            ;; path math — no file access, no confinement
@@ -436,17 +498,13 @@ No candidate bytes were committed; the previous file state was left unchanged. "
              (let [^Path cp
                    (c (if (write-opts? opts) "file-write" "file-read") p)
 
-                   tap?
-                   (and on-close
-                        (write-opts? opts)
-                        (let [^Path rp (real-path cp)]
-                          (or (and outbox-real (.startsWith rp outbox-real))
-                              (some (fn [^Path tr]
-                                      (.startsWith rp tr))
-                                    @temp-roots))))
-
                    close-fn
-                   (when tap? on-close)
+                   (when (write-opts? opts)
+                     (let [tap? (boolean (and on-close (scratch? cp)))]
+                       (when (or tap? on-mutation)
+                         (fn [^Path written]
+                           (when tap? (on-close written))
+                           (mutated! :write written)))))
 
                    lang
                    (when (write-opts? opts) (parse/guarded-language (str cp)))]
@@ -454,16 +512,25 @@ No candidate bytes were committed; the previous file state was left unchanged. "
                (if lang
                  (guarded-write-channel d cp opts lang close-fn on-rejection)
                  (let [ch (.newByteChannel d cp opts attrs)]
-                   (if tap? (tap-write-channel ch cp on-close) ch)))))
+                   (if close-fn (tap-write-channel ch cp close-fn) ch)))))
            (newDirectoryStream [dir filt] (.newDirectoryStream d (c "file-read" dir) filt))
-           (createDirectory [dir attrs] (.createDirectory d (c "file-write" dir) attrs))
-           (delete [p] (.delete d (c "file-write" p)))
-           (copy [src dst opts] (.copy d (c "file-read" src) (c "file-write" dst) opts))
-           (move [src dst opts] (.move d (c "file-write" src) (c "file-write" dst) opts))
+           (createDirectory [dir attrs]
+             (let [^Path cd (c "file-write" dir)]
+               (.createDirectory d cd attrs)
+               (mutated! :mkdir cd)))
+           (delete [p]
+             (let [^Path cp (c "file-write" p)]
+               (.delete d cp)
+               (mutated! :delete cp)))
+           ;; move/copy live in the OUTER proxy — the composite below never routes them here.
            (createLink [link existing]
-             (.createLink d (c "file-write" link) (c "file-read" existing)))
+             (let [^Path cl (c "file-write" link)]
+               (.createLink d cl (c "file-read" existing))
+               (mutated! :link cl)))
            (createSymbolicLink [link target attrs]
-             (.createSymbolicLink d (c "file-write" link) (c "file-read" target) attrs))
+             (let [^Path cl (c "file-write" link)]
+               (.createSymbolicLink d cl (c "file-read" target) attrs)
+               (mutated! :link cl)))
            (readSymbolicLink [link] (.readSymbolicLink d (c "file-read" link)))
            (setAttribute [p attr value opts] (.setAttribute d (c "file-write" p) attr value opts))
            ;; default interface methods — proxy does NOT inherit them, so delegate
@@ -477,10 +544,64 @@ No candidate bytes were committed; the previous file state was left unchanged. "
            (getFileStoreTotalSpace [p] (.getFileStoreTotalSpace d (c "file-read" p)))
            (getFileStoreUnallocatedSpace [p] (.getFileStoreUnallocatedSpace d (c "file-read" p)))
            (getFileStoreUsableSpace [p] (.getFileStoreUsableSpace d (c "file-read" p)))
-           (isFileStoreReadOnly [p] (.isFileStoreReadOnly d (c "file-read" p))))]
+           (isFileStoreReadOnly [p] (.isFileStoreReadOnly d (c "file-read" p))))
 
-     ;; Layer GraalPy's language-home + internal-resource read access ON TOP so
-     ;; importing the stdlib still works while user paths stay confined.
-     (-> ^FileSystem confined
-         (FileSystem/allowInternalResourceAccess)
-         (FileSystem/allowLanguageHomeAccess)))))
+         ;; Layer GraalPy's language-home + internal-resource read access ON TOP so
+         ;; importing the stdlib still works while user paths stay confined.
+         ^FileSystem composite
+         (-> ^FileSystem confined
+             (FileSystem/allowInternalResourceAccess)
+             (FileSystem/allowLanguageHomeAccess))]
+
+     ;; …and re-take `move`/`copy`, which the composite does not implement and the
+     ;; interface default would answer with "Atomic move not supported".
+     (proxy [FileSystem] []
+       (parsePath [arg]
+         (if (instance? java.net.URI arg)
+           (.parsePath composite ^java.net.URI arg)
+           (.parsePath composite ^String arg)))
+       (toAbsolutePath [p] (.toAbsolutePath composite ^Path p))
+       (getSeparator [] (.getSeparator composite))
+       (getPathSeparator [] (.getPathSeparator composite))
+       (toRealPath [p opts] (.toRealPath composite ^Path p opts))
+       (checkAccess [p modes opts] (.checkAccess composite ^Path p modes opts))
+       (readAttributes [p attrs opts] (.readAttributes composite ^Path p ^String attrs opts))
+       (newByteChannel [p opts attrs] (.newByteChannel composite ^Path p opts attrs))
+       (newDirectoryStream [dir filt] (.newDirectoryStream composite ^Path dir filt))
+       (createDirectory [dir attrs] (.createDirectory composite ^Path dir attrs))
+       (delete [p] (.delete composite ^Path p))
+       (copy [src dst opts]
+         (let [^Path s
+               (c "file-read" src)
+
+               ^Path t
+               (c "file-write" dst)]
+
+           (guard-transfer! s t on-rejection)
+           (.copy d s t opts)
+           (mutated! :copy s t)))
+       (move [src dst opts]
+         (let [^Path s
+               (c "file-write" src)
+
+               ^Path t
+               (c "file-write" dst)]
+
+           (guard-transfer! s t on-rejection)
+           (.move d s t opts)
+           (mutated! :move s t)))
+       (createLink [link existing] (.createLink composite ^Path link ^Path existing))
+       (createSymbolicLink [link target attrs]
+         (.createSymbolicLink composite ^Path link ^Path target attrs))
+       (readSymbolicLink [link] (.readSymbolicLink composite ^Path link))
+       (setAttribute [p attr value opts] (.setAttribute composite ^Path p ^String attr value opts))
+       (getMimeType [p] (.getMimeType composite ^Path p))
+       (getEncoding [p] (.getEncoding composite ^Path p))
+       (getTempDirectory [] (.getTempDirectory composite))
+       (isSameFile [p1 p2 opts] (.isSameFile composite ^Path p1 ^Path p2 opts))
+       (setCurrentWorkingDirectory [p] (.setCurrentWorkingDirectory composite ^Path p))
+       (getFileStoreBlockSize [p] (.getFileStoreBlockSize composite ^Path p))
+       (getFileStoreTotalSpace [p] (.getFileStoreTotalSpace composite ^Path p))
+       (getFileStoreUnallocatedSpace [p] (.getFileStoreUnallocatedSpace composite ^Path p))
+       (getFileStoreUsableSpace [p] (.getFileStoreUsableSpace composite ^Path p))
+       (isFileStoreReadOnly [p] (.isFileStoreReadOnly composite ^Path p))))))

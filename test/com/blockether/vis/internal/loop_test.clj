@@ -4,6 +4,7 @@
             [com.blockether.svar.core :as svar]
             [com.blockether.svar.internal.router :as svar-router]
             [com.blockether.vis.internal.activity :as activity]
+            [com.blockether.vis.internal.activity.event :as activity-event]
             [com.blockether.vis.internal.content :as content]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.extension :as extension]
@@ -8119,3 +8120,39 @@
                            ")"))
               (expect (some? (:python-context (first @disposed)))
                       "the disposed value must be the sandbox it built")))))))
+
+(defdescribe
+  filesystem-activity-rows-test
+  (it "turns a block's tree changes into ONE row per kind, paths carried as resources"
+      (let [ctx
+            (activity-event/context)
+
+            events
+            (@#'lp/fs-mutation-events
+             ctx
+             [{:kind :move :path "/w/a.clj" :to "/w/b.clj"} {:kind :write :path "/w/one.txt"}
+              {:kind :write :path "/w/two.txt"} {:kind :chmod :path "/w/not-a-tree-change"}])
+
+            rows
+            (:rows (activity/presentation
+                     (reduce activity/reduce-event activity/empty-state events)))]
+
+        ;; two kinds -> two lifecycle pairs; the unknown kind is dropped, never guessed
+        (expect (= 4 (count events)))
+        (expect (= ["wrote 2 files" "moved a.clj → b.clj"] (mapv :summary rows)))
+        (expect (= ["mutation" "mutation"] (mapv :signal rows)))
+        (expect (= ["write" "move"] (mapv :operation rows)))
+        (expect (= [["/w/one.txt" "/w/two.txt"] ["/w/b.clj"]]
+                   (mapv (fn [row]
+                           (mapv :id (:resources row)))
+                         rows)))
+        (expect (= ["succeeded" "succeeded"] (mapv :state rows)))))
+  (it "names the single file it touched, and counts a batch"
+      (expect (= "deleted old.txt" (@#'lp/fs-mutation-label :delete [{:path "/w/old.txt"}])))
+      (expect (= "created build" (@#'lp/fs-mutation-label :mkdir [{:path "/w/build"}])))
+      (expect (= "copied 40 files"
+                 (@#'lp/fs-mutation-label
+                  :copy
+                  (mapv (fn [i]
+                          {:path (str "/w/f" i)})
+                        (range 40)))))))

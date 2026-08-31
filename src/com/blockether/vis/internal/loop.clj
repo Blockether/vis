@@ -1014,6 +1014,86 @@
 
     [dispatch! #(.shutdown ^ExecutorService executor)]))
 
+(def ^:private fs-mutation-kinds
+  "Row order for a block's tree changes — creation before destruction, so the story reads
+   forward. Also the CLOSED set: a kind `sandbox-fs` reports and this does not name is
+   dropped, never guessed into a row."
+  [:mkdir :write :copy :move :link :delete])
+
+(def ^:private fs-mutation-verbs
+  "What each confined-FS change is CALLED in Activity, in the past tense it is reported
+   in: the operation already happened when the callback fires."
+  {:mkdir {:verb "created" :plural "directories"}
+   :write {:verb "wrote" :plural "files"}
+   :copy {:verb "copied" :plural "files"}
+   :move {:verb "moved" :plural "files"}
+   :link {:verb "linked" :plural "files"}
+   :delete {:verb "deleted" :plural "files"}})
+
+(defn- path-leaf
+  "The last segment of a path, for a row that has room for a name but not a tree."
+  [path]
+  (let [s
+        (str path)
+
+        i
+        (str/last-index-of s "/")]
+
+    (if (and i (< (long i) (dec (count s)))) (subs s (inc (long i))) s)))
+
+(defn- fs-mutation-label
+  "One row's words. A single change names its file — and `move`/`copy`, being two-ended,
+   name where it landed; a batch names its count, because forty paths are not a label."
+  [kind mutations]
+  (let [{:keys [verb plural]}
+        (get fs-mutation-verbs kind)
+
+        n
+        (count mutations)]
+
+    (if (= 1 n)
+      (let [{:keys [path to]} (first mutations)]
+        (if to
+          (str verb " " (path-leaf path) " → " (path-leaf to))
+          (str verb " " (path-leaf path))))
+      (str verb " " n " " plural))))
+
+(defn- fs-mutation-events
+  "Activity lifecycle pairs for what a block changed on disk WITHOUT a tool call —
+   `os.replace`, `shutil.copytree`, a plain `open(…, \"w\")`. ONE pair per KIND, so a
+   forty-file copy is the row `copied 40 files` and not forty rows; the paths ride as
+   resources, which is what both surfaces list underneath. Already-past tense, so the
+   pair is emitted back-to-back with a zero duration."
+  [ctx mutations]
+  (let [by-kind
+        (group-by :kind mutations)
+
+        now
+        (util/now-ms)]
+
+    (into []
+          (mapcat
+            (fn [kind]
+              (when-let [group (seq (get by-kind kind))]
+                (let [invocation (activity-event/invocation ctx nil)
+                      details {:operation (keyword "filesystem" (name kind))
+                               :presenter :generic
+                               :classification :mutation
+                               :label (fs-mutation-label kind group)
+                               :args []
+                               :result {:activity/resources (mapv (fn [{:keys [path to]}]
+                                                                    {:type :file
+                                                                     :id (str (or to path))})
+                                                                  group)}}]
+
+                  [(activity-event/start-event ctx invocation details)
+                   (activity-event/terminal-event ctx
+                                                  invocation
+                                                  (assoc details
+                                                    :started-at-ms now
+                                                    :outcome :succeeded))]))))
+          fs-mutation-kinds)))
+
 (defn- run-python-code
   "Run an agent code block through the embedded GraalPy sandbox. Wraps the
    worker-future + cancellation + tool-event/render sinks + `*1`/`*e` recovery
@@ -1174,9 +1254,15 @@
 
                   ;; One persistent interpreter per session: globals (defs,
                   ;; imports, vars) carry across calls/turns NATURALLY.
-                  (assoc (env/run-python-block python-context code {:form-cap (:form-cap env)})
-                    :lru {}
-                    :reinspect-attachments (mpl-capture/drain-reinspections reinspection-sink))))
+                  (let [out (env/run-python-block python-context code {:form-cap (:form-cap env)})]
+                    ;; Disk changes the block made with NO tool call of its own. Emitted
+                    ;; here, on the worker thread, so they queue behind the block's tool
+                    ;; events and reach the snapshot before the settler freezes it.
+                    (doseq [event (fs-mutation-events activity-context (:fs-mutations out))]
+                      (record-tool-event event))
+                    (assoc (dissoc out :fs-mutations)
+                      :lru {}
+                      :reinspect-attachments (mpl-capture/drain-reinspections reinspection-sink)))))
               (catch Throwable e
                 (reset! thrown e)
                 {:lru {} :forms [] :error (python-op-error python-context e code cancel-token)}))))

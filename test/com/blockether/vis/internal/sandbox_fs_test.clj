@@ -15,7 +15,7 @@
   (:import [org.graalvm.polyglot Context]
            [org.graalvm.polyglot.io IOAccess]
            [java.nio ByteBuffer]
-           [java.nio.file Files Paths StandardOpenOption]
+           [java.nio.file CopyOption Files LinkOption Paths StandardCopyOption StandardOpenOption]
            [java.nio.file.attribute FileAttribute]))
 
 (defn- tmp-root
@@ -358,9 +358,9 @@
           fs
           (sfs/confined-filesystem (fn []
                                      [(str rootdir)])
-                                   {:dir (str outdir)
-                                    :on-close (fn [p]
-                                                (mc/record-file! p))})]
+                                   {:outbox {:dir (str outdir)
+                                             :on-close (fn [p]
+                                                         (mc/record-file! p))}})]
 
       (binding [mc/*attachment-sink*
                 sink
@@ -395,9 +395,9 @@
             fs
             (sfs/confined-filesystem (fn []
                                        [(str outdir)])
-                                     {:dir (str outdir)
-                                      :on-close (fn [p]
-                                                  (mc/record-file! p))})]
+                                     {:outbox {:dir (str outdir)
+                                               :on-close (fn [p]
+                                                           (mc/record-file! p))}})]
 
         (binding [mc/*attachment-sink*
                   sink
@@ -426,9 +426,9 @@
             fs
             (sfs/confined-filesystem (fn []
                                        ["/no/such/workspace/root"])
-                                     {:dir (str outdir)
-                                      :on-close (fn [p]
-                                                  (mc/record-file! p))})
+                                     {:outbox {:dir (str outdir)
+                                               :on-close (fn [p]
+                                                           (mc/record-file! p))}})
 
             probe
             (str (System/getProperty "java.io.tmpdir") "/vis-tmptap-" (System/nanoTime) ".csv")]
@@ -465,9 +465,9 @@
           fs
           (sfs/confined-filesystem (fn []
                                      ["/no/such/workspace/root"])
-                                   {:dir (str outdir)
-                                    :on-close (fn [p]
-                                                (mc/record-file! p))})
+                                   {:outbox {:dir (str outdir)
+                                             :on-close (fn [p]
+                                                         (mc/record-file! p))}})
 
           probe
           (str (System/getProperty "java.io.tmpdir") "/vis-tmptap-rw-" (System/nanoTime) ".csv")]
@@ -594,8 +594,7 @@
           (fn [gate-fn]
             (let [fs (sfs/confined-filesystem (fn []
                                                 [root])
-                                              nil
-                                              gate-fn)]
+                                              {:gate-fn gate-fn})]
               (Files/createDirectory (p (str root "/secrets")) (make-array FileAttribute 0))
               (expect (denied? #(.newByteChannel fs
                                                  (p (str root "/secrets/key.txt"))
@@ -622,8 +621,7 @@
                        (fn [gate-fn]
                          (let [fs (sfs/confined-filesystem (fn []
                                                              [root])
-                                                           nil
-                                                           gate-fn)
+                                                           {:gate-fn gate-fn})
                                msg (try (.newByteChannel fs
                                                          (p (str root "/inside.txt"))
                                                          #{StandardOpenOption/WRITE}
@@ -644,9 +642,235 @@
                        (fn [gate-fn]
                          (let [fs (sfs/confined-filesystem (fn []
                                                              [root])
-                                                           nil
-                                                           gate-fn)]
+                                                           {:gate-fn gate-fn})]
                            (expect (denied? #(.newByteChannel fs
                                                               (p (str root "/inside.txt"))
                                                               #{StandardOpenOption/READ}
                                                               (make-array FileAttribute 0))))))))))
+
+;; Regression, issue: every `os.rename` / `os.replace` / `Path.rename` inside the sandbox
+;; died with `OSError: [Errno 5] Atomic move not supported`. The composite filesystem that
+;; lends GraalPy its language home implements neither `move` nor `copy`, so both fell
+;; through to the FileSystem interface DEFAULTS — and the default `move` refuses
+;; ATOMIC_MOVE outright while the default `copy` degrades a directory rename into
+;; copy-then-delete.
+(defdescribe
+  atomic-move-test
+  (it "renames with ATOMIC_MOVE instead of refusing it"
+      (let [root
+            (gated-root)
+
+            src
+            (str root "/from.txt")
+
+            dst
+            (str root "/to.txt")
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root]))]
+
+        (spit src "MOVED")
+        (.move fs
+               (p src)
+               (p dst)
+               (into-array CopyOption
+                           [StandardCopyOption/ATOMIC_MOVE StandardCopyOption/REPLACE_EXISTING]))
+        (expect (= "MOVED" (slurp dst)))
+        (expect (not (Files/exists (p src) (make-array LinkOption 0))))))
+  (it "moves a DIRECTORY as one rename, not a copy of its contents"
+      (let [root
+            (gated-root)
+
+            src
+            (str root "/tree")
+
+            dst
+            (str root "/tree-moved")
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root]))]
+
+        (Files/createDirectory (p src) (make-array FileAttribute 0))
+        (spit (str src "/leaf.txt") "LEAF")
+        (.move fs (p src) (p dst) (make-array CopyOption 0))
+        (expect (= "LEAF" (slurp (str dst "/leaf.txt"))))
+        (expect (not (Files/exists (p src) (make-array LinkOption 0))))))
+  (it "still confines both ends of a move"
+      (let [root
+            (gated-root)
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root]))]
+
+        (expect (denied? #(.move fs
+                                 (p (str root "/inside.txt"))
+                                 (p "/etc/vis-escaped.txt")
+                                 (make-array CopyOption 0))))
+        (expect
+          (denied?
+            #(.copy fs (p "/etc/hosts") (p (str root "/stolen.txt")) (make-array CopyOption 0))))))
+  (it "renames from real Python: os.replace no longer raises"
+      (let [root
+            (gated-root)
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root]))
+
+            io
+            (-> (IOAccess/newBuilder)
+                (.fileSystem fs)
+                (.build))
+
+            ctx
+            (-> (Context/newBuilder (into-array String ["python"]))
+                (.allowIO io)
+                (.allowAllAccess false)
+                (.build))]
+
+        (spit (str root "/a.txt") "PY")
+        (try (.eval ctx
+                    "python"
+                    (str "import os; os.replace("
+                         (pr-str (str root "/a.txt"))
+                         ", "
+                         (pr-str (str root "/b.txt"))
+                         ")"))
+             (expect (= "PY" (slurp (str root "/b.txt"))))
+             (finally (.close ctx))))))
+
+(defdescribe
+  fs-mutation-notice-test
+  (it "reports what the block changed on disk, in order, with the destination"
+      (let [root
+            (gated-root)
+
+            seen
+            (atom [])
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root])
+                                     {:on-mutation (fn [m]
+                                                     (swap! seen conj m))})
+
+            src
+            (str root "/m-src.txt")
+
+            dst
+            (str root "/m-dst.txt")]
+
+        (spit src "S")
+        (.createDirectory fs (p (str root "/made")) (make-array FileAttribute 0))
+        (.copy fs (p src) (p (str root "/m-copy.txt")) (make-array CopyOption 0))
+        (.move fs (p src) (p dst) (make-array CopyOption 0))
+        (.delete fs (p dst))
+        (expect (= [:mkdir :copy :move :delete] (mapv :kind @seen)))
+        (expect (= dst (:to (nth @seen 2))))
+        (expect (= src (:path (nth @seen 2))))))
+  (it "reports a write only when the channel actually produced bytes"
+      (let [root
+            (gated-root)
+
+            seen
+            (atom [])
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root])
+                                     {:on-mutation (fn [m]
+                                                     (swap! seen conj m))})
+
+            opened
+            (.newByteChannel fs
+                             (p (str root "/inside.txt"))
+                             #{StandardOpenOption/WRITE}
+                             (make-array FileAttribute 0))
+
+            written
+            (.newByteChannel fs
+                             (p (str root "/written.txt"))
+                             #{StandardOpenOption/WRITE StandardOpenOption/CREATE}
+                             (make-array FileAttribute 0))]
+
+        ;; opened write-capable, never written to — not a change
+        (.close opened)
+        (.write written (ByteBuffer/wrap (.getBytes "bytes" "UTF-8")))
+        (.close written)
+        (expect (= [:write] (mapv :kind @seen)))
+        (expect (= (str root "/written.txt") (:path (first @seen))))))
+  (it "keeps SCRATCH out: a write under the system temp dir is not a tree change"
+      (let [seen
+            (atom [])
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [(gated-root)])
+                                     {:on-mutation (fn [m]
+                                                     (swap! seen conj m))})
+
+            probe
+            (str (System/getProperty "java.io.tmpdir") "/vis-mutation-" (System/nanoTime) ".txt")
+
+            ch
+            (.newByteChannel fs
+                             (p probe)
+                             #{StandardOpenOption/WRITE StandardOpenOption/CREATE}
+                             (make-array FileAttribute 0))]
+
+        (.write ch (ByteBuffer/wrap (.getBytes "scratch" "UTF-8")))
+        (.close ch)
+        (Files/deleteIfExists (p probe))
+        (expect (empty? @seen)))))
+
+;; Regression: the tree-sitter write guard only ever saw `newByteChannel`. Once `move`
+;; became a real rename, `os.replace(staged, "core.clj")` would have committed source the
+;; same bytes could never have been WRITTEN as.
+(defdescribe
+  guarded-transfer-test
+  (it "refuses a move that would land invalid syntax in a guarded code file"
+      (let [root
+            (gated-root)
+
+            rejections
+            (atom [])
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root])
+                                     {:on-rejection (fn [r]
+                                                      (swap! rejections conj r))})
+
+            target
+            (str root "/core.clj")
+
+            staged
+            (str root "/staged.clj")]
+
+        (spit target "(defn ok [] :ok)\n")
+        (spit staged "(defn broken [] :ok\n")
+        (expect (denied? #(.move fs (p staged) (p target) (make-array CopyOption 0))))
+        (expect (= "(defn ok [] :ok)\n" (slurp target)))
+        (expect (= "introduced_parse_error" (:reason (first @rejections))))))
+  (it
+    "allows a move that lands valid syntax"
+    (let [root
+          (gated-root)
+
+          fs
+          (sfs/confined-filesystem (fn []
+                                     [root]))
+
+          target
+          (str root "/core.clj")
+
+          staged
+          (str root "/staged.clj")]
+
+      (spit target "(defn ok [] :ok)\n")
+      (spit staged "(defn ok [] :better)\n")
+      (.move fs (p staged) (p target) (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))
+      (expect (= "(defn ok [] :better)\n" (slurp target))))))
