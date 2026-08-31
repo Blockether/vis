@@ -16,15 +16,17 @@ JavaScript/Python wire value by source-file count while consumers move to the SD
 `resources/vis-contract/gateway.edn` owns the built-in route table, protocol headers and
 versions, event vocabularies, terminal/queue semantics and replay anchors.
 `resources/vis-contract/view.edn` owns both View kinds' field, node, operation and lifecycle
-vocabularies plus renderer bounds.
+vocabularies plus renderer bounds. `resources/vis-contract/content.edn` owns canonical roles,
+statuses, blocks, stream events and delta fields.
 
 Nothing here requires a Vis namespace. The engine reads this project off its own
 classpath, `vis-agent` depends on the wheel, and a tool in somebody else's
 repository can read the same declaration without installing an agent.
 
-The View contract is executable: `contract.view` owns its predicates, specs and error reports as
-well as the resource vocabulary. Core, gateway and current channels consume those shapes directly,
-and generated readers receive the same document without engine data entering the renderer.
+View and canonical content are executable contracts: their namespaces own predicates, specs and
+error data as well as the portable resource vocabularies. Core, gateway and current channels consume
+those shapes directly, and generated readers receive the same documents without engine data entering
+the renderer.
 
 ## Changing the contract
 

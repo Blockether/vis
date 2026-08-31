@@ -1,154 +1,28 @@
 (ns com.blockether.vis.internal.content
-  "Canonical role-labelled message and typed content-block contract.
+  "Canonical-content builders, normalization and disposable text projection.
 
-   This is the only persisted and transported answer shape. Maps use JSON-ready
-   snake_case string keys so in-process and remote consumers observe identical
-   values. Markdown exists only as the payload of a prose block."
-  (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]
+   `com.blockether.vis.contract.content` owns the persisted and transported shapes.
+   This namespace constructs those JSON-ready, snake_case values and converts final
+   engine answers into them; Markdown exists only as the payload of a prose block."
+  (:require [clojure.string :as str]
+            [com.blockether.vis.contract.content :as content-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]))
 
-(def roles #{"user" "assistant" "system" "developer" "tool"})
-
-(def message-statuses #{"streaming" "completed" "failed" "cancelled" "suspended"})
-
-(def tool-statuses #{"pending" "running" "completed" "failed" "cancelled"})
-
-(def reasoning-visibilities #{"private" "visible"})
-
-(defn- json-ready?
-  [x]
-  (cond (map? x) (and (every? string? (keys x)) (every? json-ready? (vals x)))
-        (vector? x) (every? json-ready? x)
-        :else (or (nil? x) (string? x) (number? x) (boolean? x))))
-
-(defn- string-keyed-map? [x] (and (map? x) (json-ready? x)))
-
-(defn- timestamp? [x] (and (integer? x) (not (neg? (long x)))))
-
-(defmulti block-valid? #(get % "type"))
-
-(defmethod block-valid? "prose"
-  [block]
-  (and (string-keyed-map? block)
-       (util/non-blank-string? (get block "id"))
-       (string? (get block "markdown"))))
-
-(defmethod block-valid? "speech"
-  [block]
-  (and (string-keyed-map? block)
-       (util/non-blank-string? (get block "id"))
-       (util/non-blank-string? (get block "text"))))
-
-(defmethod block-valid? "code"
-  [block]
-  (and (string-keyed-map? block)
-       (util/non-blank-string? (get block "id"))
-       (string? (get block "text"))
-       (or (nil? (get block "language")) (util/non-blank-string? (get block "language")))))
-
-(defmethod block-valid? "tool"
-  [block]
-  (and (string-keyed-map? block)
-       (util/non-blank-string? (get block "id"))
-       (util/non-blank-string? (get block "tool"))
-       (contains? tool-statuses (get block "status"))))
-
-(defmethod block-valid? "reasoning"
-  [block]
-  (and (string-keyed-map? block)
-       (util/non-blank-string? (get block "id"))
-       (string? (get block "text"))
-       (contains? reasoning-visibilities (get block "visibility" "private"))))
-
-(defmethod block-valid? "error"
-  [block]
-  (and (string-keyed-map? block)
-       (util/non-blank-string? (get block "id"))
-       (util/non-blank-string? (get block "code"))
-       (util/non-blank-string? (get block "message"))
-       (or (nil? (get block "retryable")) (boolean? (get block "retryable")))))
-
-(defmethod block-valid? "attachment"
-  [block]
-  (and (string-keyed-map? block)
-       (util/non-blank-string? (get block "id"))
-       (util/non-blank-string? (get block "attachment_id"))
-       (util/non-blank-string? (get block "name"))
-       (util/non-blank-string? (get block "media_type"))))
-
-(defmethod block-valid? "notice"
-  [block]
-  (and (string-keyed-map? block)
-       (util/non-blank-string? (get block "id"))
-       (util/non-blank-string? (get block "code"))
-       (util/non-blank-string? (get block "message"))))
-
-(defmethod block-valid? :default [_] false)
-
-(defn message-valid?
-  [message]
-  (and (string-keyed-map? message)
-       (util/non-blank-string? (get message "id"))
-       (contains? roles (get message "role"))
-       (contains? message-statuses (get message "status"))
-       (vector? (get message "content"))
-       (every? block-valid? (get message "content"))
-       (timestamp? (get message "created_at"))
-       (or (nil? (get message "completed_at")) (timestamp? (get message "completed_at")))
-       (or (nil? (get message "completed_at"))
-           (<= (long (get message "created_at")) (long (get message "completed_at"))))))
-
-(defn event-valid?
-  [event]
-  (and (string-keyed-map? event)
-       (case (get event "type")
-         "content.block.started"
-         (and (util/non-blank-string? (get event "turn_id")) (block-valid? (get event "block")))
-
-         "content.block.delta"
-         (and (util/non-blank-string? (get event "turn_id"))
-              (util/non-blank-string? (get event "block_id"))
-              (contains? #{"markdown" "text"} (get event "field"))
-              (string? (get event "text")))
-
-         "content.block.completed"
-         (and (util/non-blank-string? (get event "turn_id"))
-              (util/non-blank-string? (get event "block_id")))
-
-         "turn.completed"
-         (and (util/non-blank-string? (get event "turn_id")) (= "completed" (get event "status")))
-
-         "turn.failed"
-         (and (util/non-blank-string? (get event "turn_id")) (= "failed" (get event "status")))
-
-         "turn.cancelled"
-         (and (util/non-blank-string? (get event "turn_id")) (= "cancelled" (get event "status")))
-
-         false)))
-
-(s/def ::block block-valid?)
-
-(s/def ::content (s/coll-of ::block :kind vector?))
-
-(s/def ::message message-valid?)
-
-(s/def ::event event-valid?)
 
 (defn assert-block!
   [block]
-  (if (s/valid? ::block block)
+  (if (content-contract/block-valid? block)
     block
     (throw (ex-info "Invalid canonical content block"
-                    {:block block :explain (s/explain-data ::block block)}))))
+                    {:block block :explain (content-contract/block-explain-data block)}))))
 
 (defn assert-message!
   [message]
-  (if (s/valid? ::message message)
+  (if (content-contract/message-valid? message)
     message
     (throw (ex-info "Invalid canonical message"
-                    {:message message :explain (s/explain-data ::message message)}))))
+                    {:message message :explain (content-contract/message-explain-data message)}))))
 
 (defn block-id [] (str "block_" (java.util.UUID/randomUUID)))
 
@@ -271,8 +145,10 @@
   [answer]
   (let [answer (if (and (map? answer) (contains? answer :result)) (:result answer) answer)]
     (cond (nil? answer) []
-          (and (vector? answer) (every? block-valid? answer)) answer
-          (and (map? answer) (vector? (:answer answer)) (every? block-valid? (:answer answer)))
+          (and (vector? answer) (every? content-contract/block-valid? answer)) answer
+          (and (map? answer)
+               (vector? (:answer answer))
+               (every? content-contract/block-valid? (:answer answer)))
           (:answer answer)
           (string? answer) (markdown-content answer)
           (and (map? answer) (string? (:answer answer))) (markdown-content (:answer answer))

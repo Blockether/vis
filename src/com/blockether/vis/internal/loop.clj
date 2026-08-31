@@ -17,6 +17,7 @@
     [com.blockether.vis.internal.config :as config]
     [com.blockether.vis.internal.security-policy :as security-policy]
     [com.blockether.vis.internal.cancellation :as cancellation]
+    [com.blockether.vis.contract.content :as content-contract]
     [com.blockether.vis.internal.content :as content]
     [com.blockether.vis.internal.ctx-engine :as ctx-engine]
     [com.blockether.vis.internal.ctx-loop :as ctx-loop]
@@ -734,7 +735,7 @@
   (let [v (:result answer answer)]
     (cond (needs-input-answer? v) (:answer/text v)
           (markdown-answer? v) (:answer v)
-          (and (vector? v) (every? content/block-valid? v))
+          (and (vector? v) (every? content-contract/block-valid? v))
           (not-empty (str/trim (content/text-projection v)))
           :else nil)))
 
@@ -9116,7 +9117,8 @@
   [body]
   (cond (nil? body) nil
         (string? body) body
-        (and (vector? body) (every? content/block-valid? body)) (content/text-projection body)
+        (and (vector? body) (every? content-contract/block-valid? body)) (content/text-projection
+                                                                           body)
         :else (pr-str body)))
 
 (defn- slash-result->answer-markdown

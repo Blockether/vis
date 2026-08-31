@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.content-test
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
+            [com.blockether.vis.contract.content :as content-contract]
             [com.blockether.vis.internal.content :as content]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -13,16 +14,17 @@
                                       :created-at 100
                                       :completed-at 110
                                       :content [(content/prose "b1" "Hello **world**")]})]
-        (expect (s/valid? ::content/message message))
+        (expect (s/valid? ::content-contract/message message))
         (expect (= #{"id" "role" "status" "content" "created_at" "completed_at"}
                    (set (keys message))))
         (expect (= "prose" (get-in message ["content" 0 "type"])))
         (expect (= "Hello **world**" (get-in message ["content" 0 "markdown"])))))
   (it "rejects keyword-keyed and unknown blocks"
-      (expect (not (s/valid? ::content/block {:id "b1" :type "prose" :markdown "no"})))
-      (expect (not (s/valid? ::content/block {"id" "b1" "type" "html" "html" "<b>no</b>"}))))
+      (expect (not (s/valid? ::content-contract/block {:id "b1" :type "prose" :markdown "no"})))
+      (expect (not (s/valid? ::content-contract/block
+                             {"id" "b1" "type" "html" "html" "<b>no</b>"}))))
   (it "requires ordered timestamps"
-      (expect (not (s/valid? ::content/message
+      (expect (not (s/valid? ::content-contract/message
                              {"id" "t1"
                               "role" "assistant"
                               "status" "completed"
@@ -47,7 +49,7 @@
       (expect (not (str/includes? (get-in blocks [0 "markdown"]) "vis-speech")))))
   (it "accepts speech blocks and includes them in plain-text projection"
       (let [block (content/speech "s1" "A concise spoken answer.")]
-        (expect (s/valid? ::content/block block))
+        (expect (s/valid? ::content-contract/block block))
         (expect (= "A concise spoken answer." (content/text-projection [block])))))
   (it "preserves canonical error blocks in wrapped final answers"
       (let [error
@@ -57,25 +59,25 @@
             (content/answer-content {:answer [error]})]
 
         (expect (= [error] blocks))
-        (expect (s/valid? ::content/block (first blocks)))))
+        (expect (s/valid? ::content-contract/block (first blocks)))))
   (it "validates append-only streaming events"
       (expect (s/valid?
-                ::content/event
+                ::content-contract/event
                 {"type" "content.block.started" "turn_id" "t1" "block" (content/prose "b1" "")}))
-      (expect (s/valid? ::content/event
+      (expect (s/valid? ::content-contract/event
                         {"type" "content.block.delta"
                          "turn_id" "t1"
                          "block_id" "b1"
                          "field" "markdown"
                          "text" "partial"}))
-      (expect (not (s/valid? ::content/event
+      (expect (not (s/valid? ::content-contract/event
                              {"type" "content.block.delta"
                               "turn_id" "t1"
                               "block_id" "b1"
                               "field" "html"
                               "text" "<b>bad</b>"}))))
   (it "rejects keyword keys and non-JSON values at every nesting depth"
-      (expect (not (s/valid? ::content/block
+      (expect (not (s/valid? ::content-contract/block
                              {"id" "b1"
                               "type" "tool"
                               "tool" "run_tests"
@@ -86,8 +88,8 @@
                                  :status :completed
                                  :output {:provider :openai-codex :actual {:model "gpt-5.6"}}})]
         (expect (= {"provider" "openai-codex" "actual" {"model" "gpt-5.6"}} (get block "output")))
-        (expect (s/valid? ::content/block block))))
+        (expect (s/valid? ::content-contract/block block))))
   (it "keeps typed errors as data"
       (let [block (content/error "e1" "provider_unavailable" "Try again later." true)]
-        (expect (s/valid? ::content/block block))
+        (expect (s/valid? ::content-contract/block block))
         (expect (= true (get block "retryable"))))))

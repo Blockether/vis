@@ -778,7 +778,9 @@ TUI edge frozen until its Phase 10 SDK migration. Package rendering remains argu
 View, Human Input, Activity, cancellation and cross-session permit suites preserve behavior. Three
 production namespaces have moved or been removed. TUI `transient/spec.clj` likewise became local
 `transient.validation` predicates, removing 33 production `s/def` forms without making a private
-paint shape public.
+paint shape public. `content.edn` and `contract.content` now own canonical roles, statuses, blocks,
+stream events and executable content shapes; `internal.content` is builders/projection only and the
+portable package exports the same `CONTENT` vocabulary.
 
 Work already available as foundations:
 

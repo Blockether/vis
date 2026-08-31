@@ -3,7 +3,7 @@
 Vis runs an extension's Python inside its own sandbox, with the host seeded into
 the module the extension imports. This package is the DECLARATION of that
 boundary, published on its own so it can be read where Vis is not: gateway
-routes and events, the ops a host answers, the shell and View vocabularies, and
+routes and events, the ops a host answers, shell/View/content vocabularies, and
 [[Host]], the protocol an implementation is checked against.
 
 `contract.json` beside this file and the repository's language-neutral copy are
@@ -30,6 +30,7 @@ from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
     "CONTRACT",
+    "CONTENT",
     "GATEWAY",
     "VIEW",
     "OPS",
@@ -49,7 +50,7 @@ def _load_contract():
 
 
 CONTRACT = _load_contract()
-"""The whole rendered document: gateway, host ops, verb grammars and View vocabulary."""
+"""The whole rendered document: gateway, host ops and portable vocabularies."""
 
 GATEWAY = CONTRACT["gateway"]
 """Canonical routes, headers, events, envelopes and replay semantics."""
@@ -72,6 +73,9 @@ once per line."""
 
 VIEW = CONTRACT["view"]
 """The closed View vocabulary — lifecycle kinds, semantic nodes and their bounds."""
+
+CONTENT = CONTRACT["content"]
+"""Canonical roles, statuses, content blocks, stream events and delta fields."""
 
 
 def op(name):

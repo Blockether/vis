@@ -10,6 +10,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.foundation.shell :as fshell]
             [com.blockether.vis.internal.view :as view]
+            [com.blockether.vis.contract.content :as contract-content]
             [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.contract.view :as contract-view]
             [com.blockether.vis.internal.python-extensions :as pyx]
@@ -42,6 +43,15 @@
                      (get-in view-document ["live" "ops"])))
           (expect (= view-document (get (contract/package-document) "view")))
           (expect (string? (contract/package-document-json)))))
+    (it "renders canonical content from its owning document"
+        (let [content-document (contract-content/package-document)]
+          (expect (= 1 contract-content/version))
+          (expect (= ["assistant" "developer" "system" "tool" "user"]
+                     (get content-document "roles")))
+          (expect (= #{"content.block.started" "content.block.delta" "content.block.completed"
+                       "turn.completed" "turn.failed" "turn.cancelled"}
+                     (set (get content-document "event_types"))))
+          (expect (= content-document (get (contract/package-document) "content")))))
     (it "speaks the shell vocabulary the engine dispatches on"
         ;; The outside host reads these names out of the `vis_contract` document; an op
         ;; the engine does not know would make an extension that runs inside Vis
