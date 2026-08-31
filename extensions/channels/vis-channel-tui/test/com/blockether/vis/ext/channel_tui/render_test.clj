@@ -4913,9 +4913,12 @@ h = 8"
       (expect (< (.indexOf ^String expanded "PYTHON")
                  (.indexOf ^String expanded "grep({...})")
                  (.indexOf ^String expanded "18 matches")
-                 (.indexOf ^String expanded "ACTIVITY")
                  (.indexOf ^String expanded "test evidence companion suite")
                  (.indexOf ^String expanded "Done.")))
+      ;; The chronology hangs off the turn's own line under NO header. The web prints
+      ;; no frame and no title over it, and a band that names itself on one surface
+      ;; only is two products.
+      (expect (not (str/includes? expanded "ACTIVITY")))
       (doseq [width [40 52 80 120]]
         (let [lines (str/split-lines (render-row width
                                                  {:vis.channel-tui/expand-all-details? true}))]
@@ -5028,7 +5031,47 @@ h = 8"
       (expect (< (.indexOf ^String expanded "PYTHON")
                  (.indexOf ^String expanded "RESULT")
                  (.indexOf ^String expanded "## main...origin/main")
-                 (.indexOf ^String expanded "ACTIVITY")))))
+                 (.indexOf ^String expanded "operation 6")))
+      (expect (not (str/includes? expanded "ACTIVITY")))))
+  ;; Regression, issue td-9c41a7: the TUI receipt named the calls but never what they
+  ;; cost, while the web band beside it printed the three counts the wire classifies —
+  ;; one product speaking two languages about the same iteration.
+  (it
+    "prints what the iteration cost, in the kinds the web counts"
+    (render/invalidate-cache!)
+    (let [receipt
+          (->
+            (render/format-answer-with-thinking-data
+              "Done."
+              [{:forms
+                [{:code "print(1)"
+                  :stdout "ok"
+                  :success? true
+                  :duration-ms 1200
+                  :activity
+                  {:state "succeeded"
+                   :counts {:running 0 :succeeded 3 :failed 0 :cancelled 0}
+                   :rows
+                   [{:id "a" :operation "patch" :signal "mutation" :summary "" :state "succeeded"}
+                    {:id "b" :operation "grep" :signal "observation" :summary "" :state "succeeded"}
+                    {:id "c"
+                     :operation "run_tests"
+                     :signal "verification"
+                     :summary ""
+                     :state "succeeded"}]
+                   :omitted {:rows 2 :by-classification {:observation 2}}}}]}]
+              160
+              nil
+              nil
+              false
+              {:session-id "s1" :session-turn-id "turn-1" :detail-expansions {}})
+            :text
+            strip-ansi
+            strip-sentinels)]
+      ;; The rows the ENGINE dropped are part of the cost: a receipt showing three of
+      ;; five calls must never report the cost of three.
+      (expect (str/includes? receipt "1 mutation · 3 observations · 1 check"))
+      (expect (not (str/includes? receipt "ACTIVITY")))))
   ;; Regression, issue td-132d91: expanded Activity receipts were detached into one
   ;; shared rail, so only the newest receipt could show its detail.
   (it
@@ -5061,17 +5104,16 @@ h = 8"
               strip-ansi
               strip-sentinels)]
 
-      (expect (< (.indexOf ^String body "FIRST OPERATION · GREP")
-                 (.indexOf ^String body "first()")
-                 (.indexOf ^String body "FIRST RESULT")
-                 (.indexOf ^String body "ACTIVITY")
-                 (.indexOf ^String body "FIRST OPERATION" (inc (.indexOf ^String body "ACTIVITY")))
-                 (.indexOf ^String body "second()")))
+      (expect
+        (< (.indexOf ^String body "FIRST OPERATION · GREP")
+           (.indexOf ^String body "first()")
+           (.indexOf ^String body "FIRST RESULT")
+           (.indexOf ^String body "FIRST OPERATION" (inc (.indexOf ^String body "FIRST RESULT")))
+           (.indexOf ^String body "second()")))
       (expect
         (< (.indexOf ^String body "second()")
            (.indexOf ^String body "SECOND RESULT")
-           (.lastIndexOf ^String body "ACTIVITY")
-           (.indexOf ^String body "SECOND OPERATION" (inc (.lastIndexOf ^String body "ACTIVITY")))
+           (.indexOf ^String body "SECOND OPERATION" (inc (.indexOf ^String body "SECOND RESULT")))
            (.indexOf ^String body "Done.")))
       (expect (not (str/includes? body "STATUS")) "expanded detail does not repeat status")
       (expect (not (str/includes? body "Succeeded 1")) "expanded detail does not repeat counters")))
@@ -5433,7 +5475,8 @@ h = 8"
               (band-lines text)]
 
           (expect (seq lines) "the expanded receipt paints an Activity band")
-          (expect (some #(str/includes? % "ACTIVITY") lines) "the band names itself on the rail")
+          (expect (not-any? #(str/includes? % "ACTIVITY") lines)
+                  "the chronology stands on the rail and never names itself")
           (expect (str/starts-with? (str (line-with text "Patched")) "├─●")
                   "a step's mark is JOINED to the rail by a tick, never floating beside it")
           (expect (= 4 (long (.indexOf ^String (str (line-with text "Patched")) "Patched")))

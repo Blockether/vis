@@ -2542,13 +2542,6 @@
                           (p/set-colors! g t/code-duration-fg band-bg)
                           (p/put-str! g (+ (long x) (long inset)) y (subs rail 0 rail-n))))
                       (case (:kind meta)
-                        :activity-header
-                        (do (p/set-colors! g t/text-fg band-bg)
-                            (p/styled
-                              g
-                              [p/BOLD]
-                              (p/put-str! g (+ (long x) (long (:label-col meta))) y "ACTIVITY")))
-
                         :activity-row
                         (do (when-let [glyph-col (:glyph-col meta)]
                               (p/set-colors! g tone-fg band-bg)
@@ -5446,6 +5439,51 @@
            (when (pos? left) (str " + " left " more")))
       (when (pos? left) (str left " " (if (= 1 left) "activity" "activities"))))))
 
+(defn- activity-cost-text
+  "WHAT THE ITERATION COST, in the three kinds the wire classifies and no fourth.
+
+   The web says this in `activityCostParts` and the two surfaces must read the same:
+   what CHANGED the repository, what only looked at it, what checked it. `generic` is
+   none of them and stays uncounted, because \"something else happened\" is not a
+   number anyone can act on.
+
+   `0 mutations` always prints. Whether this iteration changed anything is the one
+   question a receipt is asked, and it is about the rows that are NOT there, so no row
+   on the axis can answer it; the other two kinds speak only when they happened. Rows
+   the ENGINE dropped still count, or a receipt showing four of ten calls would report
+   the cost of four."
+  ^String [activity]
+  (let [rows
+        (vec (:rows activity))
+
+        dropped
+        (reduce-kv (fn [acc classification amount]
+                     (assoc acc (name classification) (long amount)))
+                   {}
+                   (or (get-in activity [:omitted :by-classification]) {}))
+
+        tally
+        (fn [signal]
+          (+ (count (filter #(= signal (str (:signal %))) rows)) (long (get dropped signal 0))))
+
+        noun
+        (fn [amount word]
+          (str amount " " word (when-not (= 1 (long amount)) "s")))
+
+        observations
+        (tally "observation")
+
+        checks
+        (tally "verification")]
+
+    (str/join " · "
+              (cond-> [(noun (tally "mutation") "mutation")]
+                (pos? (long observations))
+                (conj (noun observations "observation"))
+
+                (pos? (long checks))
+                (conj (noun checks "check"))))))
+
 (defn- activity-status-text
   "The honest execution sentence: the calls this form made, and the state word ONLY
    when the state is not the ordinary one. Succeeding and still running are what a
@@ -5704,33 +5742,8 @@
         focused-id
         (or (:id running-row) (:id (first rows)))
 
-        focused-row
-        (some #(when (= focused-id (:id %)) %) rows)
-
-        failures
-        (count (filter #(= :failed (activity-row-state %)) rows))
-
-        count-copy
-        (str (count rows) " " (if (= 1 (count rows)) "operation" "operations"))
-
-        header-detail
-        (if running-row
-          (str "focused"
-               (when-let [detail (activity-row-summary focused-row)]
-                 (str " · " detail)))
-          (str count-copy (when (pos? failures) (str " · " failures " failed"))))
-
         meta-base
         {:session-id (str session-id)}
-
-        header
-        {:line (str activity-marker
-                    (ellipsize-cols (str activity-margin
-                                         activity-rail
-                                         "   " (band-label "ACTIVITY")
-                                         "   " header-detail)
-                                    width))
-         :meta (merge meta-base {:kind :activity-header :label-col (activity-text-col 0)})}
 
         blank
         {:line (str activity-marker activity-margin activity-rail) :meta nil}
@@ -6040,19 +6053,16 @@
                            :label label
                            :mark-col (+ (long (count activity-margin)) 2)})}))]
 
-    (vec (concat [blank header blank]
-                 (mapcat row-entry rows)
-                 (when omitted-entry [omitted-entry])
-                 [blank]))))
+    (vec (concat [blank] (mapcat row-entry rows) (when omitted-entry [omitted-entry]) [blank]))))
 
 (defn- activity-status-display
   "The stable semantic execution sentence. Paint owns emphasis and state color."
-  [{:keys [elapsed-ms status-text status-tone]}]
+  [{:keys [elapsed-ms status-text status-tone cost-text]}]
   (str/join " · "
             (remove str/blank?
               [(str status-text)
                (when (and (not= :running status-tone) (pos? (long (or elapsed-ms 0))))
-                 (vis/format-duration elapsed-ms))])))
+                 (vis/format-duration elapsed-ms)) (str cost-text)])))
 
 (defn- run-row-entries
   "Transcript receipts for the extension runs a form left behind. Activity is not one
@@ -6354,6 +6364,7 @@
                    :node-id activity-node-id
                    :status-text
                    (activity-status-text activity (boolean (or is-error? error)) success?)
+                   :cost-text (activity-cost-text activity)
                    :status-tone (cond (or is-error? error) :error
                                       (some? success?) :ok
                                       :else (activity-row-tone activity))
