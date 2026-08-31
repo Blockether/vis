@@ -44,7 +44,6 @@
            [com.googlecode.lanterna.terminal.html HtmlMedia HtmlMedia$Kind HtmlTerminal]
            [java.io PrintWriter StringWriter]
            [java.nio.charset Charset]
-           [java.nio.file Path]
            [java.util.concurrent TimeUnit]
            [java.util.concurrent.locks ReentrantLock]
            [sun.misc Signal SignalHandler]))
@@ -4994,22 +4993,10 @@
   []
   UnixLikeTerminal$CtrlCBehaviour/TRAP)
 
-(defn- announce-html-terminal!
-  [^HtmlTerminal terminal]
-  (doto ^java.io.PrintStream vis/original-stdout
-    (.println (str "Vis TUI (HTML): " (.getUrl terminal)))
-    (.flush)))
-
 (defn- create-terminal!
   [opts]
-  (if (:html? opts)
-    (let [terminal (-> (HtmlTerminal/builder)
-                       (.title "Vis terminal")
-                       (.defaultForeground t/text-fg)
-                       (.defaultBackground t/terminal-bg)
-                       (.build))]
-      (announce-html-terminal! terminal)
-      terminal)
+  (or
+    (:html-terminal opts)
     (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset) (terminal-ctrl-c-behaviour))))
 
 (defn- configure-terminal-input!
@@ -5162,14 +5149,20 @@
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
-     :session-id uuid-string - resume a specific session
-     :resume          true        - resume the latest :tui session"
+     :session-id     uuid-string  - resume a specific session
+     :resume         true         - resume the latest :tui session
+     :html-terminal  HtmlTerminal - use a transport owned by the gateway"
   ([] (run-chat! {}))
   ([opts]
    ;; Keep explicit-session resolution as a thunk. Calling it here used to start
    ;; and await a cold gateway before Lanterna owned the terminal, leaving the
    ;; user with no frame. The first-frame callback below starts the worker.
-   (let [resolve-requested-session #(pre-resolve-session-id! opts)]
+   (let [opts
+         (assoc opts :html? (some? (:html-terminal opts)))
+
+         resolve-requested-session
+         #(pre-resolve-session-id! opts)]
+
      (state/init!)
      ;; Subscribe to host notifications so any (vis/notify! ...) push
      ;; - from anywhere: this channel's click handler, an extension,
@@ -5205,31 +5198,57 @@
           (catch Throwable t
             (tel/log! {:level :warn :id ::toggles-hydrate-failed :data {:error (ex-message t)}}
                       "Toggle hydration from config failed; defaults stand.")))
-     (let [terminal (create-terminal! opts)
-           _ (configure-terminal-input! terminal opts)
-           _ (if (instance? HtmlTerminal terminal)
-               (do (reset! active-html-terminal terminal) (timg/set-backend! :html))
-               (do (reset! active-html-terminal nil) (timg/set-backend! :native)))
-           screen (TerminalScreen. terminal)
+     (let [terminal
+           (create-terminal! opts)
+
+           _
+           (configure-terminal-input! terminal opts)
+
+           _
+           (if (instance? HtmlTerminal terminal)
+             (do (reset! active-html-terminal terminal) (timg/set-backend! :html))
+             (do (reset! active-html-terminal nil) (timg/set-backend! :native)))
+
+           screen
+           (TerminalScreen. terminal)
+
            ;; Render thread handle is held in a volatile so the `finally`
            ;; clause can join it. (Locals from the `try` body aren't in
            ;; scope inside `finally`.)
-           render-thread (volatile! nil)
-           session-live-listeners (volatile! {})
+           render-thread
+           (volatile! nil)
+
+           session-live-listeners
+           (volatile! {})
+
            ;; Background bubble pre-warm is owned by `virtual/rewarm!` -
            ;; one managed worker process-wide; see its ns comment for the
            ;; invalidation events that restart it.
-           provider-limits-thread (volatile! nil)
-           workspace-refresh-thread (volatile! nil)
-           terminal-signal-cleanup (volatile! nil)
+           provider-limits-thread
+           (volatile! nil)
+
+           workspace-refresh-thread
+           (volatile! nil)
+
+           terminal-signal-cleanup
+           (volatile! nil)
+
            ;; Toggle listeners are process-global. Keep the disposal thunk so a
            ;; closed TUI cannot keep invalidating the next TUI's transcript.
-           toggle-listener-dispose (volatile! nil)
+           toggle-listener-dispose
+           (volatile! nil)
+
            ;; Gateway work is armed now but starts only from the first successful
            ;; render callback. The task remains visible to settle + teardown.
-           startup-build-id (str (java.util.UUID/randomUUID))
-           startup-task (volatile! nil)
-           startup-retried? (atom false)
+           startup-build-id
+           (str (java.util.UUID/randomUUID))
+
+           startup-task
+           (volatile! nil)
+
+           startup-retried?
+           (atom false)
+
            start-startup!
            (fn []
              (when (nil? @startup-task)
@@ -5246,7 +5265,9 @@
                                    :workspace (try (session-workspace id) (catch Throwable _ nil))
                                    :title (try (session-db-title id) (catch Throwable _ nil))})
                                 (catch Throwable e {:error e}))))))))
-           gateway-slash-load (volatile! nil)]
+
+           gateway-slash-load
+           (volatile! nil)]
 
        (.startScreen screen)
        (vreset! toggle-listener-dispose
@@ -7727,13 +7748,6 @@
              (release-workspace-sessions!)
              (when-let [cleanup @ssh-passphrase-cleanup]
                (try (cleanup) (catch Throwable _ nil)))
-             (when (and (:html-out opts) (instance? HtmlTerminal terminal))
-               (try (.writeHtml ^HtmlTerminal terminal
-                                (Path/of ^String (str (:html-out opts)) (make-array String 0)))
-                    (catch Throwable t
-                      (tel/log!
-                        {:level :warn :id ::html-export-failed :data {:error (ex-message t)}}
-                        "HTML terminal export failed."))))
              (try (.stopScreen screen)
                   (finally (when (instance? HtmlTerminal terminal) (.close ^HtmlTerminal terminal))
                            (reset! active-html-terminal nil)
@@ -7743,8 +7757,6 @@
 (def ^:private tui-usage
   "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] channels tui [--session-id ID | --resume | --continue]")
 
-(def ^:private tui-html-usage
-  "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] channels tui-html [--session-id ID | --resume | --continue] [--html-out PATH]")
 
 (defn- missing-value? [v] (or (nil? v) (str/starts-with? v "--")))
 
@@ -7756,40 +7768,34 @@
     v))
 
 (defn- parse-args
-  "Parse the flags shared by `tui` and `tui-html`."
-  ([args] (parse-args args tui-usage))
-  ([args usage]
-   (loop [args
-          (seq args)
+  [args]
+  (loop [args
+         (seq args)
 
-          opts
-          {}]
+         opts
+         {}]
 
-     (if-not args
-       opts
-       (let [arg
-             (first args)
+    (if-not args
+      opts
+      (let [arg
+            (first args)
 
-             more
-             (next args)]
+            more
+            (next args)]
 
-         (case arg
-           "--session-id"
-           (let [v (flag-value arg more usage)]
-             (recur (next more) (assoc opts :session-id v)))
+        (case arg
+          "--session-id"
+          (let [v (flag-value arg more tui-usage)]
+            (recur (next more) (assoc opts :session-id v)))
 
-           ("--resume" "-r")
-           (recur more (assoc opts :resume true))
+          ("--resume" "-r")
+          (recur more (assoc opts :resume true))
 
-           ("--continue" "-c")
-           (recur more (assoc opts :continue true))
+          ("--continue" "-c")
+          (recur more (assoc opts :continue true))
 
-           "--html-out"
-           (let [v (flag-value arg more usage)]
-             (recur (next more) (assoc opts :html-out v)))
-
-           (throw (ex-info (str "unknown flag: " arg "\nUsage: " usage)
-                           {:vis/user-error true}))))))))
+          (throw (ex-info (str "unknown flag: " arg "\nUsage: " tui-usage)
+                          {:vis/user-error true})))))))
 
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,
@@ -7816,23 +7822,20 @@
 
 (defn- print-session-id-on-exit!
   "Print the session id after the terminal releases its output surface."
-  ([] (print-session-id-on-exit! "tui"))
-  ([command]
-   (when-let [id (current-session-id)]
-     (let [^java.io.PrintStream out vis/original-stdout]
-       (.print out "\rResume with:\n")
-       (.print out (str "vis-agent channels " command " --session-id " id "\n"))
-       (.flush out)))))
+  []
+  (when-let [id (current-session-id)]
+    (let [^java.io.PrintStream out vis/original-stdout]
+      (.print out "\rResume with:\n")
+      (.print out (str "vis-agent channels tui --session-id " id "\n"))
+      (.flush out))))
 
 (defn- run-channel-main!
-  [args {:keys [html? command usage]}]
+  [args]
   (redirect-stdio-to-log!)
   (vis/init!)
   (let [exit-code (atom 0)]
-    (try (run-chat! (cond-> (parse-args args usage)
-                      html?
-                      (assoc :html? true)))
-         (if html? (print-session-id-on-exit! command) (print-session-id-on-exit!))
+    (try (run-chat! (parse-args args))
+         (print-session-id-on-exit!)
          (catch Throwable t
            (if-let [ue (loop [c t]
                          (cond (nil? c) nil
@@ -7851,15 +7854,7 @@
          (finally (vis/shutdown!) (try (shutdown-agents) (catch Throwable _ nil))))
     (when (pos? (long @exit-code)) (System/exit (int @exit-code)))))
 
-(defn channel-main
-  "Native terminal channel entry point."
-  [args]
-  (run-channel-main! args {:html? false :command "tui" :usage tui-usage}))
-
-(defn html-channel-main
-  "Browser terminal channel entry point over the complete Vis TUI."
-  [args]
-  (run-channel-main! args {:html? true :command "tui-html" :usage tui-html-usage}))
+(defn channel-main "Native terminal channel entry point." [args] (run-channel-main! args))
 
 ;;; Channel registration lives in com.blockether.vis.ext.channel-tui.core.
 ;;; Keep this namespace as the heavyweight runtime implementation loaded only

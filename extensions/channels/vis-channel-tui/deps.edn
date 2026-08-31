@@ -72,7 +72,7 @@
         ;;      exposes cellWidth/cellHeight) and TextColor's deprecated `toColor()` are
         ;;      gone, `requires static java.desktop` is dropped from module-info, and the
         ;;      jar carries no java/awt or javax/swing reference at all.
-        com.blockether/lanterna {:mvn/version "3.1.5-vis.43"}
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.44"}
         ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
         ;; (channel-tui.cinema). CORE ONLY: com.blockether/imaging renders the frames
         ;; and hands them over as jcodec RGB `Picture`s, so the java.desktop-bound

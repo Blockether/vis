@@ -3,6 +3,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
@@ -88,22 +89,157 @@ export function docSandbox(mime: string | undefined): string {
 }
 
 /**
- * The artifact itself, quarantined. `url` is an object URL for the attachment's
- * bytes, and an opened document always fills its box.
- *
- * It paints LIVE — markup, CSS and script — because the sandbox already says
- * what the page may touch ({@link docSandbox}), so there is nothing left for a
- * strip above the frame to ask about.
+ * Identify a Lanterna export without treating its bytes as trusted. A matching artifact
+ * is REPLACED by a fresh bridge document fetched through the authenticated client; its
+ * own script never receives the bearer or a parent callback. The legacy bootstrap check
+ * keeps terminal reviews attached before the SSR renderer migration useful.
+ */
+export function isLanternaTerminalHtml(html: string): boolean {
+  const shell =
+    html.includes('id="terminal" role="application"') &&
+    html.includes('id="input"') &&
+    html.includes('aria-label="Terminal keyboard input"');
+  return (
+    shell &&
+    (html.includes('data-lanterna-terminal="true"') ||
+      /<script\s+id="bootstrap"[^>]*type="application\/json"/.test(html))
+  );
+}
+
+function TuiBridgeFrame({
+  client,
+  fallbackUrl,
+  mime,
+  name,
+}: {
+  client: GatewayClient;
+  fallbackUrl: string;
+  mime: string;
+  name: string;
+}) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const stopRef = useRef<(() => void) | null>(null);
+  const [bridge] = useState(() => globalThis.crypto.randomUUID());
+  const [documentHtml, setDocumentHtml] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void client
+      .tuiBridgeDocument(bridge, controller.signal)
+      .then(setDocumentHtml)
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [bridge, client]);
+
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frameRef.current?.contentWindow) return;
+      const data = event.data as {
+        type?: unknown;
+        bridge?: unknown;
+        after?: unknown;
+        path?: unknown;
+        values?: unknown;
+      };
+      if (!data || data.bridge !== bridge || typeof data.type !== "string") return;
+      if (data.type === "lanterna.terminal.ready") {
+        const after = Number(data.after);
+        stopRef.current?.();
+        stopRef.current = client.streamTuiFrames(
+          Number.isFinite(after) ? after : -1,
+          (html) =>
+            frameRef.current?.contentWindow?.postMessage(
+              { type: "lanterna.terminal.frame", bridge, html },
+              "*",
+            ),
+          {
+            onOpen: () =>
+              frameRef.current?.contentWindow?.postMessage(
+                { type: "lanterna.terminal.resync", bridge },
+                "*",
+              ),
+          },
+        );
+        return;
+      }
+      if (
+        data.type !== "lanterna.terminal.post" ||
+        typeof data.path !== "string" ||
+        !data.values ||
+        typeof data.values !== "object" ||
+        Array.isArray(data.values)
+      )
+        return;
+      const values: Record<string, string | number | boolean> = {};
+      for (const [key, value] of Object.entries(data.values)) {
+        if (
+          typeof value === "string" ||
+          typeof value === "number" ||
+          typeof value === "boolean"
+        )
+          values[key] = value;
+      }
+      if (data.path === "/input") void client.tuiInput(values);
+      if (data.path === "/resize") {
+        const cols = Number(values.cols);
+        const rows = Number(values.rows);
+        if (Number.isInteger(cols) && cols > 0 && Number.isInteger(rows) && rows > 0)
+          void client.tuiResize(cols, rows);
+      }
+    };
+    window.addEventListener("message", receive);
+    return () => {
+      window.removeEventListener("message", receive);
+      stopRef.current?.();
+      stopRef.current = null;
+    };
+  }, [bridge, client]);
+
+  return (
+    <iframe
+      ref={frameRef}
+      title={name}
+      {...(documentHtml ? { srcDoc: documentHtml } : { src: fallbackUrl })}
+      sandbox={docSandbox(mime)}
+      referrerPolicy="no-referrer"
+      className="min-h-0 w-full flex-1 border-0 bg-input"
+    />
+  );
+}
+
+/**
+ * The artifact itself, quarantined. Ordinary markup stays in its opaque-origin frame.
+ * A Lanterna snapshot is only a marker for the authenticated live document: the snapshot
+ * is discarded and the parent carries its events without exposing gateway credentials.
  */
 export const DocFrame = memo(function DocFrame({
   url,
   mime,
   name,
+  client,
 }: {
   url: string;
   mime: string;
   name: string;
+  client?: GatewayClient;
 }) {
+  const [isTerminal, setTerminal] = useState(false);
+  useEffect(() => {
+    setTerminal(false);
+    if (!client || !/^(?:text\/html|application\/xhtml\+xml)(?:;|$)/i.test(mime)) return;
+    const controller = new AbortController();
+    void fetch(url, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      })
+      .then((html) => setTerminal(isLanternaTerminalHtml(html)))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [client, mime, url]);
+
+  if (isTerminal && client)
+    return <TuiBridgeFrame client={client} fallbackUrl={url} mime={mime} name={name} />;
   return (
     <iframe
       title={name}
@@ -122,11 +258,13 @@ function DocBody({
   mime,
   url,
   failed,
+  client,
 }: {
   name: string;
   mime: string;
   url: string | null;
   failed: boolean;
+  client?: GatewayClient;
 }) {
   if (failed)
     return (
@@ -141,7 +279,7 @@ function DocBody({
   return isTextMedia(mime, name) ? (
     <TextFrame url={url} mime={mime} name={name} fill />
   ) : (
-    <DocFrame url={url} mime={mime} name={name} />
+    <DocFrame url={url} mime={mime} name={name} client={client} />
   );
 }
 
@@ -349,7 +487,7 @@ export const DocOverlay = memo(function DocOverlay({
   return chrome({
     actions: null,
     note: "",
-    body: <DocBody name={name} mime={mime} url={url} failed={failed} />,
+    body: <DocBody name={name} mime={mime} url={url} failed={failed} client={annotate?.client} />,
   });
 });
 

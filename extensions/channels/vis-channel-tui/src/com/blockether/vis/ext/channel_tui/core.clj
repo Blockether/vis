@@ -2,14 +2,13 @@
   "Lightweight TUI channel registration.
 
    Keep this namespace tiny: the distribution manifest initializes it on every Vis startup.
-   The full Lanterna screen implementation is resolved only when the TUI
-   channel actually runs.
+   The full Lanterna screen implementation is resolved only when the native TUI runs
+   or the gateway's `/tui` route first needs its singleton runtime.
 
    Startup boundary:
-     This namespace never contacts the gateway. It resolves the full Lanterna
-     screen only when the TUI channel runs, then hands every argument through.
-     Session lookup belongs to the screen's post-first-frame worker so even a
-     cold gateway cannot leave the terminal blank."
+     This namespace never contacts the gateway. Native channel arguments pass through
+     to the screen unchanged. Session lookup belongs to the screen's post-first-frame
+     worker so even a cold gateway cannot leave the terminal blank."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.builtin-hooks :as builtin-hooks]))
@@ -17,8 +16,6 @@
 (def tui-usage
   "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] channels tui [--session-id ID | --resume | --continue]")
 
-(def tui-html-usage
-  "vis-agent [--gateway HOST[:PORT] --gateway-token TOKEN] channels tui-html [--session-id ID | --resume | --continue] [--html-out PATH]")
 
 (defn render-for-tui
   "Project canonical typed content blocks to Markdown for the TUI."
@@ -80,33 +77,33 @@
   [args]
   ((require-screen-channel-main 'com.blockether.vis.ext.channel-tui.screen/channel-main) args))
 
-(defn html-channel-main
-  "Lazy browser-terminal entry point over the same Lanterna application."
-  [args]
-  ((require-screen-channel-main 'com.blockether.vis.ext.channel-tui.screen/html-channel-main) args))
+
+(defn tui-routes-contribution
+  "Resolve the gateway browser transport only when the gateway asks for routes."
+  []
+  ((or (requiring-resolve 'com.blockether.vis.ext.channel-tui.gateway/routes-contribution)
+       (throw (ex-info "TUI gateway route contribution did not resolve" {})))))
+
+(def channel-contributions
+  (update builtin-hooks/channel-contributions
+          :gateway.slot/http-routes
+          (fnil conj [])
+          {:id :tui/http :fn tui-routes-contribution}))
 
 (def tui-extension
-  (vis/extension
-    {:ext/name "channel-tui"
-     :ext/description "Lanterna-based terminal UI channel."
-     :ext/version "0.3.0"
-     :ext/author "Blockether"
-     :ext/owner "vis"
-     :ext/license "Apache-2.0"
-     :ext/channels [{:channel/id :tui
-                     :channel/cmd "tui"
-                     :channel/doc "Interactive terminal UI."
-                     :channel/usage tui-usage
-                     :channel/owns-tty? true
-                     :channel/main-fn #'channel-main
-                     :channel/messages-renderer-fn #'render-for-tui}
-                    {:channel/id :tui-html
-                     :channel/cmd "tui-html"
-                     :channel/doc "Interactive browser-rendered terminal UI."
-                     :channel/usage tui-html-usage
-                     :channel/owns-tty? false
-                     :channel/main-fn #'html-channel-main
-                     :channel/messages-renderer-fn #'render-for-tui}]
-     :ext/channel-contributions builtin-hooks/channel-contributions}))
+  (vis/extension {:ext/name "channel-tui"
+                  :ext/description "Lanterna-based terminal UI channel."
+                  :ext/version "0.3.0"
+                  :ext/author "Blockether"
+                  :ext/owner "vis"
+                  :ext/license "Apache-2.0"
+                  :ext/channels [{:channel/id :tui
+                                  :channel/cmd "tui"
+                                  :channel/doc "Interactive terminal UI."
+                                  :channel/usage tui-usage
+                                  :channel/owns-tty? true
+                                  :channel/main-fn #'channel-main
+                                  :channel/messages-renderer-fn #'render-for-tui}]
+                  :ext/channel-contributions channel-contributions}))
 
 (defn register! [] (vis/register-extension! tui-extension))

@@ -87,6 +87,63 @@ describe('GatewayClient event-stream hard deadline', () => {
 
     stop();
   });
+ });
+
+// Regression, issue vis_session_id#b30f87ac-f20e-4d7f-9fd2-416788d10527: the
+// Companion had no authenticated path for a terminal attachment, so its iframe could
+// neither forward iPhone taps nor carry desktop keybindings to the live Lanterna runtime.
+describe('GatewayClient TUI bridge', () => {
+  it('keeps the bearer outside the frame while using the canonical HTML routes', async () => {
+    const seen: Array<{ url: string; init: RequestInit }> = [];
+    const encoder = new TextEncoder();
+    const fetchMock = vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
+      const url = String(input);
+      seen.push({ url, init });
+      if (url.includes('/tui/embed'))
+        return new Response('<body data-transport="parent"></body>');
+      if (url.includes('/tui/events')) {
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode('id: 8\nevent: frame\ndata: <div class="frame" data-version="8"></div>\n\n'),
+              );
+            },
+          }),
+          { headers: { 'Content-Type': 'text/event-stream' } },
+        );
+      }
+      return new Response(null, { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { GatewayClient } = await import('./gateway');
+    const client = new GatewayClient({ ...conn, token: 'gateway-secret' });
+
+    await expect(client.tuiBridgeDocument('phone review')).resolves.toContain('data-transport');
+    await client.tuiInput({ kind: 'key', key: 'Escape', ctrl: true });
+    await client.tuiResize(35, 38);
+
+    let stop = () => {};
+    const frame = new Promise<string>((resolve) => {
+      stop = client.streamTuiFrames(7, (html) => {
+        resolve(html);
+        stop();
+      });
+    });
+    await expect(frame).resolves.toBe('<div class="frame" data-version="8"></div>');
+
+    expect(seen.map(({ url }) => new URL(url).pathname)).toEqual([
+      '/tui/embed',
+      '/tui/input',
+      '/tui/resize',
+      '/tui/events',
+    ]);
+    for (const { init } of seen)
+      expect(new Headers(init.headers).get('Authorization')).toBe('Bearer gateway-secret');
+    expect(String(seen[1].init.body)).toBe('kind=key&key=Escape&ctrl=true');
+    expect(String(seen[2].init.body)).toBe('cols=35&rows=38');
+    expect(seen[0].url).not.toContain('gateway-secret');
+  });
 });
 
 // Regression: a cold-start client used to re-download the complete session list.

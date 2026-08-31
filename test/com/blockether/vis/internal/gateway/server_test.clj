@@ -69,6 +69,38 @@
 (deftest gateway-router-compiles-with-project-action-routes
   (testing "static project actions do not conflict with the dynamic project-id route"
     (is (some? ((rv 'router) "test-token" [])))))
+
+(deftest contributed-browser-routes-bypass-api-protocol-headers-only-where-declared
+  (let [calls
+        (atom 0)
+
+        handler
+        ((rv 'wrap-protocol)
+          (fn [_]
+            (swap! calls inc)
+            {:status 204})
+          [{:protocol-open-uris #{"/tui" "/tui/events"}}])]
+
+    (is (= 204 (:status (handler {:uri "/tui" :headers {}}))))
+    (is (= 204 (:status (handler {:uri "/tui/events" :headers {}}))))
+    (is (= 426 (:status (handler {:uri "/v1/sessions" :headers {}}))))
+    (is (= 2 @calls))))
+
+(deftest gateway-stops-runtimes-owned-by-route-contributions
+  (let [stopped (atom [])]
+    ((rv 'stop-route-contributions!)
+      [{:stop-fn #(swap! stopped conj :first)} {} {:stop-fn #(swap! stopped conj :second)}])
+    (is (= [:first :second] @stopped))))
+
+(deftest contributed-sse-streams-share-the-gateway-client-lifecycle
+  (with-server-state! {:managed? false :clients {} :sse-clients {}}
+                      (fn []
+                        (let [close! (fn [])]
+                          (is (true? (server/register-contributed-sse! :browser close!)))
+                          (is (identical? close!
+                                          (get-in @(server-state) [:sse-clients :browser :close!])))
+                          (server/unregister-contributed-sse! :browser)
+                          (is (empty? (:sse-clients @(server-state))))))))
 (deftest mcp-management-handlers-are-sanitized-and-route-mutations-test
   (let [body
         {"name" "filesystem" "enabled" true "server" {"transport" "stdio" "command" "npx"}}

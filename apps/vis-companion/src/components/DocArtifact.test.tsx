@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DocFrame,
   DocOverlay,
@@ -10,7 +10,9 @@ import {
   DocStack,
   docSandbox,
   docStackSummary,
+  isLanternaTerminalHtml,
 } from "./DocArtifact";
+import type { GatewayClient } from "../lib/gateway";
 
 /** Visible text of a rendered chunk: tags out, entities back. */
 const text = (html: string) =>
@@ -21,6 +23,8 @@ const text = (html: string) =>
     .replace(/&gt;/g, ">")
     .replace(/&lt;/g, "<")
     .replace(/&amp;/g, "&");
+
+afterEach(() => vi.unstubAllGlobals());
 
 // An attached page is UNTRUSTED markup. It renders in an iframe, which is its
 // own document with its own CSS scope, and the sandbox is what makes that a
@@ -78,6 +82,109 @@ describe("sandboxing", () => {
       expect(html).not.toContain("<button");
       expect(html).toContain("allow-scripts");
     }
+  });
+});
+
+// Regression, issue vis_session_id#b30f87ac-f20e-4d7f-9fd2-416788d10527: an
+// attached Lanterna terminal stayed a portable snapshot, so its live guard discarded
+// every keybinding, tap and viewport resize in the Companion, most visibly on iPhone.
+describe("a Lanterna terminal attachment", () => {
+  const legacyTerminal = `<!doctype html><body><div id="terminal" role="application" aria-label="Terminal"></div><textarea id="input" aria-label="Terminal keyboard input"></textarea><script id="bootstrap" type="application/json">{"live":false,"frame":{}}</script></body>`;
+  const bridgeDocument = `<!doctype html><body data-lanterna-terminal="true" data-transport="parent"><div id="terminal" role="application"></div></body>`;
+
+  const dispatchFrom = (frame: HTMLIFrameElement, data: unknown) => {
+    const event = new MessageEvent("message", { data });
+    Object.defineProperty(event, "source", { value: frame.contentWindow });
+    window.dispatchEvent(event);
+  };
+
+  it("recognises old snapshots and the current explicit marker without trusting ordinary HTML", () => {
+    expect(isLanternaTerminalHtml(legacyTerminal)).toBe(true);
+    expect(
+      isLanternaTerminalHtml(
+        '<body data-lanterna-terminal="true"><div id="terminal" role="application" aria-label="Terminal"></div><textarea id="input" aria-label="Terminal keyboard input"></textarea></body>',
+      ),
+    ).toBe(true);
+    expect(isLanternaTerminalHtml('<html><body><div id="terminal">not Lanterna</div></body></html>')).toBe(false);
+  });
+
+  it("replaces the dead snapshot with the authenticated parent bridge", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(legacyTerminal, { status: 200 })));
+    const stop = vi.fn();
+    let deliver: ((html: string) => void) | undefined;
+    let opened: (() => void) | undefined;
+    const transport = {
+      tuiBridgeDocument: vi.fn(async (_bridge: string) => bridgeDocument),
+      tuiInput: vi.fn(async () => undefined),
+      tuiResize: vi.fn(async () => undefined),
+      streamTuiFrames: vi.fn(
+        (
+          _after: number,
+          onFrame: (html: string) => void,
+          options: { onOpen?: () => void },
+        ) => {
+          deliver = onFrame;
+          opened = options.onOpen;
+          return stop;
+        },
+      ),
+    };
+    const view = render(
+      <DocFrame
+        url="blob:portable-terminal"
+        mime="text/html"
+        name="terminal.html"
+        client={transport as unknown as GatewayClient}
+      />,
+    );
+
+    await waitFor(() => expect(transport.tuiBridgeDocument).toHaveBeenCalledOnce());
+    const bridge = transport.tuiBridgeDocument.mock.calls[0][0] as string;
+    const frame = screen.getByTitle("terminal.html") as HTMLIFrameElement;
+    expect(frame.srcdoc).toContain('data-transport="parent"');
+    expect(frame.getAttribute("sandbox")).not.toContain("allow-same-origin");
+
+    const posted = vi.spyOn(frame.contentWindow!, "postMessage");
+    act(() => dispatchFrom(frame, { type: "lanterna.terminal.ready", bridge, after: 7 }));
+    expect(transport.streamTuiFrames).toHaveBeenCalledWith(7, expect.any(Function), expect.any(Object));
+    expect(opened).toBeTypeOf("function");
+    act(() => opened?.());
+    expect(posted).toHaveBeenCalledWith(
+      { type: "lanterna.terminal.resync", bridge },
+      "*",
+    );
+
+    act(() =>
+      dispatchFrom(frame, {
+        type: "lanterna.terminal.post",
+        bridge,
+        path: "/input",
+        values: { kind: "key", key: "Escape" },
+      }),
+    );
+    act(() =>
+      dispatchFrom(frame, {
+        type: "lanterna.terminal.post",
+        bridge,
+        path: "/resize",
+        values: { cols: 35, rows: 38 },
+      }),
+    );
+    await waitFor(() => expect(transport.tuiInput).toHaveBeenCalledWith({ kind: "key", key: "Escape" }));
+    expect(transport.tuiResize).toHaveBeenCalledWith(35, 38);
+
+    act(() => deliver?.('<div class="frame" data-version="8"></div>'));
+    expect(posted).toHaveBeenCalledWith(
+      {
+        type: "lanterna.terminal.frame",
+        bridge,
+        html: '<div class="frame" data-version="8"></div>',
+      },
+      "*",
+    );
+
+    view.unmount();
+    expect(stop).toHaveBeenCalledOnce();
   });
 });
 

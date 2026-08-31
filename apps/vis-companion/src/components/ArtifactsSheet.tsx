@@ -1023,7 +1023,7 @@ function ArtifactDetail({
   }
   return (
     <DetailOverlay name={artifact.name} share={share} onClose={onClose} fill>
-      <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} />
+      <DocFrame url={url} mime={artifact.mediaType} name={artifact.name} client={client} />
     </DetailOverlay>
   );
 }

@@ -387,6 +387,25 @@
                  (catch Throwable t
                    (tel/log! :warn ["gateway: refcount shutdown failed" (ex-message t)]))))))
 
+(defn register-contributed-sse!
+  "Count a contributed SSE connection in the gateway's existing client lifecycle."
+  [stream-id close!]
+  (let [registered? (volatile! false)]
+    (swap! server-state (fn [state]
+                          (when state
+                            (vreset! registered? true)
+                            (-> state
+                                (assoc :saw-client? true)
+                                (assoc-in [:sse-clients stream-id] {:pid nil :close! close!})))))
+    @registered?))
+
+(defn unregister-contributed-sse!
+  "Remove a contributed SSE connection and re-run managed-idle shutdown policy."
+  [stream-id]
+  (swap! server-state #(when % (update % :sse-clients dissoc stream-id)))
+  (maybe-stop-when-idle!)
+  nil)
+
 (def ^:private upload-ttl-ms
   "How long a binary upload may wait for its tiny turn submission. Long enough for
    a phone retry, short enough that an abandoned picker cannot pin image bytes."
@@ -3936,10 +3955,12 @@
 ;;   {:prefix            "/ui"        ; uri namespace this contribution owns
 ;;    :routes            (fn [token] reitit-route-data)
 ;;    :open-uris         #{"/ui" ...} ; reachable without auth
+;;    :protocol-open-uris #{"/ui" ...} ; browser routes with no API header
 ;;    :request-authed-fn (fn [request token] bool)   ; extra auth carrier
 ;;    :on-unauthorized   (fn [request] ring-response) ; custom 401 for :prefix
 ;;    :on-not-found      (fn [request] ring-response) ; custom 404 for :prefix
-;;    :form-params?      true}        ; urlencoded form parsing under :prefix
+;;    :form-params?      true          ; urlencoded form parsing under :prefix
+;;    :stop-fn           (fn [])}      ; stop a runtime owned by the contribution
 (defonce ^:private route-contributions (atom {}))
 
 (defonce ^:private imperative-version (atom 0))
@@ -3977,6 +3998,15 @@
         (extension/channel-contributions-for :gateway :gateway.slot/http-routes)))
 
 (defn- contributions [] (concat (declared-contributions) (vals @route-contributions)))
+
+(defn- stop-route-contributions!
+  [contribs]
+  (doseq [{:keys [stop-fn]} contribs]
+    (when stop-fn
+      (try (stop-fn)
+           (catch Throwable t
+             (tel/log! :warn ["gateway: route contribution stop failed" (ex-message t)])))))
+  nil)
 
 (defn- routes-fingerprint
   "Cheap identity of the current contribution set: declared slot entry
@@ -4058,14 +4088,18 @@
   #{"/healthz" "/readyz" "/v1/capabilities"})
 
 (defn- wrap-protocol
-  "Wire-protocol gate (§3). A client whose advertised protocol is unsupported —
-   including a client that advertises nothing — is refused once, up front, with
-   426 and the same verdict + copy every surface renders, instead of being fed a
-   shape it cannot read and failing later as a mystery 404 or missing field."
-  [handler]
+  "Wire-protocol gate (§3). API clients must advertise a compatible version.
+   A contributed browser route may name exact `:protocol-open-uris` because native
+   navigation and EventSource cannot attach API protocol headers."
+  [handler contribs]
   (fn [request]
-    (let [uri (str (:uri request))]
-      (if (or (contains? protocol-open-uris uri) (str/starts-with? uri "/docs"))
+    (let [uri
+          (str (:uri request))
+
+          browser-uri?
+          (some #(contains? (or (:protocol-open-uris %) #{}) uri) contribs)]
+
+      (if (or (contains? protocol-open-uris uri) (str/starts-with? uri "/docs") browser-uri?)
         (handler request)
         (let [v (protocol/gateway-verdict request)]
           (if (:is-compatible v)
@@ -4355,7 +4389,7 @@
     (wrap-auth token contribs)
     ;; Runs BEFORE the token gate: an out-of-date client deserves the version
     ;; verdict, not a 401 that hides it.
-    (wrap-protocol)
+    (wrap-protocol contribs)
     (wrap-scoped-params contribs)
     (wrap-scoped-multipart contribs)
     (ring-cookies/wrap-cookies)
@@ -4372,7 +4406,10 @@
 (defn- rebuild-app!
   []
   (when-let [{:keys [token]} @server-state]
-    (reset! live-app {:handler (app token (vec (contributions))) :fp (routes-fingerprint)}))
+    (let [contribs (vec (contributions))]
+      (reset! live-app {:handler (app token contribs)
+                        :fp (routes-fingerprint)
+                        :contribs contribs})))
   nil)
 
 (defn- serving-handler
@@ -4746,6 +4783,7 @@
                       ["gateway: drain timed out; forcing stop" residual
                        "turn(s) still running"])))))
     (try (.stop server) (catch Throwable _ nil))
+    (stop-route-contributions! (:contribs @live-app))
     ;; The live-view bridge holds patches for up to one flush window. A gateway
     ;; going away must publish what the engine already accepted, not swallow it.
     (try (gw-view/uninstall!) (catch Throwable _ nil))

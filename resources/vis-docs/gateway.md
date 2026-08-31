@@ -72,6 +72,41 @@ always exits 0. `vis-agent update` runs it after installing a new runtime: every
 live daemon is then older than what is on disk, and the next client spawns the
 new build. `vis-agent update --keep-gateway` opts out.
 
+
+## The complete TUI in a browser
+
+Every gateway mounts its Lanterna terminal at `GET /tui` through the ordinary
+extension route contribution. It is part of the same Reitit/Ring application and
+runs on the same Jetty 12 server, virtual-thread policy, authentication middleware
+and lifecycle as every other Vis route. Lanterna opens no HTTP socket and carries
+no Jetty, servlet, WebSocket or alternate Java HTTP implementation.
+
+The document is server-rendered: the first response already contains the resolved
+cell grid and media elements. Later paints arrive as rendered HTML fragments on
+`GET /tui/events` over the gateway's SSE path. The small browser script only swaps
+those fragments, forwards keyboard/pointer input to `POST /tui/input`, and reports
+viewport changes to `POST /tui/resize`; it never rebuilds a terminal frame from
+JSON or runs a second layout engine. There is no separate browser-channel process.
+
+Open `http://127.0.0.1:7890/tui` for the default local gateway. On a token-gated
+gateway, open `/tui?token=<gateway-token>` once. The gateway immediately moves the
+secret into an `HttpOnly`, `SameSite=Strict` cookie and redirects to the clean
+`/tui` URL; use HTTPS when the gateway is not loopback-bound.
+
+Inside Vis Companion, an attached Lanterna export is a marker rather than a detached
+interactive program. The app discards the attachment bytes, fetches a fresh parent-bridge
+document from `GET /tui/embed`, and carries `/tui/events`, `/tui/input` and `/tui/resize`
+through its existing authenticated `GatewayClient`. The terminal iframe keeps its opaque
+sandbox origin and receives neither the bearer, a gateway URL nor the original untrusted
+script. Ordinary HTML attachments keep the same sandbox and are never granted this bridge.
+
+One gateway process owns one TUI runtime. Multiple browser tabs therefore see and
+control the same terminal session rather than spawning divergent copies. Its SSE
+connection counts as a normal gateway client, so a managed daemon stays alive
+while the browser is open and self-reaps after the last browser and other client
+leave. Unchanged image, video and audio nodes are retained across paints, preserving
+playback position; a changed source is replaced so the new media takes effect.
+
 ## The token model — and the `HTTP 401`
 
 Auth is gated on the **bind host**:

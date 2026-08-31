@@ -29,6 +29,27 @@
           (expect (= [] @calls))
           (expect (= {:screen-args ["--resume"]} (tui/channel-main ["--resume"])))
           (expect (= ['com.blockether.vis.ext.channel-tui.screen/channel-main] @calls)))))
+  (it "contributes the gateway route without eagerly loading its implementation"
+      (let [calls
+            (atom [])
+
+            route
+            (-> tui/tui-extension
+                :ext/channel-contributions
+                :gateway.slot/http-routes
+                first)]
+
+        (expect (= :tui/http (:id route)))
+        (with-redefs [clojure.core/requiring-resolve
+                      (fn [sym]
+                        (swap! calls conj sym)
+                        (expect (= 'com.blockether.vis.ext.channel-tui.gateway/routes-contribution
+                                   sym))
+                        (fn []
+                          {:prefix "/tui"}))]
+          (expect (= [] @calls))
+          (expect (= {:prefix "/tui"} ((:fn route))))
+          (expect (= ['com.blockether.vis.ext.channel-tui.gateway/routes-contribution] @calls)))))
   (it "hands --session-id to the screen without contacting the gateway first"
       (let [resolve-calls (atom [])]
         (with-redefs [clojure.core/requiring-resolve (fn [sym]

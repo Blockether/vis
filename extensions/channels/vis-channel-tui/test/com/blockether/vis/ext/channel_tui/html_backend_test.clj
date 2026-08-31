@@ -7,7 +7,7 @@
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.ext.channel-tui.scroll :as scroll]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
-            [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
+            [lazytest.experimental.interfaces.clojure-test :refer [deftest is]])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.gui2 Button GridLayout Panel TextGraphicsComponent]
            [com.googlecode.lanterna.input KeyStroke KeyType]
@@ -22,45 +22,19 @@
                   (.getCharacter terminal (TerminalPosition. (int col) (int row))))
                 (range cols)))
         (range rows)))
-(deftest html-channel-registration-test
-  (let [channels
-        (:ext/channels core/tui-extension)
+(deftest browser-terminal-is-a-gateway-surface-not-a-second-channel-test
+  (let [channels (:ext/channels core/tui-extension)]
+    (is (= [:tui] (mapv :channel/id channels)))
+    (is (some #(= :tui/http (:id %)) (:gateway.slot/http-routes core/channel-contributions)))))
 
-        html
-        (some #(when (= :tui-html (:channel/id %)) %) channels)]
-
-    (is (= #{:tui :tui-html} (set (map :channel/id channels))))
-    (is (= "tui-html" (:channel/cmd html)))
-    (is (false? (:channel/owns-tty? html)))
-    (is (= core/tui-html-usage (:channel/usage html)))
-    (is (ifn? (:channel/main-fn html)))))
-
-(deftest html-entrypoint-stays-lazy-test
-  (let [resolved (atom nil)]
-    (with-redefs [clojure.core/requiring-resolve (fn [entrypoint]
-                                                   (reset! resolved entrypoint)
-                                                   (fn [args]
-                                                     {:args args}))]
-      (is (= {:args ["--resume"]} (core/html-channel-main ["--resume"])))
-      (is (= 'com.blockether.vis.ext.channel-tui.screen/html-channel-main @resolved)))))
-
-(deftest html-terminal-construction-and-arguments-test
-  (testing "the complete Vis screen can swap only its Terminal backend"
-    (let [announced
-          (atom nil)
-
-          terminal
-          (with-redefs-fn {#'screen/announce-html-terminal!
-                           (fn [value]
-                             (reset! announced (.getUrl ^HtmlTerminal value)))}
-            #(#'screen/create-terminal! {:html? true}))]
-
-      (try (is (instance? HtmlTerminal terminal))
-           (is (= (.getUrl ^HtmlTerminal terminal) @announced))
-           (is (.startsWith ^String @announced "http://127.0.0.1:"))
-           (finally (.close ^HtmlTerminal terminal)))))
-  (is (= {:resume true :html-out "view.html"}
-         (#'screen/parse-args ["--resume" "--html-out" "view.html"] core/tui-html-usage))))
+(deftest gateway-injects-a-transport-neutral-html-terminal-test
+  (with-open [terminal (-> (HtmlTerminal/builder)
+                           (.build))]
+    (is (identical? terminal (#'screen/create-terminal! {:html-terminal terminal})))
+    (is (.contains (.renderLiveHtml terminal "/tui") "data-endpoint-prefix=\"/tui\""))
+    (let [method-names (set (map #(.getName ^java.lang.reflect.Method %)
+                                 (.getMethods HtmlTerminal)))]
+      (is (not-any? method-names ["getUrl" "getUri" "getPort" "hasEmbeddedServer"])))))
 
 (deftest html-media-uses-the-resolved-image-cell-box-test
   (let [terminal
@@ -117,9 +91,9 @@
     (is (= 1 (.getRows preferred)))
     (is (.contains html "Vis header actions"))
     (is (.contains html "help ("))
-    (is (.contains html "\"live\":false"))))
+    (is (.contains html "data-live=\"false\""))))
 
-(deftest header-actions-serve-as-an-interactive-html-component-test
+(deftest header-actions-run-as-an-interactive-html-component-test
   (let [triggered
         (promise)
 
@@ -127,7 +101,7 @@
         (header/header-actions-component #(deliver triggered %))
 
         view
-        (HtmlTerminalView/serve panel (.getPreferredSize ^Panel panel) "Interactive Vis header")]
+        (HtmlTerminalView/start panel (.getPreferredSize ^Panel panel) "Interactive Vis header")]
 
     (try (.addInput (.getTerminal view) (KeyStroke. KeyType/Enter))
          (is (= :header-help (deref triggered 3000 ::timeout)))
@@ -279,8 +253,8 @@
 
     (is (instance? GridLayout (.getLayoutManager ^Panel view)))
     (is (= 1 (count (.getChildrenList ^Panel view))))
-    (is (.contains html "\"text\":\"Standalone\""))
-    (is (.contains html "\"text\":\"view\""))
+    (is (.contains html ">Standalone</span>"))
+    (is (.contains html ">view</span>"))
     (is (.contains html "Standalone Vis view"))))
 
 (deftest grid-surface-owns-size-and-clipping-test

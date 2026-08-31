@@ -4143,6 +4143,49 @@ export class GatewayClient {
     );
   }
 
+  /** Trusted terminal document; the bearer remains on this parent request. */
+  tuiBridgeDocument(bridgeId: string, signal?: AbortSignal): Promise<string> {
+    if (!bridgeId.trim()) return Promise.reject(new Error("bridge id must not be blank"));
+    return this.requestBody(
+      "GET",
+      `/tui/embed?bridge=${encodeURIComponent(bridgeId)}`,
+      { signal },
+      (response) => response.text(),
+    );
+  }
+
+  /** Forward one keyboard, composition, paste, pointer or wheel event to Lanterna. */
+  tuiInput(
+    values: Record<string, string | number | boolean>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    return this.tuiPost("/tui/input", values, signal);
+  }
+
+  /** Resize the same terminal runtime to the Companion frame's measured grid. */
+  tuiResize(cols: number, rows: number, signal?: AbortSignal): Promise<void> {
+    return this.tuiPost("/tui/resize", { cols, rows }, signal);
+  }
+
+  private tuiPost(
+    path: string,
+    values: Record<string, string | number | boolean>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const body = new URLSearchParams();
+    for (const [key, value] of Object.entries(values)) body.set(key, String(value));
+    return this.requestBody(
+      "POST",
+      path,
+      {
+        body,
+        contentType: "application/x-www-form-urlencoded;charset=UTF-8",
+        signal,
+      },
+      async () => undefined,
+    );
+  }
+
   // ── SSE live stream ─────────────────────────────────────────────
   //
   // GET /v1/events?sids=<sid> streams `data: {json}\n\n` frames. We read the
@@ -4427,11 +4470,13 @@ export class GatewayClient {
 
     return () => controller.abort();
   }
-  streamEvents(
-    sid: string,
-    onEvent: (event: SseEvent) => void,
+  private streamRouteFrames(
+    path: string,
+    cursorName: string,
+    initialCursor: number | undefined,
+    streamName: NonNullable<GatewayRequestDiagnosticStart["stream"]>,
+    onFrame: (data: string, eventName: string | null) => number | undefined,
     opts: {
-      cursor?: number;
       signal?: AbortSignal;
       onOpen?: () => void;
       onError?: (error: unknown) => void;
@@ -4442,20 +4487,17 @@ export class GatewayClient {
       ? anySignal([opts.signal, controller.signal])
       : controller.signal;
 
-    const path = `/v1/sessions/${encodeURIComponent(sid)}/events`;
     void (async () => {
-      let cursor = opts.cursor;
+      let cursor = initialCursor;
       let retryMs = 400;
       let attemptNumber = 0;
 
       while (!signal.aborted) {
-        // Per-attempt controller — the stall watchdog aborts only this attempt
-        // so the loop reconnects from `cursor` instead of dying.
         const attempt = new AbortController();
         const attemptSignal = anySignal([signal, attempt.signal]);
         const diagnostic = startRequestDiagnostic(this.base, "GET", path, {
           transport: "sse",
-          stream: "session",
+          stream: streamName,
           attempt: ++attemptNumber,
         });
         let status = 0;
@@ -4473,15 +4515,15 @@ export class GatewayClient {
         };
         try {
           armStall(SSE_CONNECT_TIMEOUT_MS);
-          const query = cursor != null ? `?cursor=${cursor}` : "";
+          const query =
+            cursor != null
+              ? `?${encodeURIComponent(cursorName)}=${encodeURIComponent(cursor)}`
+              : "";
           const response = await raceAbort(
-            fetch(
-              `${this.base}${path}${query}`,
-              {
-                headers: this.headers({ Accept: "text/event-stream" }),
-                signal: attemptSignal,
-              },
-            ),
+            fetch(`${this.base}${path}${query}`, {
+              headers: this.headers({ Accept: "text/event-stream" }),
+              signal: attemptSignal,
+            }),
             attemptSignal,
           );
           status = response.status;
@@ -4494,24 +4536,17 @@ export class GatewayClient {
 
           opts.onOpen?.();
           retryMs = 400;
-          // Stall watchdog — same heartbeat bound as the multiplexed variant.
           armStall(SSE_STALL_TIMEOUT_MS);
-
           await raceAbort(
             readSseFrames(
               response.body,
-              (json, frameName) => {
-                // Session log only: a `voice.job` frame belongs to its own stream.
-                if (frameName === VOICE_JOB_EVENT) return;
+              (data, eventName) => {
                 try {
-                  const event = JSON.parse(json) as SseEvent;
-                  // Deliver FIRST, then advance: an event whose handler
-                  // failed must replay on reconnect, never be skipped.
-                  onEvent(event);
-                  if (typeof event.seq === "number")
-                    cursor = Math.max(cursor ?? 0, event.seq);
+                  const advanced = onFrame(data, eventName);
+                  if (typeof advanced === "number")
+                    cursor = Math.max(cursor ?? advanced, advanced);
                 } catch {
-                  // A malformed frame must not end an otherwise healthy stream.
+                  // A malformed frame or failed consumer must not end a healthy stream.
                 }
               },
               () => armStall(SSE_STALL_TIMEOUT_MS),
@@ -4552,6 +4587,56 @@ export class GatewayClient {
     })();
 
     return () => controller.abort();
+  }
+
+  streamEvents(
+    sid: string,
+    onEvent: (event: SseEvent) => void,
+    opts: {
+      cursor?: number;
+      signal?: AbortSignal;
+      onOpen?: () => void;
+      onError?: (error: unknown) => void;
+    } = {},
+  ): () => void {
+    return this.streamRouteFrames(
+      `/v1/sessions/${encodeURIComponent(sid)}/events`,
+      "cursor",
+      opts.cursor,
+      "session",
+      (json, frameName) => {
+        if (frameName === VOICE_JOB_EVENT) return undefined;
+        const event = JSON.parse(json) as SseEvent;
+        onEvent(event);
+        return typeof event.seq === "number" ? event.seq : undefined;
+      },
+      opts,
+    );
+  }
+
+  /** Stream the gateway's server-rendered Lanterna fragments into one trusted frame. */
+  streamTuiFrames(
+    after: number,
+    onFrame: (html: string) => void,
+    opts: {
+      signal?: AbortSignal;
+      onOpen?: () => void;
+      onError?: (error: unknown) => void;
+    } = {},
+  ): () => void {
+    return this.streamRouteFrames(
+      "/tui/events",
+      "after",
+      after,
+      "tui",
+      (html, frameName) => {
+        if (frameName !== "frame") return undefined;
+        onFrame(html);
+        const version = /\bdata-version="(\d+)"/.exec(html)?.[1];
+        return version ? Number(version) : undefined;
+      },
+      opts,
+    );
   }
 }
 
