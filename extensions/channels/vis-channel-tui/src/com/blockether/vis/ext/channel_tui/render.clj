@@ -2454,6 +2454,13 @@
                     ;; Activity is a compact timeline grid on its own quiet surface.
                     (str/starts-with? line activity-marker)
                     (let [raw (subs line 1)
+                          ;; ACTIVITY IS NOT A BAND. The web hangs its chronology on the
+                          ;; turn's own line and paints NO surface behind it; a slab here
+                          ;; reads as a second thinking block, which is the one thing this
+                          ;; axis must not look like. The paper stays the transcript's own,
+                          ;; and the rail, the marks and the words carry the structure.
+                          band-bg (if in-answer? zone-bg bg-color)
+                          band-fg (if in-answer? zone-fg fg-color)
                           tone-fg (case (:status-tone meta)
                                     :running
                                     t/warning-fg
@@ -2466,39 +2473,45 @@
 
                                     t/code-duration-fg)]
 
-                      (p/set-colors! g t/code-result-fg t/code-block-bg)
+                      (p/set-colors! g band-fg band-bg)
                       (p/fill-rect! g fbx y iw 1)
                       (p/paint-styled-line! g
                                             x
                                             y
                                             raw
-                                            t/code-result-fg
-                                            t/code-block-bg
+                                            band-fg
+                                            band-bg
                                             t/code-block-fg
                                             t/code-block-bg)
-                      ;; THE RAIL IS COLUMN ZERO of every row in this band: `│` on a
-                      ;; continuation, `├─` where a step's mark stands on it. It is drawn
-                      ;; in the band's own border ink, so the line reads as structure and
-                      ;; never as a character somebody typed.
-                      (let [rail-n (count (take-while #{\│ \├ \─} raw))]
+                      ;; THE RAIL IS THE TURN'S LINE, standing one margin in from the
+                      ;; paper's edge: `│` on a continuation, `├─` where a step's mark
+                      ;; stands on it. It is drawn in the quiet border ink, so the line
+                      ;; reads as structure and never as a character somebody typed.
+                      (let [inset (count (take-while #{\space} raw))
+                            rail (subs raw inset)
+                            rail-n (count (take-while #{\│ \├ \─} rail))]
+
                         (when (pos? rail-n)
-                          (p/set-colors! g t/code-duration-fg t/code-block-bg)
-                          (p/put-str! g x y (subs raw 0 rail-n))))
+                          (p/set-colors! g t/code-duration-fg band-bg)
+                          (p/put-str! g (+ (long x) (long inset)) y (subs rail 0 rail-n))))
                       (case (:kind meta)
                         :activity-header
-                        (do (p/set-colors! g t/text-fg t/code-block-bg)
-                            (p/styled g [p/BOLD] (p/put-str! g (+ (long x) 4) y "ACTIVITY")))
+                        (do (p/set-colors! g t/text-fg band-bg)
+                            (p/styled
+                              g
+                              [p/BOLD]
+                              (p/put-str! g (+ (long x) (long (:label-col meta))) y "ACTIVITY")))
 
                         :activity-row
                         (do (when-let [glyph-col (:glyph-col meta)]
-                              (p/set-colors! g tone-fg t/code-block-bg)
+                              (p/set-colors! g tone-fg band-bg)
                               (p/styled g
                                         [p/BOLD]
                                         (p/put-str! g
                                                     (+ (long x) (long glyph-col))
                                                     y
                                                     (str (:status-glyph meta)))))
-                            (p/set-colors! g t/result-highlight-fg t/code-block-bg)
+                            (p/set-colors! g t/result-highlight-fg band-bg)
                             (p/styled g
                                       [p/BOLD]
                                       (p/put-str! g
@@ -2524,12 +2537,12 @@
                         (let [path-col (+ (long x) (long (:path-col meta)))
                               directory (str (:dir meta))]
 
-                          (p/set-colors! g t/code-duration-fg t/code-block-bg)
+                          (p/set-colors! g t/code-duration-fg band-bg)
                           (p/put-str! g (+ (long x) (long (:mark-col meta))) y (str (:mark meta)))
                           (when (seq directory)
-                            (p/set-colors! g t/dialog-hint t/code-block-bg)
+                            (p/set-colors! g t/dialog-hint band-bg)
                             (p/put-str! g path-col y directory))
-                          (p/set-colors! g t/code-result-fg t/code-block-bg)
+                          (p/set-colors! g band-fg band-bg)
                           (p/put-str! g
                                       (+ path-col (long (p/display-width directory)))
                                       y
@@ -2544,7 +2557,7 @@
                                         :collapsed? (:collapsed? meta)})))
 
                         :activity-more
-                        (do (p/set-colors! g t/dialog-hint t/code-block-bg)
+                        (do (p/set-colors! g t/dialog-hint band-bg)
                             (p/put-str! g
                                         (+ (long x) (long (:mark-col meta)))
                                         y
@@ -2570,7 +2583,7 @@
                                         :del
                                         t/code-err-bg
 
-                                        t/code-block-bg)
+                                        band-bg)
                               diff-fg (case diff-kind
                                         :add
                                         t/code-success-fg
@@ -5222,21 +5235,15 @@
     :idle))
 
 (defn- activity-row-glyph
+  "ONE MARK FOR EVERY STEP - the COLOUR is the state.
+
+   A per-state glyph turns a chronology into a legend the reader has to learn, and a
+   check beside a cross beside a dot reads as three different kinds of thing stacked
+   in one column. The shape stays put so the axis scans as one axis, and
+   `activity-row-tone` says it: green done, yellow running, red failed. Only a step
+   that has not begun is hollow, because there is nothing there yet to colour."
   [row]
-  (case (activity-row-state row)
-    :running
-    "●"
-
-    :failed
-    "×"
-
-    :succeeded
-    "✓"
-
-    :cancelled
-    "○"
-
-    "○"))
+  (if (contains? #{:running :failed :succeeded} (activity-row-state row)) "●" "○"))
 
 (defn- activity-row-tail
   [{:keys [duration-ms] :as row}]
@@ -5324,6 +5331,14 @@
            " · "
            total-copy))))
 
+(def ^:private activity-margin
+  "THE PAPER'S OWN EDGE, kept clear before the rail.
+
+   A line flush against the left edge of the transcript reads as the frame of the
+   window rather than as this turn's axis. Two columns of quiet are what say the
+   rail belongs to the answer and begins inside it."
+  "  ")
+
 (def ^:private activity-rail
   "THE TURN'S OWN LINE, drawn down the whole Activity band.
 
@@ -5351,16 +5366,19 @@
   4)
 
 (defn- activity-text-col
-  "Column the words of a row at `depth` start in, counted from the rail. At depth 0
-   the rail, the tick, the mark and one gap fill the four columns before them; every
-   level below is two columns further in, because the group IS the indent."
+  "Column the words of a row at `depth` start in, counted from the paper's edge. The
+   margin, the rail, the tick, the mark and one gap fill the columns before them at
+   depth 0; every level below is two columns further in, because the group IS the
+   indent."
   ^long [^long depth]
-  (+ 4 (* 2 depth)))
+  (+ (long (count activity-margin)) 4 (* 2 depth)))
 
 (defn- activity-lead
-  "The rail plus the blanks that carry the eye to column `col`."
+  "The margin, the rail, and the blanks that carry the eye to column `col`."
   ^String [^long col]
-  (str activity-rail (repeat-str \space (max 0 (dec col)))))
+  (str activity-margin
+       activity-rail
+       (repeat-str \space (max 0 (- col (long (count activity-margin)) 1)))))
 
 (defn- activity-evidence-kind
   [evidence]
@@ -5527,13 +5545,15 @@
 
         header
         {:line (str activity-marker
-                    (ellipsize-cols
-                      (str activity-rail "   " (band-label "ACTIVITY") "   " header-detail)
-                      width))
-         :meta (merge meta-base {:kind :activity-header})}
+                    (ellipsize-cols (str activity-margin
+                                         activity-rail
+                                         "   " (band-label "ACTIVITY")
+                                         "   " header-detail)
+                                    width))
+         :meta (merge meta-base {:kind :activity-header :label-col (activity-text-col 0)})}
 
         blank
-        {:line (str activity-marker activity-rail) :meta nil}
+        {:line (str activity-marker activity-margin activity-rail) :meta nil}
 
         diff-entries
         (fn [item-id diff ^long col]
@@ -5672,43 +5692,42 @@
         row-entry
         (fn row-entry ([row] (row-entry row 0)) ([{:keys [id operation error-summary result-summary
                                                           result-format summary children]
-                                                   :as row} depth] (let [col
-                                                                         (activity-text-col depth)
+                                                   :as row} depth] (let
+                                                                     [col
+                                                                      (activity-text-col depth)
 
-                                                                         operation-label
-                                                                         (ellipsize-cols
-                                                                           (str/upper-case
-                                                                             (str operation))
-                                                                           operation-w)
+                                                                      operation-label
+                                                                      (ellipsize-cols
+                                                                        (str/upper-case
+                                                                          (str operation))
+                                                                        operation-w)
 
-                                                                         operation-cell
-                                                                         (p/pad-right
-                                                                           operation-label
-                                                                           operation-w)
+                                                                      operation-cell
+                                                                      (p/pad-right operation-label
+                                                                                   operation-w)
 
-                                                                         row-summary
-                                                                         (activity-row-summary row)
+                                                                      row-summary
+                                                                      (activity-row-summary row)
 
-                                                                         delta
-                                                                         (let [{:keys [additions
-                                                                                       deletions]}
-                                                                               (activity-step-delta
-                                                                                 row)]
-                                                                           (when (pos?
-                                                                                   (+ (long
-                                                                                        additions)
-                                                                                      (long
-                                                                                        deletions)))
-                                                                             (str "  +" additions
-                                                                                  " -" deletions)))
+                                                                      delta
+                                                                      (let [{:keys [additions
+                                                                                    deletions]}
+                                                                            (activity-step-delta
+                                                                              row)]
+                                                                        (when (pos?
+                                                                                (+ (long additions)
+                                                                                   (long
+                                                                                     deletions)))
+                                                                          (str "  +" additions
+                                                                               " -" deletions)))
 
-                                                                         ;; A step that stands for several changes keeps ONE mark on the rail and
-                                                                         ;; hangs its children under it, sharing that mark's left edge: nested rows
-                                                                         ;; carry no mark of their own, because the indent already says whose they are.
-                                                                         prefix
-                                                                         (str
-                                                                           (if (zero? (long depth))
+                                                                      ;; A step that stands for several changes keeps ONE mark on the rail and
+                                                                      ;; hangs its children under it, sharing that mark's left edge: nested rows
+                                                                      ;; carry no mark of their own, because the indent already says whose they are.
+                                                                      prefix
+                                                                      (str (if (zero? (long depth))
                                                                              (str
+                                                                               activity-margin
                                                                                activity-tick
                                                                                (activity-row-glyph
                                                                                  row)
@@ -5719,94 +5738,91 @@
                                                                              (str "  " row-summary))
                                                                            delta)
 
-                                                                         line
-                                                                         (first (with-right-suffix
-                                                                                  [prefix]
-                                                                                  (activity-row-tail
-                                                                                    row)
-                                                                                  width))
+                                                                      line
+                                                                      (first (with-right-suffix
+                                                                               [prefix]
+                                                                               (activity-row-tail
+                                                                                 row)
+                                                                               width))
 
-                                                                         detail
-                                                                         (or
-                                                                           (not-empty
-                                                                             (str/trim
-                                                                               (str error-summary)))
-                                                                           (some->
-                                                                             (not-empty
-                                                                               (str/trim
-                                                                                 (str
-                                                                                   result-summary)))
-                                                                             (activity-inline-text
-                                                                               result-format)))
+                                                                      detail
+                                                                      (or (not-empty
+                                                                            (str/trim
+                                                                              (str error-summary)))
+                                                                          (some->
+                                                                            (not-empty
+                                                                              (str/trim
+                                                                                (str
+                                                                                  result-summary)))
+                                                                            (activity-inline-text
+                                                                              result-format)))
 
-                                                                         open?
-                                                                         (or (expanded? id)
-                                                                             (and
-                                                                               (= id focused-id)
+                                                                      open?
+                                                                      (or (expanded? id)
+                                                                          (and (= id focused-id)
                                                                                (=
                                                                                  :running
                                                                                  (activity-row-state
                                                                                    row))))
 
-                                                                         head
-                                                                         {:line (str activity-marker
-                                                                                     line)
-                                                                          :meta
-                                                                          (merge
-                                                                            meta-base
-                                                                            {:kind :activity-row
-                                                                             :item-id id
-                                                                             :node-id
-                                                                             (str node-id ":" id)
-                                                                             :collapsed?
-                                                                             (not (expanded? id))
-                                                                             :status-tone
-                                                                             (activity-row-tone row)
-                                                                             :status-glyph
-                                                                             (activity-row-glyph
-                                                                               row)
-                                                                             :glyph-col
-                                                                             (when (zero? (long
-                                                                                            depth))
-                                                                               2)
-                                                                             :operation-col col
-                                                                             :operation-label
-                                                                             operation-label})}
+                                                                      head
+                                                                      {:line (str activity-marker
+                                                                                  line)
+                                                                       :meta
+                                                                       (merge
+                                                                         meta-base
+                                                                         {:kind :activity-row
+                                                                          :item-id id
+                                                                          :node-id
+                                                                          (str node-id ":" id)
+                                                                          :collapsed?
+                                                                          (not (expanded? id))
+                                                                          :status-tone
+                                                                          (activity-row-tone row)
+                                                                          :status-glyph
+                                                                          (activity-row-glyph row)
+                                                                          :glyph-col
+                                                                          (when (zero? (long depth))
+                                                                            (+ (long
+                                                                                 (count
+                                                                                   activity-margin))
+                                                                               2))
+                                                                          :operation-col col
+                                                                          :operation-label
+                                                                          operation-label})}
 
-                                                                         detail-row
-                                                                         {:line
-                                                                          (str activity-marker
-                                                                               (ellipsize-cols
-                                                                                 (str
-                                                                                   (activity-lead
+                                                                      detail-row
+                                                                      {:line
+                                                                       (str activity-marker
+                                                                            (ellipsize-cols
+                                                                              (str (activity-lead
                                                                                      (+ col
                                                                                         operation-w
                                                                                         2))
                                                                                    detail)
-                                                                                 width))
-                                                                          :meta
-                                                                          (merge meta-base
-                                                                                 {:kind
-                                                                                  :activity-evidence
-                                                                                  :item-id id})}
+                                                                              width))
+                                                                       :meta (merge
+                                                                               meta-base
+                                                                               {:kind
+                                                                                :activity-evidence
+                                                                                :item-id id})}
 
-                                                                         nested
-                                                                         (vec children)
+                                                                      nested
+                                                                      (vec children)
 
-                                                                         ;; A GROUP'S PATHS BELONG TO ITS CHANGES, not to the group as well: the head
-                                                                         ;; carries every child's resource, so painting them here and again under each
-                                                                         ;; child is the same twelve paths printed twice.
-                                                                         touched
-                                                                         (if (seq nested)
-                                                                           []
-                                                                           (filterv #(not=
-                                                                                       (str (:id %))
-                                                                                       (str
-                                                                                         summary))
-                                                                             (:resources row)))
+                                                                      ;; A GROUP'S PATHS BELONG TO ITS CHANGES, not to the group as well: the head
+                                                                      ;; carries every child's resource, so painting them here and again under each
+                                                                      ;; child is the same twelve paths printed twice.
+                                                                      touched
+                                                                      (if (seq nested)
+                                                                        []
+                                                                        (filterv #(not=
+                                                                                    (str (:id %))
+                                                                                    (str summary))
+                                                                          (:resources row)))
 
-                                                                         diffs
-                                                                         (activity-diffs row)]
+                                                                      diffs
+                                                                      (activity-diffs row)]
 
                                                                      (cond-> [head]
                                                                        (and detail open?)

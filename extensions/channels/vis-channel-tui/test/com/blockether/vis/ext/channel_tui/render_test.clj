@@ -5238,11 +5238,14 @@ h = 8"
               "RESULT remains independently expandable")
       (expect (= (get-in frame [(dec python-row) 1 :bg]) (get-in frame [python-row 1 :bg]))
               "the execution box has one tinted padding row above PYTHON")
-      (expect (= (get-in frame [python-row 1 :bg])
-                 (get-in frame [first-row 1 :bg])
+      ;; Regression, T125: Activity painted the code band's slab under every row, so
+      ;; the chronology read as a second thinking block instead of the turn's own axis.
+      (expect (= (get-in frame [first-row 1 :bg])
                  (get-in frame [tests-row 1 :bg])
                  (get-in frame [(inc tests-row) 1 :bg]))
-              "Activity and its bottom padding stay inside the execution box")
+              "every Activity row and its padding share one paper")
+      (expect (not= (get-in frame [python-row 1 :bg]) (get-in frame [first-row 1 :bg]))
+              "Activity paints the transcript's own paper, never the code band's slab")
       (expect (= (.indexOf ^String python-line "PYTHON") (.indexOf ^String result-line "RESULT"))
               "section labels share one visual column")
       (expect (< (long status-row)
@@ -5408,10 +5411,12 @@ h = 8"
               strip-ansi
               strip-sentinels))
 
-        ;; The band's own rows are exactly the ones standing on the rail.
+        ;; The band's own rows are exactly the ones standing on the rail, and the rail
+        ;; stands one margin in from the paper's own edge.
         band-lines
         (fn [text]
-          (filterv #(contains? #{\u2502 \u251c} (first %)) (str/split-lines text)))
+          (filterv #(and (str/starts-with? % "  ") (contains? #{\│ \├} (nth % 2 nil)))
+                   (str/split-lines text)))
 
         line-with
         (fn [text needle]
@@ -5426,10 +5431,14 @@ h = 8"
 
           (expect (seq lines) "the expanded receipt paints an Activity band")
           (expect (some #(str/includes? % "ACTIVITY") lines) "the band names itself on the rail")
-          (expect (str/starts-with? (str (line-with text "PATCHED")) "\u251c\u2500")
+          (expect (str/starts-with? (str (line-with text "PATCHED")) "  ├─●")
                   "a step's mark is JOINED to the rail by a tick, never floating beside it")
-          (expect (= 4 (long (.indexOf ^String (str (line-with text "PATCHED")) "PATCHED")))
-                  "rail, tick, mark, gap: the verb starts in the fifth column")))
+          (expect (= 6 (long (.indexOf ^String (str (line-with text "PATCHED")) "PATCHED")))
+                  "margin, rail, tick, mark, gap: the verb starts in the seventh column")
+          (expect (every? #(str/starts-with? % "  ") lines)
+                  "the rail never sits against the paper's edge")
+          (expect (not-any? #(str/includes? % "✓") lines)
+                  "no row wears a check: one mark, and the colour carries the state")))
     (it
       "hangs the paths a step touched under it, and the patch under its path"
       (let [text
@@ -5455,7 +5464,7 @@ h = 8"
         (expect (str/includes? patched-path "\u25be") "a path that opens a patch wears a chevron")
         (expect (str/includes? read-path "\u203a")
                 "a path that only names a file wears the quiet guillemet")
-        (expect (= 4 (long (.indexOf patched-path "\u25be")))
+        (expect (= 6 (long (.indexOf patched-path "▾")))
                 "paths hang one level in from the step's own mark")
         (expect (str/includes? added "+ (def added-line 1)")
                 "an added line carries its sign exactly once, in the marker column")
