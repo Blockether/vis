@@ -31,6 +31,11 @@
                    (expect (str/includes? text "Addendum line\n\n  Nested addendum line"))
                    (expect (str/includes? text "Extension line\n\n  Nested extension line"))
                    (expect (not (str/includes? text "\n\n\n"))))))
+(defdescribe core-prompt-grep-regex-test
+             ;; Regression, user report: §3 ordered grep but omitted the content-regex switch.
+             (it "names grep's regex mode where it teaches the call"
+                 (let [text (prompt/build-system-prompt {})]
+                   (expect (str/includes? text "`is_regex: True`")))))
 
 (defdescribe
   cli-autonomous-override-test
@@ -814,9 +819,7 @@
                    (expect (str/includes?
                              text
                              "`grep({\"query\": [needles], \"paths\": [scopes], \"context\": 4})`"))
-                   (expect (str/includes?
-                             text
-                             "`context: 1` means one line before and one after (default 4)"))))
+                   (expect (str/includes? text "`context`: lines per side (default 4)"))))
              ;; Regression: `sh.logs` grew the same negative tail `cat` has, and the
              ;; prompt named the method with no arguments at all, so a watcher still
              ;; paged bytes to answer "what did it just print".

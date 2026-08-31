@@ -334,7 +334,7 @@
     "- After the initial search make at most two targeted discovery rounds before reproducing a\n"
     "  bug or writing the smallest test; exceed only if it fails or a named unresolved decision blocks the edit.\n"
     "- `grep` locates unknown code: `grep({\"query\": [needles], \"paths\": [scopes], \"context\": 4})`.\n"
-    "  It ORs terms and answers anchored TEXT, never a map; `context: 1` means one line before and one after (default 4); a hit IS a `patch` argument.\n"
+    "  Terms OR; `is_regex: True` runs a regex; answers anchored TEXT, never a map; `context`: lines per side (default 4); a hit IS a `patch` argument.\n"
     "  Read the region with `cat`, then edit by ADDRESS with\n"
     "  `patch(path, edits)`: ONE call for all file edits,\n"
     "  `[{\"from\": a, \"to\": b, \"replace\": text}]` (`to` defaults to `from`, `\"\"` deletes) — never\n"
