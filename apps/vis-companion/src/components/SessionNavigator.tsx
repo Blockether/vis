@@ -14,8 +14,8 @@ import {
 
 import type { MachineColor } from '../lib/machine-colors';
 import type { PullPhase } from '../lib/pull-to-search';
-import { ChevronIcon, PlusIcon, ProjectsIcon, SearchIcon } from './icons';
-import { Button, IconButton, LIST_EDGE, Spinner } from './ui';
+import { ChevronIcon, LoadingIcon, PlusIcon, ProjectsIcon, SearchIcon } from './icons';
+import { Button, IconButton, LIST_EDGE } from './ui';
 
 const HEADER_TYPE = 'text-title';
 
@@ -869,8 +869,8 @@ export function MachineTab({
  * than the same phrase on every row. The face stays on the compact 32px header
  * rhythm while `Button` preserves a 44px touch target outside the painted box.
  * `where` remains in the tooltip and `machine` in the accessible name.
- * While creation is in flight, the same disc stays put and its plus becomes the
- * shared waiting spinner; progress must not make one project header change width.
+ * While creation is in flight, the same disc stays put and its plus becomes a
+ * familiar turning ring; progress must not make one project header change width.
  */
 export function NewSessionButton({
   machine,
@@ -898,7 +898,7 @@ export function NewSessionButton({
       title={title}
       onClick={(event) => onPress(event.currentTarget)}
     >
-      {isBusy ? <Spinner /> : <PlusIcon className="size-4" />}
+      {isBusy ? <LoadingIcon className="size-4" /> : <PlusIcon className="size-4" />}
     </IconButton>
   );
 }

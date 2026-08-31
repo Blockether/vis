@@ -49,10 +49,10 @@
  * same `size-3`.
  *
  * Deliberately NOT here: `●`/`○`/`[✓]`, which are the cross-channel choice
- * marks the TUI paints too (see `HUMAN_INPUT_CHOICE_MARKS`), and the spinner's
- * Braille cadence. Those are the same characters on purpose — a terminal cell
- * holds a character, so the TUI mirrors these mark names in glyphs and an SVG
- * never travels the other way.
+ * marks the TUI paints too (see `HUMAN_INPUT_CHOICE_MARKS`), and the TEXT spinner's
+ * Braille cadence. Those stay characters because a terminal cell holds a character. A
+ * graphical control waiting on a phone instead uses `LoadingIcon`: an open ring that
+ * unmistakably turns rather than terminal punctuation that can read as three dots.
  */
 import {
   AlignLeft,
@@ -77,6 +77,7 @@ import {
   GitFork,
   Globe,
   Image,
+  LoaderCircle,
   type LucideIcon,
   Mic,
   MicVocal,
@@ -349,6 +350,16 @@ export function ProjectsIcon({ className }: { className?: string }) {
 /** A fork of a conversation: one trunk with a branch leaving it. */
 export function ForkIcon({ className }: { className?: string }) {
   return <Mark icon={GitFork} className={className} />;
+}
+
+/** Work in flight inside a graphical control: one open circle that turns. */
+export function LoadingIcon({ className }: { className?: string }) {
+  return (
+    <Mark
+      icon={LoaderCircle}
+      className={classes("animate-spin motion-reduce:animate-none", className)}
+    />
+  );
 }
 
 /** Re-read a live collection. The same arrows turn while that read is in flight. */

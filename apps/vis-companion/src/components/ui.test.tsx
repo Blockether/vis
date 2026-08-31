@@ -1853,8 +1853,9 @@ describe("project verbs use distinct marks", () => {
 });
 
 // Regression, user report: replacing the compact plus with “Creating...” widened one
-// project header while every neighbouring header kept its one-mark rhythm. The pressed
-// control should stay put and turn its mark into progress instead of growing a word.
+// project header while every neighbouring header kept its one-mark rhythm. The first
+// replacement used a Braille character that looked like three vertical dots on the phone;
+// progress inside a graphical button must be the familiar turning ring, not terminal type.
 describe("NewSessionButton, busy", () => {
   const busy = renderToStaticMarkup(
     <NewSessionButton
@@ -1864,8 +1865,10 @@ describe("NewSessionButton, busy", () => {
     />,
   );
 
-  it("turns its mark into progress without growing a word", () => {
-    expect(busy).toContain("animate-spinner-frame");
+  it("turns its mark into circular progress without growing a word", () => {
+    expect(busy).toContain("lucide-loader-circle");
+    expect(busy).toContain("animate-spin");
+    expect(busy).not.toContain("animate-spinner-frame");
     expect(busy).not.toContain("Creating...");
     expect(busy).not.toContain(">New session<");
   });
