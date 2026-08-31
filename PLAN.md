@@ -57,16 +57,15 @@ consumer uses.
   discovery, workspace context, editing, shell, shims, Python capture, PTY, MCP, harness,
   introspection and model-facing tool registration. That is the execution environment of Core, not
   a peer layer called Foundation or Base Tooling.
-- Production extensions reference 33 distinct `com.blockether.vis.internal.*` namespaces. The
-  language packs alone pierce the boundary at `vis-language-clojure/core.clj:18-27`,
-  `vis-language-clojure/test_runner.clj:23-25`, `vis-language-python/interpreter.clj:9-11`, and
-  `vis-language-python/ruff.clj:25-26`.
-- The boundary already has one executable gate. `packages/vis-contract/resources/vis-contract/clojure-host.edn`
-  declares `:contract/facade com.blockether.vis.core` and freezes today's leakage under
-  `:contract/internal-debt` (`:debt/production`); `clojure_host_test` fails both on a new name and on a
-  stale one. Measured debt: TUI 21 namespaces, `vis-language-python` 9, `vis-language-clojure` 6,
-  providers/persistence 1-3 each, 12 of them used by no channel. This plan extends that gate rather
-  than adding a second one.
+- The source-reader gate now measures 29 distinct `com.blockether.vis.internal.*` dependencies in
+  production extensions, plus the temporary `com.blockether.vis.core` facade: 30 forbidden
+  destinations across the 14 active packs. The TUI owns 18 internal destinations plus the facade,
+  `vis-language-python` owns 9 plus the facade, and `vis-language-clojure` owns 6 plus the facade;
+  11 internal destinations are used by no channel. `packages/vis-contract/resources/vis-contract/clojure-host.edn`
+  freezes each dependency by source-file count under `:contract/internal-debt`, including 23 sibling
+  dependencies in the current gateway server. The same executable gate freezes 93 distinct route,
+  event, header and protocol literals in the four Companion protocol modules and rejects direct
+  JavaScript/Python imports of `vis-contract`. New or stale debt fails `clojure_host_test`.
 - Two packaging facts constrain the SDK work.
   `resources/META-INF/native-image/com.blockether/vis/reachability-metadata.json` names no Vis
   namespace at all, so renaming namespaces adds nothing there; the native risk is `build.clj`'s
@@ -754,11 +753,11 @@ on-demand; a capability that appears only after unrelated use is not acceptable.
 
 ## State of the plan
 
-**REQUIRES WORK** — architecture revised and cross-validated against the tree; Phase 1 not started.
-This revision replaces the proposed `internal.base-tooling` layer with `internal.core.environment`,
-makes a tri-language Vis SDK a required boundary rather than deferred work, and splits first-party
-consumption into TUI, Companion transport and Companion View/extension phases after measuring each. No
-production namespace or package moved in the plan change.
+**IN PROGRESS** — Phase 1's executable dependency boundary is complete; behavior characterization and
+route/event fixtures remain before Phase 1 closes. `vis-contract` now source-reads Clojure `ns` forms,
+enforces the final Contract → Core → Gateway/SDK → consumer direction where those owners exist, and
+freezes current Clojure plus JavaScript/Python wire debt by source-file count. No production namespace
+or package has moved yet.
 
 Work already available as foundations:
 
@@ -770,8 +769,8 @@ Work already available as foundations:
 - Gateway startup deferral and first-frame work prove selective loading is feasible.
 - Issue #161 regressions pin stale-context retirement, abandoned-worker capacity reclamation and
   cross-session cancellation isolation.
-- `clojure_host_test` and `:contract/internal-debt` already fail on a new or stale boundary violation,
-  so Phase 1 extends a working gate instead of inventing one.
+- `clojure_host_test` now enforces the final graph, exact Clojure debt and the named Companion/Python
+  import/wire migration inputs from the independently loadable `vis-contract` artifact.
 
 The prior plan's contract, wire, View, Activity, gateway and loading work remains in Phases 2-3 and
 5-13. Its `internal.base-tooling` destination is rejected. A separately published SDK is no longer out
