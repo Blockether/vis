@@ -21,13 +21,22 @@ consumer uses.
   workspace, View, wire, themes and iteration state; for example `channel_tui/chat.clj:8-13` and
   `channel_tui/human_input.clj:26-28`.
 - The Companion implements its own client and protocol mirror. `apps/vis-companion/src/lib/gateway.ts`
-  is 169 KB, `types.ts` is 33 KB, and `App.tsx:19-20,246-249` constructs that private
-  `GatewayClient` directly. View, Human Input, compatibility and subscriptions are additional local
-  protocol implementations.
+  is 4 717 lines (169 KB), `types.ts` 1 056, `live-view.ts` 992, `fleet.ts` 783, `human-input.ts` 434,
+  `subscriptions.ts` 392, `relay.ts` 293, `compat.ts` 185 and `endpoints.ts` 183, while
+  `App.tsx:19-20,246-249` constructs that private `GatewayClient` directly. Three JVM tests read those
+  files by literal path — `channel_tui/test/.../view_cross_channel_test.clj:522,900` for
+  `human-input.ts` and `live-view.ts`, `test/.../gateway/server_test.clj:980` for `gateway.ts`, and
+  `test/.../gateway/relay_test.clj:341` for `relay.ts` — so moving that source without a successor
+  silently disarms the only cross-language drift gates the repository has.
 - Python already resembles an SDK but is named as a product half: `packages/vis-agent/pyproject.toml:1-18`
   says its exact `vis/__init__.py` source is both published and executed by the engine. It is released
   as `vis-agent`, imports as `vis`, and only covers extension-host operations; it is not a gateway
-  client shared with other consumers.
+  client shared with other consumers. `vis-agent` is also the shipped command — `bin/vis-agent` is
+  `clojure -M:vis`, with `bin/install-vis-agent`, the `vis-agent-<os>-<arch>-*` release assets and
+  `vis-agent update` — so the distribution name and the product name are not the same decision. The
+  source path itself is wired into `deps.edn:6-10`, where `packages/vis-agent/src` is a RESOURCE root
+  on `:paths`, plus `build.clj:1092-1094`, `.github/workflows/ci.yml:264-305` whose conftest expects
+  `vis-contract` as a sibling directory, and `e2e/run.py`.
 - `packages/vis-contract/README.md:10-14` currently owns only Clojure/Python host declarations.
   View, gateway, configuration, execution, provider and persistence contracts remain in engine
   implementation files.
@@ -41,10 +50,10 @@ consumer uses.
   release/build/runtime discovery. `gateway/state.clj:1-5536`, `server.clj:1-5019` and
   `client.clj:1-2719` each combine multiple owners.
 - `src/com/blockether/vis/internal/loop.clj:1-12120` owns block execution, iterations, turns,
-  environment lifetime and session caches. `internal/activity.clj:1-337` and its children reduce
+  environment lifetime and session caches. `internal/activity.clj:1-406` and its children reduce
   tool observations but sit beside Core even though Activity is execution trace data.
 - `resources/META-INF/vis/manifest.edn:2-54` registers 25 namespaces called `foundation`, and
-  `src/com/blockether/vis/internal/foundation/` contains 53 implementation files: environment
+  `src/com/blockether/vis/internal/foundation/` contains 56 implementation files: environment
   discovery, workspace context, editing, shell, shims, Python capture, PTY, MCP, harness,
   introspection and model-facing tool registration. That is the execution environment of Core, not
   a peer layer called Foundation or Base Tooling.
@@ -52,6 +61,19 @@ consumer uses.
   language packs alone pierce the boundary at `vis-language-clojure/core.clj:18-27`,
   `vis-language-clojure/test_runner.clj:23-25`, `vis-language-python/interpreter.clj:9-11`, and
   `vis-language-python/ruff.clj:25-26`.
+- The boundary already has one executable gate. `packages/vis-contract/resources/vis-contract/clojure-host.edn`
+  declares `:contract/facade com.blockether.vis.core` and freezes today's leakage under
+  `:contract/internal-debt` (`:debt/production`); `clojure_host_test` fails both on a new name and on a
+  stale one. Measured debt: TUI 21 namespaces, `vis-language-python` 9, `vis-language-clojure` 6,
+  providers/persistence 1-3 each, 12 of them used by no channel. This plan extends that gate rather
+  than adding a second one.
+- Two packaging facts constrain the SDK work.
+  `resources/META-INF/native-image/com.blockether/vis/reachability-metadata.json` names no Vis
+  namespace at all, so renaming namespaces adds nothing there; the native risk is `build.clj`'s
+  manifest-derived entrypoints and symbols resolved from strings at runtime, such as the CLI's
+  `requiring-resolve` of `com.blockether.vis.ext.channel-tui.screen/run-chat!`. And there is no root
+  `package.json` or npm workspace: `apps/vis-companion` is standalone, and its `scripts/version.mjs` is
+  the only thing allowed to write `VIS_VERSION` into package, lock and `pyproject` manifests.
 
 **Root problem.** Repository proximity is being mistaken for API access. In-process consumers call
 Core internals, the out-of-process Companion hand-builds a second client, Python exposes only one
@@ -177,14 +199,19 @@ import the production namespace they test; contract conformance tests exercise p
 
 **Acceptance criteria.**
 
-- Add one Clojure namespace dependency test and one JavaScript/Python import/wire scan enforcing the
-  graph above, initially with a closed exact debt set. A new violation fails; every migration commit
-  removes entries until Phase 10 deletes the debt mechanism.
+- Extend the existing `clojure_host_test` and its `:contract/internal-debt` freeze instead of adding a
+  parallel gate: one Clojure namespace dependency test, plus one JavaScript/Python import/wire scan
+  enforcing the graph above, each with a closed exact debt set. A new violation fails; every migration
+  commit removes entries until Phase 12 deletes the debt mechanism.
 - Pin the current route table, gateway event vocabulary, View open/patch/action/close behavior,
   Human Input validation/secrets, Activity reduction, turn cancellation and cross-session permit
   isolation before moving their owners.
 - Inventory direct TUI and extension internal imports, Companion route/header/event literals and
-  Python host operations as named migration inputs rather than broad exceptions.
+  Python host operations as named migration inputs rather than broad exceptions. The measured inputs
+  are 33 distinct engine namespaces across 18 production packs, 21 of them in the TUI, and the
+  Companion literals in `gateway.ts`, `compat.ts`, `endpoints.ts` and `types.ts`.
+- Characterize the three path-pinned cross-language mirror tests before any of their sources move, and
+  name the contract fixture that replaces each. A gate may be replaced, never deleted.
 - Record namespace bytes, public vars and package sizes as diagnostics. Final budgets are based on
   the new owners, not arbitrary limits chosen before extraction.
 - Require every phase to land in independently green vertical slices with source, consumers,
@@ -277,6 +304,10 @@ a universal schema language.
   must account for every operation.
 - Any current spec that proves to validate only a private intermediate becomes a local predicate
   rather than expanding the public contract.
+- `contract.json` renders from contract-owned data only: `write-package-document!` loses its
+  vocabulary argument, `packages/vis-contract/README.md:20-29` stops instructing a caller to hand in
+  `internal.view.spec/contract-vocabulary`, and `python_package_test` plus `contract.python-host-test`
+  pin the argument-free render.
 
 **Unknowns.** Some host operations may be meaningful only in-process or only over the gateway. Mark
 that transport/capability explicitly in the operation catalog; do not force false behavioral parity.
@@ -303,6 +334,11 @@ Artifact identities are `com.blockether/vis-sdk`, `vis-sdk` (still imported as `
 `@blockether/vis-sdk`. The top-level APIs are small conveniences over domain modules, not another
 hundreds-of-vars facade.
 
+The shipped command keeps its name: `bin/vis-agent`, `bin/install-vis-agent`, the
+`vis-agent-<os>-<arch>-*` release assets and `vis-agent update` are untouched — only the Python
+distribution and its source path move. SDK modules re-export contract types verbatim: a consumer never
+imports `contract.*`, and no SDK invents a second spelling for a contract vocabulary.
+
 **Acceptance criteria.**
 
 - Each SDK depends on generated `vis-contract` data and ordinary language libraries only; building
@@ -324,6 +360,17 @@ hundreds-of-vars facade.
 - Add package smoke tests from built artifacts: Clojure with only the SDK dependency, Python from a
   wheel, and JavaScript from the packed npm tarball.
 - `VIS_VERSION`, release automation and license audit cover all three artifacts at the same version.
+- Move every consumer of the old Python path in the same slice: `deps.edn:6-10`, where
+  `packages/vis-agent/src` is a resource root on `:paths`, `build.clj:1092-1094`,
+  `.github/workflows/ci.yml:264-305` whose conftest expects `vis-contract` as a sibling directory,
+  `e2e/run.py` and the docs. The CLI name, installer assets and update tracks do not change.
+- Decide JavaScript packaging explicitly: the repository has no root `package.json`, so the plan adds
+  either an npm workspace or a packed-tarball dependency, and extends
+  `apps/vis-companion/scripts/version.mjs` to own the new package and lock files.
+- A fixture test fails when an SDK declares a node kind, event name, field type, header or route the
+  contract does not; re-export is a thin alias, never a wrapper vocabulary.
+- The Clojure SDK carries both the out-of-process client and the in-process host adapter, because the
+  TUI is registered through `resources/META-INF/vis/manifest.edn` and runs inside the engine's process.
 
 **Unknowns.** None about the public product split: contract and SDK remain separate, and all three
 SDK distributions ship. Registry publication occurs through the existing release process after the
@@ -335,7 +382,7 @@ packages pass local artifact smoke tests.
 adapter collection. They construct the capabilities in which a Core Turn executes and share that
 environment's lifecycle, cancellation and disposal.
 
-**Data.** After Phase 3 extracts contracts, classify the 53 files into this owner:
+**Data.** After Phase 3 extracts contracts, classify the 56 files into this owner:
 
 ```text
 internal/core/environment/
@@ -352,9 +399,10 @@ moves to that channel rather than being hidden in Environment.
 
 **Acceptance criteria.**
 
-- Move every Core-owned `internal.foundation.*` implementation, test, apropos resource, manifest
-  entry and native reachability reference under `internal.core.environment.*`; delete old
-  namespaces in the same slices.
+- Move every Core-owned `internal.foundation.*` implementation, test, apropos resource and manifest
+  entry under `internal.core.environment.*`; delete old namespaces in the same slices. The 25 manifest
+  registrations carry `:apropos "META-INF/vis/apropos/shim-*.edn"` names, so regenerate those resources
+  with `apropos-resource-test/regenerate!` in the same slice or the drift test fails.
 - Environment owns creation, workspace context, tool capability assembly, cancellation attachment,
   sandbox handles and disposal. Session/Turn code uses its operations without importing concrete
   tool children.
@@ -368,8 +416,11 @@ moves to that channel rather than being hidden in Environment.
   coordinates, manifest entries and active product copy. Historical release prose is not rewritten.
 - Lifecycle tests prove a cancelled/condemned Environment cannot be reused, resources are disposed
   once, and one Session's Environment failure cannot affect another.
-- JVM and native manifest/reachability tests preserve shipped capabilities and registration order
-  apart from deliberate names.
+- `reachability-metadata.json` names no Vis namespace, so this move adds no entry there. The native
+  verdict is a green `clojure -T:build native` and `-M:test-native`, because reachability derives from
+  the manifest entrypoints and symbols resolved from strings survive a JVM-only run unnoticed.
+- JVM and native manifest tests preserve shipped capabilities and registration order apart from
+  deliberate names.
 
 **Unknowns.** A helper with both Environment and channel callers exposes contract data or moves to a
 true shared leaf only when semantics are owner-neutral. It does not justify a new miscellaneous
@@ -547,55 +598,110 @@ calls to HTTP/SSE. Shared executable transport code is neither required nor desi
 not a browser. The contract capability matrix marks it unavailable in browser JavaScript rather
 than pretending parity.
 
-## Phase 10 — Make TUI, Companion and every extension SDK-only consumers
+## Phase 10 — Put the TUI on the Clojure SDK
 
-**Rationale.** Publishing SDKs is not success while first-party consumers bypass them. TUI and
-Companion should be the conformance applications that make an internal leak or missing SDK operation
-impossible to merge.
+**Rationale.** The TUI is the largest in-process consumer and the proof that the Clojure SDK can serve
+a same-process channel rather than only a remote client. It pierces the facade in 21 engine namespaces
+today, so it is the conformance application that makes a leak impossible to merge.
 
-**Data.** Final allowed dependencies are:
+**Data.** The measured TUI debt is 21 engine namespaces:
 
 ```text
-vis-channel-tui          → com.blockether/vis-sdk + Lanterna/UI libraries
-vis-companion            → @blockether/vis-sdk + React/Capacitor/UI libraries
-Clojure extension packs  → com.blockether/vis-sdk + extension-specific libraries
-Python extensions        → vis-sdk (`import vis`)
-external clients         → one language SDK
+attachments · config · extension · external-opener · file-picker · format · gateway.wire · header
+iteration · limits-format · paths · prompt-templates · provider-error · provider-limits · providers
+render · theme · view · view.materializer · view.spec · workspace
 ```
 
-`vis-contract` may be installed transitively by an SDK but is not imported directly by these
-consumers.
+Each resolves one of three ways: an SDK operation, a contract type re-exported by the SDK, or a
+TUI-owned implementation when only the TUI needs it.
 
 **Acceptance criteria.**
 
-- Change the TUI artifact dependency from the whole engine to `com.blockether/vis-sdk`. Production
-  TUI code has zero imports, dynamic resolves or doc references to `com.blockether.vis.core`,
-  `com.blockether.vis.internal.*` or direct contract namespaces.
-- Replace each TUI internal helper dependency with an SDK operation/type or TUI-owned implementation;
-  do not move visible rendering policy into the SDK.
-- Add `@blockether/vis-sdk` to the Companion and remove local ownership of gateway transport,
-  compatibility, subscriptions, View/Human Input protocol reducers and duplicated wire models.
-- A Companion gate rejects raw Vis route strings, protocol headers/event vocabularies and direct
-  gateway `fetch`/stream construction outside the SDK. Native platform/relay integration remains app
-  code and invokes SDK client operations for gateway work.
-- Every Clojure extension imports only `com.blockether.vis.sdk.*`, its own code and ordinary
-  libraries. Every Python extension imports `vis`; no extension imports engine internals or contract
-  packages directly.
-- Move the engine binary entry point out of `com.blockether.vis.core`, migrate all legitimate host
-  operations to SDK contracts/adapters or internal owners, then delete `core.clj` and
-  `com.blockether.vis.view` without aliases.
-- Empty and delete `clojure-host.edn/:internal-debt`; the final architecture gate states the direct
-  SDK-only rule.
-- Built-artifact end-to-end tests run TUI through the Clojure SDK, Companion through the packed
-  JavaScript SDK and a Python extension/client through the wheel against the same gateway fixtures.
-- The native binary test loads a Python SDK extension and observes its registered capability through
-  an SDK client.
+- Change `extensions/channels/vis-channel-tui/deps.edn:10-12` from the whole engine to
+  `com.blockether/vis-sdk`. Production TUI code has zero imports, dynamic resolves or doc references to
+  `com.blockether.vis.core`, `com.blockether.vis.internal.*` or `com.blockether.vis.contract.*`.
+- The TUI registers and receives channel callbacks through the SDK's in-process host adapter; its
+  manifest entry and the CLI's `requiring-resolve` of `channel-tui.screen/run-chat!` keep working.
+- Visible rendering policy stays in the TUI. Paint contracts, Lanterna work and the screenshot API do
+  not migrate into the SDK, and no SDK operation exists only to satisfy one renderer.
+- The TUI suite, its terminal-grid assertions and the PNG capture path stay green; a native build and
+  `-M:test-native` prove the binary still starts the chat screen.
+- `:debt/production` loses every TUI entry in the same slices.
 
-**Unknowns.** Some formatting or file-picker helpers currently shared through engine internals may
-be pure UI utilities rather than Vis APIs. They move into the TUI when only TUI uses them; only
-cross-consumer semantics earn an SDK operation.
+**Unknowns.** Some formatting, file-picker and path helpers may be pure UI utilities rather than Vis
+APIs. They move into the TUI when only the TUI uses them; only cross-consumer semantics earn an SDK
+operation.
 
-## Phase 11 — Rebuild composition on final owners and lock the result
+## Phase 11 — Put Companion transport on the JavaScript SDK
+
+**Rationale.** The Companion owns a second implementation of the protocol — 4 717 lines in the client
+alone — and two JVM tests read that source as the drift gate. Transport is the half that is purely
+contract behavior, so it moves first and independently of View.
+
+**Data.** Move from `apps/vis-companion/src/lib` into `@blockether/vis-sdk`:
+
+```text
+gateway.ts 4 717 · types.ts 1 056 · fleet.ts 783 · subscriptions.ts 392 · relay.ts 293
+compat.ts 185 · endpoints.ts 183      (gateway.test.ts 1 135 becomes SDK conformance)
+```
+
+**Acceptance criteria.**
+
+- Connection identity, compatibility negotiation, auth/lease, routes, subscriptions/replay,
+  cancellation and wire models live in the SDK. The app keeps rendering, local state, notifications and
+  native/relay integration, and calls SDK operations for gateway work.
+- A Companion gate rejects raw Vis route strings, protocol headers, event vocabularies and direct
+  gateway `fetch`/stream construction outside the SDK.
+- `test/.../gateway/server_test.clj:980` and `test/.../gateway/relay_test.clj:341` stop reading
+  `apps/vis-companion/src/lib/*.ts`; each is replaced in the same slice by a contract-fixture drift test
+  against the SDK source, so no gate disappears without its successor.
+- `npm run lint`, `npm run test:storybook` and `npm run build` stay green, and CI consumes the packed
+  SDK artifact rather than a source path.
+
+**Unknowns.** Whether `fleet.ts` is transport or product state. Classify by the contract: fleet
+membership and health are gateway concepts, fleet presentation is not.
+
+## Phase 12 — Put Companion View, every extension and the last facade on the SDKs
+
+**Rationale.** View is the vocabulary every consumer shares, so it moves after transport and after Core
+owns one state machine. With it gone the engine keeps no public facade, and the debt mechanism that
+Phase 1 froze can be deleted instead of maintained.
+
+**Data.** The remaining consumers are:
+
+```text
+apps/vis-companion/src/lib   live-view.ts 992 · human-input.ts 434 · view.ts 39
+extensions/**                18 production packs, 12 engine namespaces left after Phase 10
+src/com/blockether/vis       core.clj 825 · view.clj 352
+```
+
+**Acceptance criteria.**
+
+- The Companion renders View from SDK-typed snapshots and sends actions through SDK operations; no
+  local protocol reducer, node table or Human Input vocabulary remains in the app.
+- `channel_tui/test/.../view_cross_channel_test.clj:522,900` is replaced by a contract-fixture
+  conformance test that the TUI renderer and the JavaScript SDK both run, so the closed vocabularies
+  stay pinned across languages.
+- Every Clojure extension imports only `com.blockether.vis.sdk.*`, its own code and ordinary libraries;
+  every Python extension imports `vis`.
+- Move the engine binary entry point out of `com.blockether.vis.core`, which `build.clj:746,1254` names
+  as `:main`, then delete `core.clj` and `com.blockether.vis.view` without aliases.
+- Update `resources/vis-docs/extending.md:1465-1475,1540,1739`, the `doc()` catalog
+  `resources/META-INF/vis/apropos/docs.edn` and `resources/vis-docs/site.edn` in the same slice, so
+  `doc("extending")` never describes a deleted facade.
+- Empty and delete `:contract/internal-debt`; `clojure_host_test` states the SDK-only rule or is
+  removed with the document it guarded.
+- Built-artifact end-to-end tests run the TUI through the Clojure SDK, the Companion through the packed
+  JavaScript SDK and a Python extension/client through the wheel against the same gateway fixtures;
+  `e2e/run.py` still drives the real CLI.
+- The native binary test loads a Python SDK extension and observes its registered capability through an
+  SDK client.
+
+**Unknowns.** Whether the Clojure SDK exposes View builders to extensions only or also to external
+clients that register nothing. Decide from the contract capability matrix, not from what is convenient
+to export.
+
+## Phase 13 — Rebuild composition on final owners and lock the result
 
 **Rationale.** Once Core, SDK and consumers are clean, the manifest can load only the Environment and
 adapters each host needs, release automation can publish the real public surface, and final gates can
@@ -632,8 +738,10 @@ remain diagnostics.
 - The architecture gates have no debt. Production paths and APIs contain no `foundation`,
   `base-tooling`, architectural `spi`, implementation-owned `spec`, broad `com.blockether.vis.core`
   facade, internal gateway client or duplicated route/event vocabulary.
-- Update owning docstrings, AGENTS guidance, docs catalog, examples, generated artifacts and release
-  audit to final package and namespace names; do not add migration aliases for removed APIs.
+- Update owning docstrings, the `AGENTS.md` ownership table and release rule, docs catalog, examples,
+  generated artifacts and the release audit to final package and namespace names; the version-sync
+  command owns every manifest and lock it writes, and the release commit's file set matches it. Do not
+  add migration aliases for removed APIs.
 - Finish each slice with its smallest tests and the plan with relevant full JVM tests, `lint_code`,
   `format_code`, native reachability/tests, Python package tests, JavaScript SDK tests, and Companion
   lint, Storybook tests and build.
@@ -646,10 +754,11 @@ on-demand; a capability that appears only after unrelated use is not acceptable.
 
 ## State of the plan
 
-**REQUIRES WORK** — architecture revised; Phase 1 not started. This revision replaces the proposed
-`internal.base-tooling` layer with `internal.core.environment` and makes a tri-language Vis SDK a
-required boundary rather than deferred work. No production namespace or package moved in the plan
-change.
+**REQUIRES WORK** — architecture revised and cross-validated against the tree; Phase 1 not started.
+This revision replaces the proposed `internal.base-tooling` layer with `internal.core.environment`,
+makes a tri-language Vis SDK a required boundary rather than deferred work, and splits first-party
+consumption into TUI, Companion transport and Companion View/extension phases after measuring each. No
+production namespace or package moved in the plan change.
 
 Work already available as foundations:
 
@@ -661,13 +770,16 @@ Work already available as foundations:
 - Gateway startup deferral and first-frame work prove selective loading is feasible.
 - Issue #161 regressions pin stale-context retirement, abandoned-worker capacity reclamation and
   cross-session cancellation isolation.
+- `clojure_host_test` and `:contract/internal-debt` already fail on a new or stale boundary violation,
+  so Phase 1 extends a working gate instead of inventing one.
 
 The prior plan's contract, wire, View, Activity, gateway and loading work remains in Phases 2-3 and
-5-11. Its `internal.base-tooling` destination is rejected. A separately published SDK is no longer
-out of scope: Clojure, JavaScript and Python SDK artifacts are Phase 4, clients are Phase 9, and
-first-party SDK-only consumption is Phase 10.
+5-13. Its `internal.base-tooling` destination is rejected. A separately published SDK is no longer out
+of scope: Clojure, JavaScript and Python SDK artifacts are Phase 4, clients are Phase 9, and
+first-party SDK-only consumption is Phases 10-12.
 
 TODO, in order: 1 dependency/behavior gates · 2 canonical wire/gateway contract · 3 all executable
-contracts · 4 three SDK artifacts · 5 Core Environment and Foundation deletion · 6 Core View · 7
-Core execution and Tool Activity · 8 gateway state owners · 9 internal server/public SDK clients ·
-10 SDK-only TUI/Companion/extensions · 11 manifest, release, budgets and final gates.
+contracts · 4 three SDK artifacts · 5 Core Environment and Foundation deletion · 6 Core View · 7 Core
+execution and Tool Activity · 8 gateway state owners · 9 internal server/public SDK clients · 10 TUI on
+the Clojure SDK · 11 Companion transport on the JavaScript SDK · 12 Companion View, extensions and
+facade deletion · 13 manifest, release, budgets and final gates.
