@@ -4,7 +4,8 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]])
   (:import [com.googlecode.lanterna TerminalSize]
            [com.googlecode.lanterna.input KeyType]
-           [com.googlecode.lanterna.terminal.html HtmlTerminal]))
+           [com.googlecode.lanterna.terminal.html HtmlTerminal HtmlTerminalEndpoint
+            HtmlTerminalEndpoint$Event]))
 
 (defn- rv [sym] (ns-resolve 'com.blockether.vis.ext.channel-tui.gateway sym))
 
@@ -40,19 +41,34 @@
     (is (false? (request-authed? {} "secret")))))
 
 (deftest page-input-resize-and-stream-use-the-same-transport-neutral-terminal
-  (with-open [terminal (terminal)]
+  (with-open [terminal
+              (terminal)
+
+              endpoint
+              (HtmlTerminalEndpoint. terminal)]
+
     (.putCharacter terminal \S)
     (.flush terminal)
-    (with-redefs-fn {(rv 'ensure-terminal!) (constantly terminal)}
+    (with-redefs-fn {(rv 'ensure-endpoint!) (constantly endpoint)}
       (fn []
-        (let [contribution (gateway/routes-contribution)
-              routes (into {} ((:routes contribution) "secret"))
-              cookie-request {:cookies {"vis_tui_gateway" {:value "secret"}}}
-              bearer-request {:headers {"authorization" "Bearer secret"}}]
+        (let [contribution
+              (gateway/routes-contribution)
+
+              routes
+              (into {} ((:routes contribution) "secret"))
+
+              cookie-request
+              {:cookies {"vis_tui_gateway" {:value "secret"}}}
+
+              bearer-request
+              {:headers {"authorization" "Bearer secret"}}]
 
           (testing "the first authenticated response is rendered HTML, not a client frame model"
-            (let [response ((rv 'page-handler) "secret" cookie-request)
-                  body (:body response)]
+            (let [response
+                  ((rv 'page-handler) "secret" cookie-request)
+
+                  body
+                  (:body response)]
 
               (is (= 200 (:status response)))
               (is (= "text/html; charset=utf-8" (get-in response [:headers "Content-Type"])))
@@ -70,17 +86,25 @@
           ;; Regression, issue b30f87ac-f20e-4d7f-9fd2-416788d10527: an HTML attachment
           ;; stayed a portable snapshot in the Companion, so every key, tap and resize was discarded.
           (testing "the authenticated Companion receives a parent bridge without the gateway secret"
-            (let [embed (get-in routes ["/tui/embed" :get])
-                  response (embed (assoc bearer-request :query-params {"bridge" "phone-review"}))
-                  body (:body response)]
+            (let [embed
+                  (get-in routes ["/tui/embed" :get])
+
+                  response
+                  (embed (assoc bearer-request :query-params {"bridge" "phone-review"}))
+
+                  body
+                  (:body response)]
 
               (is (= 200 (:status response)))
               (is (re-find #"data-transport=\"parent\"" body))
               (is (re-find #"data-bridge-id=\"phone-review\"" body))
               (is (not (str/includes? body "secret")))))
           (testing "input routes accept the browser cookie or the canonical bearer header"
-            (let [input (get-in routes ["/tui/input" :post])
-                  resize (get-in routes ["/tui/resize" :post])]
+            (let [input
+                  (get-in routes ["/tui/input" :post])
+
+                  resize
+                  (get-in routes ["/tui/resize" :post])]
 
               (is (= 401 (:status (input {:form-params {"kind" "key" "key" "Enter"}}))))
               (is (= 204
@@ -96,7 +120,12 @@
                                         :form-params {"cols" "33" "rows" "12"})))))
               (is (= (TerminalSize. 33 12) (.getTerminalSize terminal)))))
           (testing "SSE carries the server-rendered fragment itself"
-            (let [event ((rv 'frame-event) (.snapshot terminal))]
-              (is (re-find #"event: frame" event))
-              (is (re-find #"data: <div class=\"frame\"" event))
-              (is (not (re-find #"\"runs\"|\"media\"" event))))))))))
+            (let [^HtmlTerminalEndpoint$Event event
+                  (.awaitEvent ^HtmlTerminalEndpoint endpoint -1 0)
+
+                  body
+                  (.body event)]
+
+              (is (re-find #"event: frame" body))
+              (is (re-find #"data: <div class=\"frame\"" body))
+              (is (not (re-find #"\"runs\"|\"media\"" body))))))))))
