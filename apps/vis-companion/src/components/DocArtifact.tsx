@@ -95,15 +95,16 @@ export function docSandbox(mime: string | undefined): string {
  * keeps terminal reviews attached before the SSR renderer migration useful.
  */
 export function isLanternaTerminalHtml(html: string): boolean {
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  const terminal = parsed.getElementById("terminal");
+  const input = parsed.getElementById("input");
   const shell =
-    html.includes('id="terminal" role="application"') &&
-    html.includes('id="input"') &&
-    html.includes('aria-label="Terminal keyboard input"');
-  return (
-    shell &&
-    (html.includes('data-lanterna-terminal="true"') ||
-      /<script\s+id="bootstrap"[^>]*type="application\/json"/.test(html))
-  );
+    terminal?.getAttribute("role") === "application" &&
+    input?.getAttribute("aria-label") === "Terminal keyboard input";
+  const marker =
+    parsed.body.dataset.lanternaTerminal === "true" ||
+    parsed.querySelector('script#bootstrap[type="application/json"]') !== null;
+  return shell && marker;
 }
 
 function TuiBridgeFrame({

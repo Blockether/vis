@@ -108,6 +108,19 @@ describe("a Lanterna terminal attachment", () => {
     expect(isLanternaTerminalHtml('<html><body><div id="terminal">not Lanterna</div></body></html>')).toBe(false);
   });
 
+  // Regression, issue vis_session_id#61af6891-021d-4202-a507-e41e032a2bb2: a
+  // self-contained Companion page carried the terminal detector's source strings in
+  // its bundled script, so opening it was replaced by the TUI attachment beside it.
+  it("ignores terminal marker strings inside an ordinary page's script", () => {
+    const bundledPage = `<!doctype html><body><main>Companion</main><script>
+      const terminal = 'id="terminal" role="application"';
+      const input = 'id="input" aria-label="Terminal keyboard input"';
+      const marker = 'data-lanterna-terminal="true"';
+    </script></body>`;
+
+    expect(isLanternaTerminalHtml(bundledPage)).toBe(false);
+  });
+
   it("replaces the dead snapshot with the authenticated parent bridge", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(legacyTerminal, { status: 200 })));
     const stop = vi.fn();
