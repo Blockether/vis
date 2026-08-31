@@ -392,7 +392,15 @@ function ActivityPath({ id }: { id: string }) {
  */
 const ACTIVITY_FILES_SHOWN = 4;
 
-/** WHAT THE STEP TOUCHED, one path per line, in the machine's own hand. */
+/**
+ * WHAT THE STEP TOUCHED, one path per line, in the machine's own hand.
+ *
+ * ONE COLUMN, AND THE FOLD STANDS IN IT. A path and the `+N more files` that hides
+ * the rest are the same list, so both hang their mark in the same 12px cell at the
+ * row's own left edge and start their words 18px in. The cell is `w-3` because that
+ * is the box `Disclosure` gives its chevron; a guillemet left to its own 5px advance
+ * put every path two pixels off the count that folds it.
+ */
 function ActivityFiles({ resources }: { resources: ActivityResource[] }) {
   const [showAll, setShowAll] = useState(false);
   const hidden = Math.max(0, resources.length - ACTIVITY_FILES_SHOWN);
@@ -403,9 +411,9 @@ function ActivityFiles({ resources }: { resources: ActivityResource[] }) {
         {shown.map((resource) => (
           <li
             key={`${resource.type}:${resource.id}`}
-            className="flex min-w-0 items-center gap-[7px] px-1 py-0.5 font-mono text-chip text-code-result"
+            className="flex min-w-0 items-center gap-1.5 py-0.5 pr-1 font-mono text-chip text-code-result"
           >
-            <span aria-hidden="true" className="shrink-0 text-code-duration">
+            <span aria-hidden="true" className="w-3 shrink-0 text-center text-code-duration">
               &rsaquo;
             </span>
             <ActivityPath id={resource.id} />
