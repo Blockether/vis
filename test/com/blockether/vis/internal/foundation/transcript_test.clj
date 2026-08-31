@@ -42,8 +42,11 @@
                          :thinking "Reasoning about arithmetic"
                          :vars [{:name "x" :value 42 :code "(def x 42)"}]
                          :duration-ms 12
-                         :llm-provider :blockether
-                         :llm-model "gpt-4o"
+                         ;; `llm_provider`/`llm_model` were dropped as redundant, so routing
+                         ;; travels as ONE nested map. `:provider`/`:model` on the iteration
+                         ;; mirror what ACTUALLY answered, which is what the turn rolls up.
+                         :llm-routing {:selected {:provider :blockether :model "gpt-4o"}
+                                       :actual {:provider :blockether :model "gpt-4o"}}
                          :tokens {"input" 100 "output" 20 "reasoning" 0 "cached" 30}
                          :cache-created-tokens 700
                          :cost-usd 0.0042})
@@ -64,8 +67,8 @@
                                     :error {:message
                                             "ExceptionInfo: Unable to resolve symbol: Let"}}]
                            :duration-ms 1
-                           :llm-provider :blockether
-                           :llm-model "gpt-4o"
+                           :llm-routing {:selected {:provider :blockether :model "gpt-4o"}
+                                         :actual {:provider :blockether :model "gpt-4o"}}
                            :tokens {"input" 80 "output" 10 "reasoning" 0 "cached" 20}
                            :cache-created-tokens 300
                            :cost-usd 0.0021})
