@@ -2148,6 +2148,19 @@
                (expect (str/includes? field-row "▎hi")))
              (finally (.stopScreen screen))))))
 
+;; Regression, issue #160: the navigator received and stored each gateway `live`
+;; update, then reduced a running session to its turn count or `focused` label.
+(defdescribe navigator-live-status-test
+             (it "marks running sessions even when the current session is focused"
+                 (let [row
+                       (var-get #'dlg/navigator-session-row)
+
+                       live
+                       {"id" "s-live" "title" "Deploy" "turn_count" 3 "live" true}]
+
+                   (expect (= "● live" (:status (row nil live))))
+                   (expect (= "● focused · live" (:status (row "s-live" live)))))))
+
 (defdescribe
   navigator-input-needed-test
   "The session list's own answer to \"which of these is waiting on ME\". The row

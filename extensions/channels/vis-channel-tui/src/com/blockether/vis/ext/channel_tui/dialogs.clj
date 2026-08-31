@@ -4893,7 +4893,10 @@
         ;; is normally parked in ANOTHER process, and this list is where its
         ;; operator goes looking for it.
         awaiting-input?
-        (true? (get session "is_awaiting_input"))]
+        (true? (get session "is_awaiting_input"))
+
+        live?
+        (true? (get session "live"))]
 
     {:id (str "session:" id)
      :focused? active?
@@ -4905,6 +4908,8 @@
      :dir work-dir
      :work-dir work-dir
      :status (cond awaiting-input? "! input needed"
+                   (and active? live?) "● focused · live"
+                   live? "● live"
                    active? "● focused"
                    :else (str (long (or (get session "turn_count") 0)) " turns"))
      :created (navigator-stamp (get session "created_at"))
