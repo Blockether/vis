@@ -451,6 +451,49 @@
                "code" "provider_unroutable"
                "message" "No provider could take this request\n\nWHAT HAPPENED: ..."}])))))
 
+
+;; Regression, issue #167: typed provider blocks carried an upstream HTTP status,
+;; request id and attempts, but the TUI's disposable Markdown retained only the
+;; machine code and flattened message.
+(defdescribe provider-error-markdown-test
+             (it "projects the structured diagnosis before its compact diagnostics"
+                 (let [rendered (chat/content->markdown
+                                  [{"id" "provider-error-1"
+                                    "type" "error"
+                                    "code" "provider_rate-limit"
+                                    "message" "Flattened fallback that must not be painted."
+                                    "title" "Provider rate limit reached"
+                                    "explanation" "the provider is throttling new requests."
+                                    "next_step" "wait and retry, or switch provider/model."
+                                    "status" 429
+                                    "provider" "anthropic"
+                                    "request_id" "req_167"
+                                    "attempts" [{"provider" "anthropic"
+                                                 "model" "claude-opus-4"
+                                                 "status" 429
+                                                 "reason" "rate-limit"}]}])]
+                   (expect (str/starts-with? rendered "Provider rate limit reached"))
+                   (expect (str/includes? rendered "**WHAT HAPPENED:** the provider is throttling"))
+                   (expect (str/includes? rendered "**NEXT STEP:** wait and retry"))
+                   (expect (str/includes? rendered "HTTP 429"))
+                   (expect (str/includes? rendered "anthropic/claude-opus-4"))
+                   (expect (str/includes? rendered "req_167"))
+                   (expect (< (str/index-of rendered "Provider rate limit reached")
+                              (str/index-of rendered "provider_rate-limit")))
+                   (expect (not (str/includes? rendered "Flattened fallback")))))
+             (it "distinguishes a route that never sent from an HTTP response"
+                 (let [rendered (chat/content->markdown [{"id" "provider-error-unsent"
+                                                          "type" "error"
+                                                          "code" "provider_unroutable"
+                                                          "kind" "unroutable"
+                                                          "title"
+                                                          "No provider could take this request"
+                                                          "explanation" "Nothing was sent."
+                                                          "next_step" "Choose another route."
+                                                          "provider" "openai-codex"}])]
+                   (expect (str/includes? rendered "Route openai-codex"))
+                   (expect (not (str/includes? rendered "Provider openai-codex")))
+                   (expect (not (str/includes? rendered "HTTP"))))))
 (defdescribe gateway-event-chunk-test
              ;; The gateway wire event ships the raw `:code`; the TUI renders it directly
              ;; (the canonical web `block-code` contract), so the projection just carries

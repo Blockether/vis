@@ -876,13 +876,27 @@ export interface ContentBlock {
   text?: string;
   language?: string;
   tool?: string;
-  status?: "pending" | "running" | "completed" | "failed" | "cancelled";
+  status?:
+    | "pending"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | number;
   input?: JsonValue;
   output?: JsonValue;
   error?: JsonValue;
   code?: string;
   message?: string;
   retryable?: boolean;
+  kind?: string;
+  title?: string;
+  explanation?: string;
+  next_step?: string;
+  request_id?: string;
+  provider?: string;
+  attempts?: JsonValue[];
+  body?: string;
   visibility?: "private" | "visible";
   attachment_id?: string;
   name?: string;

@@ -57,6 +57,75 @@ function openResult(container: HTMLElement): void {
   }
 }
 
+describe("provider failure card", () => {
+  // Regression, issue #167: the gateway preserved HTTP 429 on the content block,
+  // but the companion painted only its machine code and flattened message.
+  it("leads with the diagnosis and keeps upstream facts visible", () => {
+    const view = render(
+      <ContentBlockView
+        block={{
+          id: "provider-error-1",
+          type: "error",
+          code: "provider_rate-limit",
+          message: "Flattened fallback that a structured client must not paint.",
+          title: "Provider rate limit reached",
+          explanation: "The provider is throttling new requests.",
+          next_step: "Wait and retry, or switch provider/model.",
+          status: 429,
+          provider: "anthropic",
+          request_id: "req_167",
+          retryable: true,
+          attempts: [
+            {
+              provider: "anthropic",
+              model: "claude-opus-4",
+              status: 429,
+              reason: "rate-limit",
+            },
+          ],
+        }}
+      />,
+    );
+
+    try {
+      expect(
+        view.getByRole("heading", { name: "Provider rate limit reached" }),
+      ).toBeTruthy();
+      const card = view.getByRole("alert");
+      expect(card.textContent).toContain("The provider is throttling new requests.");
+      expect(card.textContent).toContain("Wait and retry, or switch provider/model.");
+      expect(card.textContent).toContain("HTTP 429");
+      expect(card.textContent).toContain("anthropic");
+      expect(card.textContent).toContain("req_167");
+      expect(card.textContent).not.toContain("Flattened fallback");
+      expect(card.textContent).not.toContain("provider_rate-limit");
+
+      fireEvent.click(view.getByRole("button", { name: "Diagnostics" }));
+      expect(card.textContent).toContain("anthropic/claude-opus-4");
+      expect(card.textContent).toContain("provider_rate-limit");
+      expect(card.textContent?.indexOf("Provider rate limit reached")).toBeLessThan(
+        card.textContent?.indexOf("provider_rate-limit") ?? -1,
+      );
+    } finally {
+      view.unmount();
+    }
+  });
+  it("does not offer an empty diagnostics disclosure", () => {
+    const view = render(
+      <ContentBlockView
+        block={{ id: "internal-error-1", type: "error", message: "Unexpected failure." }}
+      />,
+    );
+
+    try {
+      expect(view.getByRole("heading", { name: "Turn failed" })).toBeTruthy();
+      expect(view.getByText("Unexpected failure.")).toBeTruthy();
+      expect(view.queryByRole("button", { name: "Diagnostics" })).toBeNull();
+    } finally {
+      view.unmount();
+    }
+  });
+});
 describe("spoken transcript", () => {
   it("opens as justified transcript under a waveform you can seek", () => {
     const html = renderToStaticMarkup(

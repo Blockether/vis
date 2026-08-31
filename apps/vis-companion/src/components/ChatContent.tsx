@@ -3063,6 +3063,153 @@ export function SpeechBlock({ text }: { text: string }) {
   );
 }
 
+function errorText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return text || undefined;
+}
+
+function providerAttemptText(value: unknown): string | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const attempt = value as Record<string, unknown>;
+  const provider = errorText(attempt.provider);
+  const model = errorText(attempt.model);
+  const status =
+    typeof attempt.status === "number" || typeof attempt.status === "string"
+      ? String(attempt.status).trim()
+      : "";
+  const reason = errorText(attempt.reason);
+  const route = [provider, model].filter(Boolean).join("/");
+  const verdict = [status, reason].filter(Boolean).join(" ");
+  return [route, verdict].filter(Boolean).join(": ") || undefined;
+}
+
+/** One failure, with the human decision first and machine evidence on demand. */
+export function ErrorBlockCard({ block }: { block: ContentBlock }) {
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const structuredTitle = errorText(block.title);
+  const title = structuredTitle ?? "Turn failed";
+  const explanation = structuredTitle
+    ? errorText(block.explanation)
+    : errorText(block.message);
+  const nextStep = errorText(block.next_step);
+  const provider = errorText(block.provider);
+  const requestId = errorText(block.request_id);
+  const status = typeof block.status === "number" ? String(block.status) : undefined;
+  const attempts = Array.isArray(block.attempts)
+    ? block.attempts.map(providerAttemptText).filter((one): one is string => Boolean(one))
+    : [];
+  const code = errorText(block.code);
+  const body = errorText(block.body);
+  const hasFacts = Boolean(status || provider || requestId);
+  const hasDiagnostics = Boolean(code || attempts.length > 0 || body);
+  const providerLabel = block.kind === "unroutable" ? "Route" : "Provider";
+  const headingId = `failure-${block.id}`;
+
+  return (
+    <section
+      role="alert"
+      aria-labelledby={headingId}
+      className="my-3 border-l-2 border-warn-edge bg-warn-surface text-answer-foreground"
+    >
+      <div className="flex items-start gap-2.5 px-3 py-3">
+        <span aria-hidden="true" className="mt-0.5 shrink-0 text-err">
+          <AlertIcon />
+        </span>
+        <div className="min-w-0">
+          <h3 id={headingId} className="text-body font-semibold text-err">
+            {title}
+          </h3>
+          {explanation && (
+            <p className={`${PROSE} mt-1 text-body text-answer-foreground`}>
+              {explanation}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {nextStep && (
+        <div className="border-t border-warn-edge px-3 py-2.5">
+          <p className="font-mono text-chip font-semibold uppercase tracking-wide text-dialog-hint">
+            Next step
+          </p>
+          <p className={`${PROSE} mt-1 text-body text-answer-foreground`}>
+            {nextStep}
+          </p>
+        </div>
+      )}
+
+      {hasFacts && (
+        <dl className="flex flex-wrap gap-x-5 gap-y-1 border-t border-warn-edge px-3 py-2 font-mono text-meta">
+          {status && (
+            <div>
+              <dt className="inline text-dialog-hint">HTTP</dt>{" "}
+              <dd className="inline font-semibold text-err">{status}</dd>
+            </div>
+          )}
+          {provider && (
+            <div>
+              <dt className="inline text-dialog-hint">{providerLabel}</dt>{" "}
+              <dd className="inline">{provider}</dd>
+            </div>
+          )}
+          {requestId && (
+            <div className="min-w-0">
+              <dt className="inline text-dialog-hint">Request</dt>{" "}
+              <dd className="inline break-all">{requestId}</dd>
+            </div>
+          )}
+        </dl>
+      )}
+
+      {hasDiagnostics && (
+        <div className="border-t border-warn-edge px-1">
+          <Disclosure
+            isOpen={diagnosticsOpen}
+            tone="caption"
+            onClick={() => setDiagnosticsOpen((open) => !open)}
+          >
+            Diagnostics
+          </Disclosure>
+          {diagnosticsOpen && (
+            <div className="space-y-2 px-2 pb-3 font-mono text-meta text-dialog-hint">
+              {code && (
+                <p>
+                  Error code <span className="text-err">{code}</span>
+                </p>
+              )}
+              {attempts.length > 0 && (
+                <div>
+                  <p className="font-semibold uppercase tracking-wide">Providers tried</p>
+                  <ul className="mt-1 grid gap-0.5">
+                    {attempts.map((attempt, index) => (
+                      <li
+                        key={`${index}-${attempt}`}
+                        className="break-words text-answer-foreground"
+                      >
+                        {attempt}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {body && (
+                <div>
+                  <p className="font-semibold uppercase tracking-wide">Provider response</p>
+                  <pre className="mt-1 whitespace-pre-wrap break-words text-answer-foreground">
+                    {body}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
 export const ContentBlockView = memo(function ContentBlockView({
   block,
   onOpenAttachment,
@@ -3100,12 +3247,7 @@ export const ContentBlockView = memo(function ContentBlockView({
       return <ToolCard form={form} />;
     }
     case "error":
-      return (
-        <div className="my-2 flex gap-2 border border-warn-edge bg-warn-surface px-2.5 py-2 font-mono text-meta text-err">
-          <strong>{block.code}</strong>
-          <span>{block.message}</span>
-        </div>
-      );
+      return <ErrorBlockCard block={block} />;
     case "attachment":
       return (
         <div className="my-2 flex w-fit items-center gap-1.5 border border-dialog-edge bg-panel px-2.5 py-1.5 font-mono text-meta text-dialog-foreground">

@@ -17,6 +17,32 @@
             :error "rate limited"}
            {:provider "openai" :model "gpt-5" :status 401 :reason :auth :error "unauthorized"}]}})
 
+
+;; Regression, issue #167: the upstream status survived classification but the
+;; canonical block flattened the diagnosis into prose, leaving channels to lose
+;; the HTTP fact or parse sentences back into a card.
+(defdescribe provider-error-block-view-model-test
+             (it "ships the presentation and upstream facts as separate fields"
+                 (let [err
+                       {:message "Exceptional status code: 429"
+                        :data {:status 429
+                               :provider :anthropic
+                               :request-id "req_167"
+                               :body "{\"error\":{\"message\":\"rate limited\"}}"}}
+
+                       block
+                       (first (perr/provider-error-content err))]
+
+                   (expect (= "rate-limit" (get block "kind")))
+                   (expect (= (perr/provider-error-title err) (get block "title")))
+                   (expect (= (second (perr/split-error-label (perr/provider-error-explanation
+                                                                err)))
+                              (get block "explanation")))
+                   (expect (= (second (perr/split-error-label (perr/provider-error-next-step err)))
+                              (get block "next_step")))
+                   (expect (= 429 (get block "status")))
+                   (expect (= "req_167" (get block "request_id")))
+                   (expect (= "anthropic" (get block "provider"))))))
 (defdescribe
   provider-error-attempts-test
   (it "reads the per-provider attempts from the ex-data"

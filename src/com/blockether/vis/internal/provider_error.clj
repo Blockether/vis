@@ -1128,21 +1128,30 @@
   (let [{:keys [kind title explanation next-step status request-id provider-id attempts body]}
         (provider-error-info err)
 
+        [_ explanation-body]
+        (split-error-label explanation)
+
+        [_ next-step-body]
+        (split-error-label next-step)
+
         retryable?
         (provider-error-retryable? err)
 
         attempts-line
-        ;; The per-provider reasons svar retained. They used to reach NO chat
-        ;; surface: the block's `attempts` field is structured data neither the TUI
-        ;; nor the companion renders, so the bubble showed three sentences of prose
-        ;; while the only concrete facts sat one key away.
+        ;; The per-provider reasons svar retained. They remain in the fallback
+        ;; message for non-structured channels and separately in `attempts` for
+        ;; product surfaces that can give them their own diagnostics section.
         (when-let [summary (provider-error-attempts-summary err)]
           (str "PROVIDERS TRIED: " summary))
 
         message
         (str/join "\n\n" (remove str/blank? [title explanation next-step attempts-line]))]
 
-    [(cond-> (content/error (str "provider_" (name (or kind :failure))) message retryable?)
+    [(cond-> (assoc (content/error (str "provider_" (name (or kind :failure))) message retryable?)
+               "kind" (name (or kind :failure))
+               "title" title
+               "explanation" explanation-body
+               "next_step" next-step-body)
        status
        (assoc "status" status)
 

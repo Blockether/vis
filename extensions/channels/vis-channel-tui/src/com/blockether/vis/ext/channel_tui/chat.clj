@@ -10,6 +10,7 @@
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.internal.attachments :as attach]
             [com.blockether.vis.internal.iteration :as iteration]
+            [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
@@ -288,6 +289,77 @@
         "message" (vis/error-message (get result "error"))
         "retryable" false}])))
 
+
+
+(defn- provider-attempt->text
+  "One canonical provider attempt as `provider/model: status reason`."
+  [attempt]
+  (let [provider
+        (util/non-blank (get attempt "provider"))
+
+        model
+        (util/non-blank (get attempt "model"))
+
+        status
+        (util/non-blank (get attempt "status"))
+
+        reason
+        (util/non-blank (get attempt "reason"))
+
+        route
+        (str/join "/" (remove nil? [provider model]))
+
+        verdict
+        (str/join " " (remove nil? [status reason]))]
+
+    (not-empty (str route (when (and (seq route) (seq verdict)) ": ") verdict))))
+
+(defn- provider-error->markdown
+  "Project one structured provider block without parsing its fallback message."
+  [block]
+  (let [title
+        (util/non-blank (get block "title"))
+
+        explanation
+        (util/non-blank (get block "explanation"))
+
+        next-step
+        (util/non-blank (get block "next_step"))
+
+        code
+        (util/non-blank (get block "code"))
+
+        body
+        (util/non-blank (get block "body"))
+
+        provider-label
+        (if (= "unroutable" (get block "kind")) "Route" "Provider")
+
+        facts
+        (remove nil?
+          [(when-let [status (util/non-blank (get block "status"))]
+             (str "HTTP " status))
+           (when-let [provider (util/non-blank (get block "provider"))]
+             (str provider-label " " provider))
+           (when-let [request-id (util/non-blank (get block "request_id"))]
+             (str "Request " request-id))])
+
+        attempts
+        (keep provider-attempt->text (get block "attempts"))
+
+        diagnostics
+        (remove str/blank?
+          [(when code (str "Error code: `" code "`"))
+           (when (seq attempts) (str "**Providers tried:** " (str/join " · " attempts)))
+           (when body (str "**Provider response:**\n\n    " (str/replace body "\n" "\n    ")))])]
+
+    (str/join "\n\n"
+              (remove str/blank?
+                [title (when explanation (str "**WHAT HAPPENED:** " explanation))
+                 (when next-step (str "**NEXT STEP:** " next-step))
+                 (when (seq facts) (str/join " · " (map #(str "`" % "`") facts)))
+                 (when (seq diagnostics)
+                   (str "**Diagnostics**\n\n" (str/join "\n\n" diagnostics)))]))))
 (defn content->markdown
   "Disposable Markdown projection of canonical content blocks."
   [blocks]
@@ -304,18 +376,11 @@
              "reasoning"
              (get block "text")
 
-             ;; An ERROR names its machine code, the same card the companion
-             ;; paints (`ChatContent.tsx`: `<strong>{code}</strong><span>{message}</span>`):
-             ;; `turn_failed` is what a bug report quotes. A NOTICE is prose for
-             ;; a human - the companion prints its message alone, so the TUI does
-             ;; too. "turn_cancelled Cancelled by user." said the same thing
-             ;; twice, once in a token nobody outside this repo can read.
-             ;;
-             ;; The message starts its OWN paragraph. A provider failure's
-             ;; message is a whole card (headline, then `WHAT HAPPENED:`, then
-             ;; `NEXT STEP:`), and gluing the code in front of it ran the machine
-             ;; token into the headline - `provider_generic Provider unavailable` -
-             ;; so the first line read as one sentence nobody wrote.
+             ;; Structured provider failures lead with the canonical diagnosis and
+             ;; action, then preserve their upstream evidence below it. Legacy/internal
+             ;; errors retain the machine code a bug report quotes and put their message
+             ;; in its own paragraph. A NOTICE remains human prose without a duplicate
+             ;; machine token.
              "error"
              (let [message
                    (get block "message")
@@ -323,7 +388,9 @@
                    code
                    (get block "code")]
 
-               (if (and (seq code) (seq message)) (str "**" code "**\n\n" message) message))
+               (if (seq (get block "title"))
+                 (provider-error->markdown block)
+                 (if (and (seq code) (seq message)) (str "**" code "**\n\n" message) message)))
 
              "notice"
              (get block "message")

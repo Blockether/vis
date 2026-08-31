@@ -30,6 +30,7 @@ import liveViewWire from '../lib/live-view.fixture.json';
 import { createComposerPaste, type ComposerPaste } from '../lib/paste';
 import { COMMENTS_HEADING } from '../lib/markdown-annotations';
 import type {
+  ContentBlock,
   FileSuggestion,
   GatewayConn,
   QueuedTurn,
@@ -902,4 +903,190 @@ export const STORY_TURN_ITERATIONS_ACTIVITY: TranscriptIteration[] = [
     ],
     duration_ms: 9100,
   },
+];
+
+/**
+ * EVERY PROVIDER FAILURE THE ENGINE CAN NAME. This is the product taxonomy, not
+ * a collection of HTTP examples: no route, no response, an HTTP rejection and a
+ * successful HTTP stream that later failed are deliberately separate states.
+ */
+function storyProviderError(
+  kind: string,
+  title: string,
+  explanation: string,
+  nextStep: string,
+  extra: Partial<ContentBlock> = {},
+): ContentBlock {
+  return {
+    id: `provider-${kind}`,
+    type: 'error',
+    code: `provider_${kind}`,
+    kind,
+    title,
+    explanation,
+    next_step: nextStep,
+    message: `${title}\n\nWHAT HAPPENED: ${explanation}\n\nNEXT STEP: ${nextStep}`,
+    retryable: false,
+    ...extra,
+  };
+}
+
+export const STORY_PROVIDER_ERRORS: ContentBlock[] = [
+  storyProviderError(
+    'unroutable',
+    'No provider could take this request',
+    'Nothing was sent. The requested route is unavailable or cooling down.',
+    'Check the first provider failure, or choose another provider/model.',
+    { provider: 'openai-codex' },
+  ),
+  storyProviderError(
+    'transport',
+    'Could not reach provider',
+    'The connection dropped before any HTTP response came back. The model never ran.',
+    'Retry. If it keeps failing, check the connection and provider gateway.',
+    { retryable: true },
+  ),
+  storyProviderError(
+    'rate-limit',
+    'Provider rate-limited',
+    'The provider is throttling new requests.',
+    'Wait and retry, or switch provider/model.',
+    {
+      status: 429,
+      provider: 'anthropic',
+      request_id: 'req_01JISSUE167',
+      retryable: true,
+      attempts: [
+        {
+          provider: 'anthropic',
+          model: 'claude-opus-4',
+          status: 429,
+          reason: 'rate-limit',
+        },
+      ],
+    },
+  ),
+  storyProviderError(
+    'stream-interrupted',
+    'Provider stream ended early',
+    'HTTP 200 opened a response stream, but it closed before the terminal event arrived.',
+    'Retry; the incomplete answer was not accepted as final.',
+    { status: 200, provider: 'openai', retryable: true },
+  ),
+  storyProviderError(
+    'file-descriptors-exhausted',
+    'Too many files are open',
+    'This machine cannot open another provider connection.',
+    'Close unused processes or raise the file-descriptor limit, then retry.',
+  ),
+  storyProviderError(
+    'context-overflow',
+    'Context window exceeded',
+    'The request is larger than this model can accept.',
+    'Start a shorter session, remove large attachments, or choose a larger context model.',
+    { status: 400, provider: 'openai' },
+  ),
+  storyProviderError(
+    'stream-timeout',
+    'Stream went quiet — Vis timed out',
+    'The provider stream stayed open but sent no model progress before the deadline.',
+    'Retry, or raise the stream timeout for long reasoning turns.',
+    { status: 200, provider: 'anthropic', retryable: true },
+  ),
+  storyProviderError(
+    'refusal',
+    'Provider declined this request',
+    'The model returned a refusal instead of an answer.',
+    'Change the request or choose a model that can answer it.',
+    { status: 200, provider: 'anthropic' },
+  ),
+  storyProviderError(
+    'empty-content',
+    'Provider returned no usable content',
+    'The response completed without text, reasoning, tool calls or attachments.',
+    'Retry once; if it repeats, switch provider/model.',
+    { status: 200, provider: 'openai', retryable: true },
+  ),
+  storyProviderError(
+    'invalid-thinking-signature',
+    'Provider rejected the thinking signature',
+    'The stream began successfully, then rejected a thinking block carried from this session.',
+    'Start a fresh turn without the incompatible thinking history.',
+    { status: 200, provider: 'anthropic', request_id: 'req_signature_167' },
+  ),
+  storyProviderError(
+    'tool-schema',
+    'Provider rejected a tool schema',
+    'One tool declaration uses a schema feature this provider does not accept.',
+    'Fix the named tool schema or choose a provider that supports it.',
+    { status: 400, provider: 'bedrock' },
+  ),
+  storyProviderError(
+    'output-budget-too-small',
+    'Output token budget too small',
+    'The configured output budget is below the provider minimum.',
+    'Raise max_output_tokens to the stated minimum, then retry.',
+    { status: 400, provider: 'openai' },
+  ),
+  storyProviderError(
+    'invalid-request',
+    'Provider rejected the request',
+    'The provider found an invalid request field: service_tier.',
+    'Correct the request configuration before retrying.',
+    { status: 400, provider: 'openai', request_id: 'req_invalid_167' },
+  ),
+  storyProviderError(
+    'auth',
+    'Provider authentication failed',
+    'The provider rejected the configured credentials.',
+    'Re-authenticate or fix the API key, then retry.',
+    { status: 401, provider: 'anthropic' },
+  ),
+  storyProviderError(
+    'quota-exhausted',
+    'Provider quota exhausted',
+    'This account has no usable quota or credits.',
+    'Check the plan and usage limits, add credits, or switch provider.',
+    { status: 402, provider: 'anthropic' },
+  ),
+  storyProviderError(
+    'upstream-timeout',
+    'Provider timed out upstream',
+    'The gateway answered, but its model upstream did not finish in time.',
+    'Retry, or switch provider/model if the timeout persists.',
+    { status: 504, provider: 'bedrock', retryable: true },
+  ),
+  storyProviderError(
+    'gateway-unavailable',
+    'Provider gateway unavailable',
+    'The gateway or its upstream service is temporarily unavailable.',
+    'Retry after a short wait, or switch provider/model.',
+    { status: 502, provider: 'zai-coding-plan', retryable: true },
+  ),
+  storyProviderError(
+    'model-unavailable',
+    'Provider model unavailable',
+    'The requested model is unavailable on this provider.',
+    'Choose another model or provider.',
+    { status: 404, provider: 'openai' },
+  ),
+  storyProviderError(
+    'resource-mismatch',
+    'Provider resource does not match',
+    'The requested item belongs to a different provider resource.',
+    'Use the resource that created the item; do not retry this request unchanged.',
+    { status: 400, provider: 'azure-openai' },
+  ),
+  storyProviderError(
+    'generic',
+    'Provider unavailable',
+    'The provider call failed without a more specific verdict.',
+    'Retry once, then include the diagnostics when reporting a persistent failure.',
+    {
+      status: 500,
+      provider: 'gateway.example.com',
+      body: '<html>upstream service unavailable</html>',
+      retryable: true,
+    },
+  ),
 ];

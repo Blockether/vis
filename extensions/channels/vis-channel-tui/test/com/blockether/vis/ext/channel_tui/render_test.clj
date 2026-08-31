@@ -4584,6 +4584,66 @@ h = 8"
           (expect (not (str/includes? text "**")))
           (expect (not (str/includes? text "ERROR:")))))))
 
+
+;; Regression, issue #167: the terminal received the upstream status on the
+;; canonical error block, then dropped it while projecting that block to Markdown.
+(defdescribe
+  provider-error-card-facts-paint-test
+  (let [blocks
+        [{"id" "provider-error-167"
+          "type" "error"
+          "code" "provider_rate-limit"
+          "title" "Provider rate-limited"
+          "explanation" "the provider is throttling new requests."
+          "next_step" "wait and retry, or switch provider/model."
+          "message" "Flattened fallback must not be painted."
+          "status" 429
+          "provider" "anthropic"
+          "request_id" "req_167"
+          "attempts"
+          [{"provider" "anthropic" "model" "claude-opus-4" "status" 429 "reason" "rate-limit"}]}]
+
+        markdown
+        (chat/content->markdown blocks)
+
+        rendered
+        (render/format-answer-markdown-data (vis/markdown->ast markdown) 82 nil)
+
+        message
+        {:role :assistant
+         :text markdown
+         :content blocks
+         :prewrapped-lines (:lines rendered)
+         :line-meta (:line-meta rendered)}
+
+        captured
+        (cap/capture!
+          {:cols 90
+           :rows 24
+           :paint!
+           (fn [{:keys [screen]}]
+             (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+               (render/draw-chat-bubble! (.newTextGraphics s) message 2 2 86 {:viewport-h 30})
+               (.refresh s)))})
+
+        text
+        (cap/frame-text captured)]
+
+    (it "paints the diagnosis, action and upstream facts from the structured block"
+        (expect (str/includes? text "Provider rate-limited"))
+        (expect (str/includes? text "the provider is throttling new requests"))
+        (expect (str/includes? text "wait and retry, or switch provider/model"))
+        (expect (str/includes? text "HTTP 429"))
+        (expect (str/includes? text "Provider anthropic"))
+        (expect (str/includes? text "Request req_167")))
+    (it "keeps machine diagnostics after the human decision"
+        (expect (str/includes? text "anthropic/claude-opus-4: 429 rate-limit"))
+        (expect (str/includes? text "provider_rate-limit"))
+        (expect (< (str/index-of text "Provider rate-limited")
+                   (str/index-of text "HTTP 429")
+                   (str/index-of text "provider_rate-limit")))
+        (expect (not (str/includes? text "Flattened fallback")))
+        (expect (not (str/includes? text "**"))))))
 ;; Every collapsible band NAMES itself on its disclosure row, and that name is
 ;; the control: `PYTHON`, `THINKING` and `RESULT` paint in caps and BOLD while
 ;; the `+N more` tally beside them stays at body weight. The three used to
