@@ -776,7 +776,9 @@ vocabulary, defaults and every executable View shape. `internal/view/spec.clj` w
 than forwarded; the engine and current TUI consumers import the contract owner directly, with the
 TUI edge frozen until its Phase 10 SDK migration. Package rendering remains argument-free. Existing
 View, Human Input, Activity, cancellation and cross-session permit suites preserve behavior. Three
-production namespaces have moved or been removed.
+production namespaces have moved or been removed. TUI `transient/spec.clj` likewise became local
+`transient.validation` predicates, removing 33 production `s/def` forms without making a private
+paint shape public.
 
 Work already available as foundations:
 

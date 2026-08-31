@@ -50,7 +50,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.ext.channel-tui.transient.spec :as sp]))
+            [com.blockether.vis.ext.channel-tui.transient.validation :as sp]))
 
 (set! *unchecked-math* :warn-on-boxed)
 

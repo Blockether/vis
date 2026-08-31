@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.channel-tui.transient.spec-test
+(ns com.blockether.vis.ext.channel-tui.transient.validation-test
   "The transient's CONTRACT on its own: the vocabulary every surface reads
    (`item-types` and the trait sets derived from it), the closed shapes a
    producer may hand the component, and the one-line prose each explainer
@@ -13,7 +13,7 @@
             [lazytest.core :refer [defdescribe expect it]]
             [com.blockether.vis.ext.channel-tui.mcp-model :as mcp-model]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
-            [com.blockether.vis.ext.channel-tui.transient.spec :as sp]))
+            [com.blockether.vis.ext.channel-tui.transient.validation :as sp]))
 
 (def ^:private legal-item
   {:key "h" :type :switch :id :no-verify :label "Disable hooks" :arg "--no-verify"})
