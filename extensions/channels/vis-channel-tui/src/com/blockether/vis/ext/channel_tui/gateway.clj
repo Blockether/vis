@@ -15,8 +15,8 @@
             [com.blockether.vis.ext.channel-tui.theme :as theme]
             [ring.core.protocols :as ring-protocols]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna.terminal.html HtmlTerminal HtmlTerminalRenderer
-            HtmlTerminalRenderer$Frame]
+  (:import [com.googlecode.lanterna.terminal.html HtmlTerminal HtmlTerminalEndpoint
+            HtmlTerminalEndpoint$Event]
            [java.io IOException OutputStream]
            [java.security MessageDigest]))
 
@@ -56,9 +56,12 @@
         (random-uuid)
 
         terminal
-        (new-terminal)]
+        (new-terminal)
 
-    (reset! runtime* {:id id :terminal terminal})
+        endpoint
+        (HtmlTerminalEndpoint. terminal)]
+
+    (reset! runtime* {:id id :terminal terminal :endpoint endpoint})
     (let [task (vis/worker-future "tui-gateway"
                                   (fn []
                                     (try (screen/run-chat! {:html-terminal terminal})
@@ -72,11 +75,20 @@
       (swap! runtime* #(when (= id (:id %)) (assoc % :task task))))
     terminal))
 
-(defn- ensure-terminal!
+(defn- ensure-runtime!
   []
   (locking runtime*
-    (let [terminal (:terminal @runtime*)]
-      (if (and terminal (not (.isClosed ^HtmlTerminal terminal))) terminal (launch-terminal!)))))
+    (let [current
+          @runtime*
+
+          terminal
+          (:terminal current)]
+
+      (if (and terminal (not (.isClosed ^HtmlTerminal terminal)))
+        current
+        (do (launch-terminal!) @runtime*)))))
+
+(defn- ensure-endpoint! [] (:endpoint (ensure-runtime!)))
 
 (defn stop!
   "Stop the gateway-owned TUI, if one is running."
@@ -85,7 +97,7 @@
                        (let [current @runtime*]
                          (reset! runtime* nil)
                          current))]
-    (.close ^HtmlTerminal (:terminal current)))
+    (.close ^HtmlTerminalEndpoint (:endpoint current)))
   nil)
 
 (def ^:private html-headers
@@ -138,7 +150,7 @@
     (cond (same-secret? token (cookie-secret request))
           {:status 200
            :headers html-headers
-           :body (.renderLiveHtml ^HtmlTerminal (ensure-terminal!) "/tui")}
+           :body (.renderPage ^HtmlTerminalEndpoint (ensure-endpoint!) "/tui")}
           (and (contains? query-params "token") (not (same-secret? token query-token)))
           (unauthorized-handler request)
           :else (session-cookie-response token request))))
@@ -150,57 +162,30 @@
 
 (defn- embed-handler
   [request]
-  (let [bridge (vis/non-blank (get-in request [:query-params "bridge"]))]
-    (if (and bridge (<= (count bridge) 128))
-      {:status 200
-       :headers html-headers
-       :body (.renderBridgeHtml ^HtmlTerminal (ensure-terminal!) bridge)}
-      {:status 400
-       :headers {"Content-Type" "text/plain; charset=utf-8" "Cache-Control" "no-store"}
-       :body "bridge must be a non-blank identifier of at most 128 characters"})))
+  (try {:status 200
+        :headers html-headers
+        :body (.renderBridge ^HtmlTerminalEndpoint (ensure-endpoint!)
+                             (get-in request [:query-params "bridge"]))}
+       (catch IllegalArgumentException _
+         {:status 400
+          :headers {"Content-Type" "text/plain; charset=utf-8" "Cache-Control" "no-store"}
+          :body "bridge must be a non-blank identifier of at most 128 characters"})))
 
 (defn- request-form [request] (or (:form-params request) (:params request) {}))
 
 (defn- input-handler
   [request]
-  (.submitBrowserInput ^HtmlTerminal (ensure-terminal!) (request-form request))
+  (.submitInput ^HtmlTerminalEndpoint (ensure-endpoint!) (request-form request))
   {:status 204 :headers {"Cache-Control" "no-store"} :body ""})
-
-(defn- form-long
-  [form key]
-  (try (some-> (get form key)
-               str
-               Long/parseLong)
-       (catch NumberFormatException _ nil)))
 
 (defn- resize-handler
   [request]
-  (let [form
-        (request-form request)
-
-        columns
-        (form-long form "cols")
-
-        rows
-        (form-long form "rows")]
-
-    (if (and columns rows)
-      (do (.resizeFromBrowser ^HtmlTerminal (ensure-terminal!) (int columns) (int rows))
-          {:status 204 :headers {"Cache-Control" "no-store"} :body ""})
-      {:status 400
-       :headers {"Content-Type" "text/plain; charset=utf-8" "Cache-Control" "no-store"}
-       :body "cols and rows must be integers"})))
-
-(defn- frame-event
-  [^HtmlTerminalRenderer$Frame frame]
-  (str "id: "
-       (.version frame)
-       "\n"
-       "event: frame\n"
-       (->> (str/split (HtmlTerminalRenderer/renderFrame frame) #"\R" -1)
-            (map #(str "data: " % "\n"))
-            (apply str))
-       "\n"))
+  (try (.resize ^HtmlTerminalEndpoint (ensure-endpoint!) (request-form request))
+       {:status 204 :headers {"Cache-Control" "no-store"} :body ""}
+       (catch IllegalArgumentException _
+         {:status 400
+          :headers {"Content-Type" "text/plain; charset=utf-8" "Cache-Control" "no-store"}
+          :body "cols and rows must be integers"})))
 
 (defn- last-event-id
   [request]
@@ -210,7 +195,7 @@
        (catch NumberFormatException _ -1)))
 
 (defn- events-body
-  [^HtmlTerminal terminal initial-version]
+  [^HtmlTerminalEndpoint endpoint initial-version]
   (reify
     ring-protocols/StreamableResponseBody
       (write-body-to-stream [_ _ output-stream]
@@ -225,14 +210,11 @@
 
           (vis/gateway-register-contributed-sse! stream-id close!)
           (try (loop [after (long initial-version)]
-                 (when-not (.isClosed terminal)
-                   (let [frame (.awaitFrame terminal after 15000)
-                         version (.version ^HtmlTerminalRenderer$Frame frame)]
+                 (when-not (.isClosed endpoint)
+                   (let [^HtmlTerminalEndpoint$Event event (.awaitEvent endpoint after 15000)
+                         version (.version event)]
 
-                     (.write output
-                             (vis/utf8 (if (= version after) ": keepalive
-
-" (frame-event frame))))
+                     (.write output (vis/utf8 (.body event)))
                      (.flush output)
                      (recur version))))
                (catch IOException _ nil)
@@ -245,7 +227,7 @@
              "Cache-Control" "no-cache, no-transform"
              "X-Accel-Buffering" "no"
              "X-Content-Type-Options" "nosniff"}
-   :body (events-body (ensure-terminal!) (last-event-id request))})
+   :body (events-body (ensure-endpoint!) (last-event-id request))})
 
 (defn routes-contribution
   "Mount the singleton SSR terminal at `/tui` on the Vis gateway."

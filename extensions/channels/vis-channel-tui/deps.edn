@@ -10,10 +10,9 @@
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
         com.blockether/vis {:local/root "../../.."}
         com.taoensso/telemere {:mvn/version "1.2.1"}
-        ;; Blockether fork of mabe02/lanterna 3.1.5 — a DROP-IN replacement in the same
-        ;; com.googlecode.lanterna.* package, retired when upstream ships equivalents.
-        ;; Its subject is STANDARD Unicode widths: lanterna's column model has to match
-        ;; what the terminal paints, or every following cell and border slides.
+        ;; Blockether's maintained fork of mabe02/lanterna 3.1.5 — a drop-in replacement
+        ;; in the same com.googlecode.lanterna.* package. It owns terminal rendering and input
+        ;; primitives so Vis can remain a thin application adapter. Notable fork changes:
         ;;   1. PR #625 cherry-pick — grapheme-aware emoji rendering in
         ;;      StreamBasedTerminal/AbstractTextGraphics putString.
         ;;   2. BMP `Emoji_Presentation=Yes` glyphs (✅ ⭐ ⚡ ❌ ⏰ …) and genuine
@@ -72,7 +71,10 @@
         ;;      exposes cellWidth/cellHeight) and TextColor's deprecated `toColor()` are
         ;;      gone, `requires static java.desktop` is dropped from module-info, and the
         ;;      jar carries no java/awt or javax/swing reference at all.
-        com.blockether/lanterna {:mvn/version "3.1.5-vis.44"}
+        ;;  17. Headless HTML terminal protocol plus shared GUI2 HitRegionMap and interactive,
+        ;;      one-cell ScrollBar primitives own browser hit-testing, endpoint semantics,
+        ;;      geometry, painting and pointer interaction inside Lanterna instead of Vis.
+        com.blockether/lanterna {:mvn/version "3.1.5-vis.45"}
         ;; Pure-Java H.264/MP4 encoder for the headless session `cinema` export
         ;; (channel-tui.cinema). CORE ONLY: com.blockether/imaging renders the frames
         ;; and hands them over as jcodec RGB `Picture`s, so the java.desktop-bound
