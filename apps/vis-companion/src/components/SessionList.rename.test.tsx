@@ -15,7 +15,23 @@ import { SessionRow } from "./SessionList";
 
 const conn = STORY_GATEWAYS[0];
 
-afterEach(cleanup);
+function pointing(kind: "fine" | "coarse") {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("pointer: fine") ? kind === "fine" : false,
+    media: query,
+    onchange: null,
+    addListener: () => undefined,
+    removeListener: () => undefined,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    dispatchEvent: () => false,
+  }));
+}
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function deferred() {
   let resolve!: () => void;
@@ -62,6 +78,7 @@ describe("session row inline rename", () => {
   // Regression, user report: entering rename replaced the session row with a field,
   // so metadata, status, and disclosure disappeared instead of only the title changing.
   it("edits only the title and saves the trimmed name", async () => {
+    pointing("fine");
     const request = deferred();
     const rename = vi.fn(() => request.promise);
     row(rename);
@@ -110,6 +127,20 @@ describe("session row inline rename", () => {
     expect(screen.getByText("Saving")).toBeTruthy();
     request.resolve();
     await waitFor(() => expect(screen.queryByRole("textbox")).toBeNull());
+  });
+
+  // Regression, user report: iOS full-range selection handles escaped the 48px
+  // session row, making its 16px editor look taller than the title it replaced.
+  it("uses one caret instead of selection handles under a thumb", async () => {
+    pointing("coarse");
+    row();
+
+    await startRename();
+
+    const field = screen.getByRole("textbox") as HTMLInputElement;
+    expect(field.selectionStart).toBe(field.value.length);
+    expect(field.selectionEnd).toBe(field.value.length);
+    expect(field.selectionDirection).toBe("none");
   });
 
   it("cancels with Escape and keeps a refused name in the row", async () => {

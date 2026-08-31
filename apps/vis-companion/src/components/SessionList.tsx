@@ -22,6 +22,7 @@ import type { PendingAttachment } from "../lib/attachments";
 import { unreadTurnCount, useReadMarks } from "../lib/unread";
 import { isFavorite } from "../lib/favorites";
 import { sessionIsLive, sessionNeedsInput, timeLabel } from "../lib/fleet";
+import { hasHardwarePointer } from "../lib/pointer";
 
 // Same frames as the session transcript's spinner and the TUI's
 // `paint-content-loading!` — one vocabulary for "working" across the product.
@@ -342,7 +343,12 @@ export const SessionRow = memo(function SessionRow({
                         if (!selectRenameOnFocusRef.current) return;
                         selectRenameOnFocusRef.current = false;
                         const field = event.currentTarget;
-                        field.setSelectionRange(0, field.value.length, "backward");
+                        const end = field.value.length;
+                        if (!hasHardwarePointer()) {
+                          field.setSelectionRange(end, end);
+                          return;
+                        }
+                        field.setSelectionRange(0, end, "backward");
                         requestAnimationFrame(() => {
                           if (renameInputRef.current === field) field.scrollLeft = 0;
                         });
