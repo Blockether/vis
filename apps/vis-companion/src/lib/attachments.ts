@@ -255,6 +255,7 @@ const EXTENSION_MEDIA_TYPES: Record<string, string> = {
   html: 'text/html',
   htm: 'text/html',
   xhtml: 'application/xhtml+xml',
+  gz: 'application/gzip',
   mp4: 'video/mp4',
   m4v: 'video/mp4',
   mov: 'video/quicktime',

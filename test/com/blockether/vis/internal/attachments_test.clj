@@ -588,6 +588,29 @@
 (def ^:private svg-doc
   "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"120\" height=\"60\"><rect width=\"120\" height=\"60\" fill=\"#333\"/></svg>")
 
+(def ^:private gzip-bytes (byte-array [0x1f 0x8b 0x08 0x00 0x00 0x00 0x00 0x00 0x00 0x03]))
+
+(defdescribe
+  gzip-attachment-test
+  "The companion exports diagnostics as `.jsonl.gz`; that artifact must come back through the same app."
+  (it "sniffs and stores an inline gzip upload as a readable human-only file"
+      (let [out
+            (attachments/prepare-inline-attachments [{:base64 (b64 gzip-bytes)
+                                                      :filename "vis-diagnostics.jsonl.gz"
+                                                      :media-type "application/gzip"}])
+
+            attachment
+            (first (:attached out))
+
+            blind
+            (first (:skipped (attachments/wire-images (:attached out))))]
+
+        (expect (empty? (:skipped out)))
+        (expect (= "application/gzip" (:media-type attachment)))
+        (expect (attachments/gzip-media-type? "application/x-gzip"))
+        (expect (attachments/hidden-from-model? attachment))
+        (expect (true? (:readable-blind? blind)))
+        (expect (str/includes? (:reason blind) "read_attachment")))))
 (defdescribe
   provider-safe-media-type-test
   "Intake STORES, it does not decide. The wire's four containers are still the

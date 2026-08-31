@@ -111,6 +111,19 @@ describe('the FILES door', () => {
     expect(result.attachments.map((a) => a.media_type)).toEqual(['audio/mpeg']);
   });
 
+  it('takes back the gzip diagnostics bundle this app exports', async () => {
+    filePicker.pickFiles.mockResolvedValue({
+      files: [picked('vis-diagnostics-20260501.jsonl.gz', '')],
+    });
+
+    const result = await pickDocumentAttachments({
+      mediaTypes: ['application/gzip'],
+    });
+
+    expect(result.rejected).toEqual([]);
+    expect(result.attachments[0].media_type).toBe('application/gzip');
+  });
+
   it('refuses what this gateway never said it takes', async () => {
     filePicker.pickFiles.mockResolvedValue({
       files: [picked('archive.zip', 'application/zip')],

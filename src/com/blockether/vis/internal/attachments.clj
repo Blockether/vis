@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.attachments
-  "User-message image, video and audio attachments.
+  "User-message image, video, audio, document and gzip attachments.
 
    Dropping a file onto the terminal pastes its PATH into the input (the
    terminal's drop behavior — same mechanism pi relies on). At turn start
@@ -10,11 +10,11 @@
    not the channel.
 
    What a file IS is sniffed from magic bytes (pi-parity: jpeg / non-animated
-   png / gif / webp / bmp, plus MP4/QuickTime clips and mp3/m4a/wav/ogg/flac
-   recordings) or, for SVG, from the markup head -- never trusted from the
-   extension alone. A container the model cannot consume is still attached: a
-   recording is kept for the HUMAN and NAMED to the model
-   ([[model-blind-media-type?]]), the same route a PDF already takes.
+   png / gif / webp / bmp, plus MP4/QuickTime clips, mp3/m4a/wav/ogg/flac
+   recordings, PDF/HTML documents and gzip streams) or, for SVG, from the
+   markup head -- never trusted from the extension alone. A container the model
+   cannot consume is still attached: recordings, documents and compressed files
+   are kept for the HUMAN and NAMED to the model ([[model-blind-media-type?]]).
 
    Storing and SENDING are deliberately separate concerns:
 
@@ -310,18 +310,23 @@
   "The one vocabulary for documents stored for the human and named to the model."
   {:pdf "application/pdf" :html "text/html" :xhtml "application/xhtml+xml"})
 
+(def gzip-media-types
+  "MIME spellings file providers use for a gzip stream. Intake sniffs and stores
+   the canonical `application/gzip`; the legacy spelling remains an accepted claim
+   because Android document providers still return it."
+  #{"application/gzip" "application/x-gzip"})
+
+(defn gzip-media-type?
+  "True when `media-type` names a gzip stream from [[gzip-media-types]]."
+  [media-type]
+  (contains? gzip-media-types (str/lower-case (str/trim (str media-type)))))
+
 (def human-only-media-types
   "Media types a model must NEVER be handed as an image block, no matter what
-   audience the caller asked for: a PDF and an HTML page are DOCUMENTS, made of
-   pages and markup rather than pixels, and the only honest thing to do with one
-   is put it in front of the human and TELL the model the file is on disk.
-
-   Sending them would be a lie twice over — the bytes are not an image, and a
-   multimodal request replays every block forever, so one report would be
-   re-billed on every later turn of the session. `attach` of a `.pdf` or an
-   `.html` is therefore clamped to the user audience at [[attachment-audience]],
-   the one funnel every route already reads."
-  (set (vals document-media-types)))
+   audience the caller asked for. Documents and gzip streams are not pixels; the
+   honest route is to keep their bytes in the session, name the file to the model,
+   and let it inspect those bytes on demand with `read_attachment`."
+  (into (set (vals document-media-types)) gzip-media-types))
 
 (defn detect-document-mime
   "Sniff a PDF, HTML or XHTML document from its bytes, never its extension."
@@ -341,14 +346,21 @@
             (:html document-media-types)
             :else nil))))
 
+(defn detect-gzip-mime
+  "Sniff the RFC 1952 magic bytes and return the canonical gzip media type."
+  [^bytes b]
+  (when (bytes-at? b 0 [0x1f 0x8b]) "application/gzip"))
+
 (defn detect-media-mime
   "The sniffed type of anything vis can attach: [[detect-image-mime]] first,
-   then [[detect-audio-mime]], [[detect-video-mime]] and [[detect-document-mime]].
-   Stills win the tie deliberately -- HEIF/AVIF photos share the MP4 container
-   header; a recording is asked about before a clip for the same reason, since an
-   `.m4a` shares it too."
+   then audio, video, document and gzip detection. Stills win the ISO-BMFF tie
+   deliberately; recordings are asked about before clips for the same reason."
   [^bytes b]
-  (or (detect-image-mime b) (detect-audio-mime b) (detect-video-mime b) (detect-document-mime b)))
+  (or (detect-image-mime b)
+      (detect-audio-mime b)
+      (detect-video-mime b)
+      (detect-document-mime b)
+      (detect-gzip-mime b)))
 
 (def provider-image-media-types
   "The ONLY image media types a vision wire accepts VERBATIM. Anthropic names
@@ -634,17 +646,16 @@
     s))
 
 (defn prepare-inline-attachments
-  "Validate already-encoded image attachments delivered INLINE (web/API upload)
-   rather than as filesystem paths. Each entry is `{:base64 :filename :media-type?}`;
-   the base64 may be a bare payload or a `data:...;base64,` URL. Decodes each,
-   sniffs the MIME from magic bytes (the declared `:media-type` is NEVER trusted),
-   enforces the same caps as [[collect-user-images]], and returns the same
-   `{:attached [...] :skipped [...]}` shape so the assemble seam treats
-   disk-scanned and inline images uniformly. Never throws.
+  "Validate already-encoded attachments delivered INLINE (web/API upload) rather
+   than as filesystem paths. Each entry is `{:base64 :filename :media-type?}`; the
+   base64 may be a bare payload or a `data:...;base64,` URL. Decodes each, sniffs
+   the MIME from magic bytes (the declared `:media-type` is NEVER trusted),
+   enforces the same caps as [[collect-user-images]], and returns its
+   `{:attached [...] :skipped [...]}` shape. Never throws.
 
-   Like [[collect-user-images]] it stores the ORIGINAL payload under its SNIFFED
-   container and converts nothing: what a provider will accept is only knowable
-   at SEND time, against that turn's model (see [[wire-image]])."
+   The ORIGINAL payload is stored under its SNIFFED container and never converted.
+   Image adaptation remains a SEND-time question (see [[wire-image]]); human-only
+   files stay available through `read_attachment`."
   ([attachments] (prepare-inline-attachments attachments {}))
   ([attachments
     {:keys [max-bytes max-images] :or {max-bytes max-image-bytes max-images max-image-count}}]
@@ -666,8 +677,10 @@
                size
                (alength raw)]
 
-           (cond (nil? mime)
-                 (update acc :skipped conj {:path label :reason "not a supported image or video"})
+           (cond (nil? mime) (update acc
+                                     :skipped
+                                     conj
+                                     {:path label :reason "not a supported attachment format"})
                  (> size (storable-limit mime (long max-bytes)))
                  (update acc
                          :skipped
@@ -758,6 +771,10 @@
   "Why a PDF or an HTML page is named to the model instead of shown to it."
   "a document for the human — open the file to read it, it is never an image block")
 
+(def ^:private compressed-file-reason
+  "Why a gzip stream is named to the model instead of sent as multimodal content."
+  "a gzip file — inspect it with read_attachment and a gzip/tar reader; it is never an image block")
+
 (def ^:private recording-reason
   "Why a voice memo or a music file is named to the model instead of sent to it."
   "a recording for the human — open the file to hear it, it is never an image block")
@@ -780,8 +797,8 @@
 
 
 (defn human-only-media-type?
-  "True when `media-type` names a document from [[human-only-media-types]].
-   Parameters (`text/html; charset=utf-8`) are dropped before the lookup."
+  "True when `media-type` names a file from [[human-only-media-types]]. Media-type
+   parameters (`text/html; charset=utf-8`) are dropped before the lookup."
   [media-type]
   (let [mt (-> (str media-type)
                (str/trim)
@@ -794,11 +811,9 @@
 
 (defn model-blind-media-type?
   "True when these bytes must never ride a request as an image block, whatever
-   audience the caller asked for: a [[human-only-media-type?]] document, or an
-   [[audio-media-type?]] recording. Neither is pixels, and a multimodal wire has
-   no other block to put them in -- so the honest route for both is the same one,
-   named in ONE place: keep the bytes for the human and TELL the model the file
-   is there."
+   audience the caller asked for: a [[human-only-media-type?]] file, or an
+   [[audio-media-type?]] recording. None is pixels, so the honest route is to keep
+   the bytes for the human and TELL the model the file is there."
   [media-type]
   (or (human-only-media-type? media-type) (audio-media-type? media-type)))
 (defn normalize-audience
@@ -813,10 +828,8 @@
   "This attachment's audience word, normalized — `\"both\"` when unstamped.
 
    A [[model-blind-media-type?]] artifact is CLAMPED to `\"user\"` here rather
-   than at each call site: the PDF, the HTML page and the voice memo are for the
-   human, and every gate that already asks this question ([[hidden-from-model?]],
-   the send-time image path, the wire manifest) inherits the refusal from one
-   place."
+   than at each call site: documents, gzip files and recordings are never image
+   blocks, and every gate that asks this question inherits the refusal here."
   [attachment]
   (if (model-blind-media-type? (:media-type attachment))
     "user"
@@ -1116,6 +1129,7 @@
                                                                        (str (:transcription att)))
                                                                    recording-reason
                                                                    transcribed-recording-reason)
+                                  (gzip-media-type? media-type) compressed-file-reason
                                   (human-only-media-type? media-type) human-only-doc-reason
                                   :else user-only-reason)
                     :readable-blind? true
