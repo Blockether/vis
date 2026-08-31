@@ -49,7 +49,6 @@ describe("one form's Activity read off the wire", () => {
       additions: 0,
       deletions: 0,
       modifications: 1,
-      omitted_lines: 7,
       is_truncated: true,
       is_redacted: true,
     };

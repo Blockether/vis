@@ -12,7 +12,7 @@ import type {
 import { workspaceRelativePath } from "../lib/path";
 import { useWorkspaceRoots } from "../lib/workspace-roots";
 
-/** `3 more lines`, `1 more file` — what a rule holds back, counted and named. */
+/** `2 more files`, `3 more steps` — what a rule holds back, counted and named. */
 function moreCount(n: number, noun: string) {
   return `${n} more ${noun}${n === 1 ? "" : "s"}`;
 }
@@ -307,11 +307,6 @@ function ActivityDiff({ diff }: { diff: ActivityDiffEvidence }) {
             <span className="pr-3">{line.text || " "}</span>
           </span>
         ))}
-        {diff.omitted_lines > 0 && (
-          <LoadMore label={moreCount(diff.omitted_lines, "line")}>
-            {moreCount(diff.omitted_lines, "line")}
-          </LoadMore>
-        )}
       </div>
     </div>
   );
@@ -573,31 +568,26 @@ function ActivityChanges({
   );
 }
 
-const ERROR_PREVIEW_LINES = 3;
-
 /**
- * THE HEAD OF AN ERROR, ALREADY ON THE PAGE.
+ * AN ERROR, WHOLE, ALREADY ON THE PAGE.
  *
  * Everything else on this axis is a summary the reader may follow; an error is
- * the one thing they are never asked to go and find. It is CLAMPED all the
- * same: the first line says what went wrong, the rest is the machine repeating
- * itself, and forty lines of it pasted into a chronology is how an axis stops
- * being readable. The whole of it is in the raw result the invocation row
- * already opens.
+ * the one thing they are never asked to go and find, and never the one thing
+ * they are shown three lines of. The machine's own text is what says why the
+ * step failed, so all of it is here - the engine already bounds it in bytes
+ * where the event is built.
  */
 function ActivityError({ evidence }: { evidence: ActivityTextEvidence }) {
   const lines = evidence.text.split("\n");
-  const shown = lines.slice(0, ERROR_PREVIEW_LINES);
-  const hidden = lines.length - shown.length;
   return (
     <div className="mt-1.5 min-w-0 border border-err-edge bg-err-surface">
       {/* No head. The step above already said which operation failed, on what,
           and in which word; a card repeating all three is that row printed
           twice. What the reader came here for is the machine's own text, and a
-          wrapped line hangs under its own first character so that three lines
-          of it still count as three. */}
+          wrapped line hangs under its own first character so that one line of it
+          still reads as one. */}
       <div className="grid min-w-0 px-2 py-1">
-        {shown.map((line, index) => (
+        {lines.map((line, index) => (
           <p
             key={`${index}-${line}`}
             className={`-indent-4 whitespace-pre-wrap break-words pl-4 font-mono text-chip ${
@@ -607,11 +597,6 @@ function ActivityError({ evidence }: { evidence: ActivityTextEvidence }) {
             {line || " "}
           </p>
         ))}
-        {hidden > 0 && (
-          <LoadMore tone="error" label={moreCount(hidden, "line")}>
-            {moreCount(hidden, "line")}
-          </LoadMore>
-        )}
       </div>
     </div>
   );

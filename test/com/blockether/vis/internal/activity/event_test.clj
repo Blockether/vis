@@ -95,7 +95,7 @@
         (expect (re-find #"REDACTED" (:argument-summary start)))
         (expect (<= (event/utf8-bytes (:argument-summary start)) event/max-summary-bytes))))
   (it
-    "bounds, classifies, and redacts structured patch diff evidence"
+    "carries a patch WHOLE, classified and redacted"
     (let [ctx
           (event/context)
 
@@ -132,10 +132,12 @@
                         (filter (comp #{:addition :deletion :context} :kind) (:lines evidence))))
       (expect (= ["[REDACTED]" "[REDACTED]"] (mapv :text (take 2 (drop 2 (:lines evidence))))))
       (expect (:is-redacted evidence))
-      (expect (:is-truncated evidence))
-      (expect (pos? (:omitted-lines evidence)))
-      (expect (<= (count (:lines evidence)) event/max-diff-lines))
-      (expect (<= (event/utf8-bytes (wire/json-str evidence)) event/max-diff-bytes))))
+      ;; Regression, T131: a patch stopped after 120 lines and the receipt printed
+      ;; `N more lines`, so the reader had to leave the axis to read the rest of it.
+      (expect (not (:is-truncated evidence)))
+      (expect (= (count (string/split-lines diff)) (count (:lines evidence)))
+              "every line of the patch is carried")
+      (expect (<= (event/utf8-bytes (wire/json-str terminal)) event/max-event-bytes))))
   ;; Regression, T120: one write touching eleven files shipped ONE diff evidence carrying
   ;; hand-made `--- (path)` headers, so the reader scrolled through ten files to reach theirs.
   (it
@@ -174,8 +176,19 @@
       (expect (= 3 (count evidence)))
       (expect (= [:diff :diff :diff] (mapv :kind evidence)))
       (expect (= paths (mapv :text evidence)))
-      (expect (every? :is-truncated evidence))
-      (expect (<= (event/utf8-bytes (wire/json-str evidence)) event/max-diff-bytes))))
+      ;; Regression, T131: the row's byte budget was divided between the files and each
+      ;; diff was cut where its share ran out, so three files arrived as three half-patches.
+      (expect (<= (event/utf8-bytes (wire/json-str terminal)) event/max-event-bytes)
+              "the transport's ceiling still holds")
+      (expect (some #(seq (:lines %)) evidence) "what fits is carried")
+      (expect (some #(and (empty? (:lines %)) (:is-truncated %)) evidence)
+              "and what does not is dropped WHOLE, named and marked")
+      (expect (every? (fn [d]
+                        (or (empty? (:lines d))
+                            (= (count (string/split-lines (:diff (hunk (:text d)))))
+                               (count (:lines d)))))
+                      evidence)
+              "no file arrives as half a patch")))
   ;; Regression, td-ba1627: a `read_session()` terminal event recursively copied
   ;; and printed the whole transcript before truncating it, leaving the await open.
   (it "bounds result traversal before rendering a terminal summary"

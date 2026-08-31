@@ -12,12 +12,10 @@
            [java.util UUID]
            [java.util.concurrent.atomic AtomicLong]))
 
-(def max-event-bytes (* 16 1024))
+(def max-event-bytes (* 256 1024))
 (def max-summary-bytes 512)
 (def max-detail-bytes (* 2 1024))
 (def max-resources 8)
-(def max-diff-lines 120)
-(def max-diff-bytes (* 8 1024))
 (def max-diff-line-bytes 512)
 (def ^:private max-summary-nodes 128)
 
@@ -192,7 +190,8 @@
           (and terminal? (not= 1 (count outcomes))) "terminal must have exactly one outcome"
           (and (not terminal?) (seq outcomes)) "start cannot carry an outcome"
           (and terminal? (not (number? (:duration-ms event)))) "terminal requires duration"
-          (> (utf8-bytes (wire/json-str event)) (long max-event-bytes)) "event exceeds 16 KiB"
+          (> (utf8-bytes (wire/json-str event)) (long max-event-bytes))
+          (str "event exceeds " (quot (long max-event-bytes) 1024) " KiB")
           :else nil)))
 
 (defn checked
@@ -202,6 +201,31 @@
                     {:type :activity/invalid-event :reason reason :event event}))
     event))
 
+(defn- heaviest-diff-body
+  "Index of the diff evidence whose lines weigh the most, nil when none carries any."
+  [diffs]
+  (->> (map-indexed vector diffs)
+       (filter (fn [[_ d]]
+                 (seq (:lines d))))
+       (sort-by (fn [[_ d]]
+                  (- (utf8-bytes (wire/json-str (:lines d))))))
+       ffirst))
+
+(defn fit-event
+  "The event, shrunk to `max-event-bytes` by dropping WHOLE diff bodies, heaviest first.
+
+   A patch is evidence, and half of one is worse than none: a reader who meets a hunk
+   that stops mid-file cannot tell the cut from the change. So the ceiling that keeps a
+   pathological payload out of SSE and `/poll` replay is paid in whole bodies - the file
+   keeps its name, its counts and `:is-truncated` - never in a partial diff. Everything
+   else an event carries is already bounded to bytes where it is built."
+  [event]
+  (loop [event event]
+    (if (<= (utf8-bytes (wire/json-str event)) (long max-event-bytes))
+      event
+      (if-let [idx (heaviest-diff-body (:diff-evidence event))]
+        (recur (update-in event [:diff-evidence idx] assoc :lines [] :is-truncated true))
+        (dissoc event :diff-evidence)))))
 (defn collector
   "Create a strict lifecycle collector. `accept!` returns each accepted event."
   []
@@ -277,44 +301,22 @@
       redacted?
       (assoc :is-redacted true))))
 
-(defn- bounded-diff-lines
-  [source line-cap byte-cap]
-  (let [raw (vec (str/split-lines (str source)))]
-    (loop [remaining raw
-           lines []
-           bytes 0]
+(defn- diff-lines
+  "EVERY line of the file's diff, in order.
 
-      (if-let [line (first remaining)]
-        (let [entry (diff-line line)
-              entry-bytes (utf8-bytes (wire/json-str entry))]
-
-          (if (or (>= (count lines) (long line-cap))
-                  (> (+ (long bytes) entry-bytes) (long byte-cap)))
-            {:lines lines :omitted-lines (count remaining)}
-            (recur (next remaining) (conj lines entry) (+ (long bytes) entry-bytes))))
-        {:lines lines :omitted-lines 0}))))
-
-(defn- fit-diff-evidence
-  [evidence byte-cap]
-  (loop [evidence evidence]
-    (if (<= (utf8-bytes (wire/json-str evidence)) (long byte-cap))
-      evidence
-      (let [lines (:lines evidence)]
-        (if (seq lines)
-          (let [kept (pop lines)]
-            (recur (assoc evidence
-                     :lines kept
-                     :omitted-lines (inc (long (:omitted-lines evidence)))
-                     :is-truncated true
-                     :is-redacted (boolean (some :is-redacted kept)))))
-          (recur (update evidence :text bounded-text max-summary-bytes)))))))
+   A patch is read whole or not at all: a receipt that stops in the middle of a hunk
+   sends the reader to find the rest somewhere else, which is the one thing the
+   receipt exists to spare them. Size is answered at the transport's own edge by
+   `fit-event`, which drops a WHOLE body rather than half a patch; the only clamp
+   here is `diff-line`'s, on a single monstrous line, in place."
+  [source]
+  (mapv diff-line (str/split-lines (str source))))
 
 (defn- file-diff-evidence
-  "ONE file's diff, named by that file and bounded to the share of the row's budget it was
-   given, so the last file of a batch is as readable as the first."
-  [unit line-cap byte-cap]
-  (let [{:keys [lines omitted-lines]}
-        (bounded-diff-lines (map-value unit :diff) line-cap byte-cap)
+  "ONE file's diff, named by that file and carried WHOLE."
+  [unit]
+  (let [lines
+        (diff-lines (map-value unit :diff))
 
         counts
         (map-value unit :lines)
@@ -328,16 +330,14 @@
         upstream-truncated?
         (some #(and (= :context (:kind %)) (str/includes? (:text %) "omitted")) lines)]
 
-    (fit-diff-evidence {:kind :diff
-                        :text (str (or path "diff"))
-                        :lines lines
-                        :additions (long (or (map-value counts :added) 0))
-                        :deletions (long (or (map-value counts :removed) 0))
-                        :modifications (long (or (map-value counts :modified) 0))
-                        :omitted-lines (long omitted-lines)
-                        :is-truncated (boolean (or (pos? (long omitted-lines)) upstream-truncated?))
-                        :is-redacted (boolean (some :is-redacted lines))}
-                       byte-cap)))
+    {:kind :diff
+     :text (str (or path "diff"))
+     :lines lines
+     :additions (long (or (map-value counts :added) 0))
+     :deletions (long (or (map-value counts :removed) 0))
+     :modifications (long (or (map-value counts :modified) 0))
+     :is-truncated (boolean upstream-truncated?)
+     :is-redacted (boolean (some :is-redacted lines))}))
 
 (defn- result-diff-evidence
   "The diffs a row SHOWS, ONE PER FILE, for ANY result envelope carrying them. A file's diff
@@ -346,9 +346,8 @@
    as the same evidence through the same renderer. A producer earns a diff by carrying that
    vocabulary, never by being a particular tool.
 
-   Answers a VECTOR, and the files SHARE one budget. Eleven diffs each allowed the whole
-   row's allowance is eleven times the payload this wire is bounded to, so the cap is divided
-   and every file keeps a readable head instead of the first one eating the event."
+   Answers a VECTOR, one whole diff per file. Nothing is divided between them here:
+   the transport's ceiling is answered once, at the event's own edge, by `fit-event`."
   [{:keys [result-envelope]}]
   (let [metadata
         (map-value result-envelope :metadata)
@@ -358,19 +357,9 @@
 
         carried
         (filterv #(util/non-blank-string? (map-value % :diff))
-          (if (sequential? declared) (vec declared) [metadata]))
+          (if (sequential? declared) (vec declared) [metadata]))]
 
-        files
-        (count carried)]
-
-    (when (pos? files)
-      (let [line-cap
-            (max 8 (quot (long max-diff-lines) files))
-
-            byte-cap
-            (max 512 (quot (long max-diff-bytes) files))]
-
-        (mapv #(file-diff-evidence % line-cap byte-cap) carried)))))
+    (when (seq carried) (mapv file-diff-evidence carried))))
 
 (defn- explicit-group-token
   [value]
@@ -538,38 +527,39 @@
         (when (= outcome :succeeded) (result-diff-evidence details))]
 
     (checked
-      (cond-> (merge (base-event ctx invocation operation presenter :terminal)
-                     (select-keys invocation [:parent-invocation-id])
-                     {outcome true
-                      :status (case outcome
-                                :succeeded
-                                :succeeded
+      (fit-event
+        (cond-> (merge (base-event ctx invocation operation presenter :terminal)
+                       (select-keys invocation [:parent-invocation-id])
+                       {outcome true
+                        :status (case outcome
+                                  :succeeded
+                                  :succeeded
 
-                                :cancelled
-                                :cancelled
+                                  :cancelled
+                                  :cancelled
 
-                                :failed)
-                      :duration-ms duration})
-        (and (= outcome :succeeded) (:text summary))
-        (assoc :result-summary (:text summary))
+                                  :failed)
+                        :duration-ms duration})
+          (and (= outcome :succeeded) (:text summary))
+          (assoc :result-summary (:text summary))
 
-        (not= outcome :succeeded)
-        (assoc :error-summary (:text summary))
+          (not= outcome :succeeded)
+          (assoc :error-summary (:text summary))
 
-        classification
-        (assoc :classification classification)
+          classification
+          (assoc :classification classification)
 
-        token
-        (assoc :group-token (bounded-text token max-summary-bytes))
+          token
+          (assoc :group-token (bounded-text token max-summary-bytes))
 
-        result-format
-        (assoc :result-format result-format)
+          result-format
+          (assoc :result-format result-format)
 
-        refs
-        (assoc :resources refs)
+          refs
+          (assoc :resources refs)
 
-        (seq diff-evidence)
-        (assoc :diff-evidence diff-evidence)
+          (seq diff-evidence)
+          (assoc :diff-evidence diff-evidence)
 
-        (:is-truncated summary)
-        (assoc :result-truncated true)))))
+          (:is-truncated summary)
+          (assoc :result-truncated true))))))

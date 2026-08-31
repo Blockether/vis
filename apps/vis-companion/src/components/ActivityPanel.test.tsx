@@ -169,9 +169,11 @@ describe("the axis is built from the closed vocabulary", () => {
     // row folds under its bare name — the only things on the axis long enough to be
     // worth folding. A STEP still never opens, and neither does the thread. What the
     // axis HOLDS BACK wears no chevron at all: a cut is the one rule both surfaces
-    // draw (`LoadMore`), never a fourth mark.
+    // draw (`LoadMore`), and only TWO things on this axis are ever cut - the paths a
+    // step touched, and the steps a long thread holds back. A patch and a failure's
+    // own words are never cut: they are what the reader came here to read.
     expect((activityPanelSource.match(/<Disclosure/g) ?? []).length).toBe(2);
-    expect((activityPanelSource.match(/<LoadMore/g) ?? []).length).toBe(4);
+    expect((activityPanelSource.match(/<LoadMore/g) ?? []).length).toBe(2);
     // No spinner: a mark that turns says only "still here", while one word says
     // whether the form is still working and, once it is not, how it ended.
     expect(activityPanelSource).not.toContain("<Spinner");
@@ -279,7 +281,6 @@ describe("a run reads as one thread", () => {
                 additions: 7,
                 deletions: 3,
                 modifications: 0,
-                omitted_lines: 0,
                 is_truncated: false,
                 is_redacted: false,
               },
@@ -419,13 +420,15 @@ describe("a step that ended badly", () => {
     expect(screen.getByText("patch refused: no anchor matched")).toBeTruthy();
   });
 
-  it("clamps the output to its head and says how much it kept back", () => {
+  // Regression, T131: a refusal was clamped to three lines with the rest behind a
+  // rule, so the reader had to leave the axis to learn why the patch was refused.
+  it("says the whole of what the machine said, however many lines", () => {
     paintFailure(["one", "two", "three", "four", "five"].join("\n"));
 
     expect(screen.getByText("one")).toBeTruthy();
     expect(screen.getByText("three")).toBeTruthy();
-    expect(screen.queryByText("four")).toBeNull();
-    expect(screen.getByText("2 more lines")).toBeTruthy();
+    expect(screen.getByText("five")).toBeTruthy();
+    expect(screen.queryByText("2 more lines")).toBeNull();
   });
 });
 

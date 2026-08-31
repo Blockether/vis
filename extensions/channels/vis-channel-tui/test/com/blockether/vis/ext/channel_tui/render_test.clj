@@ -5382,7 +5382,6 @@ h = 8"
                              :text "/w/vis/src/com/blockether/vis/internal/loop.clj"
                              :additions 2
                              :deletions 1
-                             :omitted-lines 3
                              :lines [{:kind "hunk" :text "@@ -1,4 +1,5 @@"}
                                      {:kind "context" :text "(ns loop)"}
                                      {:kind "addition" :text "(def added-line 1)"}
@@ -5472,8 +5471,8 @@ h = 8"
                 "a removed line carries its sign exactly once, in the marker column")
         (expect (not (str/includes? text "++"))
                 "the engine strips the sign and the renderer draws it")
-        (expect (str/includes? text "─ 3 more lines ─")
-                "a clipped patch says how much it kept back, in the one rule both surfaces draw")
+        (expect (not (str/includes? text "more lines"))
+                "a patch is shown WHOLE - a rule inside a hunk sends the reader elsewhere")
         (expect (some? (line-with text "CHANGELOG.md"))
                 "an opened count shows the paths it was folding away")))
     (it "shows four paths and then a count, with every patch still folded"
@@ -5549,8 +5548,8 @@ h = 8"
                    (expect (= web-verbs @#'render/activity-verbs)))
                (it "shows the same four paths before it starts counting"
                    (expect (= (web-number "ACTIVITY_FILES_SHOWN") @#'render/activity-files-shown)))
-               (it "keeps the same three lines of a failure's own words"
-                   (expect (= (web-number "ERROR_PREVIEW_LINES") @#'render/activity-error-lines)))))
+               (it "keeps a failure's own words whole on both surfaces"
+                   (expect (not (str/includes? (str source) "ERROR_PREVIEW_LINES"))))))
 
 ;; Regression, T127: the line lived INSIDE the Activity band only. The companion runs one
 ;; `RAIL_LINE` down a whole segment - thinking, the program, its result and the chronology

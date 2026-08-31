@@ -5500,7 +5500,7 @@
   "├─")
 
 (defn- more-count
-  "`3 more lines`, `1 more file` - what a rule holds back, counted and named. One
+  "`2 more files`, `3 more steps` - what a rule holds back, counted and named. One
    noun, one plural rule, so no call site spells `1 more files`."
   ^String [^long n ^String noun]
   (str n " more " noun (when (not= 1 n) "s")))
@@ -5543,14 +5543,6 @@
    in; the rest are one press away, behind the same fold the paths already carry."
   4)
 
-(def ^:private activity-error-lines
-  "THREE LINES OF THE MACHINE'S OWN WORDS, then a count.
-
-   The first line says what went wrong; the rest is the machine repeating itself, and
-   forty lines of it pasted into a chronology is how an axis stops being readable. The
-   whole of it is in the raw result the invocation row already opens. The web clamps at
-   the same three in `ERROR_PREVIEW_LINES`."
-  3)
 
 (defn- activity-counts-visible-files?
   "True when a step's own summary only counts the paths already listed under it: `4 files`
@@ -5744,9 +5736,6 @@
                 lead
                 (activity-lead band-col)
 
-                omitted
-                (long (or (:omitted-lines diff) 0))
-
                 band-w
                 (max 1 (- width band-col))
 
@@ -5760,13 +5749,11 @@
                                  :band-text (ellipsize-cols text band-w)
                                  :diff-kind tone})})]
 
-            (into (mapv (fn [line]
-                          (let [kind (activity-evidence-kind line)]
-                            (band-row (str (activity-diff-mark kind) " " (:text line))
-                                      (activity-diff-tone kind))))
-                        (:lines diff))
-                  (when (pos? omitted)
-                    [(band-row (more-rule (more-count omitted "line") band-w) nil)]))))
+            (mapv (fn [line]
+                    (let [kind (activity-evidence-kind line)]
+                      (band-row (str (activity-diff-mark kind) " " (:text line))
+                                (activity-diff-tone kind))))
+                  (:lines diff))))
 
         file-entries
         (fn [row-id resources diffs ^long col]
@@ -5881,12 +5868,6 @@
                 lines
                 (str/split-lines (str (:text evidence)))
 
-                shown
-                (vec (take activity-error-lines lines))
-
-                hidden
-                (max 0 (- (count lines) (count shown)))
-
                 band-w
                 (max 1 (- width col))
 
@@ -5900,8 +5881,7 @@
                                  :band-text (ellipsize-cols text band-w)
                                  :diff-kind :error})})]
 
-            (into (mapv #(band-row (if (str/blank? %) " " %)) shown)
-                  (when (pos? hidden) [(band-row (more-rule (more-count hidden "line") band-w))]))))
+            (mapv #(band-row (if (str/blank? %) " " %)) lines)))
 
         row-entry
         (fn row-entry ([row] (row-entry row 0)) ([{:keys [id error-summary result-summary

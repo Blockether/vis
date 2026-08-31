@@ -366,8 +366,7 @@
 (defn- presentation-resource [{:keys [type id]}] {:type (enum-name type) :id (str id)})
 
 (defn- presentation-evidence
-  [{:keys [kind text lines additions deletions modifications omitted-lines is-truncated
-           is-redacted]}]
+  [{:keys [kind text lines additions deletions modifications is-truncated is-redacted]}]
   (cond-> {:kind (enum-name kind) :text (str text)}
     (seq lines)
     (assoc :lines
@@ -381,8 +380,7 @@
     (assoc :additions
       (long (or additions 0)) :deletions
       (long (or deletions 0)) :modifications
-      (long (or modifications 0)) :omitted-lines
-      (long (or omitted-lines 0)) :is-truncated
+      (long (or modifications 0)) :is-truncated
       (boolean is-truncated) :is-redacted
       (boolean is-redacted))))
 

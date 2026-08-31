@@ -93,7 +93,6 @@ export interface ActivityDiffEvidence {
   additions: number;
   deletions: number;
   modifications: number;
-  omitted_lines: number;
   is_truncated: boolean;
   is_redacted: boolean;
 }
@@ -170,7 +169,6 @@ function activityEvidenceFromWire(value: unknown): ActivityEvidence | null {
       'additions',
       'deletions',
       'modifications',
-      'omitted_lines',
       'is_truncated',
       'is_redacted',
     ])
@@ -182,13 +180,11 @@ function activityEvidenceFromWire(value: unknown): ActivityEvidence | null {
   const additions = activityCount(raw.additions);
   const deletions = activityCount(raw.deletions);
   const modifications = activityCount(raw.modifications);
-  const omittedLines = activityCount(raw.omitted_lines);
   if (
     !rawLines ||
     additions === null ||
     deletions === null ||
     modifications === null ||
-    omittedLines === null ||
     typeof raw.is_truncated !== 'boolean' ||
     typeof raw.is_redacted !== 'boolean'
   )
@@ -225,7 +221,6 @@ function activityEvidenceFromWire(value: unknown): ActivityEvidence | null {
     additions,
     deletions,
     modifications,
-    omitted_lines: omittedLines,
     is_truncated: raw.is_truncated,
     is_redacted: raw.is_redacted,
   };
