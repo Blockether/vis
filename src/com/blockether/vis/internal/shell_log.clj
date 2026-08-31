@@ -35,7 +35,7 @@
   (:require [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.persistance :as persistance])
   (:import (java.io File InputStream OutputStream RandomAccessFile)
            (java.nio.charset StandardCharsets)))

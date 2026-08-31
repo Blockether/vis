@@ -759,18 +759,19 @@ on-demand; a capability that appears only after unrelated use is not acceptable.
 
 ## State of the plan
 
-**IN PROGRESS** — Phase 1 is complete and Phase 2 has begun. The executable dependency boundary
-freezes the current Clojure graph and JavaScript/Python wire debt. The contract-owned
+**IN PROGRESS** — Phase 1 is complete and Phase 2 is active. The executable dependency boundary
+freezes the remaining Clojure graph and JavaScript/Python wire debt. The contract-owned
 `gateway.edn` pins all 99 built-in paths / 121 method-path operations, 14 protocol header spellings,
 protocol compatibility numbers, 32 gateway event names, terminal and queue-mirror sets, shared View
-lifecycle events and replay anchors. Both blocking readers now import the terminal/queue semantics
-from `com.blockether.vis.contract.gateway`; that namespace also owns handshake parsing and the pure
-compatibility verdict, and runtime clients/server consume its numbers and headers directly. The
-removed mirrors no longer live in `internal.gateway.wire` or the deleted `internal.gateway.protocol`.
-Release/build identity, daemon staleness, concrete adapters and diagnostics now live in
-`internal.gateway.runtime`; runtime route construction plus the remaining wire and shared View
-constants still drift-test against the fixture. Existing View, Human Input, Activity, cancellation
-and cross-session permit suites preserve behavior. One production namespace has moved.
+lifecycle events, directional job streams, settled-turn metadata and replay anchors. Canonical total
+encoding now lives in independently loadable `com.blockether.vis.contract.wire`; Core producers,
+server and engine tests import it directly; current extension consumers stay behind the Core facade. Concrete
+transport, and bounded diagnostics live beside their sole state caller, so `internal.gateway.wire`
+has been deleted rather than forwarded. `com.blockether.vis.contract.gateway` also owns handshake
+parsing and the pure compatibility verdict, while release/build identity, daemon staleness and
+concrete runtime diagnostics live in `internal.gateway.runtime`. Existing View, Human Input,
+Activity, cancellation and cross-session permit suites preserve behavior. Three production
+namespaces have moved or been removed.
 
 Work already available as foundations:
 

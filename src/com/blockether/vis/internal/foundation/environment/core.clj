@@ -27,7 +27,7 @@
             [com.blockether.vis.internal.foundation.environment.render :as render]
             [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
             [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel]))
 

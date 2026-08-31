@@ -1,186 +1,149 @@
 {:contract/version 1
-
- :gateway/protocol
- {:version 12
-  :minimum-client 12
-  :minimum-gateway 12}
-
+ :gateway/protocol {:minimum-client 12 :minimum-gateway 12 :version 12}
  ;; Every header whose spelling is part of the gateway contract. Keys are semantic;
  ;; values are the canonical lower-case Ring/Fetch spelling.
- :gateway/headers
- {:accept "accept"
-  :authorization "authorization"
-  :client "x-vis-client"
-  :client-id "x-vis-client-id"
-  :client-pid "x-vis-client-pid"
-  :client-version "x-vis-client-version"
-  :content-type "content-type"
-  :etag "etag"
-  :gateway-secret "x-vis-gateway-secret"
-  :if-none-match "if-none-match"
-  :last-event-id "last-event-id"
-  :minimum-gateway-protocol "x-vis-min-gateway-protocol"
-  :protocol "x-vis-protocol"
-  :suppress-registry-recovery "x-vis-suppress-registry-recovery"}
-
+ :gateway/headers {:accept "accept"
+                   :authorization "authorization"
+                   :client "x-vis-client"
+                   :client-id "x-vis-client-id"
+                   :client-pid "x-vis-client-pid"
+                   :client-version "x-vis-client-version"
+                   :content-type "content-type"
+                   :etag "etag"
+                   :gateway-secret "x-vis-gateway-secret"
+                   :if-none-match "if-none-match"
+                   :last-event-id "last-event-id"
+                   :minimum-gateway-protocol "x-vis-min-gateway-protocol"
+                   :protocol "x-vis-protocol"
+                   :suppress-registry-recovery "x-vis-suppress-registry-recovery"}
  ;; Built-in routes only. Extension route contributions are owned by their extension
  ;; contracts and are deliberately absent. One record represents one Reitit path;
  ;; methods are the live operations on that path.
  :gateway/routes
- [  {:path "/docs" :methods #{:get} :audience :public}
-  {:path "/docs/*path" :methods #{:get} :audience :public}
-  {:path "/healthz" :methods #{:get} :audience :public}
-  {:path "/metrics" :methods #{:get} :audience :administration}
-  {:path "/readyz" :methods #{:get} :audience :public}
-  {:path "/v1/admin/status" :methods #{:get} :audience :administration}
-  {:path "/v1/admin/stop" :methods #{:post} :audience :administration}
-  {:path "/v1/capabilities" :methods #{:get} :audience :sdk}
-  {:path "/v1/clients" :methods #{:post} :audience :sdk}
-  {:path "/v1/clients/:cid" :methods #{:delete} :audience :sdk}
-  {:path "/v1/devices" :methods #{:get :post} :audience :sdk}
-  {:path "/v1/devices/:token" :methods #{:delete} :audience :sdk}
-  {:path "/v1/devices/actions/test" :methods #{:post} :audience :sdk}
-  {:path "/v1/events" :methods #{:get} :audience :sdk}
-  {:path "/v1/fs" :methods #{:get} :audience :sdk}
-  {:path "/v1/fs/actions/mkdir" :methods #{:post} :audience :sdk}
-  {:path "/v1/mcp/servers" :methods #{:get :post} :audience :sdk}
-  {:path "/v1/mcp/servers/:name" :methods #{:delete :put} :audience :sdk}
-  {:path "/v1/mcp/servers/:name/actions/enable" :methods #{:post} :audience :sdk}
-  {:path "/v1/mcp/servers/:name/actions/kill" :methods #{:post} :audience :sdk}
-  {:path "/v1/mcp/servers/:name/actions/start" :methods #{:post} :audience :sdk}
-  {:path "/v1/mcp/servers/:name/auth/cancel" :methods #{:post} :audience :sdk}
-  {:path "/v1/mcp/servers/:name/auth/complete" :methods #{:post} :audience :sdk}
-  {:path "/v1/mcp/servers/:name/auth/logout" :methods #{:post} :audience :sdk}
-  {:path "/v1/mcp/servers/:name/auth/poll" :methods #{:post} :audience :sdk}
-  {:path "/v1/mcp/servers/:name/auth/start" :methods #{:post} :audience :sdk}
-  {:path "/v1/mcp/servers/actions/test" :methods #{:post} :audience :sdk}
-  {:path "/v1/models" :methods #{:get} :audience :sdk}
-  {:path "/v1/projects" :methods #{:get :post} :audience :sdk}
-  {:path "/v1/projects/:pid" :methods #{:delete :get :patch} :audience :sdk}
-  {:path "/v1/projects/:pid/sessions" :methods #{:patch} :audience :sdk}
-  {:path "/v1/projects/actions/ensure" :methods #{:post} :audience :sdk}
-  {:path "/v1/projects/overview" :methods #{:get} :audience :sdk}
-  {:path "/v1/provider-presets" :methods #{:get} :audience :sdk}
-  {:path "/v1/providers" :methods #{:post} :audience :sdk}
-  {:path "/v1/providers/:provider-id" :methods #{:delete} :audience :sdk}
-  {:path "/v1/providers/:provider-id/auth/cancel" :methods #{:post} :audience :sdk}
-  {:path "/v1/providers/:provider-id/auth/complete" :methods #{:post} :audience :sdk}
-  {:path "/v1/providers/:provider-id/auth/poll" :methods #{:post} :audience :sdk}
-  {:path "/v1/providers/:provider-id/auth/start" :methods #{:post} :audience :sdk}
-  {:path "/v1/providers/:provider-id/limits" :methods #{:get} :audience :sdk}
-  {:path "/v1/providers/:provider-id/logout" :methods #{:post} :audience :sdk}
-  {:path "/v1/providers/:provider-id/models" :methods #{:get} :audience :sdk}
-  {:path "/v1/providers/:provider-id/status" :methods #{:get} :audience :sdk}
-  {:path "/v1/router" :methods #{:get :patch} :audience :sdk}
-  {:path "/v1/sessions" :methods #{:get :post} :audience :sdk}
-  {:path "/v1/sessions/:sid" :methods #{:delete :get :patch} :audience :sdk}
-  {:path "/v1/sessions/:sid/artifacts" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/attachments" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/cancel-current" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/context" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/drain-queue" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/events-since" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/forks" :methods #{:get :post} :audience :sdk}
-  {:path "/v1/sessions/:sid/iterations/:iid/attachments" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/iterations/:iid/attachments/:idx" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/model" :methods #{:get :patch} :audience :sdk}
-  {:path "/v1/sessions/:sid/release" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/resources" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/resources/logs" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/resources/stop" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/resume-queue" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/seq" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/slashes" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/speech" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/speech/jobs/:job-id" :methods #{:delete :get} :audience :sdk}
-  {:path "/v1/sessions/:sid/speech/jobs/:job-id/audio" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/speech/jobs/:job-id/events" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/suggest" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/transcript" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/transcript.html" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/transcript.md" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/turns" :methods #{:get :post} :audience :sdk}
-  {:path "/v1/sessions/:sid/turns/:tid" :methods #{:delete :get :patch} :audience :sdk}
-  {:path "/v1/sessions/:sid/turns/:tid/attachments" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/turns/:tid/cancel" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/turns/:tid/trace" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/usage" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/views/:view-id/actions" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/views/input" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/views/live" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/views/live/:view-id/log/:node-id" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/voice" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/voice/jobs/:job-id" :methods #{:delete :get} :audience :sdk}
-  {:path "/v1/sessions/:sid/voice/jobs/:job-id/events" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/workspace" :methods #{:get} :audience :sdk}
-  {:path "/v1/sessions/:sid/workspace/drafts" :methods #{:get :post} :audience :sdk}
-  {:path "/v1/sessions/:sid/workspace/drafts/:workspace-id" :methods #{:delete} :audience :sdk}
-  {:path "/v1/sessions/:sid/workspace/resume" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/:sid/workspace/root" :methods #{:patch} :audience :sdk}
-  {:path "/v1/sessions/:sid/workspace/stash" :methods #{:post} :audience :sdk}
-  {:path "/v1/sessions/actions/search" :methods #{:get} :audience :sdk}
-  {:path "/v1/settings" :methods #{:get :post} :audience :sdk}
-  {:path "/v1/settings/:id" :methods #{:get} :audience :sdk}
-  {:path "/v1/speech/model" :methods #{:get :post} :audience :sdk}
-  {:path "/v1/speech/voices" :methods #{:get :post} :audience :sdk}
-  {:path "/v1/speech/voices/:voice-id" :methods #{:delete} :audience :sdk}
-  {:path "/v1/speech/voices/:voice-id/sample" :methods #{:get} :audience :sdk}
-  {:path "/v1/voice/model" :methods #{:get :post} :audience :sdk}]
-
+ [{:audience :public :methods #{:get} :path "/docs"}
+  {:audience :public :methods #{:get} :path "/docs/*path"}
+  {:audience :public :methods #{:get} :path "/healthz"}
+  {:audience :administration :methods #{:get} :path "/metrics"}
+  {:audience :public :methods #{:get} :path "/readyz"}
+  {:audience :administration :methods #{:get} :path "/v1/admin/status"}
+  {:audience :administration :methods #{:post} :path "/v1/admin/stop"}
+  {:audience :sdk :methods #{:get} :path "/v1/capabilities"}
+  {:audience :sdk :methods #{:post} :path "/v1/clients"}
+  {:audience :sdk :methods #{:delete} :path "/v1/clients/:cid"}
+  {:audience :sdk :methods #{:get :post} :path "/v1/devices"}
+  {:audience :sdk :methods #{:delete} :path "/v1/devices/:token"}
+  {:audience :sdk :methods #{:post} :path "/v1/devices/actions/test"}
+  {:audience :sdk :methods #{:get} :path "/v1/events"}
+  {:audience :sdk :methods #{:get} :path "/v1/fs"}
+  {:audience :sdk :methods #{:post} :path "/v1/fs/actions/mkdir"}
+  {:audience :sdk :methods #{:get :post} :path "/v1/mcp/servers"}
+  {:audience :sdk :methods #{:delete :put} :path "/v1/mcp/servers/:name"}
+  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/actions/enable"}
+  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/actions/kill"}
+  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/actions/start"}
+  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/auth/cancel"}
+  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/auth/complete"}
+  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/auth/logout"}
+  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/auth/poll"}
+  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/:name/auth/start"}
+  {:audience :sdk :methods #{:post} :path "/v1/mcp/servers/actions/test"}
+  {:audience :sdk :methods #{:get} :path "/v1/models"}
+  {:audience :sdk :methods #{:get :post} :path "/v1/projects"}
+  {:audience :sdk :methods #{:delete :get :patch} :path "/v1/projects/:pid"}
+  {:audience :sdk :methods #{:patch} :path "/v1/projects/:pid/sessions"}
+  {:audience :sdk :methods #{:post} :path "/v1/projects/actions/ensure"}
+  {:audience :sdk :methods #{:get} :path "/v1/projects/overview"}
+  {:audience :sdk :methods #{:get} :path "/v1/provider-presets"}
+  {:audience :sdk :methods #{:post} :path "/v1/providers"}
+  {:audience :sdk :methods #{:delete} :path "/v1/providers/:provider-id"}
+  {:audience :sdk :methods #{:post} :path "/v1/providers/:provider-id/auth/cancel"}
+  {:audience :sdk :methods #{:post} :path "/v1/providers/:provider-id/auth/complete"}
+  {:audience :sdk :methods #{:post} :path "/v1/providers/:provider-id/auth/poll"}
+  {:audience :sdk :methods #{:post} :path "/v1/providers/:provider-id/auth/start"}
+  {:audience :sdk :methods #{:get} :path "/v1/providers/:provider-id/limits"}
+  {:audience :sdk :methods #{:post} :path "/v1/providers/:provider-id/logout"}
+  {:audience :sdk :methods #{:get} :path "/v1/providers/:provider-id/models"}
+  {:audience :sdk :methods #{:get} :path "/v1/providers/:provider-id/status"}
+  {:audience :sdk :methods #{:get :patch} :path "/v1/router"}
+  {:audience :sdk :methods #{:get :post} :path "/v1/sessions"}
+  {:audience :sdk :methods #{:delete :get :patch} :path "/v1/sessions/:sid"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/artifacts"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/attachments"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/cancel-current"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/context"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/drain-queue"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/events-since"}
+  {:audience :sdk :methods #{:get :post} :path "/v1/sessions/:sid/forks"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/iterations/:iid/attachments"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/iterations/:iid/attachments/:idx"}
+  {:audience :sdk :methods #{:get :patch} :path "/v1/sessions/:sid/model"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/release"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/resources"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/resources/logs"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/resources/stop"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/resume-queue"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/seq"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/slashes"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/speech"}
+  {:audience :sdk :methods #{:delete :get} :path "/v1/sessions/:sid/speech/jobs/:job-id"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/speech/jobs/:job-id/audio"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/speech/jobs/:job-id/events"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/suggest"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/transcript"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/transcript.html"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/transcript.md"}
+  {:audience :sdk :methods #{:get :post} :path "/v1/sessions/:sid/turns"}
+  {:audience :sdk :methods #{:delete :get :patch} :path "/v1/sessions/:sid/turns/:tid"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/turns/:tid/attachments"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/turns/:tid/cancel"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/turns/:tid/trace"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/usage"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/views/:view-id/actions"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/views/input"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/views/live"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/views/live/:view-id/log/:node-id"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/voice"}
+  {:audience :sdk :methods #{:delete :get} :path "/v1/sessions/:sid/voice/jobs/:job-id"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/voice/jobs/:job-id/events"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/:sid/workspace"}
+  {:audience :sdk :methods #{:get :post} :path "/v1/sessions/:sid/workspace/drafts"}
+  {:audience :sdk :methods #{:delete} :path "/v1/sessions/:sid/workspace/drafts/:workspace-id"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/workspace/resume"}
+  {:audience :sdk :methods #{:patch} :path "/v1/sessions/:sid/workspace/root"}
+  {:audience :sdk :methods #{:post} :path "/v1/sessions/:sid/workspace/stash"}
+  {:audience :sdk :methods #{:get} :path "/v1/sessions/actions/search"}
+  {:audience :sdk :methods #{:get :post} :path "/v1/settings"}
+  {:audience :sdk :methods #{:get} :path "/v1/settings/:id"}
+  {:audience :sdk :methods #{:get :post} :path "/v1/speech/model"}
+  {:audience :sdk :methods #{:get :post} :path "/v1/speech/voices"}
+  {:audience :sdk :methods #{:delete} :path "/v1/speech/voices/:voice-id"}
+  {:audience :sdk :methods #{:get} :path "/v1/speech/voices/:voice-id/sample"}
+  {:audience :sdk :methods #{:get :post} :path "/v1/voice/model"}]
  :gateway/events
  {;; Events in the session journal / multiplexed session stream.
-  :session
-  #{"block.activity"
-    "block.output"
-    "block.preview"
-    "block.started"
-    "content.block.completed"
-    "content.block.delta"
-    "content.block.started"
-    "context.updated"
-    "iteration.completed"
-    "iteration.error"
-    "provider.retry"
-    "queue.paused"
-    "queue.resumed"
-    "session.model_updated"
-    "session.status"
-    "session.title_updated"
-    "subscription.ready"
-    "turn.cancelled"
-    "turn.completed"
-    "turn.failed"
-    "turn.progress"
-    "turn.queued"
-    "turn.queued.deleted"
-    "turn.queued.drained"
-    "turn.queued.updated"
-    "turn.started"
-    "view.close"
-    "view.open"
-    "view.patch"}
-
+  :session #{"block.activity" "block.output" "block.preview" "block.started"
+             "content.block.completed" "content.block.delta" "content.block.started"
+             "context.updated" "iteration.completed" "iteration.error" "provider.retry"
+             "queue.paused" "queue.resumed" "session.model_updated" "session.status"
+             "session.title_updated" "subscription.ready" "turn.cancelled" "turn.completed"
+             "turn.failed" "turn.progress" "turn.queued" "turn.queued.deleted" "turn.queued.drained"
+             "turn.queued.updated" "turn.started" "view.close" "view.open" "view.patch"}
   ;; Dedicated speech/voice job SSE streams and relay push payloads.
-  :jobs #{"speech.job" "voice.job"}
+  :jobs {:synthesize "speech.job" :transcribe "voice.job"}
   :push #{"turn.end"}
-
   ;; Semantic subsets consumed by every blocking reader / attached queue mirror.
   :turn-terminal #{"turn.cancelled" "turn.completed" "turn.failed"}
-  :queue-mirror
-  #{"queue.paused"
-    "queue.resumed"
-    "turn.queued"
-    "turn.queued.deleted"
-    "turn.queued.drained"
-    "turn.queued.updated"}
-
+  :queue-mirror #{"queue.paused" "queue.resumed" "turn.queued" "turn.queued.deleted"
+                  "turn.queued.drained" "turn.queued.updated"}
   ;; One lifecycle for both input and live View kinds.
-  :view {:open "view.open" :patch "view.patch" :close "view.close"}}
-
+  :view {:close "view.close" :open "view.open" :patch "view.patch"}}
+ :gateway/envelopes {:settled-turn {:meta-keys ["model" "provider" "llm_selected" "llm_actual"
+                                                "is_llm_fallback" "llm_routing_trace" "tokens"
+                                                "cost" "confidence" "eval" "duration_ms"
+                                                "utilization"]}}
  ;; Cursor replay starts after the caller's last observed seq. A fresh subscription
  ;; announces readiness; a running-turn replay rewinds to its generation start.
- :gateway/replay
- {:cursor-header :last-event-id
-  :cursor-key "seq"
-  :ready-event "subscription.ready"
-  :generation-start-event "turn.started"}}
+ :gateway/replay {:cursor-header :last-event-id
+                  :cursor-key "seq"
+                  :generation-start-event "turn.started"
+                  :ready-event "subscription.ready"}}

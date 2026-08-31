@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.oauth-test
-  (:require [clojure.java.io :as io]
+  (:require [charred.api :as json]
+            [clojure.java.io :as io]
             [com.blockether.vis.internal.oauth :as oauth]
             [lazytest.core :refer [defdescribe expect it throws?]]))
 
@@ -10,6 +11,10 @@
       (expect (not (oauth/fresh-within? (- (System/currentTimeMillis) 999999))))
       (expect (not (oauth/fresh-within? nil)))
       (expect (not (oauth/fresh-within? "nope"))))
+  (it "encodes provider auth maps with canonical total JSON keys"
+      (expect (= {"oauth_token" "token" "saved_at" 1 "ratio" nil}
+                 (json/read-json (oauth/auth-json-str
+                                   {:oauth-token "token" :saved-at 1 :ratio (/ 0.0 0.0)})))))
   (it "single-flight! reuses when reuse returns non-nil, else refreshes"
       (let [ran
             (atom 0)

@@ -260,7 +260,7 @@ const SPEECH_JOB_TIMEOUT_MS = 120_000;
 /**
  * SSE `event:` name of every frame on a transcription job's stream.
  *
- * Mirror of `wire/voice-job-event` (src/com/blockether/vis/internal/gateway/wire.clj)
+ * Mirror of `com.blockether.vis.contract.gateway/voice-job-event`
  * and of `features.voice.progress_event` in `GET /v1/capabilities`; a
  * cross-channel test pins the two spellings together. It exists because this
  * client reads TWO unrelated SSE resources: a session's ordered event LOG (`id:`

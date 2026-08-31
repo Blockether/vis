@@ -6,7 +6,7 @@
    values. Markdown exists only as the payload of a prose block."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]))
 
 (def roles #{"user" "assistant" "system" "developer" "tool"})

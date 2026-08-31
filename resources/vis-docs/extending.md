@@ -242,7 +242,7 @@ vis.symbol(fn, name=None, tag="observation", is_hidden=False)
 - `is_hidden=True` hides the tool from the model-facing listing (still callable).
 - Boolean keys keep **one spelling** across the boundary: a Python `is_<name>` key
   is the Clojure `:is-<name>` keyword — the same mechanical `_` ↔ `-` mirror the
-  gateway wire uses (`wire-key` / `engine-key` in `gateway/wire.clj`). A provider's
+  gateway wire uses (`wire-key` / `engine-key` in `contract/wire.clj`). A provider's
   `is_authenticated` → `:is-authenticated`, `is_unlimited` → `:is-unlimited`,
   `is_hidden` → `:is-hidden`. The only exceptions are the few keys svar's router
   itself spells with a trailing `?` (`is_tool_call` → `:tool-call?`); those map

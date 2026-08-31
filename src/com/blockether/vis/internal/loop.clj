@@ -20,7 +20,7 @@
     [com.blockether.vis.internal.content :as content]
     [com.blockether.vis.internal.ctx-engine :as ctx-engine]
     [com.blockether.vis.internal.ctx-loop :as ctx-loop]
-    [com.blockether.vis.internal.gateway.wire :as wire]
+    [com.blockether.vis.contract.wire :as wire]
     [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
     [com.blockether.vis.internal.env-python :as env]
     [com.blockether.vis.internal.egress-proxy :as egress]

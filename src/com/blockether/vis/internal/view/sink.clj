@@ -22,7 +22,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.attachment-storage :as attachment-storage]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util])
   (:import (java.io File)
            (java.nio.file Files)))

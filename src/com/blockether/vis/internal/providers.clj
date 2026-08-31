@@ -20,7 +20,7 @@
             [com.blockether.vis.internal.cancellation :as cancel]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.format :as format]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.limits-format :as limits-format]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.registry :as registry]

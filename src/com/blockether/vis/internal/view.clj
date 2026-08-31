@@ -27,7 +27,7 @@
             [clojure.string :as str]
             [com.blockether.vis.internal.channel-events :as channel-events]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.view.materializer :as materializer]
             [com.blockether.vis.internal.view.sink :as sink]
             [com.blockether.vis.internal.view.spec :as view-spec]

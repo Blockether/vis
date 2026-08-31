@@ -10,7 +10,7 @@
             [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.relay :as relay]
-            [com.blockether.vis.internal.gateway.wire :as wire])
+            [com.blockether.vis.contract.wire :as wire])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress]
            [java.nio.charset StandardCharsets]))

@@ -9,7 +9,7 @@
             [com.blockether.vis.ext.persistance-sqlite.core :as ps]
             [com.blockether.vis.ext.persistance-sqlite.registrar]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.workspace :as ws]
             [lazytest.core :refer [defdescribe expect it]]

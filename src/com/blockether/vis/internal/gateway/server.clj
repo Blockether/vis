@@ -30,7 +30,8 @@
             [com.blockether.vis.internal.gateway.runtime :as protocol]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.provider-auth :as provider-auth]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
@@ -817,7 +818,7 @@
 
    EVERY SSE endpoint emits it for EVERY session it serves — single-session and
    multiplexed alike — so no client has to special-case which endpoint it is
-   attached to. Like every other frame it rides `wire/sse-frame`, i.e. it is an
+   attached to. Like every other frame it rides `sse/sse-frame`, i.e. it is an
    ordinary `id:`/`event:`/`data:` frame, not a bespoke encoding."
   [^OutputStream out sid ^long cursor replay]
   (let [tid
@@ -837,7 +838,7 @@
           (pos? latest-iteration)
           (assoc :latest-iteration latest-iteration))]
 
-    (.write out (.getBytes (wire/sse-frame (wire/canonical payload)) StandardCharsets/UTF_8))
+    (.write out (.getBytes (sse/sse-frame (wire/canonical payload)) StandardCharsets/UTF_8))
     (.flush out)))
 
 (defn- parse-multi-sids
@@ -932,8 +933,7 @@
               (fn [event]
                 (let [esid (str (get event "session_id"))]
                   (when (> (long (get event "seq")) (long (get @last-seqs esid Long/MIN_VALUE)))
-                    (.write out
-                            (.getBytes (wire/sse-frame (outbound event)) StandardCharsets/UTF_8))
+                    (.write out (.getBytes (sse/sse-frame (outbound event)) StandardCharsets/UTF_8))
                     (.flush out)
                     (swap! last-seqs assoc esid (long (get event "seq"))))))]
 
@@ -997,7 +997,7 @@
 
               write!
               (fn [event]
-                (.write out (.getBytes (wire/sse-frame event) StandardCharsets/UTF_8))
+                (.write out (.getBytes (sse/sse-frame event) StandardCharsets/UTF_8))
                 (.flush out))]
 
           (swap! server-state (fn [st]
@@ -3426,7 +3426,7 @@
                 ;; guessing a job from the payload's shape.
                 :is-async true
                 :progress "sse"
-                :progress-event wire/voice-job-event
+                :progress-event gateway-contract/voice-job-event
                 :phases (mapv name (voice/direction-phases :transcribe))
                 :model
                 (if engine (voice-state->json (voice/readiness engine)) {:status "unavailable"})}
@@ -3443,7 +3443,7 @@
                 :synthesis "gateway-local"
                 :is-async true
                 :progress "sse"
-                :progress-event wire/speech-job-event
+                :progress-event gateway-contract/speech-job-event
                 :phases (mapv name (voice/direction-phases :synthesize))
                 ;; a short line comes back as the audio on this connection and a long one as
                 ;; a job: both thresholds are published so a client never has to discover
@@ -3829,8 +3829,8 @@
 
 (def ^:private job-event-names
   "The SSE frame name each direction's job stream carries — the one discriminator a
-   client filters on (see [[wire/voice-job-event]])."
-  {:transcribe wire/voice-job-event :synthesize wire/speech-job-event})
+   client filters on (see [[gateway-contract/voice-job-event]])."
+  {:transcribe gateway-contract/voice-job-event :synthesize gateway-contract/speech-job-event})
 
 (defn- job-events-body
   "Ring streamable body for ONE speech job: its CURRENT state first, then a frame named
@@ -3860,7 +3860,7 @@
 
               write!
               (fn [job]
-                (.write out (.getBytes (wire/job-sse-frame event-name job) StandardCharsets/UTF_8))
+                (.write out (.getBytes (sse/job-sse-frame event-name job) StandardCharsets/UTF_8))
                 (.flush out))]
 
           (try (let [current (voice/job job-id)]

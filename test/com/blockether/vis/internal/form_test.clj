@@ -10,7 +10,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.gateway.state :as gw]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private chunk->event @#'gw/chunk->event)

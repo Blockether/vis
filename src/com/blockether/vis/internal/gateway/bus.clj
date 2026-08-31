@@ -27,7 +27,7 @@
    Degrades safely: any IO failure is swallowed and the process falls
    back to today's in-process-only behavior."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File RandomAccessFile]

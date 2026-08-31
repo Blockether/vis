@@ -47,7 +47,7 @@
             [com.blockether.vis.internal.env-python :as env]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.extension-aggregate :as aggregate]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.notifications :as notifications]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.sandbox-resources :as res]

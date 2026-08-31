@@ -9,7 +9,6 @@
             [com.blockether.vis.ext.channel-tui.composer-attachment-rail :as attachment-rail]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.internal.attachments :as attach]
-            [com.blockether.vis.internal.gateway.wire :as gateway-wire]
             [com.blockether.vis.internal.iteration :as iteration]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
@@ -966,7 +965,7 @@
       {:phase :form-activity
        :iteration iteration
        :position form-index
-       :activity (gateway-wire/->engine (event-get event :activity))}
+       :activity (vis/wire->engine (event-get event :activity))}
 
       "block.output"
       (merge {:phase :form-result

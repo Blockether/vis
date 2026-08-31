@@ -10,7 +10,8 @@
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.server :as server]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
+            [com.blockether.vis.internal.gateway.server.transport.sse :as sse]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.resources :as resources]
             [com.blockether.vis.internal.python-extensions :as python-extensions]
@@ -933,8 +934,9 @@
                                       ;; `: ping` heartbeats are comments, not frames.
                                       (remove #(str/starts-with? % ":")))]
                       (is (seq frames))
-                      (is (every? #(str/starts-with? % (str "event: " wire/voice-job-event))
-                                  frames))
+                      (is (every?
+                            #(str/starts-with? % (str "event: " gateway-contract/voice-job-event))
+                            frames))
                       (is (not-any? #(str/includes? % "id: ") frames))))
                   (is (seq jobs))
                   (is (= #{job-id} (set (map #(get % "id") jobs))))
@@ -960,9 +962,10 @@
 ;; session event or a transcription's progress.
 (deftest voice-job-frames-are-named-and-that-name-is-published
   (testing "the frame names itself, and carries no session cursor"
-    (let [frame (wire/job-sse-frame wire/voice-job-event {"id" "vj_1" "phase" "transcribing"})]
-      (is (= "voice.job" wire/voice-job-event))
-      (is (str/starts-with? frame (str "event: " wire/voice-job-event "\n")))
+    (let [frame (sse/job-sse-frame gateway-contract/voice-job-event
+                                   {"id" "vj_1" "phase" "transcribing"})]
+      (is (= "voice.job" gateway-contract/voice-job-event))
+      (is (str/starts-with? frame (str "event: " gateway-contract/voice-job-event "\n")))
       (is (str/includes? frame "data: {"))
       (is (str/ends-with? frame "\n\n"))
       ;; `id:` is the SESSION log's replay cursor. A job has no log to replay, so
@@ -974,11 +977,13 @@
                     wire/parse-json
                     (get-in ["features" "voice"]))]
       (is (= "sse" (get voice "progress")))
-      (is (= wire/voice-job-event (get voice "progress_event")))
+      (is (= gateway-contract/voice-job-event (get voice "progress_event")))
       (is (true? (get voice "is_async")))))
   (testing "the companion filters on that very string, not on a payload's shape"
     (let [ts (slurp "apps/vis-companion/src/lib/gateway.ts")]
-      (is (str/includes? ts (str "export const VOICE_JOB_EVENT = \"" wire/voice-job-event "\";")))
+      (is (str/includes?
+            ts
+            (str "export const VOICE_JOB_EVENT = \"" gateway-contract/voice-job-event "\";")))
       (is (str/includes? ts "if (event !== VOICE_JOB_EVENT) return;"))
       (is (str/includes? ts "if (frameName === VOICE_JOB_EVENT) return;")))))
 
@@ -1068,28 +1073,28 @@
   ;; A picker cannot be populated by trial: the engine, the voices it can speak in, the
   ;; phase vocabulary and the two lengths that decide inline-or-job all arrive in the one
   ;; request a client already makes.
-  (with-only-speech-engine! (speaking-engine)
-                            (fn []
-                              (let [speech (-> ((rv 'capabilities-handler) {})
-                                               :body
-                                               wire/parse-json
-                                               (get-in ["features" "speech"]))]
-                                (is (true? (get speech "is_enabled")))
-                                (is (= "audio/wav" (get speech "transport")))
-                                (is (true? (get speech "is_async")))
-                                (is (= "sse" (get speech "progress")))
-                                (is (= "speech.job" wire/speech-job-event))
-                                (is (= wire/speech-job-event (get speech "progress_event")))
-                                ;; the OTHER direction's working phase is never promised to a client that would
-                                ;; sit waiting for it
-                                (is (= ["uploading" "queued" "preparing" "synthesizing" "done"
-                                        "failed"]
-                                       (get speech "phases")))
-                                (is (= "speaker" (get speech "selected")))
-                                (is (= [{"id" "alba" "label" "Alba" "language" "en-GB"}]
-                                       (get-in speech ["engines" 0 "voices"])))
-                                (is (= 280 (get speech "inline_max_chars")))
-                                (is (< (get speech "inline_max_chars") (get speech "max_chars"))))))
+  (with-only-speech-engine!
+    (speaking-engine)
+    (fn []
+      (let [speech (-> ((rv 'capabilities-handler) {})
+                       :body
+                       wire/parse-json
+                       (get-in ["features" "speech"]))]
+        (is (true? (get speech "is_enabled")))
+        (is (= "audio/wav" (get speech "transport")))
+        (is (true? (get speech "is_async")))
+        (is (= "sse" (get speech "progress")))
+        (is (= "speech.job" gateway-contract/speech-job-event))
+        (is (= gateway-contract/speech-job-event (get speech "progress_event")))
+        ;; the OTHER direction's working phase is never promised to a client that would
+        ;; sit waiting for it
+        (is (= ["uploading" "queued" "preparing" "synthesizing" "done" "failed"]
+               (get speech "phases")))
+        (is (= "speaker" (get speech "selected")))
+        (is (= [{"id" "alba" "label" "Alba" "language" "en-GB"}]
+               (get-in speech ["engines" 0 "voices"])))
+        (is (= 280 (get speech "inline_max_chars")))
+        (is (< (get speech "inline_max_chars") (get speech "max_chars"))))))
   (testing "a gateway that cannot speak says so instead of half-advertising it"
     (with-only-speech-engine! nil
                               (fn []
@@ -1192,7 +1197,9 @@
 
                 (testing "every frame names the SYNTHESIS stream, never the transcription one"
                   (is (seq frames))
-                  (is (every? #(str/starts-with? % (str "event: " wire/speech-job-event)) frames)))
+                  (is (every? #(str/starts-with? %
+                                                 (str "event: " gateway-contract/speech-job-event))
+                              frames)))
                 (testing "the last frame IS the result: no follow-up request to learn it"
                   (is (= "done" (get final "phase")))
                   (is (= 100 (get final "progress")))

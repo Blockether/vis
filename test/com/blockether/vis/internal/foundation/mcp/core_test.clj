@@ -5,7 +5,7 @@
             [com.blockether.vis.internal.foundation.mcp.client :as client]
             [com.blockether.vis.internal.foundation.mcp.core :as mcp]
             [com.blockether.vis.internal.foundation.mcp.oauth :as oauth]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe mcp-native-contract-test

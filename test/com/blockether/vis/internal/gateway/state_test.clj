@@ -11,7 +11,7 @@
             [com.blockether.vis.internal.form :as form]
             [com.blockether.vis.internal.gateway.bus :as bus]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.persistance :as persistance]
             [com.blockether.vis.internal.session-model :as smodel]
@@ -4775,3 +4775,31 @@
         (expect (= 1 (count frames)))
         (expect (= "s1" (get (first frames) "session_id")))
         (expect (true? (get (first frames) "is_awaiting_input"))))))
+
+(defdescribe
+  bounded-diagnostics-test
+  "Diagnostic truncation must never emit half a UTF-16 surrogate pair."
+  (it "steps back when a cut would split an emoji"
+      (let [bounded-str
+            (var-get (ns-resolve 'com.blockether.vis.internal.gateway.state 'bounded-str))
+
+            s
+            (str "okxxxxxxxxxx" "😀😀")
+
+            utf8-clean?
+            (fn [^String text]
+              (= text (String. (.getBytes text "UTF-8") "UTF-8")))]
+
+        (doseq [limit [11 12 13 14 15]]
+          (expect (utf8-clean? (bounded-str s limit)) (str "lone surrogate at limit " limit)))))
+  (it "clamps non-positive limits and leaves short values alone"
+      (let [bounded-str
+            (var-get (ns-resolve 'com.blockether.vis.internal.gateway.state 'bounded-str))
+
+            bounded-pr
+            (var-get (ns-resolve 'com.blockether.vis.internal.gateway.state 'bounded-pr))]
+
+        (expect (= " …[truncated]" (bounded-str "abc" 0)))
+        (expect (= " …[truncated]" (bounded-str "abc" -1)))
+        (expect (= "abc" (bounded-str "abc" 10)))
+        (expect (= "\"abc\"" (bounded-pr "abc" 10))))))

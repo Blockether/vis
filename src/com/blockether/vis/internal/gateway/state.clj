@@ -25,7 +25,7 @@
             [com.blockether.vis.internal.session-model :as smodel]
             [com.blockether.vis.internal.ctx-loop :as ctx-loop]
             [com.blockether.vis.internal.gateway.bus :as bus]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.loop :as lp]
             [com.blockether.vis.internal.titling :as titling]
             [com.blockether.vis.internal.persistance :as persistance]
@@ -55,6 +55,22 @@
    alongside its increment (`:cumulative`) — plenty for any live band; the
    boundary `iteration.completed` still ships the complete text."
   16000)
+
+(defn- clamp
+  "Cut text without splitting a UTF-16 surrogate pair."
+  [^String s ^long limit]
+  (if (<= (count s) limit) s (str (util/truncate s limit) " …[truncated]")))
+
+(defn- bounded-pr
+  "Bound diagnostic `pr-str` values before they enter an event."
+  [x ^long limit]
+  (let [s (try (pr-str x) (catch Throwable t (str "#render-error " (ex-message t))))]
+    (clamp s limit)))
+
+(defn- bounded-str
+  "Bound an already-rendered diagnostic before it enters an event."
+  [s ^long limit]
+  (clamp (str s) limit))
 
 ;; Live reasoning/content/prose deltas arrive per provider token. Each emitted
 ;; wire frame carries the INCREMENT since the last emit under `:text` (append
@@ -1496,7 +1512,7 @@
                   (assoc :stdout stdout)
 
                   (some? error)
-                  (assoc :error (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+                  (assoc :error (bounded-str (error->wire-text error) ERROR_PR_LIMIT))
 
                   (some? duration-ms)
                   (assoc :duration_ms duration-ms))))
@@ -1509,21 +1525,21 @@
             {:block_id stream-block-id
              :field "text"
              :text (or stream-delta "")
-             :cumulative (wire/bounded-str (util/normalize-thinking-text (delta-text chunk))
-                                           STREAM_CUMULATIVE_LIMIT)}
+             :cumulative (bounded-str (util/normalize-thinking-text (delta-text chunk))
+                                      STREAM_CUMULATIVE_LIMIT)}
 
             ;; Live provider Markdown appends to the canonical prose block.
             :content
             {:block_id stream-block-id
              :field "markdown"
              :text (or stream-delta "")
-             :cumulative (wire/bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
+             :cumulative (bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
 
             :assistant-prose
             {:block_id stream-block-id
              :field "markdown"
              :text (or stream-delta "")
-             :cumulative (wire/bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
+             :cumulative (bounded-str (str (delta-text chunk)) STREAM_CUMULATIVE_LIMIT)}
 
             ;; The iteration's complete reasoning + complete assistant prose ride
             ;; the boundary event too — the canonical, PERSISTED final text.
@@ -1543,7 +1559,7 @@
             ;; bubble paints the styled CARD from (`provider-error-info` →
             ;; `:vis/provider-error-data`).
             (cond-> {:error (when (some? error)
-                              (wire/bounded-str (error->wire-text error) ERROR_PR_LIMIT))
+                              (bounded-str (error->wire-text error) ERROR_PR_LIMIT))
                      :thinking (util/settled-thinking-text thinking)}
               (map? error)
               (assoc :error-data (select-keys error [:type :message :status :cause-class]))
@@ -1563,7 +1579,7 @@
                   (select-keys (:event chunk)
                                [:event/type :reason :provider :model :from-provider :from-model
                                 :attempt :delay-ms :status :error])))
-              {:detail (wire/bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)}))]
+              {:detail (bounded-pr (dissoc chunk :phase) ERROR_PR_LIMIT)}))]
       [(case phase
          :tool-preview
          "block.preview"
@@ -3959,8 +3975,10 @@
     ;; ROW first, letting any event-carried value win, otherwise the sync
     ;; submit/attach result drops usage and live bubbles render no
     ;; tokens/cost meta at all.
-    (cond-> (-> (merge (select-keys message wire/turn-meta-keys)
-                       (into {} (filter (comp some? val)) (select-keys event wire/turn-meta-keys)))
+    (cond-> (-> (merge (select-keys message gateway-contract/turn-meta-keys)
+                       (into {}
+                             (filter (comp some? val))
+                             (select-keys event gateway-contract/turn-meta-keys)))
                 (assoc "content" blocks
                        "iteration_count" (or (get message "iteration_count") 1)
                        "session_turn_id" turn-id))

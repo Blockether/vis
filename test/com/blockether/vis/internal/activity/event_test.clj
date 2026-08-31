@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.activity.event-test
   (:require [com.blockether.vis.internal.activity.event :as event]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [clojure.string :as string]
             [lazytest.core :refer [defdescribe expect it]]))
 

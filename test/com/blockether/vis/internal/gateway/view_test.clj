@@ -16,7 +16,7 @@
             [com.blockether.vis.internal.gateway.view :as gw-hi]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.view :as hi]
             [com.blockether.vis.internal.view.materializer :as live]
             [com.blockether.vis.internal.view.spec :as hi-spec]

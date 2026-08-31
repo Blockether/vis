@@ -28,11 +28,18 @@
        (contains? audiences audience)))
 
 (defn- valid-document?
-  [{:contract/keys [version] :gateway/keys [protocol headers routes events replay] :as document}]
-  (let [{:keys [session jobs push turn-terminal queue-mirror view]} events]
+  [{:contract/keys [version]
+    :gateway/keys [protocol headers routes events envelopes replay]
+    :as document}]
+  (let [{:keys [session jobs push turn-terminal queue-mirror view]}
+        events
+
+        settled-turn
+        (:settled-turn envelopes)]
+
     (and (closed-map? document
                       #{:contract/version :gateway/protocol :gateway/headers :gateway/routes
-                        :gateway/events :gateway/replay})
+                        :gateway/events :gateway/envelopes :gateway/replay})
          (pos-int? version)
          (closed-map? protocol #{:version :minimum-client :minimum-gateway})
          (every? pos-int? (vals protocol))
@@ -46,11 +53,19 @@
          (every? valid-route? routes)
          (= (count routes) (count (set (map :path routes))))
          (closed-map? events #{:session :jobs :push :turn-terminal :queue-mirror :view})
-         (every? event-set? [session jobs push turn-terminal queue-mirror])
+         (closed-map? jobs #{:transcribe :synthesize})
+         (every? non-blank-string? (vals jobs))
+         (every? event-set? [session push turn-terminal queue-mirror])
          (every? session turn-terminal)
          (every? session queue-mirror)
          (closed-map? view #{:open :patch :close})
          (every? session (vals view))
+         (closed-map? envelopes #{:settled-turn})
+         (closed-map? settled-turn #{:meta-keys})
+         (vector? (:meta-keys settled-turn))
+         (seq (:meta-keys settled-turn))
+         (every? non-blank-string? (:meta-keys settled-turn))
+         (= (count (:meta-keys settled-turn)) (count (set (:meta-keys settled-turn))))
          (closed-map? replay #{:cursor-header :cursor-key :ready-event :generation-start-event})
          (contains? headers (:cursor-header replay))
          (non-blank-string? (:cursor-key replay))
@@ -98,9 +113,12 @@
 (def session-event-types
   "Closed built-in vocabulary carried by the session journal and multiplexed session SSE stream."
   (get-in @document [:gateway/events :session]))
-(def job-event-types
-  "Event names used by dedicated speech and voice job streams."
+(def job-events
+  "Directional event names carried by dedicated speech and voice job streams."
   (get-in @document [:gateway/events :jobs]))
+(def job-event-types "All dedicated job-stream event names." (set (vals job-events)))
+(def voice-job-event "Transcription job stream event name." (:transcribe job-events))
+(def speech-job-event "Speech synthesis job stream event name." (:synthesize job-events))
 (def push-event-types
   "Event names used by relay push payloads."
   (get-in @document [:gateway/events :push]))
@@ -117,6 +135,10 @@
 (def view-events
   "Open, patch and close event names for both View kinds."
   (get-in @document [:gateway/events :view]))
+(def envelopes "Canonical gateway envelope declarations." (:gateway/envelopes @document))
+(def turn-meta-keys
+  "Wire keys copied from a settled turn row into blocking submit/attach results."
+  (get-in envelopes [:settled-turn :meta-keys]))
 (def replay "Cursor and generation anchors for session replay." (:gateway/replay @document))
 (def event-types
   "All event names on session, dedicated-job and relay-push streams."

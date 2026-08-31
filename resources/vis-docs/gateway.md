@@ -624,7 +624,7 @@ frame's `event:` name and never off the shape of the JSON inside it:
 `features.voice.is_async`, `features.voice.progress` (`"sse"`),
 `features.voice.progress_event` (`"voice.job"`), the `phases` vocabulary, every
 registered engine in `engines[]`, and the `selected` engine id. That name has one
-source, `wire/voice-job-event`; the companion mirrors it as `VOICE_JOB_EVENT`
+source, `com.blockether.vis.contract.gateway/voice-job-event`; the companion mirrors it as `VOICE_JOB_EVENT`
 (`apps/vis-companion/src/lib/gateway.ts`) and a cross-channel test fails if the two
 spellings ever drift.
 

@@ -10,7 +10,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.gateway.keychain :as keychain]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
   (:import [java.io File]

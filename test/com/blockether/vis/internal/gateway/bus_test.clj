@@ -7,7 +7,7 @@
    watcher forever. The pid-liveness gate is what tells the two apart."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.gateway.bus :as bus]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-temp-journal

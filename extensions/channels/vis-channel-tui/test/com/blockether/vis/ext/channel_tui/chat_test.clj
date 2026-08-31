@@ -2,26 +2,25 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
-            [com.blockether.vis.internal.gateway.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
 ;; `rebuild-history` now reads `vis/gateway-transcript` (which delegates to
 ;; `persistance/db-list-*` directly, NOT the `vis/db-list-*` re-exports the
 ;; tests redef). This stub composes the same turn+`:iterations` shape from those
 ;; existing mocks — each test redefs `vis/gateway-transcript` to it. The rows
-;; pass through `wire/canonical` exactly like the REAL facade (`state/transcript`
+;; pass through `vis/wire-canonical` exactly like the REAL facade (`state/transcript`
 ;; canonicalizes at the source), so every fixture below exercises the ONE
 ;; canonical transcript shape a channel actually sees — in-process AND over HTTP.
 (defn- compose-transcript
   [sid]
-  (wire/canonical (mapv (fn [turn]
-                          (-> turn
-                              (assoc :turn-id (:id turn)
-                                     :request (:user-request turn)
-                                     :iterations
-                                     (vec (vis/db-list-session-turn-iterations :db (:id turn))))
-                              (dissoc :id :user-request)))
-                        (vis/db-list-session-turns :db sid))))
+  (vis/wire-canonical (mapv (fn [turn]
+                              (-> turn
+                                  (assoc :turn-id (:id turn)
+                                         :request (:user-request turn)
+                                         :iterations
+                                         (vec (vis/db-list-session-turn-iterations :db (:id turn))))
+                                  (dissoc :id :user-request)))
+                            (vis/db-list-session-turns :db sid))))
 
 (defdescribe rebuild-history-test)
 
@@ -547,17 +546,17 @@
 (defdescribe provider-retry-event-chunk-test
              (let [g->c @#'chat/gateway-event->chunk]
                (it "rehydrates structured retry metadata from the canonical wire event"
-                   (let [event (wire/canonical {:type "provider.retry"
-                                                :iteration 2
-                                                :attempt 1
-                                                :max-retries 3
-                                                :delay-ms 1000
-                                                :error {:type :svar.llm/provider-unavailable
-                                                        :message "Provider unavailable"}
-                                                :event {:event/type :llm.routing/provider-retry
-                                                        :reason :provider-unavailable
-                                                        :provider "openai"
-                                                        :model "gpt-x"}})
+                   (let [event (vis/wire-canonical {:type "provider.retry"
+                                                    :iteration 2
+                                                    :attempt 1
+                                                    :max-retries 3
+                                                    :delay-ms 1000
+                                                    :error {:type :svar.llm/provider-unavailable
+                                                            :message "Provider unavailable"}
+                                                    :event {:event/type :llm.routing/provider-retry
+                                                            :reason :provider-unavailable
+                                                            :provider "openai"
+                                                            :model "gpt-x"}})
                          chunk (g->c event)]
 
                      (expect (= :provider-retry-reset (:phase chunk)))
@@ -585,7 +584,7 @@
                    restore
                    (fn [env]
                      (-> (it->ie {:produced-answer? false :last-iteration-id :iter-1}
-                                 (wire/canonical {:id :iter-1 :code (:src env) :forms [env]}))
+                                 (vis/wire-canonical {:id :iter-1 :code (:src env) :forms [env]}))
                          :forms
                          first))]
 
@@ -764,47 +763,47 @@
           @#'chat/gateway-event->chunk
 
           chunk
-          (g->c (wire/canonical {:type "iteration.error"
-                                 :iteration 3
-                                 :error "upstream reset"
-                                 :error-data {:type :svar.core/http-error
-                                              :message "upstream reset"
-                                              :status 503}}))]
+          (g->c (vis/wire-canonical {:type "iteration.error"
+                                     :iteration 3
+                                     :error "upstream reset"
+                                     :error-data {:type :svar.core/http-error
+                                                  :message "upstream reset"
+                                                  :status 503}}))]
 
       (expect (= :iteration-error (:phase chunk)))
       (expect (= {:type :svar.core/http-error :message "upstream reset" :status 503}
                  (:error chunk)))))
 
-(defdescribe user-recording-transcript-fence-test
-             ;; A persisted RECORDING has no picture to re-render, so the turn used to carry
-             ;; nothing but a `memo.m4a` chip — the terminal cannot play it, and what it SAID
-             ;; was unreachable. The gateway transcribed it once on the way in; history now
-             ;; appends the words as a collapsed `vis-transcript` fence.
-             (let [render @#'chat/user-request-with-images]
-               (it "appends what a user's recording says, once, as its own fence"
-                   (let [out (render "listen to /tmp/memo.m4a"
-                                     (wire/canonical [{:filename "memo.m4a"
-                                                       :media-type "audio/mp4"
-                                                       :source "user"
-                                                       :transcription "buy milk and call back"}]))]
-                     (expect (str/includes? out "````vis-transcript"))
-                     (expect (str/includes? out "[Transcription #1: memo.m4a]"))
-                     (expect (str/includes? out "buy milk and call back"))))
-               (it "leaves a turn alone when nothing could read the recording"
-                   ;; No engine, or audio it could not decode: the chip is what it always was.
-                   (let [out (render "listen to /tmp/memo.m4a"
-                                     (wire/canonical [{:filename "memo.m4a"
-                                                       :media-type "audio/mp4"
-                                                       :source "user"}]))]
-                     (expect (not (str/includes? out "vis-transcript")))))
-               (it "never speaks for the MODEL's own audio artifact"
-                   ;; Only what the human attached belongs in the human's own bubble.
-                   (let [out (render "make me a sound"
-                                     (wire/canonical [{:filename "reply.m4a"
-                                                       :media-type "audio/mp4"
-                                                       :source "tool"
-                                                       :transcription "spoken answer"}]))]
-                     (expect (not (str/includes? out "vis-transcript")))))))
+(defdescribe
+  user-recording-transcript-fence-test
+  ;; A persisted RECORDING has no picture to re-render, so the turn used to carry
+  ;; nothing but a `memo.m4a` chip — the terminal cannot play it, and what it SAID
+  ;; was unreachable. The gateway transcribed it once on the way in; history now
+  ;; appends the words as a collapsed `vis-transcript` fence.
+  (let [render @#'chat/user-request-with-images]
+    (it "appends what a user's recording says, once, as its own fence"
+        (let [out (render "listen to /tmp/memo.m4a"
+                          (vis/wire-canonical [{:filename "memo.m4a"
+                                                :media-type "audio/mp4"
+                                                :source "user"
+                                                :transcription "buy milk and call back"}]))]
+          (expect (str/includes? out "````vis-transcript"))
+          (expect (str/includes? out "[Transcription #1: memo.m4a]"))
+          (expect (str/includes? out "buy milk and call back"))))
+    (it "leaves a turn alone when nothing could read the recording"
+        ;; No engine, or audio it could not decode: the chip is what it always was.
+        (let [out (render "listen to /tmp/memo.m4a"
+                          (vis/wire-canonical
+                            [{:filename "memo.m4a" :media-type "audio/mp4" :source "user"}]))]
+          (expect (not (str/includes? out "vis-transcript")))))
+    (it "never speaks for the MODEL's own audio artifact"
+        ;; Only what the human attached belongs in the human's own bubble.
+        (let [out (render "make me a sound"
+                          (vis/wire-canonical [{:filename "reply.m4a"
+                                                :media-type "audio/mp4"
+                                                :source "tool"
+                                                :transcription "spoken answer"}]))]
+          (expect (not (str/includes? out "vis-transcript")))))))
 
 ;; User-submitted attachments are conversation content, not composer-only state.
 (defdescribe user-submitted-attachment-history-test
@@ -814,9 +813,9 @@
 
                        out
                        (render "review this"
-                               (wire/canonical [{:filename "brief.html"
-                                                 :media-type "text/html"
-                                                 :source "user"}]))]
+                               (vis/wire-canonical [{:filename "brief.html"
+                                                     :media-type "text/html"
+                                                     :source "user"}]))]
 
                    (expect (str/includes? out "[Attachment #1: brief.html]")))))
 (defdescribe explicit-turn-attachment-test

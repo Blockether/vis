@@ -6,7 +6,7 @@
    must never change the value or exception the Python caller observes."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.activity.presenter :as presenter]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util])
   (:import [java.nio.charset StandardCharsets]
            [java.util UUID]

@@ -1,11 +1,11 @@
-(ns com.blockether.vis.internal.gateway.wire-test
+(ns com.blockether.vis.contract.wire-test
   "THE canonical-shape invariant. `wire/canonical` is DEFINED as what a remote
    client holds after `parse-json` ∘ `json-str`; this gate keeps the two in
    lockstep. Canonical map keys are snake_case STRINGS — never keywords, never
    kebab, never a trailing `?` (boolean-style keys become `is_*`)."
   (:require [clojure.string :as str]
             [clojure.walk :as walk]
-            [com.blockether.vis.internal.gateway.wire :as wire]
+            [com.blockether.vis.contract.wire :as wire]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private rich-fixture
@@ -133,12 +133,10 @@
       (expect (= {"v" nil} (wire/canonical {:v Double/NEGATIVE_INFINITY}))))
   (it "a BigDecimal keeps the canonical == roundtrip invariant"
       (expect (= {"v" 1.5} (wire/canonical {:v 1.5M}))))
-  (it "an event carrying such values still renders an SSE frame and a poll batch"
+  (it "a poll batch carrying such values remains encodable"
       (let [event (wire/canonical {:seq 1
                                    :type "iteration.completed"
                                    :tool-result {:counts {1 "a"} :ratio (/ 0.0 0.0)}})]
-        (expect (str/starts-with? (wire/sse-frame event)
-                                  "id: 1\nevent: iteration.completed\ndata: "))
         (expect (= [event] (wire/parse-json (wire/json-str [event]))))))
   (it "the invariant holds for every awkward scalar"
       (doseq [x [{1 :a} {nil 1} {true 1} {[1 2] :k} {:v 1.0M} {:v (/ 0.0 0.0)}
@@ -146,27 +144,3 @@
                  {:v #{1 2}} {:v \c} {:v Long/MAX_VALUE}]]
         (expect (= (wire/canonical x) (wire/parse-json (wire/json-str x)))
                 (str "roundtrip differs for " (pr-str x))))))
-
-(defdescribe
-  bounded-clamp-test
-  "Truncation must never emit a LONE surrogate: half an emoji is not valid text
-   and corrupts every UTF-8 consumer downstream."
-  (it "a cut landing inside a surrogate pair steps back instead of splitting it"
-      (let [s
-            (str "okxxxxxxxxxx" "😀😀")
-
-            ;; A LONE surrogate cannot be encoded: the UTF-8 round-trip
-            ;; replaces it with `?`, which is exactly how it reaches a client.
-            utf8-clean?
-            (fn [^String t]
-              (= t (String. (.getBytes t "UTF-8") "UTF-8")))]
-
-        (doseq [limit [11 12 13 14 15]]
-          (expect (utf8-clean? (wire/bounded-str s limit))
-                  (str "lone surrogate at limit " limit)))))
-  (it "a non-positive limit clamps instead of throwing"
-      (expect (= " …[truncated]" (wire/bounded-str "abc" 0)))
-      (expect (= " …[truncated]" (wire/bounded-str "abc" -1))))
-  (it "a short string is returned verbatim"
-      (expect (= "abc" (wire/bounded-str "abc" 10)))
-      (expect (= "\"abc\"" (wire/bounded-pr "abc" 10)))))

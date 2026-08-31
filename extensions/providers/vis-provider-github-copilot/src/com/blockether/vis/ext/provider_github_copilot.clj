@@ -22,7 +22,6 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel]))
 
@@ -152,11 +151,11 @@
 
 (defn- save-auth-file!
   "Persist auth state to ~/.vis/github-copilot-auth.json through the ONE JSON
-   boundary (`wire/json-str`): snake_case string keys, total encoding."
+   boundary (`oauth/auth-json-str`): snake_case string keys, total encoding."
   [auth-state]
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit (auth-file) (wire/json-str auth-state))))
+    (spit (auth-file) (oauth/auth-json-str auth-state))))
 
 (defn- normalize-account-type
   [value]
@@ -840,7 +839,6 @@
 ;; to swap providers without touching vis-runtime.
 
 (require '[com.blockether.vis.core :as vis])
-
 (require '[com.blockether.svar.core :as svar])
 
 (defn- interactive-auth!

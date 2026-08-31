@@ -39,49 +39,51 @@
    entry class via `:gen-class` for the GraalVM native-image build)."
   (:refer-clojure :exclude [symbol])
   (:gen-class)
-  (:require [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
-            [com.blockether.vis.internal.cancellation :as cancellation]
-            [com.blockether.vis.internal.capability :as capability]
-            [com.blockether.vis.internal.commandline :as commandline]
-            [com.blockether.vis.internal.config :as config]
-            [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
-            [com.blockether.vis.internal.doctor :as doctor]
-            [com.blockether.vis.internal.env-python :as env]
-            [com.blockether.vis.internal.error :as error]
-            [com.blockether.vis.internal.extension :as extension]
-            [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
-            [com.blockether.vis.internal.form :as form]
-            [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
-            [com.blockether.vis.internal.import :refer [import-vars]]
-            [com.blockether.vis.internal.format :as fmt]
-            [com.blockether.vis.internal.gateway.client :as gateway-client]
-            [com.blockether.vis.internal.gateway.server :as gateway]
-            [com.blockether.vis.internal.gateway.wire :as wire]
-            [com.blockether.vis.internal.limits-format :as limits-format]
-            [com.blockether.vis.internal.loop :as lp]
-            [com.blockether.vis.internal.manifest :as manifest]
-            [com.blockether.vis.internal.titling :as titling]
-            [com.blockether.vis.internal.main :as binary]
-            [com.blockether.vis.internal.render :as ir]
-            [com.blockether.vis.internal.notifications :as notifications]
-            [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.progress :as progress]
-            [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.pyfmt :as pyfmt]
-            [com.blockether.vis.internal.python-extensions :as python-extensions]
-            [com.blockether.vis.internal.python-test-runner :as python-test-runner]
-            [com.blockether.vis.internal.provider-key-store :as provider-key-store]
-            [com.blockether.vis.internal.provider-limits :as provider-limits]
-            [com.blockether.vis.internal.providers :as providers]
-            [com.blockether.vis.internal.session-model :as session-model]
-            [com.blockether.vis.internal.registry :as registry]
-            [com.blockether.vis.internal.resources :as resources]
-            [com.blockether.vis.internal.process-jail :as process-jail]
-            [com.blockether.vis.internal.slash :as slash]
-            [com.blockether.vis.internal.theme :as theme]
-            [com.blockether.vis.internal.toggles :as toggles]
-            [com.blockether.vis.internal.util :as util]
-            [com.blockether.vis.internal.workspace :as workspace]))
+  (:require
+    [charred.api :as json]
+    [com.blockether.vis.internal.audio-transcribe :as audio-transcribe]
+    [com.blockether.vis.internal.cancellation :as cancellation]
+    [com.blockether.vis.internal.capability :as capability]
+    [com.blockether.vis.internal.commandline :as commandline]
+    [com.blockether.vis.internal.config :as config]
+    [com.blockether.vis.internal.ctx-renderer :as ctx-renderer]
+    [com.blockether.vis.internal.doctor :as doctor]
+    [com.blockether.vis.internal.env-python :as env]
+    [com.blockether.vis.internal.error :as error]
+    [com.blockether.vis.internal.extension :as extension]
+    [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
+    [com.blockether.vis.internal.form :as form]
+    [com.blockether.vis.internal.foundation.environment.repositories :as repositories]
+    [com.blockether.vis.internal.import :refer [import-vars]]
+    [com.blockether.vis.internal.format :as fmt]
+    [com.blockether.vis.internal.gateway.client :as gateway-client]
+    [com.blockether.vis.internal.gateway.server :as gateway]
+    [com.blockether.vis.contract.wire :as wire]
+    [com.blockether.vis.internal.limits-format :as limits-format]
+    [com.blockether.vis.internal.loop :as lp]
+    [com.blockether.vis.internal.manifest :as manifest]
+    [com.blockether.vis.internal.titling :as titling]
+    [com.blockether.vis.internal.main :as binary]
+    [com.blockether.vis.internal.render :as ir]
+    [com.blockether.vis.internal.notifications :as notifications]
+    [com.blockether.vis.internal.persistance :as persistance]
+    [com.blockether.vis.internal.progress :as progress]
+    [com.blockether.vis.internal.prompt :as prompt]
+    [com.blockether.vis.internal.pyfmt :as pyfmt]
+    [com.blockether.vis.internal.python-extensions :as python-extensions]
+    [com.blockether.vis.internal.python-test-runner :as python-test-runner]
+    [com.blockether.vis.internal.provider-key-store :as provider-key-store]
+    [com.blockether.vis.internal.provider-limits :as provider-limits]
+    [com.blockether.vis.internal.providers :as providers]
+    [com.blockether.vis.internal.session-model :as session-model]
+    [com.blockether.vis.internal.registry :as registry]
+    [com.blockether.vis.internal.resources :as resources]
+    [com.blockether.vis.internal.process-jail :as process-jail]
+    [com.blockether.vis.internal.slash :as slash]
+    [com.blockether.vis.internal.theme :as theme]
+    [com.blockether.vis.internal.toggles :as toggles]
+    [com.blockether.vis.internal.util :as util]
+    [com.blockether.vis.internal.workspace :as workspace]))
 
 ;; The one closed distribution manifest, read-only: an extension can ask whether
 ;; its own initializer is listed, and in which order the engine runs it.
@@ -388,15 +390,20 @@
 ;; ruff-beautify model Python before display (gateway code blocks). Cached +
 ;; falls back to verbatim source when ruff is unavailable.
 (import-vars [beautify-python pyfmt/beautify-python])
-;; Canonical wire JSON (gateway/wire.clj ->wire shape: snake keys,
+;; Canonical `contract.wire/->wire` JSON shape: snake keys,
 ;; keywords as strings). The pretty variant is for human-facing views.
-(import-vars [wire-json-str wire/json-str] [wire-json-pretty wire/json-str-pretty])
+(import-vars [wire-json-str wire/json-str])
+
+(defn wire-json-pretty
+  "Pretty-print canonical wire JSON for human-facing views."
+  ^String [x]
+  (json/write-json-str (wire/->wire x) :indent-str "  "))
 ;; Canonical gateway values use snake_case STRING keys at every depth.
 (import-vars [wire-canonical wire/canonical])
 ;; ONE key policy: keyword/symbol key -> canonical snake_case STRING
 ;; (namespace dropped, `foo?` -> `is_foo`) — the exact spelling `->wire`
 ;; emits, for readers that project canonical maps back by engine keyword.
-(import-vars [wire-key wire/wire-key])
+(import-vars [wire-key wire/wire-key] [wire->wire wire/->wire] [wire->engine wire/->engine])
 
 ;; The gateway serves ONE canonical wire shape on BOTH transports
 ;; (snake_case STRING keys, `wire/canonical`), so there is NO inbound

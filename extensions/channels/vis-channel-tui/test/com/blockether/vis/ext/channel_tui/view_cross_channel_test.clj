@@ -21,7 +21,6 @@
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.screen :as screen]
             [com.blockether.vis.internal.gateway.view :as gw]
-            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.gateway.state :as gw-state]
             [com.blockether.vis.internal.view :as engine]
             [com.blockether.vis.internal.view.spec :as hi-spec]
@@ -761,7 +760,7 @@
       (with-redefs [vis/gateway-input-views
                     (fn [asked]
                       (is (= sid asked))
-                      (mapv #(wire/->wire (daemon-view % sid)) rids))
+                      (mapv #(vis/wire->wire (daemon-view % sid)) rids))
 
                     vis/gateway-view-action!
                     (fn [answered-sid rid action]

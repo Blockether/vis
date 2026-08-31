@@ -28,7 +28,12 @@
       (expect (= 1 contract/version))
       (expect (= 99 (count contract/route-table)))
       (expect (= 121 (count (contract/route-methods))))
-      (expect (= 32 (count contract/event-types))))
+      (expect (= 32 (count contract/event-types)))
+      (expect (= {:transcribe "voice.job" :synthesize "speech.job"} contract/job-events))
+      (expect (= ["model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
+                  "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
+                  "utilization"]
+                 contract/turn-meta-keys)))
   (it "pins every built-in method and path from the runtime router"
       (expect (= (mapv #(select-keys % [:path :methods]) contract/route-table)
                  (runtime-route-table))))

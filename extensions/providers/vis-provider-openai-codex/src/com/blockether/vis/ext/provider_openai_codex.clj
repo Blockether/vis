@@ -19,7 +19,6 @@
             [clojure.string :as str]
             [com.blockether.vis.ext.provider-openai-codex.limits :as codex-limits]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.oauth :as oauth]
             [taoensso.telemere :as tel])
   (:import [java.net URLDecoder URLEncoder]
@@ -243,12 +242,13 @@
       (try (json/read-json (slurp f) :key-fn auth-json-key) (catch Exception _ nil)))))
 
 (defn- save-auth-file!
-  "Persist credentials through the ONE JSON boundary (`wire/json-str`):
+  "Persist credentials through the ONE JSON boundary (`oauth/auth-json-str`):
    snake_case string keys, total encoding."
   [credentials]
   (let [dir (io/file (str (System/getProperty "user.home") "/.vis"))]
     (when-not (.exists dir) (.mkdirs dir))
-    (spit (auth-file) (wire/json-str (assoc credentials :saved-at (System/currentTimeMillis))))
+    (spit (auth-file)
+          (oauth/auth-json-str (assoc credentials :saved-at (System/currentTimeMillis))))
     credentials))
 
 (defn- delete-auth-file!
@@ -575,7 +575,6 @@
       (authenticated-limits-report!))))
 
 (require '[com.blockether.vis.core :as vis])
-
 (require '[com.blockether.svar.core :as svar])
 
 (vis/register-toggle! {:id "codex_fast_mode"

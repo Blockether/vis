@@ -11,7 +11,7 @@
             [com.blockether.vis.internal.gateway.keychain :as keychain]
             [com.blockether.vis.internal.gateway.web-push :as web-push]
             [com.blockether.vis.internal.gateway.state :as state]
-            [com.blockether.vis.internal.gateway.wire :as wire])
+            [com.blockether.vis.contract.wire :as wire])
   (:import [java.security KeyPairGenerator Signature]
            [java.security.spec ECGenParameterSpec]
            [java.util Arrays Base64]))

@@ -27,6 +27,7 @@
    `:provider/get-token-fn` / `:provider/refresh-token-fn`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]))
 
 (def default-reuse-window-ms
@@ -35,6 +36,11 @@
    the limits poll), short enough that a genuinely-stale token still
    refreshes promptly."
   15000)
+
+(defn auth-json-str
+  "Encode provider auth state with the canonical total JSON codec."
+  ^String [auth-state]
+  (wire/json-str auth-state))
 
 (defn new-lock
   "A fresh monitor object. One per credential store, owned by the refresher
