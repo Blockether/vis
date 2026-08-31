@@ -796,10 +796,11 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    expect(
-      painted.getByRole("button", { name: "Expand execution trace" }),
-    ).toBeTruthy();
-    expect(painted.container.textContent).toContain("RUNNING · PYTHON");
+    const receipt = painted.getByRole("button", {
+      name: "Expand execution trace",
+    });
+    expect(receipt.textContent).toContain("PYTHON");
+    expect(receipt.textContent).not.toContain("RUNNING");
     expect(painted.container.textContent).not.toContain("answer = 42");
     expect(painted.container.textContent).not.toContain("0 activities");
   });
@@ -815,7 +816,7 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    expect(painted.container.textContent).toContain("DONE · PYTHON · 29ms");
+    expect(painted.container.textContent).toContain("PYTHON · 29ms");
     expect(painted.container.textContent).not.toContain("print(42)");
     fireEvent.click(
       painted.getByRole("button", { name: "Expand execution trace" }),
@@ -873,7 +874,8 @@ describe("a Python evaluation without detected Activity", () => {
     const receipt = painted.getByRole("button", {
       name: "Expand execution trace",
     });
-    expect(painted.container.textContent).toContain("RUNNING · PYTHON");
+    expect(receipt.textContent).toContain("PYTHON");
+    expect(receipt.textContent).not.toContain("RUNNING");
 
     // Protocol 7: the snapshot arrives ON the form, from `block.activity`.
     painted.rerender(
@@ -907,10 +909,11 @@ describe("a Python evaluation without detected Activity", () => {
     expect(
       painted.getByRole("button", { name: "Expand execution trace" }),
     ).toBe(receipt);
-    // The band is named by WHAT IT COST — state, elapsed, the three kinds — and
-    // WHICH tools were called is the chronology's job, one level down.
-    expect(receipt.textContent).not.toContain("grep");
-    expect(receipt.textContent).toContain("RUNNING · 0 mutations");
+    // The band NAMES THE CALLS, in the order they were made. It used to lead with
+    // a state word instead, which said the same thing above every step in the
+    // transcript; the counters still keep the line after the names.
+    expect(receipt.textContent).toContain("GREP");
+    expect(receipt.textContent).toContain("0 mutations");
   });
 
   it("does not invent Activity when an empty projection settles", () => {
@@ -930,7 +933,7 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    expect(painted.container.textContent).toContain("DONE · PYTHON · 29ms");
+    expect(painted.container.textContent).toContain("PYTHON · 29ms");
     expect(painted.container.textContent).not.toContain("0 activities");
     fireEvent.click(
       painted.getByRole("button", { name: "Expand execution trace" }),
@@ -1027,7 +1030,7 @@ describe("Activity owns the slot after its Python form and result", () => {
     // Only the SECOND form carries a snapshot, so only its band counts anything;
     // the first can say no more than how its own program ended.
     expect(painted.container.textContent).toContain(
-      "DONE · PYTHONRUNNING · 0 mutations · 1 observation · 1 check",
+      "PYTHONGREP · RUN_TESTS · 0 mutations · 1 observation · 1 check",
     );
     receipts.forEach((receipt) => fireEvent.click(receipt));
     expect(
@@ -1063,7 +1066,7 @@ describe("Activity owns the slot after its Python form and result", () => {
         painted.getByRole("button", { name: "Expand execution trace" }),
       ).toBeTruthy();
       expect(painted.container.textContent).toContain(
-        "RUNNING · 0 mutations · 1 observation · 1 check",
+        "GREP · RUN_TESTS · 0 mutations · 1 observation · 1 check",
       );
       expect(painted.container.textContent).not.toContain("grep · run_tests");
       expect(painted.container.textContent).not.toContain("line_1()");
@@ -1117,7 +1120,7 @@ describe("Activity owns the slot after its Python form and result", () => {
     // how the iteration ended, how long it took, and what it cost, in the three
     // kinds the wire classifies and no other.
     expect(rendered).toContain(
-      "DONE · 12.6s · 0 mutations · 1 observation · 1 check",
+      "GREP · RUN_TESTS · 12.6s · 0 mutations · 1 observation · 1 check",
     );
     expect(rendered).not.toContain("1 read");
     expect(rendered).not.toContain("finished 2/2");
@@ -1597,11 +1600,11 @@ describe("a turn drawn as one thread", () => {
     // thing saying it is over, and that has to be enough.
     const rows = Array.from(
       container.querySelectorAll('[aria-label="Execution trace"]'),
-    ).map((row) => row.textContent ?? "");
+    );
 
-    expect(rows[1]).toContain("DONE");
-    expect(rows[1]).not.toContain("RUNNING");
-    expect(rows[2]).toContain("RUNNING");
+    expect(rows[1].textContent).toContain("940ms");
+    expect(rows[1].getAttribute("role")).toBeNull();
+    expect(rows[2].getAttribute("role")).toBe("status");
   });
   it("gives a multi-step trace no repeated landmark", () => {
     const { container } = render(

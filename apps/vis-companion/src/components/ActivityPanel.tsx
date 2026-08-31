@@ -119,12 +119,6 @@ function activityRowSummary(row: ActivityRow): string {
     : object;
 }
 
-function activityRowLabel(row: ActivityRow): string {
-  return [row.operation.toUpperCase(), activityRowSummary(row)]
-    .filter(Boolean)
-    .join(" · ");
-}
-
 /** The step's own sentence: a verb the reader knows, then what it was applied to. */
 function activityStepLead(row: ActivityRow): string {
   const verb = ACTIVITY_VERBS[row.operation.trim().toLowerCase()];
@@ -143,13 +137,6 @@ function activityStepHeadline(row: ActivityRow): string {
 function activityStepOutcome(row: ActivityRow): string {
   if (row.error_summary) return row.error_summary;
   return row.state === "running" ? "" : (row.result_summary ?? "");
-}
-
-function activityTotal(activity?: ActivityProjection): number {
-  const counts = activity?.counts;
-  return counts
-    ? counts.running + counts.succeeded + counts.failed + counts.cancelled
-    : (activity?.rows.length ?? 0);
 }
 
 /** One counter in the margin: the words, and the tone that repeats them. */
@@ -208,62 +195,44 @@ export function activityCostParts(
 }
 
 /**
- * HOW THE CALL ENDED AND HOW LONG IT TOOK — the first half of a closed band.
+ * WHAT THE STEP CALLED, in the order it called it — the receipt beside the chevron.
  *
- * The band names the iteration by what it COST, not by what it called: this
- * state, then the counters. v36 spent that line on identity — session, turn,
- * iteration, baseline commit — and none of that is on this wire; a state and an
- * elapsed time are. The elapsed time is printed only once it is FINAL: a number
- * that stops moving while the run is still going is worse than no number.
+ * A reader recognises a step by its calls, not by a word for how it ended: the
+ * chevron, the tone and the elapsed time already say that, and `DONE` in front of
+ * every settled receipt is one word repeated down the whole transcript. Three names
+ * at most, then how many are left, because past three the line stops being a glance
+ * and the chronology below is the whole list anyway; a lone call also prints its own
+ * subject, the one place a name like SHELL is too thin to stand by itself.
+ *
+ * The state word survives ONLY for a state the reader has to be told — failed,
+ * cancelled. The elapsed time is printed only once it is FINAL: a number that stops
+ * moving while the run is still going is worse than no number.
  */
-export function activityStateText(
-  activity?: ActivityProjection,
-  durationMs?: number,
-): string {
-  const state = activity?.state ?? "idle";
-  const settled = state !== "running" && state !== "idle";
-  return [
-    state === "succeeded" ? "DONE" : state.toUpperCase(),
-    settled ? formatActivityDuration(durationMs) : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-}
-/** The one honest sentence a unified execution trace can state at this moment. */
 export function activityReceiptText(
   activity?: ActivityProjection,
   durationMs?: number,
 ): string {
   const state = activity?.state ?? "idle";
-  const total = activityTotal(activity);
-  if (state === "running" || state === "idle") {
-    const row = activity?.rows.find(
-      (candidate) => candidate.state === "running",
-    );
-    const focus = row ? activityRowLabel(row) : "running activity";
-    return [
-      "RUNNING",
-      focus,
-      total > 1 || (activity?.omitted.rows ?? 0) > 0 ? "and more" : "",
-    ]
-      .filter(Boolean)
-      .join(" · ");
-  }
-
-  const terminal = activity?.counts
-    ? activity.counts.succeeded +
-      activity.counts.failed +
-      activity.counts.cancelled
-    : (activity?.rows.length ?? 0);
-  const primary =
-    (state === "failed" &&
-      activity?.rows.find((candidate) => candidate.state === "failed")) ||
-    activity?.rows[0];
-  const preview = primary
-    ? `${primary.operation.toUpperCase()}${terminal > 1 || (activity?.omitted.rows ?? 0) > 0 ? " and more" : ""}`
-    : "";
-  const label = state === "succeeded" ? "DONE" : state.toUpperCase();
-  return [label, preview, formatActivityDuration(durationMs)]
+  const live = state === "running" || state === "idle";
+  const rows = activity?.rows ?? [];
+  const omitted = Math.max(0, activity?.omitted.rows ?? 0);
+  const shown = rows.slice(0, 3);
+  const left = rows.length - shown.length + omitted;
+  const subject =
+    rows.length === 1 && left === 0 ? activityRowSummary(rows[0]) : "";
+  const names = [...shown.map((row) => row.operation.toUpperCase()), subject]
+    .filter(Boolean)
+    .join(" · ");
+  const calls = names
+    ? `${names}${left > 0 ? ` + ${left} more` : ""}`
+    : left > 0
+      ? `${left} ${left === 1 ? "activity" : "activities"}`
+      : live
+        ? "running activity"
+        : "";
+  const trouble =
+    state === "failed" || state === "cancelled" ? state.toUpperCase() : "";
+  return [trouble, calls, live ? "" : formatActivityDuration(durationMs)]
     .filter(Boolean)
     .join(" · ");
 }

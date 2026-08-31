@@ -5416,24 +5416,46 @@
 
                                 "finished"))))
 
+(defn- activity-ops-copy
+  "WHAT THE STEP CALLED, in the order it called it.
+
+   A reader recognises a step by its calls, not by a word for how it ended: the
+   chevron, the colour and the elapsed time already carry that, and `DONE` in front
+   of every settled receipt is a column of the same word. Three names at most, then
+   how many are left, because past three the line stops being a glance and the
+   chronology below is the whole list anyway. A lone call also prints its own
+   subject, which is the only place a name like SHELL is too thin on its own."
+  ^String [rows omitted]
+  (let [shown
+        (into [] (take 3) rows)
+
+        left
+        (+ (max 0 (- (count rows) (count shown))) (max 0 (long (or omitted 0))))
+
+        names
+        (mapv #(str/upper-case (str (:operation %))) shown)
+
+        subject
+        (when (and (= 1 (count rows)) (zero? left)) (activity-row-summary (first rows)))]
+
+    (if (seq names)
+      (str (str/join " · "
+                     (cond-> names
+                       subject
+                       (conj subject)))
+           (when (pos? left) (str " + " left " more")))
+      (when (pos? left) (str left " " (if (= 1 left) "activity" "activities"))))))
+
 (defn- activity-status-text
-  "The honest execution sentence: the first running invocation while the form is live,
-   the terminal total (and the failed invocation when there is one) once it lands."
+  "The honest execution sentence: the calls this form made, and the state word ONLY
+   when the state is not the ordinary one. Succeeding and still running are what a
+   step normally does; failure and cancellation are what a reader has to be told."
   ^String [activity failed? success?]
   (let [rows
         (vec (:rows activity))
 
-        finished
-        (count rows)
-
         running
         (count (filter #(= :running (activity-row-state %)) rows))
-
-        active
-        (first (filter #(= :running (activity-row-state %)) rows))
-
-        failed-row
-        (first (filter #(= :failed (activity-row-state %)) rows))
 
         omitted
         (max 0 (long (get-in activity [:omitted :rows] 0)))
@@ -5449,29 +5471,14 @@
         state
         (activity-state-word activity failed? success?)
 
-        primary
-        (or (when (= "FAILED" state) failed-row) (first rows))
+        trouble
+        (when (contains? #{"FAILED" "CANCELLED"} state) state)
 
-        primary-copy
-        (when primary (str/upper-case (str (:operation primary))))
+        ops
+        (activity-ops-copy rows omitted)]
 
-        total-copy
-        (str finished " " (if (= 1 finished) "activity" "activities"))]
-
-    (if-not terminal?
-      (str state
-           " · "
-           (if active
-             (str (str/upper-case (str (:operation active)))
-                  (when-let [summary (activity-row-summary active)]
-                    (str " · " summary)))
-             "running activity")
-           (when (or (> (count rows) 1) (pos? omitted)) " · and more"))
-      (str state
-           (when primary-copy
-             (str " · " primary-copy (when (or (> finished 1) (pos? omitted)) " and more")))
-           " · "
-           total-copy))))
+    (str/join " · "
+              (remove str/blank? [trouble (or ops (when-not terminal? "running activity"))]))))
 
 (def ^:private activity-margin
   "THE PAPER'S OWN EDGE, kept clear before the rail.
@@ -6372,10 +6379,7 @@
                 execution-status
                 (or activity-run
                     (when (and session-id (empty? runs) (or session-turn-id live-preview?))
-                      {:status-text (str (cond (or is-error? error) "FAILED"
-                                               (nil? success?) "RUNNING"
-                                               :else "DONE")
-                                         " · PYTHON")
+                      {:status-text (str (when (or is-error? error) "FAILED · ") "PYTHON")
                        :status-tone (cond (or is-error? error) :error
                                           (nil? success?) :running
                                           :else :ok)

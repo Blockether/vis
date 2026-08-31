@@ -1081,7 +1081,7 @@
             (strip-sentinels (strip-ansi (str/join "\n" (:lines payload))))]
 
         (expect (not (str/includes? body "ACTIVITY")))
-        (expect (str/includes? body "▸ RUNNING · SHELL · npm test · and more"))))
+        (expect (str/includes? body "▸ SHELL · GREP"))))
   (it
     "uses the same trace renderer for live progress and cancelled bubbles"
     (let [;; Tool output paints purely as the program's stdout — both live
@@ -4905,11 +4905,11 @@ h = 8"
           expanded
           (render-row 80 {:vis.channel-tui/expand-all-details? true})]
 
-      (expect (str/includes? collapsed "▸ RUNNING · TEST EVIDENCE · companion suite · and more"))
+      (expect (str/includes? collapsed "▸ GREP · TEST EVIDENCE"))
       (expect (not (str/includes? collapsed "grep({...})")))
       (expect (not (str/includes? collapsed "18 matches")))
       (expect (not (str/includes? collapsed "ACTIVITY")))
-      (expect (str/includes? expanded "▾ RUNNING · TEST EVIDENCE · companion suite · and more"))
+      (expect (str/includes? expanded "▾ GREP · TEST EVIDENCE"))
       (expect (< (.indexOf ^String expanded "PYTHON")
                  (.indexOf ^String expanded "grep({...})")
                  (.indexOf ^String expanded "18 matches")
@@ -4950,9 +4950,9 @@ h = 8"
             expanded
             (render-row {:vis.channel-tui/expand-all-details? true})]
 
-        (expect (str/includes? collapsed "▸ DONE · PYTHON · 29ms"))
+        (expect (str/includes? collapsed "▸ PYTHON · 29ms"))
         (expect (not (str/includes? collapsed "print(1)")))
-        (expect (str/includes? expanded "▾ DONE · PYTHON · 29ms"))
+        (expect (str/includes? expanded "▾ PYTHON · 29ms"))
         (expect (str/includes? expanded "PYTHON"))
         (expect (str/includes? expanded "print(1)"))
         (expect (str/includes? expanded "RESULT"))
@@ -4998,9 +4998,8 @@ h = 8"
           (str/split-lines collapsed)
 
           collapsed-status-row
-          (first (keep-indexed
-                   #(when (str/includes? %2 "▸ DONE · RUN_TESTS and more · 6 activities") %1)
-                   collapsed-lines))
+          (first (keep-indexed #(when (str/includes? %2 "▸ RUN_TESTS · GREP · GREP + 3 more") %1)
+                               collapsed-lines))
 
           expanded
           (render-row {:vis.channel-tui/expand-all-details? true})
@@ -5009,11 +5008,10 @@ h = 8"
           (str/split-lines expanded)
 
           status-row
-          (first (keep-indexed
-                   #(when (str/includes? %2 "▾ DONE · RUN_TESTS and more · 6 activities") %1)
-                   expanded-lines))]
+          (first (keep-indexed #(when (str/includes? %2 "▾ RUN_TESTS · GREP · GREP + 3 more") %1)
+                               expanded-lines))]
 
-      (expect (str/includes? collapsed "▸ DONE · RUN_TESTS and more · 6 activities · 4.8s"))
+      (expect (str/includes? collapsed "▸ RUN_TESTS · GREP · GREP + 3 more · 4.8s"))
       (expect (not (str/includes? collapsed "ACTIVITY")))
       (expect (some? collapsed-status-row))
       (expect (str/blank? (nth collapsed-lines (dec collapsed-status-row)))
@@ -5057,7 +5055,7 @@ h = 8"
               strip-ansi
               strip-sentinels)]
 
-      (expect (< (.indexOf ^String body "RUNNING · FIRST OPERATION · and more")
+      (expect (< (.indexOf ^String body "FIRST OPERATION · GREP")
                  (.indexOf ^String body "first()")
                  (.indexOf ^String body "FIRST RESULT")
                  (.indexOf ^String body "ACTIVITY")
@@ -5199,7 +5197,7 @@ h = 8"
             (first (keep-indexed #(when (str/includes? %2 needle) [%1 %2]) lines)))
 
           [status-row _]
-          (row-with "DONE · SHELL and more · 3 activities")
+          (row-with "SHELL · SHELL · RUN_TESTS")
 
           [python-row python-line]
           (row-with "PYTHON")
@@ -5229,7 +5227,7 @@ h = 8"
 
       ;; Regression, issue td-794deb: Activity forced RESULT open, removed its toggle,
       ;; lost its top surface pad, and painted the timeline outside the execution box.
-      (expect (str/includes? collapsed-text "▸ DONE · SHELL and more · 3 activities")
+      (expect (str/includes? collapsed-text "▸ SHELL · SHELL · RUN_TESTS")
               "a collapsed form carrying Activity states its verdict in one row")
       (expect (= :toggle-details (:kind result-toggle-meta))
               "the RESULT row remains an interactive disclosure")

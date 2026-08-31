@@ -2345,10 +2345,10 @@ therapy line 2"
               (:layout @state/app-db)
 
               before-receipt
-              (row-containing @before-grid "▾ DONE · INSPECT SOURCE · 1 activity")
+              (row-containing @before-grid "▾ INSPECT SOURCE · Polling the run")
 
               after-receipt
-              (row-containing @after-grid "▾ DONE · INSPECT SOURCE · 1 activity")
+              (row-containing @after-grid "▾ INSPECT SOURCE · Polling the run")
 
               before-surface
               (row-containing @before-grid "PYTHON")

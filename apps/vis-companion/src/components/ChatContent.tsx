@@ -19,7 +19,6 @@ import {
   ActivityPanel,
   activityCostParts,
   activityReceiptText,
-  activityStateText,
 } from "./ActivityPanel";
 import type { ActivityProjection } from "../lib/activity";
 import {
@@ -1453,28 +1452,42 @@ function pythonReceiptText(
     failed ||
     form.duration_ms != null ||
     resultBody(form) !== "";
-  const state = interrupted
-    ? "INTERRUPTED"
-    : failed
-      ? "FAILED"
-      : activityState === "cancelled"
-        ? "CANCELLED"
-        : activityState === "succeeded"
-          ? "DONE"
-          : // A step that MEASURED itself is over, whether or not the turn is.
-            // The duration is the terminal frame's own number, and asking the
-            // turn instead made every finished step of a live turn say RUNNING —
-            // invisible while only the last step was on screen, and a whole
-            // column of open rings once the thread drew one marker per step.
-            // Streamed output is NOT that marker: a shell prints for minutes
-            // while it runs, so a live turn wants the duration and a settled one
-            // takes any result at all.
-            (live ? form.duration_ms != null : settled)
-            ? "DONE"
-            : "RUNNING";
+  if (interrupted) return "INTERRUPTED";
+  if (failed) return "FAILED";
+  if (activityState === "cancelled") return "CANCELLED";
+  if (activityState === "succeeded") return "DONE";
+  // A step that MEASURED itself is over, whether or not the turn is. The duration
+  // is the terminal frame's own number, and asking the turn instead made every
+  // finished step of a live turn say RUNNING — invisible while only the last step
+  // was on screen, and a whole column of open rings once the thread drew one marker
+  // per step. Streamed output is NOT that marker: a shell prints for minutes while
+  // it runs, so a live turn wants the duration and a settled one takes any result.
+  return (live ? form.duration_ms != null : settled) ? "DONE" : "RUNNING";
+}
+
+/**
+ * THE RECEIPT FOR A FORM THAT CALLED NOTHING: what ran, and how long it took.
+ *
+ * The ordinary states are silent here for the same reason they are silent on an
+ * Activity receipt — `DONE` above every settled form is one word repeated down the
+ * transcript, and the chevron, the tone and the elapsed time already carry it. Only
+ * a state the reader has to be TOLD keeps its word.
+ */
+function pythonReceiptText(
+  form: TranscriptForm,
+  live: boolean,
+  activityState?: ActivityProjection["state"],
+  activityDurationMs?: number,
+): string {
+  const state = pythonFormState(form, live, activityState);
+  const ordinary = state === "DONE" || state === "RUNNING";
   const duration = activityDurationMs ?? form.duration_ms;
   const role = form.tag === "user-shell" ? "SHELL" : "PYTHON";
-  return [state, role, state === "RUNNING" ? "" : formatDuration(duration)]
+  return [
+    ordinary ? "" : state,
+    role,
+    state === "RUNNING" ? "" : formatDuration(duration),
+  ]
     .filter(Boolean)
     .join(" · ");
 }
@@ -1524,7 +1537,9 @@ function formStep(
     detected,
     settled,
     receipt,
-    running: detected ? !settled : receipt.startsWith("RUNNING"),
+    running: detected
+      ? !settled
+      : pythonFormState(form, live, activity?.state) === "RUNNING",
     failed: activity?.state === "failed" || Boolean(form.error),
   };
 }
@@ -1592,14 +1607,10 @@ const FormTrace = memo(function FormTrace({
           onClick={() => setExpanded((open) => !open)}
         >
           {/* One sentence, and its counters keep the line: on a phone they
-              wrap to their own row rather than clipping the state word off the
+              wrap to their own row rather than clipping the calls off the
               front. Colour repeats each noun and never carries it. */}
           <span className="min-w-0 flex-1 font-mono text-chip font-normal normal-case tracking-normal text-dialog-hint">
-            <span className="font-bold text-code-result">
-              {detectedActivity
-                ? activityStateText(activity, form.duration_ms)
-                : receipt}
-            </span>
+            <span className="font-bold text-code-result">{receipt}</span>
             {detectedActivity &&
               cost.map((part) => (
                 <Fragment key={part.text}>

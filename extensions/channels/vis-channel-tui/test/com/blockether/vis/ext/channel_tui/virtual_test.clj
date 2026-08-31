@@ -345,7 +345,7 @@
               projected
               (:projected (first visible))]
 
-          (expect (str/includes? (:text projected) "▸ DONE · PYTHON · 1ms"))
+          (expect (str/includes? (:text projected) "▸ PYTHON · 1ms"))
           (expect (not (str/includes? (:text projected) "chars hidden")))
           (expect (not (str/includes? (:text projected) huge-result)))
           (expect (some #(= :toggle-details (:kind %)) (:line-meta projected)))))

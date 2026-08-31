@@ -89,7 +89,7 @@ describe("one form's Activity on the phone", () => {
     paintActivity({ activity: settled });
 
     expect(activityReceiptText(settled, 12_600)).toBe(
-      "DONE · SHELL and more · 12.6s",
+      "SHELL · RUN_TESTS · 12.6s",
     );
     expect(
       screen.getByLabelText("Invocation chronology").textContent,
