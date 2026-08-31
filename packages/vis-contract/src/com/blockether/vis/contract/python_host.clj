@@ -86,7 +86,9 @@
 
 (def ^:private document
   "The parsed, validated contract. Read from the classpath — embedded in the native
-   image by build.clj's `-H:IncludeResources=vis-contract/.*`."
+   image by build.clj's blanket `-H:IncludeResources=.*\\.edn$`, which is what
+   covers every `vis-contract/*.edn`; a contract in any other format would need
+   its own pattern."
   (delay
     (let [resource
           (io/resource resource-path)
