@@ -110,7 +110,6 @@ describe("one form's Activity on the phone", () => {
 // read, what was checked. `0 mutations` is about the rows that are NOT there, so
 // it always prints; the other two print only when they happened.
 describe("what the iteration cost", () => {
-
   it("states the mutations, and stays quiet about a kind that did not happen", () => {
     const parts = activityCostParts(activityProjection());
 
@@ -209,6 +208,42 @@ describe("a run reads as one thread", () => {
       expect(mark).toContain("rounded-full");
       expect(mark).toContain("before:right-full");
       expect(step.querySelector("svg")).toBeNull();
+    }
+  });
+
+  // Regression, T125: the mark said the state with its SHAPE - a grey ring once a
+  // step had finished, a filled disc when it failed - so a reader had to learn a
+  // legend to see which steps were done.
+  it("says the state in the mark's colour: green done, yellow running, red failed", () => {
+    const base = activityProjection();
+    const [first, second] = base.rows;
+    const marked: ActivityProjection = {
+      ...base,
+      rows: [
+        { ...first, id: "done-1", state: "succeeded" as const },
+        { ...second, id: "run-1", state: "running" as const },
+        { ...first, id: "fail-1", state: "failed" as const },
+      ],
+    };
+
+    paintActivity({ activity: marked });
+
+    const markOf = (id: string) =>
+      document.querySelector(`[data-activity-row="${id}"] span.absolute`)
+        ?.className ?? "";
+
+    expect(markOf("done-1")).toContain("border-ok");
+    expect(markOf("run-1")).toContain("border-accent-ink");
+    expect(markOf("fail-1")).toContain("border-err-ink");
+    // ONE shape for all three, so nothing but the hue separates a finished step
+    // from a failed one: every mark is the same ring with the same filled centre.
+    for (const id of ["done-1", "run-1", "fail-1"]) {
+      expect(markOf(id)).toContain("rounded-full");
+      expect(
+        document.querySelector(
+          `[data-activity-row="${id}"] span.absolute > span`,
+        ),
+      ).toBeTruthy();
     }
   });
 
@@ -571,9 +606,7 @@ describe("what a code block changed with its own hands", () => {
     // The head's own sentence is markdown BECAUSE the engine declared it so: `patch`
     // and `shell` are the tools it is telling the reader were not involved.
     expect(head?.querySelector("code")?.textContent).toBe("patch");
-    expect(head?.textContent).toContain(
-      "The code block changed these itself",
-    );
+    expect(head?.textContent).toContain("The code block changed these itself");
     expect(head?.textContent).not.toContain("`");
     // A marked name is code; the row keeps no backtick of its own.
     expect(moved?.querySelector("code")?.textContent).toBe("vis/PLAN.md");
@@ -587,12 +620,8 @@ describe("what a code block changed with its own hands", () => {
 
     // The head carries every child's resource on the wire; painting them there AND
     // under each change is the same paths printed twice.
-    expect(
-      head?.querySelector(':scope > div [data-path]'),
-    ).toBeNull();
-    expect(
-      deleted?.querySelectorAll("[data-path]").length,
-    ).toBe(4);
+    expect(head?.querySelector(":scope > div [data-path]")).toBeNull();
+    expect(deleted?.querySelectorAll("[data-path]").length).toBe(4);
     expect(deleted?.textContent).toContain("+2 more files");
   });
 });

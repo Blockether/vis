@@ -330,43 +330,42 @@ function activityStepDelta(row: ActivityRow): {
 }
 
 /**
- * THE MARK ON THE BRANCH: a ring, a disc when the step failed, hollow for what
- * is not on the page at all.
+ * THE MARK ON THE BRANCH: one ring with a filled centre, and the COLOUR is the
+ * state — green done, yellow running, red failed.
  *
  * Nine pixels of the page with a dot in it — the same mark for every step,
- * because a chronology is read as a sequence and a per-state glyph turns it
- * into a legend the reader has to learn. Failure is the exception the eye must
- * not miss, so it fills; the tail the engine's bound dropped is the exception
- * that must not look like a step, so it empties and the axis still ends on a
- * mark rather than on a stray caption.
+ * because a chronology is read as a sequence and a per-state SHAPE turns it
+ * into a legend the reader has to learn. Only the tail the engine's bound
+ * dropped is hollow, because nothing happened there yet to give a colour, and
+ * the axis still ends on a mark rather than on a stray caption.
  *
  * The mark carries its own tick back to the rail. A dot floating beside a line
  * is a bullet in a list; a dot JOINED to it is a moment on a timeline, and this
  * axis is the second thing.
  */
 function ActivityNode({ state }: { state: ActivityRow["state"] }) {
-  const failed = state === "failed";
-  const running = state === "running";
-  const hollow = state === "idle";
+  const hollow = state === "idle" || state === "cancelled";
+  const edge =
+    state === "failed"
+      ? "border-err-ink"
+      : state === "running"
+        ? "border-accent-ink"
+        : state === "succeeded"
+          ? "border-ok"
+          : "border-dialog-hint";
+  const core =
+    state === "failed"
+      ? "bg-err-ink"
+      : state === "running"
+        ? "bg-accent-ink motion-safe:animate-pulse"
+        : "bg-ok";
   return (
     <span
       aria-hidden="true"
-      className={`absolute -left-1 top-1 size-[9px] rounded-full border before:absolute before:top-[3px] before:right-full before:h-px before:w-[8px] before:bg-edge-strong before:content-[''] sm:before:w-[10px] ${
-        failed
-          ? "border-err-ink bg-err-ink"
-          : running
-            ? "border-accent-ink bg-page"
-            : "border-dialog-hint bg-page"
-      }`}
+      className={`absolute -left-1 top-1 size-[9px] rounded-full border bg-page before:absolute before:top-[3px] before:right-full before:h-px before:w-[8px] before:bg-edge-strong before:content-[''] sm:before:w-[10px] ${edge}`}
     >
-      {!failed && !hollow && (
-        <span
-          className={`absolute inset-0.5 rounded-full ${
-            running
-              ? "bg-accent-ink motion-safe:animate-pulse"
-              : "bg-dialog-hint"
-          }`}
-        />
+      {!hollow && (
+        <span className={`absolute inset-0.5 rounded-full ${core}`} />
       )}
     </span>
   );
@@ -516,7 +515,9 @@ function ActivityFiles({
           isOpen={showAll}
           tone="muted"
           bleed
-          aria-label={showAll ? "Show fewer paths" : `Show ${hidden} more paths`}
+          aria-label={
+            showAll ? "Show fewer paths" : `Show ${hidden} more paths`
+          }
           onClick={() => setShowAll((wasOpen) => !wasOpen)}
         >
           <span className="min-w-0 flex-1 font-sans text-meta normal-case">
@@ -658,7 +659,8 @@ function ActivityText({
   block?: boolean;
 }) {
   if (!format) return <>{text}</>;
-  if (format === "markdown" && block) return <Markdown compact>{text}</Markdown>;
+  if (format === "markdown" && block)
+    return <Markdown compact>{text}</Markdown>;
   return <InlineMarkdown>{text}</InlineMarkdown>;
 }
 
@@ -674,7 +676,13 @@ function ActivityText({
  * touched — is the whole tree either surface will draw, because a fourth is a file
  * tree printed into a chronology and nothing on this axis is worth that.
  */
-function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) {
+function ActivityStep({
+  row,
+  depth = 0,
+}: {
+  row: ActivityRow;
+  depth?: number;
+}) {
   const nested = depth > 0;
   const failed = row.state === "failed";
   const lead = activityStepLead(row);
@@ -683,7 +691,9 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
   const duration = formatActivityDuration(row.duration_ms);
   const children = nested
     ? []
-    : [...(row.children ?? [])].sort((left, right) => left.sequence - right.sequence);
+    : [...(row.children ?? [])].sort(
+        (left, right) => left.sequence - right.sequence,
+      );
   const hasChildren = children.length > 0;
   const Headline = nested ? "p" : "h4";
   const diffs = row.evidence.filter(
@@ -784,10 +794,7 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
       )}
       {error && <ActivityError evidence={error} />}
       {hasChildren && (
-        <ol
-          data-activity-children={row.id}
-          className="mt-1.5 min-w-0 pl-4.5"
-        >
+        <ol data-activity-children={row.id} className="mt-1.5 min-w-0 pl-4.5">
           {children.map((child) => (
             <ActivityStep key={child.id} row={child} depth={depth + 1} />
           ))}
