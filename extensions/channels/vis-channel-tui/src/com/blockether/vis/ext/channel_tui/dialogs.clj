@@ -3904,6 +3904,27 @@
      :pane-left (if split? (+ left rail-w 1) left)
      :pane-width (if split? (- inner-w rail-w 1) inner-w)}))
 
+(defn- settings-pointer-target
+  "Map a primary pointer press to the logical setting or TOC section painted
+   under it. Wrapped description lines belong to their option row; scrollbar
+   cells are excluded from the settings pane."
+  [key rows entries scroll
+   {:keys [split? left rail-w pane-left pane-width list-top visible-h selected]}]
+  (or (when split?
+        (let [toc (settings-toc rows selected)]
+          (when-let [offset (mouse-row-offset key
+                                              (inc (long left))
+                                              list-top
+                                              rail-w
+                                              (min (count toc) (long visible-h)))]
+            (let [{:keys [label count]} (nth toc offset)]
+              (when (pos? (long count))
+                {:kind :toc :row-idx (settings-initial-index rows label)})))))
+      (when-let [offset (mouse-row-offset key (inc (long pane-left)) list-top pane-width visible-h)]
+        (let [entry-idx (+ (long scroll) (long offset))]
+          (when-let [{:keys [row-idx]} (get entries entry-idx)]
+            (when (settings-selectable? (nth rows row-idx)) {:kind :setting :row-idx row-idx}))))))
+
 (defn settings-dialog!
   "Show the settings dialog.
 
@@ -3912,8 +3933,9 @@
    the one owning the selection while the right pane shows settings. At narrow
    widths the rail collapses and the settings list owns the full dialog width.
    Toggle rows render a leading status glyph; choice rows cycle their value
-   with Enter; action rows invoke a callback. The rail is a passive locator —
-   arrow keys still move through the settings pane and the rail tracks them.
+   with Enter or a primary pointer click; action rows invoke a callback. Clicking
+   the wide rail parks the cursor on that section's first selectable row. Arrow
+   keys still move through the settings pane and the rail tracks them.
 
    `settings` is the persisted TUI settings map (see
    `state/default-settings`). `callbacks` also carries `:focus-section` (a
@@ -3950,6 +3972,9 @@
          (atom (or settings {}))
 
          scrollbar-drag-offset
+         (volatile! nil)
+
+         pointer-down-target
          (volatile! nil)
 
          query
@@ -4308,7 +4333,23 @@
                  (read-modal-key! screen)
 
                  selected-row
-                 (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))]
+                 (when (pos? n) (nth rows (p/clamp @selected 0 (dec n))))
+
+                 activate-row!
+                 (fn [row]
+                   (activate-settings-row! screen
+                                           g
+                                           {:left left
+                                            :inner-w inner-w
+                                            :hint-row hint-row
+                                            :text-w (max 1 (- (long inner-w) 2))
+                                            :min-row list-top
+                                            ;; One snapshot per activation: a shorter band gives the
+                                            ;; rows a taller one covered back to the list itself.
+                                            :restore! (frame-restorer screen)}
+                                           values
+                                           callbacks
+                                           row))]
 
              (when key
                (cond
@@ -4317,15 +4358,37 @@
                    ;; Mouse wheel anywhere in the dialog — selection follows
                    ;; the wheel direction so the cursor stays in the visible
                    ;; window without having to chase it with arrow keys.
-                   (do (swap! selected #(move-settings-selection rows % step)) (recur))
-                   (let [drag (scrollbar/mouse-drag-step key
+                   (do (vreset! pointer-down-target nil)
+                       (swap! selected #(move-settings-selection rows % step))
+                       (recur))
+                   (let [was-dragging? (some? @scrollbar-drag-offset)
+                         drag (scrollbar/mouse-drag-step key
                                                          {:col (+ lleft linner)
                                                           :top list-top
                                                           :track-h visible-h
                                                           :total-h visual-n
                                                           :inner-h visible-h
                                                           :scroll @scroll}
-                                                         @scrollbar-drag-offset)]
+                                                         @scrollbar-drag-offset)
+                         action (.getActionType ^MouseAction key)
+                         pointer-target (settings-pointer-target key
+                                                                 rows
+                                                                 entries
+                                                                 @scroll
+                                                                 {:split? split?
+                                                                  :left left
+                                                                  :rail-w rail-w
+                                                                  :pane-left lleft
+                                                                  ;; `paint-w` excludes the scrollbar cell.
+                                                                  :pane-width paint-w
+                                                                  :list-top list-top
+                                                                  :visible-h visible-h
+                                                                  :selected @selected})
+                         scrollbar-interaction? (or was-dragging? (map? drag))]
+
+                     ;; `mouse-drag-step` reports every release as `:release`, so
+                     ;; only `was-dragging?` distinguishes a scrollbar release
+                     ;; from the release that completes an ordinary row click.
                      (when (= drag :release) (vreset! scrollbar-drag-offset nil))
                      (when-let [grip (:arm drag)]
                        (vreset! scrollbar-drag-offset grip))
@@ -4336,7 +4399,25 @@
                        ;; `scroll` from the old selection and the list snaps back.
                        (when-let [row (settings-selection-for-window rows entries s visible-h)]
                          (reset! selected row)))
-                     (recur)))
+                     (cond scrollbar-interaction? (do (vreset! pointer-down-target nil) (recur))
+                           (= action MouseActionType/CLICK_DOWN)
+                           ;; Keep the painted frame stable between down/release. Moving
+                           ;; selection here could scroll the row away before release.
+                           (do (vreset! pointer-down-target pointer-target) (recur))
+                           (= action MouseActionType/CLICK_RELEASE)
+                           (let [pressed @pointer-down-target]
+                             (vreset! pointer-down-target nil)
+                             (when (and pressed (= pressed pointer-target))
+                               (let [row-idx (:row-idx pressed)]
+                                 (reset! selected row-idx)
+                                 ;; A TOC click navigates; a setting click performs the
+                                 ;; same operation as Enter on that logical row.
+                                 (when (= :setting (:kind pressed))
+                                   (activate-row! (nth rows row-idx)))))
+                             (recur))
+                           :else (do (when (= action MouseActionType/DRAG)
+                                       (vreset! pointer-down-target nil))
+                                     (recur)))))
                  :else (condp = (key-type key)
                          ;; Esc clears an active search first, then closes on the next press.
                          KeyType/Escape (if (str/blank? @query)
@@ -4368,26 +4449,7 @@
                                  (reset! scroll 0)
                                  (recur))
                              (recur)))
-                         KeyType/Enter (do (when selected-row
-                                             (activate-settings-row!
-                                               screen
-                                               g
-                                               {:left left
-                                                :inner-w inner-w
-                                                :hint-row hint-row
-                                                :text-w (max 1 (- (long inner-w) 2))
-                                                :min-row list-top
-                                                ;; One snapshot per
-                                                ;; activation: a
-                                                ;; shorter band gives
-                                                ;; the rows a taller
-                                                ;; one covered back to
-                                                ;; the list itself.
-                                                :restore! (frame-restorer screen)}
-                                               values
-                                               callbacks
-                                               selected-row))
-                                           (recur))
+                         KeyType/Enter (do (when selected-row (activate-row! selected-row)) (recur))
                          (recur)))))))))))
 
 ;;; ── Session picker ─────────────────────────────────────────────────────

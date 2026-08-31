@@ -2313,6 +2313,90 @@
                    (expect (= before (:row beside)))))
                (finally (.stopScreen screen))))))))
 
+;; Regression, issue reported in session b30f87ac-f20e-4d7f-9fd2-416788d10527:
+;; Settings painted selectable rows but ignored ordinary pointer presses, so every
+;; toggle, choice, action, provider, and MCP row was keyboard-only.
+(defdescribe
+  settings-pointer-activation-test
+  (it
+    "pointer clicks activate settings rows and navigate the wide section rail"
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
+          (term/virtual-screen)
+
+          rows
+          [{:type :section :label "Terminal UI"}
+           {:key :pointer-target
+            :type :toggle
+            :label "Pointer target"
+            :description "A deterministic row for pointer hit-testing."}
+           {:type :section :label "Advanced"}
+           {:key :rail-target
+            :type :toggle
+            :label "Rail target"
+            :description "The first selectable row in the second section."}]
+
+          open!
+          (fn [settings]
+            (dlg/settings-dialog! screen settings nil))
+
+          click!
+          (fn [x y]
+            (.addInput
+              terminal
+              (MouseAction. MouseActionType/CLICK_DOWN 0 (TerminalPosition. (int x) (int y))))
+            (.addInput
+              terminal
+              (MouseAction. MouseActionType/CLICK_RELEASE 0 (TerminalPosition. (int x) (int y)))))]
+
+      (with-redefs-fn {#'dlg/extension-option-rows (constantly [])
+                       #'dlg/settings-rows (fn [_]
+                                             rows)
+                       #'dlg/load-inventories! (constantly nil)}
+        (fn []
+          (try
+            ;; Paint once, then find the target from the actual terminal grid so
+            ;; this test cannot silently drift away from the renderer's geometry.
+            (.addInput terminal (KeyStroke. KeyType/Escape))
+            (open! {:pointer-target false :rail-target false})
+            (let [grid
+                  (term/grid terminal)
+
+                  y
+                  (first (keep-indexed (fn [idx line]
+                                         (when (str/includes? line "Pointer target") idx))
+                                       grid))
+
+                  x
+                  (when y (.indexOf ^String (nth grid y) "Pointer target"))]
+
+              (expect (some? y))
+              (expect (and x (not (neg? x))))
+              (click! x y)
+              (.addInput terminal (KeyStroke. KeyType/Escape))
+              (expect (true? (:pointer-target (open! {:pointer-target false :rail-target false})))))
+            ;; The first occurrence is the left-rail entry; the same section title
+            ;; is painted later in the settings pane. A rail click only navigates,
+            ;; so Enter must act on that section's first selectable row.
+            (let [grid
+                  (term/grid terminal)
+
+                  y
+                  (first (keep-indexed (fn [idx line]
+                                         (when (str/includes? line "Advanced") idx))
+                                       grid))
+
+                  x
+                  (when y (.indexOf ^String (nth grid y) "Advanced"))]
+
+              (expect (some? y))
+              (expect (and x (not (neg? x))))
+              (click! x y)
+              (.addInput terminal (KeyStroke. KeyType/Enter))
+              (.addInput terminal (KeyStroke. KeyType/Escape))
+              (expect (= {:pointer-target false :rail-target true}
+                         (open! {:pointer-target false :rail-target false}))))
+            (finally (.stopScreen screen))))))))
+
 (defdescribe modal-resize-wake-test
              (it "wakes a blocked modal and clears its old frame when the terminal resizes"
                  (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]}
