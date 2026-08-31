@@ -55,6 +55,8 @@
 
 (def ^:private coalesced-drag-scroll-amount (deref #'screen/coalesced-drag-scroll-amount))
 
+(def ^:private scrollbar-position (deref #'screen/scrollbar-position))
+
 (def ^:private live-view-wheel-event (deref #'screen/live-view-wheel-event))
 
 (def ^:private smooth-wheel! (deref #'screen/smooth-wheel!))
@@ -431,6 +433,13 @@
                  (expect (= 12 (coalesced-drag-scroll-amount 4 3)))
                  ;; bounded by drag-autoscroll-max-coalesce-factor (= 8)
                  (expect (= 32 (coalesced-drag-scroll-amount 4 99)))))
+
+;; Regression, air-gapped user report: the first mouse event at the settled
+;; transcript bottom cast the auto-bottom layout sentinel (`nil`) to `int`.
+(defdescribe scrollbar-position-test
+             (it "gives Lanterna a concrete scrollbar row for every scroll mode"
+                 (expect (= 20 (scrollbar-position scroll/follow 20)))
+                 (expect (= 7 (scrollbar-position (scroll/parked 7) 20)))))
 
 (defdescribe
   slash-menu-test

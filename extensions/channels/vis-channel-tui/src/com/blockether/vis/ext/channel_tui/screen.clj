@@ -332,6 +332,11 @@
 
     (long (* amount factor))))
 
+(defn- scrollbar-position
+  "Concrete row for Lanterna scrollbar math. Transcript layout uses `nil` as its
+   settled auto-bottom sentinel, but pointer handling must always pass a number."
+  ^long [scroll-state ^long max-scroll]
+  (scroll/displayed scroll-state max-scroll))
 
 (defn- swallow-post-dialog-escape?
   "True (and consumes the marker) when a bare Escape lands within
@@ -6124,9 +6129,8 @@
                          track-h (+ (long inner-h)
                                     (long render/MESSAGE_MARGIN_TOP)
                                     (long render/MESSAGE_MARGIN_BOTTOM))
-                         scroll-position (scroll/layout-offset
-                                           (:scroll db)
-                                           (max 0 (- (long total-h) (long inner-h))))
+                         scroll-position
+                         (scrollbar-position (:scroll db) (max 0 (- (long total-h) (long inner-h))))
                          ^ScrollBar$Geometry geom (ScrollBar/geometry (int total-h)
                                                                       (int inner-h)
                                                                       (int track-h)
