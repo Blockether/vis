@@ -79,11 +79,11 @@ export const NoReasoning: Story = {
  *
  * The band says what the step COST before anything is opened — did it change the
  * repository, what did it only look at, what did it check. Open it and the step
- * tells the rest, in order: a search with its answer, the paths a read touched
- * with their kinds, a patch the repository REFUSED with the head of its output
- * already showing, the patch that landed with its `+7 −3`, a failed check, the
- * step still moving — and under them the program that made every one of those
- * calls.
+ * tells the rest, in the order the machine ran it: the program that made every
+ * one of those calls, and then what each call did — a search with its answer,
+ * the paths a read touched with two more folded behind their count, a patch the
+ * repository REFUSED with the head of its output already showing, the patch that
+ * landed with its `+7 -3`, a failed check, the step still moving.
  */
 export const ActivityAxis: Story = {
   args: { live: true, iterations: STORY_TURN_ITERATIONS_ACTIVITY },

@@ -1009,6 +1009,12 @@ describe("Activity owns the slot after its Python form and result", () => {
       expect(painted.container.textContent).toContain("RESULT");
       expect(painted.container.textContent).toContain("0 mutations");
       expect(painted.container.textContent).toContain("18 matches");
+      // The program is what produced every row under it, so it stands at the top
+      // of the box the chevron opened, and the chronology hangs beneath it.
+      const opened = painted.container.innerHTML;
+      expect(opened.indexOf("PYTHON")).toBeLessThan(
+        opened.indexOf("data-activity-chronology"),
+      );
     },
   );
 

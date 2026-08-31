@@ -299,54 +299,6 @@ function ActivityDiff({ diff }: { diff: ActivityDiffEvidence }) {
   );
 }
 
-/** The mark a path wears in a list: its own extension, or what the engine called it. */
-function resourceMark(resource: ActivityResource): string {
-  const name = resource.id.split("/").pop() ?? "";
-  const dot = name.lastIndexOf(".");
-  return ((dot > 0 ? name.slice(dot + 1) : "") || resource.type)
-    .slice(0, 4)
-    .toUpperCase();
-}
-
-/**
- * THE INK OF A FILE MARK, borrowed from the ink the transcript already reads code in.
- *
- * A card of five paths is scanned by SHAPE before it is read, and the language is
- * what separates them — so the mark takes the transcript's own syntax hues rather
- * than a new palette invented for this one card. The app's other colour system is
- * not available here: hue on the sessions list means WHICH MACHINE, and a file
- * type wearing it would be reporting something it does not know.
- */
-const RESOURCE_INKS: Record<string, string> = {
-  ts: "text-code-syntax-number",
-  tsx: "text-code-syntax-number",
-  js: "text-code-syntax-number",
-  jsx: "text-code-syntax-number",
-  mjs: "text-code-syntax-number",
-  clj: "text-code-syntax-special",
-  cljs: "text-code-syntax-special",
-  cljc: "text-code-syntax-special",
-  bb: "text-code-syntax-special",
-  edn: "text-code-syntax-special",
-  css: "text-code-syntax-keyword",
-  html: "text-code-syntax-keyword",
-  py: "text-code-syntax-keyword",
-  json: "text-code-syntax-string",
-  yaml: "text-code-syntax-string",
-  yml: "text-code-syntax-string",
-  toml: "text-code-syntax-string",
-  md: "text-code-syntax-comment",
-};
-
-function resourceInk(resource: ActivityResource): string {
-  const name = resource.id.split("/").pop() ?? "";
-  const dot = name.lastIndexOf(".");
-  return (
-    RESOURCE_INKS[dot > 0 ? name.slice(dot + 1).toLowerCase() : ""] ??
-    "text-code-duration"
-  );
-}
-
 /** What a step's patches added and removed, summed over every diff it left. */
 function activityStepDelta(row: ActivityRow): {
   additions: number;
@@ -429,34 +381,63 @@ function ActivityPath({ id }: { id: string }) {
   );
 }
 
+/**
+ * FOUR PATHS, THEN A COUNT.
+ *
+ * A read that touched forty files is a read that touched forty files: the number
+ * is the fact, and forty paths printed under one row spend the whole chronology
+ * on the step with the least to say. Four lines show WHICH corner of the tree a
+ * step was working in; the rest are one quiet press away, in the same `+N more`
+ * the thread already ends with.
+ */
+const ACTIVITY_FILES_SHOWN = 4;
+
 /** WHAT THE STEP TOUCHED, one path per line, in the machine's own hand. */
 function ActivityFiles({ resources }: { resources: ActivityResource[] }) {
+  const [showAll, setShowAll] = useState(false);
+  const hidden = Math.max(0, resources.length - ACTIVITY_FILES_SHOWN);
+  const shown = showAll ? resources : resources.slice(0, ACTIVITY_FILES_SHOWN);
   return (
-    <ul className="mt-1.5 grid min-w-0 gap-px">
-      {resources.map((resource) => (
-        <li
-          key={`${resource.type}:${resource.id}`}
-          className="flex min-w-0 items-center gap-[7px] px-1 py-0.5 font-mono text-chip text-code-result"
+    <div className="min-w-0">
+      <ul className="mt-1.5 grid min-w-0 gap-px">
+        {shown.map((resource) => (
+          <li
+            key={`${resource.type}:${resource.id}`}
+            className="flex min-w-0 items-center gap-[7px] px-1 py-0.5 font-mono text-chip text-code-result"
+          >
+            <span aria-hidden="true" className="shrink-0 text-code-duration">
+              &rsaquo;
+            </span>
+            <ActivityPath id={resource.id} />
+          </li>
+        ))}
+      </ul>
+      {hidden > 0 && (
+        <Disclosure
+          isOpen={showAll}
+          tone="muted"
+          bleed
+          aria-label={showAll ? "Show fewer paths" : `Show ${hidden} more paths`}
+          onClick={() => setShowAll((wasOpen) => !wasOpen)}
         >
-          <span aria-hidden="true" className="shrink-0 text-code-duration">
-            &rsaquo;
+          <span className="min-w-0 flex-1 font-sans text-meta normal-case">
+            {showAll ? "Fewer files" : `+${hidden} more files`}
           </span>
-          <ActivityPath id={resource.id} />
-        </li>
-      ))}
-    </ul>
+        </Disclosure>
+      )}
+    </div>
   );
 }
 
 /**
- * WHAT THE PATCH COST THE REPOSITORY, before its text.
+ * WHAT THE PATCH CHANGED, under the paths it changed.
  *
- * A step that edited files answers "which files, and how much" on one line and
- * lists the paths under it; the diff itself is the only thing on this axis long
- * enough to be worth folding, so it is the only thing that opens. The mark
- * beside a path is its own extension in the page's neutral ink — hue on this
- * app means WHICH MACHINE, and a file type borrowing it would be reporting
- * something it does not know.
+ * No head and no card. The row above already says "Patched", prints its own
+ * `+7 -3` and carries the paths under it, so a bordered box with the word
+ * "Patch" set in bold across its top was that row said a second time, twenty
+ * pixels lower and louder. The diff is the one thing on this axis long enough to
+ * be worth folding, so it is the only thing that opens — and it opens from the
+ * foot of the list it belongs to, never from a headline standing over it.
  */
 function ActivityChanges({
   row,
@@ -470,44 +451,19 @@ function ActivityChanges({
   const [open, setOpen] = useState(false);
   const headline = activityStepHeadline(row);
   return (
-    <div className="mt-1.5 min-w-0 border border-code-edge bg-panel">
-      <div className="border-b border-code-edge px-2">
-        <Disclosure
-          isOpen={open}
-          tone="chronology"
-          bleed
-          className="w-full"
-          aria-label={`${open ? "Collapse" : "Expand"} the patch of ${headline}`}
-          onClick={() => setOpen((wasOpen) => !wasOpen)}
-        >
-          {/* The head names what OPENS, never what is already listed under it:
-              the row above printed the file count and the totals, and a card
-              printing them again is the same line twice, twenty pixels apart. */}
-          <span className="min-w-0 flex-1 font-bold text-code-result">
-            Patch
-          </span>
-        </Disclosure>
-      </div>
-      {files.length > 0 && (
-        <div className="grid min-w-0 gap-px px-2 pt-1.5 pb-2">
-          {files.map((resource) => (
-            <span
-              key={`${resource.type}:${resource.id}`}
-              className="grid min-w-0 grid-cols-[2rem_minmax(0,1fr)] items-center gap-x-[7px] py-0.5"
-            >
-              <span
-                aria-hidden="true"
-                className={`flex h-4 items-center justify-center border border-code-edge bg-page font-mono text-chip font-bold ${resourceInk(resource)}`}
-              >
-                {resourceMark(resource)}
-              </span>
-              <span className="min-w-0 font-mono text-chip text-code-result">
-                <ActivityPath id={resource.id} />
-              </span>
-            </span>
-          ))}
-        </div>
-      )}
+    <div className="min-w-0">
+      {files.length > 0 && <ActivityFiles resources={files} />}
+      <Disclosure
+        isOpen={open}
+        tone="muted"
+        bleed
+        aria-label={`${open ? "Collapse" : "Expand"} the patch of ${headline}`}
+        onClick={() => setOpen((wasOpen) => !wasOpen)}
+      >
+        <span className="min-w-0 flex-1 font-sans text-meta normal-case">
+          Diff
+        </span>
+      </Disclosure>
       {open && <ActivityDiff diff={diff} />}
     </div>
   );
@@ -568,8 +524,8 @@ function countsVisibleFiles(summary: string, shown: number): boolean {
  *
  * Nothing here is a control. The row states what the engine did and leaves what
  * it produced underneath it, so once the invocation is open there is no second
- * thing to go and find: the chronology, the program and its raw bytes are all
- * one chevron down from the band's counters.
+ * thing to go and find: the program, the bytes it printed and this chronology
+ * are all one chevron down from the band's counters.
  *
  * And it says each of those things ONCE. "Read 4 files" over four visible paths
  * counts a list the eye is already on, so a summary that is nothing but that
@@ -600,7 +556,12 @@ function ActivityStep({ row }: { row: ActivityRow }) {
       : (row.error_summary ?? "")
     : activityStepOutcome(row);
   const touched = row.resources.filter((resource) => resource.id !== summary);
-  const object = countsVisibleFiles(summary, touched.length) ? "" : summary;
+  const object = countsVisibleFiles(
+    summary,
+    Math.min(touched.length, ACTIVITY_FILES_SHOWN),
+  )
+    ? ""
+    : summary;
 
   return (
     <li

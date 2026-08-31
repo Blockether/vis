@@ -163,9 +163,10 @@ describe("what the iteration cost", () => {
 describe("the axis is built from the closed vocabulary", () => {
   it("borrows the app's controls and writes no styles of its own", () => {
     expect(activityPanelSource).toContain("<Disclosure");
-    // The patch is the one thing on the axis long enough to fold, so it owns the
-    // one chevron: a step itself never opens.
-    expect((activityPanelSource.match(/<Disclosure/g) ?? []).length).toBe(1);
+    // TWO chevrons and no more: the paths a step touched past the fourth, and the
+    // patch text — the only two things on the axis long enough to be worth
+    // folding. A STEP still never opens, and neither does the thread.
+    expect((activityPanelSource.match(/<Disclosure/g) ?? []).length).toBe(2);
     // No spinner: a mark that turns says only "still here", while one word says
     // whether the form is still working and, once it is not, how it ended.
     expect(activityPanelSource).not.toContain("<Spinner");
@@ -248,12 +249,12 @@ describe("a run reads as one thread", () => {
       },
     });
 
-    // The head names what OPENS. The row above already printed the count and the
-    // totals, so the card says neither a second time.
-    expect(screen.getByText("Patch")).toBeTruthy();
+    // Regression, T107 design review: the patch hung its paths inside a bordered
+    // card, under the word "Patch" in bold — the row's own head printed a second
+    // time, twenty pixels lower. The head is gone; only the diff still folds.
+    expect(screen.queryByText("Patch")).toBeNull();
     expect(screen.queryByText("Changed files")).toBeNull();
     expect(screen.queryByText("1 file")).toBeNull();
-    expect(screen.getByText("TSX")).toBeTruthy();
     expect(
       document.querySelector('[data-path="src/components/ui.tsx"]'),
     ).toBeTruthy();
@@ -300,9 +301,44 @@ describe("a run reads as one thread", () => {
     expect(
       document.querySelector('[data-path="src/components/ui.tsx"]'),
     ).toBeTruthy();
-    // A read is a path and nothing else: the type mark belongs to the change card,
-    // where a file is one of several and its kind is what tells them apart.
+    // A path is a path everywhere on the axis: the type badge belonged to the
+    // patch card, and that card is gone.
     expect(screen.queryByText("TSX")).toBeNull();
+  });
+
+  it("prints four paths and folds the rest behind one quiet count", () => {
+    const projection = activityProjection();
+    const [first] = projection.rows;
+    const paths = [
+      "src/components/ActivityPanel.tsx",
+      "src/components/ChatContent.tsx",
+      "src/components/ui.tsx",
+      "src/index.css",
+      "src/lib/activity.ts",
+      "src/dev/story-data.ts",
+    ];
+
+    paintActivity({
+      activity: {
+        ...projection,
+        rows: [
+          {
+            ...first,
+            resources: paths.map((id) => ({ type: "file" as const, id })),
+          },
+        ],
+      },
+    });
+
+    // Six paths under one step is the row with the least to say spending the most
+    // height on saying it. Four print; the rest are a count, one press away.
+    expect(document.querySelectorAll("[data-path]")).toHaveLength(4);
+    expect(
+      document.querySelector('[data-path="src/lib/activity.ts"]'),
+    ).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show 2 more paths" }));
+    expect(document.querySelectorAll("[data-path]")).toHaveLength(6);
   });
 });
 

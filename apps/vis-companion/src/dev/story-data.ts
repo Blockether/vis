@@ -166,13 +166,15 @@ export const ACTIVITY_CHRONOLOGY = projection({
       presenter: 'observation',
       signal: 'observation',
       state: 'succeeded',
-      summary: '4 files',
+      summary: '6 files',
       duration_ms: 120,
       resources: [
         { type: 'file', id: 'src/components/ActivityPanel.tsx' },
         { type: 'file', id: 'src/components/ChatContent.tsx' },
         { type: 'file', id: 'src/index.css' },
         { type: 'file', id: 'src/com/blockether/vis/internal/render.clj' },
+        { type: 'file', id: 'src/lib/activity.ts' },
+        { type: 'file', id: 'src/components/ui.tsx' },
       ],
       evidence: [{ kind: 'result', text: '612 lines read' }],
     },
@@ -885,7 +887,7 @@ export const STORY_TURN_ITERATIONS_ACTIVITY: TranscriptIteration[] = [
     id: 'i1',
     position: 1,
     thinking:
-      'A closed step has to answer the only question it is asked — did this change anything, what did it look at, what did it check — and everything else has to be one chevron away.\n\nSo: counters on the band; the chronology, the program and its raw text all inside it.',
+      'A closed step has to answer the only question it is asked — did this change anything, what did it look at, what did it check — and everything else has to be one chevron away.\n\nSo: counters on the band, and inside it the program first, because it is what produced every row under it.',
     forms: [
       {
         scope: 'python',

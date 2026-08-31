@@ -698,6 +698,11 @@ export function Disclosure({
    * leading edge while the press target keeps the padding a finger needs. It is
    * the row's spacing, so it belongs to the row rather than to a `-ml-2 px-2`
    * pair spelled at a call site, where the two halves can drift apart.
+   *
+   * The paper reaches LEFT and stays flush RIGHT, so the width grows back exactly
+   * what the margin took: a fill that began at the chevron's own ink read as a
+   * row with nothing in front of it, and one that then stopped eight pixels short
+   * of the column it sits in read as a row missing its last eight pixels.
    */
   bleed?: boolean;
 }) {
@@ -718,7 +723,7 @@ export function Disclosure({
       type="button"
       data-disclosure-toggle
       aria-expanded={isOpen}
-      className={`flex min-h-8 min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono ${tone === 'branch' ? 'text-ui' : 'text-chip'} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-6 ${tone === 'caption' ? 'w-auto' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
+      className={`flex min-h-8 min-w-0 cursor-pointer select-none items-center gap-1.5 text-left font-mono ${tone === 'branch' ? 'text-ui' : 'text-chip'} transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-6 ${tone === 'caption' ? 'w-auto' : bleed ? 'w-[calc(100%_+_0.5rem)]' : 'w-full'} ${bleed ? '-ml-2 px-2' : ''} ${ink} ${className}`}
       {...props}
     >
       <ChevronIcon open={isOpen} className="size-3 shrink-0 opacity-70" />

@@ -1584,7 +1584,8 @@ const FormTrace = memo(function FormTrace({
         <Disclosure
           isOpen={expanded}
           tone="step"
-          className="w-full min-w-0 flex-wrap"
+          bleed
+          className="min-w-0 flex-wrap"
           aria-label={
             expanded ? "Collapse execution trace" : "Expand execution trace"
           }
@@ -1610,13 +1611,11 @@ const FormTrace = memo(function FormTrace({
         </Disclosure>
         {expanded && (
           <>
-            {/* Opened, the iteration reads in the order it happened: what each
-                call DID, then the program that made those calls and the bytes it
-                printed. Closed, none of it is on the page — a transcript of
-                forty iterations is forty receipts, not forty chronologies. */}
-            {detectedActivity && activity && (
-              <ActivityPanel activity={activity} />
-            )}
+            {/* Opened, the iteration reads in the order the machine ran it: the
+                PROGRAM first, because it is the thing that produced every row
+                under it, then what each of its calls did. Closed, none of it is
+                on the page — a transcript of forty iterations is forty receipts,
+                not forty chronologies. */}
             <div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
               {showCode && (
                 <CollapsibleFormCode
@@ -1628,6 +1627,9 @@ const FormTrace = memo(function FormTrace({
               )}
               <CardGrid cards={cards} bare />
             </div>
+            {detectedActivity && activity && (
+              <ActivityPanel activity={activity} />
+            )}
           </>
         )}
       </div>
