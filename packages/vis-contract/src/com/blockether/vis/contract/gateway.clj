@@ -8,7 +8,8 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [com.blockether.vis.contract.wire :as wire]))
 
 (def ^:private http-methods #{:delete :get :patch :post :put})
 (def ^:private audiences #{:administration :public :sdk})
@@ -241,6 +242,31 @@
         (mapcat (fn [{:keys [path methods]}]
                   (map #(vector % path) methods))
                 route-table)))
+
+(defn- ->package-data
+  [value]
+  (cond (map? value) (into (sorted-map)
+                           (map (fn [[k v]]
+                                  [(wire/wire-key k) (->package-data v)]))
+                           value)
+        (set? value) (->> value
+                          (map ->package-data)
+                          (sort-by pr-str)
+                          vec)
+        (sequential? value) (mapv ->package-data value)
+        :else (wire/->wire value)))
+
+(defn package-document
+  "Deterministic string-keyed gateway data for generated Python and JavaScript inputs.
+   Sets become sorted vectors; route order remains the owning EDN's order."
+  []
+  (array-map "version" version
+             "protocol" (->package-data protocol)
+             "headers" (->package-data headers)
+             "routes" (->package-data route-table)
+             "events" (->package-data (:gateway/events @document))
+             "envelopes" (->package-data envelopes)
+             "replay" (->package-data replay)))
 
 (defn session-event-type?
   "True when `event-type` belongs to the closed session-stream vocabulary."

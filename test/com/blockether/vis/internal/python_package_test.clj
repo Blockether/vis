@@ -50,12 +50,17 @@
                 (expect (nil? (re-find #"(?m)^\s*(?:import|from)\s+vis_contract"
                                        (slurp (io/file agent-dir "src/vis/__init__.py")))))))
   (describe "the contract `vis-contract` ships"
-            (it "is what the renderer renders today"
+            (it "is what the renderer writes for Python and JavaScript readers"
                 ;; Regenerate with `(python-host/write-package-document!
-                ;; (hi/contract-vocabulary))` — never by hand, or the human-input
-                ;; vocabulary has a second definition again.
-                (expect (= (contract/package-document-json (hi/contract-vocabulary))
-                           (slurp (io/file contract/package-document-path)))))
+                ;; (hi/contract-vocabulary))` — never by hand, or a source EDN has a second definition.
+                (let [rendered
+                      (contract/package-document-json (hi/contract-vocabulary))
+
+                      copies
+                      (map #(slurp (io/file %)) contract/package-document-paths)]
+
+                  (expect (every? #(= rendered %) copies))
+                  (expect (apply = copies))))
             (it "answers the engine's own shell result keys, so no lookup can KeyError"
                 (expect (= (set (keys @#'shell/shell-result-base))
                            (set (python-tuple (slurp (io/file agent-dir "src/vis/_outside.py"))

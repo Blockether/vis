@@ -5,8 +5,8 @@
 # `deps.edn` puts `packages/vis-agent/src` on the classpath and
 # `internal.python-extensions/bootstrap-python` slurps it from there — and
 # the `vis-contract` dependency below carries the declaration both hosts read,
-# rendered from `packages/vis-contract/resources/vis-contract/python-host.edn` by
-# `contract.python-host/write-package-document!`. `python_package_test` fails the
+# rendered from the owning files under `packages/vis-contract/resources/vis-contract/`
+# by `contract.python-host/write-package-document!`. `python_package_test` fails the
 # build when either drifts.
 #
 # `version` mirrors the repo-root `VIS_VERSION`, the one version source

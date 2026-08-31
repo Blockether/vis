@@ -2,15 +2,14 @@
 
 Vis runs an extension's Python inside its own sandbox, with the host seeded into
 the module the extension imports. This package is the DECLARATION of that
-boundary, published on its own so it can be read where Vis is not: the ops a host
-answers, the shell verb's grammar, the closed View vocabulary every surface
-draws, and [[Host]], the protocol an implementation is checked against.
+boundary, published on its own so it can be read where Vis is not: gateway
+routes and events, the ops a host answers, the shell and View vocabularies, and
+[[Host]], the protocol an implementation is checked against.
 
-`contract.json` beside this file is rendered from the repository's
-`resources/vis-contract/python-host.edn` by
-`com.blockether.vis.contract.python-host/write-package-document!` — one document,
-one Clojure jar, one wheel, one version. Nothing here is written by hand and
-nothing here imports anything outside the standard library.
+`contract.json` beside this file and the repository's language-neutral copy are
+rendered from the owning EDN documents by
+`com.blockether.vis.contract.python-host/write-package-document!`. Nothing here
+is written by hand or imports anything outside the standard library.
 
 Read the ops:
 
@@ -31,6 +30,7 @@ from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
     "CONTRACT",
+    "GATEWAY",
     "VIEW",
     "OPS",
     "LIVE",
@@ -49,7 +49,10 @@ def _load_contract():
 
 
 CONTRACT = _load_contract()
-"""The whole rendered document: version, ops, verb grammars and View vocabulary."""
+"""The whole rendered document: gateway, host ops, verb grammars and View vocabulary."""
+
+GATEWAY = CONTRACT["gateway"]
+"""Canonical routes, headers, events, envelopes and replay semantics."""
 
 VERSION = CONTRACT["version"]
 """Bumped whenever an op is added, removed or re-shaped."""

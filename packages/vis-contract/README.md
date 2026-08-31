@@ -1,11 +1,12 @@
 # vis-contract
 
-The Vis extension **contract**, published on its own in both ecosystems:
+The Vis **contract** as one declaration with language-native inputs:
 
-| what | artifact | reads |
+| reader | input | source |
 |---|---|---|
 | Clojure | `com.blockether/vis-contract` | `resources/vis-contract/*.edn` directly |
-| Python | `vis-contract` (PyPI, `python/`) | `contract.json`, rendered from the same EDN |
+| Python | `vis-contract` (PyPI, `python/`) | wheel-local `contract.json` |
+| JavaScript generator | root `contract.json` | byte-identical to the Python copy |
 
 `resources/vis-contract/python-host.edn` declares every call the `vis` Python
 module may make on its host — the polyglot global, arity and outside-host policy.
@@ -26,10 +27,10 @@ closed vocabulary keeps exactly one definition.
 ## Changing the contract
 
 1. Edit the owning document under `resources/vis-contract/`.
-2. For Python host changes, re-render the Python document:
+2. Re-render the language-neutral and Python copies:
    `(com.blockether.vis.contract.python-host/write-package-document!
      (com.blockether.vis.internal.view.spec/contract-vocabulary))`.
-3. The contract, package and gateway characterization tests fail on drift.
+3. The contract, package and gateway characterization tests fail on source or byte drift.
 
 Both published ecosystems are versioned by the repository's `VIS_VERSION`; generated
 artifacts consume the same owning declarations rather than maintaining a second vocabulary.

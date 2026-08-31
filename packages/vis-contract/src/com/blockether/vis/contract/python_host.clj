@@ -9,8 +9,8 @@
    here, so a new host call is added to the document and nowhere else.
 
    This project is `com.blockether/vis-contract` and requires NO Vis namespace, so
-   an extension can compile against the declaration without the engine. Its PyPI
-   half ships [[package-document]] as `vis_contract/contract.json`.
+   an extension can compile against the declaration without the engine. [[package-document]]
+   ships as the root language-neutral generator input and `vis_contract/contract.json`.
 
    The View vocabulary is the one part this project does not own:
    `internal.view.spec` declares it and PASSES it to [[package-document]],
@@ -24,7 +24,8 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as gateway]))
 
 (set! *warn-on-reflection* true)
 
@@ -193,7 +194,7 @@
 ;; The vocabulary the ENGINE hands in. Specced here because the contract is what
 ;; the package trusts: a surface that drifts is caught rendering the document, not
 ;; by an extension author reading a field type Python has never heard of.
-(s/def :view/view-actions (s/coll-of string? :kind vector? :min-count 1))
+(s/def :view/view-actions (s/and (s/coll-of string? :kind vector?) not-empty))
 (s/def :contract/view
   (s/keys :req-un [:view/view-kinds :view/view-actions :view/field-types :view/text-types
                    :view/choice-types :view/secret-types :view/decor-types :view/group-type
@@ -250,10 +251,9 @@
                       "max_nodes" (:max-nodes live))))
 
 (defn package-document
-  "The contract as `vis_contract/contract.json`: snake_case string keys, ops in
-   document order, and the closed View vocabulary the outside host prompts with.
-   `view-vocabulary` comes from the namespace that OWNS it —
-   `(com.blockether.vis.internal.view.spec/contract-vocabulary)`."
+  "The portable `contract.json`: gateway semantics, host ops, verb grammars and
+   the closed View vocabulary. `view-vocabulary` comes from the namespace that OWNS
+   it — `(com.blockether.vis.internal.view.spec/contract-vocabulary)`."
   [view-vocabulary]
   (array-map "version" (version)
              "ops" (mapv op->json (ops))
@@ -265,11 +265,16 @@
                                  "spawn_ops" spawn-ops
                                  "handle_ops" handle-ops
                                  "flush_ms" flush-ms))
+             "gateway" (gateway/package-document)
              "view" (view->json view-vocabulary)))
 
 (def package-document-path
   "Where the rendered document is checked in, from the repository root."
   "packages/vis-contract/python/src/vis_contract/contract.json")
+
+(def package-document-paths
+  "The language-neutral generator input and its byte-identical Python wheel copy."
+  ["packages/vis-contract/contract.json" package-document-path])
 
 (defn package-document-json
   "[[package-document]] as the checked-in file's exact bytes."
@@ -279,7 +284,11 @@
       (str "\n")))
 
 (defn write-package-document!
-  "Re-render [[package-document-path]]. Run me after changing the contract or the
-   View vocabulary; `python_package_test` is what notices you did not."
-  ([view-vocabulary] (write-package-document! view-vocabulary package-document-path))
+  "Re-render every [[package-document-paths]] copy. Run after changing an owning
+   EDN document or the View vocabulary; `python_package_test` notices drift."
+  ([view-vocabulary]
+   (let [body (package-document-json view-vocabulary)]
+     (doseq [path package-document-paths]
+       (spit path body))
+     package-document-paths))
   ([view-vocabulary path] (spit path (package-document-json view-vocabulary)) path))

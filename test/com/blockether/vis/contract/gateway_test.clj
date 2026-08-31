@@ -34,6 +34,19 @@
                   "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
                   "utilization"]
                  contract/turn-meta-keys)))
+  (it "renders deterministic language-neutral gateway data"
+      (let [gateway
+            (contract/package-document)
+
+            devices
+            (first (filter #(= "/v1/devices" (get % "path")) (get gateway "routes")))]
+
+        (expect (= 2 (get gateway "version")))
+        (expect (= ["get" "post"] (get devices "methods")))
+        (expect (= (sort (get-in gateway ["events" "session"]))
+                   (get-in gateway ["events" "session"])))
+        (expect (= "subscription.ready"
+                   (get-in gateway ["envelopes" "subscription_ready" "event"])))))
   (it "pins every built-in method and path from the runtime router"
       (expect (= (mapv #(select-keys % [:path :methods]) contract/route-table)
                  (runtime-route-table))))

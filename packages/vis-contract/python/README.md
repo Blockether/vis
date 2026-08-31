@@ -1,9 +1,9 @@
 # vis-contract
 
-The contract half of [Vis](https://github.com/Blockether/vis): everything a Vis
-extension may ask its host for, as data — plus the protocol a host is checked
-against. `vis-agent` (the API an extension imports) depends on this package; so
-can a linter, a test double, or an editor that never runs Vis at all.
+The contract half of [Vis](https://github.com/Blockether/vis): canonical gateway
+routes, events and envelopes plus everything a Vis extension may ask its host for.
+`vis-agent` depends on this package; so can an SDK generator, linter, test double or
+editor that never runs Vis at all.
 
 ```bash
 pip install vis-contract
@@ -12,7 +12,8 @@ pip install vis-contract
 ```python
 import vis_contract
 
-vis_contract.VERSION  # the contract version
+vis_contract.GATEWAY["routes"]  # every built-in method/path declaration
+vis_contract.VERSION  # the host-operation contract version
 vis_contract.OPS["shell"]["outside"]  # "local" — what the op does with no Vis
 vis_contract.SHELL["spawn_ops"]  # ["run", "background"]
 vis_contract.VIEW["kinds"]  # ["input", "live"] — one lifecycle, two policies
@@ -34,10 +35,10 @@ vis_contract.check_host(MyHost())  # TypeError names every op you did not answer
 their doc lines are the document's, and the package's own suite fails when the
 protocol and `contract.json` stop agreeing.
 
-The document is generated from
-[`resources/vis-contract/python-host.edn`](https://github.com/Blockether/vis/blob/main/packages/vis-contract/resources/vis-contract/python-host.edn),
-which the Clojure artifact `com.blockether/vis-contract` reads directly — the same
-declaration in both ecosystems, at the same version.
+The document is generated from the owning files under
+[`resources/vis-contract/`](https://github.com/Blockether/vis/tree/main/packages/vis-contract/resources/vis-contract).
+The Clojure artifact reads those EDN sources directly; the repository's JavaScript
+generator input and this wheel's `contract.json` are pinned to identical bytes.
 
 ## License
 

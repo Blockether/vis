@@ -45,6 +45,15 @@ def test_the_document_is_the_file_shipped_beside_the_module():
     assert vis_contract.VERSION == on_disk["version"]
 
 
+def test_gateway_contract_is_generated_whole():
+    gateway = vis_contract.GATEWAY
+    assert gateway is vis_contract.CONTRACT["gateway"]
+    assert gateway["version"] == 2
+    assert len(gateway["routes"]) == 99
+    assert sum(len(route["methods"]) for route in gateway["routes"]) == 121
+    assert gateway["events"]["session"] == sorted(gateway["events"]["session"])
+
+
 def test_every_op_is_completely_declared():
     assert vis_contract.OPS
     for name, op in vis_contract.OPS.items():
