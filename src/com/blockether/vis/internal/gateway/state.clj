@@ -243,7 +243,7 @@
   "Process-wide cap for simultaneously executing gateway turns. Each turn can
    own a GraalPy context and substantial transient heap, so per-session
    serialization alone is insufficient. Override with
-   `VIS_GATEWAY_MAX_CONCURRENT_TURNS`; values <= 0 use the default of 2.
+   `VIS_GATEWAY_MAX_CONCURRENT_TURNS`; values <= 0 use the default of 50.
 
    A `delay`, never an eager read: `native-image` initializes this namespace at
    BUILD time, so a top-level `getenv` would ship the BUILDER's answer."
@@ -2655,33 +2655,51 @@
 
    This is the last line of defence for a wedged worker: the stall watchdog only
    fires `cancel!`, and a thread parked in uninterruptible native code (or any
-   post-engine cleanup) ignores it forever."
-  [sid tid cancel-token grace-ms land!]
-  (doto (Thread. ^Runnable
-                 (fn []
-                   (try (Thread/sleep (long grace-ms))
-                        (when (= tid (:current-turn (session-entry sid)))
-                          (tel/log!
-                            :warn
-                            ["gateway: cancelled turn never landed a terminal — backstopping" tid
-                             (str grace-ms "ms after cancel")])
-                          (land! sid tid cancel-token)
-                          ;; The terminal we just synthesized is only half the
-                          ;; truth: the worker never came back, so its thread may
-                          ;; still own this session's ENGINE lock. Landing the
-                          ;; event alone reports the session idle while every
-                          ;; later turn parks on that lock forever — started, no
-                          ;; events, deaf to its own cancel. Condemn the engine
-                          ;; so the next turn abandons the wedged context and
-                          ;; runs on a fresh one instead of queueing behind a
-                          ;; thread that is never coming back.
-                          (try (lp/condemn-env! sid) (catch Throwable _ nil)))
-                        (catch InterruptedException _ nil)
-                        (catch Throwable _ nil)))
-                 (str "gateway-turn-cancel-backstop-" tid))
-    (.setDaemon true)
-    (.start))
-  nil)
+   post-engine cleanup) ignores it forever.
+
+   Once the grace elapses, `release-capacity!` abandons the worker's process-wide
+   execution slot even if another terminal path already moved the session on.
+   Launched workers pass a one-shot lease, so a worker that later thaws cannot
+   release the semaphore twice. Callers that own no execution slot use five args."
+  ([sid tid cancel-token grace-ms land!]
+   (start-cancel-terminal-backstop! sid
+                                    tid
+                                    cancel-token
+                                    grace-ms
+                                    land!
+                                    (fn []
+                                      nil)))
+  ([sid tid cancel-token grace-ms land! release-capacity!]
+   (doto (Thread. ^Runnable
+                  (fn []
+                    (try (Thread/sleep (long grace-ms))
+                         ;; Capacity cannot wait behind the terminal landing itself:
+                         ;; persistence, fan-out, or engine condemnation may also be
+                         ;; the code that is wedged. The one-shot lease makes this
+                         ;; safe if the worker's own `finally` wins at the same time.
+                         (try (release-capacity!) (catch Throwable _ nil))
+                         (when (= tid (:current-turn (session-entry sid)))
+                           (tel/log!
+                             :warn
+                             ["gateway: cancelled turn never landed a terminal — backstopping" tid
+                              (str grace-ms "ms after cancel")])
+                           (land! sid tid cancel-token)
+                           ;; The terminal we just synthesized is only half the
+                           ;; truth: the worker never came back, so its thread may
+                           ;; still own this session's ENGINE lock. Landing the
+                           ;; event alone reports the session idle while every
+                           ;; later turn parks on that lock forever — started, no
+                           ;; events, deaf to its own cancel. Condemn the engine
+                           ;; so the next turn abandons the wedged context and
+                           ;; runs on a fresh one instead of queueing behind a
+                           ;; thread that is never coming back.
+                           (try (lp/condemn-env! sid) (catch Throwable _ nil)))
+                         (catch InterruptedException _ nil)
+                         (catch Throwable _ nil)))
+                  (str "gateway-turn-cancel-backstop-" tid))
+     (.setDaemon true)
+     (.start))
+   nil))
 
 (def ^:private TURN_LAUNCH_TIMEOUT_MS
   "How long a LAUNCHED turn may report NO worker activity at all — not a phase,
@@ -3318,6 +3336,17 @@
           claimed
           (java.util.concurrent.atomic.AtomicBoolean. false)
 
+          ;; A cancelled Future can report itself done while its platform thread is
+          ;; still parked in uninterruptible native code. Model the permit as a
+          ;; one-shot lease so the terminal backstop can abandon that worker's slot;
+          ;; the worker's own `finally` becomes a no-op if it ever thaws.
+          permit-held?
+          (java.util.concurrent.atomic.AtomicBoolean. false)
+
+          release-held-permit!
+          (fn []
+            (when (.compareAndSet permit-held? true false) (release-turn-permit!)))
+
           worker
           (fn []
             (when (.compareAndSet claimed false true)
@@ -3326,7 +3355,8 @@
               ;; off the launch ceiling and onto the stall ceiling.
               (swap! stall assoc :phase :awaiting-permit :started? true :last-ms (util/now-ms))
               (if (acquire-turn-permit! cancel-token)
-                (do (swap! turns-executing inc)
+                (do (.set permit-held? true)
+                    (swap! turns-executing inc)
                     ;; The permit is IN HAND: everything from here on — building or
                     ;; entering this session's engine, then the first provider
                     ;; request — is execution, not queueing. Leaving the
@@ -3350,7 +3380,7 @@
                                      :attachments attachments
                                      :display-request display-request
                                      :stall stall})
-                         (finally (release-turn-permit!))))
+                         (finally (release-held-permit!))))
                 (cancel-waiting-turn! sid tid cancel-token))))
 
           fut
@@ -3387,7 +3417,8 @@
                                              tid
                                              cancel-token
                                              (cancel-terminal-grace-ms stall)
-                                             cancel-waiting-turn!))))
+                                             cancel-waiting-turn!
+                                             release-held-permit!))))
       fut)
     (catch Throwable t
       (tel/log! :error ["gateway: turn launch failed" tid (ex-message t)])

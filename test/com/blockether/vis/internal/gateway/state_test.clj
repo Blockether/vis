@@ -2838,69 +2838,191 @@
            (finally (swap! reg dissoc sid))))))
 
 
-(defdescribe gateway-resource-bounds-test
-             (it "retains only the configured replay tail"
-                 (with-redefs-fn {#'state/EVENT_RING_MAX (delay 3)}
-                   (fn []
-                     (let [trim-ring
-                           (deref #'state/trim-ring)
+(defdescribe
+  gateway-resource-bounds-test
+  (it "retains only the configured replay tail"
+      (with-redefs-fn {#'state/EVENT_RING_MAX (delay 3)}
+        (fn []
+          (let [trim-ring
+                (deref #'state/trim-ring)
 
-                           ring
-                           (trim-ring [1 2 3 4 5])]
+                ring
+                (trim-ring [1 2 3 4 5])]
 
-                       (expect (= [3 4 5] ring))
-                       (expect (instance? clojure.lang.PersistentQueue ring))))))
-             (it "waits for a global turn permit and lets cancellation win without execution"
-                 (let [semaphore
-                       (java.util.concurrent.Semaphore. 1 true)
+            (expect (= [3 4 5] ring))
+            (expect (instance? clojure.lang.PersistentQueue ring))))))
+  (it "waits for a global turn permit and lets cancellation win without execution"
+      (let [semaphore
+            (java.util.concurrent.Semaphore. 1 true)
 
-                       token
-                       (cancellation/cancellation-token)
+            token
+            (cancellation/cancellation-token)
 
-                       acquire!
-                       (deref #'state/acquire-turn-permit!)
+            acquire!
+            (deref #'state/acquire-turn-permit!)
 
-                       waiting
-                       (var-get #'state/turns-waiting)
+            waiting
+            (var-get #'state/turns-waiting)
 
-                       queued
-                       (promise)]
+            queued
+            (promise)]
 
-                   (.acquire semaphore)
-                   (try (with-redefs-fn {#'state/turn-permits (delay semaphore)}
-                          (fn []
-                            (add-watch waiting
-                                       ::queued
-                                       (fn [_ _ _ n]
-                                         (when (pos? n) (deliver queued true))))
-                            (try (let [result (future (acquire! token))]
-                                   (expect (= true (deref queued 1000 false)))
-                                   (expect (not (realized? result)))
-                                   (cancellation/cancel! token)
-                                   (expect (= false (deref result 1000 ::timeout))))
-                                 (finally (remove-watch waiting ::queued)))))
-                        (finally (.release semaphore)))))
-             (it "keeps two unused prewarm contexts per channel"
-                 (let [pool
-                       @#'state/prewarm-pool
+        (.acquire semaphore)
+        (try (with-redefs-fn {#'state/turn-permits (delay semaphore)}
+               (fn []
+                 (add-watch waiting
+                            ::queued
+                            (fn [_ _ _ n]
+                              (when (pos? n) (deliver queued true))))
+                 (try (let [result (future (acquire! token))]
+                        (expect (= true (deref queued 1000 false)))
+                        (expect (not (realized? result)))
+                        (cancellation/cancel! token)
+                        (expect (= false (deref result 1000 ::timeout))))
+                      (finally (remove-watch waiting ::queued)))))
+             (finally (.release semaphore)))))
+  ;; Regression, issue #161: a cancelled worker that stayed stuck after its
+  ;; terminal backstop kept the process-wide permit forever, so a turn in
+  ;; another session waited until its stall watchdog auto-cancelled it.
+  (it
+    "reclaims an abandoned worker's permit before another session stalls"
+    (let [sid-a
+          (str "abandoned-a-" (java.util.UUID/randomUUID))
 
-                       prior
-                       @pool
+          sid-b
+          (str "unrelated-b-" (java.util.UUID/randomUUID))
 
-                       reserve!
-                       (deref #'state/reserve-prewarm-slot!)]
+          tid-a
+          "stuck"
 
-                   (try (reset! pool {:ready {} :in-flight {} :accepting? true})
-                        (expect (true? (reserve! :api)))
-                        (expect (true? (reserve! :api)))
-                        (expect (false? (reserve! :api)))
-                        (finally (reset! pool prior)))))
-             (it "exports concurrency, replay, heap, GC, thread, and env-cache gauges"
-                 (let [snapshot (state/metrics-snapshot)]
-                   (doseq [k [:turns-executing :turns-waiting :turn-concurrency-limit
-                              :replay-events-retained :jvm-heap-used-bytes :process-rss-bytes
-                              :jvm-gc-count-total :jvm-thread-count :env-cache-size]]
-                     (expect (contains? snapshot k))))))
+          tid-b
+          "healthy"
+
+          token-a
+          (cancellation/cancellation-token)
+
+          token-b
+          (cancellation/cancellation-token)
+
+          semaphore
+          (java.util.concurrent.Semaphore. 1 true)
+
+          registry
+          @#'state/registry
+
+          executing
+          (var-get #'state/turns-executing)
+
+          waiting
+          (var-get #'state/turns-waiting)
+
+          executing-before
+          @executing
+
+          waiting-before
+          @waiting
+
+          entered-a
+          (promise)
+
+          returned-a
+          (promise)
+
+          release-a
+          (promise)
+
+          entered-b
+          (promise)
+
+          await
+          (fn [pred ms]
+            (let [deadline (+ (System/currentTimeMillis) (long ms))]
+              (loop []
+
+                (cond (pred) true
+                      (>= (System/currentTimeMillis) deadline) false
+                      :else (do (Thread/sleep 10) (recur))))))
+
+          finish-test-turn!
+          (fn [sid tid status]
+            (swap! registry (fn [entries]
+                              (-> entries
+                                  (assoc-in [sid :current-turn] nil)
+                                  (assoc-in [sid :turns tid :status] status)))))
+
+          fake-run!
+          (fn [sid _tid _request {:keys [stall]}]
+            (if (= sid sid-a)
+              (try (swap! stall assoc :phase :form-start :last-ms (System/currentTimeMillis))
+                   (deliver entered-a true)
+                   (loop []
+
+                     (when-not (realized? release-a)
+                       (try (Thread/sleep 25) (catch InterruptedException _ nil))
+                       (recur)))
+                   (finally (deliver returned-a true)))
+              (do (deliver entered-b true) (finish-test-turn! sid tid-b "completed"))))
+
+          entry
+          (fn [tid token]
+            {:next-seq 0
+             :events []
+             :subscribers {}
+             :current-turn tid
+             :turn-order [tid]
+             :turns {tid {:turn_id tid :status "running" :cancel-token token}}})]
+
+      (try (swap! registry assoc sid-a (entry tid-a token-a) sid-b (entry tid-b token-b))
+           (with-redefs-fn {#'state/turn-permits (delay semaphore)
+                            #'state/SILENT_CANCEL_TERMINAL_GRACE_MS 100
+                            #'state/TURN_STALL_TIMEOUT_MS 700
+                            #'state/TURN_FIRST_OUTPUT_TIMEOUT_MS 700
+                            #'state/TURN_LAUNCH_TIMEOUT_MS 700
+                            #'state/append-event! (fn [& _]
+                                                    nil)
+                            #'state/run-turn! fake-run!
+                            #'state/cancel-waiting-turn! (fn [sid tid _token]
+                                                           (finish-test-turn! sid tid "cancelled"))
+                            #'lp/condemn-env! (fn [_]
+                                                true)}
+             (fn []
+               (try (#'state/launch-turn-worker! sid-a tid-a "first" {:cancel-token token-a})
+                    (expect (= true (deref entered-a 2000 false)))
+                    (#'state/launch-turn-worker! sid-b tid-b "second" {:cancel-token token-b})
+                    (expect (true? (await #(> @waiting waiting-before) 2000)))
+                    (cancellation/cancel! token-a :test-stop)
+                    (expect (= true (deref entered-b 2000 false)))
+                    (expect (nil? (cancellation/cancel-reason token-b)))
+                    (finally (deliver release-a true)
+                             (when-not (realized? entered-b)
+                               (cancellation/cancel! token-b :test-cleanup))
+                             (expect (= true (deref returned-a 2000 false)))
+                             (expect (true? (await #(= executing-before @executing) 2000)))
+                             (expect (= 1 (.availablePermits semaphore)))))))
+           (finally (swap! registry dissoc sid-a sid-b)
+                    (#'state/release-turn-terminal-claim! sid-a tid-a)
+                    (#'state/release-turn-terminal-claim! sid-b tid-b)))))
+  (it "keeps two unused prewarm contexts per channel"
+      (let [pool
+            @#'state/prewarm-pool
+
+            prior
+            @pool
+
+            reserve!
+            (deref #'state/reserve-prewarm-slot!)]
+
+        (try (reset! pool {:ready {} :in-flight {} :accepting? true})
+             (expect (true? (reserve! :api)))
+             (expect (true? (reserve! :api)))
+             (expect (false? (reserve! :api)))
+             (finally (reset! pool prior)))))
+  (it "exports concurrency, replay, heap, GC, thread, and env-cache gauges"
+      (let [snapshot (state/metrics-snapshot)]
+        (doseq [k [:turns-executing :turns-waiting :turn-concurrency-limit :replay-events-retained
+                   :jvm-heap-used-bytes :process-rss-bytes :jvm-gc-count-total :jvm-thread-count
+                   :env-cache-size]]
+          (expect (contains? snapshot k))))))
 
 (defdescribe
   queued-turn-correlation-id-test
@@ -3496,7 +3618,7 @@
                    (expect (true? (await-flag condemned 4000)))
                    (expect (= sid @condemned))))
                (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))
-    (it "stays silent once the turn is no longer the session's current turn"
+    (it "does not reland a completed turn but releases its abandoned capacity"
         (let [sid
               (str "backstop-" (java.util.UUID/randomUUID))
 
@@ -3504,16 +3626,24 @@
               (cancellation/cancellation-token)
 
               landed
+              (atom false)
+
+              released
               (atom false)]
 
           (try
             ;; the worker DID land its terminal and the session moved on
             (swap! registry assoc sid {:next-seq 0 :current-turn "other"})
             (backstop sid
-                      "t1" token
-                      150 (fn [& _]
-                            (reset! landed true)))
-            (expect (false? (await-flag landed 1200)))
+                      "t1"
+                      token
+                      150
+                      (fn [& _]
+                        (reset! landed true))
+                      (fn []
+                        (reset! released true)))
+            (expect (true? (await-flag released 4000)))
+            (expect (false? @landed))
             (finally (cancellation/cancel! token) (swap! registry dissoc sid)))))))
 
 ;; Regression: a cancelled turn whose engine had never produced a single chunk
