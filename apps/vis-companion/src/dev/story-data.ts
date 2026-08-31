@@ -877,7 +877,7 @@ export const STORY_TURN_ITERATIONS_SETTLED: TranscriptIteration[] = STORY_TURN_I
  * THE AXIS WITH SOMETHING ON IT — the same turn, drawn over a real chronology.
  *
  * `STORY_TURN_ITERATIONS` proves the THREAD (a line, its markers, a band that
- * crosses it). This one proves what hangs OFF it: the invocation's margin
+ * stops at it). This one proves what hangs OFF it: the invocation's margin
  * counting what the iteration cost, the paths a read touched with their kinds,
  * a diff's `+7 −3`, and the two steps that ended badly opening themselves with
  * the head of their output already on the page.
@@ -888,6 +888,8 @@ export const STORY_TURN_ITERATIONS_ACTIVITY: TranscriptIteration[] = [
     position: 1,
     thinking:
       'A closed step has to answer the only question it is asked — did this change anything, what did it look at, what did it check — and everything else has to be one chevron away.\n\nSo: counters on the band, and inside it the program first, because it is what produced every row under it.',
+    assistant_prose:
+      'Counters and rows come out of the same projection, so the band can carry them without a second pass — patching the panel and its story sheet next.',
     forms: [
       {
         scope: 'python',

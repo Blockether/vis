@@ -1741,7 +1741,7 @@ const RAIL_GUTTER = "pl-6";
 const RAIL_LINE =
   "before:absolute before:left-[7px] before:top-0 before:z-[1] before:w-px before:bg-code-edge before:content-['']";
 const RAIL_NODE = "absolute -left-[17px] top-0 z-[2] -translate-x-1/2";
-const RAIL_BLEED = "-ml-6 pl-6";
+const RAIL_BLEED = "-ml-4 pl-4";
 
 /**
  * ONE STEP, MARKED ON THE LINE.
@@ -1782,11 +1782,12 @@ export const ThinkingBand = memo(function ThinkingBand({
 }: {
   children: string;
   /**
-   * Bleed the band's paper LEFT, under the thread line, and set its words in the
-   * same column the steps are set in. A step's reasoning is not a block standing
-   * beside the thread — it is the first thing that step did — so the band crosses
-   * the line instead of starting politely inside it. Off wherever the band stands
-   * alone: a single reasoning block has no thread to cross.
+   * Reach the band's paper LEFT until it meets the thread line — edge ON the line,
+   * never across it — and set its words in the same column the steps are set in.
+   * A step's reasoning is not a block standing beside the thread, it is the first
+   * thing that step did, so the paper touches the line; but the line is the spine
+   * of the turn and no paper crosses it. Off wherever the band stands alone: a
+   * single reasoning block has no thread to reach.
    */
   railed?: boolean;
 }) {
