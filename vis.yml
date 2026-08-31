@@ -33,6 +33,9 @@ workspace:
     - id: clj-ruff
       path: ~/clj-ruff
       description: Blockether Clojure bindings for ruff — bump ruff + release there, then move the com.blockether/ruff pin in deps.edn.
+    - id: lanterna
+      path: ~/lanterna
+      description: Blockether Lanterna fork — release there, then move the com.blockether/lanterna pin in the TUI extension.
     - id: tree-sitter
       path: ~/tree-sitter-language-pack
       description: Sibling repo — tree-sitter grammars for syntax highlighting and the patch parse gate.
@@ -101,7 +104,7 @@ toggles:
 #   # here is not confined-granted. Access (RW vs read-only) comes from the
 #   # catalog entry above.
 #   filesystem:
-#     allow: [fff, clj-fff, clj-parinferish, clj-ruff, tree-sitter, tree-sitter-clojure, spel, svar, clj-imaging, infrastructure, blockether-com, m2, clojure, clj-tslp, graal, npm]
+#     allow: [fff, clj-fff, clj-parinferish, clj-ruff, lanterna, tree-sitter, tree-sitter-clojure, spel, svar, clj-imaging, infrastructure, blockether-com, m2, clojure, clj-tslp, graal, npm]
 #
 #   # Outbound egress allowlist. A bare host also matches its subdomains, so
 #   # `github.com` covers `api.github.com`, and `githubusercontent.com` covers
