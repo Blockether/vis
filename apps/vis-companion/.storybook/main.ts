@@ -18,8 +18,9 @@ import type { StorybookConfig } from '@storybook/react-vite';
  * product; `storybook build` writes `storybook-static/`, which is ignored.
  *
  * Storybook stays on its stable line and does one job: render the shipped UI.
- * Spel owns browser automation, measurement and screenshots, so this preview needs
- * neither an agent protocol nor prerelease change-detection tools.
+ * Browser automation, measurement and screenshots belong to the harness that drives
+ * the page, so this preview needs neither an agent protocol nor prerelease
+ * change-detection tools.
  *
  * Each addon earns its line: `addon-docs` renders component prose; `addon-a11y`
  * explains axe's roles, labels and contrast findings; `addon-vitest` makes axe plus
