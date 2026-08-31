@@ -9,6 +9,8 @@ import type {
   ActivityTextEvidence,
   ActivityTextFormat,
 } from "../lib/activity";
+import { workspaceRelativePath } from "../lib/path";
+import { useWorkspaceRoots } from "../lib/workspace-roots";
 
 /**
  * ACTIVITY, PAINTED WHERE IT BELONGS — inside the form that produced it.
@@ -377,11 +379,18 @@ function ActivityNode({ state }: { state: ActivityRow["state"] }) {
  * that differs: eight rows of `src/com/blockether/vis/internal/…` are eight
  * identical rows. The directory is what gives way, so the file being looked for
  * is always whole, and it wears the darker ink because it is the answer.
+ *
+ * And the words are the path RELATIVE TO THE WORKSPACE, because `/Users/ana/vis/`
+ * is on every row, is the same on every row, and is exactly the part `truncate`
+ * keeps. The id underneath stays ABSOLUTE — it is what the engine called the file
+ * and what a press opens — so only the reading is shortened, never the address.
  */
 function ActivityPath({ id }: { id: string }) {
-  const cut = id.lastIndexOf("/");
-  const directory = cut < 0 ? "" : id.slice(0, cut + 1);
-  const name = cut < 0 ? id : id.slice(cut + 1);
+  const roots = useWorkspaceRoots();
+  const shown = workspaceRelativePath(id, roots) || id;
+  const cut = shown.lastIndexOf("/");
+  const directory = cut < 0 ? "" : shown.slice(0, cut + 1);
+  const name = cut < 0 ? shown : shown.slice(cut + 1);
   return (
     <span className="flex min-w-0" data-path={id}>
       {directory && (
@@ -404,31 +413,102 @@ function ActivityPath({ id }: { id: string }) {
 const ACTIVITY_FILES_SHOWN = 4;
 
 /**
+ * THE LIST A STEP LEFT: every path it touched, each holding the diff that names it.
+ *
+ * A file the engine reported as CHANGED and the same file among the step's resources
+ * are ONE row — a diff is named by the file it patched, which is the id that file
+ * arrived under. A diff whose file is not in the list still gets a row of its own,
+ * because a change that never reaches the screen is the one thing this axis may not
+ * drop.
+ */
+function activityFileRows(
+  resources: ActivityResource[],
+  diffs: readonly ActivityDiffEvidence[],
+): { key: string; id: string; diff?: ActivityDiffEvidence }[] {
+  const byPath = new Map(diffs.map((diff) => [diff.text, diff]));
+  const named = new Set(resources.map((resource) => resource.id));
+  return [
+    ...resources.map((resource) => ({
+      key: `${resource.type}:${resource.id}`,
+      id: resource.id,
+      diff: byPath.get(resource.id),
+    })),
+    ...diffs
+      .filter((diff) => !named.has(diff.text))
+      .map((diff) => ({ key: `diff:${diff.text}`, id: diff.text, diff })),
+  ];
+}
+
+/**
+ * ONE PATH, AND THE PATCH IT OPENS.
+ *
+ * A row that changed a file is PRESSABLE and one that only read it is not, so they
+ * differ by exactly that: the chevron replaces the guillemet in the same 12px cell,
+ * the words keep the same ink and the same 18px start, and the taller row is the one
+ * a thumb has to hit. Two heights in one list is the honest reading — a target that
+ * measured 18px would be the design lying about what can be pressed.
+ */
+function ActivityFileRow({
+  id,
+  diff,
+}: {
+  id: string;
+  diff?: ActivityDiffEvidence;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!diff)
+    return (
+      <li className="flex min-w-0 items-center gap-1.5 py-0.5 pr-1 font-mono text-chip text-code-result">
+        <span
+          aria-hidden="true"
+          className="w-3 shrink-0 text-center text-code-duration"
+        >
+          &rsaquo;
+        </span>
+        <ActivityPath id={id} />
+      </li>
+    );
+  return (
+    <li className="min-w-0">
+      <Disclosure
+        isOpen={open}
+        tone="chronology"
+        bleed
+        aria-label={`${open ? "Collapse" : "Expand"} the diff of ${id}`}
+        onClick={() => setOpen((wasOpen) => !wasOpen)}
+      >
+        <ActivityPath id={id} />
+      </Disclosure>
+      {open && <ActivityDiff diff={diff} />}
+    </li>
+  );
+}
+
+/**
  * WHAT THE STEP TOUCHED, one path per line, in the machine's own hand.
  *
- * ONE COLUMN, AND THE FOLD STANDS IN IT. A path and the `+N more files` that hides
- * the rest are the same list, so both hang their mark in the same 12px cell at the
- * row's own left edge and start their words 18px in. The cell is `w-3` because that
- * is the box `Disclosure` gives its chevron; a guillemet left to its own 5px advance
- * put every path two pixels off the count that folds it.
+ * ONE COLUMN, AND EVERY MARK STANDS IN IT. A path, the patch that path opens and the
+ * `+N more files` that hides the rest are the same list, so all three hang their mark
+ * in the same 12px cell at the row's own left edge and start their words 18px in. The
+ * cell is `w-3` because that is the box `Disclosure` gives its chevron; a guillemet
+ * left to its own 5px advance put every path two pixels off the count that folds it.
  */
-function ActivityFiles({ resources }: { resources: ActivityResource[] }) {
+function ActivityFiles({
+  resources,
+  diffs = [],
+}: {
+  resources: ActivityResource[];
+  diffs?: readonly ActivityDiffEvidence[];
+}) {
   const [showAll, setShowAll] = useState(false);
-  const hidden = Math.max(0, resources.length - ACTIVITY_FILES_SHOWN);
-  const shown = showAll ? resources : resources.slice(0, ACTIVITY_FILES_SHOWN);
+  const rows = activityFileRows(resources, diffs);
+  const hidden = Math.max(0, rows.length - ACTIVITY_FILES_SHOWN);
+  const shown = showAll ? rows : rows.slice(0, ACTIVITY_FILES_SHOWN);
   return (
     <div className="min-w-0">
       <ul className="mt-1.5 grid min-w-0 gap-px">
-        {shown.map((resource) => (
-          <li
-            key={`${resource.type}:${resource.id}`}
-            className="flex min-w-0 items-center gap-1.5 py-0.5 pr-1 font-mono text-chip text-code-result"
-          >
-            <span aria-hidden="true" className="w-3 shrink-0 text-center text-code-duration">
-              &rsaquo;
-            </span>
-            <ActivityPath id={resource.id} />
-          </li>
+        {shown.map((row) => (
+          <ActivityFileRow key={row.key} id={row.id} diff={row.diff} />
         ))}
       </ul>
       {hidden > 0 && (
@@ -454,24 +534,29 @@ function ActivityFiles({ resources }: { resources: ActivityResource[] }) {
  * No head and no card. The row above already says "Patched", prints its own
  * `+7 -3` and carries the paths under it, so a bordered box with the word
  * "Patch" set in bold across its top was that row said a second time, twenty
- * pixels lower and louder. The diff is the one thing on this axis long enough to
- * be worth folding, so it is the only thing that opens — and it opens from the
- * foot of the list it belongs to, never from a headline standing over it.
+ * pixels lower and louder.
+ *
+ * And a step that changed SEVERAL files hands each file its OWN fold, on its own
+ * path. One chevron over eleven concatenated patches made the reader find a file
+ * by reading a header out of the diff, and any bound on the payload spent itself
+ * on whichever file came first. The bare word `Diff` survives for the one case
+ * with no path to stand on: a `patch` row, whose head already names the file.
  */
 function ActivityChanges({
   row,
-  diff,
+  diffs,
   files,
 }: {
   row: ActivityRow;
-  diff: ActivityDiffEvidence;
+  diffs: ActivityDiffEvidence[];
   files: ActivityResource[];
 }) {
   const [open, setOpen] = useState(false);
   const headline = activityStepHeadline(row);
+  const alone = files.length === 0 && diffs.length === 1 ? diffs[0] : undefined;
+  if (!alone) return <ActivityFiles resources={files} diffs={diffs} />;
   return (
     <div className="min-w-0">
-      {files.length > 0 && <ActivityFiles resources={files} />}
       <Disclosure
         isOpen={open}
         tone="muted"
@@ -483,7 +568,7 @@ function ActivityChanges({
           Diff
         </span>
       </Disclosure>
-      {open && <ActivityDiff diff={diff} />}
+      {open && <ActivityDiff diff={alone} />}
     </div>
   );
 }
@@ -601,7 +686,7 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
     : [...(row.children ?? [])].sort((left, right) => left.sequence - right.sequence);
   const hasChildren = children.length > 0;
   const Headline = nested ? "p" : "h4";
-  const diff = row.evidence.find(
+  const diffs = row.evidence.filter(
     (item): item is ActivityDiffEvidence => item.kind === "diff",
   );
   const error = row.evidence.find(
@@ -687,13 +772,13 @@ function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) 
       {/* A GROUP'S PATHS BELONG TO ITS CHANGES, not to the group as well: the head
           carries every child's resource, so painting them here and again under each
           child is the same twelve paths printed twice. */}
-      {!diff && !hasChildren && touched.length > 0 && (
+      {diffs.length === 0 && !hasChildren && touched.length > 0 && (
         <ActivityFiles resources={touched} />
       )}
-      {diff && (
+      {diffs.length > 0 && (
         <ActivityChanges
           row={row}
-          diff={diff}
+          diffs={diffs}
           files={hasChildren ? [] : touched}
         />
       )}

@@ -119,8 +119,8 @@
               :evidence (cond-> (vec (:evidence row))
                           summary-evidence
                           (conj summary-evidence)))
-      (:diff-evidence event)
-      (update :evidence conj (:diff-evidence event))
+      (seq (:diff-evidence event))
+      (update :evidence into (:diff-evidence event))
 
       (:group-token event)
       (assoc :group-token (:group-token event))

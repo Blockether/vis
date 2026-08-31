@@ -2108,7 +2108,7 @@
                              :repo-root (System/getProperty "user.dir")}}))
 
             evidence
-            (:diff-evidence (second @events))]
+            (first (:diff-evidence (second @events)))]
 
         (expect (string/starts-with? result "patched "))
         (expect (= [:deletion :addition]

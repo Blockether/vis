@@ -176,6 +176,7 @@ import {
 import { App } from "@capacitor/app";
 
 import { workspaceRelativePath } from "../lib/path";
+import { WorkspaceRootsContext } from "../lib/workspace-roots";
 
 
 const TERMINAL_EVENTS = new Set([
@@ -4277,6 +4278,14 @@ export function SessionScreen({
       openLinkedArtifact,
     ],
   );
+
+  // A path is shortened the same way wherever it appears, so the screen resolves
+  // the roots ONCE: the live ticker's own label reads them here, and the activity
+  // axis, four memoized components below, reads the same pair from the context.
+  const workspaceRoots = useMemo(
+    () => [session?.workspace?.root, session?.workspace?.repo_root],
+    [session?.workspace?.root, session?.workspace?.repo_root],
+  );
   // Every live view is now a view. Protocol 7 gave Activity to the form that
   // produced it, so no picture below the transcript is a Python slot's twin and
   // nothing has to be held back from the rail to avoid painting it twice.
@@ -4326,7 +4335,7 @@ export function SessionScreen({
           progressLabel={runningTurnPhase(
             runningTurn,
             connected,
-            [session?.workspace?.root, session?.workspace?.repo_root],
+            workspaceRoots,
             watching,
           )}
           startedAt={runningTurn.startedAt}
@@ -4350,8 +4359,7 @@ export function SessionScreen({
     sid,
     connected,
     fetchedRunningTurnAttachments,
-    session?.workspace?.root,
-    session?.workspace?.repo_root,
+    workspaceRoots,
     watching,
     liveViews,
     openLinkedArtifact,
@@ -4567,449 +4575,451 @@ export function SessionScreen({
 
   return (
     <AttachImageContext.Provider value={attachCapturedImage}>
-      <section className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
-        {/* A run BLOCKED on the operator (`vis.request_human_input`) parks until it
-         is answered. The prompt portals its own overlay, so it sits here purely
-         to be mounted for this session — the TUI shows the same form. */}
-        <HumanInputPrompt
-          client={client}
-          subscriptions={subscriptions}
-          sid={sid}
-        />
-        <SessionHeader model={headerModel} commands={headerCommands} />
-
-        {routerOpen && (
-          <ProviderRouterDialog
+      <WorkspaceRootsContext.Provider value={workspaceRoots}>
+        <section className="relative flex h-full min-h-0 w-full flex-col overflow-hidden bg-ink transition-[opacity,transform,translate,scale,rotate] duration-200 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+          {/* A run BLOCKED on the operator (`vis.request_human_input`) parks until it
+           is answered. The prompt portals its own overlay, so it sits here purely
+           to be mounted for this session — the TUI shows the same form. */}
+          <HumanInputPrompt
             client={client}
+            subscriptions={subscriptions}
             sid={sid}
-            onClose={() => setRouterOpen(false)}
-            onPicked={commitModelPref}
-            onManageProviders={onManageProviders}
           />
-        )}
+          <SessionHeader model={headerModel} commands={headerCommands} />
 
-        {editingPaste && (
-          <PasteEditor
-            key={editingPaste.id}
-            paste={editingPaste}
-            onDismiss={closePasteEditor}
-            onSave={savePasteEdit}
-          />
-        )}
-
-        <div className="relative flex min-h-0 flex-1 flex-col">
-          {/* The gallery belongs to this session but not to this transcript rectangle:
-          it portals into the viewport-pinned shell, so its full-screen contract includes
-          the session header and every detail opened from it inherits the whole glass. */}
-          {artifactsOpen && (
-            <ArtifactsSheet
+          {routerOpen && (
+            <ProviderRouterDialog
               client={client}
               sid={sid}
-              artifacts={artifacts}
-              initialArtifact={linkedArtifact}
-              voiceControl={
-                voiceConversation ? renderVoiceControl("overlay") : undefined
-              }
-              onClose={closeArtifacts}
+              onClose={() => setRouterOpen(false)}
+              onPicked={commitModelPref}
+              onManageProviders={onManageProviders}
             />
           )}
-          {/* The scroller is deliberately NOT a live region. role="log" implies
-          aria-live="polite", and WebKit answers that by keeping an AXLiveRegionNode
-          set for the subtree and re-diffing it on every mutation: with a whole
-          transcript inside, a streaming turn pegged the WebContent process at ~100%
-          CPU indefinitely (sampled on device: 3505 of 3609 main-thread samples in
-          -[UIKitWebAccessibilityObjectWrapper _performLiveRegionUpdate] ->
-          -[AXLiveRegionNode isEqual:]). Streaming is announced instead by the small
-          sr-only role="status" node each turn renders, which is what a screen reader
-          actually wants: one short phase message, not the entire log re-scanned. */}
-          <div
-            ref={scrollRef}
-            className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
-            onClickCapture={handleDisclosureClick}
-            onScroll={handleScroll}
-            onPointerDown={releasePin}
-            onWheel={releasePin}
-            onTouchMove={releasePin}
-            role="region"
-            aria-label="Transcript"
-          >
-            <div
-              ref={transcriptRef}
-              className={`mx-auto min-h-full w-full max-w-3xl pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] sm:pt-6 ${
-                !turns.length && !runningTurn
-                  ? "flex flex-col pb-4 sm:pb-6"
-                  : "flex flex-col justify-end pb-10"
-              }`}
-            >
-              {error && <Banner kind="err">{error}</Banner>}
 
-              <>
-                {/* Keep the new-session cue fluid: it shares the scroller's available
-              height, including when a software keyboard changes it. The mark is
-              intentionally unframed so the brand feels like part of the canvas,
-              not a small dialog inside it. */}
-                {!turns.length && !runningTurn ? (
-                  <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-3 text-center transition-[opacity,transform,translate,scale,rotate] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
-                    <img
-                      src="/vis-logo.png"
-                      alt=""
-                      className="w-14 max-w-full object-contain sm:w-16"
-                      aria-hidden="true"
-                    />
-                    <div className="mt-4 max-w-md">
-                      <h2 className="text-head font-semibold text-dialog-foreground">
-                        What would you like to work on?
-                      </h2>
-                      <p className="mt-1 text-body text-dialog-hint">
-                        Describe a task, ask a question, or add a screenshot to
-                        get started.
-                      </p>
-                    </div>
-                  </div>
-                ) : null}
+          {editingPaste && (
+            <PasteEditor
+              key={editingPaste.id}
+              paste={editingPaste}
+              onDismiss={closePasteEditor}
+              onSave={savePasteEdit}
+            />
+          )}
 
-                {earlierTotal > 0 && (
-                  // Not anchorable: this row is pinned above the history it loads, so
-                  // its own top never moves and anchoring on it would hold nothing
-                  // while 40 000 px lands underneath it.
-                  <div className="mb-5" data-anchor="skip">
-                    <LoadMore
-                      isEarlier
-                      label={`Load earlier turns · ${earlierTotal} remaining`}
-                      onClick={loadEarlierTurns}
-                      disabled={loadingEarlier}
-                    >
-                      {loadingEarlier
-                        ? "Loading earlier…"
-                        : visibleStart > 0
-                          ? `Load ${Math.min(INITIAL_VISIBLE_TURNS, earlierTotal)} earlier · ${earlierTotal} remaining`
-                          : `Load earlier · ${earlierTotal} remaining`}
-                    </LoadMore>
-                  </div>
-                )}
-
-                {turnRows}
-
-                {liveRow}
-
-                {/* A view can outlive the optimistic running row during resync. In that
-                  narrow gap it still paints at the transcript end; otherwise the row owns
-                  it so the phase line follows, rather than precedes, the live panel. */}
-                {!liveRow && liveViews.length > 0 && (
-                  <div className="mt-5">
-                    <LiveView views={liveViews} client={client} sid={sid} />
-                  </div>
-                )}
-              </>
-            </div>
-          </div>
-          {loading && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-ink">
-              <LoadingSession
-                ready={Math.min(hydratedTurnCount, visibleTurnCount, turns.length)}
-                total={Math.min(visibleTurnCount, turns.length)}
+          <div className="relative flex min-h-0 flex-1 flex-col">
+            {/* The gallery belongs to this session but not to this transcript rectangle:
+            it portals into the viewport-pinned shell, so its full-screen contract includes
+            the session header and every detail opened from it inherits the whole glass. */}
+            {artifactsOpen && (
+              <ArtifactsSheet
+                client={client}
+                sid={sid}
+                artifacts={artifacts}
+                initialArtifact={linkedArtifact}
+                voiceControl={
+                  voiceConversation ? renderVoiceControl("overlay") : undefined
+                }
+                onClose={closeArtifacts}
               />
+            )}
+            {/* The scroller is deliberately NOT a live region. role="log" implies
+            aria-live="polite", and WebKit answers that by keeping an AXLiveRegionNode
+            set for the subtree and re-diffing it on every mutation: with a whole
+            transcript inside, a streaming turn pegged the WebContent process at ~100%
+            CPU indefinitely (sampled on device: 3505 of 3609 main-thread samples in
+            -[UIKitWebAccessibilityObjectWrapper _performLiveRegionUpdate] ->
+            -[AXLiveRegionNode isEqual:]). Streaming is announced instead by the small
+            sr-only role="status" node each turn renders, which is what a screen reader
+            actually wants: one short phase message, not the entire log re-scanned. */}
+            <div
+              ref={scrollRef}
+              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain scroll-pb-8 bg-ink [overflow-anchor:none]"
+              onClickCapture={handleDisclosureClick}
+              onScroll={handleScroll}
+              onPointerDown={releasePin}
+              onWheel={releasePin}
+              onTouchMove={releasePin}
+              role="region"
+              aria-label="Transcript"
+            >
+              <div
+                ref={transcriptRef}
+                className={`mx-auto min-h-full w-full max-w-3xl pl-[max(0.875rem,env(safe-area-inset-left))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-4 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] sm:pt-6 ${
+                  !turns.length && !runningTurn
+                    ? "flex flex-col pb-4 sm:pb-6"
+                    : "flex flex-col justify-end pb-10"
+                }`}
+              >
+                {error && <Banner kind="err">{error}</Banner>}
+
+                <>
+                  {/* Keep the new-session cue fluid: it shares the scroller's available
+                height, including when a software keyboard changes it. The mark is
+                intentionally unframed so the brand feels like part of the canvas,
+                not a small dialog inside it. */}
+                  {!turns.length && !runningTurn ? (
+                    <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-3 text-center transition-[opacity,transform,translate,scale,rotate] duration-300 starting:translate-y-2 starting:opacity-0 motion-reduce:transition-none">
+                      <img
+                        src="/vis-logo.png"
+                        alt=""
+                        className="w-14 max-w-full object-contain sm:w-16"
+                        aria-hidden="true"
+                      />
+                      <div className="mt-4 max-w-md">
+                        <h2 className="text-head font-semibold text-dialog-foreground">
+                          What would you like to work on?
+                        </h2>
+                        <p className="mt-1 text-body text-dialog-hint">
+                          Describe a task, ask a question, or add a screenshot to
+                          get started.
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {earlierTotal > 0 && (
+                    // Not anchorable: this row is pinned above the history it loads, so
+                    // its own top never moves and anchoring on it would hold nothing
+                    // while 40 000 px lands underneath it.
+                    <div className="mb-5" data-anchor="skip">
+                      <LoadMore
+                        isEarlier
+                        label={`Load earlier turns · ${earlierTotal} remaining`}
+                        onClick={loadEarlierTurns}
+                        disabled={loadingEarlier}
+                      >
+                        {loadingEarlier
+                          ? "Loading earlier…"
+                          : visibleStart > 0
+                            ? `Load ${Math.min(INITIAL_VISIBLE_TURNS, earlierTotal)} earlier · ${earlierTotal} remaining`
+                            : `Load earlier · ${earlierTotal} remaining`}
+                      </LoadMore>
+                    </div>
+                  )}
+
+                  {turnRows}
+
+                  {liveRow}
+
+                  {/* A view can outlive the optimistic running row during resync. In that
+                    narrow gap it still paints at the transcript end; otherwise the row owns
+                    it so the phase line follows, rather than precedes, the live panel. */}
+                  {!liveRow && liveViews.length > 0 && (
+                    <div className="mt-5">
+                      <LiveView views={liveViews} client={client} sid={sid} />
+                    </div>
+                  )}
+                </>
+              </div>
             </div>
-          )}
-        </div>
-
-        {/* `sm:pt-2`, never `sm:py-2`: the `sm` variant is emitted after the base
-          rules, so a shorthand there would drop `--safe-bottom` — and `sm` is
-          exactly where a phone lands when it is turned on its side, home
-          indicator included.
-
-          It is HIDDEN while the artifacts sheet is open. The sheet is the whole box
-          then, and a composer standing under a screen of thumbnails is a band of
-          chrome for a message nobody is writing — on a tablet it is the biggest thing
-          on a screen that is not about it. Hidden rather than unmounted, so the draft,
-          the caret and the queued turns survive a look at what the session made. */}
-        <footer
-          style={safeBottomStyle}
-          className={`relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2 ${artifactsOpen ? "hidden" : ""}`}
-        >
-          {/* Anchored to the footer's top edge, so it always clears the queue
-            tray and composer no matter how tall they grow. Hidden while a
-            completion list occupies the same strip. */}
-          {showJump && !fileMatches.length && !slashMatches.length && (
-            <JumpToLatestButton
-              className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2"
-              onClick={() => scrollToEnd("smooth")}
-            />
-          )}
-
-          <ComposerSuggestions
-            kind="files"
-            items={fileMatches}
-            selectedIndex={fileIndex}
-            onSelect={(file) => completeFile(file.name)}
-          />
-          <ComposerSuggestions
-            kind="slashes"
-            items={slashMatches}
-            selectedIndex={slashIndex}
-            onSelect={completeSlash}
-          />
-
-          <QueuedTurnsTray
-            key={sid}
-            client={client}
-            sid={sid}
-            queued={queued}
-            paused={queuePaused}
-            onError={setError}
-          />
-
-          <div className="relative rounded-field border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
-            <ComposerPayloadShelf
-              pastes={activePastes}
-              attachments={attachments}
-              commands={payloadCommands}
-            />
-
-            {(composerNotice ||
-              voiceConversation ||
-              voicePhase !== "idle" ||
-              voiceModel?.status === "downloading" ||
-              (voiceRequested && voiceModel?.status !== "ready")) && (
-              <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-[3px_3px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
-                {voicePhase === "recording" ? (
-                  <>
-                    <span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" />{" "}
-                    {voiceConversation
-                      ? "Voice conversation · Listening · tap the microphone again to finish"
-                      : "Listening · tap the microphone again to finish"}
-                  </>
-                ) : voicePhase === "transcribing" ? (
-                  <>
-                    <span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" />{" "}
-                    {voiceConversation && "Voice conversation · "}
-                    {voiceProgressLabel(voiceProgress)}
-                  </>
-                ) : composerNotice ? (
-                  composerNotice
-                ) : voiceSpeaking ? (
-                  <>Voice conversation · Speaking · tap the microphone to stop</>
-                ) : voiceConversation && running ? (
-                  <>Voice conversation · Vis is working</>
-                ) : voiceConversation ? (
-                  <>Voice conversation · Ready · tap the microphone to speak</>
-                ) : voiceModel?.status === "downloading" ? (
-                  <>
-                    {voiceModel.phase === "extracting"
-                      ? "Unpacking voice model"
-                      : "Downloading voice model"}
-                    {voiceModel.progress == null
-                      ? "…"
-                      : ` · ${Math.round(voiceModel.progress)}%`}
-                  </>
-                ) : voiceModel?.status === "failed" ? (
-                  <>
-                    Voice model failed
-                    {voiceModel.error ? ` · ${voiceModel.error}` : ""}
-                  </>
-                ) : voiceModel?.status === "absent" ? (
-                  <>Tap the microphone to install the local voice model</>
-                ) : null}
+            {loading && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-ink">
+                <LoadingSession
+                  ready={Math.min(hydratedTurnCount, visibleTurnCount, turns.length)}
+                  total={Math.min(visibleTurnCount, turns.length)}
+                />
               </div>
             )}
+          </div>
 
-            <div className="flex items-end gap-1 p-1">
-              <ComposerAttachmentPicker
-                accept={(
-                  capabilities?.features.attachments.media_types ?? [
-                    "image/*",
-                    "video/*",
-                  ]
-                ).join(",")}
-                disabled={
-                  attachments.length >=
-                  (capabilities?.features.attachments.max_files ?? 8)
-                }
-                commands={attachmentCommands}
+          {/* `sm:pt-2`, never `sm:py-2`: the `sm` variant is emitted after the base
+            rules, so a shorthand there would drop `--safe-bottom` — and `sm` is
+            exactly where a phone lands when it is turned on its side, home
+            indicator included.
+
+            It is HIDDEN while the artifacts sheet is open. The sheet is the whole box
+            then, and a composer standing under a screen of thumbnails is a band of
+            chrome for a message nobody is writing — on a tablet it is the biggest thing
+            on a screen that is not about it. Hidden rather than unmounted, so the draft,
+            the caret and the queued turns survive a look at what the session made. */}
+          <footer
+            style={safeBottomStyle}
+            className={`relative z-10 shrink-0 border-t border-dialog-edge bg-ink pl-[max(0.875rem,env(safe-area-inset-left))] pb-[calc(0.375rem+var(--safe-bottom,env(safe-area-inset-bottom)))] pr-[max(0.875rem,env(safe-area-inset-right))] pt-1.5 sm:pl-[max(1.5rem,env(safe-area-inset-left),calc((100%_-_46rem)/2))] sm:pr-[max(1.5rem,env(safe-area-inset-right),calc((100%_-_46rem)/2))] sm:pt-2 ${artifactsOpen ? "hidden" : ""}`}
+          >
+            {/* Anchored to the footer's top edge, so it always clears the queue
+              tray and composer no matter how tall they grow. Hidden while a
+              completion list occupies the same strip. */}
+            {showJump && !fileMatches.length && !slashMatches.length && (
+              <JumpToLatestButton
+                className="absolute bottom-full left-1/2 z-20 mb-2 -translate-x-1/2"
+                onClick={() => scrollToEnd("smooth")}
+              />
+            )}
+
+            <ComposerSuggestions
+              kind="files"
+              items={fileMatches}
+              selectedIndex={fileIndex}
+              onSelect={(file) => completeFile(file.name)}
+            />
+            <ComposerSuggestions
+              kind="slashes"
+              items={slashMatches}
+              selectedIndex={slashIndex}
+              onSelect={completeSlash}
+            />
+
+            <QueuedTurnsTray
+              key={sid}
+              client={client}
+              sid={sid}
+              queued={queued}
+              paused={queuePaused}
+              onError={setError}
+            />
+
+            <div className="relative rounded-field border border-dialog-edge bg-input shadow-[3px_3px_0_var(--dialog-shadow)] transition-colors focus-within:border-accent">
+              <ComposerPayloadShelf
+                pastes={activePastes}
+                attachments={attachments}
+                commands={payloadCommands}
               />
 
-              {/* ONE microphone, the way a messenger does it: TAP acts in the mode
-                you are in, PRESS AND HOLD switches the mode. The mode was always a
-                single boolean — the disclosure beside this button was a menu built
-                around it, and the border welding the two read as a divider in the
-                strip. A gesture nobody can see needs the name to say it, so the
-                accessible label carries the act AND the switch, and a pointer that
-                cannot hold gets the same switch from a right-click or Shift+Enter. */}
-              {renderVoiceControl()}
+              {(composerNotice ||
+                voiceConversation ||
+                voicePhase !== "idle" ||
+                voiceModel?.status === "downloading" ||
+                (voiceRequested && voiceModel?.status !== "ready")) && (
+                <div className="pointer-events-none absolute bottom-full left-0 mb-1 flex max-w-full items-center gap-1.5 border border-dialog-edge bg-panel px-2 py-1 font-mono text-chip text-dialog-hint shadow-[3px_3px_0_var(--dialog-shadow)] transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none">
+                  {voicePhase === "recording" ? (
+                    <>
+                      <span className="size-1.5 animate-pulse bg-err motion-reduce:animate-none" />{" "}
+                      {voiceConversation
+                        ? "Voice conversation · Listening · tap the microphone again to finish"
+                        : "Listening · tap the microphone again to finish"}
+                    </>
+                  ) : voicePhase === "transcribing" ? (
+                    <>
+                      <span className="size-1.5 animate-pulse bg-accent motion-reduce:animate-none" />{" "}
+                      {voiceConversation && "Voice conversation · "}
+                      {voiceProgressLabel(voiceProgress)}
+                    </>
+                  ) : composerNotice ? (
+                    composerNotice
+                  ) : voiceSpeaking ? (
+                    <>Voice conversation · Speaking · tap the microphone to stop</>
+                  ) : voiceConversation && running ? (
+                    <>Voice conversation · Vis is working</>
+                  ) : voiceConversation ? (
+                    <>Voice conversation · Ready · tap the microphone to speak</>
+                  ) : voiceModel?.status === "downloading" ? (
+                    <>
+                      {voiceModel.phase === "extracting"
+                        ? "Unpacking voice model"
+                        : "Downloading voice model"}
+                      {voiceModel.progress == null
+                        ? "…"
+                        : ` · ${Math.round(voiceModel.progress)}%`}
+                    </>
+                  ) : voiceModel?.status === "failed" ? (
+                    <>
+                      Voice model failed
+                      {voiceModel.error ? ` · ${voiceModel.error}` : ""}
+                    </>
+                  ) : voiceModel?.status === "absent" ? (
+                    <>Tap the microphone to install the local voice model</>
+                  ) : null}
+                </div>
+              )}
 
-              <textarea
-                ref={composerRef}
-                rows={1}
-                value={prompt}
-                disabled={voicePhase === "recording"}
-                placeholder={
-                  voicePhase === "recording"
-                    ? "Listening…"
-                    : running
-                      ? "Message Vis — queues next"
-                      : "Message Vis or type / or @"
-                }
-                aria-label="Message Vis"
-                // Both completion menus are anchored to this textarea and are mutually
-                // exclusive (`fileMention` is only computed while the slash menu is shut),
-                // so the announced popup must name whichever one is actually open.
-                aria-controls={
-                  fileMatches.length
-                    ? composerSuggestionListId("files")
-                    : slashMatches.length
-                      ? composerSuggestionListId("slashes")
-                      : undefined
-                }
-                aria-expanded={
-                  slashMatches.length > 0 || fileMatches.length > 0
-                }
-                className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-1.5 mouse:text-meta"
-                onPaste={handlePaste}
-                onFocus={handleComposerFocus}
-                onSelect={(event) =>
-                  setCaret(
-                    (event.target as HTMLTextAreaElement).selectionStart ?? 0,
-                  )
-                }
-                onChange={(event) => {
-                  setPrompt(event.target.value);
-                  setCaret(
-                    event.target.selectionStart ?? event.target.value.length,
-                  );
-                  setSlashIndex(0);
-                  setSlashDismissed(false);
-                  setFileIndex(0);
-                  setFileDismissed(false);
-                }}
-                onKeyDown={(event) => {
-                  // Asked per keystroke, so a keyboard folded onto a tablet
-                  // mid-session changes the answer without a remount.
-                  const enterSends = isEnterSendKeyboard();
-                  if (fileMatches.length) {
-                    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              <div className="flex items-end gap-1 p-1">
+                <ComposerAttachmentPicker
+                  accept={(
+                    capabilities?.features.attachments.media_types ?? [
+                      "image/*",
+                      "video/*",
+                    ]
+                  ).join(",")}
+                  disabled={
+                    attachments.length >=
+                    (capabilities?.features.attachments.max_files ?? 8)
+                  }
+                  commands={attachmentCommands}
+                />
+
+                {/* ONE microphone, the way a messenger does it: TAP acts in the mode
+                  you are in, PRESS AND HOLD switches the mode. The mode was always a
+                  single boolean — the disclosure beside this button was a menu built
+                  around it, and the border welding the two read as a divider in the
+                  strip. A gesture nobody can see needs the name to say it, so the
+                  accessible label carries the act AND the switch, and a pointer that
+                  cannot hold gets the same switch from a right-click or Shift+Enter. */}
+                {renderVoiceControl()}
+
+                <textarea
+                  ref={composerRef}
+                  rows={1}
+                  value={prompt}
+                  disabled={voicePhase === "recording"}
+                  placeholder={
+                    voicePhase === "recording"
+                      ? "Listening…"
+                      : running
+                        ? "Message Vis — queues next"
+                        : "Message Vis or type / or @"
+                  }
+                  aria-label="Message Vis"
+                  // Both completion menus are anchored to this textarea and are mutually
+                  // exclusive (`fileMention` is only computed while the slash menu is shut),
+                  // so the announced popup must name whichever one is actually open.
+                  aria-controls={
+                    fileMatches.length
+                      ? composerSuggestionListId("files")
+                      : slashMatches.length
+                        ? composerSuggestionListId("slashes")
+                        : undefined
+                  }
+                  aria-expanded={
+                    slashMatches.length > 0 || fileMatches.length > 0
+                  }
+                  className="h-8 min-h-8 max-h-20 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-ui text-dialog-foreground outline-none placeholder:text-dialog-hint disabled:text-cancelled-foreground mouse:h-7 mouse:min-h-7 mouse:py-1.5 mouse:text-meta"
+                  onPaste={handlePaste}
+                  onFocus={handleComposerFocus}
+                  onSelect={(event) =>
+                    setCaret(
+                      (event.target as HTMLTextAreaElement).selectionStart ?? 0,
+                    )
+                  }
+                  onChange={(event) => {
+                    setPrompt(event.target.value);
+                    setCaret(
+                      event.target.selectionStart ?? event.target.value.length,
+                    );
+                    setSlashIndex(0);
+                    setSlashDismissed(false);
+                    setFileIndex(0);
+                    setFileDismissed(false);
+                  }}
+                  onKeyDown={(event) => {
+                    // Asked per keystroke, so a keyboard folded onto a tablet
+                    // mid-session changes the answer without a remount.
+                    const enterSends = isEnterSendKeyboard();
+                    if (fileMatches.length) {
+                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                        event.preventDefault();
+                        const delta = event.key === "ArrowDown" ? 1 : -1;
+                        setFileIndex(
+                          (current) =>
+                            (current + delta + fileMatches.length) %
+                            fileMatches.length,
+                        );
+                        return;
+                      }
+                      if (
+                        (event.key === "Tab" ||
+                          (event.key === "Enter" && enterSends)) &&
+                        selectedFile
+                      ) {
+                        event.preventDefault();
+                        completeFile(selectedFile.name);
+                        return;
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        setFileDismissed(true);
+                        return;
+                      }
+                    }
+                    if (
+                      slashMatches.length &&
+                      (event.key === "ArrowDown" || event.key === "ArrowUp")
+                    ) {
                       event.preventDefault();
                       const delta = event.key === "ArrowDown" ? 1 : -1;
-                      setFileIndex(
+                      setSlashIndex(
                         (current) =>
-                          (current + delta + fileMatches.length) %
-                          fileMatches.length,
+                          (current + delta + slashMatches.length) %
+                          slashMatches.length,
                       );
                       return;
                     }
                     if (
-                      (event.key === "Tab" ||
-                        (event.key === "Enter" && enterSends)) &&
-                      selectedFile
+                      slashMatches.length &&
+                      event.key === "Tab" &&
+                      selectedSlash
                     ) {
                       event.preventDefault();
-                      completeFile(selectedFile.name);
-                      return;
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      setFileDismissed(true);
-                      return;
-                    }
-                  }
-                  if (
-                    slashMatches.length &&
-                    (event.key === "ArrowDown" || event.key === "ArrowUp")
-                  ) {
-                    event.preventDefault();
-                    const delta = event.key === "ArrowDown" ? 1 : -1;
-                    setSlashIndex(
-                      (current) =>
-                        (current + delta + slashMatches.length) %
-                        slashMatches.length,
-                    );
-                    return;
-                  }
-                  if (
-                    slashMatches.length &&
-                    event.key === "Tab" &&
-                    selectedSlash
-                  ) {
-                    event.preventDefault();
-                    completeSlash(selectedSlash);
-                    return;
-                  }
-                  if (slashMatches.length && event.key === "Escape") {
-                    event.preventDefault();
-                    setSlashDismissed(true);
-                    return;
-                  }
-                  // On a phone Return is the NEW LINE key: there is no Shift to
-                  // hold on an on-screen keyboard, so a submitting Enter makes a
-                  // paragraph impossible to type. Send is the send button.
-                  if (
-                    enterSends &&
-                    event.key === "Enter" &&
-                    !event.shiftKey &&
-                    !event.nativeEvent.isComposing
-                  ) {
-                    event.preventDefault();
-                    if (
-                      selectedSlash &&
-                      slashText.toLowerCase() !==
-                        selectedSlash.name.toLowerCase()
-                    ) {
                       completeSlash(selectedSlash);
-                    } else {
-                      void send();
+                      return;
                     }
+                    if (slashMatches.length && event.key === "Escape") {
+                      event.preventDefault();
+                      setSlashDismissed(true);
+                      return;
+                    }
+                    // On a phone Return is the NEW LINE key: there is no Shift to
+                    // hold on an on-screen keyboard, so a submitting Enter makes a
+                    // paragraph impossible to type. Send is the send button.
+                    if (
+                      enterSends &&
+                      event.key === "Enter" &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      if (
+                        selectedSlash &&
+                        slashText.toLowerCase() !==
+                          selectedSlash.name.toLowerCase()
+                      ) {
+                        completeSlash(selectedSlash);
+                      } else {
+                        void send();
+                      }
+                    }
+                  }}
+                />
+
+                {/* The action rail keeps a CONSTANT footprint. Send and stop used to
+                  mount and unmount independently, so starting a turn, typing during
+                  one, or a turn simply ending resized the textarea under the caret.
+                  Both squares are always laid out; only the stop button's contents
+                  come and go.
+
+                  The stop affordance still retires the moment the cancel is
+                  accepted: the running-turn bubble then carries the single "Vis is
+                  cancelling" line, and the finished turn carries "Cancelled by
+                  user." — one state at a time, never a button offering to cancel a
+                  cancel. */}
+                <div className="grid size-8 shrink-0 place-items-center mouse:size-7">
+                  {activeWork && !runningTurn?.cancelling && (
+                    <ComposerButton
+                      tone="stop"
+                      onMouseDown={keepKeyboard}
+                      onClick={cancel}
+                      label="Stop response"
+                    >
+                      <StopIcon className="size-3 text-err" />
+                    </ComposerButton>
+                  )}
+                </div>
+                <ComposerButton
+                  tone="send"
+                  onMouseDown={keepKeyboard}
+                  onClick={() => {
+                    // The composer stays focused, so iOS keeps one stable keyboard and
+                    // viewport while the answer starts streaming.
+                    void send();
+                  }}
+                  disabled={
+                    (!prompt.trim() && !attachments.length) ||
+                    voicePhase !== "idle"
                   }
-                }}
-              />
-
-              {/* The action rail keeps a CONSTANT footprint. Send and stop used to
-                mount and unmount independently, so starting a turn, typing during
-                one, or a turn simply ending resized the textarea under the caret.
-                Both squares are always laid out; only the stop button's contents
-                come and go.
-
-                The stop affordance still retires the moment the cancel is
-                accepted: the running-turn bubble then carries the single "Vis is
-                cancelling" line, and the finished turn carries "Cancelled by
-                user." — one state at a time, never a button offering to cancel a
-                cancel. */}
-              <div className="grid size-8 shrink-0 place-items-center mouse:size-7">
-                {activeWork && !runningTurn?.cancelling && (
-                  <ComposerButton
-                    tone="stop"
-                    onMouseDown={keepKeyboard}
-                    onClick={cancel}
-                    label="Stop response"
-                  >
-                    <StopIcon className="size-3 text-err" />
-                  </ComposerButton>
-                )}
+                  label={running ? "Queue message" : "Send message"}
+                  title={running ? "Queue behind the running turn" : "Send"}
+                >
+                  <SendIcon className="size-3.5" />
+                </ComposerButton>
               </div>
-              <ComposerButton
-                tone="send"
-                onMouseDown={keepKeyboard}
-                onClick={() => {
-                  // The composer stays focused, so iOS keeps one stable keyboard and
-                  // viewport while the answer starts streaming.
-                  void send();
-                }}
-                disabled={
-                  (!prompt.trim() && !attachments.length) ||
-                  voicePhase !== "idle"
-                }
-                label={running ? "Queue message" : "Send message"}
-                title={running ? "Queue behind the running turn" : "Send"}
-              >
-                <SendIcon className="size-3.5" />
-              </ComposerButton>
             </div>
-          </div>
 
-          {/* The composer strip now belongs only to response controls. Cumulative
-            session usage lives behind the disclosure on the sessions list, where it
-            remains available without crowding the active session on a phone. */}
-          <ComposerResponseControls controls={responseControls} />
-        </footer>
-      </section>
+            {/* The composer strip now belongs only to response controls. Cumulative
+              session usage lives behind the disclosure on the sessions list, where it
+              remains available without crowding the active session on a phone. */}
+            <ComposerResponseControls controls={responseControls} />
+          </footer>
+        </section>
+      </WorkspaceRootsContext.Provider>
     </AttachImageContext.Provider>
   );
 }

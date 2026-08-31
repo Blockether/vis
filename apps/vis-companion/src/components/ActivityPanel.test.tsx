@@ -13,6 +13,7 @@ import {
 import activityPanelSource from "./ActivityPanel.tsx?raw";
 import activityFixture from "../lib/activity.fixture.json";
 import { ACTIVITY_TREE_CHANGES } from "../dev/story-data";
+import { WorkspaceRootsContext } from "../lib/workspace-roots";
 import {
   activityProjectionFromWire,
   type ActivityProjection,
@@ -164,10 +165,11 @@ describe("what the iteration cost", () => {
 describe("the axis is built from the closed vocabulary", () => {
   it("borrows the app's controls and writes no styles of its own", () => {
     expect(activityPanelSource).toContain("<Disclosure");
-    // TWO chevrons and no more: the paths a step touched past the fourth, and the
-    // patch text — the only two things on the axis long enough to be worth
-    // folding. A STEP still never opens, and neither does the thread.
-    expect((activityPanelSource.match(/<Disclosure/g) ?? []).length).toBe(2);
+    // THREE chevrons and no more: the paths a step touched past the fourth, a file's
+    // own patch, and the pathless one a `patch` row folds under its bare name — the
+    // only things on the axis long enough to be worth folding. A STEP still never
+    // opens, and neither does the thread.
+    expect((activityPanelSource.match(/<Disclosure/g) ?? []).length).toBe(3);
     // No spinner: a mark that turns says only "still here", while one word says
     // whether the form is still working and, once it is not, how it ended.
     expect(activityPanelSource).not.toContain("<Spinner");
@@ -234,7 +236,7 @@ describe("a run reads as one thread", () => {
             evidence: [
               {
                 kind: "diff" as const,
-                text: "+added",
+                text: "src/components/ui.tsx",
                 lines: [{ kind: "addition" as const, text: "added" }],
                 additions: 7,
                 deletions: 3,
@@ -264,7 +266,7 @@ describe("a run reads as one thread", () => {
     expect(screen.queryByText("added")).toBeNull();
     fireEvent.click(
       screen.getByRole("button", {
-        name: "Expand the patch of Patched · 2 files",
+        name: "Expand the diff of src/components/ui.tsx",
       }),
     );
     expect(screen.getByText("added")).toBeTruthy();
@@ -541,7 +543,7 @@ describe("what a code block changed with its own hands", () => {
 
     expect(heads).toHaveLength(1);
     expect(heads[0].querySelector("h4")?.textContent).toContain(
-      "Changed 11 files and 2 directories",
+      "Changed 13 files and 2 directories",
     );
     expect(children).toHaveLength(5);
     expect(
@@ -550,7 +552,7 @@ describe("what a code block changed with its own hands", () => {
       "Created 2 directories",
       // A change that carries a diff prints it, and a count already answered by the
       // paths listed under it is not printed a second time.
-      "Wrote story-data.ts +2 −1",
+      "Wrote +4 −2",
       "Copied",
       "Moved vis/PLAN.md → docs/PLAN.md",
       "Deleted 6 files",
@@ -563,7 +565,7 @@ describe("what a code block changed with its own hands", () => {
     render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
 
     const head = document.querySelector('[data-activity-depth="0"]');
-    const write = document.querySelectorAll('[data-activity-depth="1"]')[1];
+    const moved = document.querySelectorAll('[data-activity-depth="1"]')[3];
 
     // The head's own sentence is markdown BECAUSE the engine declared it so: `patch`
     // and `shell` are the tools it is telling the reader were not involved.
@@ -573,7 +575,7 @@ describe("what a code block changed with its own hands", () => {
     );
     expect(head?.textContent).not.toContain("`");
     // A marked name is code; the row keeps no backtick of its own.
-    expect(write?.querySelector("code")?.textContent).toBe("story-data.ts");
+    expect(moved?.querySelector("code")?.textContent).toBe("vis/PLAN.md");
   });
 
   it("leaves the paths to the change that touched them", () => {
@@ -591,5 +593,61 @@ describe("what a code block changed with its own hands", () => {
       deleted?.querySelectorAll("[data-path]").length,
     ).toBe(4);
     expect(deleted?.textContent).toContain("+2 more files");
+  });
+});
+
+// Regression, T120 design review: a step that changed several files hung ONE fold over
+// every patch concatenated behind a `--- (path)` line, so the reader found a file by
+// reading a header out of the diff and the payload's bound was spent on whichever file
+// came first.
+describe("a change opens under the file it changed", () => {
+  it("gives every changed file its own fold, and opens only that one", () => {
+    render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
+
+    const write = document.querySelectorAll('[data-activity-depth="1"]')[1];
+    const folds = write.querySelectorAll("[data-disclosure-toggle]");
+
+    expect(
+      Array.from(folds, (fold) => fold.getAttribute("aria-label")),
+    ).toEqual([
+      "Expand the diff of /Users/dev/vis/apps/vis-companion/src/dev/story-data.ts",
+      "Expand the diff of /Users/dev/vis/apps/vis-companion/src/components/ActivityPanel.tsx",
+      "Expand the diff of /Users/dev/vis/apps/vis-companion/src/lib/path.ts",
+    ]);
+
+    expect(screen.queryByLabelText("Unified diff")).toBeNull();
+    fireEvent.click(folds[2]);
+
+    const opened = screen.getAllByLabelText("Unified diff");
+    expect(opened).toHaveLength(1);
+    expect(opened[0].textContent).toContain("homeifyPath(root)");
+    expect(opened[0].textContent).not.toContain("summary_format");
+  });
+});
+
+// Regression, T120 design review: every row printed the machine's whole
+// `/Users/…/vis/` prefix, which is the one part `truncate` never eats.
+describe("a path reads short and stays addressable", () => {
+  const pathOf = (id: string) => document.querySelector(`[data-path="${id}"]`);
+  const written = "/Users/dev/vis/apps/vis-companion/src/lib/path.ts";
+
+  it("shortens against the workspace root and keeps the absolute id", () => {
+    render(
+      <WorkspaceRootsContext.Provider value={["/Users/dev/vis"]}>
+        <ActivityPanel activity={ACTIVITY_TREE_CHANGES} />
+      </WorkspaceRootsContext.Provider>,
+    );
+
+    expect(pathOf(written)?.textContent).toBe(
+      "apps/vis-companion/src/lib/path.ts",
+    );
+  });
+
+  it("falls back to the home form when no root owns the file", () => {
+    render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
+
+    expect(pathOf(written)?.textContent).toBe(
+      "~/vis/apps/vis-companion/src/lib/path.ts",
+    );
   });
 });

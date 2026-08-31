@@ -122,7 +122,7 @@
                                              :lines {"added" 201 "removed" 1 "modified" 0}}}})
 
           evidence
-          (:diff-evidence terminal)]
+          (first (:diff-evidence terminal))]
 
       (expect (= :diff (:kind evidence)))
       (expect (= [:hunk :context :deletion :addition] (mapv :kind (take 4 (:lines evidence)))))
@@ -131,6 +131,46 @@
       (expect (:is-truncated evidence))
       (expect (pos? (:omitted-lines evidence)))
       (expect (<= (count (:lines evidence)) event/max-diff-lines))
+      (expect (<= (event/utf8-bytes (wire/json-str evidence)) event/max-diff-bytes))))
+  ;; Regression, T120: one write touching eleven files shipped ONE diff evidence carrying
+  ;; hand-made `--- (path)` headers, so the reader scrolled through ten files to reach theirs.
+  (it
+    "answers one named diff per file when a result carries several"
+    (let [ctx
+          (event/context)
+
+          invocation
+          (event/invocation ctx nil)
+
+          hunk
+          (fn [path]
+            {:diff (str "@@ -1,1 +1,2 @@\n context\n+" path
+                        "\n" (apply str (repeat 400 (str "+" (apply str (repeat 400 "y")) "\n"))))
+             :lines {"added" 401 "removed" 0 "modified" 0}
+             :target {:resolved path}})
+
+          paths
+          ["/tmp/one.clj" "/tmp/two.clj" "/tmp/three.clj"]
+
+          terminal
+          (event/terminal-event ctx
+                                invocation
+                                {:operation :fs-write
+                                 :presenter :patch
+                                 :started-at-ms (System/currentTimeMillis)
+                                 :outcome :succeeded
+                                 :result "wrote 3 files"
+                                 :result-envelope {:metadata
+                                                   {:lines {"added" 1203 "removed" 0 "modified" 0}
+                                                    :diffs (mapv hunk paths)}}})
+
+          evidence
+          (:diff-evidence terminal)]
+
+      (expect (= 3 (count evidence)))
+      (expect (= [:diff :diff :diff] (mapv :kind evidence)))
+      (expect (= paths (mapv :text evidence)))
+      (expect (every? :is-truncated evidence))
       (expect (<= (event/utf8-bytes (wire/json-str evidence)) event/max-diff-bytes))))
   ;; Regression, td-ba1627: a `read_session()` terminal event recursively copied
   ;; and printed the whole transcript before truncating it, leaving the await open.

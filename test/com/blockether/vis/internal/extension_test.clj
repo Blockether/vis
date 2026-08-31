@@ -788,6 +788,24 @@
         (binding [extension/*tool-event-sink* #(swap! events conj %)]
           (extension/invoke-symbol-wrapper ext sym [path] {}))
         (expect (= path (:label (first @events))))))
+  ;; Regression, T120: a tool's live label carried the absolute home path, so every
+  ;; Activity row opened with the same long `/Users/<name>/` prefix nobody can read past.
+  (it "renders a label's home directory as `~/`, the spelling every other surface uses"
+      (let [events
+            (atom [])
+
+            path
+            (str (System/getProperty "user.home") "/vis/src/com/example/probe.clj")
+
+            sym
+            (extension/symbol #'activity-success-probe {:tag :mutation :presenter :patch})
+
+            ext
+            {:ext/name "test.activity" :ext/engine {:ext.engine/symbols [sym]}}]
+
+        (binding [extension/*tool-event-sink* #(swap! events conj %)]
+          (extension/invoke-symbol-wrapper ext sym [path] {}))
+        (expect (= "~/vis/src/com/example/probe.clj" (:label (first @events))))))
   (it "captures patch metadata before returning only the public value"
       (let [events
             (atom [])
@@ -803,7 +821,7 @@
               (extension/invoke-symbol-wrapper ext sym [{}] {}))
 
             evidence
-            (:diff-evidence (second @events))]
+            (first (:diff-evidence (second @events)))]
 
         (expect (= "patched fixture.clj" result))
         (expect (= :diff (:kind evidence)))

@@ -278,7 +278,7 @@
       (assoc :is-redacted true))))
 
 (defn- bounded-diff-lines
-  [source]
+  [source line-cap byte-cap]
   (let [raw (vec (str/split-lines (str source)))]
     (loop [remaining raw
            lines []
@@ -288,16 +288,16 @@
         (let [entry (diff-line line)
               entry-bytes (utf8-bytes (wire/json-str entry))]
 
-          (if (or (>= (count lines) (long max-diff-lines))
-                  (> (+ (long bytes) entry-bytes) (long max-diff-bytes)))
+          (if (or (>= (count lines) (long line-cap))
+                  (> (+ (long bytes) entry-bytes) (long byte-cap)))
             {:lines lines :omitted-lines (count remaining)}
             (recur (next remaining) (conj lines entry) (+ (long bytes) entry-bytes))))
         {:lines lines :omitted-lines 0}))))
 
 (defn- fit-diff-evidence
-  [evidence]
+  [evidence byte-cap]
   (loop [evidence evidence]
-    (if (<= (utf8-bytes (wire/json-str evidence)) (long max-diff-bytes))
+    (if (<= (utf8-bytes (wire/json-str evidence)) (long byte-cap))
       evidence
       (let [lines (:lines evidence)]
         (if (seq lines)
@@ -309,44 +309,68 @@
                      :is-redacted (boolean (some :is-redacted kept)))))
           (recur (update evidence :text bounded-text max-summary-bytes)))))))
 
+(defn- file-diff-evidence
+  "ONE file's diff, named by that file and bounded to the share of the row's budget it was
+   given, so the last file of a batch is as readable as the first."
+  [unit line-cap byte-cap]
+  (let [{:keys [lines omitted-lines]}
+        (bounded-diff-lines (map-value unit :diff) line-cap byte-cap)
+
+        counts
+        (map-value unit :lines)
+
+        target
+        (map-value unit :target)
+
+        path
+        (or (map-value target :resolved) (map-value target :requested))
+
+        upstream-truncated?
+        (some #(and (= :context (:kind %)) (str/includes? (:text %) "omitted")) lines)]
+
+    (fit-diff-evidence {:kind :diff
+                        :text (str (or path "diff"))
+                        :lines lines
+                        :additions (long (or (map-value counts :added) 0))
+                        :deletions (long (or (map-value counts :removed) 0))
+                        :modifications (long (or (map-value counts :modified) 0))
+                        :omitted-lines (long omitted-lines)
+                        :is-truncated (boolean (or (pos? (long omitted-lines)) upstream-truncated?))
+                        :is-redacted (boolean (some :is-redacted lines))}
+                       byte-cap)))
+
 (defn- result-diff-evidence
-  "The diff a row SHOWS, for ANY result envelope carrying one. `patch` reports its edit as
-   `:metadata {:diff … :lines … :target …}`, and a code block's own tree changes now report
-   the identical keys, so both arrive as the same evidence through the same renderer: a
-   producer earns a diff by carrying that vocabulary, never by being a particular tool."
+  "The diffs a row SHOWS, ONE PER FILE, for ANY result envelope carrying them. A file's diff
+   is `{:diff … :lines … :target …}`: `patch` edits one file and reports that map itself, a
+   code block that wrote eleven files reports eleven of them under `:diffs`, and both arrive
+   as the same evidence through the same renderer. A producer earns a diff by carrying that
+   vocabulary, never by being a particular tool.
+
+   Answers a VECTOR, and the files SHARE one budget. Eleven diffs each allowed the whole
+   row's allowance is eleven times the payload this wire is bounded to, so the cap is divided
+   and every file keeps a readable head instead of the first one eating the event."
   [{:keys [result-envelope]}]
   (let [metadata
         (map-value result-envelope :metadata)
 
-        source
-        (map-value metadata :diff)]
+        declared
+        (map-value metadata :diffs)
 
-    (when (util/non-blank-string? source)
-      (let [{:keys [lines omitted-lines]}
-            (bounded-diff-lines source)
+        carried
+        (filterv #(util/non-blank-string? (map-value % :diff))
+          (if (sequential? declared) (vec declared) [metadata]))
 
-            counts
-            (map-value metadata :lines)
+        files
+        (count carried)]
 
-            target
-            (map-value metadata :target)
+    (when (pos? files)
+      (let [line-cap
+            (max 8 (quot (long max-diff-lines) files))
 
-            path
-            (or (map-value target :resolved) (map-value target :requested))
+            byte-cap
+            (max 512 (quot (long max-diff-bytes) files))]
 
-            upstream-truncated?
-            (some #(and (= :context (:kind %)) (str/includes? (:text %) "omitted")) lines)]
-
-        (fit-diff-evidence {:kind :diff
-                            :text (str (or path "diff"))
-                            :lines lines
-                            :additions (long (or (map-value counts :added) 0))
-                            :deletions (long (or (map-value counts :removed) 0))
-                            :modifications (long (or (map-value counts :modified) 0))
-                            :omitted-lines (long omitted-lines)
-                            :is-truncated (boolean (or (pos? (long omitted-lines))
-                                                       upstream-truncated?))
-                            :is-redacted (boolean (some :is-redacted lines))})))))
+        (mapv #(file-diff-evidence % line-cap byte-cap) carried)))))
 
 (defn- explicit-group-token
   [value]
@@ -544,7 +568,7 @@
         refs
         (assoc :resources refs)
 
-        diff-evidence
+        (seq diff-evidence)
         (assoc :diff-evidence diff-evidence)
 
         (:is-truncated summary)

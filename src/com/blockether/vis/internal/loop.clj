@@ -1111,11 +1111,14 @@
 
 (defn- fs-mutation-diff
   "What one kind did to file CONTENTS, in the vocabulary `patch` already reports and both
-   surfaces already render: a unified diff plus exact line counts, summed over the group.
-   Only a write and a delete ever carry one — a move, a copy or a link relocates bytes that
-   already existed, so a line delta there would be an invention. Several files are spelled
-   the way a multi-file patch is spelled, one `--- (path)` header each, so ONE evidence
-   renderer serves both producers."
+   surfaces already render: a unified diff plus exact line counts. Only a write and a delete
+   ever carry one — a move, a copy or a link relocates bytes that already existed, so a line
+   delta there would be an invention.
+
+   ONE UNIT PER FILE. Eleven changed files are eleven diffs, each named by its own path and
+   opened under it, exactly as a single-file `patch` is one — never a single blob carrying
+   hand-made `--- (path)` headers, which is a reader scrolling through ten files to reach the
+   one they came for. The row's own `+n −m` is the sum over all of them."
   [mutations]
   (let [carried (filterv :lines mutations)]
     (when (seq carried)
@@ -1126,20 +1129,15 @@
                                  (update :modified + (long (get lines "modified" 0)))))
                            {:added 0 :removed 0 :modified 0}
                            carried)
-            single (when (= 1 (count carried)) (first carried))
-            text (if single
-                   (:diff single)
-                   (str/join "\n"
-                             (keep (fn [{:keys [path diff]}]
-                                     (when diff (str "--- (" (path-tail path 2) ")\n" diff)))
-                                   carried)))]
+            files (into []
+                        (keep (fn [{:keys [path diff lines]}]
+                                (when (util/non-blank-string? diff)
+                                  {:diff diff :lines lines :target {:resolved (str path)}})))
+                        carried)]
 
         (cond-> {:lines totals}
-          (util/non-blank-string? text)
-          (assoc :diff text)
-
-          single
-          (assoc :target {:resolved (str (:path single))}))))))
+          (seq files)
+          (assoc :diffs files))))))
 
 (defn- fs-mutation-events
   "Activity lifecycle pairs for what a block changed on disk WITHOUT a tool call —
