@@ -2203,7 +2203,6 @@ export function SessionsScreen({
             reader saying when. */}
         {pendingCount > 0 && (
           <LoadMore
-            isEarlier
             label={`Show ${pendingCount} newer ${pendingCount === 1 ? 'session' : 'sessions'}`}
             onClick={() => {
               adopt();

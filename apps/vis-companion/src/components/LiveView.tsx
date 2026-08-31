@@ -346,7 +346,6 @@ function LogRows({
     <div className="min-w-0">
       {load && knownFrom > 0 && (
         <LoadMore
-          isEarlier
           label={`Load ${Math.min(LOG_PAGE, knownFrom)} earlier lines`}
           disabled={isReading}
           onClick={readEarlier}

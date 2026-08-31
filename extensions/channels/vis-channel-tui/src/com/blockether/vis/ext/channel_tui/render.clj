@@ -2606,7 +2606,10 @@
                             (p/put-str! g
                                         (+ (long x) (long (:mark-col meta)))
                                         y
-                                        (str (:mark meta) " " (:label meta)))
+                                        (let [mark (str (:mark meta))]
+                                          (if (str/blank? mark)
+                                            (str (:label meta))
+                                            (str mark " " (:label meta)))))
                             (when (:node-id meta)
                               (.register interactions/hit-map
                                          {:bounds
@@ -5494,6 +5497,41 @@
    line instead of floating beside it."
   "├─")
 
+(defn- more-count
+  "`3 more lines`, `1 more file` - what a rule holds back, counted and named. One
+   noun, one plural rule, so no call site spells `1 more files`."
+  ^String [^long n ^String noun]
+  (str n " more " noun (when (not= 1 n) "s")))
+
+(defn- more-rule
+  "THE ONE FACE OF \"THERE IS MORE OF THIS\": a rule across the band with the
+   words standing in the gap.
+
+   Every place either surface hides something used to invent its own sign for it -
+   a chevron here, a bare `+2 more lines` there, a guillemet somewhere else - so a
+   reader had to learn three marks for one promise, and the chevron lied twice
+   over: it is the mark of a DISCLOSURE, and these rows disclose nothing that is
+   not already counted. A rule is the honest shape, because what was cut is a CUT:
+   the line is where the content stops and the words say how much stopped there.
+   The web draws the same rule (`LoadMore` in
+   `apps/vis-companion/src/components/ui.tsx`) and the two surfaces spell it the
+   same way.
+
+   A rule that can be PRESSED says `show …`; one that only reports what the engine
+   already dropped says the bare count. Below five columns of room the rule is
+   dropped and the words are kept - a rule with no line in it is noise."
+  ^String [label ^long width]
+  (let [text
+        (str " " (str/trim (str label)) " ")
+
+        gap
+        (- (long width) (long (p/display-width text)))]
+
+    (if (< gap 4)
+      (ellipsize-cols (str/trim text) (max 1 (long width)))
+      (let [left (quot gap 2)]
+        (str (repeat-str \─ left) text (repeat-str \─ (- gap left)))))))
+
 (def ^:private activity-files-shown
   "FOUR PATHS, THEN A COUNT.
 
@@ -5725,7 +5763,8 @@
                             (band-row (str (activity-diff-mark kind) " " (:text line))
                                       (activity-diff-tone kind))))
                         (:lines diff))
-                  (when (pos? omitted) [(band-row (str "  +" omitted " more lines") nil)]))))
+                  (when (pos? omitted)
+                    [(band-row (more-rule (more-count omitted "line") band-w) nil)]))))
 
         file-entries
         (fn [row-id resources diffs ^long col]
@@ -5786,17 +5825,15 @@
                         (into (diff-entries row-id diff col)))))
                   shown))
               (when (pos? hidden)
-                (let [label
-                      (if show-all? "Fewer files" (str "+" hidden " more files"))
-
-                      mark
-                      (if show-all? "▾" "▸")]
-
-                  [{:line (str activity-marker (ellipsize-cols (str lead mark " " label) width))
+                (let [label (more-rule (if show-all?
+                                         "show fewer files"
+                                         (str "show " (more-count hidden "file")))
+                                       (max 1 (- width col)))]
+                  [{:line (str activity-marker (ellipsize-cols (str lead label) width))
                     :meta (merge meta-base
                                  {:kind :activity-more
                                   :item-id row-id
-                                  :mark mark
+                                  :mark ""
                                   :label label
                                   :mark-col col
                                   :node-id (str node-id ":" more-key)
@@ -5862,7 +5899,7 @@
                                  :diff-kind :error})})]
 
             (into (mapv #(band-row (if (str/blank? %) " " %)) shown)
-                  (when (pos? hidden) [(band-row (str "+" hidden " more lines"))]))))
+                  (when (pos? hidden) [(band-row (more-rule (more-count hidden "line") band-w))]))))
 
         row-entry
         (fn row-entry ([row] (row-entry row 0)) ([{:keys [id error-summary result-summary
@@ -6003,16 +6040,16 @@
         ;; dropped them, and a chronology that shows four of ten calls must say so.
         omitted-entry
         (when (pos? (long (or activity-omitted 0)))
-          {:line (str activity-marker
-                      (ellipsize-cols
-                        (str activity-margin activity-tick "○ +" activity-omitted " more")
-                        width))
-           :meta (merge meta-base
-                        {:kind :activity-more
-                         :item-id "omitted"
-                         :mark "○"
-                         :label (str "+" activity-omitted " more")
-                         :mark-col (+ (long (count activity-margin)) 2)})})]
+          (let [label (more-rule (more-count (long activity-omitted) "step")
+                                 (max 1 (- width (long (count activity-margin)) 2)))]
+            {:line (str activity-marker
+                        (ellipsize-cols (str activity-margin activity-tick label) width))
+             :meta (merge meta-base
+                          {:kind :activity-more
+                           :item-id "omitted"
+                           :mark ""
+                           :label label
+                           :mark-col (+ (long (count activity-margin)) 2)})}))]
 
     (vec (concat [blank header blank]
                  (mapcat row-entry rows)

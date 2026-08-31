@@ -4683,7 +4683,6 @@ export function SessionScreen({
                     // while 40 000 px lands underneath it.
                     <div className="mb-5" data-anchor="skip">
                       <LoadMore
-                        isEarlier
                         label={`Load earlier turns · ${earlierTotal} remaining`}
                         onClick={loadEarlierTurns}
                         disabled={loadingEarlier}

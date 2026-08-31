@@ -5473,28 +5473,35 @@ h = 8"
                 "a removed line carries its sign exactly once, in the marker column")
         (expect (not (str/includes? text "++"))
                 "the engine strips the sign and the renderer draws it")
-        (expect (str/includes? text "+3 more lines") "a clipped patch says how much it kept back")
+        (expect (str/includes? text "─ 3 more lines ─")
+                "a clipped patch says how much it kept back, in the one rule both surfaces draw")
         (expect (some? (line-with text "CHANGELOG.md"))
                 "an opened count shows the paths it was folding away")))
-    (it
-      "shows four paths and then a count, with every patch still folded"
-      (let [entries
-            ((deref #'render/activity-detail-entries)
-              {:node-id "n1" :activity-rows (:rows activity) :activity-expanded? #{"patch-1"}}
-              120
-              "s1")
+    (it "shows four paths and then a count, with every patch still folded"
+        (let [entries
+              ((deref #'render/activity-detail-entries)
+                {:node-id "n1" :activity-rows (:rows activity) :activity-expanded? #{"patch-1"}}
+                120
+                "s1")
 
-            lines
-            (mapv :line entries)]
+              lines
+              (mapv :line entries)]
 
-        (expect (= 4 (count (filter #(str/includes? % "/w/vis/") lines)))
-                "four paths, then a count")
-        (expect (some #(str/includes? % "+1 more files") lines) "and the count says what it folded")
-        (expect (not-any? #(str/includes? % "CHANGELOG.md") lines) "the fifth path waits behind it")
-        (expect (not-any? #(str/includes? % "added-line") lines)
-                "a patch opens on its own path, never with the step")
-        (expect (str/includes? (str (some #(when (str/includes? % "loop.clj") %) lines)) "\u25b8")
-                "a folded patch shows a closed chevron on the path that opens it")))
+          (expect (= 4 (count (filter #(str/includes? % "/w/vis/") lines)))
+                  "four paths, then a count")
+          ;; Regression, user report ("every show-more must be a rule with the words in
+          ;; it, not a bigger chevron and `+2 more read files`"): the fold count wore a
+          ;; disclosure chevron and a `+N` it had invented for itself.
+          (expect (some #(str/includes? % "─ show 1 more file ─") lines)
+                  "and the count says what it folded, as a rule with the words in it")
+          (expect (not-any? #(and (str/includes? % "more file") (str/includes? % "▸")) lines)
+                  "a rule is not a disclosure: no chevron stands on the count")
+          (expect (not-any? #(str/includes? % "CHANGELOG.md") lines)
+                  "the fifth path waits behind it")
+          (expect (not-any? #(str/includes? % "added-line") lines)
+                  "a patch opens on its own path, never with the step")
+          (expect (str/includes? (str (some #(when (str/includes? % "loop.clj") %) lines)) "\u25b8")
+                  "a folded patch shows a closed chevron on the path that opens it")))
     (it
       "keeps the paths and the patch behind the step until it is opened"
       (let [entries

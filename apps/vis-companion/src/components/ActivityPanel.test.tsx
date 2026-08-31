@@ -165,11 +165,13 @@ describe("what the iteration cost", () => {
 describe("the axis is built from the closed vocabulary", () => {
   it("borrows the app's controls and writes no styles of its own", () => {
     expect(activityPanelSource).toContain("<Disclosure");
-    // THREE chevrons and no more: the paths a step touched past the fourth, a file's
-    // own patch, and the pathless one a `patch` row folds under its bare name — the
-    // only things on the axis long enough to be worth folding. A STEP still never
-    // opens, and neither does the thread.
-    expect((activityPanelSource.match(/<Disclosure/g) ?? []).length).toBe(3);
+    // TWO chevrons and no more: a file's own patch, and the pathless one a `patch`
+    // row folds under its bare name — the only things on the axis long enough to be
+    // worth folding. A STEP still never opens, and neither does the thread. What the
+    // axis HOLDS BACK wears no chevron at all: a cut is the one rule both surfaces
+    // draw (`LoadMore`), never a fourth mark.
+    expect((activityPanelSource.match(/<Disclosure/g) ?? []).length).toBe(2);
+    expect((activityPanelSource.match(/<LoadMore/g) ?? []).length).toBe(4);
     // No spinner: a mark that turns says only "still here", while one word says
     // whether the form is still working and, once it is not, how it ended.
     expect(activityPanelSource).not.toContain("<Spinner");
@@ -423,7 +425,7 @@ describe("a step that ended badly", () => {
     expect(screen.getByText("one")).toBeTruthy();
     expect(screen.getByText("three")).toBeTruthy();
     expect(screen.queryByText("four")).toBeNull();
-    expect(screen.getByText("+2 more lines")).toBeTruthy();
+    expect(screen.getByText("2 more lines")).toBeTruthy();
   });
 });
 
@@ -550,7 +552,9 @@ describe("what the axis does while the work is still moving", () => {
     ).toBe("off");
   });
 
-  it("ends on a mark of its own when the engine dropped the tail", () => {
+  // Regression, user report ("every show-more is the same rule with the words in
+  // it"): the dropped tail ended on a node of its own and a bare `+6 more`.
+  it("ends on the one rule when the engine dropped the tail", () => {
     paintActivity({
       activity: {
         ...activityProjection(),
@@ -558,9 +562,11 @@ describe("what the axis does while the work is still moving", () => {
       },
     });
 
-    const tail = screen.getByText("+6 more", { exact: false });
+    const tail = screen.getByText("6 more steps");
 
-    expect(tail.querySelector('span[aria-hidden="true"]')).toBeTruthy();
+    expect(tail.closest("li")?.querySelectorAll(".bg-dialog-edge").length).toBe(
+      2,
+    );
   });
 });
 
@@ -622,7 +628,7 @@ describe("what a code block changed with its own hands", () => {
     // under each change is the same paths printed twice.
     expect(head?.querySelector(":scope > div [data-path]")).toBeNull();
     expect(deleted?.querySelectorAll("[data-path]").length).toBe(4);
-    expect(deleted?.textContent).toContain("+2 more files");
+    expect(deleted?.textContent).toContain("show 2 more files");
   });
 });
 

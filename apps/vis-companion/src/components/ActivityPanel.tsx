@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { InlineMarkdown, Markdown } from "./ChatContent";
-import { Disclosure } from "./ui";
+import { Disclosure, LoadMore } from "./ui";
 import type {
   ActivityDiffEvidence,
   ActivityProjection,
@@ -11,6 +11,11 @@ import type {
 } from "../lib/activity";
 import { workspaceRelativePath } from "../lib/path";
 import { useWorkspaceRoots } from "../lib/workspace-roots";
+
+/** `3 more lines`, `1 more file` — what a rule holds back, counted and named. */
+function moreCount(n: number, noun: string) {
+  return `${n} more ${noun}${n === 1 ? "" : "s"}`;
+}
 
 /**
  * ACTIVITY, PAINTED WHERE IT BELONGS — inside the form that produced it.
@@ -303,9 +308,9 @@ function ActivityDiff({ diff }: { diff: ActivityDiffEvidence }) {
           </span>
         ))}
         {diff.omitted_lines > 0 && (
-          <span className="flex px-2 py-px text-code-duration">
-            +{diff.omitted_lines} more lines
-          </span>
+          <LoadMore label={moreCount(diff.omitted_lines, "line")}>
+            {moreCount(diff.omitted_lines, "line")}
+          </LoadMore>
         )}
       </div>
     </div>
@@ -486,11 +491,12 @@ function ActivityFileRow({
 /**
  * WHAT THE STEP TOUCHED, one path per line, in the machine's own hand.
  *
- * ONE COLUMN, AND EVERY MARK STANDS IN IT. A path, the patch that path opens and the
- * `+N more files` that hides the rest are the same list, so all three hang their mark
- * in the same 12px cell at the row's own left edge and start their words 18px in. The
- * cell is `w-3` because that is the box `Disclosure` gives its chevron; a guillemet
- * left to its own 5px advance put every path two pixels off the count that folds it.
+ * ONE COLUMN, AND EVERY MARK STANDS IN IT. A path and the patch that path opens are
+ * the same list, so both hang their mark in the same 12px cell at the row's own left
+ * edge and start their words 18px in. The cell is `w-3` because that is the box
+ * `Disclosure` gives its chevron; a guillemet left to its own 5px advance put every
+ * path two pixels off the row above it. What the list HOLDS BACK stands in no such
+ * column: a cut is a rule with the words in it (`LoadMore`), never a fifth mark.
  */
 function ActivityFiles({
   resources,
@@ -511,19 +517,12 @@ function ActivityFiles({
         ))}
       </ul>
       {hidden > 0 && (
-        <Disclosure
-          isOpen={showAll}
-          tone="muted"
-          bleed
-          aria-label={
-            showAll ? "Show fewer paths" : `Show ${hidden} more paths`
-          }
+        <LoadMore
+          label={showAll ? "Show fewer paths" : `Show ${hidden} more paths`}
           onClick={() => setShowAll((wasOpen) => !wasOpen)}
         >
-          <span className="min-w-0 flex-1 font-sans text-meta normal-case">
-            {showAll ? "Fewer files" : `+${hidden} more files`}
-          </span>
-        </Disclosure>
+          {showAll ? "show fewer files" : `show ${moreCount(hidden, "file")}`}
+        </LoadMore>
       )}
     </div>
   );
@@ -609,9 +608,9 @@ function ActivityError({ evidence }: { evidence: ActivityTextEvidence }) {
           </p>
         ))}
         {hidden > 0 && (
-          <p className="font-mono text-chip text-err-ink">
-            +{hidden} more lines
-          </p>
+          <LoadMore tone="error" label={moreCount(hidden, "line")}>
+            {moreCount(hidden, "line")}
+          </LoadMore>
         )}
       </div>
     </div>
@@ -839,8 +838,10 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
         <ActivityStep key={row.id} row={row} />
       ))}
       {omitted > 0 && (
-        <li className="relative min-w-0 pl-5 font-sans text-meta text-dialog-hint">
-          <ActivityNode state="idle" />+{omitted} more
+        <li className="relative min-w-0">
+          <LoadMore label={moreCount(omitted, "step")}>
+            {moreCount(omitted, "step")}
+          </LoadMore>
         </li>
       )}
       {rows.length === 0 && omitted === 0 && (

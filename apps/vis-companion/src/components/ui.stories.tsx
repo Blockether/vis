@@ -137,7 +137,7 @@ export const Buttons: Story = {
       <Group of="The word-only verbs">
         <TextButton>Show more</TextButton>
         <TextButton isToken>claude-opus-5</TextButton>
-        <LoadMore label="Load earlier turns" isEarlier>
+        <LoadMore label="Load earlier turns" onClick={() => {}}>
           Earlier
         </LoadMore>
       </Group>

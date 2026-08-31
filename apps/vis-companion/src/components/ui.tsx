@@ -48,7 +48,6 @@ import {
 import { createPortal } from 'react-dom';
 
 import {
-  ArrowDownIcon,
   CheckIcon,
   ChevronIcon,
   CloseIcon,
@@ -379,40 +378,63 @@ export const Chip = forwardRef<
 
 
 /**
- * "THERE IS MORE OF THIS BELOW", and there is only one of it.
+ * "THERE IS MORE OF THIS", and there is only one of it.
  *
- * The transcript's attachments and the artifacts sheet page the same way, so
- * they were the same promise in two faces: a 44px left-aligned bar in
- * `text-footer-muted` under the message, a 32px centred bar in `text-dialog-hint`
- * inside the sheet — and each spelled its own arrow beside its own words. The
- * arrow belongs to the control, not to the caller, and `label` is what a screen
- * reader hears ("Load 12 more artifacts") while the children are what the eye
- * reads.
+ * A RULE WITH THE WORDS STANDING IN IT, because what is hidden is a CUT: the
+ * line is where the content stops and the words say how much stopped there. It
+ * used to be a boxed bar wearing an arrow, while the activity band spelled the
+ * same promise three other ways — a chevron, a bare `+2 more lines`, a
+ * guillemet — so one fact wore four marks and none of them was the shape of a
+ * cut. The TUI draws this rule too (`more-rule` in
+ * `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj`),
+ * so both surfaces say it the same way.
+ *
+ * `label` is what a screen reader hears ("Load 12 more artifacts") while the
+ * children are what the eye reads. With no `onClick` nothing CAN be loaded —
+ * the rest is already gone — so it is a rule and not a button, and it reports
+ * the count instead of offering to show it.
  */
 export function LoadMore({
   label,
-  isEarlier = false,
+  tone = 'muted',
   className = '',
   children,
+  onClick,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   label: string;
   /**
-   * The rest is ABOVE: the transcript's older turns. Same promise, same bar, the
-   * arrow turned over — a second component for it would be the same forty classes
-   * again with one of them different.
+   * The rule takes the paper it lies on: on a failure's own surface the muted
+   * ink measures 3.1:1, so there the line and the words are the error's.
    */
-  isEarlier?: boolean;
+  tone?: 'muted' | 'error';
 }) {
+  const ink = tone === 'error' ? 'text-err-ink' : 'text-dialog-hint';
+  const line = tone === 'error' ? 'bg-err-edge' : 'bg-dialog-edge';
+  const shape = `mt-1.5 flex min-h-6 w-full min-w-0 items-center gap-2 font-mono text-meta ${ink} ${className}`;
+  const inside = (
+    <>
+      <span aria-hidden="true" className={`h-px min-w-3 flex-1 ${line}`} />
+      <span className="min-w-0 truncate">{children}</span>
+      <span aria-hidden="true" className={`h-px min-w-3 flex-1 ${line}`} />
+    </>
+  );
+  if (!onClick) {
+    return (
+      <div className={shape} aria-label={label}>
+        {inside}
+      </div>
+    );
+  }
   return (
     <button
       type="button"
       aria-label={label}
-      className={`mt-2 flex min-h-8 w-full min-w-0 items-center justify-center gap-1.5 border border-dialog-edge bg-panel px-2 font-mono text-meta text-dialog-hint transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none mouse:min-h-7 ${className}`}
+      onClick={onClick}
+      className={`${shape} transition-colors duration-150 hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 motion-reduce:transition-none`}
       {...props}
     >
-      <ArrowDownIcon className={`size-3 opacity-70 ${isEarlier ? 'rotate-180' : ''}`} />
-      <span className="min-w-0 truncate">{children}</span>
+      {inside}
     </button>
   );
 }

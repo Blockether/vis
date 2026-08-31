@@ -2051,6 +2051,10 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
   });
 
 
+  // Regression, user report ("every show-more must be the same `—— show more ——`
+  // rule on both surfaces, not a bigger chevron and a `+2 more read files`"): this
+  // was a boxed bar wearing an arrow while the activity band spelled the same
+  // promise with a chevron, a guillemet and a bare `+N more lines`.
   describe("LoadMore", () => {
     const html = () =>
       renderToStaticMarkup(
@@ -2059,10 +2063,19 @@ describe("the second vocabulary: chips, rows, disclosures", () => {
         </LoadMore>,
       );
 
-    it("owns its arrow and hears its own name", () => {
+    it("is a rule with the words standing in it, and hears its own name", () => {
       expect(html()).toContain('aria-label="Load 12 more artifacts"');
-      expect(html()).toContain("<svg");
       expect(html()).toContain("Load 12 more");
+      expect(html()).not.toContain("<svg");
+      expect(html().match(/bg-dialog-edge/g)?.length).toBe(2);
+    });
+
+    it("is a rule and not a button when nothing can be loaded", () => {
+      const reported = renderToStaticMarkup(
+        <LoadMore label="2 more lines">2 more lines</LoadMore>,
+      );
+      expect(reported).not.toContain("<button");
+      expect(reported).toContain("2 more lines");
     });
   });
 
@@ -2861,9 +2874,8 @@ describe("the session screen and the settings dialog spell no control out", () =
     expect(sessionDockSource).toContain("<TextButton");
     expect(sessionHeaderSource).toContain("<BackButton");
     expect(sessionScreenSource).toContain("<JumpToLatestButton");
-    // The transcript's "load earlier" is the artifacts sheet's own bar, turned over.
+    // The transcript's "load earlier" is the artifacts sheet's own rule.
     expect(sessionScreenSource).toContain("<LoadMore");
-    expect(sessionScreenSource).toContain("isEarlier");
     expect(sessionScreenSource).not.toContain("grid h-8 w-7");
     expect(sessionScreenSource).not.toContain(
       "tracking-[0.08em] text-dialog-hint-key underline",
