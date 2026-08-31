@@ -26,6 +26,16 @@ const onScreen = (height: number) => {
   return renderSessionsScreen({ machines: [{ sessions: rows }] });
 };
 
+const expectRows = async (height: number, count: number) => {
+  const view = onScreen(height);
+  try {
+    await waitFor(() => expect(view.getByText("alpha 00")).toBeTruthy());
+    expect(shown(view)).toHaveLength(count);
+  } finally {
+    view.unmount();
+    view.restore();
+  }
+};
 // `mouse:` as `index.css` spells it — a wide window under a fine pointer — which is
 // the density the desk's own row height and page are cut for.
 const onADesk = () => {
@@ -50,50 +60,34 @@ afterEach(() => {
   window.innerHeight = 768;
 });
 
-// Reported over a screenshot of a 390x844 phone: the expanded project stopped
-// after five rows with the bottom half of the screen empty and a pager reading
-// `1 / 102`, because the page had been sized by a settings panel ("Sessions per
-// project": 5, 10 or 15) that never knew how tall the device was.
+// A page still grows with the screen; the device owns its useful upper size.
 describe("a project's page is cut by the device", () => {
-  it("fills the screen it is painted on", async () => {
-    const tall = onScreen(844);
-    try {
-      await waitFor(() => expect(tall.getByText("alpha 00")).toBeTruthy());
-      // 844px, minus the 211px of bands above the first row and the peek under
-      // the last, over a 49px row.
-      expect(shown(tall)).toHaveLength(12);
-    } finally {
-      tall.unmount();
-      tall.restore();
-    }
-
-    const short = onScreen(568);
-    try {
-      await waitFor(() => expect(short.getByText("alpha 00")).toBeTruthy());
-      // The shortest phone gets a shorter page instead of three rows below its fold.
-      expect(shown(short)).toHaveLength(6);
-    } finally {
-      short.unmount();
-      short.restore();
-    }
+  // Regression, user report, Vis session 482fd0f2-1bee-4203-a959-9f3cd2ae80a5:
+  // a phone in its short orientation asked each project for only three sessions.
+  it("keeps at least fifteen rows in every mobile project", async () => {
+    await expectRows(390, 15);
+    await expectRows(568, 15);
+    await expectRows(844, 15);
   });
 
+  it("uses the extra room when more than fifteen rows fit", async () => {
+    await expectRows(1200, 19);
+  });
   it("keeps the row the reader is on when the screen changes shape", async () => {
     const view = onScreen(844);
     try {
       await waitFor(() => expect(view.getByText("alpha 00")).toBeTruthy());
       fireEvent.click(view.getByLabelText("Next page"));
       fireEvent.click(view.getByLabelText("Next page"));
-      // Page 3 of 4 at twelve rows a page: the reader is holding `alpha 24`.
-      await waitFor(() => expect(view.getByText("alpha 24")).toBeTruthy());
+      // Page 3 of 3 at fifteen rows a page: the reader is holding `alpha 30`.
+      await waitFor(() => expect(view.getByText("alpha 30")).toBeTruthy());
 
       // The device is turned, and the step under the pager grows. A page NUMBER
-      // kept across that names a different stretch of the project — page 3 of a
-      // nineteen-row page starts at `alpha 38` — so the INDEX is kept instead.
+      // kept across that would name a different stretch, so the row index is kept.
       window.innerHeight = 1200;
       fireEvent(window, new Event("resize"));
       await waitFor(() => expect(shown(view)).toHaveLength(19));
-      expect(view.getByText("alpha 24")).toBeTruthy();
+      expect(view.getByText("alpha 30")).toBeTruthy();
     } finally {
       view.unmount();
       view.restore();

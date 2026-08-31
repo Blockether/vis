@@ -19,7 +19,7 @@ vi.mock('./viewport', () => ({
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-/** The sessions list's own geometry, as `SessionsScreen` measured it. */
+/** Probe geometry for screen fitting, without a product-owned minimum. */
 const LIST: ListGeometry = { row: 49, chrome: 251, min: 3 };
 
 describe('rows that fit the screen', () => {

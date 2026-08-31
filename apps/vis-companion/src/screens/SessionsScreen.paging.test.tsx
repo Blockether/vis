@@ -7,8 +7,8 @@ import { listSession, renderSessionsScreen } from "./sessions-screen-harness";
 const at = (rank: number) =>
   new Date(Date.UTC(2024, 4, 1, 10, 0, rank)).toISOString();
 
-// One project deeper than any screen: forty sessions, and an 844px phone holds twelve
-// of them, so the project is four pages long.
+// One project deeper than any screen: forty sessions, and an 844px phone holds fifteen
+// of them, so the project is three pages long.
 const rows = Array.from({ length: 40 }, (_, index) =>
   listSession({
     id: `s${index}`,
@@ -43,7 +43,7 @@ describe("a project is paged by the gateway that counts it", () => {
     window.innerHeight = 844;
     const view = renderSessionsScreen({ machines: [{ sessions: rows }] });
     try {
-      await waitFor(() => expect(shown(view)).toHaveLength(12));
+      await waitFor(() => expect(shown(view)).toHaveLength(15));
       await settle();
 
       // The page on screen is ONE read, cut where the screen was measured — not a
@@ -52,9 +52,9 @@ describe("a project is paged by the gateway that counts it", () => {
       // and a validator each, so a page turn is a paint instead of a wait.
       const first = pageReads(view);
       expect(first).toHaveLength(3);
-      expect(first[0]).toBe("/v1/sessions?root=/Users/dev/alpha&limit=12");
+      expect(first[0]).toBe("/v1/sessions?root=/Users/dev/alpha&limit=15");
       expect(first.slice(1).every((read) => read.includes("&after="))).toBe(true);
-      expect(first.every((read) => read.includes("limit=12"))).toBe(true);
+      expect(first.every((read) => read.includes("limit=15"))).toBe(true);
       expect(shown(view)[0]).toBe("alpha 00");
       expect(view.getAllByText("40 sessions").length).toBeGreaterThan(0);
 
@@ -62,15 +62,21 @@ describe("a project is paged by the gateway that counts it", () => {
       // held, so it paints in the frame of the tap. It used to stand on the page
       // before it until the gateway answered.
       fireEvent.click(view.getByLabelText("Next page"));
-      expect(shown(view)[0]).toBe("alpha 12");
+      expect(shown(view)[0]).toBe("alpha 15");
       await settle();
 
-      // The last page, tapped from page two, paints the four rows the header's
+      // The last page, tapped from page two, paints the ten rows the header's
       // forty leaves, with no second paint under the thumb.
-      fireEvent.click(view.getByLabelText("Page 4"));
-      await waitFor(() => expect(shown(view)).toHaveLength(4));
+      fireEvent.click(view.getByLabelText("Page 3"));
+      await waitFor(() => expect(shown(view)).toHaveLength(10));
       await settle();
       expect(shown(view)).toEqual([
+        "alpha 30",
+        "alpha 31",
+        "alpha 32",
+        "alpha 33",
+        "alpha 34",
+        "alpha 35",
         "alpha 36",
         "alpha 37",
         "alpha 38",
@@ -78,7 +84,7 @@ describe("a project is paged by the gateway that counts it", () => {
       ]);
       // Every read is still one page of one project: no walk of the machine.
       expect(
-        pageReads(view).every((read) => read.includes("limit=12")),
+        pageReads(view).every((read) => read.includes("limit=15")),
       ).toBe(true);
     } finally {
       view.unmount();
@@ -95,7 +101,7 @@ describe("a project is paged by the gateway that counts it", () => {
       machines: [{ sessions: rows, holdsDeeperPages: true }],
     });
     try {
-      await waitFor(() => expect(shown(view)).toHaveLength(12));
+      await waitFor(() => expect(shown(view)).toHaveLength(15));
       expect(shown(view)[0]).toBe("alpha 00");
       await waitFor(() => expect(pageReads(view)).toHaveLength(2));
 
@@ -108,7 +114,7 @@ describe("a project is paged by the gateway that counts it", () => {
       expect(view.getByLabelText("Page 2")).not.toHaveAttribute("aria-current");
 
       view.releasePages();
-      await waitFor(() => expect(shown(view)[0]).toBe("alpha 12"));
+      await waitFor(() => expect(shown(view)[0]).toBe("alpha 15"));
       expect(view.getByLabelText("Page 2")).toHaveAttribute("aria-current", "page");
     } finally {
       view.releasePages();

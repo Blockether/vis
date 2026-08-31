@@ -284,11 +284,12 @@ function hydrateMachines(conns: GatewayConn[], previous: FleetMachine[]): FleetM
  *     glass (`sm:py-4`), and it is the same gap it keeps ABOVE itself: 16 over the
  *     card against 24 under it hung the whole list one step high in its own
  *     window. A phone is full bleed and pays none;
- *   - PEEK is what a page leaves UNDER its last row, so the next project's band
- *     shows and the list never ends flush with the bottom of the screen.
+ *   - PEEK is what a fitted page leaves UNDER its last row, so the next
+ *     project's band shows and the list never ends flush with the bottom of the screen.
  *
- * Three rows is the shortest page that still reads as a list rather than as a
- * pager with a row attached.
+ * Touch keeps at least fifteen rows per project. A short landscape phone therefore
+ * scrolls through useful history instead of paying a project header and pager every
+ * three sessions. Pointer layouts retain the three-row emergency floor.
  */
 const LIST_PEEK = 40;
 const LIST_FOOT = 16;
@@ -299,7 +300,7 @@ const LIST_FOOT = 16;
  */
 const LIST_LANE = 12;
 const LIST_GEOMETRY = {
-  touch: { row: 49, chrome: 211 + LIST_PEEK, min: 3 },
+  touch: { row: 49, chrome: 211 + LIST_PEEK, min: 15 },
   mouse: { row: 33, chrome: 149 + LIST_FOOT + LIST_PEEK, min: 3 },
   // A DESK SPENDS ITS CHROME SIDEWAYS. The machine strip that stands above the list
   // at every other size is the rail here, so those 40px go back to the rows and the

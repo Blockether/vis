@@ -657,7 +657,7 @@ export type ProjectWindows = Map<string, { etag: string; page: ProjectPage }>;
  *
  * Measured on a 1043-session gateway: the whole list is 825 KB (152 KB gzip), a
  * 100-row window 84.7 KB (16.2 KB gzip) in 446 ms, a 20-row window 19.2 KB
- * (4.6 KB gzip) in 123 ms. A phone paints twelve rows, so twenty is the screen
+ * (4.6 KB gzip) in 123 ms. A phone paints fifteen rows, so twenty is the screen
  * plus the scroll under it. Nothing deeper needs this window: a project's pages
  * are cut by the gateway at the size the screen measured (`listProjectPage`),
  * the projects and their counts arrive in the overview beside it, and the runs
