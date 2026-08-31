@@ -40,6 +40,9 @@ function ViewportProbe() {
   return (
     <div ref={shell} data-testid="shell">
       <textarea aria-label="Message" />
+      <div aria-label="Sessions">
+        <input aria-label="Rename last session" />
+      </div>
     </div>
   );
 }
@@ -81,7 +84,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("focusing the composer with a keyboard already attached", () => {
+describe("focusing an editor with a keyboard already attached", () => {
   // Regression, user report (paraphrased: on a desktop the app should neither raise
   // nor simulate a keyboard): a focus reserved the predicted software-keyboard band —
   // 41% of the window — for keys that never come up, so the composer floated above a
@@ -157,5 +160,22 @@ describe("focusing the composer with a keyboard already attached", () => {
     act(() => composer.focus());
 
     expect(shell).toHaveStyle({ height: "549px" });
+  });
+  // Regression, Vis session 5b630f33-96ef-44de-bc05-9db6cbe71845: renaming the
+  // last session pinned the native shell above the iPhone keyboard but left that row
+  // at its old list position, entirely behind the keys.
+  it("scrolls the last inline rename into the shortened native shell", () => {
+    pointing("coarse");
+    window_(390, 844);
+    render(<ViewportProbe />);
+    const shell = screen.getByTestId("shell");
+    const rename = screen.getByRole("textbox", { name: "Rename last session" });
+    const reveal = vi.fn();
+    Object.defineProperty(rename, "scrollIntoView", { configurable: true, value: reveal });
+
+    act(() => rename.focus());
+
+    expect(shell).toHaveStyle({ height: "549px" });
+    expect(reveal).toHaveBeenCalledWith({ block: "nearest" });
   });
 });

@@ -712,31 +712,29 @@ export function useVisualViewportShell(shellRef: RefObject<HTMLElement | null>):
 
     // Focusing a field raises the keyboard a few frames later, and iOS reveals
     // that field by scrolling the *layout* viewport — which a shell pinned to the
-    // visual viewport does not follow, so the caret can land off-screen. Settle
-    // the box first, then bring the field itself back into its own scroller.
+    // visual viewport does not follow, so the caret can land off-screen. Move the
+    // field only inside its own scroller, then put the document-rooted shell back.
+    const revealFocusedEditor = (el: Element) => {
+      if (document.activeElement !== el) return;
+      el.scrollIntoView?.({ block: 'nearest' });
+      resetLayoutScroll();
+      sync();
+    };
     const onFocusIn = (event: FocusEvent) => {
       const el = event.target;
       if (!(el instanceof Element) || !isKeyboardInputElement(el)) return;
       // Capacitor's `keyboardWillShow` reaches this WebView after UIKit has
       // started moving. Once we know this orientation's keyboard height, pin in
-      // the focus frame and let the event correct us if the layout changed.
+      // the focus frame and let the event correct us if the layout changed. Native
+      // scroll-to-reveal is disabled, so reveal the row against that shorter shell
+      // in the same task; otherwise a field near the list's end stays behind the keys.
       if (nativeKeyboard) {
         prepinKeyboard();
+        revealFocusedEditor(el);
         return;
       }
       resync();
-      timers.push(
-        window.setTimeout(() => {
-          if (document.activeElement !== el) return;
-          el.scrollIntoView({ block: 'nearest' });
-          // `scrollIntoView` walks EVERY scrollable ancestor, ending at the
-          // layout viewport and moving the document-rooted shell with it. Scroll
-          // the field inside its own scroller, then restore the shell's frame of
-          // reference.
-          resetLayoutScroll();
-          sync();
-        }, 350),
-      );
+      timers.push(window.setTimeout(() => revealFocusedEditor(el), 350));
     };
 
     sync();
