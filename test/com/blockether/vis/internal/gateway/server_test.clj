@@ -67,6 +67,21 @@
         (health-handler {:headers {}})
         (is (= 1 @repairs))))))
 
+(deftest json-errors-use-the-contract-envelope
+  (let [seen
+        (atom nil)
+
+        response
+        (with-redefs [gateway-contract/error-body (fn [type message extra]
+                                                    (reset! seen [type message extra])
+                                                    {"contract_error" true})]
+          ((rv 'error-response) 409 :example/problem "cannot continue" :detail 7))]
+
+    (is (= 409 (:status response)))
+    (is (= "application/json" (get-in response [:headers "Content-Type"])))
+    (is (= {"contract_error" true} (wire/parse-json (:body response))))
+    (is (= [:example/problem "cannot continue" {:detail 7}] @seen))))
+
 (deftest gateway-router-compiles-with-project-action-routes
   (testing "static project actions do not conflict with the dynamic project-id route"
     (is (some? ((rv 'router) "test-token" [])))))

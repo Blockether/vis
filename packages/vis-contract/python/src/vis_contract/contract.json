@@ -116,7 +116,7 @@
   },
   "gateway":
   {
-    "version": 2,
+    "version": 3,
     "protocol":
     {
       "minimum_client": 12,
@@ -656,6 +656,29 @@
     },
     "envelopes":
     {
+      "error_response":
+      {
+        "body_keys":
+        {
+          "error": "error"
+        },
+        "error_keys":
+        {
+          "message": "message",
+          "type": "type"
+        }
+      },
+      "handshake":
+      {
+        "keys":
+        {
+          "build": "build",
+          "min_client": "min_client",
+          "min_gateway": "min_gateway",
+          "protocol": "protocol",
+          "version": "version"
+        }
+      },
       "journal_line":
       {
         "metadata_keys":

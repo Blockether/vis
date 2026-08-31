@@ -516,7 +516,7 @@
 
 (defn- error-response
   [status type message & {:as extra}]
-  (json-response status {:error (merge {:type (name type) :message message} extra)}))
+  (json-response status (gateway-contract/error-body type message extra)))
 
 (defn- session-404
   [sid-str]

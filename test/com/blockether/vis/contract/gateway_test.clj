@@ -25,7 +25,7 @@
 (defdescribe
   gateway-contract-test
   (it "loads a closed, independently owned gateway declaration"
-      (expect (= 2 contract/version))
+      (expect (= 3 contract/version))
       (expect (= 99 (count contract/route-table)))
       (expect (= 121 (count (contract/route-methods))))
       (expect (= 32 (count contract/event-types)))
@@ -41,12 +41,20 @@
             devices
             (first (filter #(= "/v1/devices" (get % "path")) (get gateway "routes")))]
 
-        (expect (= 2 (get gateway "version")))
+        (expect (= 3 (get gateway "version")))
         (expect (= ["get" "post"] (get devices "methods")))
         (expect (= (sort (get-in gateway ["events" "session"]))
                    (get-in gateway ["events" "session"])))
         (expect (= "subscription.ready"
-                   (get-in gateway ["envelopes" "subscription_ready" "event"])))))
+                   (get-in gateway ["envelopes" "subscription_ready" "event"])))
+        (expect (= {"build" "build"
+                    "min_client" "min_client"
+                    "min_gateway" "min_gateway"
+                    "protocol" "protocol"
+                    "version" "version"}
+                   (get-in gateway ["envelopes" "handshake" "keys"])))
+        (expect (= {"message" "message" "type" "type"}
+                   (get-in gateway ["envelopes" "error_response" "error_keys"])))))
   (it "pins every built-in method and path from the runtime router"
       (expect (= (mapv #(select-keys % [:path :methods]) contract/route-table)
                  (runtime-route-table))))
@@ -69,6 +77,14 @@
                                              :gateway-min-client 2
                                              :client-protocol 1
                                              :client-min-gateway 1})))))
+  (it "builds handshake and error response envelopes"
+      (expect (=
+                {:protocol 12 :min-client 12 :min-gateway 12 :version "1.2.3" :build "abc123def456"}
+                (contract/handshake {:version "1.2.3" :build "abc123def456"})))
+      (expect (= {"error" {"type" "invalid-request" "message" "replacement" "session_id" "s1"}}
+                 (contract/error-body :mcp/invalid-request
+                                      "original"
+                                      {:message "replacement" :session_id "s1"}))))
   (it "owns session, journal and ready envelopes"
       (expect
         (= {:schema "schema" :sequence "seq" :session-id "session_id" :timestamp "ts" :type "type"}

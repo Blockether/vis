@@ -767,12 +767,13 @@ lifecycle events, directional job streams, settled-turn metadata and replay anch
 encoding now lives in independently loadable `com.blockether.vis.contract.wire`; Core producers,
 server and engine tests import it directly; current extension consumers stay behind the Core facade. Concrete
 transport and bounded diagnostics live beside their sole callers, so `internal.gateway.wire`
-has been deleted rather than forwarded. `com.blockether.vis.contract.gateway` also owns handshake
-parsing, compatibility, View event constants, and the session-event, private journal-line and
-subscription-ready envelopes consumed directly by the runtime. The same renderer now emits a root
-language-neutral `contract.json` and the Python wheel's byte-identical copy; both include the complete
-gateway declaration with sorted sets for deterministic JavaScript/Python generator input. Release/build
-identity, daemon staleness and concrete diagnostics remain in `internal.gateway.runtime`. Existing View, Human Input,
+has been deleted rather than forwarded. `com.blockether.vis.contract.gateway` also owns the handshake
+declaration, construction and parsing, the shared JSON error-response envelope, compatibility, View
+event constants, and the session-event, private journal-line and subscription-ready envelopes consumed
+directly by the runtime and server. The same renderer now emits a root language-neutral `contract.json`
+and the Python wheel's byte-identical copy; both include the complete gateway declaration with sorted
+sets for deterministic JavaScript/Python generator input. Release/build identity, daemon staleness and
+concrete diagnostics remain in `internal.gateway.runtime`. Existing View, Human Input,
 Activity, cancellation and cross-session permit suites preserve behavior. Three production
 namespaces have moved or been removed.
 

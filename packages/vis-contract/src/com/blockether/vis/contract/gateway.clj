@@ -40,57 +40,65 @@
   (let [{:keys [session jobs push turn-terminal queue-mirror view]}
         events
 
-        {:keys [session-event journal-line subscription-ready settled-turn]}
+        {:keys [error-response handshake journal-line session-event subscription-ready
+                settled-turn]}
         envelopes]
 
-    (and (closed-map? document
-                      #{:contract/version :gateway/protocol :gateway/headers :gateway/routes
-                        :gateway/events :gateway/envelopes :gateway/replay})
-         (pos-int? version)
-         (closed-map? protocol #{:version :minimum-client :minimum-gateway})
-         (every? pos-int? (vals protocol))
-         (map? headers)
-         (seq headers)
-         (every? keyword? (keys headers))
-         (every? non-blank-string? (vals headers))
-         (= (count headers) (count (set (vals headers))))
-         (vector? routes)
-         (seq routes)
-         (every? valid-route? routes)
-         (= (count routes) (count (set (map :path routes))))
-         (closed-map? events #{:session :jobs :push :turn-terminal :queue-mirror :view})
-         (closed-map? jobs #{:transcribe :synthesize})
-         (every? non-blank-string? (vals jobs))
-         (every? event-set? [session push turn-terminal queue-mirror])
-         (every? session turn-terminal)
-         (every? session queue-mirror)
-         (closed-map? view #{:open :patch :close})
-         (every? session (vals view))
-         (closed-map? envelopes #{:session-event :journal-line :subscription-ready :settled-turn})
-         (closed-map? session-event #{:schema :stamp-keys})
-         (pos-int? (:schema session-event))
-         (wire-key-map? (:stamp-keys session-event)
-                        #{:schema :sequence :session-id :timestamp :type})
-         (closed-map? journal-line #{:metadata-keys})
-         (wire-key-map? (:metadata-keys journal-line) #{:pid :producer :store})
-         (closed-map? subscription-ready #{:event :required-keys :optional-keys})
-         (contains? session (:event subscription-ready))
-         (wire-key-map? (:required-keys subscription-ready)
-                        #{:cursor :current-turn-id :is-live :server-time-ms :session-id :type})
-         (wire-key-map? (:optional-keys subscription-ready) #{:latest-iteration})
-         (not-any? (set (vals (:required-keys subscription-ready)))
-                   (vals (:optional-keys subscription-ready)))
-         (closed-map? settled-turn #{:meta-keys})
-         (vector? (:meta-keys settled-turn))
-         (seq (:meta-keys settled-turn))
-         (every? non-blank-string? (:meta-keys settled-turn))
-         (= (count (:meta-keys settled-turn)) (count (set (:meta-keys settled-turn))))
-         (closed-map? replay #{:cursor-header :cursor-key :ready-event :generation-start-event})
-         (contains? headers (:cursor-header replay))
-         (non-blank-string? (:cursor-key replay))
-         (contains? session (:ready-event replay))
-         (contains? session (:generation-start-event replay))
-         (= (:event subscription-ready) (:ready-event replay)))))
+    (and
+      (closed-map? document
+                   #{:contract/version :gateway/protocol :gateway/headers :gateway/routes
+                     :gateway/events :gateway/envelopes :gateway/replay})
+      (pos-int? version)
+      (closed-map? protocol #{:version :minimum-client :minimum-gateway})
+      (every? pos-int? (vals protocol))
+      (map? headers)
+      (seq headers)
+      (every? keyword? (keys headers))
+      (every? non-blank-string? (vals headers))
+      (= (count headers) (count (set (vals headers))))
+      (vector? routes)
+      (seq routes)
+      (every? valid-route? routes)
+      (= (count routes) (count (set (map :path routes))))
+      (closed-map? events #{:session :jobs :push :turn-terminal :queue-mirror :view})
+      (closed-map? jobs #{:transcribe :synthesize})
+      (every? non-blank-string? (vals jobs))
+      (every? event-set? [session push turn-terminal queue-mirror])
+      (every? session turn-terminal)
+      (every? session queue-mirror)
+      (closed-map? view #{:open :patch :close})
+      (every? session (vals view))
+      (closed-map? envelopes
+                   #{:error-response :handshake :journal-line :session-event :settled-turn
+                     :subscription-ready})
+      (closed-map? handshake #{:keys})
+      (wire-key-map? (:keys handshake) #{:build :min-client :min-gateway :protocol :version})
+      (closed-map? error-response #{:body-keys :error-keys})
+      (wire-key-map? (:body-keys error-response) #{:error})
+      (wire-key-map? (:error-keys error-response) #{:message :type})
+      (closed-map? session-event #{:schema :stamp-keys})
+      (pos-int? (:schema session-event))
+      (wire-key-map? (:stamp-keys session-event) #{:schema :sequence :session-id :timestamp :type})
+      (closed-map? journal-line #{:metadata-keys})
+      (wire-key-map? (:metadata-keys journal-line) #{:pid :producer :store})
+      (closed-map? subscription-ready #{:event :required-keys :optional-keys})
+      (contains? session (:event subscription-ready))
+      (wire-key-map? (:required-keys subscription-ready)
+                     #{:cursor :current-turn-id :is-live :server-time-ms :session-id :type})
+      (wire-key-map? (:optional-keys subscription-ready) #{:latest-iteration})
+      (not-any? (set (vals (:required-keys subscription-ready)))
+                (vals (:optional-keys subscription-ready)))
+      (closed-map? settled-turn #{:meta-keys})
+      (vector? (:meta-keys settled-turn))
+      (seq (:meta-keys settled-turn))
+      (every? non-blank-string? (:meta-keys settled-turn))
+      (= (count (:meta-keys settled-turn)) (count (set (:meta-keys settled-turn))))
+      (closed-map? replay #{:cursor-header :cursor-key :ready-event :generation-start-event})
+      (contains? headers (:cursor-header replay))
+      (non-blank-string? (:cursor-key replay))
+      (contains? session (:ready-event replay))
+      (contains? session (:generation-start-event replay))
+      (= (:event subscription-ready) (:ready-event replay)))))
 
 (s/def :contract/gateway valid-document?)
 
@@ -159,6 +167,15 @@
 (def view-patch-event "Session event carrying accepted View operations." (:patch view-events))
 (def view-close-event "Session event that ends either View kind." (:close view-events))
 (def envelopes "Canonical gateway envelope declarations." (:gateway/envelopes @document))
+(def handshake-envelope "Gateway identity handshake declaration." (:handshake envelopes))
+(def handshake-keys "Semantic handshake key to canonical wire spelling." (:keys handshake-envelope))
+(def error-response-envelope "Shared JSON error response declaration." (:error-response envelopes))
+(def error-response-body-keys
+  "Semantic error body key to canonical wire spelling."
+  (:body-keys error-response-envelope))
+(def error-response-error-keys
+  "Semantic error detail key to canonical wire spelling."
+  (:error-keys error-response-envelope))
 (def session-event-envelope "Stamped session stream event declaration." (:session-event envelopes))
 (def session-event-schema
   "Schema number stamped onto every session event."
@@ -183,6 +200,22 @@
 (def turn-meta-keys
   "Wire keys copied from a settled turn row into blocking submit/attach results."
   (get-in envelopes [:settled-turn :meta-keys]))
+
+(defn handshake
+  "Build the engine handshake from contract protocol numbers and runtime release identity."
+  [{:keys [version build]}]
+  {:protocol protocol-version
+   :min-client minimum-client-protocol
+   :min-gateway minimum-gateway-protocol
+   :version version
+   :build build})
+
+(defn error-body
+  "Build the canonical JSON error body; caller extras retain their existing override semantics."
+  [type message extra]
+  {(get error-response-body-keys :error) (merge {(get error-response-error-keys :type) (name type)
+                                                 (get error-response-error-keys :message) message}
+                                                (wire/->wire extra))})
 
 (defn stamp-session-event
   "Apply the contract-owned identity stamp after `payload`, so payload keys cannot spoof it."
@@ -284,13 +317,13 @@
   "Read a peer's advertised handshake from its canonical string-keyed wire map.
    Missing fields remain nil so [[verdict]] rejects an unversioned peer explicitly."
   [m]
-  {:protocol (->protocol-number (get m "protocol"))
-   :min-client (->protocol-number (get m "min_client"))
-   :min-gateway (->protocol-number (get m "min_gateway"))
-   :version (some-> (get m "version")
+  {:protocol (->protocol-number (get m (:protocol handshake-keys)))
+   :min-client (->protocol-number (get m (:min-client handshake-keys)))
+   :min-gateway (->protocol-number (get m (:min-gateway handshake-keys)))
+   :version (some-> (get m (:version handshake-keys))
                     str
                     not-empty)
-   :build (some-> (get m "build")
+   :build (some-> (get m (:build handshake-keys))
                   str
                   not-empty)})
 

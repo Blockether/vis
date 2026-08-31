@@ -207,11 +207,7 @@
 (defn handshake
   "What THIS build advertises on health, status and capabilities responses."
   []
-  {:protocol contract/protocol-version
-   :min-client contract/minimum-client-protocol
-   :min-gateway contract/minimum-gateway-protocol
-   :version (release-version)
-   :build (build-id)})
+  (contract/handshake {:version (release-version) :build (build-id)}))
 
 (defn client-headers
   "Headers every Vis client stamps on a gateway request."

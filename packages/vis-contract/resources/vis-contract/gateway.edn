@@ -1,4 +1,4 @@
-{:contract/version 2
+{:contract/version 3
  :gateway/protocol {:minimum-client 12 :minimum-gateway 12 :version 12}
  ;; Every header whose spelling is part of the gateway contract. Keys are semantic;
  ;; values are the canonical lower-case Ring/Fetch spelling.
@@ -138,7 +138,13 @@
   ;; One lifecycle for both input and live View kinds.
   :view {:close "view.close" :open "view.open" :patch "view.patch"}}
  :gateway/envelopes
- {:journal-line {:metadata-keys {:pid "_pid" :producer "_producer" :store "_store"}}
+ {:error-response {:body-keys {:error "error"} :error-keys {:message "message" :type "type"}}
+  :handshake {:keys {:build "build"
+                     :min-client "min_client"
+                     :min-gateway "min_gateway"
+                     :protocol "protocol"
+                     :version "version"}}
+  :journal-line {:metadata-keys {:pid "_pid" :producer "_producer" :store "_store"}}
   :session-event
   {:schema 1
    :stamp-keys
