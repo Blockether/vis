@@ -1461,6 +1461,37 @@
    budget for them, or its figure lands two columns past every flush-painted
    headline and the band's right edge reads ragged."
   2)
+
+(def ^:private turn-rail
+  "ONE LINE DOWN THE TURN, the way the companion draws one.
+
+   `RAIL_LINE` in `ChatContent` hangs a segment's every block off a single hairline
+   at the turn's left edge: the thinking band, each call's program, its result and
+   the Activity chronology read as ONE thread of work, and the line crosses the
+   paper of every band instead of stopping at its edge. A terminal cannot float a
+   hairline between two columns, so the line IS a column, painted in the quiet
+   border ink over whatever that row's band already filled. The final answer is not
+   on it - the answer is what the thread arrived at, not a step in it."
+  "│")
+
+(def ^:private turn-rail-col
+  "The column `turn-rail` stands in, counted from the message column's own edge.
+   Column zero would read as the frame of the transcript rather than as this turn's
+   axis, and every band insets its words by `code-text-inset-cols`, so the line
+   keeps a column of paper on either side of it. Spelled once: the Activity band's
+   margin is measured from it, because two lines one column apart are two threads."
+  1)
+
+(def ^:private turn-rail-markers
+  "The bands that HANG OFF the turn's line - the receipt, never the answer. The line
+   runs from the first of these rows to the last, the blanks between them included,
+   because a line with a gap in it reads as two lines."
+  #{thinking-marker th-md-h1-marker th-md-h2-marker th-md-h3-marker th-md-bold-marker
+    th-md-code-marker th-md-bullet-marker th-md-quote-marker th-md-hr-marker th-md-summary-marker
+    th-md-table-head-marker th-md-table-sep-marker th-md-table-row-marker iteration-hdr-marker
+    iteration-pad-marker execution-summary-marker code-marker code-ok-marker code-err-marker
+    code-pad-marker code-ok-pad-marker code-err-pad-marker result-marker err-result-marker
+    activity-marker})
 (defn- ansi-code->fg
   [code current-fg base-fg]
   ;; `(long code)` is what keeps this a constant-time tableswitch: the tests are
@@ -2131,7 +2162,21 @@
             (cached* [::ans-start (System/identityHashCode lines)]
                      #(loop [i 0] (cond (>= i n) n
                                         (answer-marker? (nth lines i)) i
-                                        :else (recur (inc i)))))]
+                                        :else (recur (inc i)))))
+
+            ;; The receipt's own extent - see `turn-rail`. Cached by `lines`-identity
+            ;; like the answer scan above, so a redraw costs no scan.
+            rail-span
+            (when-not (or user? error?)
+              (cached* [::rail-span (System/identityHashCode lines)]
+                       #(loop [idx 0 head nil tail nil] (if (>= idx (count lines))
+                                                          (when head [(long head) (long tail)])
+                                                          (let [l (nth lines idx)]
+                                                            (if (and (pos? (count l))
+                                                                     (contains? turn-rail-markers
+                                                                                (subs l 0 1)))
+                                                              (recur (inc idx) (or head idx) idx)
+                                                              (recur (inc idx) head tail)))))))]
 
         (loop [i i-start]
           (when (< i i-end)
@@ -2574,6 +2619,9 @@
                         ;; A patch is read in the transcript's own diff ink: the added row
                         ;; carries a green band, the removed row a red one, and the band
                         ;; starts at the paths' own column so it never crosses the rail.
+                        ;; A FAILURE is not a diff - `:error` quotes the machine on the
+                        ;; turn's own paper, because a slab of error colour under four
+                        ;; lines of prose is decoration, not meaning.
                         :activity-diff
                         (let [diff-kind (:diff-kind meta)
                               diff-bg (case diff-kind
@@ -2593,6 +2641,9 @@
 
                                         :meta
                                         t/code-syntax-keyword-fg
+
+                                        :error
+                                        t/dialog-hint
 
                                         t/code-block-fg)
                               band-col (+ (long x) (long (:band-col meta)))
@@ -3329,7 +3380,21 @@
                   (when (or user? error?)
                     (p/clear-styles! g)
                     (p/set-colors! g (if error? t/warning-border role-fg) bg-color)
-                    (p/put-str! g bx (+ (long btop) (long i)) "│")))
+                    (p/put-str! g bx (+ (long btop) (long i)) "│"))
+                  ;; THE TURN'S LINE, down every band of the receipt (see `turn-rail`).
+                  ;; An Activity row already carries it in its own text - that band
+                  ;; draws the marks standing ON it - so painting over that row would
+                  ;; rub out a tick. The row's paper is whatever its branch just
+                  ;; filled, so only the INK changes here: the line crosses each band
+                  ;; instead of punching a hole in it.
+                  (when (and rail-span
+                             (<= (long (first rail-span))
+                                 (long lines-idx)
+                                 (long (second rail-span)))
+                             (not (str/starts-with? line activity-marker)))
+                    (p/clear-styles! g)
+                    (p/set-fg! g t/code-duration-fg)
+                    (p/put-str! g (+ (long bx) (long turn-rail-col)) y turn-rail)))
                 (recur (inc i))))))
         ;; Below-content footer row: optional right-aligned meta, with
         ;; one breathing row between answer body and footer.
@@ -5407,9 +5472,9 @@
   "THE PAPER'S OWN EDGE, kept clear before the rail.
 
    A line flush against the left edge of the transcript reads as the frame of the
-   window rather than as this turn's axis. Two columns of quiet are what say the
+   window rather than as this turn's axis. One column of quiet is what says the
    rail belongs to the answer and begins inside it."
-  "  ")
+  (repeat-str \space turn-rail-col))
 
 (def ^:private activity-rail
   "THE TURN'S OWN LINE, drawn down the whole Activity band.
@@ -5418,10 +5483,11 @@
    (`RAIL_LINE` in `ChatContent`) and reaches every mark with a tick: a dot floating
    beside a line is a bullet in a list, a dot JOINED to it is a moment on a timeline,
    and this axis is the second thing. A terminal cannot float a hairline between two
-   columns, so the line IS column zero of every row this band paints, and
-   `activity-tick` is the join a step's mark stands on. Nothing closes the group — a
-   `╰` would be a bracket saying what the named row above it already said."
-  "│")
+   columns, so the line IS `turn-rail-col` of every row this band paints - the very
+   column the whole turn already runs down - and `activity-tick` is the join a step's
+   mark stands on. Nothing closes the group - a `╰` would be a bracket saying what
+   the named row above it already said."
+  turn-rail)
 
 (def ^:private activity-tick
   "The join from the rail to a step's mark: two columns, so the mark stands ON the
@@ -5765,9 +5831,10 @@
             (file-entries row-id resources diffs col)))
 
         error-entries
-        ;; A failed step says WHY once, in the machine's own words, on the error paper the
-        ;; transcript already uses for a removed line. No head and no pill: the row above
-        ;; already said which operation failed and on what.
+        ;; A failed step says WHY once, in the machine's own words, on the turn's own
+        ;; paper. No head, no pill and no coloured slab: the row above already said
+        ;; which operation failed and on what, and a band of error colour behind four
+        ;; lines of prose is decoration.
         (fn [row-id evidence ^long col]
           (let [lead
                 (activity-lead col)
@@ -5792,7 +5859,7 @@
                                  :item-id row-id
                                  :band-col col
                                  :band-text (ellipsize-cols text band-w)
-                                 :diff-kind :del})})]
+                                 :diff-kind :error})})]
 
             (into (mapv #(band-row (if (str/blank? %) " " %)) shown)
                   (when (pos? hidden) [(band-row (str "+" hidden " more lines"))]))))

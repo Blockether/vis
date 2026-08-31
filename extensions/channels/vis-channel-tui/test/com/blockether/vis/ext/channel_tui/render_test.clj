@@ -5416,7 +5416,7 @@ h = 8"
         ;; stands one margin in from the paper's own edge.
         band-lines
         (fn [text]
-          (filterv #(and (str/starts-with? % "  ") (contains? #{\│ \├} (nth % 2 nil)))
+          (filterv #(and (str/starts-with? % " ") (contains? #{\│ \├} (nth % 1 nil)))
             (str/split-lines text)))
 
         line-with
@@ -5432,11 +5432,11 @@ h = 8"
 
           (expect (seq lines) "the expanded receipt paints an Activity band")
           (expect (some #(str/includes? % "ACTIVITY") lines) "the band names itself on the rail")
-          (expect (str/starts-with? (str (line-with text "Patched")) "  ├─●")
+          (expect (str/starts-with? (str (line-with text "Patched")) " ├─●")
                   "a step's mark is JOINED to the rail by a tick, never floating beside it")
-          (expect (= 6 (long (.indexOf ^String (str (line-with text "Patched")) "Patched")))
-                  "margin, rail, tick, mark, gap: the verb starts in the seventh column")
-          (expect (every? #(str/starts-with? % "  ") lines)
+          (expect (= 5 (long (.indexOf ^String (str (line-with text "Patched")) "Patched")))
+                  "margin, rail, tick, mark, gap: the verb starts in the sixth column")
+          (expect (every? #(str/starts-with? % " ") lines)
                   "the rail never sits against the paper's edge")
           (expect (not-any? #(str/includes? % "✓") lines)
                   "no row wears a check: one mark, and the colour carries the state")))
@@ -5465,7 +5465,7 @@ h = 8"
         (expect (str/includes? patched-path "\u25be") "a path that opens a patch wears a chevron")
         (expect (str/includes? read-path "\u203a")
                 "a path that only names a file wears the quiet guillemet")
-        (expect (= 6 (long (.indexOf patched-path "▾")))
+        (expect (= 5 (long (.indexOf patched-path "▾")))
                 "paths hang one level in from the step's own mark")
         (expect (str/includes? added "+ (def added-line 1)")
                 "an added line carries its sign exactly once, in the marker column")
@@ -5545,3 +5545,109 @@ h = 8"
                    (expect (= (web-number "ACTIVITY_FILES_SHOWN") @#'render/activity-files-shown)))
                (it "keeps the same three lines of a failure's own words"
                    (expect (= (web-number "ERROR_PREVIEW_LINES") @#'render/activity-error-lines)))))
+
+;; Regression, T127: the line lived INSIDE the Activity band only. The companion runs one
+;; `RAIL_LINE` down a whole segment - thinking, the program, its result and the chronology
+;; all hang off it - so the terminal's receipt read as four unrelated blocks stacked on
+;; each other, and the Python band in particular stood alone with nothing joining it to
+;; the steps below it.
+(defdescribe
+  turn-rail-paint-test
+  (let [activity
+        {:state "succeeded"
+         :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+         :omitted {:rows 0}
+         :rows [{:id "grep-1"
+                 :sequence 1
+                 :operation "grep"
+                 :summary "3 files"
+                 :state "succeeded"
+                 :duration-ms 12
+                 :resources []
+                 :evidence []}]}
+
+        trace
+        [{:thinking "Read the app first."
+          :forms [{:code "print(1)"
+                   :stdout "1"
+                   :result-kind :none
+                   :duration-ms 12
+                   :silent? false
+                   :success? true
+                   :activity activity}]}]
+
+        rendered
+        (do (render/invalidate-cache!)
+            (render/format-answer-with-thinking-data*
+              "Done."
+              trace
+              72
+              {:show-thinking true :show-iterations true}
+              nil
+              false
+              {:session-id "s1" :detail-expansions {:vis.channel-tui/expand-all-details? true}}))
+
+        message
+        {:role :assistant
+         :text "Done."
+         :prewrapped-lines (:lines rendered)
+         :line-meta (:line-meta rendered)}
+
+        captured
+        (cap/capture!
+          {:cols 80
+           :rows 44
+           :paint!
+           (fn [{:keys [screen]}]
+             (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+               (render/draw-chat-bubble! (.newTextGraphics s) message 2 2 76 {:viewport-h 40})
+               (.refresh s)))})
+
+        grid
+        (first (:frames captured))
+
+        rows
+        (mapv (fn [row]
+                (str/join (map :ch row)))
+              grid)
+
+        ;; `bx` is 2 here and the line stands one column in from the paper's own edge.
+        rail-col
+        3
+
+        ;; A step's mark stands ON the line, so its own row wears the tick's `├`.
+        rail-at?
+        (fn [^long r]
+          (contains? #{"│" "├"} (:ch (nth (nth grid r) rail-col))))
+
+        row-with
+        (fn [needle]
+          (first (keep-indexed (fn [i l]
+                                 (when (str/includes? l needle) i))
+                               rows)))]
+
+    (it "runs one unbroken line from the first band of the receipt to the last"
+        (let [head
+              (row-with "Read the app first")
+
+              tail
+              (row-with "3 files")]
+
+          (expect (and head tail) "the receipt paints the thinking and the chronology")
+          (expect (every? rail-at? (range (long head) (inc (long tail))))
+                  "every row between them stands on the same column")))
+    (it "crosses the program's own paper instead of stopping at its edge"
+        (let [python
+              (row-with "PYTHON")
+
+              result
+              (row-with "RESULT")]
+
+          (expect (and python result) "the receipt paints a program and its result")
+          (expect (rail-at? python) "the line crosses the PYTHON band")
+          (expect (rail-at? result) "the line crosses the RESULT band")))
+    (it "leaves the answer off the line"
+        (let [answer (row-with "Done.")]
+          (expect answer "the bubble paints its answer")
+          (expect (not (rail-at? answer))
+                  "the answer is what the thread arrived at, never a step on it")))))
