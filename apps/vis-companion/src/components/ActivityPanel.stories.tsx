@@ -11,9 +11,9 @@ import { ActivityPanel } from './ActivityPanel';
  * WHAT THE MODEL IS DOING, WHILE IT IS DOING IT.
  *
  * The axis has one job the transcript cannot do: report a bounded run — how many
- * calls, which one is moving, what it produced — without the reader opening
- * anything. Nothing here is behind a chevron, which is the whole point: what an
- * iteration DID is never the thing you go and find. The states below are the
+ * calls, which one is moving, what it produced — in one reading, with nothing
+ * inside it behind a second chevron. It is what the invocation's own band opens
+ * onto, and the reason a reader opens that band at all. The states below are the
  * sentences it can say, and they are drawn here rather than described, because
  * `running` has to read as one moving thread, `succeeded` has to go quiet
  * without disappearing, and `failed` has to be findable in a settled transcript

@@ -7,7 +7,6 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ActivityPanel,
-  activityCallText,
   activityCostParts,
   activityReceiptText,
 } from "./ActivityPanel";
@@ -104,33 +103,10 @@ describe("one form's Activity on the phone", () => {
   });
 });
 
-// The band is named by WHAT IT CALLED, and its margin says what that cost: what
-// changed the repository, what was only read, what was checked. `0 mutations` is
-// about the rows that are NOT there, so it always prints; the other two print
-// only when they happened.
-describe("what the iteration called and what it cost", () => {
-  it("names the calls as they were typed, in the engine's order", () => {
-    expect(activityCallText(activityProjection())).toBe("grep · run_tests");
-  });
-
-  it("keeps three names and counts the rest, the dropped rows included", () => {
-    const projection = activityProjection();
-    const [first] = projection.rows;
-    const rows = [1, 2, 3, 4, 5].map((sequence) => ({
-      ...first,
-      id: `call-${sequence}`,
-      sequence,
-      operation: `tool_${sequence}`,
-    }));
-
-    expect(
-      activityCallText({
-        ...projection,
-        rows,
-        omitted: { rows: 2, by_classification: {} },
-      }),
-    ).toBe("tool_1 · tool_2 · tool_3 +4");
-  });
+// The band is named by WHAT IT COST: what changed the repository, what was only
+// read, what was checked. `0 mutations` is about the rows that are NOT there, so
+// it always prints; the other two print only when they happened.
+describe("what the iteration cost", () => {
 
   it("states the mutations, and stays quiet about a kind that did not happen", () => {
     const parts = activityCostParts(activityProjection());

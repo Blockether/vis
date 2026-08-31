@@ -885,7 +885,7 @@ export const STORY_TURN_ITERATIONS_ACTIVITY: TranscriptIteration[] = [
     id: 'i1',
     position: 1,
     thinking:
-      'The axis has to say what the iteration DID without being opened, and the program that did it has to stay behind one chevron.\n\nSo: counters in the invocation margin, chronology always on the page, raw text inside.',
+      'A closed step has to answer the only question it is asked — did this change anything, what did it look at, what did it check — and everything else has to be one chevron away.\n\nSo: counters on the band; the chronology, the program and its raw text all inside it.',
     forms: [
       {
         scope: 'python',

@@ -836,10 +836,9 @@ describe("a Python evaluation without detected Activity", () => {
     expect(
       painted.getByRole("button", { name: "Expand execution trace" }),
     ).toBe(receipt);
-    // The band is NAMED BY WHAT IT CALLED and its margin carries the facts: the
-    // sentence that used to narrate the call ("RUNNING · GREP · searching") is
-    // now the chronology's job.
-    expect(receipt.textContent).toContain("grep");
+    // The band is named by WHAT IT COST — state, elapsed, the three kinds — and
+    // WHICH tools were called is the chronology's job, one level down.
+    expect(receipt.textContent).not.toContain("grep");
     expect(receipt.textContent).toContain("RUNNING · 0 mutations");
   });
 
@@ -954,9 +953,10 @@ describe("Activity owns the slot after its Python form and result", () => {
       name: "Expand execution trace",
     });
     expect(receipts).toHaveLength(2);
-    // Only the SECOND form carries a snapshot, so only its receipt says so.
+    // Only the SECOND form carries a snapshot, so only its band counts anything;
+    // the first can say no more than how its own program ended.
     expect(painted.container.textContent).toContain(
-      "grep · run_testsRUNNING · 0 mutations · 1 observation · 1 check",
+      "DONE · PYTHONRUNNING · 0 mutations · 1 observation · 1 check",
     );
     receipts.forEach((receipt) => fireEvent.click(receipt));
     expect(
@@ -992,13 +992,14 @@ describe("Activity owns the slot after its Python form and result", () => {
         painted.getByRole("button", { name: "Expand execution trace" }),
       ).toBeTruthy();
       expect(painted.container.textContent).toContain(
-        "grep · run_testsRUNNING · 0 mutations · 1 observation · 1 check",
+        "RUNNING · 0 mutations · 1 observation · 1 check",
       );
+      expect(painted.container.textContent).not.toContain("grep · run_tests");
       expect(painted.container.textContent).not.toContain("line_1()");
       expect(painted.container.textContent).not.toContain("RESULT");
-      // The axis is not behind the chevron: what the form DID is on the page
-      // before it is opened, and only the program and its bytes are inside.
-      expect(painted.container.textContent).toContain("18 matches");
+      // Closed, the band IS the whole receipt: the chronology, the program and
+      // the bytes it printed are all behind the one chevron.
+      expect(painted.container.textContent).not.toContain("18 matches");
       fireEvent.click(
         painted.getByRole("button", { name: "Expand execution trace" }),
       );
@@ -1035,9 +1036,9 @@ describe("Activity owns the slot after its Python form and result", () => {
       ),
     );
 
-    // The count of CALLS is no longer part of the sentence — the names of the
-    // calls are the band's own title now — and the margin says what they cost,
-    // in the three kinds the wire classifies and no other.
+    // The count of CALLS is no longer part of the sentence: a closed band says
+    // how the iteration ended, how long it took, and what it cost, in the three
+    // kinds the wire classifies and no other.
     expect(rendered).toContain(
       "DONE · 12.6s · 0 mutations · 1 observation · 1 check",
     );

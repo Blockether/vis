@@ -134,34 +134,6 @@ function activityTotal(activity?: ActivityProjection): number {
     : (activity?.rows.length ?? 0);
 }
 
-/**
- * WHAT WAS CALLED, in the invocation's own name.
- *
- * `INVOCATION` is true of every band in the transcript and so names none of
- * them. What a reader wants from an iteration is the PROGRAM — `grep · cat ·
- * patch`, the tools as they were typed, in the order the engine ran them. The
- * axis below says in prose what each call DID; this line is the call itself, so
- * the two are not one sentence printed twice.
- *
- * Three names, then a tally: a fourth pushes the state word off a phone. The
- * tally counts the rows the engine's own bound dropped as well, because a call
- * nobody can see is still a call that happened.
- */
-const CALL_NAMES_SHOWN = 3;
-
-export function activityCallText(activity?: ActivityProjection): string {
-  const rows = [...(activity?.rows ?? [])].sort(
-    (left, right) => left.sequence - right.sequence,
-  );
-  const named = rows
-    .slice(0, CALL_NAMES_SHOWN)
-    .map((row) => row.operation.trim());
-  const rest = rows.length - named.length + (activity?.omitted.rows ?? 0);
-  return [named.join(" · "), rest > 0 ? `+${rest}` : ""]
-    .filter(Boolean)
-    .join(" ");
-}
-
 /** One counter in the margin: the words, and the tone that repeats them. */
 export interface ActivityCostPart {
   readonly text: string;
@@ -170,7 +142,7 @@ export interface ActivityCostPart {
 }
 
 /**
- * WHAT THE ITERATION COST THE REPOSITORY, in the invocation's own margin.
+ * WHAT THE ITERATION COST THE REPOSITORY, and the whole of what a closed band says.
  *
  * Three kinds and no fourth: these are the three the wire classifies and the
  * three a reader budgets differently — what CHANGED the repository, what only
@@ -218,14 +190,13 @@ export function activityCostParts(
 }
 
 /**
- * HOW THE CALL ENDED AND HOW LONG IT TOOK — the two facts a band's NAME cannot carry.
+ * HOW THE CALL ENDED AND HOW LONG IT TOOK — the first half of a closed band.
  *
- * The invocation row is named by what it CALLED, and everything factual stands
- * in its own margin. v36 spends that margin on identity — session, turn,
- * — session, turn, iteration, baseline commit — and none of that is on this wire;
- * a state and an elapsed time are, so the margin says those instead. The elapsed
- * time is printed only once it is FINAL: a number that stops moving while the run
- * is still going is worse than no number.
+ * The band names the iteration by what it COST, not by what it called: this
+ * state, then the counters. v36 spent that line on identity — session, turn,
+ * iteration, baseline commit — and none of that is on this wire; a state and an
+ * elapsed time are. The elapsed time is printed only once it is FINAL: a number
+ * that stops moving while the run is still going is worse than no number.
  */
 export function activityStateText(
   activity?: ActivityProjection,
@@ -596,9 +567,9 @@ function countsVisibleFiles(summary: string, shown: number): boolean {
  * ONE STEP ON THE AXIS: a verb, its object, and how long it took.
  *
  * Nothing here is a control. The row states what the engine did and leaves what
- * it produced underneath it, so the reader never has to open anything to learn
- * what the iteration DID — the program and its raw result stay behind the
- * invocation's own disclosure, one level up.
+ * it produced underneath it, so once the invocation is open there is no second
+ * thing to go and find: the chronology, the program and its raw bytes are all
+ * one chevron down from the band's counters.
  *
  * And it says each of those things ONCE. "Read 4 files" over four visible paths
  * counts a list the eye is already on, so a summary that is nothing but that

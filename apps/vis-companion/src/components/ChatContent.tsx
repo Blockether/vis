@@ -17,7 +17,6 @@ import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
 import { LiveRunRow } from "./LiveArtifact";
 import {
   ActivityPanel,
-  activityCallText,
   activityCostParts,
   activityReceiptText,
   activityStateText,
@@ -1555,11 +1554,12 @@ const FormTrace = memo(function FormTrace({
     receipt,
     running,
   } = formStep(form, live);
-  // The band is NAMED BY WHAT IT CALLED — `grep · cat · patch` — and how that
-  // call ended, what it cost and what it looked at stand in its own margin. The
-  // chronology under it says what each call did; failures are rows there,
-  // already wearing their own marks, so the margin never counts them.
-  const call = activityCallText(activity);
+  // The band is EVERYTHING THE READER GETS WITHOUT OPENING IT: how the call
+  // ended, how long it took, and what it cost the repository — what changed it,
+  // what only looked at it, what checked it. Those counters move while the run
+  // does, so a closed band is still a live one. WHICH tools were called, what
+  // each call did, and the program that made them are the chronology and the
+  // source INSIDE, because that is what a box is for.
   const cost = activityCostParts(activity);
 
   return (
@@ -1590,45 +1590,46 @@ const FormTrace = memo(function FormTrace({
           }
           onClick={() => setExpanded((open) => !open)}
         >
-          {/* The band is named by WHAT IT CALLED, and the names keep a floor
-              the margin cannot squeeze them under: on a phone the counters wrap
-              to their own line rather than clipping the program. */}
-          <span className="min-w-[9rem] flex-1 truncate font-mono text-chip font-bold tracking-normal text-code-result">
-            {detectedActivity && call ? call : receipt}
-          </span>
-          {/* WHAT IT COST, in the row's own margin: what changed the repository,
-              what was only read, what was checked — the three kinds the wire
-              classifies, answered without opening anything. Colour repeats each
-              noun and never carries it. */}
-          {detectedActivity && (
-            <span className="shrink-0 font-mono text-chip font-normal normal-case tracking-normal text-dialog-hint">
-              {activityStateText(activity, form.duration_ms)}
-              {cost.map((part) => (
+          {/* One sentence, and its counters keep the line: on a phone they
+              wrap to their own row rather than clipping the state word off the
+              front. Colour repeats each noun and never carries it. */}
+          <span className="min-w-0 flex-1 font-mono text-chip font-normal normal-case tracking-normal text-dialog-hint">
+            <span className="font-bold text-code-result">
+              {detectedActivity
+                ? activityStateText(activity, form.duration_ms)
+                : receipt}
+            </span>
+            {detectedActivity &&
+              cost.map((part) => (
                 <Fragment key={part.text}>
                   {" · "}
                   <span className={part.tone || undefined}>{part.text}</span>
                 </Fragment>
               ))}
-            </span>
-          )}
+          </span>
         </Disclosure>
         {expanded && (
-          <div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
-            {showCode && (
-              <CollapsibleFormCode
-                value={code}
-                label={codeLabel}
-                language={formCodeLanguage(form)}
-                bare
-              />
+          <>
+            {/* Opened, the iteration reads in the order it happened: what each
+                call DID, then the program that made those calls and the bytes it
+                printed. Closed, none of it is on the page — a transcript of
+                forty iterations is forty receipts, not forty chronologies. */}
+            {detectedActivity && activity && (
+              <ActivityPanel activity={activity} />
             )}
-            <CardGrid cards={cards} bare />
-          </div>
+            <div className="mt-1 grid min-w-0 grid-cols-[minmax(0,1fr)] gap-px overflow-hidden border border-dialog-edge bg-dialog-edge shadow-[2px_2px_0_var(--dialog-shadow)]">
+              {showCode && (
+                <CollapsibleFormCode
+                  value={code}
+                  label={codeLabel}
+                  language={formCodeLanguage(form)}
+                  bare
+                />
+              )}
+              <CardGrid cards={cards} bare />
+            </div>
+          </>
         )}
-        {/* The axis is NOT behind the disclosure. What the iteration DID is the
-            one thing a reader must never open a box to see; the program that
-            did it, and the bytes it printed, are exactly what a box is for. */}
-        {detectedActivity && activity && <ActivityPanel activity={activity} />}
       </div>
     </div>
   );
