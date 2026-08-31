@@ -5211,6 +5211,24 @@
                (not= (str/lower-case operation) (str/lower-case summary)))
       (activity-inline-text summary summary-format))))
 
+(defn- activity-step-object
+  "WHAT THE CALL WAS ABOUT, with the operation's own name never repeated back.
+
+   The web says this in `activityStepObject`, and the two surfaces must read the same:
+   a summary that only echoes the operation is noise beside the verb, and a legacy
+   shell spawn summary is the command itself, not a live-tense status."
+  [{:keys [operation presenter summary summary-format]}]
+  (let [op
+        (str/trim (str operation))
+
+        text
+        (str/trim (str summary))]
+
+    (cond (and (or (= "shell" (str/lower-case (str presenter))) (= "shell" (str/lower-case op)))
+               (str/starts-with? text "running: "))
+          (activity-inline-text (subs text (count "running: ")) summary-format)
+          (or (str/blank? text) (= (str/lower-case text) (str/lower-case op))) nil
+          :else (activity-inline-text text summary-format))))
 (defn- activity-row-state
   [{:keys [state]}]
   (keyword (or (some-> state
@@ -5245,11 +5263,65 @@
   [row]
   (if (contains? #{:running :failed :succeeded} (activity-row-state row)) "●" "○"))
 
+(def ^:private activity-verbs
+  "THE VERB A STEP WEARS, one for each state a reader can tell apart.
+
+   The same table the web reads in `ACTIVITY_VERBS`, because a chronology that says
+   `RUN_TESTS` in one window and `Tests failed` in the other is two products. The
+   operation id is the machine's name for the call; the reader is owed the act.
+
+   A settled verb over a step that FAILED is a lie printed in bold, so an operation
+   carries three words - what it is doing, what it did, and what it failed to do. A
+   cancelled step keeps the first: the act was under way and never landed."
+  {"grep" ["Searching" "Searched" "Search failed"]
+   "ls" ["Listing" "Listed" "List failed"]
+   "cat" ["Reading" "Read" "Read failed"]
+   "patch" ["Patching" "Patched" "Patch refused"]
+   "shell" ["Running" "Ran" "Command failed"]
+   "run_tests" ["Running tests" "Ran tests" "Tests failed"]
+   "lint_code" ["Linting" "Linted" "Lint failed"]
+   "format_code" ["Formatting" "Formatted" "Format failed"]
+   "repl_eval" ["Evaluating" "Evaluated" "Eval failed"]
+   ;; What a code block did to the tree with its own hands. The change is already past
+   ;; when it is reported, and its head says how much of the tree moved at once.
+   "change" ["Changing" "Changed" "Change failed"]
+   "mkdir" ["Creating" "Created" "Create failed"]
+   "write" ["Writing" "Wrote" "Write failed"]
+   "copy" ["Copying" "Copied" "Copy failed"]
+   "move" ["Moving" "Moved" "Move failed"]
+   "link" ["Linking" "Linked" "Link failed"]
+   "delete" ["Deleting" "Deleted" "Delete failed"]})
+
+(defn- activity-step-lead
+  "The step's own sentence opener: a verb the reader knows, or the operation's bare id
+   when the engine grew a call this table has not been taught yet."
+  ^String [row]
+  (let [operation
+        (str/trim (str (:operation row)))
+
+        verb
+        (get activity-verbs (str/lower-case operation))]
+
+    (if verb
+      (nth verb
+           (case (activity-row-state row)
+             :failed
+             2
+
+             :succeeded
+             1
+
+             0))
+      operation)))
+
 (defn- activity-row-tail
+  "How long the step took, or the `...` the web prints while it is still counting: this
+   wire carries no elapsed time for a call in flight, and an empty column reads as a
+   number that went missing rather than one not taken yet."
   [{:keys [duration-ms] :as row}]
-  (if (= :running (activity-row-state row))
-    "live"
-    (when (pos? (long (or duration-ms 0))) (vis/format-duration duration-ms))))
+  (if (pos? (long (or duration-ms 0)))
+    (vis/format-duration duration-ms)
+    (when (= :running (activity-row-state row)) "…")))
 
 (defn- activity-state-word
   "The execution word for a form's Activity. The form's OWN verdict wins; before it
@@ -5365,6 +5437,22 @@
    in; the rest are one press away, behind the same fold the paths already carry."
   4)
 
+(def ^:private activity-error-lines
+  "THREE LINES OF THE MACHINE'S OWN WORDS, then a count.
+
+   The first line says what went wrong; the rest is the machine repeating itself, and
+   forty lines of it pasted into a chronology is how an axis stops being readable. The
+   whole of it is in the raw result the invocation row already opens. The web clamps at
+   the same three in `ERROR_PREVIEW_LINES`."
+  3)
+
+(defn- activity-counts-visible-files?
+  "True when a step's own summary only counts the paths already listed under it: `4 files`
+   printed over four visible paths counts a list the eye is already on."
+  [summary ^long shown]
+  (boolean (and (pos? shown)
+                (when-let [match (re-matches #"(\d+) files?" (str/trim (str summary)))]
+                  (= shown (parse-long (second match)))))))
 (defn- activity-text-col
   "Column the words of a row at `depth` start in, counted from the paper's edge. The
    margin, the rail, the tick, the mark and one gap fill the columns before them at
@@ -5495,7 +5583,7 @@
    paths the `+N more files` count folds away. One key per fold, because a step that
    changed eleven files behind a single chevron made the reader find a file by reading
    a header out of the diff."
-  [{:keys [node-id activity-rows activity-expanded?]} max-w session-id]
+  [{:keys [node-id activity-rows activity-expanded? activity-omitted]} max-w session-id]
   (let [rows
         (vec activity-rows)
 
@@ -5513,19 +5601,6 @@
 
         focused-row
         (some #(when (= focused-id (:id %)) %) rows)
-
-        operation-w
-        ;; The column is sized over the whole PAINTED tree: a child's verb is in the same
-        ;; column as its parent's, just indented, so measuring only the heads truncated
-        ;; `DELETED` to fit a shorter head above it.
-        (min 18
-             (max 5
-                  (reduce max
-                          0
-                          (map #(p/display-width (str/upper-case (str (:operation %))))
-                               (mapcat (fn [row]
-                                         (cons row (:children row)))
-                                       rows)))))
 
         failures
         (count (filter #(= :failed (activity-row-state %)) rows))
@@ -5689,164 +5764,193 @@
                     (when open? (diff-entries row-id (first diffs) col))))
             (file-entries row-id resources diffs col)))
 
+        error-entries
+        ;; A failed step says WHY once, in the machine's own words, on the error paper the
+        ;; transcript already uses for a removed line. No head and no pill: the row above
+        ;; already said which operation failed and on what.
+        (fn [row-id evidence ^long col]
+          (let [lead
+                (activity-lead col)
+
+                lines
+                (str/split-lines (str (:text evidence)))
+
+                shown
+                (vec (take activity-error-lines lines))
+
+                hidden
+                (max 0 (- (count lines) (count shown)))
+
+                band-w
+                (max 1 (- width col))
+
+                band-row
+                (fn [text]
+                  {:line (str activity-marker (ellipsize-cols (str lead text) width))
+                   :meta (merge meta-base
+                                {:kind :activity-diff
+                                 :item-id row-id
+                                 :band-col col
+                                 :band-text (ellipsize-cols text band-w)
+                                 :diff-kind :del})})]
+
+            (into (mapv #(band-row (if (str/blank? %) " " %)) shown)
+                  (when (pos? hidden) [(band-row (str "+" hidden " more lines"))]))))
+
         row-entry
-        (fn row-entry ([row] (row-entry row 0)) ([{:keys [id operation error-summary result-summary
+        (fn row-entry ([row] (row-entry row 0)) ([{:keys [id error-summary result-summary
                                                           result-format summary children]
-                                                   :as row} depth] (let
-                                                                     [col
-                                                                      (activity-text-col depth)
+                                                   :as row} depth]
+                                                 (let [col
+                                                       (activity-text-col depth)
 
-                                                                      operation-label
-                                                                      (ellipsize-cols
-                                                                        (str/upper-case
-                                                                          (str operation))
-                                                                        operation-w)
+                                                       state
+                                                       (activity-row-state row)
 
-                                                                      operation-cell
-                                                                      (p/pad-right operation-label
-                                                                                   operation-w)
+                                                       ;; A GROUP'S PATHS BELONG TO ITS CHANGES, not to the group as well: the head
+                                                       ;; carries every child's resource, so painting them here and again under each
+                                                       ;; child is the same twelve paths printed twice.
+                                                       resources
+                                                       (filterv #(not= (str (:id %)) (str summary))
+                                                         (:resources row))
 
-                                                                      row-summary
-                                                                      (activity-row-summary row)
+                                                       lead-word
+                                                       (activity-step-lead row)
 
-                                                                      delta
-                                                                      (let [{:keys [additions
-                                                                                    deletions]}
-                                                                            (activity-step-delta
-                                                                              row)]
-                                                                        (when (pos?
-                                                                                (+ (long additions)
-                                                                                   (long
-                                                                                     deletions)))
-                                                                          (str "  +" additions
-                                                                               " -" deletions)))
+                                                       ;; A step's own `4 files` over four visible paths counts a list the eye is
+                                                       ;; already on, so the count gives way to the paths themselves.
+                                                       object
+                                                       (when-not (activity-counts-visible-files?
+                                                                   summary
+                                                                   (min (count resources)
+                                                                        activity-files-shown))
+                                                         (activity-step-object row))
 
-                                                                      ;; A step that stands for several changes keeps ONE mark on the rail and
-                                                                      ;; hangs its children under it, sharing that mark's left edge: nested rows
-                                                                      ;; carry no mark of their own, because the indent already says whose they are.
-                                                                      prefix
-                                                                      (str (if (zero? (long depth))
-                                                                             (str
-                                                                               activity-margin
-                                                                               activity-tick
-                                                                               (activity-row-glyph
-                                                                                 row)
-                                                                               " ")
-                                                                             (activity-lead col))
-                                                                           operation-cell
-                                                                           (when row-summary
-                                                                             (str "  " row-summary))
-                                                                           delta)
+                                                       delta
+                                                       (let [{:keys [additions deletions]}
+                                                             (activity-step-delta row)]
+                                                         (when (pos? (+ (long additions)
+                                                                        (long deletions)))
+                                                           (str " +" additions " −" deletions)))
 
-                                                                      line
-                                                                      (first (with-right-suffix
-                                                                               [prefix]
-                                                                               (activity-row-tail
-                                                                                 row)
-                                                                               width))
+                                                       ;; A step that stands for several changes keeps ONE mark on the rail and
+                                                       ;; hangs its children under it, sharing that mark's left edge: nested rows
+                                                       ;; carry no mark of their own, because the indent already says whose they are.
+                                                       prefix
+                                                       (str (if (zero? (long depth))
+                                                              (str activity-margin
+                                                                   activity-tick
+                                                                   (activity-row-glyph row)
+                                                                   " ")
+                                                              (activity-lead col))
+                                                            lead-word
+                                                            (when object (str " " object))
+                                                            delta)
 
-                                                                      detail
-                                                                      (or (not-empty
-                                                                            (str/trim
+                                                       line
+                                                       (first (with-right-suffix [prefix]
+                                                                                 (activity-row-tail
+                                                                                   row)
+                                                                                 width))
+
+                                                       error
+                                                       (first (filter #(= "error"
+                                                                          (activity-evidence-kind
+                                                                            %))
+                                                                      (:evidence row)))
+
+                                                       detail
+                                                       (cond (and (= :failed state) error) nil
+                                                             (= :failed state)
+                                                             (not-empty (str/trim (str
+                                                                                    error-summary)))
+                                                             :else
+                                                             (or (not-empty (str/trim
                                                                               (str error-summary)))
-                                                                          (some->
-                                                                            (not-empty
-                                                                              (str/trim
-                                                                                (str
-                                                                                  result-summary)))
-                                                                            (activity-inline-text
-                                                                              result-format)))
+                                                                 (when-not (= :running state)
+                                                                   (some-> (not-empty
+                                                                             (str/trim
+                                                                               (str
+                                                                                 result-summary)))
+                                                                           (activity-inline-text
+                                                                             result-format)))))
 
-                                                                      open?
-                                                                      (or (expanded? id)
-                                                                          (and (= id focused-id)
-                                                                               (=
-                                                                                 :running
-                                                                                 (activity-row-state
-                                                                                   row))))
+                                                       open?
+                                                       (or (expanded? id)
+                                                           (and (= id focused-id)
+                                                                (= :running state)))
 
-                                                                      head
-                                                                      {:line (str activity-marker
-                                                                                  line)
-                                                                       :meta
-                                                                       (merge
-                                                                         meta-base
-                                                                         {:kind :activity-row
-                                                                          :item-id id
-                                                                          :node-id
-                                                                          (str node-id ":" id)
-                                                                          :collapsed?
-                                                                          (not (expanded? id))
-                                                                          :status-tone
-                                                                          (activity-row-tone row)
-                                                                          :status-glyph
-                                                                          (activity-row-glyph row)
-                                                                          :glyph-col
-                                                                          (when (zero? (long depth))
-                                                                            (+ (long
-                                                                                 (count
-                                                                                   activity-margin))
-                                                                               2))
-                                                                          :operation-col col
-                                                                          :operation-label
-                                                                          operation-label})}
+                                                       head
+                                                       {:line (str activity-marker line)
+                                                        :meta
+                                                        (merge
+                                                          meta-base
+                                                          {:kind :activity-row
+                                                           :item-id id
+                                                           :node-id (str node-id ":" id)
+                                                           :collapsed? (not (expanded? id))
+                                                           :status-tone (activity-row-tone row)
+                                                           :status-glyph (activity-row-glyph row)
+                                                           :glyph-col
+                                                           (when (zero? (long depth))
+                                                             (+ (long (count activity-margin)) 2))
+                                                           :operation-col col
+                                                           :operation-label lead-word})}
 
-                                                                      detail-row
-                                                                      {:line
-                                                                       (str activity-marker
-                                                                            (ellipsize-cols
-                                                                              (str (activity-lead
-                                                                                     (+ col
-                                                                                        operation-w
-                                                                                        2))
-                                                                                   detail)
-                                                                              width))
-                                                                       :meta (merge
-                                                                               meta-base
-                                                                               {:kind
-                                                                                :activity-evidence
-                                                                                :item-id id})}
+                                                       detail-row
+                                                       {:line (str activity-marker
+                                                                   (ellipsize-cols
+                                                                     (str (activity-lead col)
+                                                                          detail)
+                                                                     width))
+                                                        :meta (merge meta-base
+                                                                     {:kind :activity-evidence
+                                                                      :item-id id})}
 
-                                                                      nested
-                                                                      (vec children)
+                                                       nested
+                                                       (vec children)
 
-                                                                      ;; A GROUP'S PATHS BELONG TO ITS CHANGES, not to the group as well: the head
-                                                                      ;; carries every child's resource, so painting them here and again under each
-                                                                      ;; child is the same twelve paths printed twice.
-                                                                      touched
-                                                                      (if (seq nested)
-                                                                        []
-                                                                        (filterv #(not=
-                                                                                    (str (:id %))
-                                                                                    (str summary))
-                                                                          (:resources row)))
+                                                       touched
+                                                       (if (seq nested) [] resources)
 
-                                                                      diffs
-                                                                      (activity-diffs row)]
+                                                       diffs
+                                                       (activity-diffs row)]
 
-                                                                     (cond-> [head]
-                                                                       (and detail open?)
-                                                                       (conj detail-row)
+                                                   (cond-> [head]
+                                                     (and detail open?)
+                                                     (conj detail-row)
 
-                                                                       (and open?
-                                                                            (or (seq touched)
-                                                                                (seq diffs)))
-                                                                       (into (change-entries
-                                                                               id
-                                                                               touched
-                                                                               diffs
-                                                                               col))
+                                                     (and open? (or (seq touched) (seq diffs)))
+                                                     (into (change-entries id touched diffs col))
 
-                                                                       ;; Three levels — step, change, paths — is the whole depth either surface draws.
-                                                                       (and (seq nested)
-                                                                            (zero? (long depth)))
-                                                                       (into (mapcat (fn [child]
-                                                                                       (row-entry
-                                                                                         child
-                                                                                         1))
-                                                                                     nested))))))]
+                                                     (and open? error)
+                                                     (into (error-entries id error col))
 
-    (vec (concat [blank header blank] (mapcat row-entry rows) [blank]))))
+                                                     ;; Three levels - step, change, paths - is the whole depth either surface draws.
+                                                     (and (seq nested) (zero? (long depth)))
+                                                     (into (mapcat (fn [child]
+                                                                     (row-entry child 1))
+                                                                   nested))))))
+
+        ;; The axis can say `+6 more` but never what the six WERE: the engine's own bound
+        ;; dropped them, and a chronology that shows four of ten calls must say so.
+        omitted-entry
+        (when (pos? (long (or activity-omitted 0)))
+          {:line (str activity-marker
+                      (ellipsize-cols
+                        (str activity-margin activity-tick "○ +" activity-omitted " more")
+                        width))
+           :meta (merge meta-base
+                        {:kind :activity-more
+                         :item-id "omitted"
+                         :mark "○"
+                         :label (str "+" activity-omitted " more")
+                         :mark-col (+ (long (count activity-margin)) 2)})})]
+
+    (vec (concat [blank header blank]
+                 (mapcat row-entry rows)
+                 (when omitted-entry [omitted-entry])
+                 [blank]))))
 
 (defn- activity-status-display
   "The stable semantic execution sentence. Paint owns emphasis and state color."
@@ -6162,11 +6266,19 @@
                                       :else (activity-row-tone activity))
                    :elapsed-ms duration-ms
                    :activity-rows (:rows activity)
+                   :activity-omitted (get-in activity [:omitted :rows] 0)
                    :activity-expanded? (fn [item-key]
                                          (detail-expanded? detail-expansions
                                                            session-id
                                                            (str activity-node-id ":" item-key)
-                                                           false))})
+                                                           ;; A STEP IS OPEN, ITS PATCH IS NOT.
+                                                           ;; The web hangs a step's outcome and
+                                                           ;; the paths it touched under it and
+                                                           ;; keeps the diff itself one press
+                                                           ;; away; the `#` keys are those
+                                                           ;; presses, and only they start shut.
+                                                           (not (str/includes? (str item-key)
+                                                                               "#"))))})
 
                 ;; The Python evaluation is the execution even when it produced no
                 ;; detectable host activities. Activity enriches this receipt; it does

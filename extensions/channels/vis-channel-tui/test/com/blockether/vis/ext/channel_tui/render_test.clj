@@ -8,6 +8,7 @@
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.iteration :as iteration]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -4913,7 +4914,7 @@ h = 8"
                  (.indexOf ^String expanded "grep({...})")
                  (.indexOf ^String expanded "18 matches")
                  (.indexOf ^String expanded "ACTIVITY")
-                 (.indexOf ^String expanded "TEST EVIDENCE  companion suite")
+                 (.indexOf ^String expanded "test evidence companion suite")
                  (.indexOf ^String expanded "Done.")))
       (doseq [width [40 52 80 120]]
         (let [lines (str/split-lines (render-row width
@@ -5211,20 +5212,20 @@ h = 8"
           ;; first SHELL row is where the timeline starts.
           [first-row first-line]
           (first (filter (fn [[row line]]
-                           (and (> (long row) (long result-row)) (str/includes? line "SHELL")))
+                           (and (> (long row) (long result-row)) (str/includes? line "Ran ")))
                          (keep-indexed (fn [row line]
-                                         (when (str/includes? line "SHELL") [row line]))
+                                         (when (str/includes? line "Ran ") [row line]))
                                        lines)))
 
           [second-row second-line]
           (first (filter (fn [[row line]]
-                           (and (> (long row) (long first-row)) (str/includes? line "SHELL")))
+                           (and (> (long row) (long first-row)) (str/includes? line "Ran ")))
                          (keep-indexed (fn [row line]
-                                         (when (str/includes? line "SHELL") [row line]))
+                                         (when (str/includes? line "Ran ") [row line]))
                                        lines)))
 
           [tests-row tests-line]
-          (row-with "RUN_TESTS")]
+          (row-with "Ran tests")]
 
       ;; Regression, issue td-794deb: Activity forced RESULT open, removed its toggle,
       ;; lost its top surface pad, and painted the timeline outside the execution box.
@@ -5261,10 +5262,10 @@ h = 8"
                  (get-in frame [second-row 1 :bg])
                  (get-in frame [tests-row 1 :bg]))
               "Activity owns one quiet timeline surface")
-      (expect (str/includes? first-line "cmd: npm test"))
-      (expect (= 1 (count (filter #(str/includes? % "cmd: npm test") lines))))
+      (expect (str/includes? first-line "Ran npm test"))
+      (expect (= 1 (count (filter #(str/includes? % "Ran npm test") lines))))
       (expect (str/includes? second-line "...") "the terminal-width command is ellipsized")
-      (expect (not (str/includes? tests-line "run_tests  run_tests"))
+      (expect (not (str/includes? tests-line "run_tests"))
               "a default detail equal to its operation is omitted")
       (expect (str/ends-with? tests-line "1.4s") "durations align at the right edge"))))
 
@@ -5300,7 +5301,7 @@ h = 8"
                                            :state "succeeded"}]}
                               {:id "child-2"
                                :sequence 4
-                               :operation "deleted"
+                               :operation "delete"
                                :summary "probe_1.json and **/*.tsx"
                                :state "succeeded"
                                :duration-ms 4}]}]}
@@ -5336,19 +5337,19 @@ h = 8"
             (last (filter #(str/includes? % needle) lines)))
 
           parent-line
-          (line-with "CHANGE")
+          (line-with "Changed")
 
           wrote-line
-          (line-with "WRITE")
+          (line-with "Wrote")
 
           deleted-line
-          (line-with "DELETED")]
+          (line-with "Deleted")]
 
       (expect (str/includes? (str parent-line) "2 files")
               "the group head states the amount; its operation states the act")
-      (expect (= (+ 2 (long (.indexOf ^String (str parent-line) "CHANGE")))
-                 (long (.indexOf ^String (str wrote-line) "WRITE"))
-                 (long (.indexOf ^String (str deleted-line) "DELETED")))
+      (expect (= (+ 2 (long (.indexOf ^String (str parent-line) "Changed")))
+                 (long (.indexOf ^String (str wrote-line) "Wrote"))
+                 (long (.indexOf ^String (str deleted-line) "Deleted")))
               "children sit one indent under their cause, on one shared left edge")
       (expect (str/includes? (str wrote-line) "story-data.ts") "a marked code span keeps its text")
       (expect (not (str/includes? (str wrote-line) "`"))
@@ -5369,7 +5370,7 @@ h = 8"
          :omitted {:rows 0}
          :rows [{:id "patch-1"
                  :sequence 1
-                 :operation "patched"
+                 :operation "patch"
                  :summary "5 files"
                  :state "succeeded"
                  :duration-ms 42
@@ -5416,7 +5417,7 @@ h = 8"
         band-lines
         (fn [text]
           (filterv #(and (str/starts-with? % "  ") (contains? #{\│ \├} (nth % 2 nil)))
-                   (str/split-lines text)))
+            (str/split-lines text)))
 
         line-with
         (fn [text needle]
@@ -5431,9 +5432,9 @@ h = 8"
 
           (expect (seq lines) "the expanded receipt paints an Activity band")
           (expect (some #(str/includes? % "ACTIVITY") lines) "the band names itself on the rail")
-          (expect (str/starts-with? (str (line-with text "PATCHED")) "  ├─●")
+          (expect (str/starts-with? (str (line-with text "Patched")) "  ├─●")
                   "a step's mark is JOINED to the rail by a tick, never floating beside it")
-          (expect (= 6 (long (.indexOf ^String (str (line-with text "PATCHED")) "PATCHED")))
+          (expect (= 6 (long (.indexOf ^String (str (line-with text "Patched")) "Patched")))
                   "margin, rail, tick, mark, gap: the verb starts in the seventh column")
           (expect (every? #(str/starts-with? % "  ") lines)
                   "the rail never sits against the paper's edge")
@@ -5445,7 +5446,7 @@ h = 8"
             (render-text {:vis.channel-tui/expand-all-details? true})
 
             head
-            (str (line-with text "PATCHED"))
+            (str (line-with text "Patched"))
 
             patched-path
             (str (line-with text "loop.clj"))
@@ -5459,7 +5460,7 @@ h = 8"
             removed
             (str (line-with text "removed-line"))]
 
-        (expect (str/includes? head "+2 -1")
+        (expect (str/includes? head "+2 −1")
                 "the head sums what every patch under it added and removed")
         (expect (str/includes? patched-path "\u25be") "a path that opens a patch wears a chevron")
         (expect (str/includes? read-path "\u203a")
@@ -5505,7 +5506,42 @@ h = 8"
             lines
             (mapv :line entries)]
 
-        (expect (some #(str/includes? % "PATCHED") lines) "the step itself is always on the page")
+        (expect (some #(str/includes? % "Patched") lines) "the step itself is always on the page")
         (expect (not-any? #(str/includes? % "/w/vis/") lines)
                 "its paths wait behind the step's own fold")
         (expect (not-any? #(str/includes? % "added-line") lines) "and so does the patch")))))
+
+;; Regression, T126: the same step wore different words on the two surfaces - the app said
+;; "Patch refused" where the terminal said "PATCHED" - because each surface kept its own
+;; vocabulary and its own bounds. The table is ONE table; this reads the app's own copy and
+;; fails when either side drifts from it.
+(defdescribe activity-cross-surface-vocabulary-test
+             (let [source
+                   (loop [dir (.getCanonicalFile (io/file (System/getProperty "user.dir")))]
+                     (when dir
+                       (let [f (io/file dir "apps/vis-companion/src/components/ActivityPanel.tsx")]
+                         (if (.isFile f) (slurp f) (recur (.getParentFile dir))))))
+
+                   web-verbs
+                   (into {}
+                         (map (fn [[_ operation running settled failed]]
+                                [operation [running settled failed]]))
+                         (re-seq #"(?m)^ {2}(\w+): \[\"([^\"]+)\", \"([^\"]+)\", \"([^\"]+)\"\],"
+                                 (str (second (re-find #"(?s)const ACTIVITY_VERBS[^{]+\{(.*?)\n\};"
+                                                       (str source))))))
+
+                   web-number
+                   (fn [nm]
+                     (some-> (re-find (re-pattern (str "const " nm " = (\\d+);")) (str source))
+                             second
+                             parse-long))]
+
+               (it "reads the app's own panel beside the terminal's"
+                   (expect (some? source) "the companion panel is in the tree")
+                   (expect (seq web-verbs) "and it still declares its verb table"))
+               (it "wears the same verb for the same operation, in every state it can be read in"
+                   (expect (= web-verbs @#'render/activity-verbs)))
+               (it "shows the same four paths before it starts counting"
+                   (expect (= (web-number "ACTIVITY_FILES_SHOWN") @#'render/activity-files-shown)))
+               (it "keeps the same three lines of a failure's own words"
+                   (expect (= (web-number "ERROR_PREVIEW_LINES") @#'render/activity-error-lines)))))
