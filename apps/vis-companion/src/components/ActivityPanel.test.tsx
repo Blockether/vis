@@ -12,6 +12,7 @@ import {
 } from "./ActivityPanel";
 import activityPanelSource from "./ActivityPanel.tsx?raw";
 import activityFixture from "../lib/activity.fixture.json";
+import { ACTIVITY_TREE_CHANGES } from "../dev/story-data";
 import {
   activityProjectionFromWire,
   type ActivityProjection,
@@ -522,5 +523,73 @@ describe("what the axis does while the work is still moving", () => {
     const tail = screen.getByText("+6 more", { exact: false });
 
     expect(tail.querySelector('span[aria-hidden="true"]')).toBeTruthy();
+  });
+});
+
+// Regression: a code block's own writes entered the chronology as unrelated top-level
+// rows, and every row's words were read literally, so `probe_1.json` could not be marked
+// as code and a group had no head naming the one cause that produced it.
+describe("what a code block changed with its own hands", () => {
+  it("hangs every change under one cause, indented, and stops at three levels", () => {
+    render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
+
+    const chronology = screen.getByLabelText("Invocation chronology");
+    const heads = chronology.querySelectorAll(
+      ':scope > [data-activity-depth="0"]',
+    );
+    const children = chronology.querySelectorAll('[data-activity-depth="1"]');
+
+    expect(heads).toHaveLength(1);
+    expect(heads[0].querySelector("h4")?.textContent).toContain(
+      "Changed 11 files and 2 directories",
+    );
+    expect(children).toHaveLength(5);
+    expect(
+      Array.from(children, (child) => child.querySelector("p")?.textContent),
+    ).toEqual([
+      "Created 2 directories",
+      // A change that carries a diff prints it, and a count already answered by the
+      // paths listed under it is not printed a second time.
+      "Wrote story-data.ts +2 −1",
+      "Copied",
+      "Moved vis/PLAN.md → docs/PLAN.md",
+      "Deleted 6 files",
+    ]);
+    // Three levels, hard stop: the cause, the change, the paths it touched.
+    expect(chronology.querySelector('[data-activity-depth="2"]')).toBeNull();
+  });
+
+  it("says who did it in the head, and marks only what the engine marked", () => {
+    render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
+
+    const head = document.querySelector('[data-activity-depth="0"]');
+    const write = document.querySelectorAll('[data-activity-depth="1"]')[1];
+
+    // The head's own sentence is markdown BECAUSE the engine declared it so: `patch`
+    // and `shell` are the tools it is telling the reader were not involved.
+    expect(head?.querySelector("code")?.textContent).toBe("patch");
+    expect(head?.textContent).toContain(
+      "The code block changed these itself",
+    );
+    expect(head?.textContent).not.toContain("`");
+    // A marked name is code; the row keeps no backtick of its own.
+    expect(write?.querySelector("code")?.textContent).toBe("story-data.ts");
+  });
+
+  it("leaves the paths to the change that touched them", () => {
+    render(<ActivityPanel activity={ACTIVITY_TREE_CHANGES} />);
+
+    const head = document.querySelector('[data-activity-depth="0"]');
+    const deleted = document.querySelectorAll('[data-activity-depth="1"]')[4];
+
+    // The head carries every child's resource on the wire; painting them there AND
+    // under each change is the same paths printed twice.
+    expect(
+      head?.querySelector(':scope > div [data-path]'),
+    ).toBeNull();
+    expect(
+      deleted?.querySelectorAll("[data-path]").length,
+    ).toBe(4);
+    expect(deleted?.textContent).toContain("+2 more files");
   });
 });

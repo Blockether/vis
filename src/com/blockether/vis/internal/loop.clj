@@ -1021,15 +1021,11 @@
    dropped, never guessed into a row."
   [:mkdir :write :copy :move :link :delete])
 
-(def ^:private fs-mutation-verbs
-  "What each confined-FS change is CALLED in Activity, in the past tense it is reported
-   in: the operation already happened when the callback fires."
-  {:mkdir {:verb "created" :plural "directories"}
-   :write {:verb "wrote" :plural "files"}
-   :copy {:verb "copied" :plural "files"}
-   :move {:verb "moved" :plural "files"}
-   :link {:verb "linked" :plural "files"}
-   :delete {:verb "deleted" :plural "files"}})
+(def ^:private fs-mutation-plurals
+  "What a BATCH of one kind is counted in. Only the noun: the verb is the row's own
+   operation, which every surface already prints in its own column, so a label carrying
+   one would say the same word twice on the same line."
+  {:mkdir "directories" :write "files" :copy "files" :move "files" :link "files" :delete "files"})
 
 (defn- path-leaf
   "The last segment of a path, for a row that has room for a name but not a tree."
@@ -1059,13 +1055,22 @@
 
         (if (or (not= a b) (>= n (long depth))) [a b] (recur (inc n)))))))
 
+(defn- code-span
+  "A path or a command as INLINE CODE, which is how the engine hands one to a surface that
+   renders markdown: inside the span a `*` or a `_` in a file name is inert, so no renderer
+   has to guess. A name carrying a backtick of its own cannot be spanned — it answers nil and
+   its row stays plain text."
+  [name]
+  (when-not (str/includes? (str name) "`") (str "`" name "`")))
+
 (defn- fs-mutation-label
-  "One row's words. A single change names its file — and `move`/`copy`/`link`, being
+  "One row's OBJECT, and how it is to be read — never its verb, which is the operation the
+   row already carries. A single change names its file; `move`/`copy`/`link`, being
    two-ended, name where it landed; a batch names its count, because forty paths are not a
-   label."
+   label. Answers `[label format]`, the format `:inline` only when the label carries a span."
   [kind mutations]
-  (let [{:keys [verb plural]}
-        (get fs-mutation-verbs kind)
+  (let [plural
+        (get fs-mutation-plurals kind)
 
         n
         (count mutations)]
@@ -1073,45 +1078,127 @@
     (if (= 1 n)
       (let [{:keys [path to]} (first mutations)]
         (if to
-          (let [[from-name to-name] (two-ended-names path to)]
-            (str verb " " from-name " → " to-name))
-          (str verb " " (path-leaf path))))
-      (str verb " " n " " plural))))
+          (let [[from-name to-name] (two-ended-names path to)
+                spanned (when-let [from-code (code-span from-name)]
+                          (when-let [to-code (code-span to-name)]
+                            (str from-code " → " to-code)))]
+
+            (if spanned [spanned :inline] [(str from-name " → " to-name)]))
+          (let [leaf (path-leaf path)
+                spanned (code-span leaf)]
+
+            (if spanned [spanned :inline] [leaf]))))
+      [(str n " " plural)])))
+
+(defn- fs-change-count-phrase
+  "The group head's OBJECT: how much of the tree one block changed, counted the way the
+   reader sees it — a directory is not a file. The verb is the head's own operation, so
+   this counts and says nothing else."
+  [mutations]
+  (let [say
+        (fn [n one many]
+          (str n " " (if (= 1 (long n)) one many)))
+
+        dirs
+        (count (filter #(= :mkdir (:kind %)) mutations))
+
+        files
+        (- (count mutations) dirs)]
+
+    (cond (zero? files) (say dirs "directory" "directories")
+          (zero? dirs) (say files "file" "files")
+          :else (str (say files "file" "files") " and " (say dirs "directory" "directories")))))
+
+(defn- fs-mutation-diff
+  "What one kind did to file CONTENTS, in the vocabulary `patch` already reports and both
+   surfaces already render: a unified diff plus exact line counts, summed over the group.
+   Only a write and a delete ever carry one — a move, a copy or a link relocates bytes that
+   already existed, so a line delta there would be an invention. Several files are spelled
+   the way a multi-file patch is spelled, one `--- (path)` header each, so ONE evidence
+   renderer serves both producers."
+  [mutations]
+  (let [carried (filterv :lines mutations)]
+    (when (seq carried)
+      (let [totals (reduce (fn [acc {:keys [lines]}]
+                             (-> acc
+                                 (update :added + (long (get lines "added" 0)))
+                                 (update :removed + (long (get lines "removed" 0)))
+                                 (update :modified + (long (get lines "modified" 0)))))
+                           {:added 0 :removed 0 :modified 0}
+                           carried)
+            single (when (= 1 (count carried)) (first carried))
+            text (if single
+                   (:diff single)
+                   (str/join "\n"
+                             (keep (fn [{:keys [path diff]}]
+                                     (when diff (str "--- (" (path-tail path 2) ")\n" diff)))
+                                   carried)))]
+
+        (cond-> {:lines totals}
+          (util/non-blank-string? text)
+          (assoc :diff text)
+
+          single
+          (assoc :target {:resolved (str (:path single))}))))))
 
 (defn- fs-mutation-events
   "Activity lifecycle pairs for what a block changed on disk WITHOUT a tool call —
    `os.replace`, `shutil.copytree`, a plain `open(…, \"w\")`. ONE pair per KIND, so a
    forty-file copy is the row `copied 40 files` and not forty rows; the paths ride as
-   resources, which is what both surfaces list underneath. Already-past tense, so the
-   pair is emitted back-to-back with a zero duration."
+   resources, which is what both surfaces list underneath.
+
+   Every pair from one block carries the SAME group token, because they share a cause: the
+   block itself. Nothing else can reach the confined filesystem — a host tool writes through
+   its own path and never through this one — so the surfaces fold them under one head that
+   says exactly that, and a block that changed one thing still reads as one row.
+
+   Already-past tense, so the pair is emitted back-to-back with a zero duration."
   [ctx mutations]
   (let [by-kind
         (group-by :kind mutations)
 
         now
-        (util/now-ms)]
+        (util/now-ms)
+
+        token
+        (str "fs-mutations-" (random-uuid))
+
+        head
+        {:operation :change
+         :summary (fs-change-count-phrase (filterv (comp (set fs-mutation-kinds) :kind) mutations))
+         :result-summary
+         "The code block changed these itself, with no `patch` or `shell` call in between."
+         :result-format :markdown}]
 
     (into []
-          (mapcat
-            (fn [kind]
-              (when-let [group (seq (get by-kind kind))]
-                (let [invocation (activity-event/invocation ctx nil)
-                      details {:operation (keyword "filesystem" (name kind))
-                               :presenter :generic
-                               :classification :mutation
-                               :label (fs-mutation-label kind group)
-                               :result {:activity/resources (mapv (fn [{:keys [path to]}]
-                                                                    {:type :file
-                                                                     :id (str (or to path))})
-                                                                  group)}}]
+          (mapcat (fn [kind]
+                    (when-let [group (seq (get by-kind kind))]
+                      (let [invocation (activity-event/invocation ctx nil)
+                            [label format] (fs-mutation-label kind group)
+                            diff (fs-mutation-diff group)
+                            details (cond-> {:operation (keyword "filesystem" (name kind))
+                                             :presenter :observation
+                                             :classification :mutation
+                                             :group-token token
+                                             :group-head head
+                                             :label label
+                                             :result {:activity/resources
+                                                      (mapv (fn [{:keys [path to]}]
+                                                              {:type :file :id (str (or to path))})
+                                                            group)}}
+                                      format
+                                      (assoc :summary-format format)
 
-                  [(activity-event/start-event ctx invocation details)
-                   (activity-event/terminal-event ctx
-                                                  invocation
-                                                  (assoc details
-                                                    :started-at-ms now
-                                                    :outcome :succeeded))]))))
-          fs-mutation-kinds)))
+                                      diff
+                                      (assoc :result-envelope {:metadata diff}))]
+
+                        [(activity-event/start-event ctx invocation details)
+                         (activity-event/terminal-event ctx
+                                                        invocation
+                                                        (assoc details
+                                                          :started-at-ms now
+                                                          :outcome :succeeded))])))
+                  fs-mutation-kinds))))
 
 (defn- run-python-code
   "Run an agent code block through the embedded GraalPy sandbox. Wraps the

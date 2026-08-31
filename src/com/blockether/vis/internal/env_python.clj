@@ -1882,6 +1882,24 @@
    how many PATHS a row can name — well past the eight `activity/max-resources` shows."
   512)
 
+(def ^:private max-block-diff-bytes
+  "Rendered diff text retained per block, across every write. One file's hunks are what
+   a reader actually reads; a block that rewrote a tree keeps its line COUNTS — which are
+   exact and cost nothing — and drops the hunks past this point."
+  (* 256 1024))
+
+(defn- retained-mutation
+  "One tree change as the block will keep it. Identical to what the sandbox reported
+   until the block's diff budget is spent, after which the hunks go and the counts stay."
+  [seen mutation]
+  (let [spent (reduce (fn [total change]
+                        (+ (long total) (long (count (str (:diff change))))))
+                      0
+                      (filter :diff seen))]
+    (cond-> mutation
+      (and (:diff mutation)
+           (> (+ spent (long (count (str (:diff mutation))))) (long max-block-diff-bytes)))
+      (dissoc :diff))))
 (defn- ctx-fs-mutations [^Context ctx] (.get ^java.util.Map ctx->fs-mutations ctx))
 
 (defn- ctx-stdout-baos ^java.io.ByteArrayOutputStream [^Context ctx] (.get ctx->stdout ctx))
@@ -2142,7 +2160,7 @@
                             (swap! fs-mutations (fn [seen]
                                                   (cond-> seen
                                                     (< (count seen) (long max-block-fs-mutations))
-                                                    (conj mutation)))))}))
+                                                    (conj (retained-mutation seen mutation))))))}))
 
         io-access
         (if (or roots-fn net?)

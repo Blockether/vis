@@ -312,6 +312,34 @@
         (let [message (try (.close ch) nil (catch java.io.IOException e (ex-message e)))]
           (expect (str/includes? message "[vis:syntax_guard]"))
           (expect (= original (slurp (str target)))))))
+  ;; Regression: an accepted guarded write commits through `atomic-replace!`, which stages
+  ;; the candidate beside its target first. Left behind, that staging file shows up in the
+  ;; user's tree as a stray source file nobody wrote.
+  (it "commits an accepted guarded write in one replace, leaving no staging file behind"
+      (let [root
+            (tmp-root)
+
+            target
+            (p (str root "/direct.clj"))
+
+            _
+            (spit (str target) "(def direct :ok)\n")
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root]))
+
+            ch
+            (.newByteChannel fs
+                             target
+                             #{StandardOpenOption/WRITE StandardOpenOption/TRUNCATE_EXISTING}
+                             (make-array FileAttribute 0))]
+
+        (.write ch (ByteBuffer/wrap (.getBytes "(def direct :done)\n")))
+        (.close ch)
+        (expect (= "(def direct :done)\n" (slurp (str target))))
+        ;; …and the directory holds the target and its neighbour, nothing else.
+        (expect (= ["direct.clj" "inside.txt"] (sort (vec (.list (java.io.File. ^String root))))))))
   (it "does not create a new guarded file when its candidate is broken"
       (let [root
             (tmp-root)
@@ -712,6 +740,93 @@
         (expect
           (denied?
             #(.copy fs (p "/etc/hosts") (p (str root "/stolen.txt")) (make-array CopyOption 0))))))
+  ;; Regression: the interface default refuses ATOMIC_MOVE outright, so a replace over a
+  ;; LIVE file was impossible — both for `os.replace` and for the guarded write's own commit.
+  (it "replaces an EXISTING destination atomically instead of refusing it"
+      (let [root
+            (gated-root)
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root]))
+
+            staged
+            (str root "/staged.txt")
+
+            live
+            (str root "/live.txt")]
+
+        (spit staged "NEW")
+        (spit live "OLD")
+        (.move fs
+               (p staged)
+               (p live)
+               (into-array CopyOption
+                           [StandardCopyOption/ATOMIC_MOVE StandardCopyOption/REPLACE_EXISTING]))
+        (expect (= "NEW" (slurp live)))
+        (expect (not (Files/exists (p staged) (make-array LinkOption 0))))))
+  ;; Regression: only `os.replace` was ever pinned end-to-end, so `os.rename`, `Path.rename`
+  ;; and `shutil.move` stayed refused with "Atomic move not supported".
+  (it
+    "moves from real Python: os.rename, Path.rename, shutil.move, and os.replace over a live file"
+    (let [root
+          (gated-root)
+
+          named
+          (fn [n]
+            (str root "/" n))
+
+          {:keys [python-context python-engine]}
+          (env-python/create-python-context {} (constantly [root]))]
+
+      (spit (named "one.txt") "ONE")
+      (spit (named "two.txt") "TWO")
+      (spit (named "three.txt") "THREE")
+      (spit (named "fresh.txt") "FRESH")
+      (spit (named "live.txt") "OLD")
+      (try
+        (let [result (env-python/run-python-block python-context
+                                                  (str
+                                                    "import os, shutil\n"
+                                                    "from pathlib import Path\n"
+                                                    "os.rename("
+                                                    (pr-str (named "one.txt"))
+                                                    ", "
+                                                    (pr-str (named "one-moved.txt"))
+                                                    ")\n"
+                                                    "Path("
+                                                    (pr-str (named "two.txt"))
+                                                    ").rename("
+                                                    (pr-str (named "two-moved.txt"))
+                                                    ")\n"
+                                                    "shutil.move("
+                                                    (pr-str (named "three.txt"))
+                                                    ", "
+                                                    (pr-str (named "three-moved.txt"))
+                                                    ")\n"
+                                                    "os.replace(" (pr-str (named "fresh.txt"))
+                                                    ", " (pr-str (named "live.txt"))
+                                                    ")\n" "print('moved')"))]
+          (expect (nil? (:error result)))
+          (expect (= "moved\n" (:stdout result)))
+          (expect (= "ONE" (slurp (named "one-moved.txt"))))
+          (expect (= "TWO" (slurp (named "two-moved.txt"))))
+          (expect (= "THREE" (slurp (named "three-moved.txt"))))
+          ;; the replace landed over the live file and took its source with it
+          (expect (= "FRESH" (slurp (named "live.txt"))))
+          (expect (not (Files/exists (p (named "fresh.txt")) (make-array LinkOption 0))))
+          ;; …and each one is ONE move on the wire, never a copy plus a delete
+          (expect (= [[:move (named "one.txt") (named "one-moved.txt")]
+                      [:move (named "two.txt") (named "two-moved.txt")]
+                      [:move (named "three.txt") (named "three-moved.txt")]
+                      [:move (named "fresh.txt") (named "live.txt")]]
+                     (into []
+                           (comp (filter (fn [m]
+                                           (#{:copy :delete :move} (:kind m))))
+                                 (map (juxt :kind :path :to)))
+                           (:fs-mutations result)))))
+        (finally (.close ^Context python-context true)
+                 (.close ^org.graalvm.polyglot.Engine python-engine)))))
   (it "renames from real Python: os.replace no longer raises"
       (let [root
             (gated-root)
@@ -802,6 +917,110 @@
         (.close written)
         (expect (= [:write] (mapv :kind @seen)))
         (expect (= (str root "/written.txt") (:path (first @seen))))))
+  ;; Regression: a write reported its path and nothing else, so Activity could only ever say
+  ;; "wrote 3 files" where a patch row says +7 −3 and shows the hunks.
+  (it
+    "reports WHAT a write changed: rendered hunks and exact line counts"
+    (let [root
+          (gated-root)
+
+          seen
+          (atom [])
+
+          fs
+          (sfs/confined-filesystem (fn []
+                                     [root])
+                                   {:on-mutation (fn [m]
+                                                   (swap! seen conj m))})
+
+          target
+          (str root "/edited.txt")
+
+          _
+          (spit target "alpha\nbeta\ngamma\n")
+
+          ch
+          (.newByteChannel fs
+                           (p target)
+                           #{StandardOpenOption/WRITE StandardOpenOption/TRUNCATE_EXISTING}
+                           (make-array FileAttribute 0))]
+
+      (.write ch (ByteBuffer/wrap (.getBytes "alpha\nBETA\ngamma\ndelta\n" "UTF-8")))
+      (.close ch)
+      (let [m (first @seen)]
+        (expect (= :write (:kind m)))
+        (expect (= {"added" 1 "modified" 1 "removed" 0} (:lines m)))
+        (expect (str/includes? (:diff m) "-beta"))
+        (expect (str/includes? (:diff m) "+BETA"))
+        (expect (str/includes? (:diff m) "+delta")))))
+  (it "counts a NEW file as all additions"
+      (let [root
+            (gated-root)
+
+            seen
+            (atom [])
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root])
+                                     {:on-mutation (fn [m]
+                                                     (swap! seen conj m))})
+
+            ch
+            (.newByteChannel fs
+                             (p (str root "/fresh.txt"))
+                             #{StandardOpenOption/CREATE StandardOpenOption/WRITE}
+                             (make-array FileAttribute 0))]
+
+        (.write ch (ByteBuffer/wrap (.getBytes "one\ntwo\n" "UTF-8")))
+        (.close ch)
+        (expect (= {"added" 2 "modified" 0 "removed" 0} (:lines (first @seen))))
+        (expect (str/includes? (:diff (first @seen)) "+one"))))
+  (it "names the file but carries no hunks for content it cannot read as text"
+      (let [root
+            (gated-root)
+
+            seen
+            (atom [])
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root])
+                                     {:on-mutation (fn [m]
+                                                     (swap! seen conj m))})
+
+            target
+            (str root "/blob.bin")
+
+            ch
+            (.newByteChannel fs
+                             (p target)
+                             #{StandardOpenOption/CREATE StandardOpenOption/WRITE}
+                             (make-array FileAttribute 0))]
+
+        (.write ch (ByteBuffer/wrap (.getBytes "bin\u0000data" "UTF-8")))
+        (.close ch)
+        (expect (= [{:kind :write :path target}] @seen))))
+  (it "reports a delete as the lines it removed"
+      (let [root
+            (gated-root)
+
+            seen
+            (atom [])
+
+            fs
+            (sfs/confined-filesystem (fn []
+                                       [root])
+                                     {:on-mutation (fn [m]
+                                                     (swap! seen conj m))})
+
+            target
+            (str root "/gone.txt")]
+
+        (spit target "one\ntwo\nthree\n")
+        (.delete fs (p target))
+        (expect (= :delete (:kind (first @seen))))
+        (expect (= {"added" 0 "modified" 0 "removed" 3} (:lines (first @seen))))))
   (it "keeps SCRATCH out: a write under the system temp dir is not a tree change"
       (let [seen
             (atom [])

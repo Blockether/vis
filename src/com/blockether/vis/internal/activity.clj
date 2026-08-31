@@ -53,10 +53,14 @@
            :state :running
            :summary (presenter/row-summary event)
            :group-token (:group-token event)
+           :group-head (:group-head event)
            :resources (vec (take event/max-resources (:resources event)))
            :evidence (if-let [argument (:argument-summary event)]
                        [{:kind :arguments :text argument}]
                        [])}
+    (:summary-format event)
+    (assoc :summary-format (:summary-format event))
+
     (:argument-truncated event)
     (assoc :is-truncated true)))
 
@@ -124,10 +128,15 @@
       (:result-summary event)
       (assoc :result-summary (:result-summary event))
 
+      (:result-format event)
+      (assoc :result-format (:result-format event))
+
+      ;; an error head is literal machine text: whatever the row's own words were to be read
+      ;; as, the failure that replaced them is never markdown.
       (:error-summary event)
-      (assoc :error-summary
-        (:error-summary event) :summary
-        (:error-summary event))
+      (-> (assoc :error-summary (:error-summary event)
+                 :summary (:error-summary event))
+          (dissoc :summary-format))
 
       (:result-truncated event)
       (assoc :is-truncated true))))
@@ -233,31 +242,43 @@
   (let [first-row
         (first children)
 
+        head
+        (:group-head first-row)
+
         state
         (grouped-state children)]
 
-    (cond-> {:id (:id first-row)
+    (cond-> {;; A head is a ROW, so it needs an id of its own: borrowing its first child's
+             ;; id put the same id twice in one tree, and a tree with a duplicate id
+             ;; cannot be keyed, expanded or addressed by either surface.
+             :id (str "group-" (or (:group-token first-row) (:id first-row)))
              :sequence (:sequence first-row)
-             :operation (if (= kind :shell)
-                          :shell
-                          :observations)
-             :presenter (if (= kind :shell)
-                          :shell
-                          :observation)
+             :operation (cond (= kind :shell) :shell
+                              ;; A head that names its own act keeps it: "changed 12 files"
+                              ;; is a verb the reader knows, where "observations" is a bucket.
+                              (:operation head) (:operation head)
+                              :else :observations)
+             :presenter (if (= kind :shell) :shell :observation)
              :classification (:classification first-row)
              :state state
              :children (vec children)
-             :resources (vec (take
-                               event/max-resources
-                               (distinct (mapcat :resources children))))
+             :resources (vec (take event/max-resources (distinct (mapcat :resources children))))
              :evidence []
-             :summary (if (= kind :shell)
-                        (:summary first-row)
-                        (str "observations · " (count children) " operations"))
+             :summary (cond (= kind :shell) (:summary first-row)
+                            (:summary head) (:summary head)
+                            :else (str "observations · " (count children) " operations"))
              :duration-ms (reduce (fn [total duration]
                                     (Math/addExact (long total) (long duration)))
-                            0
-                            (keep :duration-ms children))})))
+                                  0
+                                  (keep :duration-ms children))}
+      (:summary-format head)
+      (assoc :summary-format (:summary-format head))
+
+      (:result-summary head)
+      (assoc :result-summary (:result-summary head))
+
+      (:result-format head)
+      (assoc :result-format (:result-format head)))))
 
 (defn- coalesce-shell-rows
   [rows]
@@ -367,7 +388,8 @@
 
 (defn- presentation-row
   [{:keys [id sequence operation presenter classification state summary group-token resources
-           duration-ms result-summary error-summary evidence children is-truncated]}]
+           duration-ms result-summary error-summary evidence children is-truncated summary-format
+           result-format]}]
   (cond-> {:id (str id)
            :sequence (long sequence)
            :operation (enum-name operation)
@@ -380,11 +402,17 @@
     group-token
     (assoc :group-token (str group-token))
 
+    summary-format
+    (assoc :summary-format (enum-name summary-format))
+
     duration-ms
     (assoc :duration-ms (long duration-ms))
 
     result-summary
     (assoc :result-summary (str result-summary))
+
+    result-format
+    (assoc :result-format (enum-name result-format))
 
     error-summary
     (assoc :error-summary (str error-summary))

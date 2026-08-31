@@ -26,6 +26,7 @@
 
    Empty/zero roots ⇒ DENY everything (fail closed)."
   (:require [clojure.string :as str]
+            [com.blockether.vis.internal.foundation.editing.diff :as diff]
             [com.blockether.vis.internal.foundation.editing.parse :as parse])
   (:import [org.graalvm.polyglot.io FileSystem]
            [java.io IOException]
@@ -205,6 +206,49 @@
               (into-array java.nio.file.CopyOption
                           [StandardCopyOption/ATOMIC_MOVE StandardCopyOption/REPLACE_EXISTING])))
 
+(def ^:private ^:const max-capture-bytes
+  "Per-file ceiling on the text a change is diffed from. Past it the row still names
+   the file and still counts, it just carries no hunks."
+  (* 256 1024))
+
+(defn- capture-text
+  "One side of a change, as text, for the moment it can still be had.
+
+   Answers `[known? text]`, and the difference matters: `[true nil]` is a file that
+   is simply NOT THERE (so the other side is a creation or a deletion), while
+   `[false nil]` is a file that IS there but is too large or is not text. Only two
+   KNOWN sides may be compared — otherwise a binary rewrite would read as the whole
+   file being deleted."
+  [^Path p]
+  (try (if (Files/exists p no-link-opts)
+         (if (and (Files/isRegularFile p no-link-opts) (<= (Files/size p) (long max-capture-bytes)))
+           (let [text (Files/readString p StandardCharsets/UTF_8)]
+             (if (str/includes? text "\u0000") [false nil] [true text]))
+           [false nil])
+         [true nil])
+       (catch Throwable _ [false nil])))
+
+(defn- content-change
+  "What a change did to ONE file's CONTENTS, in the vocabulary `patch` already
+   reports: `:diff` for rendered hunks and `:lines` for exact counts. Nil when there
+   is nothing to say — nothing changed, or a side could not be captured — and the row
+   then names the file and stops.
+
+   Only a write and a delete reach here. A move, a copy or a link relocates bytes that
+   already existed, so no file's contents changed and a line delta there would be an
+   invention."
+  [[before-known? before] [after-known? after]]
+  (when (and before-known? after-known?)
+    (let [counts
+          (diff/line-change-counts before after)
+
+          text
+          (diff/unified-diff-text before after)]
+
+      (when counts
+        (cond-> {:lines counts}
+          text
+          (assoc :diff text))))))
 (def ^:private max-reported-syntax-errors
   "Parse locations a refusal names before the rest become a bare count. The
    first error is usually the cause and the rest its wreckage, so five say what
@@ -428,7 +472,9 @@ No candidate bytes were committed; the previous file state was left unchanged. "
 
    `:on-mutation` (optional) receives `{:kind :write|:move|:copy|:delete|:mkdir|:link
    :path <string> :to <string>?}` AFTER the sandbox changed the tree, so what a block did
-   to disk can become Activity rows. Scratch is not the tree: anything under the outbox or
+   to disk can become Activity rows. A write and a delete also carry `:diff` (rendered
+   hunks) and `:lines` (`added`/`removed`/`modified`), the SAME pair `patch` reports —
+   see `content-change`. Scratch is not the tree: anything under the outbox or
    a system temp root is excluded, and so are metadata-only edits (`setAttribute`, i.e.
    chmod/utime) — this reports what moved bytes. Best-effort, and its own failure never
    reaches the sandbox."
@@ -467,18 +513,24 @@ No candidate bytes were committed; the previous file state was left unchanged. "
                 (catch Throwable _ false)))
 
          mutated!
-         (fn mutated! ([kind ^Path p] (mutated! kind p nil)) ([kind ^Path p ^Path to]
-                                                              (when (and on-mutation (not (scratch?
-                                                                                            (or to
-                                                                                              p))))
-                                                                (try (on-mutation (cond-> {:kind
-                                                                                           kind
-                                                                                           :path
-                                                                                           (str p)}
-                                                                                    to
-                                                                                    (assoc :to
-                                                                                      (str to))))
-                                                                  (catch Throwable _ nil)))))
+         (fn mutated! ([kind ^Path p] (mutated! kind p nil nil)) ([kind ^Path p ^Path to] (mutated!
+                                                                                            kind p
+                                                                                            to nil))
+           ([kind ^Path p ^Path to detail-fn]
+            ;; `detail-fn` is a THUNK so the cost of reading a file back only lands on
+            ;; a change that is actually reported — never on scratch, never with no
+            ;; listener attached.
+            (when (and on-mutation (not (scratch? (or to p)))) (try (on-mutation (cond-> {:kind kind
+                                                                                          :path
+                                                                                          (str p)}
+                                                                                   to
+                                                                                   (assoc :to
+                                                                                     (str to))
+
+                                                                                   detail-fn
+                                                                                   (merge
+                                                                                     (detail-fn))))
+                                                                 (catch Throwable _ nil)))))
 
          confined
          (proxy [FileSystem] []
@@ -495,19 +547,31 @@ No candidate bytes were committed; the previous file state was left unchanged. "
            (checkAccess [p modes opts] (.checkAccess d (c "file-read" p) modes opts))
            (readAttributes [p attrs opts] (.readAttributes d (c "file-read" p) attrs opts))
            (newByteChannel [p opts attrs]
-             (let [^Path cp
-                   (c (if (write-opts? opts) "file-write" "file-read") p)
+             (let [write?
+                   (boolean (write-opts? opts))
+
+                   ^Path cp
+                   (c (if write? "file-write" "file-read") p)
+
+                   ;; The BEFORE side, taken while it still exists: a plain
+                   ;; `open(path, "w")` is an edit with two texts exactly as an anchored
+                   ;; patch is, and this is the only moment the old one can be had.
+                   before
+                   (when (and write? on-mutation) (capture-text cp))
 
                    close-fn
-                   (when (write-opts? opts)
+                   (when write?
                      (let [tap? (boolean (and on-close (scratch? cp)))]
                        (when (or tap? on-mutation)
                          (fn [^Path written]
                            (when tap? (on-close written))
-                           (mutated! :write written)))))
+                           (mutated! :write
+                                     written
+                                     nil
+                                     #(content-change before (capture-text written)))))))
 
                    lang
-                   (when (write-opts? opts) (parse/guarded-language (str cp)))]
+                   (when write? (parse/guarded-language (str cp)))]
 
                (if lang
                  (guarded-write-channel d cp opts lang close-fn on-rejection)
@@ -519,9 +583,14 @@ No candidate bytes were committed; the previous file state was left unchanged. "
                (.createDirectory d cd attrs)
                (mutated! :mkdir cd)))
            (delete [p]
-             (let [^Path cp (c "file-write" p)]
+             (let [^Path cp
+                   (c "file-write" p)
+
+                   before
+                   (when on-mutation (capture-text cp))]
+
                (.delete d cp)
-               (mutated! :delete cp)))
+               (mutated! :delete cp nil #(content-change before [true nil]))))
            ;; move/copy live in the OUTER proxy — the composite below never routes them here.
            ;;
            ;; GraalPy 25.1.3 never delivers `os.link`'s DESTINATION to a filesystem: its

@@ -309,41 +309,44 @@
                      :is-redacted (boolean (some :is-redacted kept)))))
           (recur (update evidence :text bounded-text max-summary-bytes)))))))
 
-(defn- patch-diff-evidence
-  [{:keys [presenter result-envelope]}]
-  (when (= :patch (presenter/presenter-for nil presenter))
-    (let [metadata
-          (map-value result-envelope :metadata)
+(defn- result-diff-evidence
+  "The diff a row SHOWS, for ANY result envelope carrying one. `patch` reports its edit as
+   `:metadata {:diff … :lines … :target …}`, and a code block's own tree changes now report
+   the identical keys, so both arrive as the same evidence through the same renderer: a
+   producer earns a diff by carrying that vocabulary, never by being a particular tool."
+  [{:keys [result-envelope]}]
+  (let [metadata
+        (map-value result-envelope :metadata)
 
-          source
-          (map-value metadata :diff)]
+        source
+        (map-value metadata :diff)]
 
-      (when (util/non-blank-string? source)
-        (let [{:keys [lines omitted-lines]}
-              (bounded-diff-lines source)
+    (when (util/non-blank-string? source)
+      (let [{:keys [lines omitted-lines]}
+            (bounded-diff-lines source)
 
-              counts
-              (map-value metadata :lines)
+            counts
+            (map-value metadata :lines)
 
-              target
-              (map-value metadata :target)
+            target
+            (map-value metadata :target)
 
-              path
-              (or (map-value target :resolved) (map-value target :requested))
+            path
+            (or (map-value target :resolved) (map-value target :requested))
 
-              upstream-truncated?
-              (some #(and (= :context (:kind %)) (str/includes? (:text %) "omitted")) lines)]
+            upstream-truncated?
+            (some #(and (= :context (:kind %)) (str/includes? (:text %) "omitted")) lines)]
 
-          (fit-diff-evidence {:kind :diff
-                              :text (str (or path "patch"))
-                              :lines lines
-                              :additions (long (or (map-value counts :added) 0))
-                              :deletions (long (or (map-value counts :removed) 0))
-                              :modifications (long (or (map-value counts :modified) 0))
-                              :omitted-lines (long omitted-lines)
-                              :is-truncated (boolean (or (pos? (long omitted-lines))
-                                                         upstream-truncated?))
-                              :is-redacted (boolean (some :is-redacted lines))}))))))
+        (fit-diff-evidence {:kind :diff
+                            :text (str (or path "diff"))
+                            :lines lines
+                            :additions (long (or (map-value counts :added) 0))
+                            :deletions (long (or (map-value counts :removed) 0))
+                            :modifications (long (or (map-value counts :modified) 0))
+                            :omitted-lines (long omitted-lines)
+                            :is-truncated (boolean (or (pos? (long omitted-lines))
+                                                       upstream-truncated?))
+                            :is-redacted (boolean (some :is-redacted lines))})))))
 
 (defn- explicit-group-token
   [value]
@@ -420,7 +423,8 @@
 
 (defn start-event
   [ctx invocation
-   {:keys [operation presenter extension symbol label phrase args classification group-token]
+   {:keys [operation presenter extension symbol label phrase args classification group-token
+           group-head summary-format]
     :as details}]
   (let [refs
         (resource-refs details)
@@ -463,6 +467,12 @@
         token
         (assoc :group-token (bounded-text token max-summary-bytes))
 
+        group-head
+        (assoc :group-head group-head)
+
+        summary-format
+        (assoc :summary-format summary-format)
+
         refs
         (assoc :resources refs)
 
@@ -471,7 +481,8 @@
 
 (defn terminal-event
   [ctx invocation
-   {:keys [operation presenter started-at-ms outcome result error classification group-token]
+   {:keys [operation presenter started-at-ms outcome result error classification group-token
+           result-format]
     :as details}]
   (let [duration
         (max 0 (- (util/now-ms) (long started-at-ms)))
@@ -500,7 +511,7 @@
                             max-detail-bytes))
 
         diff-evidence
-        (when (= outcome :succeeded) (patch-diff-evidence details))]
+        (when (= outcome :succeeded) (result-diff-evidence details))]
 
     (checked
       (cond-> (merge (base-event ctx invocation operation presenter :terminal)
@@ -526,6 +537,9 @@
 
         token
         (assoc :group-token (bounded-text token max-summary-bytes))
+
+        result-format
+        (assoc :result-format result-format)
 
         refs
         (assoc :resources refs)

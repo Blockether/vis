@@ -5083,10 +5083,21 @@
                      body-rows
                      (when-not (seq body-rows) [{:line (str result-marker "") :meta nil}])))))))
 
+(defn- activity-inline-text
+  "Row text the engine MARKED as markdown, lifted through the IR walker so a code span or an
+   emphasis paints as itself. Unmarked text stays literal — a path, a command or a glob in a
+   plain row must never be re-read as markup, which is why the format is declared per field
+   and never guessed from the characters."
+  [text format]
+  (let [text (str text)]
+    (if (contains? #{"inline" "markdown"} (str/trim (str format)))
+      (layout/ast->inline-sentinel-string (vis/markdown->ast text))
+      text)))
+
 (defn- activity-row-summary
   "Keep invocation detail only when it adds information beyond the operation name.
    Legacy shell spawn summaries are command evidence, never a live-tense status."
-  [{:keys [operation summary]}]
+  [{:keys [operation summary summary-format]}]
   (let [operation
         (str/trim (str operation))
 
@@ -5100,7 +5111,7 @@
 
     (when (and (not (str/blank? summary))
                (not= (str/lower-case operation) (str/lower-case summary)))
-      summary)))
+      (activity-inline-text summary summary-format))))
 
 (defn- activity-row-state
   [{:keys [state]}]
@@ -5248,10 +5259,17 @@
         (set activity-evidence)
 
         operation-w
+        ;; The column is sized over the whole PAINTED tree: a child's verb is in the same
+        ;; column as its parent's, just indented, so measuring only the heads truncated
+        ;; `DELETED` to fit a shorter head above it.
         (min 18
-             (max
-               5
-               (reduce max 0 (map #(p/display-width (str/upper-case (str (:operation %)))) rows))))
+             (max 5
+                  (reduce max
+                          0
+                          (map #(p/display-width (str/upper-case (str (:operation %))))
+                               (mapcat (fn [row]
+                                         (cons row (:children row)))
+                                       rows)))))
 
         failures
         (count (filter #(= :failed (activity-row-state %)) rows))
@@ -5279,56 +5297,124 @@
         {:line (str activity-marker "") :meta nil}
 
         row-entry
-        (fn [{:keys [id operation error-summary result-summary] :as row}]
-          (let [operation-label
-                (ellipsize-cols (str/upper-case (str operation)) operation-w)
+        (fn row-entry ([row] (row-entry row 0)) ([{:keys [id operation error-summary result-summary
+                                                          result-format children]
+                                                   :as row} depth] (let [indent-cols
+                                                                         (* 2 (long depth))
 
-                operation-cell
-                (p/pad-right operation-label operation-w)
+                                                                         operation-label
+                                                                         (ellipsize-cols
+                                                                           (str/upper-case
+                                                                             (str operation))
+                                                                           operation-w)
 
-                summary
-                (activity-row-summary row)
+                                                                         operation-cell
+                                                                         (p/pad-right
+                                                                           operation-label
+                                                                           operation-w)
 
-                prefix
-                (str "    "
-                     (activity-row-glyph row)
-                     "  "
-                     operation-cell
-                     (when summary (str "  " summary)))
+                                                                         summary
+                                                                         (activity-row-summary row)
 
-                line
-                (first (with-right-suffix [prefix] (activity-row-tail row) (max 1 (long max-w))))
+                                                                         prefix
+                                                                         (str
+                                                                           "    "
+                                                                           (repeat-str \space
+                                                                                       indent-cols)
+                                                                           (activity-row-glyph row)
+                                                                           "  "
+                                                                           operation-cell
+                                                                           (when summary
+                                                                             (str "  " summary)))
 
-                detail
-                (or (not-empty (str/trim (str error-summary)))
-                    (not-empty (str/trim (str result-summary))))
+                                                                         line
+                                                                         (first
+                                                                           (with-right-suffix
+                                                                             [prefix]
+                                                                             (activity-row-tail row)
+                                                                             (max 1 (long max-w))))
 
-                show-detail?
-                (and detail
-                     (or (contains? evidence id)
-                         (and (= id focused-id) (= :running (activity-row-state row)))))
+                                                                         detail
+                                                                         (or
+                                                                           (not-empty
+                                                                             (str/trim
+                                                                               (str error-summary)))
+                                                                           (some->
+                                                                             (not-empty
+                                                                               (str/trim
+                                                                                 (str
+                                                                                   result-summary)))
+                                                                             (activity-inline-text
+                                                                               result-format)))
 
-                head
-                {:line (str activity-marker line)
-                 :meta (merge meta-base
-                              {:kind :activity-row
-                               :item-id id
-                               :node-id (str node-id ":" id)
-                               :collapsed? (not (contains? evidence id))
-                               :status-tone (activity-row-tone row)
-                               :status-glyph (activity-row-glyph row)
-                               :operation-col 7
-                               :operation-label operation-label})}
+                                                                         show-detail?
+                                                                         (and
+                                                                           detail
+                                                                           (or
+                                                                             (contains? evidence id)
+                                                                             (and
+                                                                               (= id focused-id)
+                                                                               (=
+                                                                                 :running
+                                                                                 (activity-row-state
+                                                                                   row)))))
 
-                detail-row
-                {:line (str activity-marker
-                            (ellipsize-cols (str (repeat-str \space (+ 7 operation-w 2)) detail)
-                                            (max 1 (long max-w))))
-                 :meta (merge meta-base {:kind :activity-evidence :item-id id})}]
+                                                                         head
+                                                                         {:line (str activity-marker
+                                                                                     line)
+                                                                          :meta
+                                                                          (merge
+                                                                            meta-base
+                                                                            {:kind :activity-row
+                                                                             :item-id id
+                                                                             :node-id
+                                                                             (str node-id ":" id)
+                                                                             :collapsed?
+                                                                             (not (contains?
+                                                                                    evidence
+                                                                                    id))
+                                                                             :status-tone
+                                                                             (activity-row-tone row)
+                                                                             :status-glyph
+                                                                             (activity-row-glyph
+                                                                               row)
+                                                                             :operation-col
+                                                                             (+ 7 indent-cols)
+                                                                             :operation-label
+                                                                             operation-label})}
 
-            (cond-> [head]
-              show-detail?
-              (conj detail-row))))]
+                                                                         detail-row
+                                                                         {:line
+                                                                          (str
+                                                                            activity-marker
+                                                                            (ellipsize-cols
+                                                                              (str (repeat-str
+                                                                                     \space
+                                                                                     (+ 7
+                                                                                        indent-cols
+                                                                                        operation-w
+                                                                                        2))
+                                                                                   detail)
+                                                                              (max 1 (long max-w))))
+                                                                          :meta
+                                                                          (merge meta-base
+                                                                                 {:kind
+                                                                                  :activity-evidence
+                                                                                  :item-id id})}]
+
+                                                                     (cond-> [head]
+                                                                       show-detail?
+                                                                       (conj detail-row)
+
+                                                                       ;; A group's children ARE its detail: one indent, then stop. Three levels —
+                                                                       ;; step, change, paths — is the whole depth either surface draws.
+                                                                       (and (seq children)
+                                                                            (zero? (long depth)))
+                                                                       (into (mapcat (fn [child]
+                                                                                       (row-entry
+                                                                                         child
+                                                                                         1))
+                                                                                     children))))))]
 
     (vec (concat [blank header blank] (mapcat row-entry rows) [blank]))))
 

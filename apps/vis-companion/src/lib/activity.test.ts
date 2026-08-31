@@ -102,4 +102,26 @@ describe("one form's Activity read off the wire", () => {
       }),
     ).toBeNull();
   });
+
+
+  it('carries a per-field text format and refuses one it does not know', () => {
+    const projection = activityProjection();
+    const row = projection.rows[0];
+    const marked = {
+      ...projection,
+      rows: [{ ...row, summary_format: 'inline', result_summary: 'wrote `a.clj`', result_format: 'markdown' }],
+    };
+
+    expect(activityProjectionFromWire(marked)?.rows[0].summary_format).toBe('inline');
+    expect(activityProjectionFromWire(marked)?.rows[0].result_format).toBe('markdown');
+    // A row with no flag stays plain text; the app never guesses a format.
+    expect(activityProjectionFromWire(projection)?.rows[0].summary_format).toBeUndefined();
+    expect(
+      activityProjectionFromWire({ ...projection, rows: [{ ...row, summary_format: 'html' }] }),
+    ).toBeNull();
+    expect(
+      activityProjectionFromWire({ ...projection, rows: [{ ...row, result_format: true }] }),
+    ).toBeNull();
+  });
+
 });

@@ -5264,3 +5264,93 @@ h = 8"
       (expect (not (str/includes? tests-line "run_tests  run_tests"))
               "a default detail equal to its operation is omitted")
       (expect (str/ends-with? tests-line "1.4s") "durations align at the right edge"))))
+
+;; Regression: a filesystem mutation entered Activity as its own unrelated top-level row and
+;; every summary was read literally, so a grouped change lost its cause and text the engine
+;; had MARKED as markdown painted its own backticks.
+(defdescribe
+  activity-grouped-children-test
+  (it
+    "indents a group's children under it, stops at three levels, and lifts only marked text"
+    (render/invalidate-cache!)
+    (let [activity
+          {:state "succeeded"
+           :counts {:running 0 :succeeded 3 :failed 0 :cancelled 0}
+           :omitted {:rows 0}
+           :rows [{:id "group-1"
+                   :sequence 1
+                   :operation "change"
+                   :summary "2 files"
+                   :state "succeeded"
+                   :duration-ms 31
+                   :children [{:id "child-1"
+                               :sequence 2
+                               :operation "write"
+                               :summary "`story-data.ts`"
+                               :summary-format "inline"
+                               :state "succeeded"
+                               :duration-ms 12
+                               :children [{:id "grandchild-1"
+                                           :sequence 3
+                                           :operation "write"
+                                           :summary "buried-fourth-level"
+                                           :state "succeeded"}]}
+                              {:id "child-2"
+                               :sequence 4
+                               :operation "deleted"
+                               :summary "probe_1.json and **/*.tsx"
+                               :state "succeeded"
+                               :duration-ms 4}]}]}
+
+          trace
+          [{:forms [{:code "Path('story-data.ts').write_text(src)"
+                     :stdout ""
+                     :result-kind :none
+                     :duration-ms 31
+                     :silent? false
+                     :success? true
+                     :activity activity}]}]
+
+          text
+          (-> (render/format-answer-with-thinking-data*
+                "Done."
+                trace
+                100
+                {:show-thinking true :show-iterations true}
+                nil
+                false
+                {:session-id "s1" :detail-expansions {:vis.channel-tui/expand-all-details? true}})
+              :text
+              strip-ansi
+              strip-sentinels)
+
+          lines
+          (str/split-lines text)
+
+          line-with
+          ;; The collapsed verdict names the same operation, so the TIMELINE row is the last match.
+          (fn [needle]
+            (last (filter #(str/includes? % needle) lines)))
+
+          parent-line
+          (line-with "CHANGE")
+
+          wrote-line
+          (line-with "WRITE")
+
+          deleted-line
+          (line-with "DELETED")]
+
+      (expect (str/includes? (str parent-line) "2 files")
+              "the group head states the amount; its operation states the act")
+      (expect (= (+ 2 (long (.indexOf ^String (str parent-line) "CHANGE")))
+                 (long (.indexOf ^String (str wrote-line) "WRITE"))
+                 (long (.indexOf ^String (str deleted-line) "DELETED")))
+              "children sit one indent under their cause, on one shared left edge")
+      (expect (str/includes? (str wrote-line) "story-data.ts") "a marked code span keeps its text")
+      (expect (not (str/includes? (str wrote-line) "`"))
+              "a marked code span paints as code, never as its own backticks")
+      (expect (str/includes? (str deleted-line) "probe_1.json and **/*.tsx")
+              "unmarked text stays literal: a glob is not emphasis")
+      (expect (not (str/includes? text "buried-fourth-level"))
+              "the tree stops at three levels: step, change, paths"))))

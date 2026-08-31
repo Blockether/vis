@@ -21,6 +21,7 @@
             [com.blockether.fff :as fff]
             [com.blockether.vis.internal.foundation.mpl-capture :as mpl-capture]
             [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.foundation.editing.diff :as diff]
             [com.blockether.vis.internal.foundation.editing.escapes :as escapes]
             [com.blockether.vis.internal.foundation.editing.hashline :as hashline]
             [com.blockether.vis.internal.config :as config]
@@ -2120,7 +2121,7 @@
                         (mapv :text))))))
   (it "patch diff stays compact for large files"
       (let [diff-fn
-            (private-fn "unified-diff-text")
+            diff/unified-diff-text
 
             before
             (string/join "\n" (map #(str "line-" %) (range 1500)))
@@ -2144,7 +2145,7 @@
         (expect (not (string/includes? out "+++ after")))))
   (it "patch diff keeps real hunks for a huge file with scattered edits"
       (let [diff-fn
-            (private-fn "unified-diff-text")
+            diff/unified-diff-text
 
             base
             (mapv #(str "line-" %) (range 8000))
@@ -2172,7 +2173,7 @@
         (expect (not (string/includes? out "unchanged line(s) before")))))
   (it "patch diff bounds a many-hunk edit hunk-wise, never mid-hunk"
       (let [diff-fn
-            (private-fn "unified-diff-text")
+            diff/unified-diff-text
 
             base
             (mapv #(str "line-" %) (range 8000))
@@ -2193,7 +2194,7 @@
   (it
     "patch diff handles insert, delete, and whole-file rewrites"
     (let [diff-fn
-          (private-fn "unified-diff-text")
+          diff/unified-diff-text
 
           inserted
           (diff-fn "a\nb\nc" "a\nX\nb\nc")

@@ -253,6 +253,45 @@
         (expect (= "observations · 2 operations" (:summary (first rows))))
         (expect (= :patch (:operation (second rows))))
         (expect (= :grep (:operation (last rows))))))
+  ;; Regression: a group head borrowed its first child's id, so the tree carried the same
+  ;; id twice and the app dropped the whole projection rather than key a duplicate row.
+  (it
+    "gives a group head an id of its own"
+    (let [ctx
+          (event/context)
+
+          pairs
+          [(event-pair ctx
+                       :write
+                       :succeeded
+                       {:path "a.clj"}
+                       {:group-token "fs-mutations-1"
+                        :presenter :observation
+                        :group-head {:operation :change
+                                     :summary "2 files"
+                                     :result-summary "The code block changed these itself."
+                                     :result-format :markdown}})
+           (event-pair ctx
+                       :delete
+                       :succeeded
+                       {:path "b.clj"}
+                       {:group-token "fs-mutations-1" :presenter :observation})]
+
+          rows
+          (:rows (activity/snapshot (activity/replay (mapcat identity pairs))))
+
+          head
+          (first rows)
+
+          ids
+          (into [(:id head)] (map :id) (:children head))]
+
+      (expect (= 1 (count rows)))
+      (expect (= :change (:operation head)))
+      (expect (= "2 files" (:summary head)))
+      (expect (= :markdown (:result-format head)))
+      (expect (= [:write :delete] (mapv :operation (:children head))))
+      (expect (= (count ids) (count (distinct ids))))))
   (it "replay is deterministic for the same immutable event order"
       (let [ctx
             (event/context)

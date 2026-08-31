@@ -8123,49 +8123,95 @@
 
 (defdescribe
   filesystem-activity-rows-test
-  (it "turns a block's tree changes into ONE row per kind, paths carried as resources"
+  (it
+    "turns a block's tree changes into ONE row per kind under ONE head, paths as resources"
+    (let [ctx
+          (activity-event/context)
+
+          events
+          (@#'lp/fs-mutation-events
+           ctx
+           [{:kind :move :path "/w/a.clj" :to "/w/b.clj"} {:kind :write :path "/w/one.txt"}
+            {:kind :write :path "/w/two.txt"}
+            {:kind :link :path "/w/dist/app.tar.gz" :to "/w/releases/latest.tar.gz"}
+            {:kind :chmod :path "/w/not-a-tree-change"}])
+
+          rows
+          (:rows (activity/presentation (reduce activity/reduce-event activity/empty-state events)))
+
+          children
+          (:children (first rows))]
+
+      ;; three kinds -> three lifecycle pairs; the unknown kind is dropped, never guessed
+      (expect (= 6 (count events)))
+      ;; …and ONE cause -> ONE head, which says how much of the tree moved and who moved it
+      (expect (= 1 (count rows)))
+      ;; the head says the ACT in its operation and the AMOUNT in its summary, never both
+      (expect (= "4 files" (:summary (first rows))))
+      (expect (= "change" (:operation (first rows))))
+      (expect (= "The code block changed these itself, with no `patch` or `shell` call in between."
+                 (:result-summary (first rows))))
+      (expect (= "markdown" (:result-format (first rows))))
+      (expect (= ["2 files" "`a.clj` → `b.clj`" "`app.tar.gz` → `latest.tar.gz`"]
+                 (mapv :summary children)))
+      ;; a name rides in a code span so a `*` or a `_` in it is inert; a bare count needs none
+      (expect (= [nil "inline" "inline"] (mapv :summary-format children)))
+      (expect (= ["mutation" "mutation" "mutation"] (mapv :signal children)))
+      (expect (= ["write" "move" "link"] (mapv :operation children)))
+      (expect (= [["/w/one.txt" "/w/two.txt"] ["/w/b.clj"] ["/w/releases/latest.tar.gz"]]
+                 (mapv (fn [row]
+                         (mapv :id (:resources row)))
+                       children)))
+      (expect (= ["succeeded" "succeeded" "succeeded"] (mapv :state children)))
+      ;; the paths ARE the row: relocating bytes changed no file's contents, so no diff
+      (expect (= [[] [] []] (mapv :evidence children)))
+      (expect (= [nil nil nil] (mapv :result-summary children)))))
+  ;; Regression: a Python write could only ever be counted. It reported no content, so the
+  ;; row said "wrote 1 file" where a patch row says +1 −1 and shows the hunk.
+  (it "shows a write's own diff as the very evidence a patch row shows"
       (let [ctx
             (activity-event/context)
 
             events
             (@#'lp/fs-mutation-events
              ctx
-             [{:kind :move :path "/w/a.clj" :to "/w/b.clj"} {:kind :write :path "/w/one.txt"}
-              {:kind :write :path "/w/two.txt"}
-              {:kind :link :path "/w/dist/app.tar.gz" :to "/w/releases/latest.tar.gz"}
-              {:kind :chmod :path "/w/not-a-tree-change"}])
+             [{:kind :write
+               :path "/w/notes.md"
+               :lines {"added" 1 "removed" 1 "modified" 0}
+               :diff "@@ -1,2 +1,2 @@\n-old\n+new\n"}])
 
-            rows
-            (:rows (activity/presentation
-                     (reduce activity/reduce-event activity/empty-state events)))]
+            row
+            (first (:rows (activity/presentation
+                            (reduce activity/reduce-event activity/empty-state events))))
 
-        ;; three kinds -> three lifecycle pairs; the unknown kind is dropped, never guessed
-        (expect (= 6 (count events)))
-        (expect (= ["wrote 2 files" "moved a.clj → b.clj" "linked app.tar.gz → latest.tar.gz"]
-                   (mapv :summary rows)))
-        (expect (= ["mutation" "mutation" "mutation"] (mapv :signal rows)))
-        (expect (= ["write" "move" "link"] (mapv :operation rows)))
-        (expect (= [["/w/one.txt" "/w/two.txt"] ["/w/b.clj"] ["/w/releases/latest.tar.gz"]]
-                   (mapv (fn [row]
-                           (mapv :id (:resources row)))
-                         rows)))
-        (expect (= ["succeeded" "succeeded" "succeeded"] (mapv :state rows)))
-        ;; the paths ARE the row; a filesystem change has no arguments and no result to show
-        (expect (= [[] [] []] (mapv :evidence rows)))
-        (expect (= [nil nil nil] (mapv :result-summary rows)))))
-  (it "names the single file it touched, and counts a batch"
-      (expect (= "deleted old.txt" (@#'lp/fs-mutation-label :delete [{:path "/w/old.txt"}])))
-      (expect (= "created build" (@#'lp/fs-mutation-label :mkdir [{:path "/w/build"}])))
-      (expect (= "copied 40 files"
+            diff
+            (first (filter (fn [evidence]
+                             (= "diff" (:kind evidence)))
+                           (:evidence row)))]
+
+        ;; one kind is not a group: the row stands alone and carries the diff itself
+        (expect (= "`notes.md`" (:summary row)))
+        (expect (= "inline" (:summary-format row)))
+        (expect (nil? (:children row)))
+        (expect (= "/w/notes.md" (:text diff)))
+        (expect (= 1 (:additions diff)))
+        (expect (= 1 (:deletions diff)))
+        (expect (= ["hunk" "deletion" "addition"] (mapv :kind (:lines diff))))))
+  ;; Regression: a row said its verb twice — "WRITE · wrote notes.md" — because the label
+  ;; repeated the operation every surface already prints in its own column.
+  (it "names the single file it touched, counts a batch, and never repeats the verb"
+      (expect (= ["`old.txt`" :inline] (@#'lp/fs-mutation-label :delete [{:path "/w/old.txt"}])))
+      (expect (= ["`build`" :inline] (@#'lp/fs-mutation-label :mkdir [{:path "/w/build"}])))
+      (expect (= ["40 files"]
                  (@#'lp/fs-mutation-label
                   :copy
                   (mapv (fn [i]
                           {:path (str "/w/f" i)})
                         (range 40)))))
       ;; a move that keeps the file name must not read as `notes.md → notes.md`
-      (expect (= "moved w/notes.md → docs/notes.md"
+      (expect (= ["`w/notes.md` → `docs/notes.md`" :inline]
                  (@#'lp/fs-mutation-label :move [{:path "/w/notes.md" :to "/w/docs/notes.md"}])))
-      (expect (= "linked vis-0.1.24.tar.gz → latest.tar.gz"
+      (expect (= ["`vis-0.1.24.tar.gz` → `latest.tar.gz`" :inline]
                  (@#'lp/fs-mutation-label
                   :link
                   [{:path "/w/dist/vis-0.1.24.tar.gz" :to "/w/releases/latest.tar.gz"}])))))

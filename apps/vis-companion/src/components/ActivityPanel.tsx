@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { InlineMarkdown, Markdown } from "./ChatContent";
 import { Disclosure } from "./ui";
 import type {
   ActivityDiffEvidence,
@@ -6,6 +7,7 @@ import type {
   ActivityResource,
   ActivityRow,
   ActivityTextEvidence,
+  ActivityTextFormat,
 } from "../lib/activity";
 
 /**
@@ -67,6 +69,15 @@ const ACTIVITY_VERBS: Record<
   lint_code: ["Linting", "Linted", "Lint failed"],
   format_code: ["Formatting", "Formatted", "Format failed"],
   repl_eval: ["Evaluating", "Evaluated", "Eval failed"],
+  // What a code block did to the tree with its own hands. The change is already past
+  // when it is reported, and its head says how much of the tree moved at once.
+  change: ["Changing", "Changed", "Change failed"],
+  mkdir: ["Creating", "Created", "Create failed"],
+  write: ["Writing", "Wrote", "Write failed"],
+  copy: ["Copying", "Copied", "Copy failed"],
+  move: ["Moving", "Moved", "Move failed"],
+  link: ["Linking", "Linked", "Link failed"],
+  delete: ["Deleting", "Deleted", "Delete failed"],
 };
 
 function formatActivityDuration(value?: number): string | null {
@@ -542,12 +553,54 @@ function countsVisibleFiles(summary: string, shown: number): boolean {
  * so its column says "still counting" rather than standing empty, which reads
  * as a number that went missing.
  */
-function ActivityStep({ row }: { row: ActivityRow }) {
+/**
+ * A ROW'S OWN WORDS, READ THE WAY THE ENGINE DECLARED THEM.
+ *
+ * Text on this axis is LITERAL unless its producer marked it, because most of what a
+ * step says is a path, a glob or a command: `probe_1.json` italicised at its
+ * underscores, or a glob set in bold from its stars, is the panel corrupting the fact
+ * it was handed. So the format travels per field, is never sniffed from the
+ * characters, and the renderer is the transcript's own — one markdown vocabulary on
+ * this surface, never a second one grown inside this panel.
+ */
+function ActivityText({
+  text,
+  format,
+  block = false,
+}: {
+  text: string;
+  format?: ActivityTextFormat;
+  block?: boolean;
+}) {
+  if (!format) return <>{text}</>;
+  if (format === "markdown" && block) return <Markdown compact>{text}</Markdown>;
+  return <InlineMarkdown>{text}</InlineMarkdown>;
+}
+
+/**
+ * ONE STEP, AND WHAT IT DID UNDER IT.
+ *
+ * A step that stands for several changes at once — a code block that wrote its own
+ * files — keeps ONE mark on the chronology and hangs its changes under it, sharing
+ * that mark's left edge and indented from it. Not a card, not a second rail: the
+ * group is the indent, exactly as the terminal draws it.
+ *
+ * The depth is HARD. Three levels — the step, the change, the paths the change
+ * touched — is the whole tree either surface will draw, because a fourth is a file
+ * tree printed into a chronology and nothing on this axis is worth that.
+ */
+function ActivityStep({ row, depth = 0 }: { row: ActivityRow; depth?: number }) {
+  const nested = depth > 0;
   const failed = row.state === "failed";
   const lead = activityStepLead(row);
   const summary = activityStepObject(row);
   const delta = activityStepDelta(row);
   const duration = formatActivityDuration(row.duration_ms);
+  const children = nested
+    ? []
+    : [...(row.children ?? [])].sort((left, right) => left.sequence - right.sequence);
+  const hasChildren = children.length > 0;
+  const Headline = nested ? "p" : "h4";
   const diff = row.evidence.find(
     (item): item is ActivityDiffEvidence => item.kind === "diff",
   );
@@ -574,17 +627,28 @@ function ActivityStep({ row }: { row: ActivityRow }) {
   return (
     <li
       data-activity-row={row.id}
-      className="relative mb-4 min-w-0 pl-5 last:mb-0"
+      data-activity-depth={depth}
+      className={
+        nested
+          ? "relative mb-1.5 min-w-0 last:mb-0"
+          : "relative mb-4 min-w-0 pl-5 last:mb-0"
+      }
     >
-      <ActivityNode state={row.state} />
+      {!nested && <ActivityNode state={row.state} />}
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-2">
-        <h4 className="min-w-0 font-sans text-ui font-bold text-code-result">
+        <Headline
+          className={
+            nested
+              ? "min-w-0 font-sans text-meta font-medium text-code-result"
+              : "min-w-0 font-sans text-ui font-bold text-code-result"
+          }
+        >
           {lead}
           {object && (
             <>
               {" "}
               <span className="ml-[5px] font-normal text-dialog-hint">
-                {object}
+                <ActivityText text={object} format={row.summary_format} />
               </span>
             </>
           )}
@@ -596,7 +660,7 @@ function ActivityStep({ row }: { row: ActivityRow }) {
               </span>
             </>
           )}
-        </h4>
+        </Headline>
         {duration && (
           <time className="min-w-[38px] shrink-0 text-right font-mono text-chip text-code-duration">
             {duration}
@@ -612,11 +676,38 @@ function ActivityStep({ row }: { row: ActivityRow }) {
         )}
       </div>
       {outcome && (
-        <p className="mt-0.5 font-sans text-meta text-dialog-hint">{outcome}</p>
+        <div className="mt-0.5 font-sans text-meta text-dialog-hint">
+          <ActivityText
+            text={outcome}
+            format={failed ? undefined : row.result_format}
+            block
+          />
+        </div>
       )}
-      {!diff && touched.length > 0 && <ActivityFiles resources={touched} />}
-      {diff && <ActivityChanges row={row} diff={diff} files={touched} />}
+      {/* A GROUP'S PATHS BELONG TO ITS CHANGES, not to the group as well: the head
+          carries every child's resource, so painting them here and again under each
+          child is the same twelve paths printed twice. */}
+      {!diff && !hasChildren && touched.length > 0 && (
+        <ActivityFiles resources={touched} />
+      )}
+      {diff && (
+        <ActivityChanges
+          row={row}
+          diff={diff}
+          files={hasChildren ? [] : touched}
+        />
+      )}
       {error && <ActivityError evidence={error} />}
+      {hasChildren && (
+        <ol
+          data-activity-children={row.id}
+          className="mt-1.5 min-w-0 pl-4.5"
+        >
+          {children.map((child) => (
+            <ActivityStep key={child.id} row={child} depth={depth + 1} />
+          ))}
+        </ol>
+      )}
     </li>
   );
 }

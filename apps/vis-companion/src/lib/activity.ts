@@ -58,8 +58,15 @@ export const ACTIVITY_PRESENTERS = [
 ] as const;
 export const ACTIVITY_SIGNALS = ['generic', 'observation', 'mutation', 'verification'] as const;
 export const ACTIVITY_STATES = ['idle', 'running', 'succeeded', 'failed', 'cancelled'] as const;
+/**
+ * How a row's own words are to be READ. Absent means literal: a path, a glob or a command
+ * must never be re-read as markup, so the engine DECLARES the format per field and the
+ * renderer never guesses it from the characters.
+ */
+export const ACTIVITY_TEXT_FORMATS = ['inline', 'markdown'] as const;
 
 export type ActivityPresenter = (typeof ACTIVITY_PRESENTERS)[number];
+export type ActivityTextFormat = (typeof ACTIVITY_TEXT_FORMATS)[number];
 export type ActivitySignal = (typeof ACTIVITY_SIGNALS)[number];
 export type ActivityState = (typeof ACTIVITY_STATES)[number];
 
@@ -101,9 +108,11 @@ export interface ActivityRow {
   signal: ActivitySignal;
   state: ActivityState;
   summary: string;
+  summary_format?: ActivityTextFormat;
   group_token?: string;
   duration_ms?: number;
   result_summary?: string;
+  result_format?: ActivityTextFormat;
   error_summary?: string;
   resources: ActivityResource[];
   evidence: ActivityEvidence[];
@@ -237,6 +246,8 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
         'error_summary',
         'children',
         'is_truncated',
+        'summary_format',
+        'result_format',
       ],
     )
   ) {
@@ -260,6 +271,10 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
   const duration = raw.duration_ms === undefined ? undefined : activityCount(raw.duration_ms);
   const resultSummary = raw.result_summary === undefined ? undefined : optionalText(raw.result_summary);
   const errorSummary = raw.error_summary === undefined ? undefined : optionalText(raw.error_summary);
+  const summaryFormat =
+    raw.summary_format === undefined ? undefined : activityEnum(raw.summary_format, ACTIVITY_TEXT_FORMATS);
+  const resultFormat =
+    raw.result_format === undefined ? undefined : activityEnum(raw.result_format, ACTIVITY_TEXT_FORMATS);
   const childrenRaw =
     raw.children === undefined
       ? undefined
@@ -284,6 +299,8 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     duration === null ||
     (raw.result_summary !== undefined && resultSummary === undefined) ||
     (raw.error_summary !== undefined && errorSummary === undefined) ||
+    (raw.summary_format !== undefined && !summaryFormat) ||
+    (raw.result_format !== undefined && !resultFormat) ||
     childrenRaw === null ||
     children?.some((child) => child === null) ||
     (raw.is_truncated !== undefined && raw.is_truncated !== true)
@@ -304,6 +321,8 @@ function activityRowFromWire(value: unknown, depth = 0): ActivityRow | null {
     ...(duration !== undefined ? { duration_ms: duration } : {}),
     ...(resultSummary !== undefined ? { result_summary: resultSummary } : {}),
     ...(errorSummary !== undefined ? { error_summary: errorSummary } : {}),
+    ...(summaryFormat ? { summary_format: summaryFormat } : {}),
+    ...(resultFormat ? { result_format: resultFormat } : {}),
     ...(children ? { children: children as ActivityRow[] } : {}),
     ...(raw.is_truncated === true ? { is_truncated: true } : {}),
   };
