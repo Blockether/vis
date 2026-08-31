@@ -16,6 +16,11 @@
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 (defn- closed-map? [m expected-keys] (and (map? m) (= expected-keys (set (keys m)))))
 (defn- event-set? [x] (and (set? x) (seq x) (every? non-blank-string? x)))
+(defn- wire-key-map?
+  [m expected-keys]
+  (and (closed-map? m expected-keys)
+       (every? non-blank-string? (vals m))
+       (= (count m) (count (set (vals m))))))
 
 (defn- valid-route?
   [{:keys [path methods audience] :as route}]
@@ -34,8 +39,8 @@
   (let [{:keys [session jobs push turn-terminal queue-mirror view]}
         events
 
-        settled-turn
-        (:settled-turn envelopes)]
+        {:keys [session-event journal-line subscription-ready settled-turn]}
+        envelopes]
 
     (and (closed-map? document
                       #{:contract/version :gateway/protocol :gateway/headers :gateway/routes
@@ -60,7 +65,20 @@
          (every? session queue-mirror)
          (closed-map? view #{:open :patch :close})
          (every? session (vals view))
-         (closed-map? envelopes #{:settled-turn})
+         (closed-map? envelopes #{:session-event :journal-line :subscription-ready :settled-turn})
+         (closed-map? session-event #{:schema :stamp-keys})
+         (pos-int? (:schema session-event))
+         (wire-key-map? (:stamp-keys session-event)
+                        #{:schema :sequence :session-id :timestamp :type})
+         (closed-map? journal-line #{:metadata-keys})
+         (wire-key-map? (:metadata-keys journal-line) #{:pid :producer :store})
+         (closed-map? subscription-ready #{:event :required-keys :optional-keys})
+         (contains? session (:event subscription-ready))
+         (wire-key-map? (:required-keys subscription-ready)
+                        #{:cursor :current-turn-id :is-live :server-time-ms :session-id :type})
+         (wire-key-map? (:optional-keys subscription-ready) #{:latest-iteration})
+         (not-any? (set (vals (:required-keys subscription-ready)))
+                   (vals (:optional-keys subscription-ready)))
          (closed-map? settled-turn #{:meta-keys})
          (vector? (:meta-keys settled-turn))
          (seq (:meta-keys settled-turn))
@@ -70,7 +88,8 @@
          (contains? headers (:cursor-header replay))
          (non-blank-string? (:cursor-key replay))
          (contains? session (:ready-event replay))
-         (contains? session (:generation-start-event replay)))))
+         (contains? session (:generation-start-event replay))
+         (= (:event subscription-ready) (:ready-event replay)))))
 
 (s/def :contract/gateway valid-document?)
 
@@ -139,9 +158,75 @@
 (def view-patch-event "Session event carrying accepted View operations." (:patch view-events))
 (def view-close-event "Session event that ends either View kind." (:close view-events))
 (def envelopes "Canonical gateway envelope declarations." (:gateway/envelopes @document))
+(def session-event-envelope "Stamped session stream event declaration." (:session-event envelopes))
+(def session-event-schema
+  "Schema number stamped onto every session event."
+  (:schema session-event-envelope))
+(def session-event-keys
+  "Semantic session stamp key to canonical wire spelling."
+  (:stamp-keys session-event-envelope))
+(def journal-line-envelope
+  "Private cross-process journal metadata declaration."
+  (:journal-line envelopes))
+(def journal-metadata-keys
+  "Semantic journal metadata key to canonical wire spelling."
+  (:metadata-keys journal-line-envelope))
+(def journal-pid-key (:pid journal-metadata-keys))
+(def journal-producer-key (:producer journal-metadata-keys))
+(def journal-store-key (:store journal-metadata-keys))
+(def subscription-ready-envelope
+  "First-frame session subscription declaration."
+  (:subscription-ready envelopes))
+(def subscription-ready-required-keys (:required-keys subscription-ready-envelope))
+(def subscription-ready-optional-keys (:optional-keys subscription-ready-envelope))
 (def turn-meta-keys
   "Wire keys copied from a settled turn row into blocking submit/attach results."
   (get-in envelopes [:settled-turn :meta-keys]))
+
+(defn stamp-session-event
+  "Apply the contract-owned identity stamp after `payload`, so payload keys cannot spoof it."
+  [payload session-id sequence timestamp type]
+  (assoc payload
+    (:schema session-event-keys) session-event-schema
+    (:sequence session-event-keys) sequence
+    (:timestamp session-event-keys) timestamp
+    (:session-id session-event-keys) (str session-id)
+    (:type session-event-keys) type))
+
+(defn stamp-journal-line
+  "Add private producer metadata to one already-stamped session event."
+  [event producer pid store?]
+  (assoc event
+    journal-producer-key producer
+    journal-pid-key pid
+    journal-store-key (boolean store?)))
+
+(defn journal-producer [event] (get event journal-producer-key))
+(defn journal-pid [event] (get event journal-pid-key))
+(defn journal-stored? [event] (boolean (get event journal-store-key)))
+(defn strip-journal-metadata
+  "Remove private journal metadata before an event reaches a session consumer."
+  [event]
+  (apply dissoc event (vals journal-metadata-keys)))
+
+(defn subscription-ready-event
+  "Build the canonical first frame for one session subscription."
+  [{:keys [session-id cursor current-turn-id is-live server-time-ms latest-iteration]}]
+  (let [required
+        subscription-ready-required-keys
+
+        optional
+        subscription-ready-optional-keys]
+
+    (cond-> {(get required :type) (:event subscription-ready-envelope)
+             (get required :session-id) (str session-id)
+             (get required :cursor) cursor
+             (get required :current-turn-id) (some-> current-turn-id
+                                                     str)
+             (get required :is-live) (boolean is-live)
+             (get required :server-time-ms) server-time-ms}
+      (some? latest-iteration)
+      (assoc (get optional :latest-iteration) latest-iteration))))
 (def replay "Cursor and generation anchors for session replay." (:gateway/replay @document))
 (def event-types
   "All event names on session, dedicated-job and relay-push streams."

@@ -1,4 +1,4 @@
-{:contract/version 1
+{:contract/version 2
  :gateway/protocol {:minimum-client 12 :minimum-gateway 12 :version 12}
  ;; Every header whose spelling is part of the gateway contract. Keys are semantic;
  ;; values are the canonical lower-case Ring/Fetch spelling.
@@ -137,10 +137,23 @@
                   "turn.queued.drained" "turn.queued.updated"}
   ;; One lifecycle for both input and live View kinds.
   :view {:close "view.close" :open "view.open" :patch "view.patch"}}
- :gateway/envelopes {:settled-turn {:meta-keys ["model" "provider" "llm_selected" "llm_actual"
-                                                "is_llm_fallback" "llm_routing_trace" "tokens"
-                                                "cost" "confidence" "eval" "duration_ms"
-                                                "utilization"]}}
+ :gateway/envelopes
+ {:journal-line {:metadata-keys {:pid "_pid" :producer "_producer" :store "_store"}}
+  :session-event
+  {:schema 1
+   :stamp-keys
+   {:schema "schema" :sequence "seq" :session-id "session_id" :timestamp "ts" :type "type"}}
+  :settled-turn {:meta-keys ["model" "provider" "llm_selected" "llm_actual" "is_llm_fallback"
+                             "llm_routing_trace" "tokens" "cost" "confidence" "eval" "duration_ms"
+                             "utilization"]}
+  :subscription-ready {:event "subscription.ready"
+                       :optional-keys {:latest-iteration "latest_iteration"}
+                       :required-keys {:current-turn-id "current_turn_id"
+                                       :cursor "cursor"
+                                       :is-live "is_live"
+                                       :server-time-ms "server_time_ms"
+                                       :session-id "session_id"
+                                       :type "type"}}}
  ;; Cursor replay starts after the caller's last observed seq. A fresh subscription
  ;; announces readiness; a running-turn replay rewinds to its generation start.
  :gateway/replay {:cursor-header :last-event-id

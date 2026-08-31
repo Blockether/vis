@@ -828,15 +828,13 @@
         (latest-replay-iteration replay tid)
 
         payload
-        (cond-> {:type "subscription.ready"
-                 :session_id (str sid)
-                 :cursor cursor
-                 :current_turn_id (some-> tid
-                                          str)
-                 :is_live (some? tid)
-                 :server_time_ms (util/now-ms)}
-          (pos? latest-iteration)
-          (assoc :latest-iteration latest-iteration))]
+        (gateway-contract/subscription-ready-event {:session-id sid
+                                                    :cursor cursor
+                                                    :current-turn-id tid
+                                                    :is-live (some? tid)
+                                                    :server-time-ms (util/now-ms)
+                                                    :latest-iteration (when (pos? latest-iteration)
+                                                                        latest-iteration)})]
 
     (.write out (.getBytes (sse/sse-frame (wire/canonical payload)) StandardCharsets/UTF_8))
     (.flush out)))

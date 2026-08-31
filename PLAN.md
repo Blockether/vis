@@ -768,9 +768,9 @@ encoding now lives in independently loadable `com.blockether.vis.contract.wire`;
 server and engine tests import it directly; current extension consumers stay behind the Core facade. Concrete
 transport and bounded diagnostics live beside their sole callers, so `internal.gateway.wire`
 has been deleted rather than forwarded. `com.blockether.vis.contract.gateway` also owns handshake
-parsing, the pure compatibility verdict and the View event constants consumed by the gateway bridge,
-while release/build identity, daemon staleness and concrete runtime diagnostics live in
-`internal.gateway.runtime`. Existing View, Human Input,
+parsing, compatibility, View event constants, and the session-event, private journal-line and
+subscription-ready envelopes consumed directly by the runtime. Release/build identity, daemon
+staleness and concrete diagnostics remain in `internal.gateway.runtime`. Existing View, Human Input,
 Activity, cancellation and cross-session permit suites preserve behavior. Three production
 namespaces have moved or been removed.
 

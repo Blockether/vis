@@ -25,7 +25,7 @@
 (defdescribe
   gateway-contract-test
   (it "loads a closed, independently owned gateway declaration"
-      (expect (= 1 contract/version))
+      (expect (= 2 contract/version))
       (expect (= 99 (count contract/route-table)))
       (expect (= 121 (count (contract/route-methods))))
       (expect (= 32 (count contract/event-types)))
@@ -56,6 +56,37 @@
                                              :gateway-min-client 2
                                              :client-protocol 1
                                              :client-min-gateway 1})))))
+  (it "owns session, journal and ready envelopes"
+      (expect
+        (= {:schema "schema" :sequence "seq" :session-id "session_id" :timestamp "ts" :type "type"}
+           contract/session-event-keys))
+      (expect (= {"schema" 1 "seq" 7 "ts" 9 "session_id" "s1" "type" "turn.started" "text" "hello"}
+                 (contract/stamp-session-event {"schema" 99 "session_id" "spoofed" "text" "hello"}
+                                               "s1" 7
+                                               9 "turn.started")))
+      (let [event
+            {"type" "turn.started"}
+
+            line
+            (contract/stamp-journal-line event "producer-1" 42 true)]
+
+        (expect (= "producer-1" (contract/journal-producer line)))
+        (expect (= 42 (contract/journal-pid line)))
+        (expect (contract/journal-stored? line))
+        (expect (= event (contract/strip-journal-metadata line))))
+      (expect (= {"type" "subscription.ready"
+                  "session_id" "s1"
+                  "cursor" 7
+                  "current_turn_id" "t1"
+                  "is_live" true
+                  "server_time_ms" 9
+                  "latest_iteration" 4}
+                 (contract/subscription-ready-event {:session-id "s1"
+                                                     :cursor 7
+                                                     :current-turn-id "t1"
+                                                     :is-live true
+                                                     :server-time-ms 9
+                                                     :latest-iteration 4}))))
   (it "exports generated View event constants"
       (expect (= {:open contract/view-open-event
                   :patch contract/view-patch-event

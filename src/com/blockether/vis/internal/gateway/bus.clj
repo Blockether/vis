@@ -27,6 +27,7 @@
    Degrades safely: any IO failure is swallowed and the process falls
    back to today's in-process-only behavior."
   (:require [clojure.string :as str]
+            [com.blockether.vis.contract.gateway :as gateway-contract]
             [com.blockether.vis.contract.wire :as wire]
             [com.blockether.vis.internal.util :as util]
             [taoensso.telemere :as tel])
@@ -468,10 +469,8 @@
              (session-file sid)
 
              line
-             (str (wire/json-str (assoc event
-                                   "_producer" producer-id
-                                   "_pid" producer-pid
-                                   "_store" (boolean store?)))
+             (str (wire/json-str
+                    (gateway-contract/stamp-journal-line event producer-id producer-pid store?))
                   "\n")]
 
          (with-open [raf (RandomAccessFile. f "rw")]
@@ -519,7 +518,8 @@
   (let [t (Thread. ^Runnable
                    (fn []
                      (while (not (Thread/interrupted))
-                       (try (let [{:keys [sid event opts done]} (.take writer-queue)]
+                       (try (let [{:keys [sid event opts done]} (.take ^ArrayBlockingQueue
+                                                                       writer-queue)]
                               (write-event! sid event opts)
                               (when done (deliver done true)))
                             (catch InterruptedException _ (.interrupt (Thread/currentThread)))
@@ -569,7 +569,7 @@
     ;; deltas and wait, so the file is ordered and tests/hydration see them.
     (let [done (promise)]
       ;; Bounded: never park a turn/provider thread forever on a wedged writer.
-      (if (.offer writer-queue
+      (if (.offer ^ArrayBlockingQueue writer-queue
                   {:sid sid :event event :opts opts :done done}
                   durable-write-timeout-ms
                   TimeUnit/MILLISECONDS)
@@ -580,7 +580,7 @@
     ;; Transient deltas are live hints. Never block provider/input threads on disk;
     ;; if the queue is saturated, sibling processes will catch the final canonical
     ;; text from the durable completion event instead of making the active TUI stutter.
-    (when-not (.offer writer-queue {:sid sid :event event :opts opts})
+    (when-not (.offer ^ArrayBlockingQueue writer-queue {:sid sid :event event :opts opts})
       (tel/log! :debug ["gateway-bus: dropped transient event; writer queue full" (:type event)])))
   nil)
 
@@ -686,11 +686,9 @@
 (defonce ^:private tailer (atom nil))
 
 (def ^:private ^String self-marker
-  "The exact `\"_producer\":\"<id>\"` JSON fragment this process writes. A raw
-   substring test against it short-circuits the (comparatively expensive) JSON
-   parse for our OWN journal lines — and the streaming producer tails its own
-   file, so without this it would parse-then-discard nearly every line it wrote."
-  (str "\"_producer\":\"" producer-id "\""))
+  "The exact producer metadata fragment this process writes. A raw substring test
+   short-circuits JSON parsing for our own journal lines."
+  (str "\"" gateway-contract/journal-producer-key "\":\"" producer-id "\""))
 
 ;; One growable read buffer, reused across polls. drain-file! runs ONLY on the
 ;; single tailer thread (poll-once! drains files sequentially), so steady-state
@@ -706,10 +704,10 @@
   ;; a correctness backstop for the (foreign) lines that do get parsed.
   (when-not (.contains line self-marker)
     (when-let [event (wire/parse-json line)]
-      (when-not (= (get event "_producer") producer-id)
+      (when-not (= (gateway-contract/journal-producer event) producer-id)
         (when-let [f @deliver-fn]
-          (let [store? (boolean (get event "_store"))
-                clean (dissoc event "_producer" "_pid" "_store")]
+          (let [store? (gateway-contract/journal-stored? event)
+                clean (gateway-contract/strip-journal-metadata event)]
 
             (try (f sid store? clean)
                  (catch Throwable t
@@ -854,7 +852,7 @@
                               (String. ^bytes raw 0 (int whole) StandardCharsets/UTF_8))
                             (remove str/blank?)
                             (keep wire/parse-json))
-                foreign (remove #(= (get % "_producer") producer-id) events)
+                foreign (remove #(= (gateway-contract/journal-producer %) producer-id) events)
                 ;; A terminal from ANYONE (a sibling, or a prior orphan-reap by
                 ;; THIS process) means the turn is done — don't re-stream it.
                 terminal? (some #(contains? #{"turn.completed" "turn.failed" "turn.cancelled"}
@@ -871,15 +869,16 @@
               ;; answers both "whose pid?" and "which turn_id?".
               (let [anchor (or (some #(when (= "turn.started" (get % "type")) %) foreign)
                                (last foreign))]
-                (if (producer-alive? (get anchor "_pid"))
+                (if (producer-alive? (gateway-contract/journal-pid anchor))
                   ;; Live sibling: mirror its in-flight turn into the registry.
                   (when-let [f' @deliver-fn]
                     (doseq [ev foreign]
-                      (try
-                        (f' sid (boolean (get ev "_store")) (dissoc ev "_producer" "_pid" "_store"))
-                        (catch Throwable t
-                          (tel/log! :debug
-                                    ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
+                      (try (f' sid
+                               (gateway-contract/journal-stored? ev)
+                               (gateway-contract/strip-journal-metadata ev))
+                           (catch Throwable t
+                             (tel/log! :debug
+                                       ["gateway-bus: hydrate deliver failed" (ex-message t)])))))
                   ;; Orphan: producer process is gone. Reap it terminally.
                   (when-let [tid (get anchor "turn_id")]
                     ;; CAS-claim the reap BEFORE publishing: `publish!` lands the

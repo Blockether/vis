@@ -460,17 +460,14 @@
                ;; payloads carry their subject under their OWN key (see
                ;; `broadcast-title-event!`'s `:titled_session_id`).
                ;;
-               ;; The stamp keys are ALREADY in canonical spelling, so assoc-ing
-               ;; them onto the canonicalized payload is identical to canonicalizing
-               ;; the stamped payload — and it enforces the rule above outright: a
-               ;; payload key that merely CANONICALIZES onto a stamp key
-               ;; (`:session-id` -> `session_id`) can no longer race it.
-               (assoc canonical-payload
-                 "schema" 1
-                 "seq" n
-                 "ts" stamp-ts
-                 "session_id" stamp-sid
-                 "type" stamp-type)]
+               ;; The contract stamper owns these already-canonical spellings and
+               ;; applies them after the canonical payload. A key that merely CANONICALIZES
+               ;; onto a stamp key (`:session-id` -> `session_id`) therefore cannot spoof it.
+               (gateway-contract/stamp-session-event canonical-payload
+                                                     stamp-sid
+                                                     n
+                                                     stamp-ts
+                                                     stamp-type)]
 
            (vreset! captured event)
            (-> (cond-> (assoc entry
