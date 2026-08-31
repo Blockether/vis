@@ -1430,6 +1430,19 @@
   [ex-data-map]
   (contains? INFRASTRUCTURE_ERROR_TYPES (:type ex-data-map)))
 
+(defn- output-budget-exhausted-data?
+  "The exact provider signal that an unchanged request cannot recover from, but a
+   smaller NEXT Vis iteration can. Svar owns same-request retry safety; Vis owns
+   changing strategy after the signal crosses that boundary."
+  [data]
+  (and (= :svar.core/stream-incomplete (:type data)) (= "max_output_tokens" (str (:reason data)))))
+
+(defn- output-budget-exhausted-cause
+  [^Throwable e]
+  (some (fn [^Throwable t]
+          (when (output-budget-exhausted-data? (ex-data t)) t))
+        (bounded-cause-chain e)))
+
 (defn- provider-failure-cause
   "The throwable carrying a provider failure that escaped svar, or nil. Svar has
    already classified it and exhausted every retry/fallback policy it owns, so
@@ -1564,8 +1577,15 @@
         hopeless-overflow?
         (hopeless-context-overflow? ex-data-map)
 
+        ;; Svar refuses an unchanged replay for this deterministic cap. Preserve
+        ;; the typed inner cause across wrappers and let the OUTER Vis loop ask for
+        ;; a materially smaller strategy instead of terminalizing it as a generic
+        ;; provider failure.
+        output-budget-exhaustion
+        (output-budget-exhausted-cause e)
+
         provider-failure
-        (provider-failure-cause e)
+        (when-not output-budget-exhaustion (provider-failure-cause e))
 
         ;; The WIRE just answered a question no capability table can: whether this
         ;; endpoint can carry an image content part at all, or whether only that one
@@ -1586,7 +1606,7 @@
         (or (infrastructure-error? ex-data-map) hopeless-overflow? non-correctable? user-error?)
 
         iteration-error-data
-        (exception->iteration-error-data e ctx)]
+        (exception->iteration-error-data (or output-budget-exhaustion e) ctx)]
 
     (tel/log!
       {:level (if fatal? :error :warn)
@@ -5620,11 +5640,7 @@
 
 ;; Core helpers
 
-(defn- stream-output-overflow?
-  [err]
-  (let [data (:data err)]
-    (and (= :svar.core/stream-incomplete (:type data))
-         (= "max_output_tokens" (str (:reason data))))))
+(defn- stream-output-overflow? [err] (output-budget-exhausted-data? (:data err)))
 (def ^:private MAX_AUTH_REFRESH_RETRIES
   "Max transparent auth-401 retries per iteration. Attempt 0 forces ONE OAuth
    refresh-token exchange (the stored access token was invalidated server-side,

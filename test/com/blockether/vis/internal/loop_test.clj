@@ -1461,6 +1461,8 @@
 
 (def ^:private llm-provider-error-context (deref #'lp/llm-provider-error-context))
 
+(def ^:private iteration-error-feedback (deref #'lp/iteration-error-feedback))
+
 (def ^:private previous-turn-context (deref #'lp/previous-turn-context))
 
 (def ^:private previous-request-usage (deref #'lp/previous-request-usage))
@@ -6918,6 +6920,39 @@
                               (ex-info "invalid API key" {:status 401 :provider :openai-codex}))
                      {:iteration 2 :messages [{:role "user" :content "hi"}]})]
         (expect (true? (::lp/fatal-iteration-error result))))))
+
+;; Regression, issue #162: a provider-declared `max_output_tokens` cap was folded
+;; into the terminal provider-failure path, so Vis ended the turn instead of making
+;; one materially changed, compact recovery iteration.
+(defdescribe
+  output-budget-exhaustion-recovery-test
+  (let [cap-data
+        {:type :svar.core/stream-incomplete
+         :stream? true
+         :reason "max_output_tokens"
+         :provider :openai-codex
+         :content-acc-len 0
+         :reasoning-acc-len 128}
+
+        cap-error
+        (ex-info "Stream ended with incomplete response, reason: max_output_tokens" cap-data)]
+
+    (doseq [[label error] [["direct" cap-error]
+                           ["wrapped" (ex-info "HTTP client request failed" {} cap-error)]]]
+      (it (str "keeps the " label " output-cap signal recoverable and intact")
+          (let [result (lp/handle-iteration-exception!
+                         error
+                         {:iteration 2 :messages [{:role "user" :content "finish the task"}]})
+                iteration-error (::lp/iteration-error result)
+                feedback (iteration-error-feedback 2 iteration-error "finish the task")]
+
+            (expect (contains? result ::lp/iteration-error))
+            (expect (not (::lp/fatal-iteration-error result)))
+            (expect (= :svar.core/stream-incomplete (get-in iteration-error [:data :type])))
+            (expect (= "max_output_tokens" (get-in iteration-error [:data :reason])))
+            (expect (str/includes? feedback ":llm-provider/output-budget-exhausted"))
+            (expect (str/includes? feedback "Use a compact path now"))
+            (expect (str/includes? feedback "Original request: finish the task")))))))
 
 ;; Regression: a stream that ended before the provider's terminal marker reached
 ;; the log as class/message/type alone. Svar had already measured WHY — the last
