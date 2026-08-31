@@ -178,10 +178,10 @@
             (expect (= [] (get-in report [:dynamic :limits]))))))))
 
 ;; The host does not trust a provider's report: `vis/provider-limits` runs it
-;; through `::provider-limits/report` and swaps in an error envelope when a row
-;; is malformed. Proving the REAL rows survive that gate is what makes the
-;; window shapes (`:calendar` week/month, `:rolling` 5h) a contract rather than
-;; something that merely looked right in this file.
+;; through `com.blockether.vis.contract.provider`'s report shape and swaps in an
+;; error envelope when a row is malformed. Proving the REAL rows survive that gate
+;; is what makes the window shapes (`:calendar` week/month, `:rolling` 5h) a
+;; contract rather than something that merely looked right in this file.
 (defdescribe host-envelope-test
              (it "produces rows the host limits spec accepts"
                  (reload!)

@@ -7,95 +7,20 @@
    with static provider metadata from svar's catalog (currently RPM /
    TPM).
 
+   The limits vocabulary and the report shape belong to
+   `com.blockether.vis.contract.provider`; what stays here is fetching, caching and
+   normalizing whatever a provider answered.
+
    Goals:
    - one host-level shape for all providers,
    - explicit support for providers that only know static limits,
-   - spec validation of every returned report,
+   - contract validation of every returned report,
    - graceful error envelopes instead of exploding the caller when a
      provider-specific implementation is absent or malformed."
-  (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]
-            [com.blockether.svar.internal.router :as svar-router]
+  (:require [com.blockether.svar.internal.router :as svar-router]
+            [com.blockether.vis.contract.provider :as contract-provider]
             [com.blockether.vis.internal.registry :as registry]
             [com.blockether.vis.internal.util :as util]))
-
-(def ^:private limit-statuses #{:ok :unauthenticated :unsupported :error :unknown-provider})
-
-(def ^:private limit-scopes #{:account :plan :workspace :model})
-
-(def ^:private limit-kinds #{:requests :tokens :usd :credits :sessions :rate})
-
-(def ^:private limit-window-kinds #{:calendar :rolling :lifetime})
-
-(def ^:private limit-window-units #{:minute :hour :day :week :month :year})
-
-(def ^:private limit-precisions #{:exact :estimate :derived :unknown})
-
-(def ^:private limit-sources #{:provider-api :derived :static :local})
-
-(s/def ::provider-id keyword?)
-
-(s/def ::status limit-statuses)
-
-(s/def ::fetched-at-ms integer?)
-
-(s/def ::rpm nat-int?)
-
-(s/def ::tpm nat-int?)
-
-(s/def ::static (s/keys :opt-un [::rpm ::tpm]))
-
-(s/def ::id keyword?)
-
-(s/def ::label (s/and string? #(not (str/blank? %))))
-
-(s/def ::scope limit-scopes)
-
-(s/def ::subject map?)
-
-(s/def ::kind limit-kinds)
-
-(s/def ::precision limit-precisions)
-
-(s/def ::source limit-sources)
-
-(s/def ::used number?)
-
-(s/def ::limit number?)
-
-(s/def ::remaining number?)
-
-(s/def ::is-unlimited boolean?)
-
-(s/def ::note string?)
-
-(s/def ::window
-  (s/and map?
-         #(contains? limit-window-kinds (:kind %))
-         #(or (nil? (:unit %)) (contains? limit-window-units (:unit %)))
-         #(or (nil? (:size %)) (pos-int? (:size %)))
-         #(or (nil? (:resets-at-ms %)) (integer? (:resets-at-ms %)))))
-
-(s/def ::limit-row
-  (s/keys :req-un [::id ::label ::scope ::kind ::precision ::source ::is-unlimited]
-          :opt-un [::subject ::window ::used ::limit ::remaining ::note]))
-
-(s/def ::limits (s/coll-of ::limit-row :kind vector?))
-
-(s/def ::dynamic (s/keys :req-un [::limits] :opt-un [::note]))
-
-(s/def ::type keyword?)
-
-(s/def ::message (s/and string? #(not (str/blank? %))))
-
-(s/def ::data map?)
-
-(s/def ::error (s/keys :req-un [::type ::message] :opt-un [::data]))
-
-(s/def ::report
-  (s/keys :req-un [::provider-id ::status ::fetched-at-ms ::static ::dynamic] :opt-un [::error]))
-
-(s/def ::reports (s/coll-of ::report :kind vector?))
 
 (defn- static-limits
   [provider-id]
@@ -164,7 +89,7 @@
   (error-report provider-id
                 :provider/invalid-limits-report
                 "Provider limits fn returned an invalid report"
-                {:report raw :explain (s/explain-data ::report raw)}))
+                {:report raw :explain (contract-provider/explain-report raw)}))
 
 (def ^:private limits-cache-ttl-ms
   "How long one provider's live limits report is reused.
@@ -210,12 +135,13 @@
     @(:value entry)))
 
 (defn provider-limits
-  "Return a normalized, spec-validated limits report for one provider id.
+  "Return a normalized, contract-validated limits report for one provider id.
 
    The provider's optional `:provider/limits-fn` supplies the dynamic
    portion. This host wrapper backfills static svar metadata and always
-   returns a valid `::report` envelope, even when the provider-specific
-   implementation is absent, missing, throws, or returns malformed data.
+   returns a valid `contract-provider/report` envelope, even when the
+   provider-specific implementation is absent, missing, throws, or returns
+   malformed data.
 
    Providers that only have static svar catalog metadata still return a
    usable `:ok` report so callers can surface RPM / TPM without needing a
@@ -231,19 +157,21 @@
         (seq (:static static-report))]
 
     (cond (and provider (:provider/limits-fn provider))
-          (cached-report
-            provider-id
-            (fn []
-              (try (let [report (merge-report static-report
-                                              (or ((:provider/limits-fn provider)) {}))]
-                     (if (s/valid? ::report report) report (invalid-report provider-id report)))
-                   (catch Throwable t
-                     (if (authentication-rejection? t)
-                       (unauthenticated-report provider-id t)
-                       (error-report provider-id
-                                     :provider/limits-error
-                                     (or (ex-message t) (.getName (class t)))
-                                     {:class (.getName (class t))}))))))
+          (cached-report provider-id
+                         (fn []
+                           (try (let [report (merge-report static-report
+                                                           (or ((:provider/limits-fn provider))
+                                                               {}))]
+                                  (if (contract-provider/report-valid? report)
+                                    report
+                                    (invalid-report provider-id report)))
+                                (catch Throwable t
+                                  (if (authentication-rejection? t)
+                                    (unauthenticated-report provider-id t)
+                                    (error-report provider-id
+                                                  :provider/limits-error
+                                                  (or (ex-message t) (.getName (class t)))
+                                                  {:class (.getName (class t))}))))))
           has-static? (base-report
                         provider-id
                         :ok

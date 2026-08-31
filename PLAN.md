@@ -783,7 +783,9 @@ stream events and executable content shapes; `internal.content` is builders/proj
 portable package exports the same `CONTENT` vocabulary. `toggle.edn` and `contract.toggle` own the
 id grammar, kinds, settings-copy bound, boolean tokens and executable contribution shape; the Core
 registry now owns only normalization, mutable values, listeners, persistence and hydration, while
-portable readers receive `TOGGLE`.
+portable readers receive `TOGGLE`. `provider.edn` and `contract.provider` own the limits vocabulary
+and the whole report envelope every provider answer is judged by; `internal.provider-limits` is fetch,
+cache and normalization only, and portable readers receive `PROVIDER`.
 
 Work already available as foundations:
 

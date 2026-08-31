@@ -12,6 +12,7 @@
             [com.blockether.vis.internal.view :as view]
             [com.blockether.vis.contract.content :as contract-content]
             [com.blockether.vis.contract.python-host :as contract]
+            [com.blockether.vis.contract.provider :as contract-provider]
             [com.blockether.vis.contract.toggle :as contract-toggle]
             [com.blockether.vis.contract.view :as contract-view]
             [com.blockether.vis.internal.python-extensions :as pyx]
@@ -60,6 +61,12 @@
           (expect (= #{"1" "on" "true" "yes"}
                      (set (get-in toggle-document ["boolean_wire" "true"]))))
           (expect (= toggle-document (get (contract/package-document) "toggle")))))
+    (it "renders the provider limits vocabulary from its owning document"
+        (let [provider-document (contract-provider/package-document)]
+          (expect (= 1 contract-provider/version))
+          (expect (= #{"error" "ok" "unauthenticated" "unknown-provider" "unsupported"}
+                     (set (get-in provider-document ["limits" "statuses"]))))
+          (expect (= provider-document (get (contract/package-document) "provider")))))
     (it "speaks the shell vocabulary the engine dispatches on"
         ;; The outside host reads these names out of the `vis_contract` document; an op
         ;; the engine does not know would make an extension that runs inside Vis

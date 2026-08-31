@@ -14,6 +14,7 @@
             [com.blockether.vis.internal.persistance :as ps]
             [com.blockether.vis.internal.prompt-templates :as prompt-templates]
             [com.blockether.vis.internal.provider-auth :as pauth]
+            [com.blockether.vis.contract.provider :as contract-provider]
             [com.blockether.vis.internal.provider-limits :as provider-limits]
             [com.blockether.vis.internal.providers :as providers]
             [com.blockether.vis.internal.limits-format :as limits-format]
@@ -2224,8 +2225,8 @@ vis.extension(
 
 ;; Regression, issue #118: a Python provider could never publish live account
 ;; usage. Its `limits_fn` row came back with `:unlimited?` instead of the host
-;; schema's `:is-unlimited`, so every row failed `::limit-row`, the whole report
-;; was replaced by an invalid-report error, and the TUI footer showed
+;; schema's `:is-unlimited`, so every row failed `contract.provider/limit-row`, the
+;; whole report was replaced by an invalid-report error, and the TUI footer showed
 ;; "limits: error (Provider limits fn returned an invalid report)".
 (defdescribe python-provider-limits-test
              (it "a Python limits_fn yields a valid report the footer can render"
@@ -2240,6 +2241,8 @@ vis.extension(
 
                                   (expect (= :ok (:status report)))
                                   (expect (nil? (:error report)))
+                                  ;; and the row itself passes the contract gate the host judges it by
+                                  (expect (contract-provider/limit-row-valid? row))
                                   ;; the host-schema boolean survives the Python boundary verbatim
                                   (expect (false? (:is-unlimited row)))
                                   (expect (nil? (:unlimited? row)))

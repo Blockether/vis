@@ -362,10 +362,10 @@
 (defn- limits-status-text
   "Render an explicit placeholder when the report is missing or the
    provider's `:provider/limits-fn` reported a non-ok status. The host
-   wrapper (`com.blockether.vis.internal.provider-limits`) is the
-   single source of these statuses: providers signal success/failure by
-   returning a `::report` with `:status :ok` / `:error` /
-   `:unauthenticated` / `:unsupported` / `:unknown-provider`, so the
+   contract (`com.blockether.vis.contract.provider`) is the single owner
+   of these statuses: providers signal success/failure by returning a
+   report with `:status :ok` / `:error` / `:unauthenticated` /
+   `:unsupported` / `:unknown-provider`, so the
    footer doesn't need a separate `notify-error!` / `notify-success!`
    side channel — it just reads the envelope."
   [db provider]

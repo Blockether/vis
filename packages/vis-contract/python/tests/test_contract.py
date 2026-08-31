@@ -171,6 +171,26 @@ def test_the_toggle_vocabulary_is_whole():
     assert set(toggle["config_truthy"]) <= set(toggle["boolean_wire"]["true"])
 
 
+def test_the_provider_limits_vocabulary_is_whole():
+    provider = vis_contract.PROVIDER
+    assert provider is vis_contract.CONTRACT["provider"]
+    assert provider["version"] == 1
+    limits = provider["limits"]
+    assert set(limits) == {
+        "statuses",
+        "scopes",
+        "kinds",
+        "window_kinds",
+        "window_units",
+        "precisions",
+        "sources",
+    }
+    for name, tokens in limits.items():
+        assert tokens == sorted(set(tokens)), name
+    # A report the host could not classify is still a report a channel must paint.
+    assert {"ok", "unauthenticated", "unknown-provider"} <= set(limits["statuses"])
+
+
 def test_the_view_vocabulary_is_whole():
     view = vis_contract.VIEW
     assert set(view["kinds"]) == {"input", "live"}
