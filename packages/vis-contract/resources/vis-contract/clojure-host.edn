@@ -98,7 +98,7 @@
     com.blockether.vis.internal.gateway-sandbox 1
     com.blockether.vis.internal.gateway.discovery 1
     com.blockether.vis.internal.gateway.pairing 1
-    com.blockether.vis.internal.gateway.protocol 1
+    com.blockether.vis.internal.gateway.runtime 1
     com.blockether.vis.internal.gateway.push 1
     com.blockether.vis.internal.gateway.state 1
     com.blockether.vis.internal.gateway.view 1

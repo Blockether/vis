@@ -1,7 +1,7 @@
 (ns com.blockether.vis.release-bundle-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.gateway.protocol :as protocol]
+            [com.blockether.vis.internal.gateway.runtime :as protocol]
             [lazytest.core :refer [defdescribe expect it]])
   (:import [java.net URL URLClassLoader]
            [java.nio.file Files]

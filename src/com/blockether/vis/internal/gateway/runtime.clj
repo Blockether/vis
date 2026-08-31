@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.gateway.protocol
+(ns com.blockether.vis.internal.gateway.runtime
   "Runtime identity, daemon staleness and compatibility diagnostics.
 
    Canonical protocol numbers, headers, handshake parsing and the pure compatibility
@@ -68,7 +68,7 @@
    namespace's own source file that holds a `.git`. nil for anything running out of
    a jar or an image, which carries its identity in `vis/BUILD` instead."
   []
-  (when-let [^java.io.File f (resource-file "com/blockether/vis/internal/gateway/protocol.clj")]
+  (when-let [^java.io.File f (resource-file "com/blockether/vis/internal/gateway/runtime.clj")]
     (loop [^java.io.File dir (.getParentFile f)]
       (when dir (if (.exists (io/file dir ".git")) dir (recur (.getParentFile dir)))))))
 

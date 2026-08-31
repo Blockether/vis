@@ -766,11 +766,11 @@ protocol compatibility numbers, 32 gateway event names, terminal and queue-mirro
 lifecycle events and replay anchors. Both blocking readers now import the terminal/queue semantics
 from `com.blockether.vis.contract.gateway`; that namespace also owns handshake parsing and the pure
 compatibility verdict, and runtime clients/server consume its numbers and headers directly. The
-removed mirrors no longer live in `internal.gateway.wire` or `internal.gateway.protocol`; the latter
-contains only release/build identity, concrete adapters and diagnostics pending its runtime move.
-Runtime route construction plus the remaining wire and shared View constants still drift-test
-against the fixture; existing View, Human Input, Activity, cancellation and cross-session permit
-suites preserve behavior. No production namespace or package has moved yet.
+removed mirrors no longer live in `internal.gateway.wire` or the deleted `internal.gateway.protocol`.
+Release/build identity, daemon staleness, concrete adapters and diagnostics now live in
+`internal.gateway.runtime`; runtime route construction plus the remaining wire and shared View
+constants still drift-test against the fixture. Existing View, Human Input, Activity, cancellation
+and cross-session permit suites preserve behavior. One production namespace has moved.
 
 Work already available as foundations:
 

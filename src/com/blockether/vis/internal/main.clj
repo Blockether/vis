@@ -2880,9 +2880,9 @@
   (if (and (= "dev" version) build) (str version " (" build ")") version))
 
 (defn- this-handshake
-  "What THIS runtime advertises about itself ([[protocol/handshake]])."
+  "What THIS runtime advertises about itself ([[runtime/handshake]])."
   []
-  ((requiring-resolve 'com.blockether.vis.internal.gateway.protocol/handshake)))
+  ((requiring-resolve 'com.blockether.vis.internal.gateway.runtime/handshake)))
 
 (defn- stale-daemon-note
   "The line `gateway status` adds when THIS runtime (`ours`, a handshake) is newer
@@ -2891,7 +2891,7 @@
 
    Both halves come out of the handshake the status map already carries, so the
    answer costs no extra round trip, and it applies the SAME two rules an attach
-   does - [[protocol/superseded?]] for the verdict, [[client/daemon-idle?]] for
+   does - [[runtime/superseded?]] for the verdict, [[client/daemon-idle?]] for
    whether anything is in the way. A status line must never promise a replacement
    the next client would refuse to make."
   [status ours]
@@ -2899,7 +2899,7 @@
         (get status "protocol")
 
         superseded?
-        ((requiring-resolve 'com.blockether.vis.internal.gateway.protocol/superseded?)
+        ((requiring-resolve 'com.blockether.vis.internal.gateway.runtime/superseded?)
           {:our-version (:version ours)
            :their-version (get peer "version")
            :our-build (:build ours)

@@ -1,6 +1,6 @@
 /**
  * Gateway ↔ app version compatibility — the browser half of
- * `com.blockether.vis.internal.gateway.protocol`.
+ * `com.blockether.vis.contract.gateway`.
  *
  * The companion updates on its own clock: a phone keeps a cached web build for
  * weeks while the gateway behind it gets `brew upgrade`d, or the reverse. So

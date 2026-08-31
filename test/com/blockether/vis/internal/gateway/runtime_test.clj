@@ -1,8 +1,8 @@
-(ns com.blockether.vis.internal.gateway.protocol-test
+(ns com.blockether.vis.internal.gateway.runtime-test
   (:require [lazytest.experimental.interfaces.clojure-test :refer [deftest is testing]]
             [com.blockether.vis.contract.gateway :as contract]
             [com.blockether.vis.internal.gateway.client :as client]
-            [com.blockether.vis.internal.gateway.protocol :as protocol]))
+            [com.blockether.vis.internal.gateway.runtime :as protocol]))
 
 (defn- client-var [sym] (ns-resolve 'com.blockether.vis.internal.gateway.client sym))
 

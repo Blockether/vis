@@ -17,7 +17,7 @@
             [com.blockether.vis.internal.cancellation :as cancellation]
             [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.gateway.discovery :as discovery]
-            [com.blockether.vis.internal.gateway.protocol :as protocol]
+            [com.blockether.vis.internal.gateway.runtime :as protocol]
             [com.blockether.vis.internal.gateway.wire :as wire]
             [com.blockether.vis.internal.util :as util])
   (:import (java.io BufferedReader InputStream InputStreamReader)

@@ -496,7 +496,7 @@ export interface SessionArtifactRow extends IterationAttachment {
 
 /**
  * The gateway's version contract, mirrored from
- * `com.blockether.vis.internal.gateway.protocol`. `protocol` is the wire
+ * `com.blockether.vis.contract.gateway`. `protocol` is the wire
  * number it speaks; `min_client` / `min_gateway` are the oldest counterparts it
  * still serves; `version` is the human Vis release.
  */

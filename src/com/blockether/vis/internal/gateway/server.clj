@@ -27,7 +27,7 @@
             [com.blockether.vis.internal.gateway.discovery :as discovery]
             [com.blockether.vis.internal.gateway.view :as gw-view]
             [com.blockether.vis.internal.gateway.pairing :as pairing]
-            [com.blockether.vis.internal.gateway.protocol :as protocol]
+            [com.blockether.vis.internal.gateway.runtime :as protocol]
             [com.blockether.vis.internal.gateway.push :as push]
             [com.blockether.vis.internal.gateway.state :as state]
             [com.blockether.vis.internal.gateway.wire :as wire]

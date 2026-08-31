@@ -332,9 +332,9 @@ a panel, the companion replaces its UI with a version-mismatch screen naming
 which half is stale and how to update it. A peer that advertises nothing is
 grandfathered in, never refused.
 
-Bump `protocol-version` in `gateway/protocol.clj` (and `APP_PROTOCOL` in the
-companion's `lib/compat.ts`) only for a breaking wire change, and raise
-`min-client-protocol` only when the old shape genuinely cannot be served.
+Bump the protocol numbers in `packages/vis-contract/resources/vis-contract/gateway.edn`
+(and `APP_PROTOCOL` in the companion's `lib/compat.ts`) only for a breaking wire change, and raise
+the minimum client protocol only when the old shape genuinely cannot be served.
 
 ## Push notifications (iOS / Android)
 

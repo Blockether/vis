@@ -486,7 +486,7 @@
     (reset! guard false)
     (reset! handshake {:protocol 2 :min-client 2 :min-gateway 2 :version "0.1.39"})
     (try (with-redefs-fn {(requiring-resolve
-                            'com.blockether.vis.internal.gateway.protocol/release-version)
+                            'com.blockether.vis.internal.gateway.runtime/release-version)
                           (constantly "0.1.40")
                           (rv 'report-version-bounce!) (constantly nil)
                           (rv 'send-json-with-entry!) (fn [& _]
@@ -524,9 +524,9 @@
     (reset! handshake
       {:protocol 2 :min-client 2 :min-gateway 2 :version "dev" :build "bbb222bbb222"})
     (try (with-redefs-fn {(requiring-resolve
-                            'com.blockether.vis.internal.gateway.protocol/release-version)
+                            'com.blockether.vis.internal.gateway.runtime/release-version)
                           (constantly "dev")
-                          (requiring-resolve 'com.blockether.vis.internal.gateway.protocol/build-id)
+                          (requiring-resolve 'com.blockether.vis.internal.gateway.runtime/build-id)
                           (constantly "aaa111aaa111")
                           (rv 'report-version-bounce!) (constantly nil)
                           (rv 'send-json-with-entry!) (fn [& _]
@@ -575,7 +575,7 @@
     (reset! handshake {:protocol 1 :min-client 1 :min-gateway 1 :version "0.1.39"})
     (try
       (with-redefs-fn
-        {(requiring-resolve 'com.blockether.vis.internal.gateway.protocol/release-version)
+        {(requiring-resolve 'com.blockether.vis.internal.gateway.runtime/release-version)
          (constantly "0.1.40")
          (rv 'report-version-bounce!) (constantly nil)
          (rv 'remote-gateway) (constantly nil)
