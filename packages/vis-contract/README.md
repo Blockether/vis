@@ -15,21 +15,21 @@ names current source inputs and freezes every forbidden Clojure edge and hand-wr
 JavaScript/Python wire value by source-file count while consumers move to the SDKs.
 `resources/vis-contract/gateway.edn` owns the built-in route table, protocol headers and
 versions, event vocabularies, terminal/queue semantics and replay anchors.
+`resources/vis-contract/view.edn` owns both View kinds' field, node, operation and lifecycle
+vocabularies plus renderer bounds.
 
 Nothing here requires a Vis namespace. The engine reads this project off its own
 classpath, `vis-agent` depends on the wheel, and a tool in somebody else's
 repository can read the same declaration without installing an agent.
 
-The one part this project does not own is the View vocabulary: the engine's
-`internal.view.spec` declares it and hands it to `package-document`, so the
-closed vocabulary keeps exactly one definition.
+The View vocabulary is contract-owned too: Core derives its keyword values from `contract.view`,
+and generated readers receive the same document without passing engine data into the renderer.
 
 ## Changing the contract
 
 1. Edit the owning document under `resources/vis-contract/`.
-2. Re-render the language-neutral and Python copies:
-   `(com.blockether.vis.contract.python-host/write-package-document!
-     (com.blockether.vis.internal.view.spec/contract-vocabulary))`.
+2. Re-render the language-neutral and Python copies with
+   `(com.blockether.vis.contract.python-host/write-package-document!)`.
 3. The contract, package and gateway characterization tests fail on source or byte drift.
 
 Both published ecosystems are versioned by the repository's `VIS_VERSION`; generated

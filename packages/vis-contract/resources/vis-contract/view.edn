@@ -1,0 +1,28 @@
+{:contract/version 1
+ :view/actions ["cancel" "interrupt" "select" "submit"]
+ :view/choice-types ["multiselect" "select"]
+ :view/decor-types ["heading" "paragraph"]
+ :view/field-types ["checkbox" "multiline" "multiselect" "otp" "password" "plaintext" "range"
+                    "select"]
+ :view/group-directions ["column" "row"]
+ :view/group-type "group"
+ :view/kinds ["input" "live"]
+ :view/live {:aligns ["left" "right"]
+             :link-targets ["attachment" "path" "url"]
+             :log {:max-patch-lines 500 :window-lines 2000 :window-lines-cap 100000}
+             :max-links 32
+             :max-nodes 32
+             :max-stats 32
+             :max-steps 200
+             :node-types ["link" "log" "progress" "stat" "status" "steps" "table"]
+             :ops ["add-node" "append" "clear" "remove" "remove-node" "set"]
+             :orders ["insertion" "newest-first"]
+             :reasons ["completed" "failed" "interrupted" "superseded" "timeout" "undeliverable"]
+             :sort-dirs ["asc" "desc"]
+             :table {:max-patch-rows 200 :max-rows 5000}
+             :tones ["error" "idle" "ok" "running" "warn"]}
+ :view/otp {:ceiling 12 :length 6}
+ :view/range {:max 100 :min 0 :step 1}
+ :view/secret-handle-prefix "vis-secret:"
+ :view/secret-types ["otp" "password"]
+ :view/text-types ["multiline" "password" "plaintext"]}

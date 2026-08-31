@@ -11,7 +11,6 @@
             [clojure.string :as str]
             [com.blockether.vis.contract.python-host :as contract]
             [com.blockether.vis.internal.foundation.shell :as shell]
-            [com.blockether.vis.internal.view.spec :as hi]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (def ^:private agent-dir "packages/vis-agent")
@@ -51,10 +50,10 @@
                                        (slurp (io/file agent-dir "src/vis/__init__.py")))))))
   (describe "the contract `vis-contract` ships"
             (it "is what the renderer writes for Python and JavaScript readers"
-                ;; Regenerate with `(python-host/write-package-document!
-                ;; (hi/contract-vocabulary))` — never by hand, or a source EDN has a second definition.
+                ;; Regenerate with `(python-host/write-package-document!)` — never by hand,
+                ;; or a source EDN has a second definition.
                 (let [rendered
-                      (contract/package-document-json (hi/contract-vocabulary))
+                      (contract/package-document-json)
 
                       copies
                       (map #(slurp (io/file %)) contract/package-document-paths)]

@@ -15,19 +15,20 @@
    envelopes and checks the five boundary seams once, never per keystroke."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
+            [com.blockether.vis.contract.view :as contract-view]
             [com.blockether.vis.internal.util :as util]))
 
 ;; The closed vocabulary
 
 (def view-kinds
   "Wire name -> lifecycle kind. Capability policy dispatches on this CLOSED set."
-  {"input" :input "live" :live})
+  contract-view/view-kinds)
 
 (def view-actions
   "Wire name -> operator action. Every surface sends this CLOSED vocabulary
    through one `view.action` seam; the View kind and addressed node decide whether
    the action is supported."
-  {"cancel" :cancel "interrupt" :interrupt "select" :select "submit" :submit})
+  contract-view/view-actions)
 
 (def view-action-key-sets
   "Every key one operator action may carry, selected by `:action`. Keeping these
@@ -44,26 +45,19 @@
 
    Only a type that holds an ANSWER belongs here. A layout `group` does not —
    see [[group-type]]."
-  {"plaintext" :plaintext
-   "password" :password
-   "multiline" :multiline
-   "select" :select
-   "multiselect" :multiselect
-   "checkbox" :checkbox
-   "range" :range
-   "otp" :otp})
+  contract-view/field-types)
 
-(def text-types "Field types whose answer is typed text." #{:plaintext :password :multiline})
+(def text-types "Field types whose answer is typed text." contract-view/text-types)
 
 (def choice-types
   "Field types answered by picking from `:options` — exclusive, then inclusive."
-  #{:select :multiselect})
+  contract-view/choice-types)
 
 (def secret-types
   "Field types whose value must never reach a log, an event or a transcript. A
    one-time code is as much a credential as a password — it opens the account
    once — so both answer with a vault handle instead of what the human typed."
-  #{:password :otp})
+  contract-view/secret-types)
 
 (def group-type
   "The type of a layout GROUP: the one node of a request's field tree that holds
@@ -75,13 +69,15 @@
    map. Listing it beside `:otp` said the opposite: every value path had to
    carry a branch for a node that can never take one, and a field spec would
    happily accept a group."
-  :group)
+  contract-view/group-type)
 
-(def group-type-name "How a wire spec asks for a [[group-type]] node." "group")
+(def group-type-name
+  "How a wire spec asks for a [[group-type]] node."
+  contract-view/group-type-name)
 
 (def group-directions
   "Wire direction name -> internal group direction."
-  {"column" :column "row" :row})
+  contract-view/group-directions)
 
 (def decor-types
   "Wire type name -> internal type of a DECORATION: a node that asks nothing and
@@ -93,7 +89,7 @@
    no focus stop — and owns no children either. It has no `:name` at all, which
    is the point: there is no identity, so two headings reading the same words are
    two decorations rather than a name collision."
-  {"heading" :heading "paragraph" :paragraph})
+  contract-view/decor-types)
 
 (def ^:private decor-node-types (set (vals decor-types)))
 
@@ -107,21 +103,21 @@
 (def otp-defaults
   "How many boxes a one-time code gets by default, and the most it may ask for:
    past a dozen the boxes no longer fit a narrow dialog."
-  {:length 6 :ceiling 12})
+  contract-view/otp-defaults)
 
 (def range-defaults
   "The track a `:range` field falls back to. A slider with no bounds is a
    PERCENTAGE — the one scale every operator already reads without being told
    what the numbers mean — and every surface fills the same three numbers in, so
    a hand-made request view draws the same knob a normalized one does."
-  {:min 0 :max 100 :step 1})
+  contract-view/range-defaults)
 
 (def secret-handle-prefix
   "What a submitted secret — a `:password` or an `:otp` — becomes before its
    answer leaves the engine. The plaintext stays in a process-local vault; this
    prefix is the whole difference between an answer that is harmless in a log
    and a leaked credential, so the answer contract is declared in terms of it."
-  "vis-secret:")
+  contract-view/secret-handle-prefix)
 
 (defn secret-handle?
   "True when `value` is an opaque handle minted for a `secret-types` field."
@@ -150,52 +146,36 @@
    indeterminate), `tree` (no caller). Arranging nodes is refused as a type
    too: a view lays its nodes out with the form's own [[group-type]], so `row`
    and `column` mean ONE thing on every surface."
-  {"status" :status     ; one line, REPLACED: what is happening right now
-   "progress" :progress ; a fraction, or indeterminate
-   "stat" :stat         ; label -> value counters upserted by id: the score
-   "steps" :steps       ; an ORDERED keyed checklist, each item carrying its tone
-   "log" :log           ; append-only lines — the scrollback
-   "table" :table       ; rows upserted and removed by row id, in a DECLARED order
-   "link" :link})       ; labeled pointers the human OPENS
+  contract-view/live-node-types)
 
 (def link-targets
   "The three things a surface knows how to open. CLOSED."
-  {"attachment" :attachment "path" :path "url" :url})
+  contract-view/link-targets)
 
 (def live-ops
   "What one patch operation DOES. The first four address ONE node BY ID, and the
    last two change the view's SHAPE. CLOSED."
-  {"set" :set           ; replace a node's own state (status text, progress value …)
-   "append" :append     ; add lines to a log; upsert rows, steps, stats, links by id
-   "remove" :remove     ; drop keyed ITEMS by id
-   "clear" :clear       ; empty a log, table, step list, stat strip or link list
-   "add-node" :add-node ; add a WHOLE node mid-run (a second table, a per-device log)
-   "remove-node" :remove-node}) ; drop a whole node, its items with it
+  contract-view/live-ops)
 
 (def live-tones
   "How a surface COLOURS one line, row, step or stat. CLOSED."
-  {"idle" :idle "running" :running "ok" :ok "warn" :warn "error" :error})
+  contract-view/live-tones)
 
 (def live-orders
   "Wire order name -> internal paint order of a `:table`'s rows. A keyed
    collection has no order of its own, so the terminal and the phone would be
    free to disagree unless the view DECLARES one."
-  {"insertion" :insertion "newest-first" :newest-first})
+  contract-view/live-orders)
 
 (def live-aligns
   "How a table column's cells sit under their header. CLOSED."
-  {"left" :left "right" :right})
+  contract-view/live-aligns)
 
-(def live-sort-dirs "Which way a `{:by …}` order runs. CLOSED." {"asc" :asc "desc" :desc})
+(def live-sort-dirs "Which way a `{:by …}` order runs. CLOSED." contract-view/live-sort-dirs)
 
 (def live-reasons
   "Why a view ended. CLOSED, and the only vocabulary an extension branches on."
-  {"completed" :completed
-   "interrupted" :interrupted
-   "timeout" :timeout
-   "undeliverable" :undeliverable
-   "failed" :failed
-   "superseded" :superseded})
+  contract-view/live-reasons)
 
 (def note-chars
   "The most characters a human's stop note carries. Stopping a view is ALWAYS
@@ -212,15 +192,15 @@
 (def log-defaults
   "The paint WINDOW of a `:log`, and the most lines one patch may carry. Neither
    is a cap on the stream: the sink keeps every line that was accepted."
-  {:window-lines 2000 :window-lines-cap 100000 :max-patch-lines 500})
+  contract-view/log-defaults)
 
 (def table-defaults
   "How many rows a `:table` may HOLD, and carry per patch."
-  {:max-rows 5000 :max-patch-rows 200})
-(def stat-defaults "A strip, not a spreadsheet." {:max-stats 32})
-(def step-defaults "A checklist, not a second log." {:max-steps 200})
-(def link-defaults "Pointers a human scans, not a bookmark file." {:max-links 32})
-(def view-defaults "200 devices are 200 ROWS, not 200 panes." {:max-nodes 32})
+  contract-view/table-defaults)
+(def stat-defaults "A strip, not a spreadsheet." contract-view/stat-defaults)
+(def step-defaults "A checklist, not a second log." contract-view/step-defaults)
+(def link-defaults "Pointers a human scans, not a bookmark file." contract-view/link-defaults)
+(def view-defaults "200 devices are 200 ROWS, not 200 panes." contract-view/view-defaults)
 (def item-bounds
   "The keyed collection each live node type holds: which key carries it, and how
    many items it may hold before a patch is REFUSED. One table, so the
@@ -347,41 +327,6 @@
    [[live-artifact-inline-bytes]])."
   #{:id :view-id :session-id :title :media-type :audience :ended-at :reason :view :storage-uri :size
     :line-count :base64})
-(defn contract-vocabulary
-  "This vocabulary as DATA, for `com.blockether.vis.contract.python-host` to render
-   into `vis_contract/contract.json` — the document every surface that cannot
-   require this namespace reads instead. The tables above stay the one definition:
-   a Python reader gets a rendering of them, never a transcription."
-  []
-  {:view-kinds (vec (sort (keys view-kinds)))
-   :view-actions (vec (sort (keys view-actions)))
-   :field-types (vec (sort (keys field-types)))
-   :text-types (mapv clojure.core/name (sort text-types))
-   :choice-types (mapv clojure.core/name (sort choice-types))
-   :secret-types (mapv clojure.core/name (sort secret-types))
-   :decor-types (vec (sort (keys decor-types)))
-   :group-type group-type-name
-   :group-directions (vec (sort (keys group-directions)))
-   :otp {:length (:length otp-defaults) :ceiling (:ceiling otp-defaults)}
-   :range {:min (:min range-defaults) :max (:max range-defaults) :step (:step range-defaults)}
-   :secret-handle-prefix secret-handle-prefix
-   :live {:node-types (vec (sort (keys live-node-types)))
-          :link-targets (vec (sort (keys link-targets)))
-          :ops (vec (sort (keys live-ops)))
-          :tones (vec (sort (keys live-tones)))
-          :orders (vec (sort (keys live-orders)))
-          :aligns (vec (sort (keys live-aligns)))
-          :sort-dirs (vec (sort (keys live-sort-dirs)))
-          :reasons (vec (sort (keys live-reasons)))
-          :log {:window-lines (:window-lines log-defaults)
-                :window-lines-cap (:window-lines-cap log-defaults)
-                :max-patch-lines (:max-patch-lines log-defaults)}
-          :table {:max-rows (:max-rows table-defaults)
-                  :max-patch-rows (:max-patch-rows table-defaults)}
-          :max-stats (:max-stats stat-defaults)
-          :max-steps (:max-steps step-defaults)
-          :max-links (:max-links link-defaults)
-          :max-nodes (:max-nodes view-defaults)}})
 
 ;; The keys — one table, and the parser reads it too
 ;;

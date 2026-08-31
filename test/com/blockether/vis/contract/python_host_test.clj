@@ -11,6 +11,7 @@
             [com.blockether.vis.internal.foundation.shell :as fshell]
             [com.blockether.vis.internal.view :as view]
             [com.blockether.vis.contract.python-host :as contract]
+            [com.blockether.vis.contract.view :as contract-view]
             [com.blockether.vis.internal.python-extensions :as pyx]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import (org.graalvm.polyglot Context)))
@@ -33,6 +34,14 @@
         (let [refusing (filter #(= :outside/refuse (:op/outside %)) (contract/ops))]
           (expect (seq refusing))
           (expect (every? #(str/includes? (:op/refusal %) (str "vis." (:op/name %))) refusing))))
+    (it "renders from the View contract without engine arguments"
+        (let [view-document (contract-view/package-document)]
+          (expect (= 1 contract-view/version))
+          (expect (= ["input" "live"] (get view-document "kinds")))
+          (expect (= ["add-node" "append" "clear" "remove" "remove-node" "set"]
+                     (get-in view-document ["live" "ops"])))
+          (expect (= view-document (get (contract/package-document) "view")))
+          (expect (string? (contract/package-document-json)))))
     (it "speaks the shell vocabulary the engine dispatches on"
         ;; The outside host reads these names out of the `vis_contract` document; an op
         ;; the engine does not know would make an extension that runs inside Vis

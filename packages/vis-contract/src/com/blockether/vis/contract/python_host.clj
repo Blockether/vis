@@ -12,10 +12,8 @@
    an extension can compile against the declaration without the engine. [[package-document]]
    ships as the root language-neutral generator input and `vis_contract/contract.json`.
 
-   The View vocabulary is the one part this project does not own:
-   `internal.view.spec` declares it and PASSES it to [[package-document]],
-   because a closed vocabulary with two definitions is exactly the bug a contract
-   exists to prevent.
+   The View vocabulary is owned by `com.blockether.vis.contract.view` and read from
+   `resources/vis-contract/view.edn`; package rendering therefore needs no engine input.
 
    The document is validated the moment it is read: a malformed contract is a
    broken build, not a runtime surprise inside somebody's extension.
@@ -25,7 +23,8 @@
             [clojure.java.io :as io]
             [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [com.blockether.vis.contract.gateway :as gateway]))
+            [com.blockether.vis.contract.gateway :as gateway]
+            [com.blockether.vis.contract.view :as view]))
 
 (set! *warn-on-reflection* true)
 
@@ -139,67 +138,12 @@
 ;; ---------------------------------------------------------------------------
 ;; The document the PACKAGE reads
 ;;
-;; `python/src/vis_contract/contract.json` is this document plus the View
-;; vocabulary, rendered for a Python reader that has no EDN and no JVM. It is
-;; CHECKED IN because a wheel installed from PyPI has no repository to read, and
-;; GENERATED because the engine's `view.spec` holds the one definition of that
-;; vocabulary -- the package gets a rendering, never a transcription.
-;; `python_package_test` fails on drift and names [[write-package-document!]] as
-;; the fix.
+;; `python/src/vis_contract/contract.json` is this document plus the contract-owned
+;; View vocabulary, rendered for Python and JavaScript readers that have no EDN or
+;; JVM. It is checked in because a wheel installed from PyPI has no repository to
+;; read. `python_package_test` fails on drift and names [[write-package-document!]]
+;; as the fix.
 
-(s/def :view/strings (s/and (s/coll-of non-blank-string? :kind vector? :distinct true) not-empty))
-(s/def :view/view-kinds :view/strings)
-(s/def :view/field-types :view/strings)
-(s/def :view/text-types :view/strings)
-(s/def :view/choice-types :view/strings)
-(s/def :view/secret-types :view/strings)
-(s/def :view/decor-types :view/strings)
-(s/def :view/group-type non-blank-string?)
-(s/def :view/group-directions :view/strings)
-(s/def :view/otp (s/keys :req-un [:view/length :view/ceiling]))
-(s/def :view/length pos-int?)
-(s/def :view/ceiling pos-int?)
-(s/def :view/range (s/keys :req-un [:view/min :view/max :view/step]))
-(s/def :view/min number?)
-(s/def :view/max number?)
-(s/def :view/step number?)
-(s/def :view/secret-handle-prefix non-blank-string?)
-;; The LIVE half of the vocabulary: the node types, patch operations, tones,
-;; orders and endings a streaming view is built from, plus the bounds a patch is
-;; REFUSED against. Same shape as above — closed tables the engine owns and this
-;; document only renders.
-(s/def :view/node-types :view/strings)
-(s/def :view/link-targets :view/strings)
-(s/def :view/ops :view/strings)
-(s/def :view/tones :view/strings)
-(s/def :view/orders :view/strings)
-(s/def :view/aligns :view/strings)
-(s/def :view/sort-dirs :view/strings)
-(s/def :view/reasons :view/strings)
-(s/def :view/window-lines pos-int?)
-(s/def :view/window-lines-cap pos-int?)
-(s/def :view/max-patch-lines pos-int?)
-(s/def :view/max-rows pos-int?)
-(s/def :view/max-patch-rows pos-int?)
-(s/def :view/max-stats pos-int?)
-(s/def :view/max-steps pos-int?)
-(s/def :view/max-links pos-int?)
-(s/def :view/max-nodes pos-int?)
-(s/def :view/log (s/keys :req-un [:view/window-lines :view/window-lines-cap :view/max-patch-lines]))
-(s/def :view/table (s/keys :req-un [:view/max-rows :view/max-patch-rows]))
-(s/def :view/live
-  (s/keys :req-un [:view/node-types :view/link-targets :view/ops :view/tones :view/orders
-                   :view/aligns :view/sort-dirs :view/reasons :view/log :view/table :view/max-stats
-                   :view/max-steps :view/max-links :view/max-nodes]))
-;; The vocabulary the ENGINE hands in. Specced here because the contract is what
-;; the package trusts: a surface that drifts is caught rendering the document, not
-;; by an extension author reading a field type Python has never heard of.
-(s/def :view/view-actions (s/and (s/coll-of string? :kind vector?) not-empty))
-(s/def :contract/view
-  (s/keys :req-un [:view/view-kinds :view/view-actions :view/field-types :view/text-types
-                   :view/choice-types :view/secret-types :view/decor-types :view/group-type
-                   :view/group-directions :view/otp :view/range :view/secret-handle-prefix
-                   :view/live]))
 
 (defn- op->json
   [{:op/keys [name global arity summary outside refusal]}]
@@ -211,50 +155,11 @@
     refusal
     (assoc "refusal" refusal)))
 
-(defn- view->json
-  [{:keys [view-kinds view-actions field-types text-types choice-types secret-types decor-types
-           group-type group-directions otp range secret-handle-prefix live]
-    :as vocabulary}]
-  (when-not (s/valid? :contract/view vocabulary)
-    (throw (ex-info "the View vocabulary handed to the contract is not one"
-                    {:type :vis/contract-invalid
-                     :explain (s/explain-str :contract/view vocabulary)})))
-  (array-map "kinds" view-kinds
-             "actions" view-actions
-             "field_types" field-types
-             "text_types" text-types
-             "choice_types" choice-types
-             "secret_types" secret-types
-             "decor_types" decor-types
-             "group_type" group-type
-             "group_directions" group-directions
-             "otp" (array-map "length" (:length otp) "ceiling" (:ceiling otp))
-             "range" (array-map "min" (:min range) "max" (:max range) "step" (:step range))
-             "secret_handle_prefix" secret-handle-prefix
-             "live" (array-map
-                      "node_types" (:node-types live)
-                      "link_targets" (:link-targets live)
-                      "ops" (:ops live)
-                      "tones" (:tones live)
-                      "orders" (:orders live)
-                      "aligns" (:aligns live)
-                      "sort_dirs" (:sort-dirs live)
-                      "reasons" (:reasons live)
-                      "log" (array-map "window_lines" (get-in live [:log :window-lines])
-                                       "window_lines_cap" (get-in live [:log :window-lines-cap])
-                                       "max_patch_lines" (get-in live [:log :max-patch-lines]))
-                      "table" (array-map "max_rows" (get-in live [:table :max-rows])
-                                         "max_patch_rows" (get-in live [:table :max-patch-rows]))
-                      "max_stats" (:max-stats live)
-                      "max_steps" (:max-steps live)
-                      "max_links" (:max-links live)
-                      "max_nodes" (:max-nodes live))))
 
 (defn package-document
   "The portable `contract.json`: gateway semantics, host ops, verb grammars and
-   the closed View vocabulary. `view-vocabulary` comes from the namespace that OWNS
-   it — `(com.blockether.vis.internal.view.spec/contract-vocabulary)`."
-  [view-vocabulary]
+   the closed View vocabulary, all rendered from contract-owned documents."
+  []
   (array-map "version" (version)
              "ops" (mapv op->json (ops))
              "shell"
@@ -266,7 +171,7 @@
                                  "handle_ops" handle-ops
                                  "flush_ms" flush-ms))
              "gateway" (gateway/package-document)
-             "view" (view->json view-vocabulary)))
+             "view" (view/package-document)))
 
 (def package-document-path
   "Where the rendered document is checked in, from the repository root."
@@ -278,17 +183,15 @@
 
 (defn package-document-json
   "[[package-document]] as the checked-in file's exact bytes."
-  [view-vocabulary]
-  (-> (json/write-json-str (package-document view-vocabulary) {:indent-str "  "})
+  []
+  (-> (json/write-json-str (package-document) {:indent-str "  "})
       (str/replace #" +\n" "\n")
       (str "\n")))
 
 (defn write-package-document!
-  "Re-render every [[package-document-paths]] copy. Run after changing an owning
-   EDN document or the View vocabulary; `python_package_test` notices drift."
-  ([view-vocabulary]
-   (let [body (package-document-json view-vocabulary)]
-     (doseq [path package-document-paths]
-       (spit path body))
-     package-document-paths))
-  ([view-vocabulary path] (spit path (package-document-json view-vocabulary)) path))
+  "Re-render every [[package-document-paths]] copy from its owning contract data."
+  []
+  (let [body (package-document-json)]
+    (doseq [path package-document-paths]
+      (spit path body))
+    package-document-paths))

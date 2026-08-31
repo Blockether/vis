@@ -759,23 +759,22 @@ on-demand; a capability that appears only after unrelated use is not acceptable.
 
 ## State of the plan
 
-**IN PROGRESS** — Phase 1 is complete and Phase 2 is active. The executable dependency boundary
-freezes the remaining Clojure graph and JavaScript/Python wire debt. The contract-owned
+**IN PROGRESS** — Phases 1 and 2 are complete; Phase 3 is active. The executable dependency
+boundary freezes the remaining Clojure graph and JavaScript/Python wire debt. The contract-owned
 `gateway.edn` pins all 99 built-in paths / 121 method-path operations and each operation's request
-body plus successful response transport, alongside 14 protocol header spellings, protocol compatibility
-numbers, 32 gateway event names, terminal and queue-mirror sets, shared View lifecycle events,
-encoding now lives in independently loadable `com.blockether.vis.contract.wire`; Core producers,
-server and engine tests import it directly; current extension consumers stay behind the Core facade. Concrete
-transport and bounded diagnostics live beside their sole callers, so `internal.gateway.wire`
-has been deleted rather than forwarded. `com.blockether.vis.contract.gateway` also owns the handshake
-declaration, construction and parsing, the shared JSON error-response envelope, compatibility, View
-event constants, and the session-event, private journal-line and subscription-ready envelopes consumed
-directly by the runtime and server. Method-only route sets have been replaced by operation records; the
-same renderer emits a root language-neutral `contract.json` and the Python wheel's byte-identical copy
-with deterministic JavaScript/Python generator input. Release/build identity, daemon staleness and
-concrete diagnostics remain in `internal.gateway.runtime`. Existing View, Human Input,
-Activity, cancellation and cross-session permit suites preserve behavior. Three production
-namespaces have moved or been removed.
+body plus successful response transport, alongside 14 protocol header spellings, protocol
+compatibility numbers, 32 gateway event names, terminal and queue-mirror sets, shared View
+lifecycle events and replay/envelope semantics. Canonical encoding lives in independently loadable
+`com.blockether.vis.contract.wire`; Core producers, server and engine tests import it directly.
+Concrete transport and bounded diagnostics remain beside their sole callers;
+`internal.gateway.wire` was deleted rather than forwarded. Release/build identity, daemon
+staleness and concrete diagnostics remain in `internal.gateway.runtime`. The same renderer emits
+the language-neutral root `contract.json` and the Python wheel's byte-identical copy.
+
+Phase 3 began with `view.edn`: `com.blockether.vis.contract.view` now owns the closed View
+vocabulary and defaults, the engine derives its existing constants from that owner, and package
+rendering is argument-free. Existing View, Human Input, Activity, cancellation and cross-session
+permit suites preserve behavior. Three production namespaces have moved or been removed.
 
 Work already available as foundations:
 
