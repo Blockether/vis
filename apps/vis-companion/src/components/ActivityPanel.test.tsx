@@ -168,14 +168,17 @@ describe("the axis is built from the closed vocabulary", () => {
 // box of its own. These cases pin that line, the words on it, and the evidence
 // that opens under one step without moving the others.
 describe("a run reads as one thread", () => {
-  it("hangs every step on one branch, bracketed against the invocation above it", () => {
+  it("hangs every step on one line and joins each mark to it", () => {
     paintActivity();
 
-    // One hairline down the left of the marks, and a bracket closing the group
-    // top and bottom against the row that produced it — that is the whole frame.
+    // ONE hairline down the left of the marks, dropped from the row that
+    // produced them, with a tick from it to every ring: a dot floating beside a
+    // line is a bullet in a list, a dot JOINED to it is a moment on a timeline.
+    // Nothing brackets the group — that was a second border saying what the
+    // named row above it already said.
     const branch = screen.getByRole("list", { name: "Invocation chronology" });
     expect(branch.className).toContain("before:w-px");
-    expect(branch.className).toContain("after:border-y");
+    expect(branch.className).not.toContain("after:");
 
     const steps = [...document.querySelectorAll("[data-activity-row]")];
     expect(steps).toHaveLength(2);
@@ -317,9 +320,11 @@ describe("a step that ended badly", () => {
   it("says how it failed on its own line and opens itself", () => {
     paintFailure("patch refused: no anchor matched");
 
+    // The machine's own text IS the reason. The row stamps no word on top of it:
+    // the filled mark is the whole of the colour a failure gets.
     expect(
       document.querySelector('[data-activity-row="call-1"]')?.textContent,
-    ).toContain("NO MATCH");
+    ).not.toContain("NO MATCH");
     expect(screen.getByText("patch refused: no anchor matched")).toBeTruthy();
   });
 
@@ -373,11 +378,11 @@ describe("the axis says a thing once", () => {
 
     const chronology =
       screen.getByLabelText("Invocation chronology").textContent ?? "";
-    expect(chronology.match(/NO MATCH/g) ?? []).toHaveLength(1);
+    expect(chronology).not.toContain("NO MATCH");
     expect(chronology.match(/src\/components\/ui\.tsx/g) ?? []).toHaveLength(1);
   });
 
-  it("drops the pill when it would only spell out the mark beside it", () => {
+  it("prints the engine's reason only when no text opens under the step", () => {
     paintStep({
       state: "failed" as const,
       error_summary: "the provider closed the stream before the first token",

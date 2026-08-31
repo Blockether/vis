@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { ReactNode } from "react";
 import { Disclosure } from "./ui";
 import type {
   ActivityDiffEvidence,
@@ -25,11 +24,12 @@ import type {
  * form runs and once it has landed — which is what stops the transcript from
  * swapping a live surface for an artifact under the reader.
  *
- * A BRANCH OFF THE INVOCATION, NOT A LIST OF ROWS. The chronology hangs on its
- * own hairline, indented left of the invocation's words, and a second pair of
- * hairlines closes the top and bottom of the group: that bracket is what says
- * "all of this belongs to the call above" without a border, a card or a header
- * repeating what the invocation row already said.
+ * A BRANCH OFF THE INVOCATION, NOT A LIST OF ROWS. The chronology hangs on one
+ * hairline dropped from the invocation's own row, and every step reaches that
+ * line with a tick of its own: the line is TIME, a mark on it is the moment the
+ * call happened, and the tick is the step arriving. Nothing closes the group —
+ * a bracket, like a card, is a second border repeating what the named row above
+ * it already said.
  *
  * A STEP IS INERT. Its mark is a 9px ring on the branch — never an icon, never
  * a state colour — because the run's states are already in the words, and a
@@ -334,30 +334,6 @@ function activityStepDelta(row: ActivityRow): {
   );
 }
 
-const FAIL_TAG_MAX = 18;
-
-/**
- * The word the pill carries — or NOTHING at all.
- *
- * A pill reading FAILED, beside a filled red mark, under a verb that already
- * says the step failed, is the third spelling of one fact. The frame is earned
- * only by the engine's own reason — NO MATCH, TIMEOUT, 2 FAILED — and when the
- * engine has only a sentence, that sentence is printed as the step's own line.
- */
-function failTagText(row: ActivityRow): string {
-  const summary = (row.error_summary ?? "").trim();
-  return summary && summary.length <= FAIL_TAG_MAX ? summary.toUpperCase() : "";
-}
-
-/** A FAILURE, SAID ONCE, IN A FRAME — the only colour this axis is allowed. */
-function FailTag({ children }: { children: ReactNode }) {
-  return (
-    <span className="inline-block shrink-0 border border-err-ink px-1 font-mono text-chip font-bold tracking-[0.06em] text-err-ink">
-      {children}
-    </span>
-  );
-}
-
 /**
  * THE MARK ON THE BRANCH: a ring, a disc when the step failed, hollow for what
  * is not on the page at all.
@@ -368,6 +344,10 @@ function FailTag({ children }: { children: ReactNode }) {
  * not miss, so it fills; the tail the engine's bound dropped is the exception
  * that must not look like a step, so it empties and the axis still ends on a
  * mark rather than on a stray caption.
+ *
+ * The mark carries its own tick back to the rail. A dot floating beside a line
+ * is a bullet in a list; a dot JOINED to it is a moment on a timeline, and this
+ * axis is the second thing.
  */
 function ActivityNode({ state }: { state: ActivityRow["state"] }) {
   const failed = state === "failed";
@@ -376,7 +356,7 @@ function ActivityNode({ state }: { state: ActivityRow["state"] }) {
   return (
     <span
       aria-hidden="true"
-      className={`absolute -left-1 top-1 size-[9px] rounded-full border ${
+      className={`absolute -left-1 top-1 size-[9px] rounded-full border before:absolute before:top-[3px] before:right-full before:h-px before:w-[8px] before:bg-edge-strong before:content-[''] sm:before:w-[10px] ${
         failed
           ? "border-err-ink bg-err-ink"
           : running
@@ -574,18 +554,21 @@ function ActivityStep({ row }: { row: ActivityRow }) {
   const summary = activityStepObject(row);
   const delta = activityStepDelta(row);
   const duration = formatActivityDuration(row.duration_ms);
-  const tag = failTagText(row);
-  const outcome = failed
-    ? tag
-      ? ""
-      : (row.error_summary ?? "")
-    : activityStepOutcome(row);
   const diff = row.evidence.find(
     (item): item is ActivityDiffEvidence => item.kind === "diff",
   );
   const error = row.evidence.find(
     (item): item is ActivityTextEvidence => item.kind === "error",
   );
+  // A failed step says WHY once: the machine's own text when it left one, and
+  // the engine's summary line only when it did not. There is no pill — a framed
+  // word beside a filled red mark, under a verb that already says "refused",
+  // was the same fact spelled a third time.
+  const outcome = failed
+    ? error
+      ? ""
+      : (row.error_summary ?? "")
+    : activityStepOutcome(row);
   const touched = row.resources.filter((resource) => resource.id !== summary);
   const object = countsVisibleFiles(summary, touched.length) ? "" : summary;
 
@@ -611,14 +594,6 @@ function ActivityStep({ row }: { row: ActivityRow }) {
               {" "}
               <span className="ml-[5px] font-mono font-normal text-dialog-hint">
                 +{delta.additions} &minus;{delta.deletions}
-              </span>
-            </>
-          )}
-          {failed && tag && (
-            <>
-              {" "}
-              <span className="ml-1.5 inline-block align-[1px]">
-                <FailTag>{tag}</FailTag>
               </span>
             </>
           )}
@@ -648,17 +623,16 @@ function ActivityStep({ row }: { row: ActivityRow }) {
 }
 
 /**
- * THE BRANCH ITSELF: one hairline, bracketed top and bottom.
+ * THE BRANCH ITSELF: one hairline, and a tick from it to every mark.
  *
- * The rail runs left of every mark and the bracket closes the group against the
- * invocation above it, which is the whole frame this surface gets — a card
- * around a chronology that already hangs off a named row is the second box that
- * made a turn read as a stack of panels.
+ * The rail drops from the invocation's own row and each step reaches it with a
+ * tick, so the axis reads as work that HAPPENED IN TIME rather than a list that
+ * was laid out — the line is when, the mark is the moment, the tick is the step
+ * arriving on it.
  *
- * The rail is the PALER line of the two. It only has to be followed, while the
- * ticks that close the group are what says where this call's work begins and
- * ends; drawn the other way round, the darkest thing in the block is a line
- * that carries no information at all.
+ * One line is the whole frame this surface gets. A bracket closing the group,
+ * like a card around it, is a second border saying what the named row above it
+ * already said; and the rail stays pale, because it is followed, not read.
  */
 function ActivityThread({ activity }: { activity?: ActivityProjection }) {
   const rows = [...(activity?.rows ?? [])].sort(
@@ -670,7 +644,7 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
     <ol
       aria-label="Invocation chronology"
       data-activity-rail
-      className="relative -ml-[14px] mb-0.5 min-w-0 pt-4 pb-4.5 pl-[27px] before:absolute before:inset-y-0 before:left-[15px] before:w-px before:bg-edge-strong before:content-[''] after:absolute after:inset-y-0 after:left-[-12px] after:w-[27px] after:border-y after:border-code-edge after:content-[''] sm:-ml-[18px] sm:pl-8 sm:before:left-[18px] sm:after:left-[-14px] sm:after:w-8"
+      className="relative -ml-[14px] mb-0.5 min-w-0 pt-4 pb-4.5 pl-[27px] before:absolute before:inset-y-0 before:left-[15px] before:w-px before:bg-edge-strong before:content-[''] sm:-ml-[18px] sm:pl-8 sm:before:left-[18px]"
     >
       {rows.map((row) => (
         <ActivityStep key={row.id} row={row} />
