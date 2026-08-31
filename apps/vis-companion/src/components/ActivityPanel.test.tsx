@@ -7,7 +7,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ActivityPanel,
-  activityCostText,
+  activityCallText,
+  activityCostParts,
   activityReceiptText,
 } from "./ActivityPanel";
 import activityPanelSource from "./ActivityPanel.tsx?raw";
@@ -103,18 +104,49 @@ describe("one form's Activity on the phone", () => {
   });
 });
 
-// "Did this iteration change anything" is the one question a closed invocation
-// is asked, and no row answers it: the verbs do not carry the classification and
-// `0 mutations` is about the rows that are NOT there. Everything else the margin
-// used to count — reads, checks, failures — is a row on the axis below it.
-describe("what the iteration cost the repository", () => {
-  it("states the mutations and nothing the axis already shows", () => {
-    const cost = activityCostText(activityProjection());
+// The band is named by WHAT IT CALLED, and its margin says what that cost: what
+// changed the repository, what was only read, what was checked. `0 mutations` is
+// about the rows that are NOT there, so it always prints; the other two print
+// only when they happened.
+describe("what the iteration called and what it cost", () => {
+  it("names the calls as they were typed, in the engine's order", () => {
+    expect(activityCallText(activityProjection())).toBe("grep · run_tests");
+  });
 
-    expect(cost).toBe("0 mutations");
-    expect(cost).not.toContain("read");
-    expect(cost).not.toContain("check");
-    expect(cost).not.toContain("error");
+  it("keeps three names and counts the rest, the dropped rows included", () => {
+    const projection = activityProjection();
+    const [first] = projection.rows;
+    const rows = [1, 2, 3, 4, 5].map((sequence) => ({
+      ...first,
+      id: `call-${sequence}`,
+      sequence,
+      operation: `tool_${sequence}`,
+    }));
+
+    expect(
+      activityCallText({
+        ...projection,
+        rows,
+        omitted: { rows: 2, by_classification: {} },
+      }),
+    ).toBe("tool_1 · tool_2 · tool_3 +4");
+  });
+
+  it("states the mutations, and stays quiet about a kind that did not happen", () => {
+    const parts = activityCostParts(activityProjection());
+
+    expect(parts.map((part) => part.text)).toEqual([
+      "0 mutations",
+      "1 observation",
+      "1 check",
+    ]);
+    // Colour REPEATS the noun. Reading the words alone must lose nothing, so the
+    // quiet count wears the margin's own ink and no tone at all.
+    expect(parts.map((part) => part.tone)).toEqual([
+      "text-accent-ink",
+      "text-code-syntax-keyword",
+      "",
+    ]);
   });
 
   it("leaves the failures to the marks and the state word", () => {
@@ -122,29 +154,33 @@ describe("what the iteration cost the repository", () => {
     const [first, ...rest] = projection.rows;
 
     expect(
-      activityCostText({
+      activityCostParts({
         ...projection,
         counts: { running: 0, succeeded: 1, failed: 1, cancelled: 0 },
         rows: [
           { ...first, signal: "mutation" as const, state: "failed" as const },
           ...rest,
         ],
-      }),
-    ).toBe("1 mutation");
+      }).map((part) => part.text),
+    ).toEqual(["1 mutation", "1 check"]);
   });
 
   // The ENGINE's own bound is what drops rows, so the cost covers the whole run:
-  // a chronology that shows four of ten calls must not report the cost of four.
+  // a chronology that shows four of ten calls must not report the cost of four,
+  // and its tail can say `+6 more` but never what the six WERE.
   it("counts the rows the engine dropped, so a bounded axis cannot under-report", () => {
     const projection = activityProjection();
 
     expect(
-      activityCostText({
+      activityCostParts({
         ...projection,
         rows: [],
-        omitted: { rows: 6, by_classification: { mutation: 6 } },
-      }),
-    ).toBe("6 mutations");
+        omitted: {
+          rows: 6,
+          by_classification: { mutation: 6, observation: 2 },
+        },
+      }).map((part) => part.text),
+    ).toEqual(["6 mutations", "2 observations"]);
   });
 });
 
@@ -171,13 +207,15 @@ describe("a run reads as one thread", () => {
   it("hangs every step on one line and joins each mark to it", () => {
     paintActivity();
 
-    // ONE hairline down the left of the marks, dropped from the row that
-    // produced them, with a tick from it to every ring: a dot floating beside a
-    // line is a bullet in a list, a dot JOINED to it is a moment on a timeline.
-    // Nothing brackets the group — that was a second border saying what the
-    // named row above it already said.
+    // ONE line for the whole turn: the chronology draws none of its own. It
+    // bleeds left onto the line the turn already runs down its column, and every
+    // ring reaches that line with a tick — a dot floating beside a line is a
+    // bullet in a list, a dot JOINED to it is a moment on a timeline. Nothing
+    // brackets the group; that was a second border saying what the named row
+    // above it already said.
     const branch = screen.getByRole("list", { name: "Invocation chronology" });
-    expect(branch.className).toContain("before:w-px");
+    expect(branch.className).toContain("-ml-6");
+    expect(branch.className).not.toContain("before:");
     expect(branch.className).not.toContain("after:");
 
     const steps = [...document.querySelectorAll("[data-activity-row]")];
@@ -186,9 +224,9 @@ describe("a run reads as one thread", () => {
       // A step owns no box of its own, and its mark is a ring rather than a glyph.
       expect(step.className).not.toContain("border-t");
       expect(step.className).not.toContain("bg-result");
-      expect(step.querySelector("span.absolute")?.className ?? "").toContain(
-        "rounded-full",
-      );
+      const mark = step.querySelector("span.absolute")?.className ?? "";
+      expect(mark).toContain("rounded-full");
+      expect(mark).toContain("before:right-full");
       expect(step.querySelector("svg")).toBeNull();
     }
   });

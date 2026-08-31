@@ -836,10 +836,11 @@ describe("a Python evaluation without detected Activity", () => {
     expect(
       painted.getByRole("button", { name: "Expand execution trace" }),
     ).toBe(receipt);
-    // The band is NAMED and its margin carries the facts: the sentence that used
-    // to narrate the call ("RUNNING · GREP · searching") is now the chronology's job.
-    expect(painted.container.textContent).toContain("INVOCATION");
-    expect(painted.container.textContent).toContain("RUNNING · 0 mutations");
+    // The band is NAMED BY WHAT IT CALLED and its margin carries the facts: the
+    // sentence that used to narrate the call ("RUNNING · GREP · searching") is
+    // now the chronology's job.
+    expect(receipt.textContent).toContain("grep");
+    expect(receipt.textContent).toContain("RUNNING · 0 mutations");
   });
 
   it("does not invent Activity when an empty projection settles", () => {
@@ -955,7 +956,7 @@ describe("Activity owns the slot after its Python form and result", () => {
     expect(receipts).toHaveLength(2);
     // Only the SECOND form carries a snapshot, so only its receipt says so.
     expect(painted.container.textContent).toContain(
-      "INVOCATIONRUNNING · 0 mutations",
+      "grep · run_testsRUNNING · 0 mutations · 1 observation · 1 check",
     );
     receipts.forEach((receipt) => fireEvent.click(receipt));
     expect(
@@ -991,7 +992,7 @@ describe("Activity owns the slot after its Python form and result", () => {
         painted.getByRole("button", { name: "Expand execution trace" }),
       ).toBeTruthy();
       expect(painted.container.textContent).toContain(
-        "INVOCATIONRUNNING · 0 mutations",
+        "grep · run_testsRUNNING · 0 mutations · 1 observation · 1 check",
       );
       expect(painted.container.textContent).not.toContain("line_1()");
       expect(painted.container.textContent).not.toContain("RESULT");
@@ -1034,12 +1035,14 @@ describe("Activity owns the slot after its Python form and result", () => {
       ),
     );
 
-    expect(rendered).toContain("DONE · 12.6s · 0 mutations");
-    // The count of calls is no longer part of the sentence: the margin says what
-    // they COST, which is the question the sentence could not answer — and it
-    // says only that, because the reads and the checks are rows on the axis.
+    // The count of CALLS is no longer part of the sentence — the names of the
+    // calls are the band's own title now — and the margin says what they cost,
+    // in the three kinds the wire classifies and no other.
+    expect(rendered).toContain(
+      "DONE · 12.6s · 0 mutations · 1 observation · 1 check",
+    );
     expect(rendered).not.toContain("1 read");
-    expect(rendered).not.toContain("1 check");
+    expect(rendered).not.toContain("finished 2/2");
   });
 
   it("uses only the actual terminal Activity count after settlement", () => {
@@ -1063,12 +1066,11 @@ describe("Activity owns the slot after its Python form and result", () => {
       ),
     );
 
-    // The dropped rows still count where the count is the margin's own — but a
-    // tally of reads is not: six dropped OBSERVATIONS are what the axis's own
-    // tail says, and repeating them beside INVOCATION prints them twice.
+    // The dropped rows still count where the count is the margin's own: the
+    // axis's tail can say `+6 more`, never WHAT the six were, and naming them is
+    // exactly what this line is for.
     expect(rendered).toContain("FAILED");
-    expect(rendered).toContain("0 mutations");
-    expect(rendered).not.toContain("6 reads");
+    expect(rendered).toContain("0 mutations · 6 observations");
     expect(rendered).not.toContain("finished 6/");
   });
 

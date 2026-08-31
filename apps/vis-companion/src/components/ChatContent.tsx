@@ -17,7 +17,8 @@ import { DocPreview, DocStack, docStackSummary } from "./DocArtifact";
 import { LiveRunRow } from "./LiveArtifact";
 import {
   ActivityPanel,
-  activityCostText,
+  activityCallText,
+  activityCostParts,
   activityReceiptText,
   activityStateText,
 } from "./ActivityPanel";
@@ -1554,16 +1555,12 @@ const FormTrace = memo(function FormTrace({
     receipt,
     running,
   } = formStep(form, live);
-  // The band is NAMED, not narrated: how the call ended and what it cost the
-  // repository stand in its own margin, and the chronology under it says which
-  // program is running. The margin counts only mutations — reads, checks and
-  // failures are rows on the axis, and counting them here prints them twice.
-  const margin = [
-    activityStateText(activity, form.duration_ms),
-    activityCostText(activity),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  // The band is NAMED BY WHAT IT CALLED — `grep · cat · patch` — and how that
+  // call ended, what it cost and what it looked at stand in its own margin. The
+  // chronology under it says what each call did; failures are rows there,
+  // already wearing their own marks, so the margin never counts them.
+  const call = activityCallText(activity);
+  const cost = activityCostParts(activity);
 
   return (
     <div className={live ? `min-w-0 ${transcriptRiseClass}` : "min-w-0"}>
@@ -1593,18 +1590,25 @@ const FormTrace = memo(function FormTrace({
           }
           onClick={() => setExpanded((open) => !open)}
         >
-          {/* The state keeps a floor the margin cannot squeeze it under: on a
-              phone the cost wraps to its own line rather than clipping the one
-              word — "RUNNING" — that says whether to wait. */}
-          <span className="min-w-[9rem] flex-1 truncate font-mono text-chip font-bold text-code-result">
-            {detectedActivity ? "INVOCATION" : receipt}
+          {/* The band is named by WHAT IT CALLED, and the names keep a floor
+              the margin cannot squeeze them under: on a phone the counters wrap
+              to their own line rather than clipping the program. */}
+          <span className="min-w-[9rem] flex-1 truncate font-mono text-chip font-bold tracking-normal text-code-result">
+            {detectedActivity && call ? call : receipt}
           </span>
-          {/* WHAT IT COST, in the row's own margin: "did this change anything"
-              is the one question a closed invocation is asked, and it is
-              answered without opening it. */}
-          {detectedActivity && margin && (
+          {/* WHAT IT COST, in the row's own margin: what changed the repository,
+              what was only read, what was checked — the three kinds the wire
+              classifies, answered without opening anything. Colour repeats each
+              noun and never carries it. */}
+          {detectedActivity && (
             <span className="shrink-0 font-mono text-chip font-normal normal-case tracking-normal text-dialog-hint">
-              {margin}
+              {activityStateText(activity, form.duration_ms)}
+              {cost.map((part) => (
+                <Fragment key={part.text}>
+                  {" · "}
+                  <span className={part.tone || undefined}>{part.text}</span>
+                </Fragment>
+              ))}
             </span>
           )}
         </Disclosure>

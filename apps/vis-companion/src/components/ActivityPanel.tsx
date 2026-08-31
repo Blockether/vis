@@ -24,12 +24,12 @@ import type {
  * form runs and once it has landed — which is what stops the transcript from
  * swapping a live surface for an artifact under the reader.
  *
- * A BRANCH OFF THE INVOCATION, NOT A LIST OF ROWS. The chronology hangs on one
- * hairline dropped from the invocation's own row, and every step reaches that
- * line with a tick of its own: the line is TIME, a mark on it is the moment the
- * call happened, and the tick is the step arriving. Nothing closes the group —
- * a bracket, like a card, is a second border repeating what the named row above
- * it already said.
+ * ONE SPINE, NOT TWO. The chronology hangs on the TURN's own line — the same
+ * hairline the invocation's ring stands on — and every step reaches it with a
+ * tick of its own: the line is TIME, a mark on it is the moment the call
+ * happened, and the tick is the step arriving. A second rail beside that one, or
+ * a bracket closing the group, is a second border repeating what the named row
+ * above it already said.
  *
  * A STEP IS INERT. Its mark is a 9px ring on the branch — never an icon, never
  * a state colour — because the run's states are already in the words, and a
@@ -135,34 +135,93 @@ function activityTotal(activity?: ActivityProjection): number {
 }
 
 /**
+ * WHAT WAS CALLED, in the invocation's own name.
+ *
+ * `INVOCATION` is true of every band in the transcript and so names none of
+ * them. What a reader wants from an iteration is the PROGRAM — `grep · cat ·
+ * patch`, the tools as they were typed, in the order the engine ran them. The
+ * axis below says in prose what each call DID; this line is the call itself, so
+ * the two are not one sentence printed twice.
+ *
+ * Three names, then a tally: a fourth pushes the state word off a phone. The
+ * tally counts the rows the engine's own bound dropped as well, because a call
+ * nobody can see is still a call that happened.
+ */
+const CALL_NAMES_SHOWN = 3;
+
+export function activityCallText(activity?: ActivityProjection): string {
+  const rows = [...(activity?.rows ?? [])].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
+  const named = rows
+    .slice(0, CALL_NAMES_SHOWN)
+    .map((row) => row.operation.trim());
+  const rest = rows.length - named.length + (activity?.omitted.rows ?? 0);
+  return [named.join(" · "), rest > 0 ? `+${rest}` : ""]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** One counter in the margin: the words, and the tone that repeats them. */
+export interface ActivityCostPart {
+  readonly text: string;
+  /** Empty for the margin's own ink — a count that needs no colour to be read. */
+  readonly tone: string;
+}
+
+/**
  * WHAT THE ITERATION COST THE REPOSITORY, in the invocation's own margin.
  *
- * The margin says only what the axis beneath it cannot. Reads, checks and
- * failures are ROWS on the page — countable by eye, already wearing their own
- * marks — so a tally of them beside the word INVOCATION is one fact printed
- * twice. A mutation count is not that fact: "did this iteration change
- * anything" is a classification the verbs do not carry, and `0 mutations` is an
- * answer no row can give, because it is about the rows that are not there.
+ * Three kinds and no fourth: these are the three the wire classifies and the
+ * three a reader budgets differently — what CHANGED the repository, what only
+ * looked at it, what checked it. `generic` is none of them and stays uncounted,
+ * because "something else happened" is not a number anyone can act on.
+ *
+ * `0 mutations` always prints. "Did this iteration change anything" is the one
+ * question a closed invocation is asked, and it is about the rows that are NOT
+ * there, so no row on the axis can answer it. The other two print only when they
+ * happened, because their zero is a fact the page already shows.
  *
  * The rows the engine's own bound DROPPED are counted here from
- * `omitted.by_classification`, because this line covers the whole run: a
- * chronology that shows four of ten calls must not report the cost of four.
+ * `omitted.by_classification`: this line covers the whole run, a chronology that
+ * shows four of ten calls must not report the cost of four, and the axis tail
+ * can say `+6 more` but never what the six WERE.
+ *
+ * Colour repeats each noun and never carries it — mutations in the accent, reads
+ * in the theme's cool ink, checks in the margin's own — so a reader who cannot
+ * separate two hues loses nothing.
  */
-export function activityCostText(activity?: ActivityProjection): string {
+export function activityCostParts(
+  activity?: ActivityProjection,
+): readonly ActivityCostPart[] {
   const dropped: Record<string, number> =
     activity?.omitted.by_classification ?? {};
-  const mutations =
-    (activity?.rows ?? []).filter(
-      (candidate) => candidate.signal === "mutation",
-    ).length + (dropped.mutation ?? 0);
-  return `${mutations} mutation${mutations === 1 ? "" : "s"}`;
+  const rows = activity?.rows ?? [];
+  const tally = (signal: string) =>
+    rows.filter((row) => row.signal === signal).length + (dropped[signal] ?? 0);
+  const noun = (amount: number, word: string) =>
+    `${amount} ${word}${amount === 1 ? "" : "s"}`;
+  const observations = tally("observation");
+  const checks = tally("verification");
+  return [
+    { text: noun(tally("mutation"), "mutation"), tone: "text-accent-ink" },
+    ...(observations
+      ? [
+          {
+            text: noun(observations, "observation"),
+            tone: "text-code-syntax-keyword",
+          },
+        ]
+      : []),
+    ...(checks ? [{ text: noun(checks, "check"), tone: "" }] : []),
+  ];
 }
 
 /**
  * HOW THE CALL ENDED AND HOW LONG IT TOOK — the two facts a band's NAME cannot carry.
  *
- * The invocation row is named, not narrated: its left is the word INVOCATION and
- * everything factual stands in its own margin. v36 spends that margin on identity
+ * The invocation row is named by what it CALLED, and everything factual stands
+ * in its own margin. v36 spends that margin on identity — session, turn,
  * — session, turn, iteration, baseline commit — and none of that is on this wire;
  * a state and an elapsed time are, so the margin says those instead. The elapsed
  * time is printed only once it is FINAL: a number that stops moving while the run
@@ -623,16 +682,23 @@ function ActivityStep({ row }: { row: ActivityRow }) {
 }
 
 /**
- * THE BRANCH ITSELF: one hairline, and a tick from it to every mark.
+ * THE CHRONOLOGY: the turn's own line, and a tick from it to every mark.
  *
- * The rail drops from the invocation's own row and each step reaches it with a
- * tick, so the axis reads as work that HAPPENED IN TIME rather than a list that
- * was laid out — the line is when, the mark is the moment, the tick is the step
- * arriving on it.
+ * It draws NO rail. The line the marks hang on is the one the turn already runs
+ * down its whole column (`RAIL_LINE` in `ChatContent`), with the invocation's
+ * own ring standing on it directly above — so a step is a branch off the call
+ * that made it, and one line carries the eye from a turn's first call to its
+ * last step. A second hairline of its own, eighteen pixels to the right, was two
+ * timelines drawn for one chronology.
  *
- * One line is the whole frame this surface gets. A bracket closing the group,
- * like a card around it, is a second border saying what the named row above it
- * already said; and the rail stays pale, because it is followed, not read.
+ * Every mark reaches that line with a tick: a dot floating beside a line is a
+ * bullet in a list, a dot JOINED to it is a moment on a timeline, and this axis
+ * is the second thing. The padding is measured, not chosen — the ring sits 4px
+ * left of the text column with an 8px tick (10px from `sm`), so 19px and 21px
+ * land the tick's far end exactly on the turn's line at 7px.
+ *
+ * Nothing closes the group: a bracket, like a card around it, is a second border
+ * saying what the named row above it already said.
  */
 function ActivityThread({ activity }: { activity?: ActivityProjection }) {
   const rows = [...(activity?.rows ?? [])].sort(
@@ -643,8 +709,8 @@ function ActivityThread({ activity }: { activity?: ActivityProjection }) {
   return (
     <ol
       aria-label="Invocation chronology"
-      data-activity-rail
-      className="relative -ml-[14px] mb-0.5 min-w-0 pt-4 pb-4.5 pl-[27px] before:absolute before:inset-y-0 before:left-[15px] before:w-px before:bg-edge-strong before:content-[''] sm:-ml-[18px] sm:pl-8 sm:before:left-[18px]"
+      data-activity-chronology
+      className="relative -ml-6 mb-0.5 min-w-0 pt-4 pb-4.5 pl-[19px] sm:pl-[21px]"
     >
       {rows.map((row) => (
         <ActivityStep key={row.id} row={row} />
