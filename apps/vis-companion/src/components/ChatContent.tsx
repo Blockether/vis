@@ -1796,13 +1796,15 @@ function StepNode({ running, failed }: { running: boolean; failed: boolean }) {
       data-step-node
       className={`${RAIL_NODE} flex h-8 items-center mouse:h-6`}
     >
-      {/* Only the mark's own box clears the line — a full-height clearing would
-          rub the thread out for the whole step and leave the marker floating.
-          It clears in the TRANSCRIPT's own paper (`bg-ink`, the scroller in
-          `SessionScreen`), never in `bg-page`: that token is three percent of
-          the foreground mixed in, so behind every marker it painted a grey tile
-          the reader could see. */}
-      <span className="flex bg-ink py-[3px]">
+      {/* The thread runs UNDER the mark, not into it: the clearing is the mark's
+          own disc, so the line meets the ring and comes out the other side
+          instead of stopping in a gap either side of it. A rectangle — or any
+          taller box — cut the thread twice per step and left the ring floating
+          in the hole. It clears in the TRANSCRIPT's own paper (`bg-ink`, the
+          scroller in `SessionScreen`), never in `bg-page`: that token is three
+          percent of the foreground mixed in, so behind every marker it painted
+          a grey tile the reader could see. */}
+      <span className="flex rounded-full bg-ink">
         {running ? (
           <CircleDotIcon className="text-accent-ink" />
         ) : failed ? (
