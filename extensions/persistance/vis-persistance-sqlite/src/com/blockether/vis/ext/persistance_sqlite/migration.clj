@@ -255,6 +255,17 @@
     (loop [acc #{}]
       (if (.next rs) (recur (conj acc (str/lower-case (.getString rs "name")))) acc))))
 
+(defn- stored-columns
+  "The column definitions `table` actually carries, parsed out of the store's own
+   `CREATE TABLE` text by the very parser the canonical file goes through, so the
+   two sides are comparable. Empty when the table does not exist."
+  [^java.sql.Connection conn ^String table]
+  (with-open [st (.prepareStatement
+                   conn
+                   "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")]
+    (.setString st 1 table)
+    (with-open [rs (.executeQuery st)]
+      (if (.next rs) (get (canonical-columns (or (.getString rs "sql") "")) table []) []))))
 (defn- reconcile-canonical-columns!
   "Additively realign a database that was created by an EARLIER copy of the
    canonical V1 with the V1 shipped now.
@@ -415,14 +426,15 @@
   (with-open [st (.createStatement conn)]
     (.executeUpdate st sql)))
 
-(defn- retire-column!
-  "Drop `column` from `table` and restore what had to go with it: the dependent
-   triggers and the external-content FTS5 index are dropped, the column goes,
-   then every dependent the canonical SQL still defines is recreated from that
-   file's own text and each recreated FTS index is `rebuild`-ed so it holds the
-   surviving columns. One transaction — a store ends up either fully retired or
-   exactly as it started, never with its search triggers missing."
-  [^java.sql.Connection conn objects ^String table ^String column]
+(defn- restoring-dependents!
+  "Run `alter!` between DROPPING every schema object whose DDL names `column`
+   and recreating the ones the canonical SQL still defines, each recreated FTS5
+   index `rebuild`-ed so it holds the surviving columns.
+
+   The drop is what makes the alteration legal at all — SQLite refuses to touch
+   a column a trigger reads — and the recreate is what keeps search working
+   afterwards. Both column repairs need exactly this, so neither owns it."
+  [^java.sql.Connection conn objects ^String table ^String column alter!]
   (let [deps
         (dependent-objects conn table column)
 
@@ -434,7 +446,7 @@
 
     (doseq [{:keys [kind name]} deps]
       (execute-ddl! conn (str "DROP " (str/upper-case kind) " IF EXISTS " name)))
-    (execute-ddl! conn (str "ALTER TABLE " table " DROP COLUMN " column))
+    (alter!)
     (doseq [{:keys [sql]} recreate]
       (execute-ddl! conn sql))
     (doseq [{:keys [kind name sql]}
@@ -443,6 +455,17 @@
             :when (and (= "table" kind) (re-find #"(?i)using\s+fts5" ^String sql))]
 
       (execute-ddl! conn (str "INSERT INTO " name "(" name ") VALUES('rebuild')")))))
+
+(defn- retire-column!
+  "Drop `column` from `table` and restore what had to go with it. One
+   transaction — a store ends up either fully retired or exactly as it started,
+   never with its search triggers missing."
+  [^java.sql.Connection conn objects ^String table ^String column]
+  (restoring-dependents! conn
+                         objects
+                         table
+                         column
+                         #(execute-ddl! conn (str "ALTER TABLE " table " DROP COLUMN " column))))
 
 (defn- drop-retired-columns!
   "Drop every `retired-columns` entry a store still carries. Best effort and
@@ -476,6 +499,81 @@
              (.executeUpdate st (str "DELETE FROM " table " WHERE " predicate)))
            (catch Throwable _ nil)))))
 
+(defn- drifted-columns
+  "Columns whose definition in the STORE no longer reads like the canonical
+   file's, as the canonical definition plus its `:table`.
+
+   The additive pass only ever sees a column that is MISSING. A column whose
+   text CHANGED is present, so nothing realigned it: when
+   `prompt_cache_continuity` gained a `cache-context-changed` case in its CHECK,
+   every store created before that edit kept the narrower constraint and the
+   first write of the new value died with SQLITE_CONSTRAINT_CHECK, taking the
+   turn with it. Both sides go through the same parse and compare
+   case-insensitively, so formatting alone never provokes a rewrite."
+  [^java.sql.Connection conn tables]
+  (vec
+    (for [[table cols]
+          tables
+
+          :let [have
+                (into {}
+                      (map (juxt (comp str/lower-case :name) (comp str/lower-case :sql)))
+                      (stored-columns conn table))]
+          :when (seq have)
+          col
+          cols
+
+          :let [stored
+                (get have (str/lower-case ^String (:name col)))]
+          :when (and stored (not= stored (str/lower-case ^String (:sql col))) (addable-column? col))]
+
+      (assoc col :table table))))
+
+(defn- realign-column!
+  "Give `table` the canonical definition of `col` while keeping the values it
+   holds: the old column is renamed aside, the canonical one added, every value
+   copied across and the old one dropped. SQLite has no ALTER COLUMN, and a whole
+   table rebuild would have to re-derive constraints the file already spells out.
+
+   A value the new definition REFUSES rolls the transaction back and leaves the
+   store as it was: dropping data to satisfy a narrowed constraint is a decision
+   for a retirement entry, not for a repair that runs on every open."
+  [^java.sql.Connection conn objects ^String table {:keys [^String name ^String sql]}]
+  (let [aside (str name "_vis_superseded")]
+    (restoring-dependents!
+      conn
+      objects
+      table
+      name
+      (fn []
+        (execute-ddl! conn (str "ALTER TABLE " table " RENAME COLUMN " name " TO " aside))
+        (execute-ddl! conn (str "ALTER TABLE " table " ADD COLUMN " sql))
+        (execute-ddl! conn (str "UPDATE " table " SET " name " = " aside))
+        (execute-ddl! conn (str "ALTER TABLE " table " DROP COLUMN " aside))))))
+
+(defn- realign-drifted-columns!
+  "Rewrite every column a store carries with an older canonical V1's definition.
+   Best effort and per column: one repair SQLite refuses rolls back alone, so the
+   rest of the store still realigns and the database stays openable."
+  [^DataSource ds locations]
+  (let [texts
+        (migration-sql-texts locations)
+
+        tables
+        (reduce merge {} (map canonical-columns texts))
+
+        objects
+        (canonical-objects texts)]
+
+    (when (seq tables)
+      (with-open [conn (.getConnection ds)]
+        (doseq [col (drifted-columns conn tables)]
+          (let [auto (.getAutoCommit conn)]
+            (try (.setAutoCommit conn false)
+                 (realign-column! conn objects (:table col) col)
+                 (.commit conn)
+                 (catch Throwable _ (try (.rollback conn) (catch Throwable _ nil)))
+                 (finally (try (.setAutoCommit conn auto) (catch Throwable _ nil))))))))))
 (defn migrate!
   "Install the single canonical V1 schema.
 
@@ -483,8 +581,9 @@
    into V1 self-heal through Flyway `repair`, then migration is retried. Repair
    changes only `flyway_schema_history`; persisted Vis rows and schema objects
    are preserved. Databases created by an older V1 are then topped up additively
-   by `reconcile-canonical-columns!` and stripped of `retired-columns`, so one
-   canonical migration keeps serving stores that already exist."
+   by `reconcile-canonical-columns!`, realigned by `realign-drifted-columns!`
+   wherever a column's own definition changed, and stripped of `retired-columns`,
+   so one canonical migration keeps serving stores that already exist."
   [^DataSource ds locations]
   (let [locs
         (cond (string? locations) [locations]
@@ -512,6 +611,7 @@
         (catch Throwable e
           (if (repairable-validation-error? e) (do (.repair flyway) (.migrate flyway)) (throw e)))))
     (reconcile-canonical-columns! ds locs)
+    (realign-drifted-columns! ds locs)
     (delete-retired-rows! ds)
     (drop-retired-columns! ds locs)
     ds))

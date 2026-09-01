@@ -219,3 +219,78 @@
            (exec! ds (str "UPDATE " table " SET llm_assistant_prose = 'kestrel' WHERE id = 'i1'"))
            (expect (= 1 (fts-count ds "kestrel")))
            (finally (.delete file))))))
+
+(defn- scalar
+  [^javax.sql.DataSource ds ^String sql]
+  (with-open [conn
+              (.getConnection ds)
+
+              st
+              (.createStatement conn)
+
+              rs
+              (.executeQuery st sql)]
+
+    (when (.next rs) (.getString rs 1))))
+
+(defn- refused
+  "The exception `sql` raised, or nil when the store accepted it."
+  [^javax.sql.DataSource ds ^String sql]
+  (try (exec! ds sql) nil (catch Exception e e)))
+
+(defn- iteration-row
+  "One iteration carrying `continuity`, with only the columns V1 makes NOT NULL."
+  [^String id ^long position ^String continuity]
+  (str "INSERT INTO session_turn_iteration"
+       " (id, session_turn_state_id, position, status, code, created_at,"
+       " prompt_cache_continuity)"
+       " VALUES ('"
+       id
+       "', 't1', "
+       position
+       ", 'done', 'print(1)', 1, '"
+       continuity
+       "')"))
+
+;; Regression: `prompt_cache_continuity` gained a `cache-context-changed` case in
+;; its CHECK, but a store created by the older canonical V1 kept the narrower
+;; constraint — the additive pass only ever adds a column that is MISSING, and
+;; this one was present. The first iteration recorded with the new value died
+;; with SQLITE_CONSTRAINT_CHECK, and the whole turn failed with it.
+(defdescribe
+  drifted-column-test
+  (it
+    "realigns a column whose canonical definition changed, keeping its values"
+    (let [[^java.io.File file ds]
+          (temp-ds)
+
+          table
+          "session_turn_iteration"
+
+          column
+          "prompt_cache_continuity"]
+
+      (try (migration/migrate! ds [migration-dir])
+           ;; the shape an older V1 left behind: the same column, narrower CHECK
+           (exec! ds (str "ALTER TABLE " table " DROP COLUMN " column))
+           (exec! ds
+                  (str "ALTER TABLE "
+                       table
+                       " ADD COLUMN "
+                       column
+                       " TEXT CHECK ( "
+                       column
+                       " IS NULL OR "
+                       column
+                       " IN ('initial', 'append-only', 'rewrite', 'expired') )"))
+           (exec! ds (iteration-row "i1" 1 "expired"))
+           (expect (some? (refused ds (iteration-row "i2" 2 "cache-context-changed"))))
+           (migration/migrate! ds [migration-dir])
+           ;; the value the shipped V1 allows is now writable, and the store kept
+           ;; every row it already held
+           (expect (nil? (refused ds (iteration-row "i2" 2 "cache-context-changed"))))
+           (expect (= 2 (row-count ds table)))
+           (expect (= "expired"
+                      (scalar ds (str "SELECT " column " FROM " table " WHERE id = 'i1'"))))
+           (expect (not (contains? (columns-of ds table) (str column "_vis_superseded"))))
+           (finally (.delete file))))))
