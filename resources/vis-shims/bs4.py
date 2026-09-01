@@ -1537,7 +1537,7 @@ def __vis_install_bs4__():
 
     # -- CSS select --------------------------------------------------------------
     # An+B, as soupsieve's RE_NTH sees it (`odd`/`even` are handled separately).
-    _NTH_RE = re.compile(r"^([-+]?)(\d*n|\d+)(?:([-+])(\d+))?$")
+    _NTH_RE = _re.compile(r"^([-+]?)(\d*n|\d+)(?:([-+])(\d+))?$")
 
     # The element `:scope` refers to: whatever select() was called on.
     _CSS_SCOPE = [None]
@@ -2879,9 +2879,11 @@ def __vis_install_bs4__():
             "title",
         )
 
-        def set_cdata_mode(self, elem):
+        def set_cdata_mode(self, elem, escapable=False):
+            # html.parser grew a keyword-only `escapable` after 3.11: accept it
+            # and keep deciding from the element, which both versions agree on.
             self.cdata_elem = elem.lower()
-            if self.cdata_elem in self.RCDATA_CONTENT_ELEMENTS:
+            if escapable or self.cdata_elem in self.RCDATA_CONTENT_ELEMENTS:
                 self.interesting = _re.compile(r"&|</\s*%s" % self.cdata_elem, _re.I)
             else:
                 self.interesting = _re.compile(r"</\s*%s" % self.cdata_elem, _re.I)
@@ -3596,8 +3598,8 @@ def __vis_install_bs4__():
                 out.append("\\" + ch)
         return "".join(out)
 
-    _CSS_CUSTOM_NAME_RE = re.compile(r"^:--[\w-]*$")
-    _CSS_CUSTOM_USE_RE = re.compile(r":--[\w-]*")
+    _CSS_CUSTOM_NAME_RE = _re.compile(r"^:--[\w-]*$")
+    _CSS_CUSTOM_USE_RE = _re.compile(r":--[\w-]*")
 
     def _css_position_message(text, pattern, index):
         """soupsieve points a caret at the offending character; mirror that shape."""
