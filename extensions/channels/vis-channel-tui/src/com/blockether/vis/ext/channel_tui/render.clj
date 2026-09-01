@@ -9,7 +9,6 @@
             [com.blockether.vis.ext.channel-tui.table :as table]
             [com.blockether.vis.ext.channel-tui.terminal-image :as timg]
             [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.internal.paths :as vpaths]
             [com.blockether.vis.internal.provider-error :as perr])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
            [com.googlecode.lanterna.graphics TextGraphics]
@@ -5662,7 +5661,7 @@
    answer and the directory is only where it lives."
   [id ^long max-w]
   (let [shown
-        (vpaths/abbreviate-home (str id))
+        (vis/abbreviate-home (str id))
 
         cut
         (str/last-index-of shown "/")
@@ -6409,7 +6408,14 @@
                      (or (get detail-expansions :vis.channel-tui/expand-execution-details?)
                          (detail-expanded? detail-expansions session-id execution-node-id false)))
 
-                ;; BLOCK N header removed per user directive (also gated
+
+                 ;; THE ELAPSED IS SAID ONCE. The receipt's head band already carries the
+                 ;; figure and is the ONE row present in both states, so RESULT, a bodyless
+                 ;; form's stamp and a failure headline all stop repeating it — the same
+                 ;; measurement printed twice reads as two of them. Without a head band
+                 ;; (no session, no receipt) the result rows remain its only home.
+                 result-duration-ms
+                 (when-not execution-status duration-ms)
                 ;; on `show-header?` which is now always false). Keep
                 ;; `expr-hdr` defined as empty so the existing `(when
                 ;; show-header? ...)` branch is dead but type-safe.
@@ -6455,10 +6461,14 @@
                 title-lines
                 []
 
-                ;; Canonical code surface: the gateway's cached, ruff-formatted
-                ;; `:display-code`, falling back to formatting the raw source here.
-                code-text
-                (str/trim (str (or (not-empty (str display-code)) (vis/beautify-python code))))
+                 ;; THE PROGRAM THE MODEL WROTE, and no second dialect. The gateway attaches
+                 ;; the cached ruff rendering as `:display-code` — on the live chunk and on
+                 ;; every restored form alike (`form/with-display`) — so a record that carries
+                 ;; none never had one, and its own source is what ran. Formatting it a third
+                 ;; time HERE printed a program the companion never shows: `ChatContent` falls
+                 ;; back to the raw source in exactly this order and reformats nothing.
+                 code-text
+                 (str/trim (str (or (not-empty (str display-code)) code)))
 
                 ;; A pre-rendered display names its OWN language; every other code
                 ;; surface here is Python.
@@ -6606,10 +6616,11 @@
                 ;; figure-only row. A card head, `+N more` disclosure, or FAILED headline
                 ;; already carries the same figure: never paint it twice.
                 duration-stamp
-                (when-let [d (and (nil? card)
-                                  (nil? error)
-                                  (empty? form-artifacts)
-                                  (vis/format-duration duration-ms))]
+                 (when-let [d (and (nil? card)
+                                   (nil? error)
+                                   (empty? form-artifacts)
+                                   (some? result-duration-ms)
+                                   (vis/format-duration result-duration-ms))]
                   {:line (str result-marker
                               " "
                               (format-detail-summary-line "" d (max 1 (dec (long fill-w)))))
@@ -6664,7 +6675,7 @@
                                                    :session-id session-id
                                                    :detail-expansions detail-expansions
                                                    :node-id result-node-id
-                                                   :duration-ms duration-ms})
+                                                   :duration-ms result-duration-ms})
                           ;; Long stdout without an op card: keep the first rows visible and
                           ;; collapse only the surplus behind the band's own name.
                           (and result-node-id (seq hidden))
@@ -6690,7 +6701,7 @@
                                    :collapsed? (not expanded?)
                                    :session-id session-id
                                    :node-id result-node-id
-                                   :duration-ms duration-ms})]
+                                   :duration-ms result-duration-ms})]
 
                             (vec (concat visible summary (when expanded? hidden))))
                           :else (cond-> entries
@@ -6713,8 +6724,8 @@
                         ;; columns every error row is inset by, and never when a card
                         ;; head already wears it.
                         (cond-> (wrap-text (form-error-headline error) fill-w)
-                          (nil? card)
-                          (with-right-suffix (vis/format-duration duration-ms)
+                          (and (nil? card) (some? result-duration-ms))
+                          (with-right-suffix (vis/format-duration result-duration-ms)
                                              (max 1
                                                   (- (long fill-w) (long code-text-inset-cols)))))))
 
@@ -6747,10 +6758,6 @@
                                 (when (seq title-lines) [(line-entry "")])
                                 (when show-header?
                                   [(line-entry (str iteration-hdr-marker expr-hdr))])
-                                (when (seq comment-lines)
-                                  (concat [(line-entry (str thinking-marker ""))]
-                                          comment-lines
-                                          [(line-entry (str thinking-marker ""))]))
                                 [(line-entry (str c-pad ""))]
                                 c-lines
                                 (when (seq inline-error-message-lines) inline-error-message-lines)
@@ -6775,34 +6782,45 @@
                 execution-body
                 (vec (concat code-block result-block artifact-block generic-run-entries))
 
-                activity-surface
-                (when activity-run (activity-detail-entries activity-run fill-w session-id))]
+                 ;; THE SENTENCE THAT INTRODUCES A CALL IS TRANSCRIPT TEXT, above the band and
+                 ;; outside its fold. The companion prints a form's comment as an ordinary block
+                 ;; before the receipt; folding it under the receipt's own chevron hid the words
+                 ;; that say WHY the step exists and let the machine's summary speak first.
+                 comment-block
+                 (when (seq comment-lines)
+                   (vec (concat [(line-entry (str thinking-marker ""))]
+                                comment-lines
+                                [(line-entry (str thinking-marker ""))])))
 
-            (if-not execution-status
-              execution-body
-              (let [summary-text
-                    (activity-status-display (cond-> execution-status
-                                               (seq form-artifacts)
-                                               (update :status-text str
-                                                       " · " (artifact-preview form-artifacts))))
+                 activity-surface
+                 (when activity-run (activity-detail-entries activity-run fill-w session-id))]
 
-                    summary-line
-                    (ellipsize-cols (str "  " (if execution-expanded? "▾" "▸") " " summary-text)
-                                    (max 1 (long fill-w)))
+             (if-not execution-status
+               (vec (concat comment-block execution-body))
+               (let [summary-text
+                     (activity-status-display (cond-> execution-status
+                                                (seq form-artifacts)
+                                                (update :status-text str
+                                                        " · " (artifact-preview form-artifacts))))
 
-                    summary
-                    {:line (str execution-summary-marker summary-line)
-                     :meta {:kind :toggle-details
-                            :status-tone (:status-tone execution-status)
-                            :session-id session-id
-                            :node-id execution-node-id
-                            :collapsed? (not execution-expanded?)}}]
+                     summary-line
+                     (ellipsize-cols (str "  " (if execution-expanded? "▾" "▸") " " summary-text)
+                                     (max 1 (long fill-w)))
 
-                (vec (concat [(line-entry "") summary]
-                             (when execution-expanded? [(line-entry "")])
-                             (when execution-expanded? execution-body)
-                             (when (and execution-expanded? activity-surface)
-                               activity-surface)))))))
+                     summary
+                     {:line (str execution-summary-marker summary-line)
+                      :meta {:kind :toggle-details
+                             :status-tone (:status-tone execution-status)
+                             :session-id session-id
+                             :node-id execution-node-id
+                             :collapsed? (not execution-expanded?)}}]
+
+                 (vec (concat comment-block
+                              [(line-entry "") summary]
+                              (when execution-expanded? [(line-entry "")])
+                              (when execution-expanded? execution-body)
+                              (when (and execution-expanded? activity-surface)
+                                activity-surface)))))))
 
         ;; The display-block's CODE BODY: per-proof-envelope (`:forms`) code
         ;; rows joined into the one card. Phase-5 dropped per-form result

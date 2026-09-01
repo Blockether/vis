@@ -82,6 +82,7 @@
     [com.blockether.vis.internal.slash :as slash]
     [com.blockether.vis.internal.theme :as theme]
     [com.blockether.vis.internal.toggles :as toggles]
+    [com.blockether.vis.internal.paths :as paths]
     [com.blockether.vis.internal.util :as util]
     [com.blockether.vis.internal.workspace :as workspace]))
 
@@ -516,6 +517,7 @@
 ;; prose uses the correct domain word: Persistence.
 (import-vars [ds persistance/ds]
              [now-ms util/now-ms]
+             [abbreviate-home paths/abbreviate-home]
              [non-blank util/non-blank]
              [utf8 util/utf8]
              [->id persistance/->id]
