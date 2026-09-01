@@ -4481,6 +4481,40 @@
         (state/dispatch [:message-received nil (vis/markdown->ast "full answer")
                          {:client-turn-id "c1" :status :completed}])
         (expect (= trace (get-in @state/app-db [:messages 1 :traces])))))
+  (it "a canonical refresh that resolves to NOTHING keeps the live trace"
+      ;; Regression: a turn submitted from another channel settles under the gateway's
+      ;; own turn id, which names no persisted row — the canonical trace refresh came
+      ;; back empty, `[]` is truthy, and it replaced everything the user had just
+      ;; watched. The work reappeared only after a restart, which reads the persisted
+      ;; transcript instead.
+      (let [trace [{:id :iter-1 :forms [{:id :form-1}]}]]
+        (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))
+        (state/dispatch [:message-received nil (vis/markdown->ast "full answer")
+                         {:client-turn-id "c1" :status :completed :terminal-trace []}])
+        (expect (= trace (get-in @state/app-db [:messages 1 :traces])))))
+  (it "a canonical refresh holding less of the turn than the live trace loses"
+      ;; A half-written row projects to one EMPTY stub block, which is how a settled
+      ;; bubble came back holding blank code cards instead of the work it had shown.
+      (let [trace [{:id :iter-1 :forms [{:id :form-1} {:id :form-2}]}]]
+        (reset! state/app-db (terminal-test-db {:progress {:iterations trace}}))
+        (state/dispatch [:message-received nil (vis/markdown->ast "full answer")
+                         {:client-turn-id "c1"
+                          :status :completed
+                          :terminal-trace [{:id :iter-1 :forms [{:id :form-1}]}]}])
+        (expect (= trace (get-in @state/app-db [:messages 1 :traces])))))
+  (it "a canonical refresh carrying the whole turn still wins"
+      ;; The refresh exists to swap live rows for durable ones; nothing about the guard
+      ;; may cost the settled bubble its attachment descriptors.
+      (let [live
+            [{:id :iter-1 :forms [{:id :form-1}]}]
+
+            canonical
+            [{:id :iter-1 :forms [{:id :form-1 :attachments [{"filename" "r.html"}]}]}]]
+
+        (reset! state/app-db (terminal-test-db {:progress {:iterations live}}))
+        (state/dispatch [:message-received nil (vis/markdown->ast "full answer")
+                         {:client-turn-id "c1" :status :completed :terminal-trace canonical}])
+        (expect (= canonical (get-in @state/app-db [:messages 1 :traces])))))
   (it "a late c1 callback cannot mutate c2 editor or active turn state"
       (reset! state/app-db (-> (terminal-test-db)
                                (assoc :live-turn-client-id "c2"

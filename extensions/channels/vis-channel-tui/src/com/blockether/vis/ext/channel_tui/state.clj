@@ -5315,6 +5315,34 @@
                         workspace
                         (assoc-in workspace [:progress :iterations] (vec (or iterations [])))))))))
 
+(defn- settled-trace
+  "The trace a settling bubble KEEPS: the canonical refetch, but only when it carries
+   at least as much of the turn as the trace the human actually watched.
+
+   The refresh exists to swap live rows for durable ones (attachment descriptors),
+   never to SHRINK the turn. A terminal event names the turn by the gateway's own id,
+   and a turn submitted from another channel has no persisted row under that id - the
+   trace endpoint answers nothing, `[]` is truthy, and preferring it erased every
+   iteration the human had just watched the instant the answer landed. Only a restart,
+   which reads the persisted transcript, brought them back."
+  [canonical live]
+  (let [weigh
+        (fn [trace]
+          (let [rows (vec (or trace []))]
+            [(count rows) (reduce + 0 (map #(count (:forms %)) rows))]))
+
+        [canonical-iterations canonical-forms]
+        (weigh canonical)
+
+        [live-iterations live-forms]
+        (weigh live)]
+
+    (if (and (pos? (long canonical-iterations))
+             (>= (long canonical-iterations) (long live-iterations))
+             (>= (long canonical-forms) (long live-forms)))
+      (not-empty (vec canonical))
+      (not-empty (vec live)))))
+
 (reg-event-fx
   :message-received
   (fn [db [_ a b c :as event]]
@@ -5362,29 +5390,30 @@
                                                 ;; every iteration the user watched on this one.
                                                 (completion-response
                                                   answer
-                                                  (or terminal-trace
-                                                      (not-empty
-                                                        (vec (get-in (vec (:messages workspace))
-                                                                     [matching-pending-index
-                                                                      :terminal-pending :trace]))))
+                                                  (settled-trace terminal-trace
+                                                                 (get-in (vec (:messages workspace))
+                                                                         [matching-pending-index
+                                                                          :terminal-pending
+                                                                          :trace]))
                                                   nil
                                                   completion))
                                     :scroll (scroll/settle (:scroll workspace)))
                 :else
                 (let [trace
-                      (or terminal-trace
-                          (not-empty (vec (get-in workspace [:progress :iterations])))
-                          ;; The persistent mux settles this turn's active state the
-                          ;; moment the terminal event lands — `:sync-turn-terminal`
-                          ;; clears `:progress` up to `terminal-result-grace-ms` BEFORE
-                          ;; the blocking worker delivers the full answer. The live
-                          ;; trace it snapshotted survives on the placeholder; without
-                          ;; this fallback every iteration the user watched LIVE is
-                          ;; dropped and only the final answer stays on screen.
-                          (let [ms (vec (:messages workspace))]
-                            (not-empty (vec (get-in ms
-                                                    [(pending-assistant-index ms client-turn-id)
-                                                     :terminal-pending :trace])))))
+                      ;; The persistent mux settles this turn's active state the
+                      ;; moment the terminal event lands — `:sync-turn-terminal`
+                      ;; clears `:progress` up to `terminal-result-grace-ms` BEFORE
+                      ;; the blocking worker delivers the full answer. The live
+                      ;; trace it snapshotted survives on the placeholder; without
+                      ;; this fallback every iteration the user watched LIVE is
+                      ;; dropped and only the final answer stays on screen.
+                      (settled-trace terminal-trace
+                                     (or (not-empty (vec (get-in workspace
+                                                                 [:progress :iterations])))
+                                         (let [ms (vec (:messages workspace))]
+                                           (get-in ms
+                                                   [(pending-assistant-index ms client-turn-id)
+                                                    :terminal-pending :trace]))))
 
                       cancelled?
                       (= :cancelled status)
