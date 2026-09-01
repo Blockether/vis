@@ -7453,6 +7453,14 @@
                      (when paused-line [paused-line])
                      [hint]))))))
 
+(defn- ink-free-row?
+  "True when a bubble row paints no reading matter: a coalescer pad, a band
+   edge, or an activity axis's rail continuation (`│`). The bubble draws its
+   own left rail down that column, so to the eye such a row IS a blank line —
+   two of them in a row read as two lines of margin, not one."
+  [{:keys [line]}]
+  (str/blank? (str/replace (str line) #"[\u200b\u200c\u206a\u206c\u206f\ue000-\ue0ff│]" "")))
+
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.
 
@@ -7619,20 +7627,26 @@
                    queued-entries
                    (queued-progress-entries pending-sends content-w queue-paused)
 
-                   ;; Top margin invariant: the spinner row always has ONE blank
-                   ;; line above it inside the bubble, whether or not any
-                   ;; iterations have been recorded yet. Without this the iter-0
-                   ;; "Vis is calling the provider" state sits flush against the
-                   ;; bubble's top border while every subsequent state (iter>=1,
-                   ;; where trace-entries naturally end with a blank) gets a row
-                   ;; of breathing room - a visible jump the moment the first
-                   ;; iteration lands. Keeping the blank in both branches makes
-                   ;; the bubble height transition smooth and the spinner
+                   ;; Top margin invariant: the spinner row carries EXACTLY ONE
+                   ;; empty row above it, whether or not any iteration has been
+                   ;; recorded yet. Without the blank the iter-0 "Vis is calling
+                   ;; the provider" state sits flush against the bubble's top
+                   ;; border; without TRIMMING first it gets two, because a trace
+                   ;; that ends in an activity axis or a code block already closes
+                   ;; on a band-edge row the eye reads as blank. Both halves keep
+                   ;; the bubble's height transition smooth and the ticker
                    ;; vertically anchored.
+                   trimmed-trace
+                   (let [v (vec trace-entries)]
+                     (subvec v
+                             0
+                             (long (loop [i (count v)]
+                                     (if (and (pos? i) (ink-free-row? (nth v (dec i))))
+                                       (recur (dec i))
+                                       i)))))
+
                    prefix-entries
-                   (if (seq trace-entries)
-                     (conj (vec trace-entries) (line-entry ""))
-                     [(line-entry "")])
+                   (conj trimmed-trace (line-entry ""))
 
                    prefix
                    (vec (coalesce-bubble-blanks prefix-entries))

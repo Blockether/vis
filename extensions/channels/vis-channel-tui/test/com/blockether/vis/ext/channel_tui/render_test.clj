@@ -997,6 +997,48 @@
         (expect (= 2 (count lines)))
         (expect (= "" (first lines)))
         (expect (str/includes? (second lines) "Vis is calling the provider"))))
+  ;; Regression, T143: the live ticker carried TWO empty rows whenever the trace
+  ;; closed on a band edge - an activity axis's rail continuation or a code block's
+  ;; pad - because the margin blank was appended to a row that already read as blank.
+  (it "the live ticker keeps exactly one empty row above it when the trace closes on an axis"
+      (render/invalidate-cache!)
+      (let [iter
+            {:forms [{:code "r = 1"
+                      :comment nil
+                      :stdout nil
+                      :error nil
+                      :duration-ms nil
+                      :silent? false
+                      :activity
+                      {:state "running"
+                       :counts {:running 1 :succeeded 0 :failed 0 :cancelled 0}
+                       :rows [{:id "one" :operation "status" :summary "--json" :state "running"}]
+                       :omitted {:rows 0 :by-classification {}}}}]
+             :activity :tool-call}
+
+            ;; What the EYE reads: pads, band edges and the axis rail paint no
+            ;; reading matter, so a row holding only those is a blank line.
+            lines
+            (mapv (fn [l]
+                    (str/replace (strip-ansi (str l))
+                                 #"[\u200b\u200c\u206a\u206c\u206f\ue000-\ue0ff│]"
+                                 ""))
+                  (:lines (render/progress->lines-data
+                            {:iterations [iter]}
+                            80
+                            {:show-thinking true :show-iterations true}
+                            {:now-ms 1000
+                             :turn-start-ms 0
+                             :session-id "s1"
+                             :session-turn-id "t1"
+                             :detail-expansions {:vis.channel-tui/expand-all-details? true}})))
+
+            ticker
+            (count (take-while #(not (str/includes? % "Esc to cancel")) lines))]
+
+        (expect (< ticker (count lines)))
+        (expect (str/blank? (nth lines (dec ticker))))
+        (expect (not (str/blank? (nth lines (- ticker 2)))))))
   (it "shows queued submissions inside the live progress bubble"
       (let [payload
             (render/progress->lines-data
