@@ -198,7 +198,7 @@
 
       (expect (not (str/includes? txt "PYTHON +")))
       (expect (str/includes? txt "first = 1"))
-      (expect (str/includes? txt "x = 1 / 0"))
+      (expect (str/includes? txt "x = 1/0"))
       (expect (= 1 (count (re-seq #"PYCODEMARKER" txt))))
       (expect (not (str/includes? txt "RUNTIME_EXCERPT_ONLY")))
       (expect (= 1 (count (re-seq #"ZeroDivisionError" txt))))))
@@ -291,7 +291,10 @@
 
         (expect (some? head) (str "got: " lines))
         (expect (str/ends-with? (str/trimr (strip-sentinels (body-of head))) "2.3s"))))
-  (it "paints the duration on the collapsible head, which stays the toggle"
+  ;; Regression, T137: the head band and the RESULT disclosure under it both stamped the
+  ;; same figure. The band is the one row a receipt shows in either state, so the band
+  ;; says how long the call took and nothing beneath it repeats the measurement.
+  (it "paints the duration on the head band, and never again under it"
       (let [entries
             (format-iteration-entry-entries
               (iteration/canonicalize
@@ -304,18 +307,23 @@
                :session-turn-id "t1"
                :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
+            body-text
+            (fn [entry]
+              (str/trimr (strip-sentinels (strip-ansi (body-of (:line entry))))))
+
+            band
+            (first (filter #(str/includes? (body-of (:line %)) "PYTHON") entries))
+
             head
             (first (filter #(str/includes? (body-of (:line %)) "RESULT") entries))]
 
+        (expect (some? band) (str "got: " (mapv :line entries)))
+        (expect (str/ends-with? (body-text band) "2.3s"))
+        ;; The band is the toggle: the figure rides the control, not a row that
+        ;; disappears with the fold.
+        (expect (= :toggle-details (:kind (:meta band))))
         (expect (some? head) (str "got: " (mapv :line entries)))
-        (expect (str/ends-with? (str/trimr (strip-sentinels (strip-ansi (body-of (:line head)))))
-                                "2.3s"))
-        ;; The duration is added after the label's IR walk and aligned to the right,
-        ;; budgeting the two columns the painter insets a toggle row by
-        ;; (`code-text-inset-cols`) so the figure lands on the same column as a
-        ;; flush-painted headline's: 80 - 1 marker - 2 inset.
-        (expect (= :toggle-details (:kind (:meta head))))
-        (expect (= 77 (count (str/trimr (strip-sentinels (strip-ansi (body-of (:line head))))))))))
+        (expect (not (str/includes? (body-text head) "2.3s")))))
   (it "paints nothing when the duration is zero or absent"
       (let [zero
             (render-forms [(assoc (result-form "grep" "12 results") :duration-ms 0)])
@@ -330,7 +338,7 @@
 
         (expect (not (str/includes? (head zero) "0ms")))
         (expect (= (head zero) (head none)))))
-  (it "carries the duration on the long-result RESULT disclosure head"
+  (it "carries the duration on the head band of a long result, not on its disclosure"
       (let [entries
             (format-iteration-entry-entries
               (iteration/canonicalize {:position 0
@@ -338,8 +346,7 @@
                                        :forms [{:success? true
                                                 :code "x = 1"
                                                 :stdout
-                                                (str/join "
-" (map #(str "line " %) (range 1 40)))
+                                                (str/join "\n" (map #(str "line " %) (range 1 40)))
                                                 :duration-ms 61000}]})
               80
               1
@@ -347,12 +354,20 @@
                :session-turn-id "t1"
                :detail-expansions {:vis.channel-tui/expand-execution-details? true}})
 
+            body-text
+            (fn [entry]
+              (str/trimr (strip-sentinels (strip-ansi (body-of (:line entry))))))
+
+            band
+            (first (filter #(str/includes? (body-of (:line %)) "PYTHON") entries))
+
             head
             (first (filter #(str/includes? (body-of (:line %)) "RESULT") entries))]
 
+        (expect (some? band) (str "got: " (mapv :line entries)))
+        (expect (str/ends-with? (body-text band) "1m 1s"))
         (expect (some? head) (str "got: " (mapv :line entries)))
-        (expect (str/ends-with? (str/trimr (strip-sentinels (strip-ansi (body-of (:line head)))))
-                                "1m 1s"))))
+        (expect (not (str/includes? (body-text head) "1m 1s")))))
   ;; The three shapes the companion bands and the TUI did not: `toolCards`
   ;; returns `[form]` for EVERY non-silent form, so a bare value, a call that
   ;; returned nothing and a FAILED call all wear the figure in the app while the
@@ -5703,3 +5718,172 @@ h = 8"
           (expect answer "the bubble paints its answer")
           (expect (not (rail-at? answer))
                   "the answer is what the thread arrived at, never a step on it")))))
+
+;; Regression, T137: the terminal's receipt drifted from the app's. It printed the elapsed
+;; twice - once on the band it already carries, again on the RESULT it stamps - ran the
+;; model's program through a third Python formatter before showing it, and kept the model's
+;; own sentence inside the fold, under the band the companion prints it above.
+(defdescribe
+  receipt-parity-with-companion-test
+  (let [activity
+        {:state "succeeded"
+         :counts {:running 0 :succeeded 1 :failed 0 :cancelled 0}
+         :omitted {:rows 0}
+         :rows [{:id "grep-1"
+                 :sequence 1
+                 :operation "grep"
+                 :summary "3 files"
+                 :state "succeeded"
+                 :duration-ms 12
+                 :resources []
+                 :evidence []}]}
+
+        ;; Written the way a model writes it: its own line breaks, its own spacing.
+        program
+        "rows=[1,\n      2]\nprint(len(rows))"
+
+        trace
+        [{:thinking "Read the app first."
+          :forms [{:comment "Let me count the rows."
+                   :code program
+                   :stdout "2"
+                   :result-kind :none
+                   :duration-ms 8400
+                   :silent? false
+                   :success? true
+                   :activity activity}]}]
+
+        text-of
+        (fn [expand-all?]
+          (render/invalidate-cache!)
+          (->> (:lines (render/format-answer-with-thinking-data*
+                         "Done."
+                         trace
+                         72
+                         {:show-thinking true :show-iterations true}
+                         nil
+                         false
+                         {:session-id "s1"
+                          :detail-expansions {:vis.channel-tui/expand-all-details? expand-all?}}))
+               (map (comp strip-sentinels strip-ansi))
+               (str/join "\n")))
+
+        expanded
+        (text-of true)
+
+        collapsed
+        (text-of false)
+
+        row-with
+        (fn [haystack needle]
+          (first (keep-indexed (fn [i l]
+                                 (when (str/includes? l needle) i))
+                               (str/split-lines haystack))))
+
+        row-text
+        (fn [haystack needle]
+          (some (fn [l]
+                  (when (str/includes? l needle) l))
+                (str/split-lines haystack)))]
+
+    (it "says the elapsed once, on the band both states can read"
+        (expect (= 1 (count (re-seq #"8\.4s" expanded)))
+                "the figure is printed once while the receipt is open")
+        (expect (= 1 (count (re-seq #"8\.4s" collapsed))) "and once while it is folded")
+        (expect (str/includes? (str (row-text expanded "8.4s")) "GREP")
+                "the band is where the figure stands")
+        (expect (not (str/includes? (str (row-text expanded "RESULT")) "8.4s"))
+                "so the result band never repeats it"))
+    (it "shows the program the model wrote, not a reformatting of it"
+        (expect (str/includes? expanded "rows=[1,") "the model's own line break survives")
+        (expect (not (str/includes? expanded "rows = [1, 2]"))
+                "the terminal is not a third Python formatter"))
+    (it "prints the model's sentence above the receipt, open or folded"
+        (expect (< (long (row-with expanded "Let me count the rows."))
+                   (long (row-with expanded "8.4s")))
+                "the sentence introduces the call, so it stands before the band")
+        (expect (some? (row-with collapsed "Let me count the rows."))
+                "and folding the receipt cannot hide it, being no part of the fold"))))
+
+;; Regression, T137: reported as one flat grey for every step - measured through a harness
+;; that painted the lines itself and never read `:line-meta`. The paint the terminal really
+;; runs inks each mark with its own state; this pins it, so the claim is measured next time.
+(defdescribe
+  step-mark-ink-test
+  (let [step
+        (fn [i operation summary state]
+          {:id (str operation "-" i)
+           :sequence i
+           :operation operation
+           :summary summary
+           :state state
+           :duration-ms 12
+           :resources []
+           :evidence []})
+
+        activity
+        {:state "running"
+         :counts {:running 1 :succeeded 1 :failed 1 :cancelled 0}
+         :omitted {:rows 0}
+         :rows [(step 1 "grep" "3 files" "succeeded") (step 2 "patch" "3 hunks" "failed")
+                (step 3 "shell" "npm test" "running")]}
+
+        rendered
+        (do (render/invalidate-cache!)
+            (render/format-answer-with-thinking-data*
+              "Done."
+              [{:thinking "Read the app first."
+                :forms [{:code "print(1)"
+                         :stdout "1"
+                         :result-kind :none
+                         :duration-ms 8400
+                         :silent? false
+                         :success? true
+                         :activity activity}]}]
+              72
+              {:show-thinking true :show-iterations true}
+              nil
+              false
+              {:session-id "s1" :detail-expansions {:vis.channel-tui/expand-all-details? true}}))
+
+        message
+        {:role :assistant
+         :text "Done."
+         :prewrapped-lines (:lines rendered)
+         :line-meta (:line-meta rendered)}
+
+        grid
+        (first (:frames (cap/capture!
+                          {:cols 80
+                           :rows 40
+                           :paint! (fn [{:keys [screen]}]
+                                     (let [^com.googlecode.lanterna.screen.TerminalScreen s screen]
+                                       (render/draw-chat-bubble! (.newTextGraphics s)
+                                                                 message
+                                                                 2 2
+                                                                 76 {:viewport-h 36})
+                                       (.refresh s)))})))
+
+        ink-of
+        (fn [glyph]
+          (for [row
+                grid
+
+                cell
+                row
+
+                :when (= glyph (str (:ch cell)))]
+
+            (:fg cell)))
+
+        marks
+        (vec (ink-of "●"))]
+
+    (it "gives every step's mark the ink of its own state"
+        (expect (= 3 (count marks)) "three steps paint three marks")
+        (expect (= 3 (count (set marks))) "and no two states share an ink")
+        (expect (not-any? (set marks) (ink-of "│")) "none of them wears the rail's own neutral"))
+    (it "reads a success as green and a failure as red"
+        (let [[[ok-r ok-g] [bad-r bad-g]] marks]
+          (expect (> (long ok-g) (long ok-r)) "the succeeded mark leans green")
+          (expect (> (long bad-r) (long bad-g)) "the failed mark leans red")))))

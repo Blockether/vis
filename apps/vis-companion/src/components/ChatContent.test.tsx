@@ -1131,6 +1131,37 @@ describe("Activity owns the slot after its Python form and result", () => {
     expect(rendered).not.toContain("finished 2/2");
   });
 
+  // Regression, T137: the receipt printed its elapsed twice — the band above the fold and
+  // the card head inside it carried the same measurement, which reads as two of them. The
+  // band says it, and a card standing under a band stops repeating it.
+  it("prints the elapsed once, on the band, never again on what it opens", () => {
+    const painted = render(
+      <AssistantMessage
+        turn={turnOf([
+          {
+            source: "work()",
+            stdout: "done\n",
+            duration_ms: 12_600,
+            activity: {
+              ...runningActivity,
+              state: "succeeded",
+              counts: { running: 0, succeeded: 2, failed: 0, cancelled: 0 },
+              rows: rows.map((row) => ({ ...row, state: "succeeded" })),
+            },
+          },
+        ])}
+      />,
+    );
+    const elapsed = () =>
+      (painted.container.textContent?.match(/12\.6s/g) ?? []).length;
+
+    expect(elapsed()).toBe(1);
+    fireEvent.click(
+      painted.getByRole("button", { name: "Expand execution trace" }),
+    );
+    expect(painted.container.textContent).toContain("RESULT");
+    expect(elapsed()).toBe(1);
+  });
   it("uses only the actual terminal Activity count after settlement", () => {
     const rendered = text(
       renderToStaticMarkup(

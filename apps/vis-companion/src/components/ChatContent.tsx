@@ -1208,7 +1208,19 @@ function ToolSummary({
  */
 const CARD_BAND = "flex min-h-8 items-center gap-1.5 px-2";
 
-const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
+const ToolCard = memo(function ToolCard({
+  form,
+  elapsedOnBand = false,
+}: {
+  form: TranscriptForm;
+  /**
+   * THE ELAPSED IS SAID ONCE. Under a receipt, the band above already carries the
+   * figure and is the only row present in both states, so the card head stops
+   * repeating it — the same measurement printed twice reads as two of them. A card
+   * standing on its own (a chunk with no band) keeps it: there it is the only home.
+   */
+  elapsedOnBand?: boolean;
+}) {
   const interrupted = interruptedPython(form);
   const resultText = resultBody(form);
   const failed = form.error != null && !interrupted;
@@ -1217,7 +1229,7 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
   const stateLabel = interrupted ? "Interrupted" : failed ? "Failed" : "";
   const running = !interrupted && !failed && !hasOutcome;
   const body = resultText;
-  const duration = formatDuration(form.duration_ms);
+  const duration = elapsedOnBand ? "" : formatDuration(form.duration_ms);
   // A COLLAPSED result body is not in the DOM at all. Measured on device on a
   // real transcript: those bodies were 52k of the screen's 72k elements, and
   // WebKit computes style for them even though a closed <details> paints
@@ -1403,10 +1415,13 @@ const CardGrid = memo(function CardGrid({
   cards,
   live = false,
   bare = false,
+  elapsedOnBand = false,
 }: {
   cards: TranscriptForm[];
   live?: boolean;
   bare?: boolean;
+  /** The receipt band above this stack already carries the elapsed. */
+  elapsedOnBand?: boolean;
 }) {
   if (!cards.length) return null;
 
@@ -1423,6 +1438,7 @@ const CardGrid = memo(function CardGrid({
         <ToolCard
           key={`${card.scope ?? card.op ?? "result"}-${cardIndex}`}
           form={card}
+          elapsedOnBand={elapsedOnBand}
         />
       ))}
     </div>
@@ -1634,7 +1650,7 @@ const FormTrace = memo(function FormTrace({
                   bare
                 />
               )}
-              <CardGrid cards={cards} bare />
+              <CardGrid cards={cards} bare elapsedOnBand />
             </div>
             {detectedActivity && activity && (
               <ActivityPanel activity={activity} />
