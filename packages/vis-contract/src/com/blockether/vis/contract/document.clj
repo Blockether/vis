@@ -12,40 +12,33 @@
    This is the only place either file is parsed. An invalid document throws while
    loading, with the schema's own errors, instead of surfacing later as a missing
    key in whatever happened to read it first."
-  (:require [charred.api :as charred]
-            [clojure.java.io :as io]
+  (:require [clojure.java.io :as io]
             [com.blockether.skjema.core :as skjema]))
 
 (set! *warn-on-reflection* true)
 
-(defn- read-json
+(defn- read-resource
   "The JSON resource at `resource-path`, with its keys left as written."
   [resource-path]
-  (let [resource
-        (io/resource resource-path)]
-
+  (let [resource (io/resource resource-path)]
     (when-not resource
       (throw (ex-info (str "the contract resource is missing from the classpath: " resource-path)
                       {:type :vis/contract-missing :resource resource-path})))
+    (skjema/read-schema resource)))
 
-    (charred/read-json (slurp resource))))
-
-(def ^:private common-schema
-  (delay (read-json "vis-contract/schema/common.json")))
+(def ^:private common-schema (delay (read-resource "vis-contract/schema/common.json")))
 
 (defn- compiled-schema
   "The compiled schema for one document, with `schema/common.json` in the registry
    so its `$ref`s resolve without a network fetch."
   [document-name]
-  (let [schema
-        (read-json (str "vis-contract/schema/" document-name ".json"))]
-
-    (skjema/compile schema
-                    {:base (get schema "$id")
-                     :registry {(get @common-schema "$id") @common-schema}
-                     ;; `format` annotates unless asked to assert, and the
-                     ;; contract means its `regex`/`uri` formats as constraints.
-                     :format-assertion true})))
+  (let [schema (read-resource (str "vis-contract/schema/" document-name ".json"))]
+    (skjema/compile-schema schema
+                           {:base (get schema "$id")
+                            :registry {(get @common-schema "$id") @common-schema}
+                            ;; `format` annotates unless asked to assert, and the
+                            ;; contract means its `regex`/`uri` formats as constraints.
+                            :format-assertion true})))
 
 (defn load!
   "The contract document named `document-name`, parsed and validated against its
@@ -57,15 +50,13 @@
         (str "vis-contract/" document-name ".json")
 
         parsed
-        (read-json resource-path)
+        (read-resource resource-path)
 
         result
         (skjema/validate (compiled-schema document-name) parsed)]
 
     (when-not (:valid result)
-      (throw (ex-info (str resource-path " does not satisfy vis-contract/schema/" document-name ".json")
-                      {:type :vis/contract-invalid
-                       :resource resource-path
-                       :errors (:errors result)})))
-
+      (throw (ex-info
+               (str resource-path " does not satisfy vis-contract/schema/" document-name ".json")
+               {:type :vis/contract-invalid :resource resource-path :errors (:errors result)})))
     parsed))
