@@ -181,10 +181,13 @@
   --color-input: var(--input-field-bg);
   --color-button: var(--button-bg);
   --color-button-foreground: var(--button-fg);
-  /* Thinking prose is de-emphasised, not invisible: --iteration-header-fg is a
-     TUI rule/heading tint (#b0a798 on #f5eee4 = 2.1:1). Blend the message ink
-     into the band instead, so every palette lands on readable-but-quiet. */
-  --color-thinking: color-mix(in oklab, var(--ai-bubble-fg) 62%, var(--iteration-header-bg));
+  /* Thinking prose is de-emphasised, not invisible, and "quiet" is MEASURED on the band
+     it sits on. --iteration-header-fg is a TUI rule/heading tint (#b0a798 on #f5eee4 =
+     2.1:1), and blending the message ink into the band by a fixed 62% cannot serve every
+     ground either: solarized-light's own body ink is 7.27:1 on that band, so the blend
+     landed 3.13:1 there. --dialog-hint IS the palette's contrast-checked quiet ink, and
+     on this band it measures 5.3:1 (solarized-light) to 7.0:1 (blockether-dark). */
+  --color-thinking: var(--dialog-hint);
   --color-thinking-surface: var(--iteration-header-bg);
   --color-you-message: var(--user-bubble-bg);
   --color-you-message-foreground: var(--user-bubble-fg);

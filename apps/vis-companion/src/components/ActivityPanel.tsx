@@ -556,11 +556,15 @@ function ActivityError({ evidence }: { evidence: ActivityTextEvidence }) {
           wrapped line hangs under its own first character so that one line of it
           still reads as one. */}
       <div className="grid min-w-0 px-2 py-1">
+        {/* Two inks, both measured on THIS tinted paper: the machine's first line
+            wears the error's own red, the trace under it the message ink. --dialog-hint
+            is a DIALOG ink and lands 4.4:1 here in both solarized palettes, under the
+            4.5 a small line owes; the message ink reads 6.0:1 to 13.4:1. */}
         {lines.map((line, index) => (
           <p
             key={`${index}-${line}`}
             className={`-indent-4 whitespace-pre-wrap break-words pl-4 font-mono text-chip ${
-              index === 0 ? "text-err-ink" : "text-dialog-hint"
+              index === 0 ? "text-err-ink" : "text-vis-message"
             }`}
           >
             {line || " "}
