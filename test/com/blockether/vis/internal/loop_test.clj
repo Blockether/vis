@@ -4775,6 +4775,53 @@
              (expect (= :lmstudio (:root-provider ctx))) (expect (= "shared" (:root-model ctx)))
              (expect (= {:provider :lmstudio :model "shared"} (:routing ctx))))))))
 
+;; Regression, reported session b34c2a0f-3eff-4ab6-8b9c-bb0c8c7fbda5: the gateway freezes a turn
+;; id in `submit-turn!` and names it in every `turn.*` event, cancel and forced terminal, and it
+;; hands that id to the engine as `:session-turn-id`. The engine's own turn context dropped the
+;; key, so the durable row was minted under a SECOND id: one submitted turn existed TWICE (the
+;; gateway record the channels hold plus its persisted twin), and the trace behind the id the
+;; channels hold answered nothing.
+(defdescribe
+  caller-frozen-turn-id-test
+  (describe
+    "a turn id the caller froze survives every engine hop down to the durable write"
+    (let [prepare
+          #'lp/prepare-turn-context
+
+          run-phase
+          #'lp/run-iteration-phase
+
+          router
+          {:providers [{:id :openai-codex :models [{:name "shared"}]}]}
+
+          env
+          {:db-info ::db :session-id "session-1" :router router}
+
+          messages
+          [{:role "user" :content "hello"}]
+
+          captured-opts
+          (fn [ctx]
+            (let [seen (atom ::never-called)]
+              (with-redefs-fn {#'lp/run-turn! (fn [_env _request opts]
+                                                (reset! seen opts)
+                                                {})}
+                #(run-phase ctx))
+              @seen))]
+
+      (it "the turn context keeps the id the caller passed in opts"
+          (let [ctx (prepare env messages {:model "shared" :session-turn-id "frozen-turn-id"})]
+            (expect (= "frozen-turn-id" (:session-turn-id ctx)))))
+      (it "the iteration phase hands that id to run-turn!, which stores the durable row"
+          (expect (= "frozen-turn-id"
+                     (:session-turn-id (captured-opts {:environment {}
+                                                       :user-request "hello"
+                                                       :session-turn-id "frozen-turn-id"})))))
+      (it "a direct engine caller that froze no id leaves the key absent, so one is minted"
+          (let [ctx (prepare env messages {:model "shared"})]
+            (expect (nil? (:session-turn-id ctx)))
+            (expect (not (contains? (captured-opts (assoc ctx :environment {}))
+                                    :session-turn-id))))))))
 (defdescribe
   context-overflow-terminal-breaker-test
   "Typed context overflow must never be fed back into an unreachable next model call."

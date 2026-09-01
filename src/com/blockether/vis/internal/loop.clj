@@ -10012,7 +10012,8 @@
    Returns a map of all computed context needed for subsequent phases."
   [env messages opts]
   (let [{:keys [spec provider model max-context-tokens system-prompt debug? hooks cancel-token
-                eval-timeout-ms reasoning-default reasoning-effort routing extra-body]
+                eval-timeout-ms reasoning-default reasoning-effort routing extra-body
+                session-turn-id]
          :or {debug? false}}
         opts]
     (when-not (:db-info env)
@@ -10232,6 +10233,12 @@
        :db-info db-info
        :environment environment
        :environment-id environment-id
+       ;; The turn's canonical id, when the CALLER already froze one. The gateway mints
+       ;; it in `submit-turn!` BEFORE the first event goes out, so every `turn.*` event,
+       ;; every cancel and the forced-terminal backstop already name it. Dropping it here
+       ;; made the durable row a SECOND id: the turn existed twice (gateway record +
+       ;; persisted twin), and the trace behind the id the channels hold came back empty.
+       :session-turn-id session-turn-id
        :spec spec
        :max-context-tokens max-context-tokens
        :system-prompt system-prompt
@@ -10252,7 +10259,7 @@
    Returns iteration-result, session-turn-id, cost atoms, and merge-cost! fn."
   [{:keys [environment user-request spec max-context-tokens system-prompt hooks cancel-atom
            cancel-token reasoning-default reasoning-effort routing extra-body turn-features
-           workspace-overrides]}]
+           workspace-overrides session-turn-id]}]
   (let [iteration-result
         (run-turn! environment
                    user-request
@@ -10264,6 +10271,9 @@
                             :hooks hooks
                             :cancel-atom cancel-atom
                             :cancel-token cancel-token}
+                     session-turn-id
+                     (assoc :session-turn-id session-turn-id)
+
                      routing
                      (assoc :routing routing)
 
@@ -10607,18 +10617,20 @@
   ;; than dropped, because a leak nothing reports is one nobody can find.
   (try
     (doseq [[step run!]
-            [[:egress-proxy #(when-let [tok (:sandbox-token environment)]
-                               (gateway-sandbox/unregister-session! tok))]
-             [:repl-egress-proxy #(when-let [tok (:repl-sandbox-token environment)]
-                                    (gateway-sandbox/unregister-session! tok))]
+            [[:egress-proxy
+              #(when-let [tok (:sandbox-token environment)] (gateway-sandbox/unregister-session!
+                                                              tok))]
+             [:repl-egress-proxy
+              #(when-let [tok (:repl-sandbox-token environment)]
+                 (gateway-sandbox/unregister-session! tok))]
              [:process-jail #(process-jail/unregister-session-jail! (:session-id environment))]
-             [:llm-session #(when-let [a (:llm-session-atom environment)]
-                              (locking a (close-llm-session! a)))]
+             [:llm-session
+              #(when-let [a (:llm-session-atom environment)] (locking a (close-llm-session! a)))]
              ;; BEFORE the context goes: the session's helper-source memo outlives
              ;; both the context and the engine, and nothing else ever drops it
              ;; (see `env-python/forget-session-defs!`).
-             [:session-defs #(when-let [sid (:session-id environment)]
-                               (env/forget-session-defs! sid))]]]
+             [:session-defs
+              #(when-let [sid (:session-id environment)] (env/forget-session-defs! sid))]]]
       (try (run!)
            (catch Throwable t
              (tel/log! :warn
