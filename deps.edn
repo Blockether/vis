@@ -61,6 +61,9 @@
   ;; Blockether fork — keep pinned to the "-blockether.N" fork line manually (antq
   ;; mistakes bare upstream versions for newer).
   com.blockether/tree-sitter-language-pack {:mvn/version "1.12.3-blockether.39"}
+  ;; The embedded CPython the sandbox runs, replacing GraalPy. LOCAL PIN while the
+  ;; migration lands — it becomes a released coordinate before this reaches main.
+  com.blockether/vis-python-runtime {:local/root "/Users/fierycod/vis-python-runtime"}
   com.cnuernber/charred {:mvn/version "1.041"}
   com.google.zxing/core {:mvn/version "3.5.4"}
   ;; JVM codecs backing the lazy sandbox nippy_encode/nippy_decode helpers.
