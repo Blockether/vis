@@ -302,9 +302,9 @@ function activityStepDelta(row: ActivityRow): {
  * THE MARK ON THE BRANCH: one ring with a filled centre, and the COLOUR is the
  * state — green done, yellow running, red failed.
  *
- * Nine pixels of the page with a dot in it — the same mark for every step,
- * because a chronology is read as a sequence and a per-state SHAPE turns it
- * into a legend the reader has to learn. Only the tail the engine's bound
+ * Nine pixels of the transcript's own paper with a dot in it — the same mark for
+ * every step, because a chronology is read as a sequence and a per-state SHAPE
+ * turns it into a legend the reader has to learn. Only the tail the engine's bound
  * dropped is hollow, because nothing happened there yet to give a colour, and
  * the axis still ends on a mark rather than on a stray caption.
  *
@@ -331,7 +331,7 @@ function ActivityNode({ state }: { state: ActivityRow["state"] }) {
   return (
     <span
       aria-hidden="true"
-      className={`absolute -left-1 top-1 size-[9px] rounded-full border bg-page before:absolute before:top-[3px] before:right-full before:h-px before:w-[8px] before:bg-edge-strong before:content-[''] sm:before:w-[10px] ${edge}`}
+      className={`absolute -left-1 top-1 size-[9px] rounded-full border bg-ink before:absolute before:top-[3px] before:right-full before:h-px before:w-[8px] before:bg-edge-strong before:content-[''] sm:before:w-[10px] ${edge}`}
     >
       {!hollow && (
         <span className={`absolute inset-0.5 rounded-full ${core}`} />

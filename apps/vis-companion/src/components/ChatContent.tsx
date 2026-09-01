@@ -1797,8 +1797,12 @@ function StepNode({ running, failed }: { running: boolean; failed: boolean }) {
       className={`${RAIL_NODE} flex h-8 items-center mouse:h-6`}
     >
       {/* Only the mark's own box clears the line — a full-height clearing would
-          rub the thread out for the whole step and leave the marker floating. */}
-      <span className="flex bg-page py-[3px]">
+          rub the thread out for the whole step and leave the marker floating.
+          It clears in the TRANSCRIPT's own paper (`bg-ink`, the scroller in
+          `SessionScreen`), never in `bg-page`: that token is three percent of
+          the foreground mixed in, so behind every marker it painted a grey tile
+          the reader could see. */}
+      <span className="flex bg-ink py-[3px]">
         {running ? (
           <CircleDotIcon className="text-accent-ink" />
         ) : failed ? (
