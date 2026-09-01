@@ -10,7 +10,7 @@
 
    So the sandbox does the reclamation CPython's refcount would: every handle is
    registered under its descriptor with a WEAK ref, and once that ref is dead
-   the descriptor is closed by hand. `__vis_fd_max__` is the ceiling that cannot
+   the descriptor is closed by hand. `__vis_fd_limits__[0]` is the ceiling that cannot
    be crossed — reaching it with handles genuinely held open raises a normal
    Python `OSError(EMFILE)` naming the fix, in the block that caused it, instead
    of leaving the session to die later on an unrelated toolchain error."
@@ -73,8 +73,7 @@
                               "W = "
                               (pr-str (str root "/written.txt"))
                               "\n"
-                              "__vis_fd_max__ = 8\n"
-                              "__vis_fd_sweep_at__ = 4\n")
+                              "__vis_fd_limits__[:] = [8, 4]\n")
                          "t1/i1")
     ctx))
 
@@ -146,7 +145,7 @@
       (tpc/with-own [ctx {}]
                     (let [r (ep/run-python-block
                               ctx
-                              "print(json.dumps([__vis_fd_max__, __vis_fd_sweep_at__]))"
+                              "print(json.dumps(__vis_fd_limits__))"
                               "t1/i1")]
                       (expect (nil? (:error r)))
                       (expect (= [512 256] (printed r)))))))
@@ -433,7 +432,7 @@
                 (net-sandbox)
                 (str
                   "import socket\n"
-                  "__vis_fd_max__ = 8\n" "__vis_fd_sweep_at__ = 4\n"
+                  "__vis_fd_limits__[:] = [8, 4]\n"
                   "srv = socket.socket()\n" "srv.bind(('127.0.0.1', 0))\n"
                   "srv.listen(32)\n" "port = srv.getsockname()[1]\n"
                   "held = []\n" "err = ''\n"

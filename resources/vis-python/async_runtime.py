@@ -56,7 +56,7 @@ __vis_real_open__ = __vis_survivor__("__vis_real_open__", lambda: __vis_builtins
 # so the common sweep is a cheap fstat pass with NO `gc.collect()` (a collect
 # here costs ~270ms; it is the fallback, not the rule). Identity (`st_dev`,
 # `st_ino`) is re-checked before every close, so a recycled fd number is never
-# stolen from whoever owns it now. `__vis_fd_max__` is the ceiling that cannot be
+# stolen from whoever owns it now. `__vis_fd_limits__[0]` is the ceiling that cannot be
 # crossed: reaching it raises a normal Python `OSError(EMFILE)` naming the fix,
 # instead of leaving the session to die later on an unrelated toolchain error.
 __vis_fd_registry__ = __vis_survivor__(
@@ -75,8 +75,16 @@ def __vis_fd_env_int__(__vis_name__, __vis_default__, __vis_low__):
 # Ceiling, and the mark where reclamation starts. The mark is HALF the ceiling so
 # an honest workload (handles opened and closed) never sweeps twice for nothing,
 # while a leaking one is caught long before the process limit.
-__vis_fd_max__ = __vis_fd_env_int__("VIS_PY_MAX_OPEN_FILES", 512, 8)
-__vis_fd_sweep_at__ = max(16, __vis_fd_max__ // 2)
+# A PROCESS resource, so both numbers are a survivor: one interpreter can serve
+# several sessions and the doors installed by one of them serve all of them, so
+# a ceiling read out of whichever namespace installed last would be somebody
+# else's. `__vis_fd_limits__` is [ceiling, sweep-at].
+def __vis_fd_default_limits__():
+    __vis_m__ = __vis_fd_env_int__("VIS_PY_MAX_OPEN_FILES", 512, 8)
+    return [__vis_m__, max(16, __vis_m__ // 2)]
+
+
+__vis_fd_limits__ = __vis_survivor__("__vis_fd_limits__", __vis_fd_default_limits__)
 
 
 def __vis_fd_owner__(__vis_h__):
@@ -265,7 +273,7 @@ def __vis_reclaim_fds__(force=False):
     __vis_run_reapers__()
     if not __vis_fd_registry__:
         return 0
-    if not force and len(__vis_fd_registry__) < __vis_fd_sweep_at__:
+    if not force and len(__vis_fd_registry__) < __vis_fd_limits__[1]:
         return 0
     __vis_closed__ = 0
     for __vis_fd__ in list(__vis_fd_registry__):
@@ -303,22 +311,22 @@ def __vis_fd_admit__():
     # Runs before every sandbox `open`. Under the mark it costs one int compare;
     # at the mark it reclaims, and only a workload that really holds the ceiling
     # open at once is refused — with the message that names the actual fix.
-    if len(__vis_fd_registry__) < __vis_fd_sweep_at__:
+    if len(__vis_fd_registry__) < __vis_fd_limits__[1]:
         return
     __vis_reclaim_fds__(True)
-    if len(__vis_fd_registry__) >= __vis_fd_max__:
+    if len(__vis_fd_registry__) >= __vis_fd_limits__[0]:
         # Last resort: force the collect the cheap pass did not need, in case
         # this VM has not gotten around to clearing those weak refs yet.
         __vis_gc__.collect()
         __vis_reclaim_fds__(True)
-    if len(__vis_fd_registry__) < __vis_fd_max__:
+    if len(__vis_fd_registry__) < __vis_fd_limits__[0]:
         return
     raise OSError(
         __vis_errno__.EMFILE,
         "too many open files in this sandbox: "
         + str(len(__vis_fd_registry__))
         + " handles are open at once and the ceiling is "
-        + str(__vis_fd_max__)
+        + str(__vis_fd_limits__[0])
         + ". Sandbox Python does NOT close a file or a socket when you drop it,"
         " so `open(p).read()` in a loop leaks one descriptor per iteration — and"
         " so does every HTTP response whose body is never read — until no"
@@ -1417,13 +1425,15 @@ try:
 except Exception:
 
     def __vis_is_foreign__(x):
-        # Fallback (no `polyglot` module, e.g. non-GraalPy): approximate the
-        # old allowlist — treat anything outside real-python primitives as a
-        # proxy so tool results still rebuild.
-        return not (
-            type(x) in (dict, list, str, bytes, int, float, bool)
-            or isinstance(x, __VisDict__)
-        )
+        # No `polyglot` module means there are no polyglot proxies: this is
+        # CPython, where a tool result arrives as a value the host already
+        # DECODED, so nothing here needs rebuilding.
+        #
+        # The approximation this replaces — "anything that is not a primitive is
+        # a proxy" — was catastrophic off GraalPy: settle wraps the value of
+        # every top-level assignment, so `h = open(p, "rb")` rebuilt the handle
+        # by ITERATING it, and the block got a list of its own lines.
+        return False
 
 
 def __vis_pyify__(x):
