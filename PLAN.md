@@ -790,7 +790,10 @@ cache and normalization only, and portable readers receive `PROVIDER`. `contract
 the language-surface result contract every pack's `format_code`, `lint_code` and `run_tests` answer
 is checked against; `internal/foundation/surface_contract.clj` was deleted rather than forwarded,
 both language packs and the dispatch surface import the contract owner directly, and the frozen
-consumer debt changed key without growing.
+consumer debt changed key without growing. `contract.test-runner` now owns the language-neutral
+test selector vocabulary, the uniform result map and the node-id helpers every pack's runner
+selects through; `internal/test_contract.clj` was deleted rather than forwarded, so no
+`*_contract` namespace survives outside the contract package.
 
 Work already available as foundations:
 

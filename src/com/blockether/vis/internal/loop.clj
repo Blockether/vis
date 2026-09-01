@@ -10598,25 +10598,47 @@
   ;; Drop this session from the SHARED gateway egress proxy's registry. The shared
   ;; proxy + CA are daemon-lifetime (internal.gateway-sandbox/shutdown!), not
   ;; per-session, so nothing is stopped here — only this session's policy is removed.
-  (when-let [tok (:sandbox-token environment)]
-    (gateway-sandbox/unregister-session! tok))
-  (when-let [tok (:repl-sandbox-token environment)]
-    (gateway-sandbox/unregister-session! tok))
-  (process-jail/unregister-session-jail! (:session-id environment))
-  (when-let [session-atom (:llm-session-atom environment)]
-    (locking session-atom (close-llm-session! session-atom)))
-  ;; BEFORE the context goes: the session's helper-source memo outlives both the
-  ;; context and the engine, and nothing else ever drops it (see
-  ;; `env-python/forget-session-defs!`).
-  (when-let [sid (:session-id environment)]
-    (try (env/forget-session-defs! sid) (catch Throwable _ nil)))
-  ;; The whole sandbox, in the one order that works — host handles, Context,
-  ;; Engine. `sandbox-resources/dispose!` owns that order so no teardown site
-  ;; has to restate it, and each step gives back something different: the
-  ;; handles, the action threads that would otherwise root this Context
-  ;; forever, and the Python heap the Engine retains.
-  (res/dispose! environment)
-  (when (:db-info environment) (persistance/db-dispose-connection! (:db-info environment))))
+  ;; EVERY step before the sandbox is best-effort AND cannot skip it. These run
+  ;; first because they need the environment intact, but not one of them is worth
+  ;; the Python heap: a throw here used to abandon `res/dispose!` below, and the
+  ;; only caller that recycles between turns swallows the exception — so a single
+  ;; failing unregister leaked a whole Engine, silently, every five turns. The
+  ;; sandbox teardown is therefore a `finally`, and a failure is LOGGED rather
+  ;; than dropped, because a leak nothing reports is one nobody can find.
+  (try
+    (doseq [[step run!]
+            [[:egress-proxy #(when-let [tok (:sandbox-token environment)]
+                               (gateway-sandbox/unregister-session! tok))]
+             [:repl-egress-proxy #(when-let [tok (:repl-sandbox-token environment)]
+                                    (gateway-sandbox/unregister-session! tok))]
+             [:process-jail #(process-jail/unregister-session-jail! (:session-id environment))]
+             [:llm-session #(when-let [a (:llm-session-atom environment)]
+                              (locking a (close-llm-session! a)))]
+             ;; BEFORE the context goes: the session's helper-source memo outlives
+             ;; both the context and the engine, and nothing else ever drops it
+             ;; (see `env-python/forget-session-defs!`).
+             [:session-defs #(when-let [sid (:session-id environment)]
+                               (env/forget-session-defs! sid))]]]
+      (try (run!)
+           (catch Throwable t
+             (tel/log! :warn
+                       ["gateway: env teardown step failed" (name step)
+                        (str (:session-id environment)) (ex-message t)]))))
+    (finally
+      ;; The whole sandbox, in the one order that works — host handles, Context,
+      ;; Engine. `sandbox-resources/dispose!` owns that order so no teardown site
+      ;; has to restate it, and each step gives back something different: the
+      ;; handles, the action threads that would otherwise root this Context
+      ;; forever, and the Python heap the Engine retains.
+      (try (res/dispose! environment)
+           (catch Throwable t
+             (tel/log! :error
+                       ["gateway: sandbox dispose failed - Engine LEAKED"
+                        (str (:session-id environment)) (ex-message t)])))
+      (when (:db-info environment)
+        (try (persistance/db-dispose-connection! (:db-info environment))
+             (catch Throwable t
+               (tel/log! :warn ["gateway: env db close failed" (ex-message t)])))))))
 
 (defonce ^:private last-good-security-snapshot
   ;; Retains the most recent VALID security snapshot so an invalid live config
@@ -11937,7 +11959,14 @@
           ;; Restamp to the current epoch: the fresh env carries the latest
           ;; security-policy snapshot, so it is no longer reload-stale.
           :policy-epoch (java.util.concurrent.atomic.AtomicLong. (long @policy-reload-epoch))))
-      (try (dispose-environment! (:environment old)) (catch Throwable _ nil)))))
+      ;; The recycle is the busiest teardown site there is — every N turns, for
+      ;; the life of every session — so a failure here is the one that compounds.
+      ;; It must not take the swap down, but it must not vanish either.
+      (try (dispose-environment! (:environment old))
+           (catch Throwable t
+             (tel/log! :error
+                       ["gateway: recycle failed to dispose the old env" (str k)
+                        (ex-message t)]))))))
 
 (def ^:private ENGINE_LOCK_POLL_MS
   "How long one attempt at a session's turn lock waits before `send!` re-reads
