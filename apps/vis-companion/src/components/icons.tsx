@@ -68,6 +68,7 @@ import {
   CircleCheck,
   CircleDashed,
   CircleDot,
+  CircleSlash,
   CircleX,
   Copy,
   Crop,
@@ -450,7 +451,7 @@ export function CheckIcon({ className }: { className?: string }) {
 }
 
 /**
- * THE STATUS COLUMN — one ring, five interiors. These six are a SET and are used
+ * THE STATUS COLUMN — one ring, six interiors. These six are a SET and are used
  * as one: a live view paints a column of them, and the column is legible because
  * every mark is the same 20-unit circle and only what sits inside it changes.
  * They are the only marks in this file chosen for each other rather than for the
@@ -475,6 +476,14 @@ export function CircleDashedIcon({ className }: { className?: string }) {
   return <Mark icon={CircleDashed} className={className} />;
 }
 
+/**
+ * Stopped before it finished — cancelled, or interrupted. The ring struck
+ * through, because the work is neither done nor wrong and a cross would call it
+ * a failure the reader then has to go and disprove.
+ */
+export function CircleSlashIcon({ className }: { className?: string }) {
+  return <Mark icon={CircleSlash} className={className} />;
+}
 /** A warning that belongs in the status column, where the triangle would not fit the ring. */
 export function CircleAlertIcon({ className }: { className?: string }) {
   return <Mark icon={CircleAlert} className={className} />;

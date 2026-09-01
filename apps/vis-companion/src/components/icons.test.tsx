@@ -12,6 +12,7 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotIcon,
+  CircleSlashIcon,
   CircleXIcon,
   ClipIcon,
   CloseIcon,
@@ -36,15 +37,17 @@ import {
 } from "./icons";
 
 /**
- * THE STATUS COLUMN, and it is a SET: these five are chosen for each other rather
- * than for the control they lead. They stack in the live view's first column, so
- * they are measured against one another and not against the strip of controls.
+ * THE STATUS COLUMN, and it is a SET: these six are chosen for each other rather
+ * than for the control they lead. They stack in the live view's first column and
+ * on the transcript's own thread, so they are measured against one another and
+ * not against the strip of controls.
  */
 const STATUS_COLUMN = {
   CircleCheckIcon: <CircleCheckIcon />,
   CircleXIcon: <CircleXIcon />,
   CircleDotIcon: <CircleDotIcon />,
   CircleDashedIcon: <CircleDashedIcon />,
+  CircleSlashIcon: <CircleSlashIcon />,
   CircleAlertIcon: <CircleAlertIcon />,
 };
 
@@ -322,7 +325,7 @@ describe("the icon set", () => {
 
     // The column has no such licence: a ring is a ring, and fifty of them stack.
     const column = centres.filter(({ name }) => name in STATUS_COLUMN);
-    expect(column).toHaveLength(5);
+    expect(column).toHaveLength(6);
     expect(
       column.filter(
         ({ centre }) => centre[0] !== 12 || centre[1] !== 12,

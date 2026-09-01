@@ -40,6 +40,14 @@ const text = (html: string) =>
 const codeRows = (html: string) =>
   (html.match(/<div class="flex w-fit[^"]*">.*?<\/div>/g) ?? []).map(text);
 
+/**
+ * What a step's row says to a screen reader and not to the eye: the ring on the
+ * thread carries the state visually, so the word for it lives here alone.
+ */
+const announcedStates = (root: HTMLElement) =>
+  [...root.querySelectorAll(".sr-only")].map((node) =>
+    (node.textContent ?? "").replace(/:\s*$/, ""),
+  );
 const count = (html: string, pattern: RegExp) =>
   (html.match(pattern) ?? []).length;
 
@@ -842,7 +850,11 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    expect(painted.container.textContent).toContain("FAILED · PYTHON · 29ms");
+    // Regression, T153: the row shouted FAILED beside a ring that already drew
+    // the cross, and spent the front of the line — where the eye lands — on it.
+    expect(painted.container.textContent).toContain("PYTHON · 29ms");
+    expect(painted.container.textContent).not.toContain("FAILED · PYTHON");
+    expect(announcedStates(painted.container)).toContain("Failed");
     expect(
       painted.getByRole("button", { name: "Expand execution trace" }),
     ).toBeTruthy();
@@ -862,10 +874,9 @@ describe("a Python evaluation without detected Activity", () => {
       />,
     );
 
-    expect(painted.container.textContent).toContain(
-      "INTERRUPTED · PYTHON · 29ms",
-    );
-    expect(painted.container.textContent).not.toContain("FAILED · PYTHON");
+    expect(painted.container.textContent).toContain("PYTHON · 29ms");
+    expect(painted.container.textContent).not.toContain("INTERRUPTED · PYTHON");
+    expect(announcedStates(painted.container)).toContain("Interrupted");
     fireEvent.click(
       painted.getByRole("button", { name: "Expand execution trace" }),
     );
@@ -1186,7 +1197,7 @@ describe("Activity owns the slot after its Python form and result", () => {
     // The dropped rows still count where the count is the margin's own: the
     // axis's tail can say `+6 more`, never WHAT the six were, and naming them is
     // exactly what this line is for.
-    expect(rendered).toContain("FAILED");
+    expect(rendered).not.toContain("FAILED");
     expect(rendered).toContain("0 mutations · 6 observations");
     expect(rendered).not.toContain("finished 6/");
   });

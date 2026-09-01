@@ -1084,11 +1084,19 @@ export const STORY_TURN_ITERATIONS_SETTLED: TranscriptIteration[] = STORY_TURN_I
       ...form,
       duration_ms: form.duration_ms ?? 3100,
       result_kind: iteration.id === 'i2' ? 'error' : 'ok',
-      // The middle step FAILED, and the turn carried on past it. A settled sheet
-      // where everything worked is the one sheet that proves nothing: the marker
-      // for a step that ended badly has to be findable from the gutter alone,
-      // months later, in a transcript nobody is reading closely.
-      activity: iteration.id === 'i2' ? ACTIVITY_FAILED : ACTIVITY_SETTLED,
+      // The middle step FAILED and the turn carried on past it; the last one was
+      // STOPPED before it finished. A settled sheet where everything worked is
+      // the one sheet that proves nothing: the marker for a step that ended
+      // badly — and the marker for one that never ended at all — have to be
+      // findable from the gutter alone, months later, in a transcript nobody is
+      // reading closely, because the row beside them no longer says a word
+      // about it.
+      activity:
+        iteration.id === 'i2'
+          ? ACTIVITY_FAILED
+          : iteration.id === 'i3'
+            ? { ...ACTIVITY_SETTLED, state: 'cancelled' as const }
+            : ACTIVITY_SETTLED,
     })),
   }),
 );
@@ -1111,7 +1119,7 @@ export const STORY_EXCHANGE_TURN: TranscriptTurn = {
       id: 'exchange-answer',
       type: 'prose',
       markdown:
-        'The thread now belongs to the turn, not to the step: one line down the column, a marker where each step landed, and the line stops at the last one. The middle step failed and the turn carried on past it, which the gutter says on its own.',
+        'The thread now belongs to the turn, not to the step: one line down the column, a marker where each step landed, and the line stops at the last one. The middle step failed, the last one was stopped, and the turn carried on past both — which the gutter says on its own, in rings, without spending a word of the row on it.',
     },
   ],
   model: 'claude-opus-5',

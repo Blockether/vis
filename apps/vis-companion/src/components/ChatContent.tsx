@@ -27,6 +27,7 @@ import {
   ChevronIcon,
   CircleCheckIcon,
   CircleDotIcon,
+  CircleSlashIcon,
   CircleXIcon,
   PauseIcon,
   PlayIcon,
@@ -1482,10 +1483,11 @@ function pythonFormState(
 /**
  * THE RECEIPT FOR A FORM THAT CALLED NOTHING: what ran, and how long it took.
  *
- * The ordinary states are silent here for the same reason they are silent on an
- * Activity receipt — `DONE` above every settled form is one word repeated down the
- * transcript, and the chevron, the tone and the elapsed time already carry it. Only
- * a state the reader has to be TOLD keeps its word.
+ * NO state word, not even a bad one. The mark on the thread beside this row is a
+ * ring in its own ink for each of them, so `FAILED · PYTHON · 29ms` says the same
+ * thing twice and spends the front of the line — where the eye lands — on the
+ * half of it the mark already carried. The word survives for a screen reader
+ * alone, which cannot see the ring: `formStep` hands it back as `status`.
  */
 function pythonReceiptText(
   form: TranscriptForm,
@@ -1494,17 +1496,20 @@ function pythonReceiptText(
   activityDurationMs?: number,
 ): string {
   const state = pythonFormState(form, live, activityState);
-  const ordinary = state === "DONE" || state === "RUNNING";
   const duration = activityDurationMs ?? form.duration_ms;
   const role = form.tag === "user-shell" ? "SHELL" : "PYTHON";
-  return [
-    ordinary ? "" : state,
-    role,
-    state === "RUNNING" ? "" : formatDuration(duration),
-  ]
+  return [role, state === "RUNNING" ? "" : formatDuration(duration)]
     .filter(Boolean)
     .join(" · ");
 }
+
+/**
+ * THE FOUR STATES A STEP CAN BE IN, and the ring is the one that says them.
+ *
+ * `halted` is cancelled or interrupted: stopped on purpose, so neither the tick
+ * of a step that finished nor the cross of one that broke.
+ */
+type StepMark = "running" | "failed" | "halted" | "done";
 
 /**
  * WHAT A FORM'S ROW SAYS, AND WHETHER IT IS STILL MOVING.
@@ -1523,8 +1528,15 @@ function formStep(
   settled: boolean;
   receipt: string;
   running: boolean;
-  /** A step that ENDED badly — it stays findable in a transcript scrolled past. */
-  failed: boolean;
+  /** Which ring the thread wears here — the ONE reading of how this step ended. */
+  mark: StepMark;
+  /**
+   * The word for that ring, for a reader who cannot see it. Empty for the two
+   * ordinary states: a screen reader that announced "Done" under every settled
+   * step of a forty-step turn is the audible version of the noise this row just
+   * stopped printing.
+   */
+  status: string;
 } {
   // Activity rides the form itself now, so there is no artifact to fetch and no
   // loading or unavailable state to paint: either this form did something and
@@ -1546,15 +1558,26 @@ function formStep(
     detected && activity
       ? activityReceiptText(activity, form.duration_ms)
       : pythonReceiptText(form, live, activity?.state, form.duration_ms);
+  const state = pythonFormState(form, live, activity?.state);
+  const running = detected ? !settled : state === "RUNNING";
+  const mark: StepMark = running
+    ? "running"
+    : state === "FAILED"
+      ? "failed"
+      : state === "CANCELLED" || state === "INTERRUPTED"
+        ? "halted"
+        : "done";
   return {
     activity,
     detected,
     settled,
     receipt,
-    running: detected
-      ? !settled
-      : pythonFormState(form, live, activity?.state) === "RUNNING",
-    failed: activity?.state === "failed" || Boolean(form.error),
+    running,
+    mark,
+    status:
+      mark === "running" || mark === "done"
+        ? ""
+        : state.charAt(0) + state.slice(1).toLowerCase(),
   };
 }
 
@@ -1582,6 +1605,7 @@ const FormTrace = memo(function FormTrace({
     detected: detectedActivity,
     receipt,
     running,
+    status,
   } = formStep(form, live);
   // The band is EVERYTHING THE READER GETS WITHOUT OPENING IT: how the call
   // ended, how long it took, and what it cost the repository — what changed it,
@@ -1622,8 +1646,11 @@ const FormTrace = memo(function FormTrace({
         >
           {/* One sentence, and its counters keep the line: on a phone they
               wrap to their own row rather than clipping the calls off the
-              front. Colour repeats each noun and never carries it. */}
+              front. Colour repeats each noun and never carries it. The state
+              is the RING's to say — printed here only for a reader who cannot
+              see it, and only when it is a state worth stopping on. */}
           <span className="min-w-0 flex-1 font-mono text-chip font-normal normal-case tracking-normal text-dialog-hint">
+            {status && <span className="sr-only">{status}: </span>}
             <span className="font-bold text-code-result">{receipt}</span>
             {detectedActivity &&
               cost.map((part) => (
@@ -1789,14 +1816,17 @@ const RAIL_SPINE_PAPER = "ml-2";
  * ONE STEP, MARKED ON THE LINE.
  *
  * A ring straddling the thread, on the page's own paper, so the line reads as
- * broken BY the step instead of passing behind it. Three rings and no fourth:
- * moving, ended badly, done — the same three the run's own panel draws, in the
- * same order, so a column of them can be read at a glance from the gutter alone.
+ * broken BY the step instead of passing behind it. Four rings and no fifth:
+ * moving, ended badly, stopped on purpose, done — the same marks the run's own
+ * panel draws, in the same order, so a column of them can be read at a glance
+ * from the gutter alone.
  *
- * It carries no words and no label: the receipt row it sits beside says the same
- * thing in text, and a screen reader is given that row rather than this ring twice.
+ * The ring is now the ONLY thing that says how a step ended: the receipt beside
+ * it prints the calls and the elapsed time and no state word. So it stays
+ * `aria-hidden` and the row carries a `sr-only` word instead — one statement of
+ * it for the eye, one for a screen reader, never two for either.
  */
-function StepNode({ running, failed }: { running: boolean; failed: boolean }) {
+function StepNode({ mark }: { mark: StepMark }) {
   return (
     <span
       aria-hidden
@@ -1812,10 +1842,12 @@ function StepNode({ running, failed }: { running: boolean; failed: boolean }) {
           percent of the foreground mixed in, so behind every marker it painted
           a grey tile the reader could see. */}
       <span className="flex rounded-full bg-ink">
-        {running ? (
+        {mark === "running" ? (
           <CircleDotIcon className="text-accent-ink" />
-        ) : failed ? (
+        ) : mark === "failed" ? (
           <CircleXIcon className="text-err-ink" />
+        ) : mark === "halted" ? (
+          <CircleSlashIcon className="text-dialog-hint" />
         ) : (
           <CircleCheckIcon className="text-dialog-hint" />
         )}
@@ -2661,8 +2693,7 @@ const TraceSegment = memo(function TraceSegment({
             return (
               <div key={chunk.key} className="relative min-w-0">
                 <StepNode
-                  running={step ? step.running : live}
-                  failed={step?.failed ?? false}
+                  mark={step ? step.mark : live ? "running" : "done"}
                 />
                 {chunk.kind === "code" ? (
                   <FormTrace form={chunk.form} live={live} />

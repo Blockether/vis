@@ -204,9 +204,13 @@ export function activityCostParts(
  * and the chronology below is the whole list anyway; a lone call also prints its own
  * subject, the one place a name like SHELL is too thin to stand by itself.
  *
- * The state word survives ONLY for a state the reader has to be told — failed,
- * cancelled. The elapsed time is printed only once it is FINAL: a number that stops
- * moving while the run is still going is worse than no number.
+ * NO STATE WORD AT ALL, not even for a step that failed: the mark on the thread
+ * beside the row is a struck or crossed ring in its own ink, and `FAILED` in
+ * front of the calls says it a second time while pushing the calls — the part a
+ * reader actually scans for — off the front of the line. The word survives for a
+ * screen reader alone, which cannot see the ring. The elapsed time is printed
+ * only once it is FINAL: a number that stops moving while the run is still going
+ * is worse than no number.
  */
 export function activityReceiptText(
   activity?: ActivityProjection,
@@ -230,9 +234,7 @@ export function activityReceiptText(
       : live
         ? "running activity"
         : "";
-  const trouble =
-    state === "failed" || state === "cancelled" ? state.toUpperCase() : "";
-  return [trouble, calls, live ? "" : formatActivityDuration(durationMs)]
+  return [calls, live ? "" : formatActivityDuration(durationMs)]
     .filter(Boolean)
     .join(" · ");
 }
