@@ -7,6 +7,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.xml :as xml]
+            [com.blockether.vis.contract.test-runner :as contract]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.language-python.interpreter :as interpreter]
             [com.blockether.vis.ext.language-python.repl-manager :as repl]
@@ -15,8 +16,7 @@
             [com.blockether.vis.internal.paths :as paths]
             [com.blockether.vis.internal.python-project :as pyproj]
             [com.blockether.vis.internal.python-test-runner :as ptr]
-            [com.blockether.vis.internal.runtime-settings :as rt]
-            [com.blockether.vis.internal.test-contract :as contract]))
+            [com.blockether.vis.internal.runtime-settings :as rt]))
 
 ;; Activation
 

@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/provider.json",
+  "title": "Provider limits contract",
+  "description": "The portable limits vocabulary every SDK renders: what a report may say, what one row is measured against, what it counts, how its window is anchored, and how exactly and from where its numbers are known.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "limits"
+  ],
+  "properties": {
+    "version": {
+      "$ref": "common.json#/$defs/version"
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    }
+  },
+  "$defs": {
+    "limits": {
+      "description": "The closed vocabularies one limits report is judged by. Every list is a SET: sorted, unique, and lower-case, so two SDKs cannot disagree about spelling or order.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "statuses",
+        "scopes",
+        "kinds",
+        "window_kinds",
+        "window_units",
+        "precisions",
+        "sources"
+      ],
+      "properties": {
+        "statuses": {
+          "description": "What a whole report may say about itself.",
+          "$ref": "common.json#/$defs/token_list"
+        },
+        "scopes": {
+          "description": "What one row is measured against.",
+          "$ref": "common.json#/$defs/token_list"
+        },
+        "kinds": {
+          "description": "What one row counts.",
+          "$ref": "common.json#/$defs/token_list"
+        },
+        "window_kinds": {
+          "description": "How a row's window is anchored.",
+          "$ref": "common.json#/$defs/token_list"
+        },
+        "window_units": {
+          "description": "Calendar units a row's window may be sized in.",
+          "$ref": "common.json#/$defs/token_list"
+        },
+        "precisions": {
+          "description": "How exactly a row's numbers are known.",
+          "$ref": "common.json#/$defs/token_list"
+        },
+        "sources": {
+          "description": "Where a row's numbers came from.",
+          "$ref": "common.json#/$defs/token_list"
+        }
+      }
+    }
+  }
+}

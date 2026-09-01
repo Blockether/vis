@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.test-contract-test
+(ns com.blockether.vis.contract.test-runner-test
   "Tests that REUSE the language-neutral test-runner contract.
 
    Exercises the clojure.spec definitions (`::selectors`, `::result`), the
@@ -7,7 +7,7 @@
    `run_tests` handler builds its result THROUGH are validated here, so a drift
    in the contract shape is caught by this ns."
   (:require [clojure.spec.alpha :as s]
-            [com.blockether.vis.internal.test-contract :as contract]
+            [com.blockether.vis.contract.test-runner :as contract]
             [lazytest.core :refer [defdescribe describe expect it]]))
 
 (defdescribe selector-keys-test

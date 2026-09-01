@@ -1,8 +1,0 @@
-{:contract/version 1
- :toggle/id-pattern "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
- :toggle/types ["boolean" "enum"]
- :toggle/default-type "boolean"
- :toggle/max-description-length 100
- :toggle/boolean-wire {:true ["1" "on" "true" "yes"]
-                       :false ["0" "false" "no" "off"]}
- :toggle/config-truthy ["1" "on" "true" "yes"]}

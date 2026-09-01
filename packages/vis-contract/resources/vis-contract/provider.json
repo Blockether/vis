@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "limits": {
+    "statuses": [
+      "error",
+      "ok",
+      "unauthenticated",
+      "unknown-provider",
+      "unsupported"
+    ],
+    "scopes": [
+      "account",
+      "model",
+      "plan",
+      "workspace"
+    ],
+    "kinds": [
+      "credits",
+      "rate",
+      "requests",
+      "sessions",
+      "tokens",
+      "usd"
+    ],
+    "window_kinds": [
+      "calendar",
+      "lifetime",
+      "rolling"
+    ],
+    "window_units": [
+      "day",
+      "hour",
+      "minute",
+      "month",
+      "week",
+      "year"
+    ],
+    "precisions": [
+      "derived",
+      "estimate",
+      "exact",
+      "unknown"
+    ],
+    "sources": [
+      "derived",
+      "local",
+      "provider-api",
+      "static"
+    ]
+  }
+}

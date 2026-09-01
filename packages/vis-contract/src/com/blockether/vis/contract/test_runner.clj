@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.test-contract
+(ns com.blockether.vis.contract.test-runner
   "Language-neutral test-runner CONTRACT shared across vis language packs.
 
    ONE vocabulary for selecting and reporting tests, modeled on lazytest's CLI

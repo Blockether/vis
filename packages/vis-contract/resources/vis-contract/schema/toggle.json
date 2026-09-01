@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/toggle.json",
+  "title": "Feature-toggle contract",
+  "description": "The portable id grammar, toggle kinds, description bound and boolean token vocabulary every SDK renders.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "id_pattern",
+    "types",
+    "default_type",
+    "max_description_length",
+    "boolean_wire",
+    "config_truthy"
+  ],
+  "properties": {
+    "version": {
+      "$ref": "common.json#/$defs/version"
+    },
+    "id_pattern": {
+      "$ref": "common.json#/$defs/regex"
+    },
+    "types": {
+      "$ref": "common.json#/$defs/token_list"
+    },
+    "default_type": {
+      "$ref": "common.json#/$defs/lower_token"
+    },
+    "max_description_length": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "boolean_wire": {
+      "$ref": "#/$defs/boolean_wire"
+    },
+    "config_truthy": {
+      "$ref": "common.json#/$defs/token_list"
+    }
+  },
+  "$defs": {
+    "boolean_wire": {
+      "description": "The wire tokens each boolean value is spelled with.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "true",
+        "false"
+      ],
+      "properties": {
+        "true": {
+          "$ref": "common.json#/$defs/token_list"
+        },
+        "false": {
+          "$ref": "common.json#/$defs/token_list"
+        }
+      }
+    }
+  }
+}

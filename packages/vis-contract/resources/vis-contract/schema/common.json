@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contract.blockether.com/vis/schema/common.json",
+  "title": "Shared contract definitions",
+  "description": "The small definitions every Vis contract document reuses. A document schema $refs these; nothing here describes a whole document.",
+  "$defs": {
+    "version": {
+      "description": "Document version, bumped when the shape changes.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "non_blank_string": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "regex": {
+      "description": "A portable regular expression, in the syntax every SDK compiles.",
+      "type": "string",
+      "minLength": 1,
+      "format": "regex"
+    },
+    "lower_token": {
+      "description": "One lower-case wire token.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "token_list": {
+      "description": "A non-empty set of lower-case wire tokens, written in sorted order.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/lower_token"
+      }
+    },
+    "snake_case_id": {
+      "description": "A canonical snake_case identifier.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
+    }
+  }
+}

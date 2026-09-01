@@ -48,6 +48,9 @@ workspace:
     - id: svar
       path: ~/svar
       description: Sibling repo — structured LLM output + routing library.
+    - id: skjema
+      path: ~/skjema
+      description: Sibling repo — Blockether JSON Schema 2020-12 validator, reflection-free and native-image safe, validating EDN directly.
     - id: clj-imaging
       path: ~/clj-imaging
       description: Sibling repo — Blockether AWT-free imaging (decode/encode/transforms/SVG) over a first-party Rust cdylib.

@@ -1,9 +1,10 @@
 (ns com.blockether.vis.contract.provider
   "The executable provider limits contract.
 
-   `vis-contract/provider.edn` owns the portable limits vocabulary: report statuses,
+   `vis-contract/provider.json` owns the portable limits vocabulary: report statuses,
    what one row is measured against, what it counts, how its window is anchored, and
-   how exactly and from where its numbers are known. This namespace validates that
+   how exactly and from where its numbers are known. `vis-contract/schema/provider.json`
+   declares its shape. This namespace reads that
    document, declares the envelope every provider limits report is judged by, and
    renders the same vocabulary for every SDK.
 
@@ -12,69 +13,25 @@
    [[report-valid?]] and swaps in an error envelope when a row is malformed, so this
    shape is exactly what a channel may assume it is painting. Fetching, caching, static
    catalog augmentation and error classification stay in Core."
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
-            [clojure.spec.alpha :as s]
-            [clojure.string :as str]))
+  (:require [clojure.spec.alpha :as s]
+            [clojure.string :as str]
+            [com.blockether.vis.contract.document :as document]))
 
 (set! *warn-on-reflection* true)
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
-(defn- closed-map? [m expected-keys] (and (map? m) (= expected-keys (set (keys m)))))
+(def ^:private document (delay (document/load! "provider")))
 
-(defn- sorted-token-vector?
-  [value]
-  (and (vector? value)
-       (seq value)
-       (= value (vec (sort value)))
-       (= (count value) (count (set value)))
-       (every? #(and (non-blank-string? %) (= % (str/lower-case %))) value)))
+(defn- vocabulary [key] (set (map keyword (get-in @document ["limits" key]))))
 
-(def ^:private limit-vocabularies
-  #{:statuses :scopes :kinds :window-kinds :window-units :precisions :sources})
-
-(defn- valid-document?
-  [{:contract/keys [version] :provider/keys [limits] :as value}]
-  (and (closed-map? value #{:contract/version :provider/limits})
-       (pos-int? version)
-       (closed-map? limits limit-vocabularies)
-       (every? sorted-token-vector? (vals limits))))
-
-(s/def :contract/provider valid-document?)
-
-(def ^:private resource-path "vis-contract/provider.edn")
-
-(def ^:private document
-  (delay
-    (let [resource
-          (io/resource resource-path)
-
-          _
-          (when-not resource
-            (throw (ex-info (str "the provider contract is missing from the classpath: "
-                                 resource-path)
-                            {:type :vis/contract-missing :resource resource-path})))
-
-          parsed
-          (edn/read-string (slurp resource))]
-
-      (when-not (s/valid? :contract/provider parsed)
-        (throw (ex-info (str resource-path " is not a valid provider contract")
-                        {:type :vis/contract-invalid
-                         :resource resource-path
-                         :explain (s/explain-str :contract/provider parsed)})))
-      parsed)))
-
-(defn- vocabulary [key] (set (map keyword (get-in @document [:provider/limits key]))))
-
-(def version "Provider contract document version." (:contract/version @document))
-(def statuses "Closed limits report statuses." (vocabulary :statuses))
-(def scopes "What one limit row is measured against." (vocabulary :scopes))
-(def kinds "What one limit row counts." (vocabulary :kinds))
-(def window-kinds "How a row's window is anchored." (vocabulary :window-kinds))
-(def window-units "Calendar units a row's window may be sized in." (vocabulary :window-units))
-(def precisions "How exactly a row's numbers are known." (vocabulary :precisions))
-(def sources "Where a row's numbers came from." (vocabulary :sources))
+(def version "Provider contract document version." (get @document "version"))
+(def statuses "Closed limits report statuses." (vocabulary "statuses"))
+(def scopes "What one limit row is measured against." (vocabulary "scopes"))
+(def kinds "What one limit row counts." (vocabulary "kinds"))
+(def window-kinds "How a row's window is anchored." (vocabulary "window_kinds"))
+(def window-units "Calendar units a row's window may be sized in." (vocabulary "window_units"))
+(def precisions "How exactly a row's numbers are known." (vocabulary "precisions"))
+(def sources "Where a row's numbers came from." (vocabulary "sources"))
 
 (s/def ::provider-id keyword?)
 (s/def ::status statuses)
@@ -138,12 +95,16 @@
 (defn package-document
   "Deterministic JSON-ready provider section for every generated language contract."
   []
-  (let [limits (:provider/limits @document)]
+  ;; The document is the rendered shape already — string keys, snake_case. The
+  ;; keys are still spelled out rather than passed through so the ORDER is this
+  ;; function's, not the parser's: a generated contract that reorders its keys is
+  ;; a diff in every SDK for no change at all.
+  (let [limits (get @document "limits")]
     (array-map "version" version
-               "limits" (array-map "statuses" (:statuses limits)
-                                   "scopes" (:scopes limits)
-                                   "kinds" (:kinds limits)
-                                   "window_kinds" (:window-kinds limits)
-                                   "window_units" (:window-units limits)
-                                   "precisions" (:precisions limits)
-                                   "sources" (:sources limits)))))
+               "limits" (array-map "statuses" (get limits "statuses")
+                                   "scopes" (get limits "scopes")
+                                   "kinds" (get limits "kinds")
+                                   "window_kinds" (get limits "window_kinds")
+                                   "window_units" (get limits "window_units")
+                                   "precisions" (get limits "precisions")
+                                   "sources" (get limits "sources")))))

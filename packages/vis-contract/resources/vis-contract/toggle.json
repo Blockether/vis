@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "id_pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$",
+  "types": [
+    "boolean",
+    "enum"
+  ],
+  "default_type": "boolean",
+  "max_description_length": 100,
+  "boolean_wire": {
+    "true": [
+      "1",
+      "on",
+      "true",
+      "yes"
+    ],
+    "false": [
+      "0",
+      "false",
+      "no",
+      "off"
+    ]
+  },
+  "config_truthy": [
+    "1",
+    "on",
+    "true",
+    "yes"
+  ]
+}
