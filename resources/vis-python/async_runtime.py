@@ -644,10 +644,19 @@ def __vis_socket_bind__(self, *__vis_a__, **__vis_kw__):
         __vis_sock_track__(self)
 
 
-__vis_socket__.socket.__init__ = __vis_socket_init__
-__vis_socket__.socket.connect = __vis_socket_connect__
-__vis_socket__.socket.connect_ex = __vis_socket_connect_ex__
-__vis_socket__.socket.bind = __vis_socket_bind__
+# The doors go on ONCE per interpreter. A reinstall re-DEFINES the functions
+# above, so re-assigning them would throw away whatever another layer wrapped on
+# top of a door — `network_guard` patches this same `connect` — and leave the
+# pristine method underneath it, silently unguarded. The doors installed by the
+# first session keep serving every later one, because every table they touch is
+# a survivor.
+__vis_socket_doors_on__ = __vis_survivor__("__vis_socket_doors_on__", lambda: [])
+if not __vis_socket_doors_on__:
+    __vis_socket__.socket.__init__ = __vis_socket_init__
+    __vis_socket__.socket.connect = __vis_socket_connect__
+    __vis_socket__.socket.connect_ex = __vis_socket_connect_ex__
+    __vis_socket__.socket.bind = __vis_socket_bind__
+    __vis_socket_doors_on__.append(1)
 
 
 def __vis_count_forms__(src):

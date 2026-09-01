@@ -1,4 +1,5 @@
 def __vis_install_net_guard__():
+    import builtins as _b
     import socket as _s
 
     def _norm(x):
@@ -6,30 +7,44 @@ def __vis_install_net_guard__():
 
     _allowed = set(_norm(d) for d in __vis_allowed_domains__ if _norm(d))
     _denied = set(_norm(d) for d in __vis_denied_domains__ if _norm(d))
-    _allow_specific = set(d for d in _allowed if d != "*")
-    _deny_specific = set(d for d in _denied if d != "*")
-    _allow_star = ("*" in _allowed) or (len(_allowed) == 0)
-    _deny_star = "*" in _denied
+
+    # ONE interpreter can serve several sessions, so the policy is a HOLDER the
+    # checks read at CALL time and an install REPLACES. Wrapping `socket` a
+    # second time would leave the previous session's policy underneath this one,
+    # blocking hosts the current session allows and never coming back off.
+    _b.__vis_net_policy__ = {
+        "allowed": _allowed,
+        "denied": _denied,
+        "allow_specific": set(d for d in _allowed if d != "*"),
+        "deny_specific": set(d for d in _denied if d != "*"),
+        "allow_star": ("*" in _allowed) or (len(_allowed) == 0),
+        "deny_star": "*" in _denied,
+    }
+
+    if getattr(_s, "__vis_net_guarded__", False):
+        return
 
     def _match(h, pats):
         return any(h == d or h.endswith("." + d) for d in pats)
 
-    def _host_ok(host):
+    def _host_ok(host, policy):
         h = _norm(host)
-        if _match(h, _deny_specific):
+        if _match(h, policy["deny_specific"]):
             return False
-        if _match(h, _allow_specific):
+        if _match(h, policy["allow_specific"]):
             return True
-        if _deny_star:
+        if policy["deny_star"]:
             return False
-        return _allow_star
+        return policy["allow_star"]
 
     def _check(host):
-        if not _host_ok(host):
-            raise PermissionError(
-                "vis: network host '%s' is blocked (allowlist=%s, denylist=%s)"
-                % (host, sorted(_allowed) or ["*"], sorted(_denied))
-            )
+        policy = getattr(_b, "__vis_net_policy__", None)
+        if policy is None or _host_ok(host, policy):
+            return
+        raise PermissionError(
+            "vis: network host '%s' is blocked (allowlist=%s, denylist=%s)"
+            % (host, sorted(policy["allowed"]) or ["*"], sorted(policy["denied"]))
+        )
 
     def _addr_host(address):
         if (
@@ -78,6 +93,8 @@ def __vis_install_net_guard__():
         _s.create_connection = _wrap_create(_s.create_connection)
     except Exception:
         pass
+
+    _s.__vis_net_guarded__ = True
 
 
 __vis_install_net_guard__()
