@@ -1756,15 +1756,22 @@ function observeBox(
 
 // THE THREAD'S OWN GEOMETRY, in one place.
 //
-// A turn is a column of steps hung on one vertical line: the line sits 7px in,
-// the steps 24px in, and a step's marker straddles the line so the eye reads
-// "this happened, then this" without a single word for it. The three numbers
-// are one number three ways — move the gutter and the marker follows — which is
-// why they are spelled here and never at a call site. `RAIL_NODE` is measured
-// from the step's own left edge, so 7 - 24 = -17.
+// A turn is a column of steps hung on one vertical line: the line runs from 6px
+// to 8px, the steps 24px in, and a step's marker straddles the line so the eye
+// reads "this happened, then this" without a single word for it. The three
+// numbers are one number three ways — move the gutter and the marker follows —
+// which is why they are spelled here and never at a call site.
+//
+// The line is two pixels because the mark is fourteen: an odd rule leaves its
+// middle on a half pixel, a 14px glyph cannot centre on a half pixel, and the
+// mark then hangs visibly off its own thread — a third of a pixel at 1x and a
+// whole one at 3x. Two pixels puts both middles on 7 with nothing to round, and
+// it is the stroke the human's own bubble already draws (`RAIL_SPINE`), so one
+// vertical of one weight runs the whole exchange. `RAIL_NODE` is measured from
+// the step's own left edge, so 7 - 24 = -17.
 const RAIL_GUTTER = "pl-6";
 const RAIL_LINE =
-  "before:absolute before:left-[7px] before:top-0 before:z-[1] before:w-px before:bg-code-edge before:content-['']";
+  "before:absolute before:left-[6px] before:top-0 before:z-[1] before:w-0.5 before:bg-code-edge before:content-['']";
 const RAIL_NODE = "absolute -left-[17px] top-0 z-[2] -translate-x-1/2";
 const RAIL_BLEED = "-ml-4 pl-4";
 // A block that is not a step but stands on the same thread — the human's own
