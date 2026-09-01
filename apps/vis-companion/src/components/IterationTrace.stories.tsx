@@ -1,10 +1,15 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import {
+  STORY_EXCHANGE_TURN,
   STORY_TURN_ITERATIONS,
   STORY_TURN_ITERATIONS_ACTIVITY,
   STORY_TURN_ITERATIONS_SETTLED,
 } from "../dev/story-data";
-import { IterationTrace } from "./ChatContent";
+import {
+  AssistantMessage,
+  IterationTrace,
+  UserMessage,
+} from "./ChatContent";
 
 /**
  * A TURN, DRAWN AS ONE THREAD.
@@ -87,4 +92,30 @@ export const NoReasoning: Story = {
  */
 export const ActivityAxis: Story = {
   args: { live: true, iterations: STORY_TURN_ITERATIONS_ACTIVITY },
+};
+
+/**
+ * THE EXCHANGE — your message and the turn it started, on ONE line.
+ *
+ * A transcript draws exactly two vertical strokes: the role bar down the human's
+ * own bubble, and the thread down the turn that answered it. They are the same
+ * column, so they stand on the same x — the eye follows one stroke from what was
+ * asked into what the machine did about it, and the bubble's paper begins where
+ * a railed reasoning band's does.
+ *
+ * This is the only sheet where both edges are on screen at once, so it is the
+ * one that fails when they drift apart. Look down the left margin, not at the
+ * blocks.
+ */
+export const Exchange: Story = {
+  args: { live: false, iterations: STORY_TURN_ITERATIONS_SETTLED },
+  render: (args) => (
+    <>
+      <UserMessage>{STORY_EXCHANGE_TURN.request ?? ""}</UserMessage>
+      <AssistantMessage
+        turn={{ ...STORY_EXCHANGE_TURN, iterations: args.iterations }}
+        whole={args.whole}
+      />
+    </>
+  ),
 };

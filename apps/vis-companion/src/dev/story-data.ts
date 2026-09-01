@@ -40,6 +40,7 @@ import type {
   SessionUsage,
   SlashCommand,
   TranscriptIteration,
+  TranscriptTurn,
 } from '../lib/types';
 import type { GwHealth } from '../components/Machines';
 import type { ManagedProject } from '../components/ManageProjectsSheet';
@@ -1091,6 +1092,32 @@ export const STORY_TURN_ITERATIONS_SETTLED: TranscriptIteration[] = STORY_TURN_I
     })),
   }),
 );
+
+/**
+ * ONE EXCHANGE — what was asked, and the turn that answered it.
+ *
+ * The only fixture where the human's bubble and the machine's thread are on
+ * screen together, which makes it the only place their two vertical strokes can
+ * be compared: they are the transcript's whole structure, and a few pixels of
+ * drift between them reads as a wobble rather than as a column.
+ */
+export const STORY_EXCHANGE_TURN: TranscriptTurn = {
+  turn_id: 'turn-exchange',
+  request: 'The steps of a turn read as a pile. Make them read as one thread.',
+  status: 'completed',
+  iterations: STORY_TURN_ITERATIONS_SETTLED,
+  content: [
+    {
+      id: 'exchange-answer',
+      type: 'prose',
+      markdown:
+        'The thread now belongs to the turn, not to the step: one line down the column, a marker where each step landed, and the line stops at the last one. The middle step failed and the turn carried on past it, which the gutter says on its own.',
+    },
+  ],
+  model: 'claude-opus-5',
+  provider: 'anthropic',
+  duration_ms: 11500,
+};
 
 /**
  * THE AXIS WITH SOMETHING ON IT — the same turn, drawn over a real chronology.

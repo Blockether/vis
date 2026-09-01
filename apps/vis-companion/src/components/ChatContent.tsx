@@ -1767,6 +1767,16 @@ const RAIL_LINE =
   "before:absolute before:left-[7px] before:top-0 before:z-[1] before:w-px before:bg-code-edge before:content-['']";
 const RAIL_NODE = "absolute -left-[17px] top-0 z-[2] -translate-x-1/2";
 const RAIL_BLEED = "-ml-4 pl-4";
+// A block that is not a step but stands on the same thread — the human's own
+// bubble — puts its left edge ON that line rather than beside it: inset by its
+// own two-pixel stroke, so the stroke ends where the line's does (8px) and the
+// paper behind it starts where a railed band's paper starts. One vertical then
+// runs the whole exchange, from what was asked into what the machine did.
+const RAIL_SPINE = "ml-1.5";
+// The same edge for what carries no stroke of its own — the pictures under that
+// bubble — which therefore starts one stroke further in, on the paper edge
+// rather than on the line.
+const RAIL_SPINE_PAPER = "ml-2";
 
 /**
  * ONE STEP, MARKED ON THE LINE.
@@ -3930,7 +3940,7 @@ export const UserMessage = memo(function UserMessage({
         You
       </div>
       <div
-        className={`block w-full whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${PROSE}`}
+        className={`${RAIL_SPINE} block whitespace-pre-wrap break-words border-l-2 border-you-role bg-code px-3 py-2 text-ui text-you-message-foreground ${PROSE}`}
       >
         {parts.map((part) =>
           part.type === "text" ? (
@@ -3964,7 +3974,7 @@ export const UserMessage = memo(function UserMessage({
         )}
       </div>
       {mediaAttachments.length > 0 && (
-        <div className="mt-2.5 min-w-0">
+        <div className={`mt-2.5 min-w-0 ${RAIL_SPINE_PAPER}`}>
           {/* The clip the user sent replays from the SAME DB-owned bytes as a
               picture, so it survives a restart after the source file is gone. */}
           {/* A recording the user sent replays from those same bytes — it just
