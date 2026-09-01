@@ -559,11 +559,13 @@ function ActivityError({ evidence }: { evidence: ActivityTextEvidence }) {
         {/* Two inks, both measured on THIS tinted paper: the machine's first line
             wears the error's own red, the trace under it the message ink. --dialog-hint
             is a DIALOG ink and lands 4.4:1 here in both solarized palettes, under the
-            4.5 a small line owes; the message ink reads 6.0:1 to 13.4:1. */}
+            4.5 a small line owes; the message ink reads 6.0:1 to 13.4:1. The size is
+            meta, not chip: chip is a short tag beside other copy, and here the
+            machine's text is the only copy the card has. */}
         {lines.map((line, index) => (
           <p
             key={`${index}-${line}`}
-            className={`-indent-4 whitespace-pre-wrap break-words pl-4 font-mono text-chip ${
+            className={`-indent-4 whitespace-pre-wrap break-words pl-4 font-mono text-meta ${
               index === 0 ? "text-err-ink" : "text-vis-message"
             }`}
           >
