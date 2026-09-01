@@ -10,7 +10,7 @@
 ;; `python/` is the same contract for the other ecosystem (`pip install
 ;; vis-contract`): the rendered `contract.json` and the host protocol both Python
 ;; hosts implement. One document, two registries, one version — VIS_VERSION.
-{:deps {com.blockether/skjema {:mvn/version "0.2.0"}
+{:deps {com.blockether/skjema {:mvn/version "0.3.0"}
         com.cnuernber/charred {:mvn/version "1.041"}
         org.clojure/clojure {:mvn/version "1.12.5"}}
  :paths ["src" "resources"]}

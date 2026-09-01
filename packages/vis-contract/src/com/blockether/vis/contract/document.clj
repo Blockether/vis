@@ -50,13 +50,10 @@
         (str "vis-contract/" document-name ".json")
 
         parsed
-        (read-resource resource-path)
+        (read-resource resource-path)]
 
-        result
-        (skjema/validate (compiled-schema document-name) parsed)]
-
-    (when-not (:valid result)
+    (when-let [{:keys [errors]} (skjema/explain (compiled-schema document-name) parsed)]
       (throw (ex-info
                (str resource-path " does not satisfy vis-contract/schema/" document-name ".json")
-               {:type :vis/contract-invalid :resource resource-path :errors (:errors result)})))
+               {:type :vis/contract-invalid :resource resource-path :errors errors})))
     parsed))
