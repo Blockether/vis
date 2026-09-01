@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
 import {
+  STORY_LONG_QUEUED_TURNS,
   STORY_QUEUED_TURNS,
   STORY_QUEUE_CLIENT,
   STORY_QUEUE_PAUSED,
@@ -29,3 +30,10 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 export const PausedWithTwoTurns: Story = {};
+
+export const LongQueue: Story = {
+  args: {
+    queued: STORY_LONG_QUEUED_TURNS,
+    paused: null,
+  },
+};

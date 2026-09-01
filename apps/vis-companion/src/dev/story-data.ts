@@ -820,6 +820,29 @@ export const STORY_QUEUED_TURNS: QueuedTurn[] = [
   },
 ];
 
+const STORY_LONG_QUEUE_REQUESTS = [
+  'Inspect the release manifest',
+  'Summarize the failed checks',
+  'Verify the public schema package',
+  'Cross-check contract examples',
+  'Review generated resources',
+  'Measure validation performance',
+  'Compare JSON Schema libraries',
+  'Remove unnecessary abstractions',
+  'Fix the remaining checks',
+  'Confirm required schema fields',
+  'Profile the complete workflow',
+  'Lint and verify the release',
+];
+
+export const STORY_LONG_QUEUED_TURNS: QueuedTurn[] =
+  STORY_LONG_QUEUE_REQUESTS.map((request, index) => ({
+    turnId: `long-queue-${index + 1}`,
+    request,
+    preview: request,
+    attachments: [],
+  }));
+
 export const STORY_QUEUE_PAUSED: QueuePausedInfo = {
   held: 2,
   reason: 'turn_failed',

@@ -688,8 +688,13 @@ describe("a card gives stdout one stable band and no op badge", () => {
     expect(rendered).not.toContain("GREP");
   });
 
+  // A settled call that printed nothing already says so three times: the band says
+  // RESULT, there is no chevron to open and no `Copy` chip to take. A fourth telling
+  // — the word `none`, standing where a real summary would — was repeated status.
   it("names the completed band even when stdout is empty", () => {
-    expect(card({ duration_ms: 39 })).toContain("RESULT");
+    const rendered = card({ duration_ms: 39 });
+    expect(rendered).toContain("RESULT");
+    expect(rendered).not.toContain("none");
   });
 
   it("names nothing while the op is still running", () => {

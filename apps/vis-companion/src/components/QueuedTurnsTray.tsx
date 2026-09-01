@@ -78,14 +78,22 @@ export function QueuedTurnsTray({
             <span aria-hidden="true">┌</span>
             Queued · {queued.length}
           </div>
-          {queued.map((item, index) => {
+          <div
+            role="region"
+            aria-label="Queued messages"
+            tabIndex={0}
+            className="max-h-64 overflow-y-auto overscroll-contain focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[-2px]"
+          >
+            <div role="list">
+              {queued.map((item, index) => {
             const isEditing = editing?.turnId === item.turnId;
             const isBusy = busyIds.has(item.turnId);
             return (
-              <div
-                key={item.turnId}
-                className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${isBusy ? " opacity-50" : ""}`}
-              >
+                <div
+                  key={item.turnId}
+                  role="listitem"
+                  className={`flex items-center gap-2 border-t border-dialog-edge px-2.5 py-1 first:border-t-0 transition-[opacity,transform,translate,scale,rotate] duration-150 starting:translate-y-1 starting:opacity-0 motion-reduce:transition-none${isBusy ? " opacity-50" : ""}`}
+                >
                 <span className="shrink-0 font-mono text-meta font-bold text-accent-ink">
                   #{index + 1}
                 </span>
@@ -164,7 +172,9 @@ export function QueuedTurnsTray({
                 />
               </div>
             );
-          })}
+              })}
+            </div>
+          </div>
         </div>
       )}
     </>

@@ -1243,13 +1243,6 @@ const ToolCard = memo(function ToolCard({ form }: { form: TranscriptForm }) {
       ) : (
         !running && <BandLabel className="min-w-0 flex-1">RESULT</BandLabel>
       )}
-      {/* A finished call that produced NO body still says so. `running` keeps the
-          placeholder quiet until the outcome actually lands. */}
-      {!stateLabel && !body && !running && !failed && (
-        <span className="shrink-0 truncate font-mono text-chip font-medium text-code-duration">
-          none
-        </span>
-      )}
       {duration && (
         <span className="shrink-0 font-mono text-chip tabular-nums text-code-duration">
           {duration}
@@ -1436,12 +1429,17 @@ const CardGrid = memo(function CardGrid({
   );
 });
 
-function pythonReceiptText(
+/**
+ * HOW A FORM'S OWN PROGRAM STANDS when no Activity named its calls.
+ *
+ * Read ONCE, because two things ask it: the receipt row, in words, and the marker
+ * beside it, as a ring.
+ */
+function pythonFormState(
   form: TranscriptForm,
   live: boolean,
   activityState?: ActivityProjection["state"],
-  activityDurationMs?: number,
-): string {
+): "INTERRUPTED" | "FAILED" | "CANCELLED" | "DONE" | "RUNNING" {
   const interrupted = interruptedPython(form);
   const failed =
     (form.error != null && !interrupted) || activityState === "failed";

@@ -94,4 +94,23 @@ describe("queued turns tray", () => {
       expect(onError).toHaveBeenCalledWith("queue changed first"),
     );
   });
+  it("keeps a long queue in a named keyboard-scrollable region", () => {
+    render(
+      <QueuedTurnsTray
+        client={gateway()}
+        sid="session-1"
+        queued={Array.from({ length: 12 }, (_, index) => ({
+          ...queued[0],
+          turnId: `turn-${index}`,
+          attachments: [],
+        }))}
+        paused={null}
+        onError={() => {}}
+      />,
+    );
+
+    const queue = screen.getByRole("region", { name: "Queued messages" });
+    expect(queue.tabIndex).toBe(0);
+    expect(screen.getAllByRole("listitem")).toHaveLength(12);
+  });
 });
