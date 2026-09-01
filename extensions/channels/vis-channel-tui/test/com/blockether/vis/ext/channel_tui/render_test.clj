@@ -998,8 +998,8 @@
         (expect (= "" (first lines)))
         (expect (str/includes? (second lines) "Vis is calling the provider"))))
   ;; Regression, T143: the live ticker carried TWO empty rows whenever the trace
-  ;; closed on a band edge - an activity axis's rail continuation or a code block's
-  ;; pad - because the margin blank was appended to a row that already read as blank.
+  ;; closed on an activity axis, because the margin blank was appended to the
+  ;; axis rail and iteration pad, which are margin themselves.
   (it "the live ticker keeps exactly one empty row above it when the trace closes on an axis"
       (render/invalidate-cache!)
       (let [iter
@@ -1016,13 +1016,12 @@
                        :omitted {:rows 0 :by-classification {}}}}]
              :activity :tool-call}
 
-            ;; What the EYE reads: pads, band edges and the axis rail paint no
-            ;; reading matter, so a row holding only those is a blank line.
+            ;; What the EYE reads as margin: the iteration pad and the axis rail
+            ;; ride columns the bubble already owns. A BAND edge paints, so it is
+            ;; not stripped here - it belongs to the block above.
             lines
             (mapv (fn [l]
-                    (str/replace (strip-ansi (str l))
-                                 #"[\u200b\u200c\u206a\u206c\u206f\ue000-\ue0ff│]"
-                                 ""))
+                    (str/replace (strip-ansi (str l)) #"[\u206c\ue015│]" ""))
                   (:lines (render/progress->lines-data
                             {:iterations [iter]}
                             80
@@ -1039,6 +1038,33 @@
         (expect (< ticker (count lines)))
         (expect (str/blank? (nth lines (dec ticker))))
         (expect (not (str/blank? (nth lines (- ticker 2)))))))
+  ;; Regression, T144: a live THINKING block lost its closing band edge - the
+  ;; ticker's margin trim ate the thinking pad, so the dim band ended flush
+  ;; against its last word and the row only reappeared once the iteration settled.
+  (it "the live ticker keeps the thinking band's own bottom edge above its margin"
+      (render/invalidate-cache!)
+      (let [lines
+            (mapv (comp strip-ansi str)
+                  (:lines (render/progress->lines-data
+                            {:iterations
+                             [{:thinking "Auditing thread starts, capping the pool at one hundred."
+                               :forms []
+                               :activity :thinking}]}
+                            80
+                            {:show-thinking true :show-iterations true}
+                            {:now-ms 1000
+                             :turn-start-ms 0
+                             :session-id "s1"
+                             :session-turn-id "t1"
+                             :detail-expansions {:vis.channel-tui/expand-all-details? true}})))
+
+            ticker
+            (count (take-while #(not (str/includes? % "Esc to cancel")) lines))]
+
+        (expect (< 3 ticker (count lines)))
+        (expect (= "" (nth lines (dec ticker))))
+        (expect (= p/MARKER_THINKING (nth lines (- ticker 2))))
+        (expect (str/includes? (nth lines (- ticker 3)) "Auditing thread starts"))))
   (it "shows queued submissions inside the live progress bubble"
       (let [payload
             (render/progress->lines-data

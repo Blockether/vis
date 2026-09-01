@@ -7453,13 +7453,23 @@
                      (when paused-line [paused-line])
                      [hint]))))))
 
-(defn- ink-free-row?
-  "True when a bubble row paints no reading matter: a coalescer pad, a band
-   edge, or an activity axis's rail continuation (`│`). The bubble draws its
-   own left rail down that column, so to the eye such a row IS a blank line —
-   two of them in a row read as two lines of margin, not one."
+(def ^:private margin-only-glyphs
+  ;; MARKER_ITERATION_PAD, the Activity axis marker, and the rail glyph the axis
+  ;; continues down the column the bubble already draws for itself.
+  (re-pattern (str "[" p/MARKER_ITERATION_PAD p/MARKER_ACTIVITY "│]")))
+
+(defn- margin-row?
+  "True when a bubble row is pure MARGIN: the empty string, an iteration pad,
+   or an Activity axis's rail continuation, whose only glyph rides the rail
+   column the bubble draws anyway. Two of those in a row read as two lines of
+   margin, not one.
+
+   A band EDGE is not margin. The thinking pad (`MARKER_THINKING`) and the
+   code-block pads paint their zone's background across the bubble, so such a
+   row IS the band's own bottom edge — trimming it lets the live ticker eat the
+   closing line of the block above and the band ends flush against its text."
   [{:keys [line]}]
-  (str/blank? (str/replace (str line) #"[\u200b\u200c\u206a\u206c\u206f\ue000-\ue0ff│]" "")))
+  (str/blank? (str/replace (str line) margin-only-glyphs "")))
 
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.
@@ -7632,16 +7642,17 @@
                    ;; recorded yet. Without the blank the iter-0 "Vis is calling
                    ;; the provider" state sits flush against the bubble's top
                    ;; border; without TRIMMING first it gets two, because a trace
-                   ;; that ends in an activity axis or a code block already closes
-                   ;; on a band-edge row the eye reads as blank. Both halves keep
-                   ;; the bubble's height transition smooth and the ticker
+                   ;; that ends in an activity axis already closes on rail and pad
+                   ;; rows that are margin themselves. Trim only that margin — a
+                   ;; band edge belongs to its block. Both halves keep the
+                   ;; bubble's height transition smooth and the ticker
                    ;; vertically anchored.
                    trimmed-trace
                    (let [v (vec trace-entries)]
                      (subvec v
                              0
                              (long (loop [i (count v)]
-                                     (if (and (pos? i) (ink-free-row? (nth v (dec i))))
+                                     (if (and (pos? i) (margin-row? (nth v (dec i))))
                                        (recur (dec i))
                                        i)))))
 
